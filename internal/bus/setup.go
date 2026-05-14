@@ -35,8 +35,14 @@ type ObjectStoreManager interface {
 }
 
 // EnsureStream creates the gateway events stream if it does not exist.
-// "Already exists" errors are treated as success so the call is safe to
-// invoke on every startup.
+// "Already exists" errors are treated as success so the call is idempotent
+// and safe to invoke on every startup. The stream config is not reconciled
+// — if the existing stream has different subjects, retention, or storage,
+// EnsureStream returns nil and leaves the operator to migrate.
+//
+// "Already exists" detection falls back to a substring match on the error
+// message because the JetStream client wraps the sentinel inconsistently
+// across server versions; see isAlreadyExists for the full reasoning.
 func EnsureStream(ctx context.Context, js StreamManager, name string, subjects []string) error {
 	if name == "" {
 		return errors.New("bus: stream name required")
@@ -64,8 +70,13 @@ func EnsureStream(ctx context.Context, js StreamManager, name string, subjects [
 }
 
 // EnsureObjectStore creates the gateway stash bucket if it does not
-// exist. "Already exists" errors are tolerated so callers may invoke it
-// on every startup.
+// exist. The call is idempotent: on "already exists" the existing bucket
+// is looked up and returned so callers receive a usable handle either
+// way. As with EnsureStream, the bucket config is not reconciled — only
+// existence is asserted.
+//
+// "Already exists" detection falls back to a substring match on the error
+// message; see isAlreadyExists for the full reasoning.
 func EnsureObjectStore(ctx context.Context, js ObjectStoreManager, bucket string) (jetstream.ObjectStore, error) {
 	if bucket == "" {
 		return nil, errors.New("bus: bucket name required")

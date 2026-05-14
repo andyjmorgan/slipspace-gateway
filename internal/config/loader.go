@@ -32,10 +32,12 @@ var knownTopLevelKeys = map[string]struct{}{
 	keyAPIKeys:        {},
 }
 
-// Load scans dir for *.yaml, merges the files by top-level key, decodes each
-// known block into its strongly-typed contract struct, validates the result,
-// and builds the runtime indexes. Duplicate top-level keys across files are an
-// error.
+// Load reads the YAML configuration directory at dir and returns the merged,
+// validated, indexed runtime view.
+//
+// Files are merged by top-level key — duplicate keys across files are rejected
+// rather than silently overlaid, because file ordering would otherwise
+// silently determine policy.
 func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("config: load %q: %w", dir, err)
@@ -88,9 +90,9 @@ func listYAMLFiles(dir string) ([]string, error) {
 	return out, nil
 }
 
-// mergedTree holds the per-top-level-key yaml.Node assembled across files,
-// along with the filename that contributed each block, used for error
-// reporting on duplicate keys.
+// mergedTree holds the per-top-level-key yaml.Node assembled across the
+// configuration directory, alongside the filename that contributed each block
+// so duplicate-key errors can name both offenders.
 type mergedTree struct {
 	nodes  map[string]*yaml.Node
 	origin map[string]string
@@ -126,10 +128,12 @@ func mergeFiles(files []string) (*mergedTree, error) {
 }
 
 // parseTopLevel loads path through koanf (the approved file+YAML layer), then
-// re-marshals the merged tree to bytes and parses with yaml.v3 to obtain
-// per-key yaml.Node trees. Round-tripping through koanf preserves verbatim
-// rules/resilience subtrees while normalizing input to a guaranteed mapping
-// shape, which keeps the second-stage parser branch-free.
+// re-marshals the tree to bytes and reparses with yaml.v3 to obtain per-key
+// yaml.Node trees.
+//
+// The round-trip preserves verbatim rules/resilience subtrees while
+// normalizing input to a guaranteed mapping shape; that lets the second-stage
+// parser stay branch-free.
 func parseTopLevel(path string) (map[string]*yaml.Node, error) {
 	k := koanf.New(".")
 	if err := k.Load(file.Provider(path), koanfyaml.Parser()); err != nil {
@@ -187,7 +191,12 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 	return out, nil
 }
 
-// Validate enforces cross-block invariants on the merged tree.
+// Validate enforces cross-block invariants — every allowed_endpoint resolves
+// to a real provider.endpoint, every api_key references a known configuration,
+// every provider with prefix_required has a prefix, and no two endpoints can
+// claim the same fully-resolved route path.
+//
+// Returns the first violation as a wrapped sentinel error.
 func (r *ResolvedConfig) Validate() error {
 	if len(r.Configurations) == 0 {
 		return fmt.Errorf("config: validate: %w", ErrNoConfigurations)
@@ -263,16 +272,17 @@ func (r *ResolvedConfig) Validate() error {
 	return nil
 }
 
-// emittedRoute is one fully-resolved RouteIndex entry for a (provider, endpoint, accepted_path).
+// emittedRoute is one fully-resolved RouteIndex entry for a
+// (provider, endpoint, accepted_path) triple.
 type emittedRoute struct {
 	Path     string
 	Provider string
 	Endpoint string
 }
 
-// emitRoutes returns the fully-resolved route paths a (provider, endpoint) pair
-// claims, expanding the optional prefix into both bare and prefixed forms
-// per the prefix_required flag.
+// emitRoutes expands a (provider, endpoint) pair into every accepted_path it
+// claims, generating both the prefixed and bare forms unless prefix_required
+// pins it to prefixed-only.
 func emitRoutes(providerName, endpointName string, p contractsconfig.Provider, e contractsconfig.Endpoint) []emittedRoute {
 	out := make([]emittedRoute, 0, len(e.AcceptedPaths)*2)
 	for _, ap := range e.AcceptedPaths {

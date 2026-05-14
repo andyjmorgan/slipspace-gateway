@@ -24,7 +24,16 @@ var ErrNotStruct = errors.New("dynamic: v must reference a struct")
 // DynamicProperties captures unknown JSON fields so they survive round-tripping.
 // Embed it on any struct whose wire format may carry provider-defined fields
 // beyond the ones we model.
+//
+// This type underpins the load-bearing invariant from CLAUDE.md: every
+// provider model type must embed DynamicProperties so unknown JSON fields
+// round-trip back to upstream providers intact. Dropping a field on the way
+// out subtly breaks customer requests with no error to log; the safety net
+// here is what prevents that.
 type DynamicProperties struct {
+	// Extra holds JSON object keys that did not match any typed field on the
+	// embedding struct. Keys are preserved verbatim and re-emitted on
+	// marshal so the wire payload survives a parse-and-reserialise cycle.
 	Extra map[string]json.RawMessage `json:"-"`
 }
 

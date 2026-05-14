@@ -41,8 +41,12 @@ const EnvDeploymentEnvironment = "SLUICE_ENV"
 // BuildInfo identifies the running binary in resource attributes and
 // log enrichment.
 type BuildInfo struct {
+	// Service is the OTel service.name resource attribute and the
+	// "service" slog field. Typically the binary name, e.g. "gateway".
 	Service string
 
+	// Version is the OTel service.version resource attribute and the
+	// "version" slog field. Sourced from internal/version.Version.
 	Version string
 }
 
@@ -50,17 +54,30 @@ type BuildInfo struct {
 // during graceful termination so the OTLP exporter can flush its
 // in-memory queue.
 type Provider struct {
+	// Meters is the pre-built instrument bundle. Always non-nil — Setup
+	// installs the no-op bundle when no exporter is enabled.
 	Meters *Meters
 
+	// MeterProvider is the underlying provider. The same one is
+	// registered globally via otel.SetMeterProvider so any code that
+	// reaches for the global meter still routes here. May be a
+	// sdkmetric.MeterProvider with one or two Readers (Prometheus and/or
+	// OTLP) or a noop.MeterProvider in the no-exporter case.
 	MeterProvider metric.MeterProvider
 
+	// Logger is the service-enriched root logger. Per-request loggers
+	// are derived from this and stashed on context.Context.
 	Logger *slog.Logger
 
-	// PromHandler serves the Prometheus exposition format when Prometheus
-	// scrape is enabled. It is nil otherwise — callers should branch on
-	// the field rather than calling it unconditionally.
+	// PromHandler serves the Prometheus exposition format when
+	// Prometheus scrape is enabled. It is nil otherwise — callers should
+	// branch on the field rather than calling it unconditionally.
 	PromHandler http.Handler
 
+	// Shutdown flushes and shuts down the OTLP exporter and the
+	// MeterProvider. Safe to call multiple times: the inner once.Do
+	// makes subsequent invocations no-ops that return the same joined
+	// error as the first call.
 	Shutdown func(ctx context.Context) error
 }
 

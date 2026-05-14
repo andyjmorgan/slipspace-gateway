@@ -36,50 +36,96 @@ type ObjectPutter interface {
 
 // Stats is a point-in-time snapshot of publisher counters.
 type Stats struct {
+	// Published counts envelopes successfully shipped to JetStream.
 	Published uint64
 
+	// Dropped counts envelopes refused on enqueue (queue full) or that
+	// failed dispatch after enqueue (NATS unreachable, marshal error).
+	// The two cases share a counter because either way the customer
+	// observes a missing event.
 	Dropped uint64
 
+	// Stashed counts envelopes whose payload exceeded the threshold and
+	// was uploaded to the Object Store instead of carried inline.
 	Stashed uint64
 }
 
-// Options configures a Publisher. JS is required; ObjectStore is optional
-// — when nil, oversized payloads are published inline and a warning is
-// logged.
+// Options configures a Publisher. JS is required; ObjectStore is
+// optional — when nil, oversized payloads are published inline and a
+// warning is logged.
 type Options struct {
+	// JS is the JetStream publish target. Required.
 	JS JetStreamPublisher
 
+	// ObjectStore is the bucket used to stash oversized payloads. When
+	// nil the publisher logs a warning and falls back to inline publish —
+	// a deliberate degradation that keeps the request path unaffected
+	// even in a misconfigured environment.
 	ObjectStore ObjectPutter
 
 	// StashBucket is recorded on the ObjectRef for stashed payloads.
-	// Defaults to DefaultStreamConfig().StashBucket when empty.
+	// Defaults to DefaultObjectStoreBucket when empty.
 	StashBucket string
 
+	// QueueSize is the capacity of the internal channel that buffers
+	// envelopes between Publish and the worker goroutines. Defaults to
+	// defaultQueueSize when zero.
 	QueueSize int
 
+	// Workers is the number of goroutines draining the queue. Defaults
+	// to defaultWorkers when zero.
 	Workers int
 
+	// StashThreshold is the byte length above which an inline payload is
+	// uploaded to the Object Store instead. Defaults to
+	// defaultStashThreshold (768 KiB) when zero.
 	StashThreshold int
 
 	Logger *slog.Logger
 }
 
-// Publisher is the non-blocking event publisher. Publish enqueues or drops;
-// worker goroutines drain the queue and ship envelopes to JetStream.
+// Publisher is the non-blocking event publisher. Publish enqueues or
+// drops; worker goroutines drain the queue and ship envelopes to
+// JetStream.
+//
+// The drop-on-full semantics are load-bearing: the request path must
+// never block on reporting backpressure. See the "NATS Reporting" design
+// note and CLAUDE.md's load-bearing invariants section.
 type Publisher struct {
-	js          JetStreamPublisher
-	store       ObjectPutter
+	// js is the JetStream publisher. Non-nil for the lifetime of the
+	// Publisher.
+	js JetStreamPublisher
+
+	// store is the Object Store used for stashed payloads. Nil when the
+	// caller did not configure one — dispatch logs and falls back to
+	// inline publish for oversized envelopes.
+	store ObjectPutter
+
+	// stashBucket is the bucket name recorded on stashed envelopes.
 	stashBucket string
 
+	// queue is the bounded channel between producers (Publish) and
+	// worker goroutines. Capacity is set at construction; full-queue
+	// pressure manifests as drops, never as blocked callers.
 	queue chan Envelope
 
+	// threshold is the inline-vs-stashed cutoff in bytes.
 	threshold int
-	workers   int
 
+	// workers is the number of run() goroutines spawned by Start.
+	workers int
+
+	// stopOnce guards stopCh so Stop is idempotent.
 	stopOnce sync.Once
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
 
+	// stopCh signals workers to drain remaining envelopes and exit.
+	stopCh chan struct{}
+
+	// wg tracks worker goroutines for Stop to await.
+	wg sync.WaitGroup
+
+	// dropCnt, publishCnt, stashCnt are lock-free counters exposed via
+	// Stats. Always update via atomic ops.
 	dropCnt    atomic.Uint64
 	publishCnt atomic.Uint64
 	stashCnt   atomic.Uint64
@@ -153,8 +199,16 @@ func (p *Publisher) Stop(timeout time.Duration) bool {
 	}
 }
 
-// Publish enqueues env for asynchronous dispatch. If the queue is full it
-// drops the event and increments the drop counter. It never blocks.
+// Publish enqueues env for asynchronous dispatch. It never blocks.
+//
+// If the queue is full, the envelope is dropped and Stats.Dropped is
+// incremented — there is no retry, no in-memory replay buffer, no backoff.
+// This non-blocking guarantee is a load-bearing invariant of the gateway:
+// the request path must never wait on reporting backpressure. The next
+// event is always more valuable than this one.
+//
+// SchemaVersion is stamped to SchemaVersion when callers leave it zero, so
+// the on-wire envelope always carries a version.
 func (p *Publisher) Publish(env Envelope) {
 	if env.SchemaVersion == 0 {
 		env.SchemaVersion = SchemaVersion

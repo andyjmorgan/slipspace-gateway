@@ -12,27 +12,50 @@ import (
 )
 
 // Router matches incoming HTTP requests to (provider, endpoint) pairs.
+//
+// The route table is partitioned at construction time: paths without
+// placeholders live in exact for O(1) lookup; paths with `{name}`
+// segments live in patterns as compiled regexes. Resolve probes exact
+// first and falls through to patterns only on miss — exact-match always
+// wins over a pattern that would also match the same path.
 type Router struct {
+	// exact holds literal paths. Lookup is a single map probe.
 	exact map[string]bound
 
+	// patterns holds compiled regex routes. Iterated in lexicographic
+	// order of the source path so a config that defines two overlapping
+	// patterns resolves deterministically across restarts.
 	patterns []patternedRoute
 }
 
+// bound is the per-exact-path payload stored in Router.exact.
 type bound struct {
 	Provider string
 
 	Endpoint string
 
+	// Methods is the set of uppercase HTTP verbs allowed at this route,
+	// pre-normalized at build time so Resolve only does a map probe.
 	Methods map[string]struct{}
 }
 
+// patternedRoute is a single placeholder-bearing route compiled to a
+// regex. ParamNames carries the names of the `{...}` segments in left-to-
+// right order; the i-th regex capture group corresponds to ParamNames[i].
 type patternedRoute struct {
+	// Path is the original accepted_paths string. Retained for diagnostics
+	// and for the lexicographic sort that gives Resolve a stable iteration
+	// order.
 	Path string
 
+	// Regex is the anchored compiled pattern built by compilePattern.
 	Regex *regexp.Regexp
 
+	// ParamNames are the placeholder identifiers in left-to-right order.
+	// Empty for patterns that contain no `{name}` segments.
 	ParamNames []string
 
+	// Methods is the set of uppercase HTTP verbs allowed at this route.
 	Methods map[string]struct{}
 
 	Provider string
@@ -46,12 +69,17 @@ type Match struct {
 
 	Endpoint string
 
+	// Params carries the captured `{name}` values for patterned matches,
+	// keyed by placeholder name. Nil for exact-path matches and for
+	// patterned routes that declare no placeholders.
 	Params map[string]string
 }
 
-// New builds a Router from the resolved config. The methods allowed for each
-// route are stashed at build time so Resolve is a single map lookup on the
-// exact-match path.
+// New builds a Router from the resolved config. The methods allowed for
+// each route are stashed at build time so Resolve is a single map lookup
+// on the exact-match path. Patterns are sorted lexicographically by source
+// path so two overlapping patterns resolve in a stable, restart-
+// independent order.
 func New(resolved *config.ResolvedConfig) (*Router, error) {
 	if resolved == nil {
 		return nil, fmt.Errorf("routing: new: resolved config is nil")
@@ -104,8 +132,14 @@ func New(resolved *config.ResolvedConfig) (*Router, error) {
 	return r, nil
 }
 
-// Resolve returns the (provider, endpoint) match for an inbound request, or
-// ErrNoRoute / ErrMethodNotAllowed.
+// Resolve returns the (provider, endpoint) match for an inbound request,
+// or ErrNoRoute / ErrMethodNotAllowed.
+//
+// Lookup order is exact map first, then patterns in their stored
+// (lexicographic) order. An exact-path entry always wins over a pattern
+// that would also match the same literal path. Method matching happens
+// after path matching, so a path-matched-but-method-rejected request
+// reports ErrMethodNotAllowed rather than falling through to ErrNoRoute.
 func (r *Router) Resolve(method, path string) (Match, error) {
 	m := strings.ToUpper(method)
 

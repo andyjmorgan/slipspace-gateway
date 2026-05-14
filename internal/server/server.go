@@ -24,22 +24,51 @@ const DefaultDrainTimeout = 300 * time.Second
 // fallbacks (DrainTimeout → DefaultDrainTimeout, Logger → slog.Default,
 // ReadHeaderTimeout → 10s).
 type Options struct {
-	Bind              string
-	Handler           http.Handler
-	DrainTimeout      time.Duration
+	// Bind is the listen address in net.Listen("tcp", ...) form, e.g.
+	// ":8080" or "127.0.0.1:0". An empty string causes Run to fail.
+	Bind string
+
+	// Handler is the application handler mounted at "/". Requests to
+	// "/healthz" are intercepted before they reach it. A nil Handler is
+	// permitted (and exercised by tests); only /healthz responds.
+	Handler http.Handler
+
+	// DrainTimeout caps how long graceful shutdown waits for in-flight
+	// requests to finish after /healthz flips to draining. On overrun the
+	// server hard-closes remaining connections.
+	DrainTimeout time.Duration
+
+	// ReadHeaderTimeout is set on the underlying http.Server. Defaults to
+	// 10s when zero — leaving it unset would trip linters.
 	ReadHeaderTimeout time.Duration
-	Logger            *slog.Logger
+
+	Logger *slog.Logger
 }
 
 // Server wraps net/http.Server with drain lifecycle and an automatically
 // mounted /healthz endpoint.
 type Server struct {
+	// httpSrv is owned by the Server. Construction wires the /healthz
+	// mux ahead of opts.Handler; callers must not reach in and replace
+	// the Handler after New.
 	httpSrv *http.Server
-	bind    string
-	drain   time.Duration
-	logger  *slog.Logger
+
+	bind string
+
+	// drain is the deadline applied to http.Server.Shutdown after
+	// /healthz has been flipped to 503.
+	drain time.Duration
+
+	logger *slog.Logger
+
+	// healthz is the readiness probe handler. Mounted on the internal
+	// mux at construction and exposed via Healthz() so tests can inspect
+	// drain transitions without hitting the HTTP surface.
 	healthz *HealthzHandler
 
+	// addrMu guards addr. Run writes addr once at startup; Addr reads it
+	// concurrently from tests that bind to ":0" and need the assigned
+	// port.
 	addrMu sync.RWMutex
 	addr   string
 }

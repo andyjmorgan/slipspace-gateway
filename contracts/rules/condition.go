@@ -20,12 +20,16 @@ type Condition interface {
 
 // ProviderCondition matches when the resolved provider equals ExpectedProvider.
 type ProviderCondition struct {
+	// Type is the polymorphic discriminator; always "provider".
 	Type string `yaml:"type" json:"type"`
 
+	// Operator is the comparison strategy. Only EnumEquals is meaningful.
 	Operator EnumOperator `yaml:"operator" json:"operator"`
 
+	// ExpectedProvider is the provider name the condition compares against.
 	ExpectedProvider string `yaml:"expectedProvider" json:"expected_provider"`
 
+	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
 	models.DynamicProperties
@@ -46,12 +50,17 @@ func (c ProviderCondition) MarshalJSON() ([]byte, error) { return models.Marshal
 
 // EndpointCondition matches when the resolved endpoint equals ExpectedEndpoint.
 type EndpointCondition struct {
+	// Type is the polymorphic discriminator; always "endpoint".
 	Type string `yaml:"type" json:"type"`
 
+	// Operator is the comparison strategy. Only EnumEquals is meaningful.
 	Operator EnumOperator `yaml:"operator" json:"operator"`
 
+	// ExpectedEndpoint is the endpoint identifier the condition compares
+	// against (e.g., "openai.chat_completions").
 	ExpectedEndpoint string `yaml:"expectedEndpoint" json:"expected_endpoint"`
 
+	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
 	models.DynamicProperties
@@ -72,14 +81,20 @@ func (c EndpointCondition) MarshalJSON() ([]byte, error) { return models.Marshal
 
 // ModelNameCondition matches the resolved model name with a string operator.
 type ModelNameCondition struct {
+	// Type is the polymorphic discriminator; always "modelName".
 	Type string `yaml:"type" json:"type"`
 
+	// Operator selects the string comparison strategy.
 	Operator StringOperator `yaml:"operator" json:"operator"`
 
+	// ExpectedModelName is the literal, prefix, suffix, substring, or regex
+	// the model name is compared against — Operator decides which.
 	ExpectedModelName string `yaml:"expectedModelName" json:"expected_model_name"`
 
+	// CaseInsensitive folds case before comparing.
 	CaseInsensitive bool `yaml:"caseInsensitive,omitempty" json:"case_insensitive,omitempty"`
 
+	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
 	models.DynamicProperties
@@ -101,18 +116,28 @@ func (c ModelNameCondition) MarshalJSON() ([]byte, error) { return models.Marsha
 // HeaderCondition matches inbound HTTP headers. KeyOperator always applies; if
 // ValueOperator is set the value must also match.
 type HeaderCondition struct {
+	// Type is the polymorphic discriminator; always "header".
 	Type string `yaml:"type" json:"type"`
 
+	// KeyOperator selects how to match header names against KeyPattern.
 	KeyOperator StringOperator `yaml:"keyOperator" json:"key_operator"`
 
+	// KeyPattern is the header-name pattern; interpretation depends on
+	// KeyOperator.
 	KeyPattern string `yaml:"keyPattern" json:"key_pattern"`
 
+	// ValueOperator selects how to match header values against ValuePattern.
+	// When nil, only KeyOperator applies and any value matches.
 	ValueOperator *StringOperator `yaml:"valueOperator,omitempty" json:"value_operator,omitempty"`
 
+	// ValuePattern is the header-value pattern; interpretation depends on
+	// ValueOperator.
 	ValuePattern string `yaml:"valuePattern,omitempty" json:"value_pattern,omitempty"`
 
+	// CaseInsensitive folds case on both key and value comparisons.
 	CaseInsensitive bool `yaml:"caseInsensitive,omitempty" json:"case_insensitive,omitempty"`
 
+	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
 	models.DynamicProperties
@@ -135,12 +160,17 @@ func (c HeaderCondition) MarshalJSON() ([]byte, error) { return models.MarshalDy
 // any Condition type, including nested RuleGroups, allowing arbitrarily-deep
 // logic trees.
 type RuleGroup struct {
+	// Type is the polymorphic discriminator; always "group".
 	Type string `yaml:"type" json:"type"`
 
+	// LogicalOperator combines the Children results.
 	LogicalOperator LogicalOperator `yaml:"logicalOperator" json:"logical_operator"`
 
+	// Children are the sub-conditions; may be any Condition type including
+	// nested RuleGroups.
 	Children []Condition `yaml:"children" json:"children"`
 
+	// Not inverts the group's result after the logical combination.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
 	models.DynamicProperties
@@ -264,6 +294,8 @@ func (g *RuleGroup) UnmarshalYAML(value *yaml.Node) error {
 // and every other JSON field lands in DynamicProperties.Extra so the
 // condition round-trips intact.
 type UnknownCondition struct {
+	// Type holds the unknown discriminator value verbatim so it can be
+	// re-emitted on marshal.
 	Type string `yaml:"type" json:"type"`
 
 	models.DynamicProperties

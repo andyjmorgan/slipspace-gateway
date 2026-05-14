@@ -51,19 +51,38 @@ const (
 const MaxBodyBytes int64 = 10 * 1024 * 1024
 
 // Captured is the result of reading and (optionally) decoding a request body.
-// Raw is always populated with the verbatim wire bytes so the forwarder can
-// resend them. Body is the typed deserialised value or nil for passthrough.
+// It lands on the request context after HTTPHandler runs and is read by
+// downstream middleware (rules, forwarder) via FromContext.
 type Captured struct {
+	// Kind is the RequestKind the route declared — the dispatch key that
+	// selected Body's concrete type.
 	Kind RequestKind
 
+	// Raw is the verbatim inbound body bytes, capped at MaxBodyBytes. The
+	// forwarder reads from this (via r.Body, which HTTPHandler replaces
+	// with a reader over Raw) so the upstream sees byte-for-byte what the
+	// client sent.
 	Raw []byte
 
+	// Body is the typed deserialised value: one of
+	// *openaichat.ChatCompletionRequest, *openairesponses.ResponsesRequest,
+	// *messages.MessagesRequest, *content.GenerateContentRequest, or nil
+	// for KindPassthrough. Type-switch on Body when consuming.
+	//
+	// DynamicProperties on each concrete type preserves unknown fields, so
+	// re-marshalling Body (rather than Raw) is safe but not equivalent —
+	// key ordering and whitespace differ.
 	Body any
 }
 
 // KindFromContextFunc returns the RequestKind the routing middleware stashed
-// on the request context. ok is false when routing has not run or the route
-// did not carry a kind.
+// on the request context. ok is false when routing has not run or the
+// matched route did not carry a kind.
+//
+// It exists as a dependency-injection point so bodycapture does not import
+// internal/routing — routing depends on config + contracts and a direct
+// import would create a cycle once routing's tests pull in bodycapture
+// fixtures.
 type KindFromContextFunc func(ctx context.Context) (RequestKind, bool)
 
 // Capture reads r.Body up to MaxBodyBytes and, when kind is a typed shape,
@@ -96,14 +115,18 @@ func Capture(r *http.Request, kind RequestKind) (Captured, error) {
 	return Captured{Kind: kind, Raw: raw, Body: target}, nil
 }
 
-// HTTPHandler wraps next with the capture step. The route's RequestKind is
-// pulled from context via kindFrom. On success the Captured lands on the
-// request context and r.Body is replaced with a reader over the original
-// bytes so the forwarder reads identical content.
+// HTTPHandler wraps next with the body-capture step.
+//
+// It sits downstream of routing and auth in the request chain. It reads the
+// route's RequestKind from context via kindFrom, calls Capture to buffer
+// and (when typed) deserialise the body, stashes the Captured on the
+// request context (read downstream via FromContext), and replaces r.Body
+// with a reader over the captured raw bytes so the forwarder consumes
+// identical content.
 //
 // On ErrBodyTooLarge the handler writes 413; on ErrParse it writes 400 and
-// logs at warn level; on missing route or unknown kind it writes 500 — those
-// are wiring bugs that should not reach clients silently.
+// logs at warn level; on missing route or unknown kind it writes 500 —
+// those are wiring bugs that should not reach clients silently.
 func HTTPHandler(kindFrom KindFromContextFunc, next http.Handler) http.Handler {
 	if kindFrom == nil {
 		panic("bodycapture: HTTPHandler called with nil kindFrom")

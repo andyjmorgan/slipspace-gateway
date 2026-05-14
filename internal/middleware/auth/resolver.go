@@ -43,41 +43,76 @@ const (
 	headerGeminiAPIKey = "x-goog-api-key" //nolint:gosec // header name, not a credential
 )
 
-// AuthResult is the resolved decision for a single request. Downstream
-// middleware reads this off the context.
+// AuthResult is the resolved auth decision for a single request, stashed
+// on the request context by HTTPHandler and read by downstream middleware
+// (bodycapture, forwarder).
 type AuthResult struct {
+	// Mode is which auth scheme matched: ModeManaged when a Sluice-issued
+	// bearer was presented, ModePassthrough when the X-Sluice-Configuration
+	// header selected the policy.
 	Mode Mode
 
+	// APIKey is the matched managed-mode API key, or nil in passthrough
+	// mode (which has no API key — the client uses its own upstream
+	// credential). Downstream code must nil-check before dereferencing.
 	APIKey *contractsconfig.APIKey
 
+	// Configuration is the resolved policy bundle. Nil only when
+	// resolution failed before configuration lookup.
 	Configuration *contractsconfig.Configuration
 
+	// ConfigurationName is the name the policy was looked up by — the
+	// X-Sluice-Configuration value (passthrough) or APIKey.Configuration
+	// (managed). Retained for structured logging even when Configuration
+	// is nil.
 	ConfigurationName string
 
+	// Provider is the upstream provider name routed to (openai, anthropic,
+	// gemini, ...). Injected from the routing decision; not resolved by
+	// auth.
 	Provider string
 
+	// Endpoint is the upstream endpoint name routed to. Injected from the
+	// routing decision; not resolved by auth.
 	Endpoint string
 
+	// DropHeaders names inbound headers the forwarder must strip before
+	// sending upstream — always includes X-Sluice-Configuration and, for
+	// providers with non-bearer credentials, the inbound Authorization
+	// header. DropHeaders is applied before SetHeaders, so setting and
+	// dropping the same name is a no-op net of the set.
 	DropHeaders []string
 
+	// SetHeaders carries the upstream credential headers the forwarder
+	// must inject (e.g. Authorization, x-api-key, x-goog-api-key). Empty
+	// in passthrough mode — the client's own credential header is
+	// forwarded verbatim.
 	SetHeaders http.Header
 }
 
-// Resolver is the pure-logic resolver: given inbound headers and a routed
-// (provider, endpoint) pair, it returns an AuthResult or a typed error. No
-// HTTP serving concerns.
+// Resolver decides the auth outcome for a request: given inbound headers and
+// the routed (provider, endpoint) pair, it returns an AuthResult plus the
+// header swap to apply, or a typed sentinel error.
+//
+// Resolver contains no HTTP serving concerns and is safe to call from tests
+// without standing up a server. HTTPHandler is the http.Handler adapter.
 type Resolver struct {
 	cfg *config.ResolvedConfig
 }
 
-// NewResolver constructs a Resolver bound to cfg. The resolver does not retain
-// or mutate cfg beyond reading the SecretIndex and ConfigurationIndex.
+// NewResolver constructs a Resolver bound to cfg.
+//
+// The resolver retains cfg by pointer but reads only SecretIndex and
+// ConfigurationIndex; it does not mutate either. Callers that swap the
+// underlying config must build a fresh Resolver.
 func NewResolver(cfg *config.ResolvedConfig) *Resolver {
 	return &Resolver{cfg: cfg}
 }
 
-// Resolve decides the auth mode and returns the resulting policy + header
-// swaps to apply when forwarding upstream.
+// Resolve decides the auth mode and returns the resulting AuthResult plus
+// the header swap to apply when forwarding upstream. The X-Sluice-
+// Configuration header takes precedence over any bearer token on the same
+// request — if present, resolution is always passthrough.
 func (r *Resolver) Resolve(headers http.Header, provider, endpoint string) (AuthResult, error) {
 	if r == nil || r.cfg == nil {
 		return AuthResult{}, ErrUnknownConfiguration

@@ -90,16 +90,27 @@ const (
 // Action in Actions fires in sequence; terminating actions short-circuit the
 // pipeline. Behavior controls whether evaluation continues after this rule.
 type RuleContract struct {
+	// ID is the rule's stable identifier; surfaced in telemetry and used to
+	// reference the rule in logs and reporting events.
 	ID string `yaml:"id" json:"id"`
 
+	// Name is a human-readable label. Optional; ID is the canonical handle.
 	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 
+	// Priority orders evaluation. Lower values run first; ties break on the
+	// rule's position in the Configuration.
 	Priority int `yaml:"priority" json:"priority"`
 
+	// Condition is the predicate that must match for the rule's Actions to
+	// fire. Polymorphic; see Condition and its concrete types.
 	Condition Condition `yaml:"condition" json:"condition"`
 
+	// Actions are executed in order on a match. A terminating action
+	// short-circuits the pipeline regardless of Behavior.
 	Actions []Action `yaml:"actions" json:"actions"`
 
+	// Behavior controls whether evaluation continues to lower-priority rules
+	// after this rule's Actions complete. Empty defaults to BehaviorContinue.
 	Behavior RuleBehavior `yaml:"behavior,omitempty" json:"behavior,omitempty"`
 }
 

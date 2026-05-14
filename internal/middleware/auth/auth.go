@@ -13,14 +13,22 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
-// RouteFromContextFunc is supplied by the caller so this package does not
-// import internal/routing. It returns the (provider, endpoint) the routing
+// RouteFromContextFunc returns the (provider, endpoint) the routing
 // middleware stashed on the request context.
+//
+// It exists as a dependency-injection point so auth does not import
+// internal/routing — routing depends on config which depends on contracts,
+// and pulling routing in here would create an import cycle once routing
+// gains its own dependency on auth-resolved policy in later milestones.
 type RouteFromContextFunc func(context.Context) (provider string, endpoint string, ok bool)
 
-// HTTPHandler wraps next with auth resolution. On success the AuthResult is
-// stashed on the request context. On failure a typed JSON error response is
-// written and next is not invoked.
+// HTTPHandler wraps next with the auth resolution step.
+//
+// It sits immediately downstream of routing in the request chain: it reads
+// the routed (provider, endpoint) via routeFrom, invokes resolver.Resolve
+// against the request headers, and on success stashes the resulting
+// AuthResult on the request context (retrieved downstream via FromContext).
+// On failure a typed JSON error response is written and next is not invoked.
 func HTTPHandler(resolver *Resolver, routeFrom RouteFromContextFunc, next http.Handler) http.Handler {
 	if resolver == nil {
 		panic("auth: HTTPHandler called with nil resolver")

@@ -9,18 +9,36 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/models"
 )
 
-// ContentPart is implemented by every concrete content-part type and by
-// UnknownContentPart. The discriminator is the "type" field.
+// ContentPart is the polymorphic interface implemented by every concrete
+// chat-completions content part — TextContentPart, ImageURLContentPart,
+// InputAudioContentPart, OutputAudioContentPart, RefusalContentPart,
+// FileContentPart, and the UnknownContentPart fallback.
+//
+// The discriminator is the "type" field. Unknown discriminator values are
+// dispatched to UnknownContentPart, which preserves both the type value AND
+// any sibling JSON fields via DynamicProperties so the payload round-trips
+// intact.
+//
+// Decode a JSON content-parts array via UnmarshalContentParts (or let
+// MessageContent.AsParts do it for you) rather than calling json.Unmarshal
+// into a []ContentPart directly — Go cannot pick the concrete type from a
+// bare interface, so registry dispatch is what makes the round-trip work.
 type ContentPart interface {
+	// PartType returns the wire discriminator value of the concrete part
+	// type ("text", "image_url", ...).
 	PartType() string
 
 	isContentPart()
 }
 
-// TextContentPart is the "text" content part variant.
+// TextContentPart is the "text" content part variant — plain text inside a
+// chat-completions message content array. Unknown fields round-trip via the
+// embedded DynamicProperties.
 type TextContentPart struct {
+	// Type is the wire "type" discriminator, always "text".
 	Type string `json:"type"`
 
+	// Text is the part's literal text content.
 	Text string `json:"text"`
 
 	models.DynamicProperties
@@ -31,33 +49,45 @@ func (TextContentPart) PartType() string { return "text" }
 
 func (TextContentPart) isContentPart() {}
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into p, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (p *TextContentPart) UnmarshalJSON(data []byte) error {
 	return models.UnmarshalDynamic(data, p)
 }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes p and merges DynamicProperties.Extra back into the
+// resulting object.
 func (p TextContentPart) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(p) }
 
-// ImageURL is the nested url+detail object on an ImageURLContentPart.
+// ImageURL is the nested url+detail object on an ImageURLContentPart. Unknown
+// fields round-trip via the embedded DynamicProperties.
 type ImageURL struct {
+	// URL is the http(s) URL or "data:" base64 image URL.
 	URL string `json:"url"`
 
+	// Detail selects the image-detail tier ("low", "high", "auto"); empty
+	// means "use the server default".
 	Detail string `json:"detail,omitempty"`
 
 	models.DynamicProperties
 }
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into i, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (i *ImageURL) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, i) }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes i and merges DynamicProperties.Extra back into the
+// resulting object.
 func (i ImageURL) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(i) }
 
-// ImageURLContentPart is the "image_url" content part variant.
+// ImageURLContentPart is the "image_url" content part variant — an inline or
+// remote image attached to a chat-completions message. Unknown fields
+// round-trip via the embedded DynamicProperties.
 type ImageURLContentPart struct {
+	// Type is the wire "type" discriminator, always "image_url".
 	Type string `json:"type"`
 
+	// ImageURL carries the image's URL and detail hint.
 	ImageURL ImageURL `json:"image_url"`
 
 	models.DynamicProperties
@@ -68,33 +98,44 @@ func (ImageURLContentPart) PartType() string { return "image_url" }
 
 func (ImageURLContentPart) isContentPart() {}
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into p, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (p *ImageURLContentPart) UnmarshalJSON(data []byte) error {
 	return models.UnmarshalDynamic(data, p)
 }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes p and merges DynamicProperties.Extra back into the
+// resulting object.
 func (p ImageURLContentPart) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(p) }
 
-// InputAudio is the nested audio payload on an InputAudioContentPart.
+// InputAudio is the nested audio payload on an InputAudioContentPart. Unknown
+// fields round-trip via the embedded DynamicProperties.
 type InputAudio struct {
+	// Data is the base64-encoded audio payload.
 	Data string `json:"data"`
 
+	// Format selects the audio container/codec (e.g., "wav", "mp3").
 	Format string `json:"format,omitempty"`
 
 	models.DynamicProperties
 }
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into a, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (a *InputAudio) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, a) }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes a and merges DynamicProperties.Extra back into the
+// resulting object.
 func (a InputAudio) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
-// InputAudioContentPart is the "input_audio" content part variant.
+// InputAudioContentPart is the "input_audio" content part variant — audio
+// sent to the model from the caller. Unknown fields round-trip via the
+// embedded DynamicProperties.
 type InputAudioContentPart struct {
+	// Type is the wire "type" discriminator, always "input_audio".
 	Type string `json:"type"`
 
+	// InputAudio carries the audio data and format.
 	InputAudio InputAudio `json:"input_audio"`
 
 	models.DynamicProperties
@@ -105,19 +146,24 @@ func (InputAudioContentPart) PartType() string { return "input_audio" }
 
 func (InputAudioContentPart) isContentPart() {}
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into p, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (p *InputAudioContentPart) UnmarshalJSON(data []byte) error {
 	return models.UnmarshalDynamic(data, p)
 }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes p and merges DynamicProperties.Extra back into the
+// resulting object.
 func (p InputAudioContentPart) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(p) }
 
 // OutputAudioContentPart is the "audio" content part variant emitted by the
-// assistant when audio modality is enabled.
+// assistant when audio modality is enabled on the request. Unknown fields
+// round-trip via the embedded DynamicProperties.
 type OutputAudioContentPart struct {
+	// Type is the wire "type" discriminator, always "audio".
 	Type string `json:"type"`
 
+	// Audio is the assistant's audio reply (ID, base64 data, transcript).
 	Audio AudioMessage `json:"audio"`
 
 	models.DynamicProperties
@@ -128,19 +174,24 @@ func (OutputAudioContentPart) PartType() string { return "audio" }
 
 func (OutputAudioContentPart) isContentPart() {}
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into p, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (p *OutputAudioContentPart) UnmarshalJSON(data []byte) error {
 	return models.UnmarshalDynamic(data, p)
 }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes p and merges DynamicProperties.Extra back into the
+// resulting object.
 func (p OutputAudioContentPart) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(p) }
 
 // RefusalContentPart is the "refusal" content part variant emitted by the
-// assistant when it declines to answer.
+// assistant when it declines to answer. Unknown fields round-trip via the
+// embedded DynamicProperties.
 type RefusalContentPart struct {
+	// Type is the wire "type" discriminator, always "refusal".
 	Type string `json:"type"`
 
+	// Refusal carries the assistant's refusal text.
 	Refusal string `json:"refusal"`
 
 	models.DynamicProperties
@@ -151,36 +202,49 @@ func (RefusalContentPart) PartType() string { return "refusal" }
 
 func (RefusalContentPart) isContentPart() {}
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into p, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (p *RefusalContentPart) UnmarshalJSON(data []byte) error {
 	return models.UnmarshalDynamic(data, p)
 }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes p and merges DynamicProperties.Extra back into the
+// resulting object.
 func (p RefusalContentPart) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(p) }
 
-// File is the nested file reference on a FileContentPart.
+// File is the nested file reference on a FileContentPart. Exactly one of
+// FileID and (FileName + FileData) is set: FileID references a previously
+// uploaded file, while FileName/FileData inlines the bytes. Unknown fields
+// round-trip via the embedded DynamicProperties.
 type File struct {
+	// FileID references a previously uploaded file via /v1/files.
 	FileID string `json:"file_id,omitempty"`
 
+	// FileName is the display name when inlining bytes via FileData.
 	FileName string `json:"file_name,omitempty"`
 
+	// FileData is the base64-encoded inline file payload.
 	FileData string `json:"file_data,omitempty"`
 
 	models.DynamicProperties
 }
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into f, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (f *File) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, f) }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes f and merges DynamicProperties.Extra back into the
+// resulting object.
 func (f File) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(f) }
 
-// FileContentPart is the "file" content part variant referencing a previously
-// uploaded file or inline file payload.
+// FileContentPart is the "file" content part variant — a reference to a
+// previously uploaded file or an inline file payload. Unknown fields
+// round-trip via the embedded DynamicProperties.
 type FileContentPart struct {
+	// Type is the wire "type" discriminator, always "file".
 	Type string `json:"type"`
 
+	// File carries the file reference or inline payload.
 	File File `json:"file"`
 
 	models.DynamicProperties
@@ -191,18 +255,22 @@ func (FileContentPart) PartType() string { return "file" }
 
 func (FileContentPart) isContentPart() {}
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into p, routing any field not declared on the
+// struct into DynamicProperties.Extra.
 func (p *FileContentPart) UnmarshalJSON(data []byte) error {
 	return models.UnmarshalDynamic(data, p)
 }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes p and merges DynamicProperties.Extra back into the
+// resulting object.
 func (p FileContentPart) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(p) }
 
-// UnknownContentPart preserves any content part whose discriminator we have
-// not modelled. Type carries the unknown discriminator and every other JSON
-// field lands in DynamicProperties.Extra so the part round-trips intact.
+// UnknownContentPart preserves any content part whose "type" discriminator
+// this package has not modelled. Type carries the unknown discriminator
+// verbatim and every other JSON field lands in DynamicProperties.Extra so the
+// part round-trips intact.
 type UnknownContentPart struct {
+	// Type is the unmodelled wire discriminator, preserved verbatim.
 	Type string `json:"type"`
 
 	models.DynamicProperties
@@ -213,12 +281,14 @@ func (p UnknownContentPart) PartType() string { return p.Type }
 
 func (UnknownContentPart) isContentPart() {}
 
-// UnmarshalJSON routes unknown fields through DynamicProperties.
+// UnmarshalJSON decodes data into p, routing every non-type field into
+// DynamicProperties.Extra so the unknown part round-trips byte-equivalent.
 func (p *UnknownContentPart) UnmarshalJSON(data []byte) error {
 	return models.UnmarshalDynamic(data, p)
 }
 
-// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+// MarshalJSON encodes p and merges DynamicProperties.Extra back into the
+// resulting object.
 func (p UnknownContentPart) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(p) }
 
 var contentPartRegistry = models.PolymorphicRegistry[ContentPart]{
@@ -234,35 +304,41 @@ var contentPartRegistry = models.PolymorphicRegistry[ContentPart]{
 	Fallback: func(disc string) ContentPart { return &UnknownContentPart{Type: disc} },
 }
 
-// UnmarshalContentPart decodes a single chat content part, dispatching on the
-// "type" discriminator and falling back to UnknownContentPart for any
-// unrecognised value.
+// UnmarshalContentPart decodes a single chat-completions content-part JSON
+// object, dispatching on the "type" discriminator. Any type this package has
+// not modelled is returned as an UnknownContentPart so the payload still
+// round-trips.
 func UnmarshalContentPart(data []byte) (ContentPart, error) {
 	return contentPartRegistry.UnmarshalOne(data)
 }
 
-// UnmarshalContentParts decodes a JSON array of chat content parts.
+// UnmarshalContentParts decodes a JSON array of chat-completions content
+// parts, dispatching each element on its "type" discriminator. Unmodelled
+// types return as UnknownContentPart.
 func UnmarshalContentParts(data []byte) ([]ContentPart, error) {
 	return contentPartRegistry.UnmarshalSlice(data)
 }
 
-// MessageContent is the OpenAI string-or-array content shape: a chat message
-// content field may be a plain string OR a JSON array of polymorphic
-// ContentPart values. The raw bytes are retained verbatim; callers use
-// AsString and AsParts to project into the representation they need.
+// MessageContent is the chat-completions string-or-array content shape: a
+// chat message content field may be a plain JSON string OR a JSON array of
+// polymorphic ContentPart values. The raw bytes are retained verbatim so a
+// MessageContent round-trips byte-equivalent; use IsString/IsArray/IsNull to
+// inspect the shape and AsString/AsParts to project into a typed
+// representation.
 type MessageContent struct {
 	raw json.RawMessage
 }
 
-// ErrContentNotString is returned by AsString when the content is not a JSON
-// string.
+// ErrContentNotString is returned by MessageContent.AsString when the content
+// is not a JSON string (either absent, null, or an array).
 var ErrContentNotString = errors.New("openai/chat: content is not a string")
 
-// ErrContentNotArray is returned by AsParts when the content is not a JSON
-// array.
+// ErrContentNotArray is returned by MessageContent.AsParts when the content
+// is not a JSON array (either absent, null, or a bare string).
 var ErrContentNotArray = errors.New("openai/chat: content is not an array")
 
-// UnmarshalJSON records the raw bytes verbatim.
+// UnmarshalJSON records the raw bytes verbatim, deferring shape detection to
+// IsString/IsArray and decoding to AsString/AsParts.
 func (c *MessageContent) UnmarshalJSON(data []byte) error {
 	c.raw = append(c.raw[:0], data...)
 	return nil
@@ -277,7 +353,7 @@ func (c MessageContent) MarshalJSON() ([]byte, error) {
 	return c.raw, nil
 }
 
-// Raw returns the raw JSON bytes of the content.
+// Raw returns a defensive copy of the underlying JSON bytes.
 func (c MessageContent) Raw() json.RawMessage {
 	out := make(json.RawMessage, len(c.raw))
 	copy(out, c.raw)
@@ -302,7 +378,8 @@ func (c MessageContent) IsNull() bool {
 	return bytes.Equal(bytes.TrimSpace(c.raw), []byte("null"))
 }
 
-// AsString decodes the content as a JSON string.
+// AsString decodes the content as a JSON string. Returns ErrContentNotString
+// when the underlying shape is anything else.
 func (c MessageContent) AsString() (string, error) {
 	if !c.IsString() {
 		return "", ErrContentNotString
@@ -314,7 +391,9 @@ func (c MessageContent) AsString() (string, error) {
 	return s, nil
 }
 
-// AsParts decodes the content as a JSON array of polymorphic content parts.
+// AsParts decodes the content as a JSON array of polymorphic ContentPart
+// values, dispatching unknown discriminators to UnknownContentPart. Returns
+// ErrContentNotArray when the underlying shape is anything else.
 func (c MessageContent) AsParts() ([]ContentPart, error) {
 	if !c.IsArray() {
 		return nil, ErrContentNotArray
@@ -329,7 +408,7 @@ func NewStringContent(s string) MessageContent {
 }
 
 // NewPartsContent builds a MessageContent that marshals as a JSON array of
-// the given parts.
+// the given parts. Returns an error only if a part's MarshalJSON fails.
 func NewPartsContent(parts []ContentPart) (MessageContent, error) {
 	raw, err := json.Marshal(parts)
 	if err != nil {

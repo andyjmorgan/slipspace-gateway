@@ -27,11 +27,23 @@ var ErrUnknownDiscriminator = errors.New("polymorphic: unknown discriminator and
 // Factories and Fallback is non-nil, Fallback receives the unknown value and
 // produces a catch-all instance (typically an UnknownX type) into which the
 // payload is unmarshalled so it round-trips intact.
+//
+// Together with DynamicProperties, the Fallback path is what guarantees the
+// load-bearing invariant: a payload carrying a discriminator we haven't
+// modelled still survives the gateway without lossy field-stripping.
 type PolymorphicRegistry[T any] struct {
+	// DiscriminatorField is the JSON object key whose value selects the
+	// concrete factory (commonly "type" or "role").
 	DiscriminatorField string
 
+	// Factories maps each known discriminator value to a constructor that
+	// returns a pointer to a fresh zero-value instance.
 	Factories map[string]func() T
 
+	// Fallback, when non-nil, is invoked for any discriminator value that
+	// has no entry in Factories. It receives the unknown value and returns
+	// a catch-all instance (conventionally an UnknownX type) into which the
+	// payload is unmarshalled so the wire shape round-trips intact.
 	Fallback func(discriminator string) T
 }
 

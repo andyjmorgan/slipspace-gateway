@@ -11,14 +11,20 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/pipeline"
 )
 
-// Inspector is the seam where v1.2+ DLP engines plug in. Implementations may
-// transform the message, leave it untouched, or return an error to terminate
-// the pipeline.
+// Inspector is the seam where v1.2+ DLP engines plug in. Implementations
+// may transform the message, leave it untouched, or return an error to
+// terminate the pipeline.
+//
+// Inspect is invoked once per pipeline.Message; implementations must be
+// safe for concurrent use across requests since one Inspector instance is
+// shared by all goroutines.
 type Inspector interface {
 	Inspect(ctx context.Context, msg pipeline.Message) (pipeline.Message, error)
 }
 
-// NopInspector implements Inspector as a strict passthrough.
+// NopInspector is the v1.0 default Inspector: it forwards every message
+// unchanged. It exists so the pipeline wiring can include a guardrails
+// stage today without committing to a particular DLP engine.
 type NopInspector struct{}
 
 // Inspect returns msg unchanged.
@@ -26,9 +32,13 @@ func (NopInspector) Inspect(_ context.Context, msg pipeline.Message) (pipeline.M
 	return msg, nil
 }
 
-// Middleware returns a pipeline.Middleware that runs each message through the
-// supplied Inspector. An Inspector error is converted to a terminal
-// pipeline.Error and the goroutine exits.
+// Middleware returns a pipeline.Middleware that runs each message through
+// inspector.Inspect.
+//
+// On Inspector error the middleware emits a terminal pipeline.Error
+// (StatusCode 500) and shuts down — guardrail failures are treated as
+// internal, since the DLP engine itself is a gateway concern and not a
+// client-facing one.
 func Middleware(ctx context.Context, inspector Inspector) pipeline.Middleware {
 	return func(in <-chan pipeline.Message) <-chan pipeline.Message {
 		out := make(chan pipeline.Message)
