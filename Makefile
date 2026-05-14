@@ -4,7 +4,7 @@ COVER_OUT  := coverage.out
 COVER_MIN  := 95
 GATE       := scripts/coverage-gate.sh
 
-.PHONY: all build test lint fmt vet coverage dev clean tools
+.PHONY: all build test lint fmt vet coverage dev dev-with-overlay e2e clean tools
 
 all: lint vet test
 
@@ -29,8 +29,16 @@ coverage: test
 	@$(GATE) $(COVER_OUT) $(COVER_MIN)
 
 dev:
+	docker compose -f docker-compose.yaml up -d mockllm nats
+	SLUICE_CONFIG_DIR=./config-dev $(GO) run ./cmd/gateway
+
+dev-with-overlay:
+	@test -f docker-compose.dev.yaml || { echo "docker-compose.dev.yaml not found; copy docker-compose.dev.yaml.example"; exit 1; }
 	docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d mockllm nats
-	$(GO) run ./cmd/gateway
+	SLUICE_CONFIG_DIR=./config-dev $(GO) run ./cmd/gateway
+
+e2e:
+	$(GO) test -tags=e2e -race -timeout=2m ./test/e2e/...
 
 clean:
 	rm -f $(COVER_OUT) coverage.html
