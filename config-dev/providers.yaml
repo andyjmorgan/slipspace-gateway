@@ -1,5 +1,7 @@
 providers:
   openai:
+    prefix: openai
+    prefix_required: false
     base_url: http://mockllm:5555
     endpoints:
       chat_completions:
@@ -21,6 +23,8 @@ providers:
         request_kind: passthrough
 
   anthropic:
+    prefix: anthropic
+    prefix_required: true
     base_url: http://mockllm:5555
     required_headers:
       anthropic-version: "2023-06-01"
@@ -38,6 +42,8 @@ providers:
         request_kind: passthrough
 
   gemini:
+    prefix: gemini
+    prefix_required: true
     base_url: http://mockllm:5555
     endpoints:
       generate_content:

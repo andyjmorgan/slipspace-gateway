@@ -179,15 +179,26 @@ func TestLoad_HappyPath(t *testing.T) {
 	}
 }
 
-// TestLoad_ConfigDevFixtures exercises the real repo fixtures up to the
-// validation step. They intentionally include `/v1/models` claimed by both
-// openai.models and anthropic.models — which the path-collision rule rejects —
-// so we assert ErrPathCollision rather than success. If the fixtures are ever
-// disambiguated, flip this assertion to a happy-path check.
+// TestLoad_ConfigDevFixtures exercises the real repo fixtures. The dev config
+// uses prefix disambiguation: openai is the default (prefix_required=false),
+// anthropic and gemini are prefixed (prefix_required=true), so the shared
+// /v1/models accepted_path no longer collides.
 func TestLoad_ConfigDevFixtures(t *testing.T) {
-	_, err := config.Load(context.Background(), "../../config-dev")
-	if !errors.Is(err, config.ErrPathCollision) {
-		t.Fatalf("config-dev: want ErrPathCollision (fixtures share /v1/models across providers), got %v", err)
+	resolved, err := config.Load(context.Background(), "../../config-dev")
+	if err != nil {
+		t.Fatalf("config-dev: %v", err)
+	}
+	if got, ok := resolved.RouteIndex["/v1/models"]; !ok || got.Provider != "openai" {
+		t.Errorf("RouteIndex /v1/models = %+v, want openai.models", got)
+	}
+	if got, ok := resolved.RouteIndex["/anthropic/v1/models"]; !ok || got.Provider != "anthropic" {
+		t.Errorf("RouteIndex /anthropic/v1/models = %+v, want anthropic.models", got)
+	}
+	if got, ok := resolved.RouteIndex["/gemini/v1beta/models"]; !ok || got.Provider != "gemini" {
+		t.Errorf("RouteIndex /gemini/v1beta/models = %+v, want gemini.models", got)
+	}
+	if _, ok := resolved.RouteIndex["/v1/messages"]; ok {
+		t.Errorf("anthropic has prefix_required=true; bare /v1/messages must not be in the route index")
 	}
 }
 
@@ -308,6 +319,124 @@ configurations:
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrPathCollision) {
 		t.Fatalf("want ErrPathCollision, got %v", err)
+	}
+}
+
+// TestLoad_PrefixResolvesCollision: two providers share an accepted_path but
+// one requires a prefix — the bare path belongs to the default provider and
+// the prefixed form routes to the other. No collision.
+func TestLoad_PrefixResolvesCollision(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", `
+providers:
+  openai:
+    prefix: openai
+    prefix_required: false
+    base_url: http://a
+    endpoints:
+      models:
+        path: /v1/models
+        method: [GET]
+        accepted_paths: [/v1/models]
+        request_kind: passthrough
+  anthropic:
+    prefix: anthropic
+    prefix_required: true
+    base_url: http://b
+    endpoints:
+      models:
+        path: /v1/models
+        method: [GET]
+        accepted_paths: [/v1/models]
+        request_kind: passthrough
+`)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - openai.models
+      - anthropic.models
+`)
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, ok := resolved.RouteIndex["/v1/models"]; !ok || got.Provider != "openai" {
+		t.Errorf("bare /v1/models = %+v, want openai (default with optional prefix)", got)
+	}
+	if got, ok := resolved.RouteIndex["/openai/v1/models"]; !ok || got.Provider != "openai" {
+		t.Errorf("/openai/v1/models = %+v, want openai (optional prefix attached)", got)
+	}
+	if got, ok := resolved.RouteIndex["/anthropic/v1/models"]; !ok || got.Provider != "anthropic" {
+		t.Errorf("/anthropic/v1/models = %+v, want anthropic (required prefix)", got)
+	}
+}
+
+// TestLoad_PrefixRequiredEmpty: prefix_required=true with no prefix value
+// is a configuration error — the provider would be unreachable.
+func TestLoad_PrefixRequiredEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", `
+providers:
+  broken:
+    prefix_required: true
+    base_url: http://x
+    endpoints:
+      chat:
+        path: /v1/chat/completions
+        method: [POST]
+        accepted_paths: [/v1/chat/completions]
+        request_kind: chat
+`)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - broken.chat
+`)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrPrefixRequiredEmpty) {
+		t.Fatalf("want ErrPrefixRequiredEmpty, got %v", err)
+	}
+}
+
+// TestLoad_TwoDefaultProvidersCollide: two providers both with
+// prefix_required=false (or no prefix at all) sharing an accepted_path is
+// still a collision — the bare path is ambiguous.
+func TestLoad_TwoDefaultProvidersCollide(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", `
+providers:
+  openai:
+    prefix: openai
+    prefix_required: false
+    base_url: http://a
+    endpoints:
+      models:
+        path: /v1/models
+        method: [GET]
+        accepted_paths: [/v1/models]
+        request_kind: passthrough
+  anthropic:
+    prefix: anthropic
+    prefix_required: false
+    base_url: http://b
+    endpoints:
+      models:
+        path: /v1/models
+        method: [GET]
+        accepted_paths: [/v1/models]
+        request_kind: passthrough
+`)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - openai.models
+`)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrPathCollision) {
+		t.Fatalf("want ErrPathCollision (two default providers share bare /v1/models), got %v", err)
 	}
 }
 

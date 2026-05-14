@@ -238,6 +238,9 @@ func (r *ResolvedConfig) Validate() error {
 	sort.Strings(providerNames)
 	for _, providerName := range providerNames {
 		p := r.Providers[providerName]
+		if p.PrefixRequired && p.Prefix == "" {
+			return fmt.Errorf("config: provider %q: %w", providerName, ErrPrefixRequiredEmpty)
+		}
 		endpointNames := make([]string, 0, len(p.Endpoints))
 		for name := range p.Endpoints {
 			endpointNames = append(endpointNames, name)
@@ -245,19 +248,50 @@ func (r *ResolvedConfig) Validate() error {
 		sort.Strings(endpointNames)
 		for _, endpointName := range endpointNames {
 			e := p.Endpoints[endpointName]
-			for _, ap := range e.AcceptedPaths {
-				if prev, dup := seen[ap]; dup {
+			for _, route := range emitRoutes(providerName, endpointName, p, e) {
+				if prev, dup := seen[route.Path]; dup {
 					return fmt.Errorf(
-						"config: accepted_path %q claimed by %s.%s and %s.%s: %w",
-						ap, prev.Provider, prev.Endpoint, providerName, endpointName, ErrPathCollision,
+						"config: route %q claimed by %s.%s and %s.%s: %w",
+						route.Path, prev.Provider, prev.Endpoint, providerName, endpointName, ErrPathCollision,
 					)
 				}
-				seen[ap] = Route{Provider: providerName, Endpoint: endpointName}
+				seen[route.Path] = Route{Provider: providerName, Endpoint: endpointName}
 			}
 		}
 	}
 
 	return nil
+}
+
+// emittedRoute is one fully-resolved RouteIndex entry for a (provider, endpoint, accepted_path).
+type emittedRoute struct {
+	Path     string
+	Provider string
+	Endpoint string
+}
+
+// emitRoutes returns the fully-resolved route paths a (provider, endpoint) pair
+// claims, expanding the optional prefix into both bare and prefixed forms
+// per the prefix_required flag.
+func emitRoutes(providerName, endpointName string, p contractsconfig.Provider, e contractsconfig.Endpoint) []emittedRoute {
+	out := make([]emittedRoute, 0, len(e.AcceptedPaths)*2)
+	for _, ap := range e.AcceptedPaths {
+		if p.Prefix != "" {
+			out = append(out, emittedRoute{
+				Path:     "/" + p.Prefix + ap,
+				Provider: providerName,
+				Endpoint: endpointName,
+			})
+		}
+		if !p.PrefixRequired {
+			out = append(out, emittedRoute{
+				Path:     ap,
+				Provider: providerName,
+				Endpoint: endpointName,
+			})
+		}
+	}
+	return out
 }
 
 func (r *ResolvedConfig) buildIndexes() {
@@ -276,8 +310,8 @@ func (r *ResolvedConfig) buildIndexes() {
 	r.RouteIndex = make(map[string]Route)
 	for providerName, p := range r.Providers {
 		for endpointName, e := range p.Endpoints {
-			for _, ap := range e.AcceptedPaths {
-				r.RouteIndex[ap] = Route{Provider: providerName, Endpoint: endpointName}
+			for _, route := range emitRoutes(providerName, endpointName, p, e) {
+				r.RouteIndex[route.Path] = Route{Provider: route.Provider, Endpoint: route.Endpoint}
 			}
 		}
 	}

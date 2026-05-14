@@ -30,8 +30,15 @@ var ErrEndpointNotInProvider = errors.New("config: allowed_endpoint references u
 // in the form "provider.endpoint".
 var ErrMalformedAllowedEndpoint = errors.New("config: allowed_endpoint must be provider.endpoint")
 
-// ErrPathCollision is returned when two providers claim the same accepted_path.
-var ErrPathCollision = errors.New("config: accepted_path claimed by multiple endpoints")
+// ErrPathCollision is returned when two providers claim the same fully-resolved
+// route path. With prefix disambiguation, collisions are only possible when
+// two providers both have `prefix_required: false` and share an accepted_path,
+// or when two providers share both the same prefix and an accepted_path.
+var ErrPathCollision = errors.New("config: route path claimed by multiple endpoints")
+
+// ErrPrefixRequiredEmpty is returned when a provider has `prefix_required: true`
+// but no prefix value — the provider would be unreachable.
+var ErrPrefixRequiredEmpty = errors.New("config: prefix_required is true but prefix is empty")
 
 // ErrInvalidBind is returned when gateway.http.bind is not a valid host:port.
 var ErrInvalidBind = errors.New("config: gateway.http.bind must be host:port")

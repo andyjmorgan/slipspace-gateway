@@ -8,6 +8,18 @@ type ProvidersConfig map[string]Provider
 type Provider struct {
 	BaseURL string `yaml:"base_url" json:"base_url"`
 
+	// Prefix is the URL path segment that disambiguates this provider when
+	// multiple providers share an `accepted_paths` entry (e.g., /v1/models).
+	// Empty means the provider only matches bare paths (legacy single-provider
+	// deploys).
+	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+
+	// PrefixRequired controls whether the prefix is mandatory. When false
+	// (the default), the provider matches BOTH `/<prefix><accepted_path>` and
+	// `<accepted_path>` (with the latter being the "default" provider for that
+	// path). When true, only the prefixed form matches.
+	PrefixRequired bool `yaml:"prefix_required,omitempty" json:"prefix_required,omitempty"`
+
 	RequiredHeaders map[string]string `yaml:"required_headers,omitempty" json:"required_headers,omitempty"`
 
 	Endpoints map[string]Endpoint `yaml:"endpoints" json:"endpoints"`
