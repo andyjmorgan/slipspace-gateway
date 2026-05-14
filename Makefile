@@ -4,7 +4,7 @@ COVER_OUT  := coverage.out
 COVER_MIN  := 95
 GATE       := scripts/coverage-gate.sh
 
-.PHONY: all build test lint fmt vet coverage dev dev-with-overlay e2e clean tools
+.PHONY: all build test lint fmt vet coverage dev dev-with-overlay e2e py-compat clean tools
 
 all: lint vet test
 
@@ -39,6 +39,11 @@ dev-with-overlay:
 
 e2e:
 	$(GO) test -tags=e2e -race -timeout=2m ./test/e2e/...
+
+py-compat:
+	$(GO) build -o /tmp/sluice-gateway ./cmd/gateway
+	$(GO) build -o /tmp/sluice-mockllm ./cmd/mockllm
+	cd test/python && uv run --project . pytest -v
 
 clean:
 	rm -f $(COVER_OUT) coverage.html

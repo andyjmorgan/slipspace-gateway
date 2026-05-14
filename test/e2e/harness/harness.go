@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -29,8 +30,6 @@ const (
 	// managed-auth path. Not a credential — it's checked into the repo on
 	// purpose so the E2E harness has a known-good handshake.
 	defaultAPIKey = "sk_dev_local_development_only_not_for_production" //nolint:gosec // test fixture
-
-	gatewayBindPort = 8585
 
 	startupTimeout = 60 * time.Second
 	healthInterval = 100 * time.Millisecond
@@ -52,15 +51,26 @@ type Harness struct {
 	HTTP *http.Client
 	NATS *nats.Conn
 
+	opts Options
+
+	gatewayBindPort int
+	promBindPort    int
+
 	configDir string
 
 	natsContainer testcontainers.Container
 
+	eventBuf chan *nats.Msg
+	eventSub *nats.Subscription
+
 	mockllmCmd  *exec.Cmd
-	mockllmDone chan error
+	mockllmDone chan struct{}
 
 	gatewayCmd  *exec.Cmd
-	gatewayDone chan error
+	gatewayDone chan struct{}
+
+	gatewayExitMu  sync.Mutex
+	gatewayExitErr error
 
 	stopped bool
 }
@@ -69,6 +79,13 @@ type Harness struct {
 // and the gateway binary, waits for each to be reachable, and registers
 // cleanups. It calls t.Fatalf on any startup failure.
 func New(t *testing.T) *Harness {
+	t.Helper()
+	return NewWithOptions(t, Options{})
+}
+
+// NewWithOptions is New with non-default configuration overrides applied to
+// the materialized gateway config. See [Options] for the supported knobs.
+func NewWithOptions(t *testing.T, opts Options) *Harness {
 	t.Helper()
 
 	repoRoot, err := findRepoRoot()
@@ -80,14 +97,47 @@ func New(t *testing.T) *Harness {
 		T:      t,
 		APIKey: defaultAPIKey,
 		HTTP:   &http.Client{Timeout: 30 * time.Second},
+		opts:   opts,
 	}
 
 	h.startNATS(t)
+	if err := h.startEventTap(); err != nil {
+		t.Fatalf("harness: event tap: %v", err)
+	}
 	h.startMockLLM(t, repoRoot)
 	h.startGateway(t, repoRoot)
 
 	t.Cleanup(h.Stop)
 	return h
+}
+
+// SendGatewaySignal forwards sig to the gateway process group. Used by drain
+// tests that need to send SIGTERM mid-request and verify in-flight completion
+// before the process exits. Returns nil if the gateway process is gone.
+func (h *Harness) SendGatewaySignal(sig syscall.Signal) error {
+	return signalGroup(h.gatewayCmd, sig)
+}
+
+// WaitGatewayExit blocks until the gateway process exits or timeout elapses.
+// Returns the gateway's exit error (nil on clean exit) or
+// context.DeadlineExceeded if the process is still running when timeout
+// elapses.
+//
+// Safe to call concurrently with Stop / from t.Cleanup: the underlying
+// gatewayDone channel is closed by the harness watcher goroutine, so all
+// observers see the same result.
+func (h *Harness) WaitGatewayExit(timeout time.Duration) error {
+	if h.gatewayDone == nil {
+		return errors.New("gateway not started")
+	}
+	select {
+	case <-h.gatewayDone:
+		h.gatewayExitMu.Lock()
+		defer h.gatewayExitMu.Unlock()
+		return h.gatewayExitErr
+	case <-time.After(timeout):
+		return context.DeadlineExceeded
+	}
 }
 
 // Stop tears the harness down. Safe to call more than once.
@@ -97,6 +147,9 @@ func (h *Harness) Stop() {
 	}
 	h.stopped = true
 
+	if h.eventSub != nil {
+		_ = h.eventSub.Unsubscribe()
+	}
 	if h.NATS != nil {
 		h.NATS.Close()
 	}
@@ -176,8 +229,11 @@ func (h *Harness) startMockLLM(t *testing.T, repoRoot string) {
 		t.Fatalf("harness: start mockllm: %v", err)
 	}
 
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
 
 	h.mockllmCmd = cmd
 	h.mockllmDone = done
@@ -191,6 +247,17 @@ func (h *Harness) startMockLLM(t *testing.T, repoRoot string) {
 
 func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 	t.Helper()
+
+	gwPort, err := freePort()
+	if err != nil {
+		t.Fatalf("harness: alloc gateway port: %v", err)
+	}
+	promPort, err := freePort()
+	if err != nil {
+		t.Fatalf("harness: alloc prometheus port: %v", err)
+	}
+	h.gatewayBindPort = gwPort
+	h.promBindPort = promPort
 
 	configDir, err := h.materializeConfig(repoRoot)
 	if err != nil {
@@ -212,12 +279,18 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 		t.Fatalf("harness: start gateway: %v", err)
 	}
 
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	done := make(chan struct{})
+	go func() {
+		err := cmd.Wait()
+		h.gatewayExitMu.Lock()
+		h.gatewayExitErr = err
+		h.gatewayExitMu.Unlock()
+		close(done)
+	}()
 
 	h.gatewayCmd = cmd
 	h.gatewayDone = done
-	h.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", gatewayBindPort)
+	h.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", gwPort)
 
 	if err := waitForHTTP(h.HTTP, h.GatewayURL+"/healthz", startupTimeout); err != nil {
 		stopProcess(cmd, done)
@@ -257,12 +330,47 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 		}
 		patched := strings.ReplaceAll(string(raw), "mockllm:5555", mockHost)
 		patched = strings.ReplaceAll(patched, "nats:4222", natsHost)
+		if name == "gateway.yaml" {
+			patched = strings.Replace(patched,
+				"bind: 0.0.0.0:8585",
+				fmt.Sprintf("bind: 127.0.0.1:%d", h.gatewayBindPort), 1)
+			patched = strings.Replace(patched,
+				"bind: 0.0.0.0:9090",
+				fmt.Sprintf("bind: 127.0.0.1:%d", h.promBindPort), 1)
+			patched = h.applyGatewayOverrides(patched)
+		}
 		dstFile := filepath.Join(dst, name)
 		if err := os.WriteFile(dstFile, []byte(patched), 0o600); err != nil { //nolint:gosec // dst is os.MkdirTemp output
 			return "", fmt.Errorf("write %s: %w", name, err)
 		}
 	}
 	return dst, nil
+}
+
+// applyGatewayOverrides rewrites scalar values in gateway.yaml when Options
+// requests them. Implemented as targeted string replacement so we keep the
+// in-tree YAML structure intact for tests that diff against it.
+func (h *Harness) applyGatewayOverrides(yaml string) string {
+	if h.opts.ReportingEnabled != nil {
+		want := "enabled: true"
+		if !*h.opts.ReportingEnabled {
+			want = "enabled: false"
+		}
+		yaml = strings.Replace(yaml, "enabled: true", want, 1)
+	}
+	if h.opts.StashThresholdBytes > 0 {
+		yaml = strings.Replace(yaml,
+			"stash_threshold_bytes: 786432",
+			fmt.Sprintf("stash_threshold_bytes: %d", h.opts.StashThresholdBytes),
+			1)
+	}
+	if h.opts.DrainTimeoutSeconds > 0 {
+		yaml = strings.Replace(yaml,
+			"drain_timeout_seconds: 300",
+			fmt.Sprintf("drain_timeout_seconds: %d", h.opts.DrainTimeoutSeconds),
+			1)
+	}
+	return yaml
 }
 
 // findRepoRoot walks up from this source file until it finds go.mod.
@@ -325,8 +433,9 @@ func waitForHTTP(client *http.Client, url string, timeout time.Duration) error {
 }
 
 // stopProcess sends SIGTERM, then SIGKILL if the process does not exit within
-// stopTimeout. Safe with nil cmd.
-func stopProcess(cmd *exec.Cmd, done chan error) {
+// stopTimeout. Safe with nil cmd. done must be closed (not just signalled)
+// when the underlying process has exited.
+func stopProcess(cmd *exec.Cmd, done <-chan struct{}) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
