@@ -100,28 +100,63 @@ Current stable (1.23+). `go.mod` pins the minimum. Bump as new releases drop —
 
 ### Comments
 
-**Default: write no comments.** Well-named code explains itself.
+Comment density scales with how public-facing the symbol is. Comments are prose. Go has no structured-tag equivalent to `@param`/`<param>`/JSDoc; never invent one.
 
-Write a comment only when:
-- The **why** is non-obvious — a constraint, a workaround, a regulatory requirement, a behavior that would surprise a reader
-- A function/method/type is **exported** — Godoc-style sentence starting with the identifier name
-- A **subtle invariant** must be maintained (e.g., "Callers must hold f.mu before invoking this")
+**Always comment:**
+- Every exported type, function, method, field, and named constant. Godoc, starting with the identifier name. One sentence minimum on the synopsis line; add paragraphs separated by `//`-blank lines when behavior needs nuance.
+- Every struct field — exported or unexported — on complex/load-bearing types (e.g., `Forwarder`, `Publisher`, `Resolver`, `Router`, `Server`). Field comment length scales with semantic complexity: trivial fields get a one-liner, fields carrying invariants or copy-on-write semantics get multiple lines.
+- Sentinel errors (`var ErrX = errors.New(...)`) — describe when each fires.
+- Compile-time interface assertions (`var _ Iface = (*Impl)(nil)`) — one line on why we want the assertion or what idiom we're enforcing.
+- Tool directives (`//nolint:rulename`, build tags, `//go:generate`, etc.) — include the reason inline. `//nolint:contextcheck // shutdown ctx must outlive request ctx` not just `//nolint:contextcheck`.
+- Package overview as `// Package X ...` on the `package` line of `doc.go` (or the primary file if there's no `doc.go`). A multi-line block describing what the package is for; longer for public packages, shorter for internal helpers.
 
-**Never write what-comments.** These are noise:
+**Don't comment:**
+- Trivial unexported helpers whose name + signature already say everything.
+- "What" the code does. The code already says what. Comments add **why**, constraints, gotchas, performance notes, invariants, or upstream-API quirks.
+- Parameters individually. Describe subtle parameter semantics in the godoc prose ("ctx must be derived from the server context", "headers may be nil").
+- Banner sections (`// ====== section ======`, `// --- region ---`). If a file is large enough to want banners, split it.
+
+**Synopsis-line rules:**
+- Comment is on the line directly above the declaration. No blank line between.
+- Starts with the identifier name: `// Forward sends req upstream...`, not `// Sends a request...`.
+- One sentence. Subsequent context goes in paragraphs below, separated by `//`-blank lines.
+- For exported types, the synopsis should let a consumer decide whether to read further from godoc alone.
+
+**Examples — get this right:**
 
 ```go
-// bad — narrates what the code obviously does
-// Forward forwards the request.
-func (f *Forwarder) Forward(...) error {
-
-// bad
-// Loop over each rule.
-for _, rule := range rules {
+// Forward sends req upstream, applying the configured resilience policy.
+// It blocks until either the upstream responds or ctx is cancelled.
+// Streaming responses are written as chunks arrive.
+func (f *Forwarder) Forward(ctx context.Context, req *Request) error {
 ```
 
-**Never write line-by-line commentary.** A function with one comment for every three lines of code is unreadable. Comments are punctuation; use them sparingly.
+```go
+// Publisher publishes envelope messages to NATS. All Publish calls are
+// non-blocking — if the worker queue is full or the broker is unreachable,
+// the envelope is dropped and the drop counter is incremented.
+type Publisher struct {
+    // queue is the buffered channel between Publish() callers and worker
+    // goroutines. Sized via Options.QueueSize; once full, Publish drops.
+    queue chan Envelope
 
-The right density looks like this:
+    // dropCnt counts events dropped on full queue or dispatch failure.
+    // Exposed through Stats() for telemetry bridges.
+    dropCnt atomic.Uint64
+
+    workers  int
+    threshold int
+}
+```
+
+```go
+// ErrPathCollision is returned when two providers claim the same fully-
+// resolved route path. With prefix disambiguation, collisions only happen
+// when two providers both have prefix_required=false sharing an
+// accepted_path, or when two providers share both the same prefix and an
+// accepted_path.
+var ErrPathCollision = errors.New("config: route path claimed by multiple endpoints")
+```
 
 ```go
 // We drop on full rather than blocking — the request path must never
@@ -133,16 +168,29 @@ default:
 }
 ```
 
-One sentence explaining *why we did the unusual thing*, not narrating the loop.
-
-Godoc style for exported symbols:
+**Examples — get this wrong:**
 
 ```go
-// Forward sends req upstream, applying the configured resilience policy.
-// It blocks until either the upstream responds or ctx is cancelled.
-// Streaming responses are written to req's response writer as chunks arrive.
-func (f *Forwarder) Forward(ctx context.Context, req *Request) error {
+// bad — narrates what the code obviously does
+// Forward forwards the request.
+func (f *Forwarder) Forward(...) error {
+
+// bad — line-by-line commentary
+// Loop over each rule.
+for _, rule := range rules {
+    // Check if it matches.
+    if rule.Condition.Matches(ctx) {
+        // Apply the actions.
+        for _, action := range rule.Actions { ... }
+    }
+}
+
+// bad — XML doc / structured tags
+/// <summary>Forward the request.</summary>
+/// <param name="req">The request.</param>
 ```
+
+**Don't write XML doc comments (`///`)** anywhere. That syntax is a .NET artifact. Go uses plain `//` godoc.
 
 ### Concurrency
 
