@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"tags\":[\"a\",\"b\",\"c\"],\"future_arr\":[{\"k\":1},{\"k\":2}]}")

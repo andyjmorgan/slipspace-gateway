@@ -1,0 +1,435 @@
+package config
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	koanfyaml "github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/file"
+	"github.com/knadh/koanf/v2"
+	"gopkg.in/yaml.v3"
+
+	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+)
+
+const (
+	keyProviders          = "providers"
+	keyConfigurations     = "configurations"
+	keyAPIKeys            = "api_keys"
+	keyRules              = "rules"
+	keyResiliencePolicies = "resilience_policies"
+)
+
+const (
+	filenameProviders = "providers.yaml"
+	filenamePolicy    = "policy.yaml"
+)
+
+// allowedKeysByFile pins each accepted filename to the top-level keys it is
+// permitted to carry. Any key in the file that is not in its set is reported
+// as ErrWrongFileForKey.
+var allowedKeysByFile = map[string]map[string]struct{}{
+	filenameProviders: {
+		keyProviders: {},
+	},
+	filenamePolicy: {
+		keyConfigurations:     {},
+		keyAPIKeys:            {},
+		keyRules:              {},
+		keyResiliencePolicies: {},
+	},
+}
+
+// Load reads the YAML configuration directory at dir and returns the merged,
+// validated, indexed runtime view.
+//
+// The directory must contain only the two accepted filenames (providers.yaml,
+// policy.yaml). Each file is restricted to a specific set of top-level keys;
+// keys outside that set are rejected. Server-level configuration is sourced
+// from the SLUICE_* env vars via LoadEnv — it is no longer part of the YAML
+// tree.
+func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("config: load %q: %w", dir, err)
+	}
+
+	files, err := listConfigFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("config: load %q: %w", dir, ErrEmptyDirectory)
+	}
+
+	merged, err := mergeFiles(files)
+	if err != nil {
+		return nil, err
+	}
+
+	resolved, err := decode(merged)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := resolved.Validate(); err != nil {
+		return nil, err
+	}
+
+	resolved.buildIndexes()
+	return resolved, nil
+}
+
+// listConfigFiles enumerates dir and returns a map of accepted filename to its
+// absolute path. Any non-directory entry whose name is not one of the two
+// accepted filenames produces ErrUnexpectedConfigFile; subdirectories are
+// skipped silently.
+func listConfigFiles(dir string) (map[string]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("config: read dir %q: %w", dir, err)
+	}
+	out := make(map[string]string, len(allowedKeysByFile))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if _, ok := allowedKeysByFile[name]; !ok {
+			return nil, fmt.Errorf("config: %s in %s: %w", name, dir, ErrUnexpectedConfigFile)
+		}
+		out[name] = filepath.Join(dir, name)
+	}
+	return out, nil
+}
+
+// mergedTree holds the per-top-level-key yaml.Node trees assembled across the
+// configuration directory, alongside the filename that contributed each block
+// so wrong-file errors can name the offender.
+type mergedTree struct {
+	nodes  map[string]*yaml.Node
+	origin map[string]string
+}
+
+func mergeFiles(files map[string]string) (*mergedTree, error) {
+	out := &mergedTree{
+		nodes:  make(map[string]*yaml.Node),
+		origin: make(map[string]string),
+	}
+
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		path := files[name]
+		topLevel, err := parseTopLevel(path)
+		if err != nil {
+			return nil, err
+		}
+		allowed := allowedKeysByFile[name]
+		for key, node := range topLevel {
+			if _, ok := allowed[key]; !ok {
+				return nil, fmt.Errorf("config: key %q in %s: %w", key, path, ErrWrongFileForKey)
+			}
+			out.nodes[key] = node
+			out.origin[key] = path
+		}
+	}
+
+	return out, nil
+}
+
+// parseTopLevel loads path through koanf (the approved file+YAML layer), then
+// re-marshals the tree to bytes and reparses with yaml.v3 to obtain per-key
+// yaml.Node trees.
+//
+// The round-trip preserves verbatim rules/resilience subtrees while
+// normalizing input to a guaranteed mapping shape; that lets the second-stage
+// parser stay branch-free.
+func parseTopLevel(path string) (map[string]*yaml.Node, error) {
+	k := koanf.New(".")
+	if err := k.Load(file.Provider(path), koanfyaml.Parser()); err != nil {
+		return nil, fmt.Errorf("config: load %s: %w: %w", path, ErrParse, err)
+	}
+
+	raw, err := k.Marshal(koanfyaml.Parser())
+	if err != nil {
+		return nil, fmt.Errorf("config: round-trip %s: %w", path, err)
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("config: parse %s: %w: %w", path, ErrParse, err)
+	}
+
+	if doc.Kind == 0 || len(doc.Content) == 0 {
+		return map[string]*yaml.Node{}, nil
+	}
+	root := doc.Content[0]
+
+	out := make(map[string]*yaml.Node, len(root.Content)/2)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		out[root.Content[i].Value] = root.Content[i+1]
+	}
+	return out, nil
+}
+
+func decode(merged *mergedTree) (*ResolvedConfig, error) {
+	out := &ResolvedConfig{
+		Providers:      contractsconfig.ProvidersConfig{},
+		Configurations: contractsconfig.ConfigurationsConfig{},
+	}
+
+	if node, ok := merged.nodes[keyProviders]; ok {
+		if err := node.Decode(&out.Providers); err != nil {
+			return nil, fmt.Errorf("config: decode providers: %w: %w", ErrParse, err)
+		}
+	}
+	if node, ok := merged.nodes[keyConfigurations]; ok {
+		if err := node.Decode(&out.Configurations); err != nil {
+			return nil, fmt.Errorf("config: decode configurations: %w: %w", ErrParse, err)
+		}
+	}
+	if node, ok := merged.nodes[keyAPIKeys]; ok {
+		if err := node.Decode(&out.APIKeys); err != nil {
+			return nil, fmt.Errorf("config: decode api_keys: %w: %w", ErrParse, err)
+		}
+	}
+	if node, ok := merged.nodes[keyRules]; ok {
+		if err := node.Decode(&out.Rules); err != nil {
+			return nil, fmt.Errorf("config: decode rules: %w: %w", ErrParse, err)
+		}
+	}
+	if node, ok := merged.nodes[keyResiliencePolicies]; ok {
+		if err := node.Decode(&out.ResiliencePolicies); err != nil {
+			return nil, fmt.Errorf("config: decode resilience_policies: %w: %w", ErrParse, err)
+		}
+	}
+	return out, nil
+}
+
+// Validate enforces cross-block invariants — every allowed_endpoint resolves
+// to a real provider.endpoint, every api_key references a known configuration,
+// every provider with prefix_required has a prefix, and no two endpoints can
+// claim the same fully-resolved route path.
+//
+// Returns the first violation as a wrapped sentinel error.
+func (r *ResolvedConfig) Validate() error {
+	if len(r.Configurations) == 0 {
+		return fmt.Errorf("config: validate: %w", ErrNoConfigurations)
+	}
+
+	for name, cfg := range r.Configurations {
+		for _, allowed := range cfg.AllowedEndpoints {
+			provider, endpoint, err := splitProviderEndpoint(allowed)
+			if err != nil {
+				return fmt.Errorf("config: configuration %q allowed_endpoint %q: %w", name, allowed, err)
+			}
+			p, ok := r.Providers[provider]
+			if !ok {
+				return fmt.Errorf(
+					"config: configuration %q allowed_endpoint %q: %w (no such provider)",
+					name, allowed, ErrEndpointNotInProvider,
+				)
+			}
+			if _, ok := p.Endpoints[endpoint]; !ok {
+				return fmt.Errorf(
+					"config: configuration %q allowed_endpoint %q: %w (provider %q has no endpoint %q)",
+					name, allowed, ErrEndpointNotInProvider, provider, endpoint,
+				)
+			}
+		}
+	}
+
+	if err := r.validateLibraries(); err != nil {
+		return err
+	}
+
+	for i, key := range r.APIKeys {
+		if _, ok := r.Configurations[key.Configuration]; !ok {
+			return fmt.Errorf(
+				"config: api_keys[%d] %q: %w (name=%q)",
+				i, key.Configuration, ErrUnknownConfiguration, key.Name,
+			)
+		}
+	}
+
+	seen := make(map[string]Route)
+	providerNames := make([]string, 0, len(r.Providers))
+	for name := range r.Providers {
+		providerNames = append(providerNames, name)
+	}
+	sort.Strings(providerNames)
+	for _, providerName := range providerNames {
+		p := r.Providers[providerName]
+		if p.PrefixRequired && p.Prefix == "" {
+			return fmt.Errorf("config: provider %q: %w", providerName, ErrPrefixRequiredEmpty)
+		}
+		endpointNames := make([]string, 0, len(p.Endpoints))
+		for name := range p.Endpoints {
+			endpointNames = append(endpointNames, name)
+		}
+		sort.Strings(endpointNames)
+		for _, endpointName := range endpointNames {
+			e := p.Endpoints[endpointName]
+			for _, route := range emitRoutes(providerName, endpointName, p, e) {
+				if prev, dup := seen[route.Path]; dup {
+					return fmt.Errorf(
+						"config: route %q claimed by %s.%s and %s.%s: %w",
+						route.Path, prev.Provider, prev.Endpoint, providerName, endpointName, ErrPathCollision,
+					)
+				}
+				seen[route.Path] = Route{Provider: providerName, Endpoint: endpointName}
+			}
+		}
+	}
+
+	return nil
+}
+
+// emittedRoute is one fully-resolved RouteIndex entry for a
+// (provider, endpoint, accepted_path) triple.
+type emittedRoute struct {
+	Path     string
+	Provider string
+	Endpoint string
+}
+
+// emitRoutes expands a (provider, endpoint) pair into every accepted_path it
+// claims, generating both the prefixed and bare forms unless prefix_required
+// pins it to prefixed-only.
+func emitRoutes(providerName, endpointName string, p contractsconfig.Provider, e contractsconfig.Endpoint) []emittedRoute {
+	out := make([]emittedRoute, 0, len(e.AcceptedPaths)*2)
+	for _, ap := range e.AcceptedPaths {
+		if p.Prefix != "" {
+			out = append(out, emittedRoute{
+				Path:     "/" + p.Prefix + ap,
+				Provider: providerName,
+				Endpoint: endpointName,
+			})
+		}
+		if !p.PrefixRequired {
+			out = append(out, emittedRoute{
+				Path:     ap,
+				Provider: providerName,
+				Endpoint: endpointName,
+			})
+		}
+	}
+	return out
+}
+
+func (r *ResolvedConfig) buildIndexes() {
+	r.SecretIndex = make(map[string]*contractsconfig.APIKey, len(r.APIKeys))
+	for i := range r.APIKeys {
+		key := &r.APIKeys[i]
+		r.SecretIndex[key.Secret] = key
+	}
+
+	r.ConfigurationIndex = make(map[string]*contractsconfig.Configuration, len(r.Configurations))
+	for name, cfg := range r.Configurations {
+		entry := cfg
+		r.ConfigurationIndex[name] = &entry
+	}
+
+	r.RouteIndex = make(map[string]Route)
+	for providerName, p := range r.Providers {
+		for endpointName, e := range p.Endpoints {
+			for _, route := range emitRoutes(providerName, endpointName, p, e) {
+				r.RouteIndex[route.Path] = Route{Provider: route.Provider, Endpoint: route.Endpoint}
+			}
+		}
+	}
+
+	r.RuleIndex = make(map[string]*rulescontract.RuleContract, len(r.Rules))
+	for i := range r.Rules {
+		rule := &r.Rules[i]
+		r.RuleIndex[rule.Name] = rule
+	}
+
+	r.ResilienceIndex = make(map[string]*resilience.ResilienceConfig, len(r.ResiliencePolicies))
+	for i := range r.ResiliencePolicies {
+		pol := &r.ResiliencePolicies[i]
+		r.ResilienceIndex[pol.Name] = pol
+	}
+}
+
+// validateLibraries enforces uniqueness within the top-level rules and
+// resilience_policies libraries, runs each entry's own Validate, and confirms
+// every Configuration reference resolves to a library entry.
+//
+// The library checks live here (rather than inline in Validate) because they
+// pivot on cross-block invariants: uniqueness within the library plus
+// reference integrity from Configurations. Splitting them out keeps the main
+// Validate readable.
+func (r *ResolvedConfig) validateLibraries() error {
+	ruleNames := make(map[string]int, len(r.Rules))
+	ruleIDs := make(map[string]int)
+	for i := range r.Rules {
+		rule := &r.Rules[i]
+		if prev, dup := ruleNames[rule.Name]; dup {
+			return fmt.Errorf("config: rules[%d] and rules[%d] name=%q: %w", prev, i, rule.Name, ErrDuplicateRuleName)
+		}
+		ruleNames[rule.Name] = i
+		if rule.ID != nil {
+			id := rule.ID.String()
+			if prev, dup := ruleIDs[id]; dup {
+				return fmt.Errorf("config: rules[%d] and rules[%d] id=%s: %w", prev, i, id, ErrDuplicateRuleID)
+			}
+			ruleIDs[id] = i
+		}
+		if err := rule.Validate(); err != nil {
+			return fmt.Errorf("config: rules[%d]: %w", i, err)
+		}
+	}
+
+	policyNames := make(map[string]int, len(r.ResiliencePolicies))
+	policyIDs := make(map[string]int)
+	for i := range r.ResiliencePolicies {
+		pol := &r.ResiliencePolicies[i]
+		if prev, dup := policyNames[pol.Name]; dup {
+			return fmt.Errorf("config: resilience_policies[%d] and resilience_policies[%d] name=%q: %w", prev, i, pol.Name, ErrDuplicateResilienceName)
+		}
+		policyNames[pol.Name] = i
+		if pol.ID != nil {
+			id := pol.ID.String()
+			if prev, dup := policyIDs[id]; dup {
+				return fmt.Errorf("config: resilience_policies[%d] and resilience_policies[%d] id=%s: %w", prev, i, id, ErrDuplicateResilienceID)
+			}
+			policyIDs[id] = i
+		}
+		if err := pol.Validate(); err != nil {
+			return fmt.Errorf("config: resilience_policies[%d]: %w", i, err)
+		}
+	}
+
+	for name, cfg := range r.Configurations {
+		for _, ruleName := range cfg.RuleNames {
+			if _, ok := ruleNames[ruleName]; !ok {
+				return fmt.Errorf("config: configuration %q rule_names %q: %w", name, ruleName, ErrUnknownRuleName)
+			}
+		}
+		if cfg.ResilienceName != nil {
+			if _, ok := policyNames[*cfg.ResilienceName]; !ok {
+				return fmt.Errorf("config: configuration %q resilience_name %q: %w", name, *cfg.ResilienceName, ErrUnknownResilienceName)
+			}
+		}
+	}
+	return nil
+}
+
+func splitProviderEndpoint(s string) (string, string, error) {
+	provider, endpoint, ok := strings.Cut(s, ".")
+	if !ok || provider == "" || endpoint == "" {
+		return "", "", ErrMalformedAllowedEndpoint
+	}
+	return provider, endpoint, nil
+}

@@ -1,0 +1,227 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/bus"
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	"github.com/andyjmorgan/sluice-gateway/internal/routing"
+	"github.com/andyjmorgan/sluice-gateway/internal/server"
+	"github.com/andyjmorgan/sluice-gateway/internal/version"
+)
+
+const (
+	binaryName = "gateway"
+
+	publisherStopTimeout = 5 * time.Second
+)
+
+func main() {
+	os.Exit(mainErr())
+}
+
+func mainErr() int {
+	showVersion := flag.Bool("version", false, "print version and exit")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("%s %s\n", binaryName, version.Version)
+		return 0
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx); err != nil {
+		slog.Error("gateway exited with error", "err", err)
+		return 1
+	}
+	return 0
+}
+
+func run(ctx context.Context) error {
+	env, err := config.LoadEnv()
+	if err != nil {
+		return fmt.Errorf("gateway: load env: %w", err)
+	}
+	if err := env.Validate(); err != nil {
+		return fmt.Errorf("gateway: validate env: %w", err)
+	}
+
+	resolved, err := config.Load(ctx, env.ConfigDir)
+	if err != nil {
+		return fmt.Errorf("gateway: load config %q: %w", env.ConfigDir, err)
+	}
+
+	build := observability.BuildInfo{Service: binaryName, Version: version.Version}
+	obs, err := observability.Setup(ctx, observability.Config{
+		PrometheusBind: env.PrometheusBind,
+		OTLPEndpoint:   env.OTLPEndpoint,
+		OTLPProtocol:   env.OTLPProtocol,
+		LogFormat:      env.LogFormat,
+		LogLevel:       env.LogLevel,
+	}, build)
+	if err != nil {
+		return fmt.Errorf("gateway: observability setup: %w", err)
+	}
+	defer shutdownObservability(obs) //nolint:contextcheck // detached on purpose; see shutdownObservability
+
+	logger := obs.Logger
+
+	publisher, busCleanup, err := setupBus(ctx, env, logger)
+	if err != nil {
+		return fmt.Errorf("gateway: bus setup: %w", err)
+	}
+	defer busCleanup()
+
+	router, err := routing.New(resolved)
+	if err != nil {
+		return fmt.Errorf("gateway: router: %w", err)
+	}
+
+	resolver := auth.NewResolver(resolved)
+
+	observer := newReporterObserver(publisher, logger, obs.Meters)
+	forwarder := proxy.New(proxy.Options{Logger: logger, Observer: observer})
+
+	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)
+
+	root := correlationMiddleware(logger, dataPlane)
+
+	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
+
+	srv := server.New(server.Options{
+		Bind:         env.HTTPBind,
+		Handler:      root,
+		DrainTimeout: drain,
+		Logger:       logger,
+	})
+
+	if obs.PromHandler != nil {
+		startPrometheus(ctx, env.PrometheusBind, obs.PromHandler, logger)
+	}
+
+	logger.InfoContext(ctx, "gateway starting",
+		"bind", env.HTTPBind,
+		"config_dir", env.ConfigDir,
+		"providers", len(resolved.Providers),
+		"configurations", len(resolved.Configurations),
+		"api_keys", len(resolved.APIKeys),
+	)
+
+	if err := srv.Run(ctx); err != nil {
+		return fmt.Errorf("gateway: run: %w", err)
+	}
+	return nil
+}
+
+// setupBus wires the NATS publisher when reporting is enabled. A nil publisher
+// is returned (with a no-op cleanup) when reporting is off or NATS is
+// unreachable — the request path must never block on reporting, so a missing
+// bus degrades gracefully into "events dropped" rather than aborting startup.
+func setupBus(ctx context.Context, env *config.ServerEnv, logger *slog.Logger) (*bus.Publisher, func(), error) {
+	noop := func() {}
+	if !env.ReportingEnabled() {
+		return nil, noop, nil
+	}
+
+	nc, err := nats.Connect(env.NATSURL)
+	if err != nil {
+		logger.WarnContext(ctx, "reporting enabled but nats connect failed; disabling publisher",
+			"err", err.Error(),
+			"url", env.NATSURL,
+		)
+		return nil, noop, nil
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		nc.Close()
+		return nil, noop, fmt.Errorf("jetstream: %w", err)
+	}
+
+	if err := bus.EnsureStream(ctx, js, env.NATSStream, []string{"gateway.>"}); err != nil {
+		nc.Close()
+		return nil, noop, fmt.Errorf("ensure stream: %w", err)
+	}
+	store, err := bus.EnsureObjectStore(ctx, js, env.NATSBucket)
+	if err != nil {
+		nc.Close()
+		return nil, noop, fmt.Errorf("ensure object store: %w", err)
+	}
+
+	pub := bus.New(bus.Options{
+		JS:             js,
+		ObjectStore:    store,
+		StashBucket:    env.NATSBucket,
+		QueueSize:      env.NATSPublishQueueSize,
+		StashThreshold: env.NATSStashThresholdBytes,
+		Logger:         logger,
+	})
+	pub.Start(ctx)
+
+	cleanup := func() {
+		pub.Stop(publisherStopTimeout)
+		nc.Close()
+	}
+	return pub, cleanup, nil
+}
+
+// startPrometheus mounts the scrape handler on a separate listener so the
+// data-plane port is reserved for client traffic. The two goroutines exit on
+// ctx cancellation.
+func startPrometheus(ctx context.Context, bind string, handler http.Handler, logger *slog.Logger) {
+	if bind == "" {
+		return
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", handler)
+	srv := &http.Server{
+		Addr:              bind,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		logger.InfoContext(ctx, "prometheus listening", "addr", bind)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.ErrorContext(ctx, "prometheus listener exited", "err", err.Error())
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownPromServer(srv) //nolint:contextcheck // shutdown context is intentionally detached
+	}()
+}
+
+// shutdownPromServer detaches the shutdown context from the cancelled parent
+// so the drain budget outlives the SIGTERM that triggered it.
+func shutdownPromServer(srv *http.Server) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
+}
+
+// shutdownObservability flushes the telemetry pipeline with a fresh, detached
+// context so the OTLP exporter is not killed by the same signal that triggered
+// shutdown.
+func shutdownObservability(p *observability.Provider) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), publisherStopTimeout)
+	defer cancel()
+	_ = p.Shutdown(shutdownCtx)
+}

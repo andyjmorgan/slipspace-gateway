@@ -1,0 +1,53 @@
+configurations:
+  dev:
+    allowed_endpoints:
+      - openai.chat_completions
+      - openai.responses
+      - openai.models
+      - anthropic.messages
+      - anthropic.models
+      - gemini.generate_content
+      - gemini.models
+
+    upstream_credentials:
+      openai: sk-dev-mock
+      anthropic: sk-ant-dev-mock
+      gemini: dev-mock
+
+    rule_names:
+      - redact-emails
+
+    resilience_name: high-availability
+
+    tags:
+      tier: dev
+
+api_keys:
+  - secret: sk_dev_local_development_only_not_for_production
+    name: "Local dev"
+    configuration: dev
+    enabled: true
+
+rules:
+  - name: redact-emails
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: setHeader
+        headerName: X-Sluice-Redacted
+        headerAction: Set
+        headerValue: emails
+    behavior: continue
+
+resilience_policies:
+  - name: high-availability
+    mode: failover
+    timeout_seconds: 30
+    targets:
+      - provider: openai
+        order: 0
+      - provider: anthropic
+        order: 1

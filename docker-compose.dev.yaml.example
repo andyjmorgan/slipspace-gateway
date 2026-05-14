@@ -1,0 +1,41 @@
+# Local mock-LLM overlay — copy to docker-compose.dev.yaml and edit.
+#
+# This file is the sample shape for developers who want to override the
+# published mockllm image with one built locally. The committed
+# docker-compose.yaml always references ghcr.io/andyjmorgan/sluice-mockllm so
+# CI and onboarding work out of the box.
+#
+# Two common overrides:
+#
+#   1. Build cmd/mockllm from this repo (recommended once cmd/mockllm
+#      stabilizes locally — exercises uncommitted changes).
+#
+#   2. Run the legacy C# mock from a sibling workspace. Path references to the
+#      C# project are intentionally NOT committed here; substitute your own
+#      build context.
+#
+# Apply with:
+#   make dev-with-overlay
+# or:
+#   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d mockllm nats
+
+services:
+  # Option 1 — local build of the in-repo Go mockllm.
+  mockllm:
+    image: sluice-mockllm:dev
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.mockllm
+    ports:
+      - "5555:5555"
+
+  # Option 2 — point at a locally built legacy mock. Uncomment and replace the
+  # build.context with the absolute path to your sibling workspace. Do not
+  # commit the resulting docker-compose.dev.yaml; it is gitignored.
+  #
+  # mockllm:
+  #   image: sluice-mockllm:legacy
+  #   build:
+  #     context: /absolute/path/to/your/legacy/mock
+  #   ports:
+  #     - "5555:5555"

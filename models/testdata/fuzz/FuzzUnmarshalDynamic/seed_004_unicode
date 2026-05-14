@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"model\":\"héllo 世界\",\"emoji\":\"🦊\",\"escape\":\"a\\nb\\tc\"}")
