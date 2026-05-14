@@ -1,0 +1,29 @@
+gateway:
+  http:
+    bind: 0.0.0.0:8585
+
+  shutdown:
+    drain_timeout_seconds: 300
+
+  reporting:
+    enabled: true
+    nats:
+      url: nats://nats:4222
+      stream: GATEWAY_EVENTS
+      bucket: GATEWAY_EVENT_STASH
+      stash_threshold_bytes: 786432
+      stream_max_age_minutes: 60
+      bucket_ttl_minutes: 75
+      publish_queue_size: 10000
+
+  observability:
+    prometheus:
+      enabled: true
+      bind: 0.0.0.0:9090
+    otlp:
+      enabled: false
+      endpoint: http://otel-collector:4317
+      protocol: grpc
+    logging:
+      format: json
+      level: debug

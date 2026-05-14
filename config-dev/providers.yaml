@@ -1,0 +1,53 @@
+providers:
+  openai:
+    base_url: http://mockllm:5555
+    endpoints:
+      chat_completions:
+        path: /v1/chat/completions
+        method: [POST]
+        accepted_paths: [/v1/chat/completions, /chat/completions]
+        accepts_streaming: true
+        request_kind: chat
+      responses:
+        path: /v1/responses
+        method: [POST]
+        accepted_paths: [/v1/responses]
+        accepts_streaming: true
+        request_kind: responses
+      models:
+        path: /v1/models
+        method: [GET]
+        accepted_paths: [/v1/models, /models]
+        request_kind: passthrough
+
+  anthropic:
+    base_url: http://mockllm:5555
+    required_headers:
+      anthropic-version: "2023-06-01"
+    endpoints:
+      messages:
+        path: /v1/messages
+        method: [POST]
+        accepted_paths: [/v1/messages, /messages]
+        accepts_streaming: true
+        request_kind: messages
+      models:
+        path: /v1/models
+        method: [GET]
+        accepted_paths: [/v1/models]
+        request_kind: passthrough
+
+  gemini:
+    base_url: http://mockllm:5555
+    endpoints:
+      generate_content:
+        path: /v1beta/models/{model}:generateContent
+        method: [POST]
+        accepted_paths: ["/v1beta/models/{model}:generateContent"]
+        accepts_streaming: true
+        request_kind: generate_content
+      models:
+        path: /v1beta/models
+        method: [GET]
+        accepted_paths: [/v1beta/models]
+        request_kind: passthrough
