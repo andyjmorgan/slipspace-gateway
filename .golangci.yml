@@ -1,0 +1,50 @@
+version: "2"
+
+run:
+  timeout: 5m
+  go: "1.23"
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - revive
+    - gosec
+    - ineffassign
+    - unconvert
+    - unparam
+    - gocritic
+    - bodyclose
+    - contextcheck
+
+  settings:
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+    gosec:
+      excludes:
+        - G104 # duplicate of errcheck
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: true
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/andyjmorgan/sluice-gateway

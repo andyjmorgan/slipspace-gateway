@@ -1,0 +1,23 @@
+# Build artifacts
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Coverage
+coverage.out
+coverage.html
+
+# Local dev overlay — never commit references to the C# mock LLM path.
+docker-compose.dev.yaml
+.env
+.air.toml
+
+# Vendored mock LLM (legacy C# project, used pre-v0.1 only)
+airia-llmock/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
