@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
@@ -24,6 +25,7 @@ func buildDataPlaneHandler(
 	resolver *auth.Resolver,
 	forwarder *proxy.Forwarder,
 	providers contractsconfig.ProvidersConfig,
+	errs *httperr.Writer,
 	_ *slog.Logger,
 ) http.Handler {
 	final := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,26 +35,26 @@ func buildDataPlaneHandler(
 		match, ok := matchFromContext(ctx)
 		if !ok {
 			log.ErrorContext(ctx, "forwarder: no route on context")
-			writeJSON(w, http.StatusInternalServerError, errorBody("internal error"))
+			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
 		authResult, ok := auth.FromContext(ctx)
 		if !ok {
 			log.ErrorContext(ctx, "forwarder: no auth on context")
-			writeJSON(w, http.StatusInternalServerError, errorBody("internal error"))
+			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
 
 		provider, ok := providers[match.Provider]
 		if !ok {
 			log.ErrorContext(ctx, "forwarder: unknown provider", "provider", match.Provider)
-			writeJSON(w, http.StatusInternalServerError, errorBody("internal error"))
+			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
 		endpoint, ok := provider.Endpoints[match.Endpoint]
 		if !ok {
 			log.ErrorContext(ctx, "forwarder: unknown endpoint", "provider", match.Provider, "endpoint", match.Endpoint)
-			writeJSON(w, http.StatusInternalServerError, errorBody("internal error"))
+			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
 
@@ -66,13 +68,13 @@ func buildDataPlaneHandler(
 		dest, err := buildDestination(provider, endpoint, match, authResult, r)
 		if err != nil {
 			log.ErrorContext(ctx, "forwarder: destination", "err", err.Error())
-			writeJSON(w, http.StatusInternalServerError, errorBody("internal error"))
+			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
 
 		if err := forwarder.Forward(ctx, w, r, dest); err != nil {
 			log.ErrorContext(ctx, "forwarder: forward", "err", err.Error())
-			writeJSON(w, http.StatusInternalServerError, errorBody("internal error"))
+			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "forward_failed", "internal error")
 			return
 		}
 	})
@@ -82,7 +84,7 @@ func buildDataPlaneHandler(
 	var h http.Handler = final
 	h = bodycapture.HTTPHandler(kindFrom, h)
 	h = auth.HTTPHandler(resolver, routeFromContext, h)
-	h = routingMiddleware(router, h)
+	h = routingMiddleware(router, errs, h)
 	return h
 }
 

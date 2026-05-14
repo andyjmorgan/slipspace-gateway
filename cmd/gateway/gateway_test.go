@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
@@ -94,7 +95,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	observer := newReporterObserver(nil, logger, meters)
 	forwarder := proxy.New(proxy.Options{Logger: logger, Observer: observer})
 
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, logger)
+	errs := httperr.New(meters.ErrorResponsesTotal, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)
 	root := correlationMiddleware(logger, dataPlane)
 
 	mux := http.NewServeMux()

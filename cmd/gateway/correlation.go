@@ -19,8 +19,18 @@ const (
 // It lives on the request context so a single Observer instance can serve all
 // requests without owning any state itself.
 type reqState struct {
-	mu         sync.Mutex
-	started    time.Time
+	mu sync.Mutex
+
+	// started is the wall-clock time at which OnRequestStart fired. Used
+	// both as the base for the overall request duration and as the
+	// reference point for the TTFB measurement.
+	started time.Time
+
+	// firstByte is the wall-clock time at which OnResponseHeaders fired —
+	// the moment the upstream response headers reached the proxy. Zero
+	// when the upstream returned no headers (transport failure).
+	firstByte time.Time
+
 	provider   string
 	endpoint   string
 	statusCode int
@@ -61,6 +71,12 @@ func correlationMiddleware(baseLogger *slog.Logger, next http.Handler) http.Hand
 		if sid := r.Header.Get(headerSessionID); sid != "" {
 			w.Header().Set(headerSessionID, sid)
 		}
+
+		logger.InfoContext(ctx, "request received",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+		)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

@@ -46,6 +46,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 	meters.UnmappedFieldsTotal.Add(ctx, 3)
 	meters.ConfigReloadTotal.Add(ctx, 1)
 	meters.UpstreamErrorsTotal.Add(ctx, 2)
+	meters.ErrorResponsesTotal.Add(ctx, 1)
 	meters.RequestDuration.Record(ctx, 0.42)
 	meters.RequestTimeToFirstByte.Record(ctx, 0.075)
 	meters.EventsInlineBytes.Record(ctx, 4096)
@@ -75,6 +76,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 		observability.MetricUnmappedFieldsTotal,
 		observability.MetricConfigReloadTotal,
 		observability.MetricUpstreamErrorsTotal,
+		observability.MetricErrorResponsesTotal,
 		observability.MetricRequestDuration,
 		observability.MetricRequestTimeToFirstByte,
 		observability.MetricEventsInlineBytes,

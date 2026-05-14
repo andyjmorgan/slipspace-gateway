@@ -19,6 +19,7 @@ import (
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
@@ -95,7 +96,8 @@ func run(ctx context.Context) error {
 	observer := newReporterObserver(publisher, logger, obs.Meters)
 	forwarder := proxy.New(proxy.Options{Logger: logger, Observer: observer})
 
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, logger)
+	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)
 
 	root := correlationMiddleware(logger, dataPlane)
 

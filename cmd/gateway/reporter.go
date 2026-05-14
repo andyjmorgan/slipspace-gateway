@@ -68,11 +68,19 @@ func (o *reporterObserver) OnRequestStart(ctx context.Context, _ proxy.Destinati
 }
 
 func (o *reporterObserver) OnResponseHeaders(ctx context.Context, status int, _ http.Header, streaming bool) {
+	var startedAt time.Time
 	if s := reqStateFromContext(ctx); s != nil {
 		s.mu.Lock()
+		startedAt = s.started
+		s.firstByte = time.Now()
 		s.statusCode = status
 		s.streaming = streaming
 		s.mu.Unlock()
+	}
+
+	if !startedAt.IsZero() && o.meters != nil && o.meters.RequestTimeToFirstByte != nil {
+		ttfb := time.Since(startedAt).Seconds()
+		o.meters.RequestTimeToFirstByte.Record(ctx, ttfb, withProviderEndpoint(ctx))
 	}
 }
 
@@ -93,6 +101,7 @@ func (o *reporterObserver) OnComplete(ctx context.Context, status int, durationM
 	ev.StatusCode = status
 	ev.DurationMs = durationMs
 	ev.CorrelationID = observability.CorrelationIDFromContext(ctx)
+	var ttfbMs int64
 	if state != nil {
 		state.mu.Lock()
 		ev.Provider = state.provider
@@ -103,6 +112,9 @@ func (o *reporterObserver) OnComplete(ctx context.Context, status int, durationM
 		}
 		if state.upstream != nil {
 			ev.UpstreamError = state.upstream.Error()
+		}
+		if !state.started.IsZero() && !state.firstByte.IsZero() {
+			ttfbMs = state.firstByte.Sub(state.started).Milliseconds()
 		}
 		state.mu.Unlock()
 	}
@@ -120,24 +132,34 @@ func (o *reporterObserver) OnComplete(ctx context.Context, status int, durationM
 		}
 	}
 
-	if o.publisher == nil {
-		return
+	if o.publisher != nil {
+		payload, err := json.Marshal(ev)
+		if err != nil {
+			o.logger.WarnContext(ctx, "reporter: marshal event", "err", err.Error())
+		} else {
+			o.publisher.Publish(bus.Envelope{
+				EventID:       uuid.NewString(),
+				EventType:     eventTypeRequest,
+				Timestamp:     time.Now().UTC(),
+				Mode:          bus.PayloadInline,
+				InlinePayload: payload,
+			})
+		}
 	}
-	payload, err := json.Marshal(ev)
-	if err != nil {
-		o.logger.WarnContext(ctx, "reporter: marshal event", "err", err.Error())
-		return
-	}
-	o.publisher.Publish(bus.Envelope{
-		EventID:       uuid.NewString(),
-		EventType:     eventTypeRequest,
-		Timestamp:     time.Now().UTC(),
-		Mode:          bus.PayloadInline,
-		InlinePayload: payload,
-	})
+
+	logger := observability.FromContext(ctx)
+	logger.InfoContext(ctx, "request completed",
+		"status_code", ev.StatusCode,
+		"duration_ms", ev.DurationMs,
+		"provider", ev.Provider,
+		"endpoint", ev.Endpoint,
+		"streaming", ev.Streaming,
+		"ttfb_ms", ttfbMs,
+		"upstream_error", ev.UpstreamError,
+	)
 }
 
-func withProviderEndpoint(ctx context.Context) metric.AddOption {
+func withProviderEndpoint(ctx context.Context) metric.MeasurementOption {
 	s := reqStateFromContext(ctx)
 	if s == nil {
 		return metric.WithAttributes()

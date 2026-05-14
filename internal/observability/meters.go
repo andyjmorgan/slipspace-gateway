@@ -24,6 +24,7 @@ const (
 	MetricUnmappedFieldsTotal  = "gateway.unmapped_fields.total"
 	MetricConfigReloadTotal    = "gateway.config_reload.total"
 	MetricUpstreamErrorsTotal  = "gateway.upstream_errors.total"
+	MetricErrorResponsesTotal  = "gateway.error_responses.total"
 
 	MetricRequestDuration        = "gateway.request.duration"
 	MetricRequestTimeToFirstByte = "gateway.request.time_to_first_byte"
@@ -60,6 +61,11 @@ type Meters struct {
 	UnmappedFieldsTotal metric.Int64Counter
 	ConfigReloadTotal   metric.Int64Counter
 	UpstreamErrorsTotal metric.Int64Counter
+
+	// ErrorResponsesTotal counts JSON error responses written by the
+	// gateway middleware chain. Labels: layer (routing|handler|...),
+	// code (machine-readable error name), status_code (HTTP status).
+	ErrorResponsesTotal metric.Int64Counter
 
 	RequestDuration        metric.Float64Histogram
 	RequestTimeToFirstByte metric.Float64Histogram
@@ -105,6 +111,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricUnmappedFieldsTotal, "Unknown fields detected on inbound provider payloads.", "1", &m.UnmappedFieldsTotal},
 		{MetricConfigReloadTotal, "Configuration reload attempts.", "1", &m.ConfigReloadTotal},
 		{MetricUpstreamErrorsTotal, "Errors returned by upstream providers.", "1", &m.UpstreamErrorsTotal},
+		{MetricErrorResponsesTotal, "JSON error responses written by the gateway middleware chain.", "1", &m.ErrorResponsesTotal},
 	} {
 		if err := int64Counter(c.name, c.desc, c.unit, c.dst); err != nil {
 			return nil, err
