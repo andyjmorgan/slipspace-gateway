@@ -9,7 +9,7 @@ Sluice is a slim, observable AI provider gateway in Go. It intercepts API calls 
 Repo: `git@github.com:andyjmorgan/sluice-gateway.git`
 
 Two coexisting auth modes:
-- **Managed:** client uses a Sluice-issued API key (`Authorization: Bearer ak_live_...`); gateway swaps in the upstream provider credentials before forwarding.
+- **Managed:** client uses a Sluice-issued API key (`Authorization: Bearer sk_live_...`); gateway swaps in the upstream provider credentials before forwarding.
 - **Passthrough:** client uses their own upstream token (e.g., Claude Code OAuth); gateway picks the policy via `X-Sluice-Configuration: <name>` and forwards the `Authorization` header verbatim.
 
 Both modes resolve to a named **Configuration** — a reusable policy bundle (allowed endpoints, rules, resilience, upstream credentials). Many API keys can share one configuration.

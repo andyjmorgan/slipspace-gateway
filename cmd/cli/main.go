@@ -89,7 +89,7 @@ func runKeyNew(args []string) error {
 	}
 
 	_ = label
-	fmt.Println("ak_live_PLACEHOLDER (key generation lands in a later task)")
+	fmt.Println("sk_live_PLACEHOLDER (key generation lands in a later task)")
 	return nil
 }
 
