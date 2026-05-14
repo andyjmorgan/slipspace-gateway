@@ -94,6 +94,9 @@ func TestResolver_Managed_OpenAI(t *testing.T) {
 	if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
 		t.Fatalf("APIKey not set correctly")
 	}
+	if ar.AuthHeader != HeaderAuthorization {
+		t.Fatalf("AuthHeader = %q want %q", ar.AuthHeader, HeaderAuthorization)
+	}
 }
 
 func TestResolver_Managed_Anthropic(t *testing.T) {
@@ -114,6 +117,9 @@ func TestResolver_Managed_Anthropic(t *testing.T) {
 	if !sliceContains(ar.DropHeaders, HeaderConfiguration) {
 		t.Fatalf("X-Sluice-Configuration must be dropped, got %v", ar.DropHeaders)
 	}
+	if ar.AuthHeader != headerAnthropicAPIKey {
+		t.Fatalf("AuthHeader = %q want %q", ar.AuthHeader, headerAnthropicAPIKey)
+	}
 }
 
 func TestResolver_Managed_Gemini(t *testing.T) {
@@ -131,6 +137,9 @@ func TestResolver_Managed_Gemini(t *testing.T) {
 	if !sliceContains(ar.DropHeaders, HeaderAuthorization) {
 		t.Fatalf("Authorization must be dropped for gemini, got %v", ar.DropHeaders)
 	}
+	if ar.AuthHeader != headerGeminiAPIKey {
+		t.Fatalf("AuthHeader = %q want %q", ar.AuthHeader, headerGeminiAPIKey)
+	}
 }
 
 func TestResolver_Managed_UnknownProvider(t *testing.T) {
@@ -144,6 +153,9 @@ func TestResolver_Managed_UnknownProvider(t *testing.T) {
 	}
 	if got := ar.SetHeaders.Get(HeaderAuthorization); got != "Bearer custom-upstream" {
 		t.Fatalf("Authorization = %q want Bearer custom-upstream", got)
+	}
+	if ar.AuthHeader != HeaderAuthorization {
+		t.Fatalf("AuthHeader = %q want %q for unknown provider fallback", ar.AuthHeader, HeaderAuthorization)
 	}
 }
 
@@ -261,6 +273,9 @@ func TestResolver_Passthrough_Happy(t *testing.T) {
 	if ar.ConfigurationName != "prod" {
 		t.Fatalf("ConfigurationName = %q want prod", ar.ConfigurationName)
 	}
+	if ar.AuthHeader != "" {
+		t.Fatalf("AuthHeader must be empty in passthrough, got %q", ar.AuthHeader)
+	}
 }
 
 func TestResolver_Passthrough_UnknownConfiguration(t *testing.T) {
@@ -348,19 +363,20 @@ func TestResolver_NilGuards(t *testing.T) {
 
 func TestAuthSwap_DropHeadersSorted(t *testing.T) {
 	tests := []struct {
-		provider  string
-		wantSet   string
-		wantValue string
-		wantDrop  []string
+		provider       string
+		wantSet        string
+		wantValue      string
+		wantDrop       []string
+		wantAuthHeader string
 	}{
-		{providerOpenAI, HeaderAuthorization, "Bearer cred", []string{HeaderConfiguration}},
-		{providerAnthropic, headerAnthropicAPIKey, "cred", []string{HeaderAuthorization, HeaderConfiguration}},
-		{providerGemini, headerGeminiAPIKey, "cred", []string{HeaderAuthorization, HeaderConfiguration}},
-		{"unknown-provider", HeaderAuthorization, "Bearer cred", []string{HeaderConfiguration}},
+		{providerOpenAI, HeaderAuthorization, "Bearer cred", []string{HeaderConfiguration}, HeaderAuthorization},
+		{providerAnthropic, headerAnthropicAPIKey, "cred", []string{HeaderAuthorization, HeaderConfiguration}, headerAnthropicAPIKey},
+		{providerGemini, headerGeminiAPIKey, "cred", []string{HeaderAuthorization, HeaderConfiguration}, headerGeminiAPIKey},
+		{"unknown-provider", HeaderAuthorization, "Bearer cred", []string{HeaderConfiguration}, HeaderAuthorization},
 	}
 	for _, tc := range tests {
 		t.Run(tc.provider, func(t *testing.T) {
-			set, drop := authSwap(tc.provider, "cred")
+			set, drop, authHeader := authSwap(tc.provider, "cred")
 			if got := set.Get(tc.wantSet); got != tc.wantValue {
 				t.Fatalf("%s = %q want %q", tc.wantSet, got, tc.wantValue)
 			}
@@ -370,6 +386,9 @@ func TestAuthSwap_DropHeadersSorted(t *testing.T) {
 			sort.Strings(want)
 			if !reflect.DeepEqual(gotDrop, want) {
 				t.Fatalf("drop = %v want %v", gotDrop, want)
+			}
+			if authHeader != tc.wantAuthHeader {
+				t.Fatalf("authHeader = %q want %q", authHeader, tc.wantAuthHeader)
 			}
 		})
 	}

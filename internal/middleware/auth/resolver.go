@@ -88,6 +88,13 @@ type AuthResult struct {
 	// in passthrough mode — the client's own credential header is
 	// forwarded verbatim.
 	SetHeaders http.Header
+
+	// AuthHeader names the upstream HTTP header the gateway will set on the
+	// outgoing request to carry the resolved credential. For managed mode:
+	// "Authorization" for OpenAI, "x-api-key" for Anthropic, "x-goog-api-key"
+	// for Gemini. For passthrough mode this is empty — the inbound
+	// Authorization is forwarded verbatim by the cmd/gateway layer.
+	AuthHeader string
 }
 
 // Resolver decides the auth outcome for a request: given inbound headers and
@@ -192,7 +199,7 @@ func (r *Resolver) resolveManaged(headers http.Header, provider, endpoint string
 		}, ErrEndpointNotAllowed
 	}
 
-	set, drop := authSwap(provider, cfg.UpstreamCredentials[provider])
+	set, drop, authHeader := authSwap(provider, cfg.UpstreamCredentials[provider])
 
 	return AuthResult{
 		Mode:              ModeManaged,
@@ -203,6 +210,7 @@ func (r *Resolver) resolveManaged(headers http.Header, provider, endpoint string
 		Endpoint:          endpoint,
 		SetHeaders:        set,
 		DropHeaders:       drop,
+		AuthHeader:        authHeader,
 	}, nil
 }
 
@@ -233,27 +241,38 @@ func endpointAllowed(cfg *contractsconfig.Configuration, provider, endpoint stri
 }
 
 // authSwap builds the header set/drop pair the forwarder applies to the
-// outgoing managed-mode request. The inbound X-Sluice-Configuration header is
+// outgoing managed-mode request, plus the name of the upstream credential
+// header for diagnostic logging. The inbound X-Sluice-Configuration header is
 // always dropped — it has no meaning upstream and would only be present if the
 // client tried to mix modes. For Anthropic / Gemini the inbound Authorization
 // header is also dropped because the upstream credential lives on a
 // provider-specific header instead.
-func authSwap(provider, credential string) (http.Header, []string) {
+//
+// The third return value is the canonical name of the credential header
+// injected into SetHeaders ("Authorization", "x-api-key", "x-goog-api-key").
+// Unknown providers fall back to a Bearer Authorization swap; the header name
+// reflects that.
+func authSwap(provider, credential string) (http.Header, []string, string) {
 	set := http.Header{}
 	drop := []string{HeaderConfiguration}
+	var authHeader string
 
 	switch provider {
 	case providerAnthropic:
 		set.Set(headerAnthropicAPIKey, credential)
 		drop = append(drop, HeaderAuthorization)
+		authHeader = headerAnthropicAPIKey
 	case providerGemini:
 		set.Set(headerGeminiAPIKey, credential)
 		drop = append(drop, HeaderAuthorization)
+		authHeader = headerGeminiAPIKey
 	case providerOpenAI:
 		set.Set(HeaderAuthorization, bearerPrefix+credential)
+		authHeader = HeaderAuthorization
 	default:
 		set.Set(HeaderAuthorization, bearerPrefix+credential)
+		authHeader = HeaderAuthorization
 	}
 
-	return set, drop
+	return set, drop, authHeader
 }

@@ -12,6 +12,11 @@ type statusWriter struct {
 
 	status      int
 	wroteHeader bool
+
+	// streaming records whether the upstream response was SSE, populated by
+	// the Forwarder's ModifyResponse hook so the success log can report it
+	// without re-inspecting headers.
+	streaming bool
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -40,4 +45,15 @@ func (w *statusWriter) Flush() {
 
 func (w *statusWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
+}
+
+// Status returns the captured HTTP status code. Reads default to 200 until
+// WriteHeader or Write has been observed.
+func (w *statusWriter) Status() int {
+	return w.status
+}
+
+// Streaming reports whether the upstream response was flagged as SSE.
+func (w *statusWriter) Streaming() bool {
+	return w.streaming
 }

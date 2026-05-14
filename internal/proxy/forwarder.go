@@ -149,6 +149,13 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 	dropHeaders := append([]string{}, alwaysDropHeaders...)
 	dropHeaders = append(dropHeaders, dest.DropHeaders...)
 
+	cw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+
+	// upstreamErr is set by ErrorHandler so the success-log path can skip
+	// emission when the transport failed — the error log there is the
+	// authoritative line for that case.
+	var upstreamErr error
+
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			rewriteURL(pr, dest.UpstreamURL)
@@ -162,10 +169,13 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			f.observer.OnResponseHeaders(ctx, resp.StatusCode, resp.Header, isSSE(resp.Header))
+			streaming := isSSE(resp.Header)
+			cw.streaming = streaming
+			f.observer.OnResponseHeaders(ctx, resp.StatusCode, resp.Header, streaming)
 			return nil
 		},
 		ErrorHandler: func(rw http.ResponseWriter, _ *http.Request, err error) {
+			upstreamErr = err
 			f.observer.OnUpstreamError(ctx, err)
 			f.logger.ErrorContext(ctx, "proxy: upstream forward failed",
 				slog.String("destination", baseKey),
@@ -177,13 +187,21 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 		FlushInterval: -1,
 	}
 
-	cw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 	f.observer.OnRequestStart(ctx, dest)
 	start := time.Now()
 
 	rp.ServeHTTP(cw, req)
 
-	f.observer.OnComplete(ctx, cw.status, time.Since(start).Milliseconds())
+	f.observer.OnComplete(ctx, cw.Status(), time.Since(start).Milliseconds())
+
+	if upstreamErr == nil {
+		f.logger.InfoContext(ctx, "proxy: upstream completed",
+			slog.String("destination", baseKey),
+			slog.String("upstream_url", dest.UpstreamURL.String()),
+			slog.Int("status_code", cw.Status()),
+			slog.Bool("streaming", cw.Streaming()),
+		)
+	}
 	return nil
 }
 

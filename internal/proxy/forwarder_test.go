@@ -2,9 +2,11 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -74,6 +76,88 @@ func TestForward_HappyPath(t *testing.T) {
 	}
 	if events[2].durationMs < 0 {
 		t.Fatalf("durationMs negative: %d", events[2].durationMs)
+	}
+}
+
+func TestForward_SuccessLog(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	f := New(Options{Logger: logger})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
+	dest := newDestination(t, upstream.URL+"/v1/x")
+	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	out := logs.String()
+	if !strings.Contains(out, `"msg":"proxy: upstream completed"`) {
+		t.Fatalf("success log not emitted: %s", out)
+	}
+	if !strings.Contains(out, `"status_code":201`) {
+		t.Fatalf("success log missing status_code=201: %s", out)
+	}
+	if !strings.Contains(out, `"streaming":false`) {
+		t.Fatalf("success log missing streaming=false: %s", out)
+	}
+	if !strings.Contains(out, `"upstream_url":"`+upstream.URL+`/v1/x"`) {
+		t.Fatalf("success log missing upstream_url: %s", out)
+	}
+}
+
+func TestForward_SuccessLog_StreamingFlag(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: done\n\n"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	f := New(Options{Logger: logger})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/stream", nil)
+	dest := newDestination(t, upstream.URL+"/v1/stream")
+	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if !strings.Contains(logs.String(), `"streaming":true`) {
+		t.Fatalf("streaming flag not set in success log: %s", logs.String())
+	}
+}
+
+func TestForward_NoSuccessLogOnDialFailure(t *testing.T) {
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	f := New(Options{Logger: logger})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
+	upstreamURL, _ := url.Parse("http://127.0.0.1:1/v1/x")
+	base, _ := url.Parse("http://127.0.0.1:1")
+	dest := Destination{BaseURL: base, UpstreamURL: upstreamURL}
+
+	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if strings.Contains(logs.String(), `"msg":"proxy: upstream completed"`) {
+		t.Fatalf("success log must not fire on dial failure: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"msg":"proxy: upstream forward failed"`) {
+		t.Fatalf("error log missing: %s", logs.String())
 	}
 }
 

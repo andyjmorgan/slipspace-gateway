@@ -71,6 +71,7 @@ func HTTPHandler(resolver *Resolver, routeFrom RouteFromContextFunc, next http.H
 			"configuration", ar.ConfigurationName,
 			"provider", provider,
 			"endpoint", endpoint,
+			"auth_header", ar.AuthHeader,
 			"result", string(ResultSuccess),
 		)
 
