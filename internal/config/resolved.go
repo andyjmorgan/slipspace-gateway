@@ -36,15 +36,11 @@ type ResolvedConfig struct {
 	APIKeys contractsconfig.APIKeysConfig
 
 	// Rules is the top-level `rules:` library — every rule definition
-	// available for Configurations to reference by name. Distinct from the
-	// per-Configuration inline `Rules` field, which is the legacy form being
-	// retired across the three-plane refactor.
+	// available for Configurations to reference by name.
 	Rules []rulescontract.RuleContract
 
 	// ResiliencePolicies is the top-level `resilience_policies:` library —
 	// every named resilience policy available for Configurations to reference.
-	// Distinct from the per-Configuration inline `Resilience` field being
-	// retired across the three-plane refactor.
 	ResiliencePolicies []resilience.ResilienceConfig
 
 	// SecretIndex maps an API-key secret string to the owning APIKey entry
@@ -66,13 +62,10 @@ type ResolvedConfig struct {
 
 	// RuleIndex maps rule name to a pointer into Rules so middleware can
 	// resolve a Configuration's RuleNames reference with a single map read.
-	// Distinct from the legacy per-Configuration inline rules, which are
-	// kept on Configuration.Rules until commit 2 removes them.
 	RuleIndex map[string]*rulescontract.RuleContract
 
 	// ResilienceIndex maps resilience policy name to a pointer into
-	// ResiliencePolicies. Same separation as RuleIndex versus the legacy
-	// per-Configuration inline resilience.
+	// ResiliencePolicies.
 	ResilienceIndex map[string]*resilience.ResilienceConfig
 }
 

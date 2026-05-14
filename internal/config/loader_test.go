@@ -79,19 +79,9 @@ configurations:
       - anthropic.messages
     upstream_credentials:
       openai: sk-dev-mock
-    rules:
-      - id: redact-emails
-        priority: 100
-        actions:
-          - type: redactPattern
-            pattern: "[\\w.]+@[\\w.]+"
-            replacement: "[redacted]"
-        behavior: continue
-    resilience:
-      mode: failover
-      timeout_seconds: 30
-      targets:
-        - { provider: anthropic, weight: 1, order: 0 }
+    rule_names:
+      - redact-emails
+    resilience_name: ha
     tags:
       tier: dev
 `
@@ -104,6 +94,38 @@ api_keys:
     configuration: dev
     enabled: true
 `
+
+const sampleRulesLibrary = `
+rules:
+  - name: redact-emails
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: setHeader
+        headerName: X-Sluice-Redacted
+        headerAction: Set
+        headerValue: emails
+    behavior: continue
+`
+
+const sampleResiliencePoliciesLibrary = `
+resilience_policies:
+  - name: ha
+    mode: failover
+    timeout_seconds: 30
+    targets:
+      - provider: openai
+        order: 0
+`
+
+// samplePolicy is the single-file policy bundle: configurations + api_keys +
+// rules library + resilience_policies library. The four fragments are
+// concatenated rather than maintained as a separate literal so individual
+// pieces stay independently editable.
+var samplePolicy = sampleConfigurations + sampleAPIKeys + sampleRulesLibrary + sampleResiliencePoliciesLibrary
 
 func writeFile(t *testing.T, dir, name, body string) {
 	t.Helper()
@@ -118,8 +140,7 @@ func makeFullDir(t *testing.T) string {
 	dir := t.TempDir()
 	writeFile(t, dir, "gateway.yaml", sampleGateway)
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
-	writeFile(t, dir, "api_keys.yaml", sampleAPIKeys)
+	writeFile(t, dir, "policy.yaml", samplePolicy)
 	return dir
 }
 
@@ -154,11 +175,11 @@ func TestLoad_HappyPath(t *testing.T) {
 	if len(dev.AllowedEndpoints) != 3 {
 		t.Errorf("allowed_endpoints = %v", dev.AllowedEndpoints)
 	}
-	if len(dev.Rules) != 1 {
-		t.Errorf("expected 1 raw rule, got %d", len(dev.Rules))
+	if len(dev.RuleNames) != 1 || dev.RuleNames[0] != "redact-emails" {
+		t.Errorf("rule_names = %v", dev.RuleNames)
 	}
-	if dev.Resilience == nil {
-		t.Error("expected resilience preserved")
+	if dev.ResilienceName == nil || *dev.ResilienceName != "ha" {
+		t.Errorf("resilience_name = %v", dev.ResilienceName)
 	}
 
 	if len(resolved.APIKeys) != 1 {
@@ -176,6 +197,13 @@ func TestLoad_HappyPath(t *testing.T) {
 	}
 	if got, ok := resolved.RouteIndex["/chat/completions"]; !ok || got.Provider != "openai" {
 		t.Errorf("RouteIndex /chat/completions = %+v", got)
+	}
+
+	if got := resolved.RuleIndex["redact-emails"]; got == nil || got.Name != "redact-emails" {
+		t.Errorf("RuleIndex redact-emails = %+v", got)
+	}
+	if got := resolved.ResilienceIndex["ha"]; got == nil || got.Mode != "failover" {
+		t.Errorf("ResilienceIndex ha = %+v", got)
 	}
 }
 
@@ -202,19 +230,6 @@ func TestLoad_ConfigDevFixtures(t *testing.T) {
 	}
 }
 
-func TestLoad_DuplicateTopLevelKeyAcrossFiles(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "a.yaml", sampleGateway)
-	writeFile(t, dir, "b.yaml", sampleGateway)
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
-
-	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrDuplicateTopLevelKey) {
-		t.Fatalf("want ErrDuplicateTopLevelKey, got %v", err)
-	}
-}
-
 func TestLoad_DuplicateKeyWithinSingleFile(t *testing.T) {
 	dir := t.TempDir()
 	body := sampleProviders + "\n" + sampleProviders
@@ -230,8 +245,7 @@ func TestLoad_UnknownConfiguration(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "gateway.yaml", sampleGateway)
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
-	writeFile(t, dir, "api_keys.yaml", `
+	writeFile(t, dir, "policy.yaml", sampleConfigurations+sampleRulesLibrary+sampleResiliencePoliciesLibrary+`
 api_keys:
   - secret: sk_dev_xxx
     name: bad
@@ -247,7 +261,7 @@ api_keys:
 func TestLoad_AllowedEndpointMissingProvider(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints:
@@ -262,7 +276,7 @@ configurations:
 func TestLoad_AllowedEndpointMissingEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints:
@@ -277,7 +291,7 @@ configurations:
 func TestLoad_MalformedAllowedEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints:
@@ -310,7 +324,7 @@ providers:
         accepted_paths: [/v1/chat/completions]
         request_kind: chat
 `)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints:
@@ -350,7 +364,7 @@ providers:
         accepted_paths: [/v1/models]
         request_kind: passthrough
 `)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints:
@@ -388,7 +402,7 @@ providers:
         accepted_paths: [/v1/chat/completions]
         request_kind: chat
 `)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints:
@@ -428,7 +442,7 @@ providers:
         accepted_paths: [/v1/models]
         request_kind: passthrough
 `)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints:
@@ -450,19 +464,45 @@ func TestLoad_EmptyDirectory(t *testing.T) {
 
 func TestLoad_BadYAML(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "bad.yaml", "::: not yaml :::\n  - [unclosed")
+	writeFile(t, dir, "policy.yaml", "::: not yaml :::\n  - [unclosed")
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrParse) {
 		t.Fatalf("want ErrParse, got %v", err)
 	}
 }
 
-func TestLoad_UnknownTopLevelKey(t *testing.T) {
+func TestLoad_UnexpectedFile(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "mystery.yaml", "mystery:\n  foo: bar\n")
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", sampleConfigurations+sampleRulesLibrary+sampleResiliencePoliciesLibrary)
+	writeFile(t, dir, "random.yaml", "mystery:\n  foo: bar\n")
 	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrUnknownTopLevelKey) {
-		t.Fatalf("want ErrUnknownTopLevelKey, got %v", err)
+	if !errors.Is(err, config.ErrUnexpectedConfigFile) {
+		t.Fatalf("want ErrUnexpectedConfigFile, got %v", err)
+	}
+}
+
+func TestLoad_GatewayKeyInPolicyFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", sampleConfigurations+`
+gateway:
+  http:
+    bind: 0.0.0.0:8585
+`)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrWrongFileForKey) {
+		t.Fatalf("want ErrWrongFileForKey, got %v", err)
+	}
+}
+
+func TestLoad_PolicyKeyInProvidersFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders+sampleRulesLibrary)
+	writeFile(t, dir, "policy.yaml", sampleConfigurations)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrWrongFileForKey) {
+		t.Fatalf("want ErrWrongFileForKey, got %v", err)
 	}
 }
 
@@ -499,7 +539,7 @@ gateway:
     bind: "not a host port"
 `)
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
+	writeFile(t, dir, "policy.yaml", samplePolicy)
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrInvalidBind) {
 		t.Fatalf("want ErrInvalidBind, got %v", err)
@@ -514,7 +554,7 @@ gateway:
     bind: "0.0.0.0:abc"
 `)
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
+	writeFile(t, dir, "policy.yaml", samplePolicy)
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrInvalidBind) {
 		t.Fatalf("want ErrInvalidBind, got %v", err)
@@ -523,43 +563,39 @@ gateway:
 
 func TestLoad_NonMappingTopLevel(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "bad.yaml", "- just\n- a\n- list\n")
+	writeFile(t, dir, "policy.yaml", "- just\n- a\n- list\n")
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrParse) {
 		t.Fatalf("want ErrParse, got %v", err)
 	}
 }
 
-func TestLoad_YmlExtensionAlsoAccepted(t *testing.T) {
+func TestLoad_IgnoresSubdirs(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "providers.yml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
-	resolved, err := config.Load(context.Background(), dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if _, ok := resolved.Providers["openai"]; !ok {
-		t.Error(".yml extension not accepted")
-	}
-}
-
-func TestLoad_IgnoresNonYAMLFilesAndSubdirs(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "README.md", "hello")
-	writeFile(t, dir, ".hidden", "ignored")
 	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, dir, "subdir/inside.yaml", sampleConfigurations)
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
+	writeFile(t, dir, "policy.yaml", sampleConfigurations+sampleRulesLibrary+sampleResiliencePoliciesLibrary)
 
 	resolved, err := config.Load(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if _, ok := resolved.Configurations["dev"]; !ok {
-		t.Error("expected dev from configurations.yaml")
+		t.Error("expected dev from policy.yaml")
+	}
+}
+
+func TestLoad_RejectsNonYAMLFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", samplePolicy)
+	writeFile(t, dir, "README.md", "hello")
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrUnexpectedConfigFile) {
+		t.Fatalf("want ErrUnexpectedConfigFile for README.md, got %v", err)
 	}
 }
 
@@ -600,7 +636,7 @@ func TestResolvedConfig_ValidateEmpty(t *testing.T) {
 func TestLoad_BindEmpty(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
+	writeFile(t, dir, "policy.yaml", samplePolicy)
 	if _, err := config.Load(context.Background(), dir); err != nil {
 		t.Fatalf("empty bind should be allowed (no gateway block at all): %v", err)
 	}
@@ -609,7 +645,7 @@ func TestLoad_BindEmpty(t *testing.T) {
 func TestLoad_AllowedEndpointsTrimmedNamesAreUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints:
@@ -623,7 +659,7 @@ configurations:
 
 func TestLoad_NonScalarTopLevelKeyErrors(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "weird.yaml", "? [a, b]\n: foo\n")
+	writeFile(t, dir, "policy.yaml", "? [a, b]\n: foo\n")
 	_, err := config.Load(context.Background(), dir)
 	if err == nil || !strings.Contains(err.Error(), "config:") {
 		t.Fatalf("expected config error, got %v", err)
@@ -632,18 +668,19 @@ func TestLoad_NonScalarTopLevelKeyErrors(t *testing.T) {
 
 func TestLoad_DecodeErrors(t *testing.T) {
 	cases := []struct {
-		name string
-		yaml string
+		name     string
+		filename string
+		yaml     string
 	}{
-		{"gateway_not_a_map", "gateway: \"not a map, a string\"\n"},
-		{"providers_not_a_map", "providers: \"not a map\"\n"},
-		{"configurations_not_a_map", "configurations: 42\n"},
-		{"api_keys_not_a_list", "api_keys: \"not a list\"\n"},
+		{"gateway_not_a_map", "gateway.yaml", "gateway: \"not a map, a string\"\n"},
+		{"providers_not_a_map", "providers.yaml", "providers: \"not a map\"\n"},
+		{"configurations_not_a_map", "policy.yaml", "configurations: 42\n"},
+		{"api_keys_not_a_list", "policy.yaml", "api_keys: \"not a list\"\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeFile(t, dir, "bad.yaml", tc.yaml)
+			writeFile(t, dir, tc.filename, tc.yaml)
 			_, err := config.Load(context.Background(), dir)
 			if !errors.Is(err, config.ErrParse) {
 				t.Fatalf("want ErrParse, got %v", err)
@@ -654,9 +691,9 @@ func TestLoad_DecodeErrors(t *testing.T) {
 
 func TestLoad_EmptyYAMLFile(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "empty.yaml", "")
+	writeFile(t, dir, "gateway.yaml", "")
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
+	writeFile(t, dir, "policy.yaml", samplePolicy)
 	resolved, err := config.Load(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -674,17 +711,15 @@ gateway:
     bind: ":"
 `)
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", sampleConfigurations)
+	writeFile(t, dir, "policy.yaml", samplePolicy)
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrInvalidBind) {
 		t.Fatalf("want ErrInvalidBind, got %v", err)
 	}
 }
 
-// libraryConfigurations references entries from a top-level rules library
-// and a top-level resilience_policies library by name. The inline `rules:`
-// and `resilience:` fields are intentionally omitted; the
-// TestLoad_LibraryWithInlineCoexistence case proves both forms work side by side.
+// libraryConfigurations references entries from the top-level rules library
+// and resilience_policies library by name.
 const libraryConfigurations = `
 configurations:
   dev:
@@ -696,7 +731,7 @@ configurations:
     resilience_name: high-availability
 `
 
-const libraryPolicy = `
+const libraryRulesAndPolicies = `
 rules:
   - name: redact-emails
     priority: 100
@@ -730,8 +765,7 @@ resilience_policies:
 func TestLoad_LibraryHappyPath(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", libraryConfigurations)
-	writeFile(t, dir, "policy.yaml", libraryPolicy)
+	writeFile(t, dir, "policy.yaml", libraryConfigurations+libraryRulesAndPolicies)
 
 	resolved, err := config.Load(context.Background(), dir)
 	if err != nil {
@@ -764,13 +798,12 @@ func TestLoad_LibraryHappyPath(t *testing.T) {
 func TestLoad_LibraryUnknownRuleName(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints: [openai.chat_completions]
     rule_names: [ghost]
-`)
-	writeFile(t, dir, "policy.yaml", libraryPolicy)
+`+libraryRulesAndPolicies)
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrUnknownRuleName) {
 		t.Fatalf("want ErrUnknownRuleName, got %v", err)
@@ -780,13 +813,12 @@ configurations:
 func TestLoad_LibraryUnknownResilienceName(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints: [openai.chat_completions]
     resilience_name: ghost
-`)
-	writeFile(t, dir, "policy.yaml", libraryPolicy)
+`+libraryRulesAndPolicies)
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrUnknownResilienceName) {
 		t.Fatalf("want ErrUnknownResilienceName, got %v", err)
@@ -796,12 +828,11 @@ configurations:
 func TestLoad_LibraryDuplicateRuleName(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints: [openai.chat_completions]
-`)
-	writeFile(t, dir, "policy.yaml", `
+
 rules:
   - name: dup
     priority: 1
@@ -821,12 +852,11 @@ rules:
 func TestLoad_LibraryDuplicateRuleID(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints: [openai.chat_completions]
-`)
-	writeFile(t, dir, "policy.yaml", `
+
 rules:
   - id: 550e8400-e29b-41d4-a716-446655440000
     name: a
@@ -848,12 +878,11 @@ rules:
 func TestLoad_LibraryDuplicateResilienceName(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints: [openai.chat_completions]
-`)
-	writeFile(t, dir, "policy.yaml", `
+
 resilience_policies:
   - name: dup
     mode: none
@@ -869,12 +898,11 @@ resilience_policies:
 func TestLoad_LibraryDuplicateResilienceID(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
+	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     allowed_endpoints: [openai.chat_completions]
-`)
-	writeFile(t, dir, "policy.yaml", `
+
 resilience_policies:
   - id: 550e8400-e29b-41d4-a716-446655440000
     name: a
@@ -886,53 +914,5 @@ resilience_policies:
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrDuplicateResilienceID) {
 		t.Fatalf("want ErrDuplicateResilienceID, got %v", err)
-	}
-}
-
-// TestLoad_LibraryWithInlineCoexistence proves the additive contract of
-// commit 1: a Configuration may carry both legacy inline `rules:`/`resilience:`
-// AND the new library `rule_names:`/`resilience_name:` references at the
-// same time. Commit 2 removes the inline form.
-func TestLoad_LibraryWithInlineCoexistence(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "configurations.yaml", `
-configurations:
-  dev:
-    allowed_endpoints: [openai.chat_completions]
-    rule_names: [redact-emails]
-    resilience_name: high-availability
-    rules:
-      - id: legacy-inline
-        priority: 50
-        actions:
-          - type: redactPattern
-            pattern: "[\\w.]+@[\\w.]+"
-            replacement: "[redacted]"
-        behavior: continue
-    resilience:
-      mode: none
-`)
-	writeFile(t, dir, "policy.yaml", libraryPolicy)
-
-	resolved, err := config.Load(context.Background(), dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	dev, ok := resolved.Configurations["dev"]
-	if !ok {
-		t.Fatal("missing dev configuration")
-	}
-	if len(dev.Rules) != 1 {
-		t.Errorf("inline Rules len = %d, want 1 (legacy form must coexist)", len(dev.Rules))
-	}
-	if dev.Resilience == nil {
-		t.Error("inline Resilience must coexist with library reference")
-	}
-	if len(dev.RuleNames) != 1 || dev.RuleNames[0] != "redact-emails" {
-		t.Errorf("dev.RuleNames = %v", dev.RuleNames)
-	}
-	if got := resolved.RuleIndex["redact-emails"]; got == nil {
-		t.Error("library RuleIndex must resolve the named reference")
 	}
 }

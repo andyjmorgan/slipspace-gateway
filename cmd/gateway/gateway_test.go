@@ -158,7 +158,8 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
         request_kind: messages
 `, upstreamURL, upstreamURL)
 
-	configurationsYAML := `configurations:
+	//nolint:gosec // test fixture keys; not real credentials
+	policyYAML := `configurations:
   dev:
     allowed_endpoints:
       - openai.chat_completions
@@ -170,10 +171,8 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
   empty:
     allowed_endpoints: []
     upstream_credentials: {}
-`
 
-	//nolint:gosec // test fixture keys; not real credentials
-	apiKeysYAML := `api_keys:
+api_keys:
   - secret: sk_dev_local
     name: local
     configuration: dev
@@ -202,10 +201,9 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
 `
 
 	for name, body := range map[string]string{
-		"providers.yaml":      providersYAML,
-		"configurations.yaml": configurationsYAML,
-		"api_keys.yaml":       apiKeysYAML,
-		"gateway.yaml":        gatewayYAML,
+		"providers.yaml": providersYAML,
+		"policy.yaml":    policyYAML,
+		"gateway.yaml":   gatewayYAML,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)

@@ -6,13 +6,32 @@ import "errors"
 // *.yaml files.
 var ErrEmptyDirectory = errors.New("config: directory contains no yaml files")
 
-// ErrDuplicateTopLevelKey is returned when two files in the configuration
-// directory define the same top-level key (e.g., both define `providers`).
+// ErrDuplicateTopLevelKey is retained as a backward-compatibility sentinel for
+// external callers (notably cmd/cli's error classifier). The single-purpose
+// file layout makes cross-file duplicates impossible by construction, so the
+// loader no longer returns this. Duplicate keys WITHIN a single file surface
+// as a yaml.v3 parse error wrapped in ErrParse.
+//
+// Deprecated: unreachable from Load; kept exported for compile-time
+// compatibility with downstream classifiers.
 var ErrDuplicateTopLevelKey = errors.New("config: duplicate top-level key across files")
 
-// ErrUnknownTopLevelKey is returned when a YAML file contains a top-level key
-// that is not one of {gateway, providers, configurations, api_keys}.
+// ErrUnknownTopLevelKey is retained for the same compatibility reason as
+// ErrDuplicateTopLevelKey. With single-purpose files the relevant failure mode
+// is "this key is not allowed in this file", reported via ErrWrongFileForKey.
+//
+// Deprecated: unreachable from Load; kept exported for compile-time
+// compatibility with downstream classifiers.
 var ErrUnknownTopLevelKey = errors.New("config: unknown top-level key")
+
+// ErrUnexpectedConfigFile is returned when the configuration directory
+// contains a file whose name is not one of the three accepted filenames
+// (gateway.yaml, providers.yaml, policy.yaml).
+var ErrUnexpectedConfigFile = errors.New("config: unexpected file in config directory")
+
+// ErrWrongFileForKey is returned when a top-level key appears in a file that
+// is not authorized to carry it — e.g., `gateway:` in policy.yaml.
+var ErrWrongFileForKey = errors.New("config: top-level key is not allowed in this file")
 
 // ErrNoConfigurations is returned when the merged tree contains zero entries
 // under `configurations`.

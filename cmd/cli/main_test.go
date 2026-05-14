@@ -250,27 +250,23 @@ func TestConfigValidate_EmptyDirectory(t *testing.T) {
 	}
 }
 
-func TestConfigValidate_DuplicateTopLevelKey(t *testing.T) {
+func TestConfigValidate_UnexpectedFile(t *testing.T) {
 	dir := t.TempDir()
-	gatewayBlock := "gateway:\n  http:\n    bind: 0.0.0.0:8585\n"
-	if err := os.WriteFile(filepath.Join(dir, "a.yaml"), []byte(gatewayBlock), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "b.yaml"), []byte(gatewayBlock), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "random.yaml"), []byte("gateway:\n  http:\n    bind: 0.0.0.0:8585\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, code := runCLI(t, "config", "validate", "--dir", dir)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stdout=%q", code, stdout.String())
 	}
-	if !strings.HasPrefix(stdout.String(), "FAIL: duplicate_top_level_key:") {
-		t.Fatalf("stdout = %q, want FAIL: duplicate_top_level_key prefix", stdout.String())
+	if !strings.HasPrefix(stdout.String(), "FAIL: unexpected_config_file:") {
+		t.Fatalf("stdout = %q, want FAIL: unexpected_config_file prefix", stdout.String())
 	}
 }
 
 func TestConfigValidate_ParseError(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "api_keys.yaml"), []byte("api_keys:\n  - secret: [unclosed\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte("api_keys:\n  - secret: [unclosed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, code := runCLI(t, "config", "validate", "--dir", dir)
@@ -296,17 +292,17 @@ func TestConfigValidate_NoConfigurations(t *testing.T) {
 	}
 }
 
-func TestConfigValidate_UnknownTopLevel(t *testing.T) {
+func TestConfigValidate_WrongFileForKey(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "weird.yaml"), []byte("nope: true\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte("gateway:\n  http:\n    bind: 0.0.0.0:8585\nconfigurations: {dev: {allowed_endpoints: []}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, code := runCLI(t, "config", "validate", "--dir", dir)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
-	if !strings.HasPrefix(stdout.String(), "FAIL: unknown_top_level_key:") {
-		t.Fatalf("stdout = %q, want FAIL: unknown_top_level_key prefix", stdout.String())
+	if !strings.HasPrefix(stdout.String(), "FAIL: wrong_file_for_key:") {
+		t.Fatalf("stdout = %q, want FAIL: wrong_file_for_key prefix", stdout.String())
 	}
 }
 
@@ -354,8 +350,8 @@ func TestClassifyConfigErr_AllCategories(t *testing.T) {
 		want string
 	}{
 		{config.ErrEmptyDirectory, "empty_directory"},
-		{config.ErrDuplicateTopLevelKey, "duplicate_top_level_key"},
-		{config.ErrUnknownTopLevelKey, "unknown_top_level_key"},
+		{config.ErrUnexpectedConfigFile, "unexpected_config_file"},
+		{config.ErrWrongFileForKey, "wrong_file_for_key"},
 		{config.ErrNoConfigurations, "no_configurations"},
 		{config.ErrUnknownConfiguration, "unknown_configuration"},
 		{config.ErrEndpointNotInProvider, "endpoint_not_in_provider"},

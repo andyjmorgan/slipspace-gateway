@@ -29,27 +29,42 @@ const (
 	keyResiliencePolicies = "resilience_policies"
 )
 
-var knownTopLevelKeys = map[string]struct{}{
-	keyGateway:            {},
-	keyProviders:          {},
-	keyConfigurations:     {},
-	keyAPIKeys:            {},
-	keyRules:              {},
-	keyResiliencePolicies: {},
+const (
+	filenameGateway   = "gateway.yaml"
+	filenameProviders = "providers.yaml"
+	filenamePolicy    = "policy.yaml"
+)
+
+// allowedKeysByFile pins each accepted filename to the top-level keys it is
+// permitted to carry. Any key in the file that is not in its set is reported
+// as ErrWrongFileForKey.
+var allowedKeysByFile = map[string]map[string]struct{}{
+	filenameGateway: {
+		keyGateway: {},
+	},
+	filenameProviders: {
+		keyProviders: {},
+	},
+	filenamePolicy: {
+		keyConfigurations:     {},
+		keyAPIKeys:            {},
+		keyRules:              {},
+		keyResiliencePolicies: {},
+	},
 }
 
 // Load reads the YAML configuration directory at dir and returns the merged,
 // validated, indexed runtime view.
 //
-// Files are merged by top-level key — duplicate keys across files are rejected
-// rather than silently overlaid, because file ordering would otherwise
-// silently determine policy.
+// The directory must contain only the three accepted filenames
+// (gateway.yaml, providers.yaml, policy.yaml). Each file is restricted to a
+// specific set of top-level keys; keys outside that set are rejected.
 func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("config: load %q: %w", dir, err)
 	}
 
-	files, err := listYAMLFiles(dir)
+	files, err := listConfigFiles(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -75,55 +90,59 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 	return resolved, nil
 }
 
-func listYAMLFiles(dir string) ([]string, error) {
+// listConfigFiles enumerates dir and returns a map of accepted filename to its
+// absolute path. Any non-directory entry whose name is not one of the three
+// accepted filenames produces ErrUnexpectedConfigFile; subdirectories are
+// skipped silently.
+func listConfigFiles(dir string) (map[string]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("config: read dir %q: %w", dir, err)
 	}
-	var out []string
+	out := make(map[string]string, len(allowedKeysByFile))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		name := e.Name()
-		ext := strings.ToLower(filepath.Ext(name))
-		if ext != ".yaml" && ext != ".yml" {
-			continue
+		if _, ok := allowedKeysByFile[name]; !ok {
+			return nil, fmt.Errorf("config: %s in %s: %w", name, dir, ErrUnexpectedConfigFile)
 		}
-		out = append(out, filepath.Join(dir, name))
+		out[name] = filepath.Join(dir, name)
 	}
-	sort.Strings(out)
 	return out, nil
 }
 
-// mergedTree holds the per-top-level-key yaml.Node assembled across the
+// mergedTree holds the per-top-level-key yaml.Node trees assembled across the
 // configuration directory, alongside the filename that contributed each block
-// so duplicate-key errors can name both offenders.
+// so wrong-file errors can name the offender.
 type mergedTree struct {
 	nodes  map[string]*yaml.Node
 	origin map[string]string
 }
 
-func mergeFiles(files []string) (*mergedTree, error) {
+func mergeFiles(files map[string]string) (*mergedTree, error) {
 	out := &mergedTree{
 		nodes:  make(map[string]*yaml.Node),
 		origin: make(map[string]string),
 	}
 
-	for _, path := range files {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		path := files[name]
 		topLevel, err := parseTopLevel(path)
 		if err != nil {
 			return nil, err
 		}
+		allowed := allowedKeysByFile[name]
 		for key, node := range topLevel {
-			if _, ok := knownTopLevelKeys[key]; !ok {
-				return nil, fmt.Errorf("config: %q in %s: %w", key, path, ErrUnknownTopLevelKey)
-			}
-			if existing, dup := out.origin[key]; dup {
-				return nil, fmt.Errorf(
-					"config: top-level key %q defined in both %s and %s: %w",
-					key, existing, path, ErrDuplicateTopLevelKey,
-				)
+			if _, ok := allowed[key]; !ok {
+				return nil, fmt.Errorf("config: key %q in %s: %w", key, path, ErrWrongFileForKey)
 			}
 			out.nodes[key] = node
 			out.origin[key] = path

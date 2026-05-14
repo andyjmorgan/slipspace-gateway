@@ -60,10 +60,10 @@ func classifyConfigErr(err error) string {
 	switch {
 	case errors.Is(err, config.ErrEmptyDirectory):
 		return "empty_directory"
-	case errors.Is(err, config.ErrDuplicateTopLevelKey):
-		return "duplicate_top_level_key"
-	case errors.Is(err, config.ErrUnknownTopLevelKey):
-		return "unknown_top_level_key"
+	case errors.Is(err, config.ErrUnexpectedConfigFile):
+		return "unexpected_config_file"
+	case errors.Is(err, config.ErrWrongFileForKey):
+		return "wrong_file_for_key"
 	case errors.Is(err, config.ErrNoConfigurations):
 		return "no_configurations"
 	case errors.Is(err, config.ErrUnknownConfiguration):

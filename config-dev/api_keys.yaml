@@ -1,5 +1,0 @@
-api_keys:
-  - secret: sk_dev_local_development_only_not_for_production
-    name: "Local dev"
-    configuration: dev
-    enabled: true
