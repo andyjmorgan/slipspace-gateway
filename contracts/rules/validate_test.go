@@ -19,7 +19,7 @@ func TestRuleContract_Validate(t *testing.T) {
 		{
 			name: "valid minimal",
 			rule: rules.RuleContract{
-				ID:        "rule-1",
+				Name:      "rule-1",
 				Priority:  1,
 				Condition: cond,
 				Actions:   []rules.Action{act},
@@ -28,7 +28,7 @@ func TestRuleContract_Validate(t *testing.T) {
 		{
 			name: "valid with continue behavior",
 			rule: rules.RuleContract{
-				ID:        "rule-2",
+				Name:      "rule-2",
 				Condition: cond,
 				Actions:   []rules.Action{act},
 				Behavior:  rules.BehaviorContinue,
@@ -37,36 +37,36 @@ func TestRuleContract_Validate(t *testing.T) {
 		{
 			name: "valid with exit behavior",
 			rule: rules.RuleContract{
-				ID:        "rule-3",
+				Name:      "rule-3",
 				Condition: cond,
 				Actions:   []rules.Action{act},
 				Behavior:  rules.BehaviorExit,
 			},
 		},
 		{
-			name:    "empty id",
+			name:    "empty name",
 			rule:    rules.RuleContract{Condition: cond, Actions: []rules.Action{act}},
-			wantErr: rules.ErrEmptyRuleID,
+			wantErr: rules.ErrEmptyRuleName,
 		},
 		{
 			name:    "no condition",
-			rule:    rules.RuleContract{ID: "x", Actions: []rules.Action{act}},
+			rule:    rules.RuleContract{Name: "x", Actions: []rules.Action{act}},
 			wantErr: rules.ErrNoCondition,
 		},
 		{
 			name:    "no actions",
-			rule:    rules.RuleContract{ID: "x", Condition: cond},
+			rule:    rules.RuleContract{Name: "x", Condition: cond},
 			wantErr: rules.ErrNoActions,
 		},
 		{
 			name:    "empty actions slice",
-			rule:    rules.RuleContract{ID: "x", Condition: cond, Actions: []rules.Action{}},
+			rule:    rules.RuleContract{Name: "x", Condition: cond, Actions: []rules.Action{}},
 			wantErr: rules.ErrNoActions,
 		},
 		{
 			name: "unknown behavior",
 			rule: rules.RuleContract{
-				ID:        "x",
+				Name:      "x",
 				Condition: cond,
 				Actions:   []rules.Action{act},
 				Behavior:  "loop-forever",

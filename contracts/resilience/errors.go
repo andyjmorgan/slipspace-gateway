@@ -28,3 +28,12 @@ var ErrInvalidRetryConfig = errors.New("resilience: invalid retry config")
 
 // ErrEmptyProvider is returned when a ResilienceTarget omits its provider name.
 var ErrEmptyProvider = errors.New("resilience: target provider required")
+
+// ErrEmptyResilienceName is returned when a ResilienceConfig carries no Name.
+// Name is the canonical handle referenced from Configuration.ResilienceName and
+// is required at the schema level.
+var ErrEmptyResilienceName = errors.New("resilience: policy name required")
+
+// ErrInvalidResilienceID is returned when a ResilienceConfig.ID string fails
+// to parse as a UUID during in-memory construction.
+var ErrInvalidResilienceID = errors.New("resilience: policy id not a valid uuid")

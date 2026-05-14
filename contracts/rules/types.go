@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -90,12 +91,14 @@ const (
 // Action in Actions fires in sequence; terminating actions short-circuit the
 // pipeline. Behavior controls whether evaluation continues after this rule.
 type RuleContract struct {
-	// ID is the rule's stable identifier; surfaced in telemetry and used to
-	// reference the rule in logs and reporting events.
-	ID string `yaml:"id" json:"id"`
+	// ID is optional; populated by the control plane when minted via the
+	// management API. Empty in operator-authored static config — the gateway
+	// emits a stable telemetry handle via Name in that case.
+	ID *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 
-	// Name is a human-readable label. Optional; ID is the canonical handle.
-	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Name is required; the human anchor used by logs, dashboards, and
+	// Configuration.RuleNames references.
+	Name string `yaml:"name" json:"name"`
 
 	// Priority orders evaluation. Lower values run first; ties break on the
 	// rule's position in the Configuration.
@@ -116,10 +119,12 @@ type RuleContract struct {
 
 // ruleContractWire mirrors RuleContract with the polymorphic fields held as
 // raw JSON so the polymorphic registries can dispatch on the discriminator.
+// ID arrives as a string so a malformed UUID can be wrapped in ErrInvalidRuleID
+// rather than surfacing as an opaque json-unmarshal error.
 type ruleContractWire struct {
-	ID string `json:"id"`
+	ID *string `json:"id,omitempty"`
 
-	Name string `json:"name,omitempty"`
+	Name string `json:"name"`
 
 	Priority int `json:"priority"`
 
@@ -137,7 +142,13 @@ func (r *RuleContract) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &w); err != nil {
 		return fmt.Errorf("rules: unmarshal rule: %w", err)
 	}
-	r.ID = w.ID
+	if w.ID != nil && *w.ID != "" {
+		parsed, err := uuid.Parse(*w.ID)
+		if err != nil {
+			return fmt.Errorf("rules: rule %q: %w: %w", w.Name, ErrInvalidRuleID, err)
+		}
+		r.ID = &parsed
+	}
 	r.Name = w.Name
 	r.Priority = w.Priority
 	r.Behavior = w.Behavior
@@ -145,7 +156,7 @@ func (r *RuleContract) UnmarshalJSON(data []byte) error {
 	if len(w.Condition) > 0 && !isJSONNull(w.Condition) {
 		cond, err := UnmarshalCondition(w.Condition)
 		if err != nil {
-			return fmt.Errorf("rules: rule %q: condition: %w", w.ID, err)
+			return fmt.Errorf("rules: rule %q: condition: %w", w.Name, err)
 		}
 		r.Condition = cond
 	}
@@ -155,7 +166,7 @@ func (r *RuleContract) UnmarshalJSON(data []byte) error {
 		for i, raw := range w.Actions {
 			act, err := UnmarshalAction(raw)
 			if err != nil {
-				return fmt.Errorf("rules: rule %q: actions[%d]: %w", w.ID, i, err)
+				return fmt.Errorf("rules: rule %q: actions[%d]: %w", w.Name, i, err)
 			}
 			r.Actions[i] = act
 		}
@@ -171,8 +182,8 @@ func (r *RuleContract) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	type scalarAlias struct {
-		ID       string       `yaml:"id"`
-		Name     string       `yaml:"name,omitempty"`
+		ID       string       `yaml:"id,omitempty"`
+		Name     string       `yaml:"name"`
 		Priority int          `yaml:"priority"`
 		Behavior RuleBehavior `yaml:"behavior,omitempty"`
 	}
@@ -180,7 +191,13 @@ func (r *RuleContract) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&s); err != nil {
 		return fmt.Errorf("rules: rule: %w", err)
 	}
-	r.ID = s.ID
+	if s.ID != "" {
+		parsed, err := uuid.Parse(s.ID)
+		if err != nil {
+			return fmt.Errorf("rules: rule %q: %w: %w", s.Name, ErrInvalidRuleID, err)
+		}
+		r.ID = &parsed
+	}
 	r.Name = s.Name
 	r.Priority = s.Priority
 	r.Behavior = s.Behavior
@@ -192,18 +209,18 @@ func (r *RuleContract) UnmarshalYAML(value *yaml.Node) error {
 		case "condition":
 			cond, err := decodeConditionNode(valNode)
 			if err != nil {
-				return fmt.Errorf("rules: rule %q: condition: %w", r.ID, err)
+				return fmt.Errorf("rules: rule %q: condition: %w", r.Name, err)
 			}
 			r.Condition = cond
 		case "actions":
 			if valNode.Kind != yaml.SequenceNode {
-				return fmt.Errorf("rules: rule %q: actions: expected sequence, got %v", r.ID, valNode.Kind)
+				return fmt.Errorf("rules: rule %q: actions: expected sequence, got %v", r.Name, valNode.Kind)
 			}
 			r.Actions = make([]Action, len(valNode.Content))
 			for j, n := range valNode.Content {
 				act, err := decodeActionNode(n)
 				if err != nil {
-					return fmt.Errorf("rules: rule %q: actions[%d]: %w", r.ID, j, err)
+					return fmt.Errorf("rules: rule %q: actions[%d]: %w", r.Name, j, err)
 				}
 				r.Actions[j] = act
 			}

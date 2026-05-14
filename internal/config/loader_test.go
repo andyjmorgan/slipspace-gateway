@@ -680,3 +680,259 @@ gateway:
 		t.Fatalf("want ErrInvalidBind, got %v", err)
 	}
 }
+
+// libraryConfigurations references entries from a top-level rules library
+// and a top-level resilience_policies library by name. The inline `rules:`
+// and `resilience:` fields are intentionally omitted; the
+// TestLoad_LibraryWithInlineCoexistence case proves both forms work side by side.
+const libraryConfigurations = `
+configurations:
+  dev:
+    allowed_endpoints:
+      - openai.chat_completions
+    rule_names:
+      - redact-emails
+      - block-pii
+    resilience_name: high-availability
+`
+
+const libraryPolicy = `
+rules:
+  - name: redact-emails
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: changeProvider
+        newProvider: anthropic
+  - name: block-pii
+    priority: 200
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: returnStatusCode
+        statusCode: 403
+        bodyType: text
+        body: blocked
+
+resilience_policies:
+  - name: high-availability
+    mode: failover
+    timeout_seconds: 30
+    targets:
+      - provider: anthropic
+`
+
+func TestLoad_LibraryHappyPath(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "configurations.yaml", libraryConfigurations)
+	writeFile(t, dir, "policy.yaml", libraryPolicy)
+
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(resolved.Rules) != 2 {
+		t.Fatalf("Rules len = %d", len(resolved.Rules))
+	}
+	if got := resolved.RuleIndex["redact-emails"]; got == nil || got.Name != "redact-emails" {
+		t.Errorf("RuleIndex redact-emails = %+v", got)
+	}
+	if got := resolved.RuleIndex["block-pii"]; got == nil || got.Priority != 200 {
+		t.Errorf("RuleIndex block-pii = %+v", got)
+	}
+	if len(resolved.ResiliencePolicies) != 1 {
+		t.Fatalf("ResiliencePolicies len = %d", len(resolved.ResiliencePolicies))
+	}
+	if got := resolved.ResilienceIndex["high-availability"]; got == nil || got.Mode != "failover" {
+		t.Errorf("ResilienceIndex high-availability = %+v", got)
+	}
+	dev := resolved.Configurations["dev"]
+	if len(dev.RuleNames) != 2 || dev.RuleNames[0] != "redact-emails" {
+		t.Errorf("dev.RuleNames = %v", dev.RuleNames)
+	}
+	if dev.ResilienceName == nil || *dev.ResilienceName != "high-availability" {
+		t.Errorf("dev.ResilienceName = %v", dev.ResilienceName)
+	}
+}
+
+func TestLoad_LibraryUnknownRuleName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints: [openai.chat_completions]
+    rule_names: [ghost]
+`)
+	writeFile(t, dir, "policy.yaml", libraryPolicy)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrUnknownRuleName) {
+		t.Fatalf("want ErrUnknownRuleName, got %v", err)
+	}
+}
+
+func TestLoad_LibraryUnknownResilienceName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints: [openai.chat_completions]
+    resilience_name: ghost
+`)
+	writeFile(t, dir, "policy.yaml", libraryPolicy)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrUnknownResilienceName) {
+		t.Fatalf("want ErrUnknownResilienceName, got %v", err)
+	}
+}
+
+func TestLoad_LibraryDuplicateRuleName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints: [openai.chat_completions]
+`)
+	writeFile(t, dir, "policy.yaml", `
+rules:
+  - name: dup
+    priority: 1
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions: [{type: changeProvider, newProvider: anthropic}]
+  - name: dup
+    priority: 2
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions: [{type: changeProvider, newProvider: anthropic}]
+`)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrDuplicateRuleName) {
+		t.Fatalf("want ErrDuplicateRuleName, got %v", err)
+	}
+}
+
+func TestLoad_LibraryDuplicateRuleID(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints: [openai.chat_completions]
+`)
+	writeFile(t, dir, "policy.yaml", `
+rules:
+  - id: 550e8400-e29b-41d4-a716-446655440000
+    name: a
+    priority: 1
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions: [{type: changeProvider, newProvider: anthropic}]
+  - id: 550e8400-e29b-41d4-a716-446655440000
+    name: b
+    priority: 2
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions: [{type: changeProvider, newProvider: anthropic}]
+`)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrDuplicateRuleID) {
+		t.Fatalf("want ErrDuplicateRuleID, got %v", err)
+	}
+}
+
+func TestLoad_LibraryDuplicateResilienceName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints: [openai.chat_completions]
+`)
+	writeFile(t, dir, "policy.yaml", `
+resilience_policies:
+  - name: dup
+    mode: none
+  - name: dup
+    mode: none
+`)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrDuplicateResilienceName) {
+		t.Fatalf("want ErrDuplicateResilienceName, got %v", err)
+	}
+}
+
+func TestLoad_LibraryDuplicateResilienceID(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints: [openai.chat_completions]
+`)
+	writeFile(t, dir, "policy.yaml", `
+resilience_policies:
+  - id: 550e8400-e29b-41d4-a716-446655440000
+    name: a
+    mode: none
+  - id: 550e8400-e29b-41d4-a716-446655440000
+    name: b
+    mode: none
+`)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrDuplicateResilienceID) {
+		t.Fatalf("want ErrDuplicateResilienceID, got %v", err)
+	}
+}
+
+// TestLoad_LibraryWithInlineCoexistence proves the additive contract of
+// commit 1: a Configuration may carry both legacy inline `rules:`/`resilience:`
+// AND the new library `rule_names:`/`resilience_name:` references at the
+// same time. Commit 2 removes the inline form.
+func TestLoad_LibraryWithInlineCoexistence(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "configurations.yaml", `
+configurations:
+  dev:
+    allowed_endpoints: [openai.chat_completions]
+    rule_names: [redact-emails]
+    resilience_name: high-availability
+    rules:
+      - id: legacy-inline
+        priority: 50
+        actions:
+          - type: redactPattern
+            pattern: "[\\w.]+@[\\w.]+"
+            replacement: "[redacted]"
+        behavior: continue
+    resilience:
+      mode: none
+`)
+	writeFile(t, dir, "policy.yaml", libraryPolicy)
+
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	dev, ok := resolved.Configurations["dev"]
+	if !ok {
+		t.Fatal("missing dev configuration")
+	}
+	if len(dev.Rules) != 1 {
+		t.Errorf("inline Rules len = %d, want 1 (legacy form must coexist)", len(dev.Rules))
+	}
+	if dev.Resilience == nil {
+		t.Error("inline Resilience must coexist with library reference")
+	}
+	if len(dev.RuleNames) != 1 || dev.RuleNames[0] != "redact-emails" {
+		t.Errorf("dev.RuleNames = %v", dev.RuleNames)
+	}
+	if got := resolved.RuleIndex["redact-emails"]; got == nil {
+		t.Error("library RuleIndex must resolve the named reference")
+	}
+}

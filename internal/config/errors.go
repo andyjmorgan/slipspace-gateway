@@ -45,3 +45,30 @@ var ErrInvalidBind = errors.New("config: gateway.http.bind must be host:port")
 
 // ErrParse is returned when a YAML file is malformed.
 var ErrParse = errors.New("config: parse error")
+
+// ErrUnknownRuleName is returned when a Configuration's rule_names entry does
+// not resolve to a rule in the top-level rules library.
+var ErrUnknownRuleName = errors.New("config: configuration references unknown rule name")
+
+// ErrDuplicateRuleName is returned when two entries in the top-level rules
+// library share the same Name. Names are the canonical reference target so
+// duplicates would make resolution ambiguous.
+var ErrDuplicateRuleName = errors.New("config: rule name defined more than once in the rules library")
+
+// ErrDuplicateRuleID is returned when two entries in the top-level rules
+// library share the same ID. Only entries with non-nil ID are compared —
+// nil ID is the default in operator-authored static config.
+var ErrDuplicateRuleID = errors.New("config: rule id defined more than once in the rules library")
+
+// ErrUnknownResilienceName is returned when a Configuration's resilience_name
+// does not resolve to a policy in the top-level resilience_policies library.
+var ErrUnknownResilienceName = errors.New("config: configuration references unknown resilience policy")
+
+// ErrDuplicateResilienceName is returned when two entries in the top-level
+// resilience_policies library share the same Name.
+var ErrDuplicateResilienceName = errors.New("config: resilience policy name defined more than once")
+
+// ErrDuplicateResilienceID is returned when two entries in the top-level
+// resilience_policies library share the same ID. Only entries with non-nil
+// ID are compared.
+var ErrDuplicateResilienceID = errors.New("config: resilience policy id defined more than once")

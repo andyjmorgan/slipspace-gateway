@@ -16,20 +16,26 @@ import (
 	"gopkg.in/yaml.v3"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
 
 const (
-	keyGateway        = "gateway"
-	keyProviders      = "providers"
-	keyConfigurations = "configurations"
-	keyAPIKeys        = "api_keys"
+	keyGateway            = "gateway"
+	keyProviders          = "providers"
+	keyConfigurations     = "configurations"
+	keyAPIKeys            = "api_keys"
+	keyRules              = "rules"
+	keyResiliencePolicies = "resilience_policies"
 )
 
 var knownTopLevelKeys = map[string]struct{}{
-	keyGateway:        {},
-	keyProviders:      {},
-	keyConfigurations: {},
-	keyAPIKeys:        {},
+	keyGateway:            {},
+	keyProviders:          {},
+	keyConfigurations:     {},
+	keyAPIKeys:            {},
+	keyRules:              {},
+	keyResiliencePolicies: {},
 }
 
 // Load reads the YAML configuration directory at dir and returns the merged,
@@ -188,6 +194,16 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 			return nil, fmt.Errorf("config: decode api_keys: %w: %w", ErrParse, err)
 		}
 	}
+	if node, ok := merged.nodes[keyRules]; ok {
+		if err := node.Decode(&out.Rules); err != nil {
+			return nil, fmt.Errorf("config: decode rules: %w: %w", ErrParse, err)
+		}
+	}
+	if node, ok := merged.nodes[keyResiliencePolicies]; ok {
+		if err := node.Decode(&out.ResiliencePolicies); err != nil {
+			return nil, fmt.Errorf("config: decode resilience_policies: %w: %w", ErrParse, err)
+		}
+	}
 	return out, nil
 }
 
@@ -228,6 +244,10 @@ func (r *ResolvedConfig) Validate() error {
 				)
 			}
 		}
+	}
+
+	if err := r.validateLibraries(); err != nil {
+		return err
 	}
 
 	for i, key := range r.APIKeys {
@@ -325,6 +345,82 @@ func (r *ResolvedConfig) buildIndexes() {
 			}
 		}
 	}
+
+	r.RuleIndex = make(map[string]*rulescontract.RuleContract, len(r.Rules))
+	for i := range r.Rules {
+		rule := &r.Rules[i]
+		r.RuleIndex[rule.Name] = rule
+	}
+
+	r.ResilienceIndex = make(map[string]*resilience.ResilienceConfig, len(r.ResiliencePolicies))
+	for i := range r.ResiliencePolicies {
+		pol := &r.ResiliencePolicies[i]
+		r.ResilienceIndex[pol.Name] = pol
+	}
+}
+
+// validateLibraries enforces uniqueness within the top-level rules and
+// resilience_policies libraries, runs each entry's own Validate, and confirms
+// every Configuration reference resolves to a library entry.
+//
+// The library checks live here (rather than inline in Validate) because they
+// pivot on cross-block invariants: uniqueness within the library plus
+// reference integrity from Configurations. Splitting them out keeps the main
+// Validate readable.
+func (r *ResolvedConfig) validateLibraries() error {
+	ruleNames := make(map[string]int, len(r.Rules))
+	ruleIDs := make(map[string]int)
+	for i := range r.Rules {
+		rule := &r.Rules[i]
+		if prev, dup := ruleNames[rule.Name]; dup {
+			return fmt.Errorf("config: rules[%d] and rules[%d] name=%q: %w", prev, i, rule.Name, ErrDuplicateRuleName)
+		}
+		ruleNames[rule.Name] = i
+		if rule.ID != nil {
+			id := rule.ID.String()
+			if prev, dup := ruleIDs[id]; dup {
+				return fmt.Errorf("config: rules[%d] and rules[%d] id=%s: %w", prev, i, id, ErrDuplicateRuleID)
+			}
+			ruleIDs[id] = i
+		}
+		if err := rule.Validate(); err != nil {
+			return fmt.Errorf("config: rules[%d]: %w", i, err)
+		}
+	}
+
+	policyNames := make(map[string]int, len(r.ResiliencePolicies))
+	policyIDs := make(map[string]int)
+	for i := range r.ResiliencePolicies {
+		pol := &r.ResiliencePolicies[i]
+		if prev, dup := policyNames[pol.Name]; dup {
+			return fmt.Errorf("config: resilience_policies[%d] and resilience_policies[%d] name=%q: %w", prev, i, pol.Name, ErrDuplicateResilienceName)
+		}
+		policyNames[pol.Name] = i
+		if pol.ID != nil {
+			id := pol.ID.String()
+			if prev, dup := policyIDs[id]; dup {
+				return fmt.Errorf("config: resilience_policies[%d] and resilience_policies[%d] id=%s: %w", prev, i, id, ErrDuplicateResilienceID)
+			}
+			policyIDs[id] = i
+		}
+		if err := pol.Validate(); err != nil {
+			return fmt.Errorf("config: resilience_policies[%d]: %w", i, err)
+		}
+	}
+
+	for name, cfg := range r.Configurations {
+		for _, ruleName := range cfg.RuleNames {
+			if _, ok := ruleNames[ruleName]; !ok {
+				return fmt.Errorf("config: configuration %q rule_names %q: %w", name, ruleName, ErrUnknownRuleName)
+			}
+		}
+		if cfg.ResilienceName != nil {
+			if _, ok := policyNames[*cfg.ResilienceName]; !ok {
+				return fmt.Errorf("config: configuration %q resilience_name %q: %w", name, *cfg.ResilienceName, ErrUnknownResilienceName)
+			}
+		}
+	}
+	return nil
 }
 
 func splitProviderEndpoint(s string) (string, string, error) {

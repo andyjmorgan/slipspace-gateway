@@ -4,6 +4,8 @@ package config
 
 import (
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
 
 // ResolvedConfig is the merged, validated, indexed runtime view of the
@@ -24,14 +26,26 @@ type ResolvedConfig struct {
 	Providers contractsconfig.ProvidersConfig
 
 	// Configurations is the `configurations` block keyed by configuration
-	// name. Each entry bundles allowed_endpoints, rules, resilience, and
-	// upstream credentials.
+	// name. Each entry bundles allowed_endpoints, rule references, resilience
+	// references, and upstream credentials.
 	Configurations contractsconfig.ConfigurationsConfig
 
 	// APIKeys is the `api_keys` block as authored — a flat slice, kept in
 	// authoring order. Lookups use SecretIndex; this slice exists for
 	// enumeration (admin listing, audit).
 	APIKeys contractsconfig.APIKeysConfig
+
+	// Rules is the top-level `rules:` library — every rule definition
+	// available for Configurations to reference by name. Distinct from the
+	// per-Configuration inline `Rules` field, which is the legacy form being
+	// retired across the three-plane refactor.
+	Rules []rulescontract.RuleContract
+
+	// ResiliencePolicies is the top-level `resilience_policies:` library —
+	// every named resilience policy available for Configurations to reference.
+	// Distinct from the per-Configuration inline `Resilience` field being
+	// retired across the three-plane refactor.
+	ResiliencePolicies []resilience.ResilienceConfig
 
 	// SecretIndex maps an API-key secret string to the owning APIKey entry
 	// in APIKeys. Pointers reference the entries in place — the slice's
@@ -49,6 +63,17 @@ type ResolvedConfig struct {
 	// it. Populated by Validate after route emission; routing middleware
 	// reads this on every request.
 	RouteIndex map[string]Route
+
+	// RuleIndex maps rule name to a pointer into Rules so middleware can
+	// resolve a Configuration's RuleNames reference with a single map read.
+	// Distinct from the legacy per-Configuration inline rules, which are
+	// kept on Configuration.Rules until commit 2 removes them.
+	RuleIndex map[string]*rulescontract.RuleContract
+
+	// ResilienceIndex maps resilience policy name to a pointer into
+	// ResiliencePolicies. Same separation as RuleIndex versus the legacy
+	// per-Configuration inline resilience.
+	ResilienceIndex map[string]*resilience.ResilienceConfig
 }
 
 // Route names the (provider, endpoint) pair that owns an accepted_paths entry

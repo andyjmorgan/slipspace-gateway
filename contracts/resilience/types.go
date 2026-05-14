@@ -3,6 +3,8 @@
 // to v1.1; see the "Resilience Schema + Engine" design note for the long-form.
 package resilience
 
+import "github.com/google/uuid"
+
 // ResilienceMode selects which orchestration strategy applies to a Configuration.
 type ResilienceMode string
 
@@ -34,6 +36,15 @@ const (
 // ResilienceConfig is the resilience policy attached to a Configuration.
 // Mode determines which strategy is active; the relevant sub-config must be set.
 type ResilienceConfig struct {
+	// Name is required; the human anchor used by logs, dashboards, and
+	// Configuration.ResilienceName references.
+	Name string `yaml:"name" json:"name"`
+
+	// ID is optional; populated by the control plane when minted via the
+	// management API. Empty in operator-authored static config — the gateway
+	// emits a stable telemetry handle via Name in that case.
+	ID *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
+
 	// Mode selects the orchestration strategy. See the ModeX constants.
 	Mode ResilienceMode `yaml:"mode" json:"mode"`
 

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 )
 
@@ -17,35 +19,50 @@ func TestResilienceConfig_Validate(t *testing.T) {
 	}{
 		{
 			name: "mode none ok",
-			cfg:  resilience.ResilienceConfig{Mode: resilience.ModeNone},
+			cfg:  resilience.ResilienceConfig{Name: "p", Mode: resilience.ModeNone},
 		},
 		{
 			name: "empty mode treated as none",
-			cfg:  resilience.ResilienceConfig{},
+			cfg:  resilience.ResilienceConfig{Name: "p"},
+		},
+		{
+			name:    "empty name",
+			cfg:     resilience.ResilienceConfig{Mode: resilience.ModeNone},
+			wantErr: resilience.ErrEmptyResilienceName,
+		},
+		{
+			name: "zero uuid id",
+			cfg: resilience.ResilienceConfig{
+				Name: "p",
+				ID:   new(uuid.UUID),
+				Mode: resilience.ModeNone,
+			},
+			wantErr: resilience.ErrInvalidResilienceID,
 		},
 		{
 			name:    "unknown mode",
-			cfg:     resilience.ResilienceConfig{Mode: "moon-orbit"},
+			cfg:     resilience.ResilienceConfig{Name: "p", Mode: "moon-orbit"},
 			wantErr: resilience.ErrUnknownMode,
 		},
 		{
 			name:    "failover without targets",
-			cfg:     resilience.ResilienceConfig{Mode: resilience.ModeFailover},
+			cfg:     resilience.ResilienceConfig{Name: "p", Mode: resilience.ModeFailover},
 			wantErr: resilience.ErrTargetsRequired,
 		},
 		{
 			name:    "load_balance without targets",
-			cfg:     resilience.ResilienceConfig{Mode: resilience.ModeLoadBalance},
+			cfg:     resilience.ResilienceConfig{Name: "p", Mode: resilience.ModeLoadBalance},
 			wantErr: resilience.ErrTargetsRequired,
 		},
 		{
 			name:    "load_balance_with_failover without targets",
-			cfg:     resilience.ResilienceConfig{Mode: resilience.ModeLoadBalanceWithFailover},
+			cfg:     resilience.ResilienceConfig{Name: "p", Mode: resilience.ModeLoadBalanceWithFailover},
 			wantErr: resilience.ErrTargetsRequired,
 		},
 		{
 			name: "failover with one target",
 			cfg: resilience.ResilienceConfig{
+				Name:    "p",
 				Mode:    resilience.ModeFailover,
 				Targets: []resilience.ResilienceTarget{validTarget},
 			},
@@ -53,6 +70,7 @@ func TestResilienceConfig_Validate(t *testing.T) {
 		{
 			name: "negative top-level timeout",
 			cfg: resilience.ResilienceConfig{
+				Name:           "p",
 				Mode:           resilience.ModeNone,
 				TimeoutSeconds: -1,
 			},
@@ -61,6 +79,7 @@ func TestResilienceConfig_Validate(t *testing.T) {
 		{
 			name: "invalid circuit breaker",
 			cfg: resilience.ResilienceConfig{
+				Name: "p",
 				Mode: resilience.ModeNone,
 				CircuitBreaker: &resilience.CircuitBreakerConfig{
 					FailureRateThreshold: 2,
@@ -71,6 +90,7 @@ func TestResilienceConfig_Validate(t *testing.T) {
 		{
 			name: "valid circuit breaker",
 			cfg: resilience.ResilienceConfig{
+				Name: "p",
 				Mode: resilience.ModeNone,
 				CircuitBreaker: &resilience.CircuitBreakerConfig{
 					Enabled:                  true,
@@ -86,6 +106,7 @@ func TestResilienceConfig_Validate(t *testing.T) {
 		{
 			name: "invalid retry",
 			cfg: resilience.ResilienceConfig{
+				Name:  "p",
 				Mode:  resilience.ModeNone,
 				Retry: &resilience.RetryConfig{Enabled: true, MaxAttempts: 0},
 			},
@@ -94,6 +115,7 @@ func TestResilienceConfig_Validate(t *testing.T) {
 		{
 			name: "valid retry",
 			cfg: resilience.ResilienceConfig{
+				Name: "p",
 				Mode: resilience.ModeNone,
 				Retry: &resilience.RetryConfig{
 					Enabled:           true,
@@ -108,6 +130,7 @@ func TestResilienceConfig_Validate(t *testing.T) {
 		{
 			name: "invalid nested target",
 			cfg: resilience.ResilienceConfig{
+				Name: "p",
 				Mode: resilience.ModeFailover,
 				Targets: []resilience.ResilienceTarget{
 					{Provider: ""},

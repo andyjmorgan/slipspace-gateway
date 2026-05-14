@@ -2,6 +2,7 @@ package rules_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -10,8 +11,8 @@ import (
 )
 
 const sampleYAML = `
-id: route-gpt-4-to-anthropic
-name: Route GPT-4 to Anthropic
+id: 550e8400-e29b-41d4-a716-446655440000
+name: route-gpt-4-to-anthropic
 priority: 10
 behavior: exit
 condition:
@@ -48,8 +49,11 @@ func TestRuleContract_YAMLRoundTrip(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(sampleYAML), &r); err != nil {
 		t.Fatalf("yaml unmarshal: %v", err)
 	}
-	if r.ID != "route-gpt-4-to-anthropic" {
-		t.Errorf("ID = %q", r.ID)
+	if r.ID == nil || r.ID.String() != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("ID = %v", r.ID)
+	}
+	if r.Name != "route-gpt-4-to-anthropic" {
+		t.Errorf("Name = %q", r.Name)
 	}
 	if r.Priority != 10 {
 		t.Errorf("Priority = %d", r.Priority)
@@ -98,7 +102,7 @@ func TestRuleContract_YAMLRoundTrip(t *testing.T) {
 
 func TestRuleContract_YAML_UnknownConditionAndAction_FallBack(t *testing.T) {
 	src := `
-id: unknown-stuff
+name: unknown-stuff
 priority: 1
 condition:
   type: futureCondition
@@ -132,7 +136,7 @@ actions:
 
 func TestRuleContract_JSONRoundTrip(t *testing.T) {
 	src := `{
-        "id": "rule-json",
+        "name": "rule-json",
         "priority": 5,
         "behavior": "continue",
         "condition": {"type":"provider","operator":"Equals","expected_provider":"openai"},
@@ -144,7 +148,7 @@ func TestRuleContract_JSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal([]byte(src), &r); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
-	if r.ID != "rule-json" || r.Priority != 5 || r.Behavior != rules.BehaviorContinue {
+	if r.Name != "rule-json" || r.Priority != 5 || r.Behavior != rules.BehaviorContinue {
 		t.Errorf("top fields: %+v", r)
 	}
 	if _, ok := r.Condition.(*rules.ProviderCondition); !ok {
@@ -156,7 +160,7 @@ func TestRuleContract_JSONRoundTrip(t *testing.T) {
 }
 
 func TestRuleContract_JSON_NullCondition_OK(t *testing.T) {
-	src := `{"id":"x","priority":1,"condition":null,"actions":[]}`
+	src := `{"name":"x","priority":1,"condition":null,"actions":[]}`
 	var r rules.RuleContract
 	if err := json.Unmarshal([]byte(src), &r); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -167,7 +171,7 @@ func TestRuleContract_JSON_NullCondition_OK(t *testing.T) {
 }
 
 func TestRuleContract_JSON_BadCondition(t *testing.T) {
-	src := `{"id":"x","priority":1,"condition":{"operator":"Equals"},"actions":[]}`
+	src := `{"name":"x","priority":1,"condition":{"operator":"Equals"},"actions":[]}`
 	var r rules.RuleContract
 	if err := json.Unmarshal([]byte(src), &r); err == nil {
 		t.Fatalf("expected error")
@@ -175,7 +179,7 @@ func TestRuleContract_JSON_BadCondition(t *testing.T) {
 }
 
 func TestRuleContract_JSON_BadAction(t *testing.T) {
-	src := `{"id":"x","priority":1,"condition":{"type":"provider","operator":"Equals","expected_provider":"openai"},"actions":[{"oops":1}]}`
+	src := `{"name":"x","priority":1,"condition":{"type":"provider","operator":"Equals","expected_provider":"openai"},"actions":[{"oops":1}]}`
 	var r rules.RuleContract
 	if err := json.Unmarshal([]byte(src), &r); err == nil {
 		t.Fatalf("expected error")
@@ -198,7 +202,7 @@ func TestRuleContract_YAML_NonMapping(t *testing.T) {
 
 func TestRuleContract_YAML_BadActionsShape(t *testing.T) {
 	src := `
-id: x
+name: x
 priority: 1
 condition:
   type: provider
@@ -214,7 +218,7 @@ actions: not-a-list
 
 func TestRuleContract_YAML_BadConditionType(t *testing.T) {
 	src := `
-id: x
+name: x
 priority: 1
 condition: "not-a-mapping"
 actions:
@@ -229,7 +233,7 @@ actions:
 
 func TestRuleContract_YAML_BadActionEntry(t *testing.T) {
 	src := `
-id: x
+name: x
 priority: 1
 condition:
   type: provider
@@ -246,7 +250,7 @@ actions:
 
 func TestRuleContract_YAML_GroupBadChildren(t *testing.T) {
 	src := `
-id: x
+name: x
 priority: 1
 condition:
   type: group
@@ -264,7 +268,7 @@ actions:
 
 func TestRuleContract_YAML_GroupBadChildEntry(t *testing.T) {
 	src := `
-id: x
+name: x
 priority: 1
 condition:
   type: group
@@ -278,6 +282,84 @@ actions:
 	var r rules.RuleContract
 	if err := yaml.Unmarshal([]byte(src), &r); err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+// TestRuleContract_YAML_ID_AbsentLeavesNil confirms a rule with no `id` field
+// unmarshals to a nil ID — the static-config default.
+func TestRuleContract_YAML_ID_AbsentLeavesNil(t *testing.T) {
+	src := `
+name: r
+priority: 1
+condition:
+  type: provider
+  operator: Equals
+  expectedProvider: openai
+actions:
+  - type: changeProvider
+    newProvider: anthropic
+`
+	var r rules.RuleContract
+	if err := yaml.Unmarshal([]byte(src), &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if r.ID != nil {
+		t.Errorf("expected nil ID, got %v", r.ID)
+	}
+	if r.Name != "r" {
+		t.Errorf("Name = %q", r.Name)
+	}
+}
+
+// TestRuleContract_YAML_BadUUID confirms a malformed UUID is wrapped in
+// ErrInvalidRuleID rather than surfacing as an opaque parse error.
+func TestRuleContract_YAML_BadUUID(t *testing.T) {
+	src := `
+id: not-a-uuid
+name: r
+priority: 1
+condition:
+  type: provider
+  operator: Equals
+  expectedProvider: openai
+actions:
+  - type: changeProvider
+    newProvider: anthropic
+`
+	var r rules.RuleContract
+	err := yaml.Unmarshal([]byte(src), &r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, rules.ErrInvalidRuleID) {
+		t.Errorf("error chain: got %v, want ErrInvalidRuleID", err)
+	}
+}
+
+// TestRuleContract_JSON_BadUUID confirms the JSON path also wraps malformed
+// UUIDs in ErrInvalidRuleID.
+func TestRuleContract_JSON_BadUUID(t *testing.T) {
+	src := `{"id":"not-a-uuid","name":"r","priority":1,"condition":{"type":"provider","operator":"Equals","expected_provider":"openai"},"actions":[{"type":"changeProvider","new_provider":"anthropic"}]}`
+	var r rules.RuleContract
+	err := json.Unmarshal([]byte(src), &r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, rules.ErrInvalidRuleID) {
+		t.Errorf("error chain: got %v, want ErrInvalidRuleID", err)
+	}
+}
+
+// TestRuleContract_JSON_ValidUUID confirms a well-formed UUID round-trips
+// through the wire string and lands on the typed *uuid.UUID field.
+func TestRuleContract_JSON_ValidUUID(t *testing.T) {
+	src := `{"id":"550e8400-e29b-41d4-a716-446655440000","name":"r","priority":1,"condition":{"type":"provider","operator":"Equals","expected_provider":"openai"},"actions":[{"type":"changeProvider","new_provider":"anthropic"}]}`
+	var r rules.RuleContract
+	if err := json.Unmarshal([]byte(src), &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if r.ID == nil || r.ID.String() != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("ID = %v", r.ID)
 	}
 }
 

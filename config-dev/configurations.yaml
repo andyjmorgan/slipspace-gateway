@@ -14,5 +14,10 @@ configurations:
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
 
+    rule_names:
+      - redact-emails
+
+    resilience_name: high-availability
+
     tags:
       tier: dev

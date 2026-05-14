@@ -33,7 +33,7 @@ func TestRuleGroup_Marshal_WithExtra(t *testing.T) {
 // TestRuleGroup_UnmarshalYAML_NotMapping covers the non-mapping error branch.
 func TestRuleGroup_UnmarshalYAML_NotMapping(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition: "not-a-mapping-for-group-either"
 actions:
@@ -50,7 +50,7 @@ actions:
 // branch by feeding a non-string scalar where a string is expected.
 func TestRuleGroup_UnmarshalYAML_BadAliasDecode(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition:
   type: group
@@ -71,7 +71,7 @@ actions:
 // peekYAMLDiscriminator missing-field path.
 func TestDecodeConditionNode_MissingDiscriminator(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition:
   operator: Equals
@@ -89,7 +89,7 @@ actions:
 // discriminator branch of peekYAMLDiscriminator.
 func TestDecodeConditionNode_NonScalarDiscriminator(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition:
   type: [a, b]
@@ -108,7 +108,7 @@ actions:
 // decodeActionNode.
 func TestDecodeActionNode_NonMapping(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition:
   type: provider
@@ -126,7 +126,7 @@ actions:
 // TestDecodeActionNode_MissingDiscriminator covers the missing-type branch.
 func TestDecodeActionNode_MissingDiscriminator(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition:
   type: provider
@@ -146,7 +146,7 @@ actions:
 // decode error inside the typed factory path.
 func TestDecodeActionNode_BadFactoryDecode(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition:
   type: provider
@@ -166,7 +166,7 @@ actions:
 // typed condition factory.
 func TestDecodeConditionNode_BadFactoryDecode(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition:
   type: modelName
@@ -195,7 +195,7 @@ func TestRuleContract_UnmarshalJSON_MalformedTop(t *testing.T) {
 // decode failure by providing a non-int priority.
 func TestRuleContract_UnmarshalYAML_BadScalarAlias(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: "not-an-int"
 condition:
   type: provider
@@ -216,7 +216,7 @@ actions:
 // we exercise this path indirectly via unknown-condition with a nested map.
 func TestDecodeUnknownYAMLNode_NestedMap(t *testing.T) {
 	src := `
-id: r
+name: r
 priority: 1
 condition:
   type: futureCondition

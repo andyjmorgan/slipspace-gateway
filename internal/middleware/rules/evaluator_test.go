@@ -12,7 +12,7 @@ import (
 func TestEvaluator_NoOp_AlwaysPassthrough(t *testing.T) {
 	configured := []contractsrules.RuleContract{
 		{
-			ID:        "rule-1",
+			Name:      "rule-1",
 			Priority:  1,
 			Condition: &contractsrules.ProviderCondition{Type: "provider", Operator: contractsrules.EnumEquals, ExpectedProvider: "openai"},
 			Actions: []contractsrules.Action{
@@ -71,12 +71,12 @@ func TestEvaluator_NoOp_NoRules(t *testing.T) {
 
 func TestEvaluator_Rules_Accessor(t *testing.T) {
 	configured := []contractsrules.RuleContract{
-		{ID: "a"},
-		{ID: "b"},
+		{Name: "a"},
+		{Name: "b"},
 	}
 	e := rules.NewEvaluator(configured)
 	got := e.Rules()
-	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" {
 		t.Errorf("Rules() = %+v", got)
 	}
 }

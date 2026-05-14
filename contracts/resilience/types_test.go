@@ -10,6 +10,7 @@ import (
 )
 
 const sampleYAML = `
+name: lb-with-failover
 mode: load_balance_with_failover
 timeout_seconds: 30
 targets:
@@ -93,6 +94,56 @@ func TestResilienceConfig_YAMLRoundTrip(t *testing.T) {
 	}
 	if back.Mode != cfg.Mode || len(back.Targets) != len(cfg.Targets) {
 		t.Errorf("round-trip diverged: %+v", back)
+	}
+}
+
+// TestResilienceConfig_YAML_ID_AbsentLeavesNil confirms a policy with no `id`
+// field unmarshals to a nil ID — the static-config default.
+func TestResilienceConfig_YAML_ID_AbsentLeavesNil(t *testing.T) {
+	src := `
+name: p
+mode: none
+`
+	var cfg resilience.ResilienceConfig
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.ID != nil {
+		t.Errorf("expected nil ID, got %v", cfg.ID)
+	}
+	if cfg.Name != "p" {
+		t.Errorf("Name = %q", cfg.Name)
+	}
+}
+
+// TestResilienceConfig_YAML_BadUUID confirms yaml.v3's TextUnmarshaler path
+// rejects a malformed UUID string in the id field.
+func TestResilienceConfig_YAML_BadUUID(t *testing.T) {
+	src := `
+id: not-a-uuid
+name: p
+mode: none
+`
+	var cfg resilience.ResilienceConfig
+	if err := yaml.Unmarshal([]byte(src), &cfg); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// TestResilienceConfig_YAML_ValidUUID confirms a well-formed UUID round-trips
+// through the wire and lands on the typed *uuid.UUID field.
+func TestResilienceConfig_YAML_ValidUUID(t *testing.T) {
+	src := `
+id: 550e8400-e29b-41d4-a716-446655440000
+name: p
+mode: none
+`
+	var cfg resilience.ResilienceConfig
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.ID == nil || cfg.ID.String() != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("ID = %v", cfg.ID)
 	}
 }
 

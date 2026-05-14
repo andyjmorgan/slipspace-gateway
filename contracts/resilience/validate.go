@@ -1,10 +1,23 @@
 package resilience
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/google/uuid"
+)
 
 // Validate enforces mode-specific invariants on a ResilienceConfig. An empty
-// Mode is treated as ModeNone downstream and validates as such.
+// Mode is treated as ModeNone downstream and validates as such. Name is
+// required at the schema level; ID is nullable but must not be the zero UUID
+// when set (a defensive check for in-memory construction paths — the YAML and
+// JSON unmarshal paths already reject malformed UUID strings).
 func (c *ResilienceConfig) Validate() error {
+	if c.Name == "" {
+		return ErrEmptyResilienceName
+	}
+	if c.ID != nil && *c.ID == uuid.Nil {
+		return fmt.Errorf("resilience policy %q: %w", c.Name, ErrInvalidResilienceID)
+	}
 	switch c.Mode {
 	case ModeNone, "":
 	case ModeFailover, ModeLoadBalance, ModeLoadBalanceWithFailover:
