@@ -7,7 +7,8 @@ type APIKeysConfig []APIKey
 // APIKey is a single gateway-issued credential.
 type APIKey struct {
 	// Secret is the bearer token clients present (conventionally prefixed
-	// "ak_live_…"). Authentication compares this in constant time.
+	// "sk_live_…" for production keys or "sk_dev_…" for development keys).
+	// Authentication compares this in constant time.
 	Secret string `yaml:"secret" json:"secret"`
 
 	// Name is a human-readable label surfaced in logs and reporting events;
