@@ -116,17 +116,13 @@ def _docker_nats() -> Iterator[str | None]:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
 
-def _materialize_config(target_dir: Path, mockllm_host: str, nats_host: str | None) -> None:
+def _materialize_config(target_dir: Path, mockllm_host: str) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
     for entry in CONFIG_DEV.iterdir():
         if entry.suffix not in (".yaml", ".yml"):
             continue
         raw = entry.read_text()
         raw = raw.replace("mockllm:5555", mockllm_host)
-        if nats_host is not None:
-            raw = raw.replace("nats:4222", nats_host)
-        else:
-            raw = raw.replace("enabled: true", "enabled: false")
         (target_dir / entry.name).write_text(raw)
 
 
@@ -156,28 +152,25 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
     with _docker_nats() as nats_url:
         config_dir = tmp_path_factory.mktemp("sluice-config")
         mockllm_host = f"127.0.0.1:{mockllm_port}"
-        nats_host = nats_url.removeprefix("nats://") if nats_url else None
-        _materialize_config(config_dir, mockllm_host, nats_host)
+        _materialize_config(config_dir, mockllm_host)
 
-        gateway_yaml = config_dir / "gateway.yaml"
-        contents = gateway_yaml.read_text().replace(
-            "bind: 0.0.0.0:8585", f"bind: 127.0.0.1:{gateway_port}"
-        )
-        contents = contents.replace(
-            "bind: 0.0.0.0:9090", f"bind: 127.0.0.1:{_free_port()}"
-        )
-        gateway_yaml.write_text(contents)
+        prom_port = _free_port()
+        gateway_env = {
+            **os.environ,
+            "SLUICE_CONFIG_DIR": str(config_dir),
+            "SLUICE_HTTP_BIND": f"127.0.0.1:{gateway_port}",
+            "SLUICE_PROMETHEUS_BIND": f"127.0.0.1:{prom_port}",
+            "SLUICE_LOG_LEVEL": "warn",
+        }
+        if nats_url:
+            gateway_env["SLUICE_NATS_URL"] = nats_url
 
         gateway_proc = subprocess.Popen(
             [str(GATEWAY_BIN)],
             cwd=REPO_ROOT,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env={
-                **os.environ,
-                "SLUICE_CONFIG_DIR": str(config_dir),
-                "LOG_LEVEL": "warn",
-            },
+            env=gateway_env,
         )
 
         gateway_url = f"http://127.0.0.1:{gateway_port}"

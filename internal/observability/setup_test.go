@@ -9,7 +9,6 @@ import (
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -20,8 +19,9 @@ func build() observability.BuildInfo {
 func TestSetup_NeitherExporterInstallsNoopProvider(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		Logging: config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		LogFormat: "json",
+		LogLevel:  "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -46,9 +46,10 @@ func TestSetup_NeitherExporterInstallsNoopProvider(t *testing.T) {
 func TestSetup_PrometheusOnly(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		Prometheus: config.PrometheusConfig{Enabled: true, Bind: "0.0.0.0:9090"},
-		Logging:    config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		PrometheusBind: "0.0.0.0:9090",
+		LogFormat:      "json",
+		LogLevel:       "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -82,13 +83,11 @@ func TestSetup_PrometheusOnly(t *testing.T) {
 func TestSetup_OTLPOnlyGRPC(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		OTLP: config.OTLPConfig{
-			Enabled:  true,
-			Endpoint: "127.0.0.1:14317",
-			Protocol: "grpc",
-		},
-		Logging: config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		OTLPEndpoint: "127.0.0.1:14317",
+		OTLPProtocol: "grpc",
+		LogFormat:    "json",
+		LogLevel:     "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -106,13 +105,11 @@ func TestSetup_OTLPOnlyGRPC(t *testing.T) {
 func TestSetup_OTLPHTTPProtocol(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		OTLP: config.OTLPConfig{
-			Enabled:  true,
-			Endpoint: "127.0.0.1:14318",
-			Protocol: "http/protobuf",
-		},
-		Logging: config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		OTLPEndpoint: "127.0.0.1:14318",
+		OTLPProtocol: "http/protobuf",
+		LogFormat:    "json",
+		LogLevel:     "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -123,9 +120,10 @@ func TestSetup_OTLPHTTPProtocol(t *testing.T) {
 func TestSetup_OTLPDefaultsToGRPC(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		OTLP:    config.OTLPConfig{Enabled: true, Endpoint: "127.0.0.1:14317"},
-		Logging: config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		OTLPEndpoint: "127.0.0.1:14317",
+		LogFormat:    "json",
+		LogLevel:     "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -136,9 +134,11 @@ func TestSetup_OTLPDefaultsToGRPC(t *testing.T) {
 func TestSetup_OTLPUnknownProtocolFails(t *testing.T) {
 	t.Parallel()
 
-	_, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		OTLP:    config.OTLPConfig{Enabled: true, Protocol: "thrift"},
-		Logging: config.LoggingConfig{Format: "json", Level: "info"},
+	_, err := observability.Setup(context.Background(), observability.Config{
+		OTLPEndpoint: "127.0.0.1:14317",
+		OTLPProtocol: "thrift",
+		LogFormat:    "json",
+		LogLevel:     "info",
 	}, build())
 	if err == nil {
 		t.Fatalf("expected error for unsupported OTLP protocol")
@@ -148,14 +148,12 @@ func TestSetup_OTLPUnknownProtocolFails(t *testing.T) {
 func TestSetup_BothExportersCoexist(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		Prometheus: config.PrometheusConfig{Enabled: true},
-		OTLP: config.OTLPConfig{
-			Enabled:  true,
-			Endpoint: "127.0.0.1:14317",
-			Protocol: "grpc",
-		},
-		Logging: config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		PrometheusBind: "0.0.0.0:9090",
+		OTLPEndpoint:   "127.0.0.1:14317",
+		OTLPProtocol:   "grpc",
+		LogFormat:      "json",
+		LogLevel:       "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -170,8 +168,9 @@ func TestSetup_BothExportersCoexist(t *testing.T) {
 func TestSetup_LoggingErrorPropagates(t *testing.T) {
 	t.Parallel()
 
-	_, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		Logging: config.LoggingConfig{Format: "json", Level: "shouty"},
+	_, err := observability.Setup(context.Background(), observability.Config{
+		LogFormat: "json",
+		LogLevel:  "shouty",
 	}, build())
 	if err == nil {
 		t.Fatalf("expected error from bad log level")
@@ -181,9 +180,10 @@ func TestSetup_LoggingErrorPropagates(t *testing.T) {
 func TestSetup_DeploymentEnvironmentAttribute(t *testing.T) {
 	t.Setenv(observability.EnvDeploymentEnvironment, "staging")
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		Prometheus: config.PrometheusConfig{Enabled: true},
-		Logging:    config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		PrometheusBind: "0.0.0.0:9090",
+		LogFormat:      "json",
+		LogLevel:       "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -194,9 +194,10 @@ func TestSetup_DeploymentEnvironmentAttribute(t *testing.T) {
 func TestProvider_ShutdownIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		Prometheus: config.PrometheusConfig{Enabled: true},
-		Logging:    config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		PrometheusBind: "0.0.0.0:9090",
+		LogFormat:      "json",
+		LogLevel:       "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -218,13 +219,11 @@ func TestProvider_ShutdownIsIdempotent(t *testing.T) {
 func TestProvider_ShutdownCachesResult(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		OTLP: config.OTLPConfig{
-			Enabled:  true,
-			Endpoint: "127.0.0.1:14317",
-			Protocol: "grpc",
-		},
-		Logging: config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		OTLPEndpoint: "127.0.0.1:14317",
+		OTLPProtocol: "grpc",
+		LogFormat:    "json",
+		LogLevel:     "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -246,8 +245,9 @@ func TestProvider_ShutdownCachesResult(t *testing.T) {
 func TestProvider_NoopShutdownIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	prov, err := observability.Setup(context.Background(), config.ObservabilityConfig{
-		Logging: config.LoggingConfig{Format: "json", Level: "info"},
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		LogFormat: "json",
+		LogLevel:  "info",
 	}, build())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)

@@ -187,23 +187,9 @@ api_keys:
     enabled: true
 `
 
-	gatewayYAML := `gateway:
-  http:
-    bind: 127.0.0.1:0
-  shutdown:
-    drain_timeout_seconds: 1
-  reporting:
-    enabled: false
-  observability:
-    logging:
-      format: json
-      level: error
-`
-
 	for name, body := range map[string]string{
 		"providers.yaml": providersYAML,
 		"policy.yaml":    policyYAML,
-		"gateway.yaml":   gatewayYAML,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)

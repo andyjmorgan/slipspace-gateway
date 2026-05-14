@@ -6,31 +6,13 @@ import "errors"
 // *.yaml files.
 var ErrEmptyDirectory = errors.New("config: directory contains no yaml files")
 
-// ErrDuplicateTopLevelKey is retained as a backward-compatibility sentinel for
-// external callers (notably cmd/cli's error classifier). The single-purpose
-// file layout makes cross-file duplicates impossible by construction, so the
-// loader no longer returns this. Duplicate keys WITHIN a single file surface
-// as a yaml.v3 parse error wrapped in ErrParse.
-//
-// Deprecated: unreachable from Load; kept exported for compile-time
-// compatibility with downstream classifiers.
-var ErrDuplicateTopLevelKey = errors.New("config: duplicate top-level key across files")
-
-// ErrUnknownTopLevelKey is retained for the same compatibility reason as
-// ErrDuplicateTopLevelKey. With single-purpose files the relevant failure mode
-// is "this key is not allowed in this file", reported via ErrWrongFileForKey.
-//
-// Deprecated: unreachable from Load; kept exported for compile-time
-// compatibility with downstream classifiers.
-var ErrUnknownTopLevelKey = errors.New("config: unknown top-level key")
-
 // ErrUnexpectedConfigFile is returned when the configuration directory
-// contains a file whose name is not one of the three accepted filenames
-// (gateway.yaml, providers.yaml, policy.yaml).
+// contains a file whose name is not one of the two accepted filenames
+// (providers.yaml, policy.yaml).
 var ErrUnexpectedConfigFile = errors.New("config: unexpected file in config directory")
 
 // ErrWrongFileForKey is returned when a top-level key appears in a file that
-// is not authorized to carry it — e.g., `gateway:` in policy.yaml.
+// is not authorized to carry it — e.g., `providers:` in policy.yaml.
 var ErrWrongFileForKey = errors.New("config: top-level key is not allowed in this file")
 
 // ErrNoConfigurations is returned when the merged tree contains zero entries
@@ -59,8 +41,9 @@ var ErrPathCollision = errors.New("config: route path claimed by multiple endpoi
 // but no prefix value — the provider would be unreachable.
 var ErrPrefixRequiredEmpty = errors.New("config: prefix_required is true but prefix is empty")
 
-// ErrInvalidBind is returned when gateway.http.bind is not a valid host:port.
-var ErrInvalidBind = errors.New("config: gateway.http.bind must be host:port")
+// ErrInvalidBind is returned when a bind env var (SLUICE_HTTP_BIND,
+// SLUICE_PROMETHEUS_BIND) is not a valid host:port.
+var ErrInvalidBind = errors.New("config: bind must be host:port")
 
 // ErrParse is returned when a YAML file is malformed.
 var ErrParse = errors.New("config: parse error")
@@ -91,3 +74,19 @@ var ErrDuplicateResilienceName = errors.New("config: resilience policy name defi
 // resilience_policies library share the same ID. Only entries with non-nil
 // ID are compared.
 var ErrDuplicateResilienceID = errors.New("config: resilience policy id defined more than once")
+
+// ErrInvalidEnv is returned when a SLUICE_* env var fails to parse as the
+// expected type or violates a numeric range invariant.
+var ErrInvalidEnv = errors.New("config: invalid env var value")
+
+// ErrUnknownLogLevel is returned when SLUICE_LOG_LEVEL is set to a value
+// outside the accepted set.
+var ErrUnknownLogLevel = errors.New("config: SLUICE_LOG_LEVEL must be debug|info|warn|error")
+
+// ErrUnknownLogFormat is returned when SLUICE_LOG_FORMAT is set to a value
+// outside the accepted set.
+var ErrUnknownLogFormat = errors.New("config: SLUICE_LOG_FORMAT must be json|text")
+
+// ErrUnknownOTLPProtocol is returned when SLUICE_OTLP_PROTOCOL is set to a
+// value outside the accepted set.
+var ErrUnknownOTLPProtocol = errors.New("config: SLUICE_OTLP_PROTOCOL must be grpc|http/protobuf")

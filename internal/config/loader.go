@@ -3,11 +3,9 @@ package config
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	koanfyaml "github.com/knadh/koanf/parsers/yaml"
@@ -21,7 +19,6 @@ import (
 )
 
 const (
-	keyGateway            = "gateway"
 	keyProviders          = "providers"
 	keyConfigurations     = "configurations"
 	keyAPIKeys            = "api_keys"
@@ -30,7 +27,6 @@ const (
 )
 
 const (
-	filenameGateway   = "gateway.yaml"
 	filenameProviders = "providers.yaml"
 	filenamePolicy    = "policy.yaml"
 )
@@ -39,9 +35,6 @@ const (
 // permitted to carry. Any key in the file that is not in its set is reported
 // as ErrWrongFileForKey.
 var allowedKeysByFile = map[string]map[string]struct{}{
-	filenameGateway: {
-		keyGateway: {},
-	},
 	filenameProviders: {
 		keyProviders: {},
 	},
@@ -56,9 +49,11 @@ var allowedKeysByFile = map[string]map[string]struct{}{
 // Load reads the YAML configuration directory at dir and returns the merged,
 // validated, indexed runtime view.
 //
-// The directory must contain only the three accepted filenames
-// (gateway.yaml, providers.yaml, policy.yaml). Each file is restricted to a
-// specific set of top-level keys; keys outside that set are rejected.
+// The directory must contain only the two accepted filenames (providers.yaml,
+// policy.yaml). Each file is restricted to a specific set of top-level keys;
+// keys outside that set are rejected. Server-level configuration is sourced
+// from the SLUICE_* env vars via LoadEnv — it is no longer part of the YAML
+// tree.
 func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("config: load %q: %w", dir, err)
@@ -91,7 +86,7 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 }
 
 // listConfigFiles enumerates dir and returns a map of accepted filename to its
-// absolute path. Any non-directory entry whose name is not one of the three
+// absolute path. Any non-directory entry whose name is not one of the two
 // accepted filenames produces ErrUnexpectedConfigFile; subdirectories are
 // skipped silently.
 func listConfigFiles(dir string) (map[string]string, error) {
@@ -193,11 +188,6 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 		Configurations: contractsconfig.ConfigurationsConfig{},
 	}
 
-	if node, ok := merged.nodes[keyGateway]; ok {
-		if err := node.Decode(&out.Gateway); err != nil {
-			return nil, fmt.Errorf("config: decode gateway: %w: %w", ErrParse, err)
-		}
-	}
 	if node, ok := merged.nodes[keyProviders]; ok {
 		if err := node.Decode(&out.Providers); err != nil {
 			return nil, fmt.Errorf("config: decode providers: %w: %w", ErrParse, err)
@@ -235,12 +225,6 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 func (r *ResolvedConfig) Validate() error {
 	if len(r.Configurations) == 0 {
 		return fmt.Errorf("config: validate: %w", ErrNoConfigurations)
-	}
-
-	if r.Gateway.HTTP.Bind != "" {
-		if err := validateBind(r.Gateway.HTTP.Bind); err != nil {
-			return err
-		}
 	}
 
 	for name, cfg := range r.Configurations {
@@ -448,18 +432,4 @@ func splitProviderEndpoint(s string) (string, string, error) {
 		return "", "", ErrMalformedAllowedEndpoint
 	}
 	return provider, endpoint, nil
-}
-
-func validateBind(bind string) error {
-	host, port, err := net.SplitHostPort(bind)
-	if err != nil {
-		return fmt.Errorf("config: gateway.http.bind=%q: %w: %w", bind, ErrInvalidBind, err)
-	}
-	if host == "" && port == "" {
-		return fmt.Errorf("config: gateway.http.bind=%q: %w", bind, ErrInvalidBind)
-	}
-	if _, perr := strconv.Atoi(port); perr != nil {
-		return fmt.Errorf("config: gateway.http.bind=%q: %w: port not numeric", bind, ErrInvalidBind)
-	}
-	return nil
 }

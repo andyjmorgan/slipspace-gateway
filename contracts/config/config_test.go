@@ -9,68 +9,6 @@ import (
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 )
 
-const gatewayYAML = `
-http:
-  bind: 0.0.0.0:8585
-shutdown:
-  drain_timeout_seconds: 300
-reporting:
-  enabled: true
-  nats:
-    url: nats://nats:4222
-    stream: GATEWAY_EVENTS
-    bucket: GATEWAY_EVENT_STASH
-    stash_threshold_bytes: 786432
-    stream_max_age_minutes: 60
-    bucket_ttl_minutes: 75
-    publish_queue_size: 10000
-observability:
-  prometheus:
-    enabled: true
-    bind: 0.0.0.0:9090
-  otlp:
-    enabled: true
-    endpoint: http://collector:4317
-    protocol: grpc
-  logging:
-    format: json
-    level: info
-`
-
-func TestGatewayConfig_YAMLRoundTrip(t *testing.T) {
-	var g contractsconfig.GatewayConfig
-	if err := yaml.Unmarshal([]byte(gatewayYAML), &g); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if g.HTTP.Bind != "0.0.0.0:8585" {
-		t.Errorf("bind: %q", g.HTTP.Bind)
-	}
-	if g.Shutdown.DrainTimeoutSeconds != 300 {
-		t.Errorf("drain: %d", g.Shutdown.DrainTimeoutSeconds)
-	}
-	if !g.Reporting.Enabled {
-		t.Error("reporting disabled")
-	}
-	if g.Reporting.NATS.PublishQueueSize != 10000 {
-		t.Errorf("queue: %d", g.Reporting.NATS.PublishQueueSize)
-	}
-	if g.Observability.Logging.Format != "json" {
-		t.Errorf("logging format: %q", g.Observability.Logging.Format)
-	}
-
-	out, err := yaml.Marshal(g)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var back contractsconfig.GatewayConfig
-	if err := yaml.Unmarshal(out, &back); err != nil {
-		t.Fatalf("re-unmarshal: %v", err)
-	}
-	if back != g {
-		t.Errorf("round-trip mismatch")
-	}
-}
-
 func TestProvidersConfig_YAMLRoundTrip(t *testing.T) {
 	body := `
 openai:

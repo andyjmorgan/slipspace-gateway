@@ -1,5 +1,6 @@
 // Package config loads, validates, and indexes the on-disk YAML configuration
-// tree for the Sluice gateway.
+// tree for the Sluice gateway, and parses the SLUICE_* env vars that carry
+// the per-process server configuration.
 package config
 
 import (
@@ -11,15 +12,12 @@ import (
 // ResolvedConfig is the merged, validated, indexed runtime view of the
 // configuration directory.
 //
-// The first four fields mirror the top-level YAML blocks; the trailing
-// *Index fields are the lookup tables Validate built so request-path code
-// can hit them with a single map read instead of scanning slices.
+// The leading fields mirror the top-level YAML blocks under policy.yaml +
+// providers.yaml; the trailing *Index fields are the lookup tables Validate
+// built so request-path code can hit them with a single map read instead of
+// scanning slices. Server-level configuration (bind, drain, NATS, OTel,
+// logging, Prometheus) lives on ServerEnv, not here.
 type ResolvedConfig struct {
-	// Gateway carries the top-level `gateway` block (bind addr, reporting,
-	// resilience defaults). Always populated, even when the YAML omits it —
-	// the zero value is the default policy.
-	Gateway contractsconfig.GatewayConfig
-
 	// Providers is the `providers` block keyed by provider name (openai,
 	// anthropic, gemini, ...). Holds endpoint definitions, prefixes, and
 	// upstream base URLs.

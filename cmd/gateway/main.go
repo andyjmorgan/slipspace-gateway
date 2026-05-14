@@ -9,14 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
@@ -30,9 +28,6 @@ import (
 
 const (
 	binaryName = "gateway"
-
-	envConfigDir     = "SLUICE_CONFIG_DIR"
-	defaultConfigDir = "/etc/sluice/"
 
 	publisherStopTimeout = 5 * time.Second
 )
@@ -61,18 +56,27 @@ func mainErr() int {
 }
 
 func run(ctx context.Context) error {
-	dir := strings.TrimSpace(os.Getenv(envConfigDir))
-	if dir == "" {
-		dir = defaultConfigDir
+	env, err := config.LoadEnv()
+	if err != nil {
+		return fmt.Errorf("gateway: load env: %w", err)
+	}
+	if err := env.Validate(); err != nil {
+		return fmt.Errorf("gateway: validate env: %w", err)
 	}
 
-	resolved, err := config.Load(ctx, dir)
+	resolved, err := config.Load(ctx, env.ConfigDir)
 	if err != nil {
-		return fmt.Errorf("gateway: load config %q: %w", dir, err)
+		return fmt.Errorf("gateway: load config %q: %w", env.ConfigDir, err)
 	}
 
 	build := observability.BuildInfo{Service: binaryName, Version: version.Version}
-	obs, err := observability.Setup(ctx, resolved.Gateway.Observability, build)
+	obs, err := observability.Setup(ctx, observability.Config{
+		PrometheusBind: env.PrometheusBind,
+		OTLPEndpoint:   env.OTLPEndpoint,
+		OTLPProtocol:   env.OTLPProtocol,
+		LogFormat:      env.LogFormat,
+		LogLevel:       env.LogLevel,
+	}, build)
 	if err != nil {
 		return fmt.Errorf("gateway: observability setup: %w", err)
 	}
@@ -80,7 +84,7 @@ func run(ctx context.Context) error {
 
 	logger := obs.Logger
 
-	publisher, busCleanup, err := setupBus(ctx, resolved.Gateway.Reporting, logger)
+	publisher, busCleanup, err := setupBus(ctx, env, logger)
 	if err != nil {
 		return fmt.Errorf("gateway: bus setup: %w", err)
 	}
@@ -101,27 +105,22 @@ func run(ctx context.Context) error {
 
 	root := correlationMiddleware(logger, dataPlane)
 
-	bind := resolved.Gateway.HTTP.Bind
-	if bind == "" {
-		bind = "0.0.0.0:8585"
-	}
-
-	drain := time.Duration(resolved.Gateway.Shutdown.DrainTimeoutSeconds) * time.Second
+	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
 
 	srv := server.New(server.Options{
-		Bind:         bind,
+		Bind:         env.HTTPBind,
 		Handler:      root,
 		DrainTimeout: drain,
 		Logger:       logger,
 	})
 
 	if obs.PromHandler != nil {
-		startPrometheus(ctx, resolved.Gateway.Observability.Prometheus.Bind, obs.PromHandler, logger)
+		startPrometheus(ctx, env.PrometheusBind, obs.PromHandler, logger)
 	}
 
 	logger.InfoContext(ctx, "gateway starting",
-		"bind", bind,
-		"config_dir", dir,
+		"bind", env.HTTPBind,
+		"config_dir", env.ConfigDir,
 		"providers", len(resolved.Providers),
 		"configurations", len(resolved.Configurations),
 		"api_keys", len(resolved.APIKeys),
@@ -137,21 +136,17 @@ func run(ctx context.Context) error {
 // is returned (with a no-op cleanup) when reporting is off or NATS is
 // unreachable — the request path must never block on reporting, so a missing
 // bus degrades gracefully into "events dropped" rather than aborting startup.
-func setupBus(ctx context.Context, cfg contractsconfig.ReportingConfig, logger *slog.Logger) (*bus.Publisher, func(), error) {
+func setupBus(ctx context.Context, env *config.ServerEnv, logger *slog.Logger) (*bus.Publisher, func(), error) {
 	noop := func() {}
-	if !cfg.Enabled {
-		return nil, noop, nil
-	}
-	if strings.TrimSpace(cfg.NATS.URL) == "" {
-		logger.WarnContext(ctx, "reporting enabled but nats.url empty; disabling publisher")
+	if !env.ReportingEnabled() {
 		return nil, noop, nil
 	}
 
-	nc, err := nats.Connect(cfg.NATS.URL)
+	nc, err := nats.Connect(env.NATSURL)
 	if err != nil {
 		logger.WarnContext(ctx, "reporting enabled but nats connect failed; disabling publisher",
 			"err", err.Error(),
-			"url", cfg.NATS.URL,
+			"url", env.NATSURL,
 		)
 		return nil, noop, nil
 	}
@@ -161,20 +156,11 @@ func setupBus(ctx context.Context, cfg contractsconfig.ReportingConfig, logger *
 		return nil, noop, fmt.Errorf("jetstream: %w", err)
 	}
 
-	streamName := cfg.NATS.Stream
-	if streamName == "" {
-		streamName = bus.DefaultStreamName
-	}
-	bucket := cfg.NATS.Bucket
-	if bucket == "" {
-		bucket = bus.DefaultObjectStoreBucket
-	}
-
-	if err := bus.EnsureStream(ctx, js, streamName, []string{"gateway.>"}); err != nil {
+	if err := bus.EnsureStream(ctx, js, env.NATSStream, []string{"gateway.>"}); err != nil {
 		nc.Close()
 		return nil, noop, fmt.Errorf("ensure stream: %w", err)
 	}
-	store, err := bus.EnsureObjectStore(ctx, js, bucket)
+	store, err := bus.EnsureObjectStore(ctx, js, env.NATSBucket)
 	if err != nil {
 		nc.Close()
 		return nil, noop, fmt.Errorf("ensure object store: %w", err)
@@ -183,9 +169,9 @@ func setupBus(ctx context.Context, cfg contractsconfig.ReportingConfig, logger *
 	pub := bus.New(bus.Options{
 		JS:             js,
 		ObjectStore:    store,
-		StashBucket:    bucket,
-		QueueSize:      cfg.NATS.PublishQueueSize,
-		StashThreshold: cfg.NATS.StashThresholdBytes,
+		StashBucket:    env.NATSBucket,
+		QueueSize:      env.NATSPublishQueueSize,
+		StashThreshold: env.NATSStashThresholdBytes,
 		Logger:         logger,
 	})
 	pub.Start(ctx)

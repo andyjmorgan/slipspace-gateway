@@ -22,8 +22,6 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
-
-	"github.com/andyjmorgan/sluice-gateway/contracts/config"
 )
 
 // Supported OTLP transport identifiers.
@@ -48,6 +46,28 @@ type BuildInfo struct {
 	// Version is the OTel service.version resource attribute and the
 	// "version" slog field. Sourced from internal/version.Version.
 	Version string
+}
+
+// Config carries the observability inputs Setup needs. Empty Prometheus
+// or OTLP fields disable the respective exporter; LogFormat / LogLevel
+// must already be the validated, normalized values from ServerEnv.
+type Config struct {
+	// PrometheusBind is the host:port for the /metrics scrape listener.
+	// Empty disables the Prometheus exporter and PromHandler is nil.
+	PrometheusBind string
+
+	// OTLPEndpoint is the OTLP exporter target. Empty disables OTLP.
+	OTLPEndpoint string
+
+	// OTLPProtocol selects the OTLP transport ("grpc" or "http/protobuf").
+	// Only consulted when OTLPEndpoint is non-empty.
+	OTLPProtocol string
+
+	// LogFormat selects the slog handler ("json" or "text").
+	LogFormat string
+
+	// LogLevel is the minimum slog level ("debug"/"info"/"warn"/"error").
+	LogLevel string
 }
 
 // Provider bundles the live telemetry pipeline. Shutdown must be invoked
@@ -89,14 +109,17 @@ type Provider struct {
 // Setup also calls otel.SetMeterProvider on the returned provider so any
 // stray code that reaches for the global meter still routes to the same
 // pipeline.
-func Setup(ctx context.Context, cfg config.ObservabilityConfig, build BuildInfo) (*Provider, error) {
-	logger, err := NewLogger(cfg.Logging.Format, cfg.Logging.Level)
+func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) {
+	logger, err := NewLogger(cfg.LogFormat, cfg.LogLevel)
 	if err != nil {
 		return nil, err
 	}
 	logger = EnrichLogger(logger, build.Service, build.Version)
 
-	if !cfg.Prometheus.Enabled && !cfg.OTLP.Enabled {
+	promEnabled := cfg.PrometheusBind != ""
+	otlpEnabled := cfg.OTLPEndpoint != ""
+
+	if !promEnabled && !otlpEnabled {
 		return newNoopProvider(logger)
 	}
 
@@ -111,7 +134,7 @@ func Setup(ctx context.Context, cfg config.ObservabilityConfig, build BuildInfo)
 
 	var promHandler http.Handler
 
-	if cfg.Prometheus.Enabled {
+	if promEnabled {
 		reg := prometheus.NewRegistry()
 		exp, perr := otelprom.New(otelprom.WithRegisterer(reg))
 		if perr != nil {
@@ -121,8 +144,8 @@ func Setup(ctx context.Context, cfg config.ObservabilityConfig, build BuildInfo)
 		promHandler = promhttp.HandlerFor(reg, promhttp.HandlerOpts{Registry: reg})
 	}
 
-	if cfg.OTLP.Enabled {
-		exp, oerr := newOTLPReader(ctx, cfg.OTLP)
+	if otlpEnabled {
+		exp, oerr := newOTLPReader(ctx, cfg.OTLPEndpoint, cfg.OTLPProtocol)
 		if oerr != nil {
 			return nil, oerr
 		}
@@ -186,8 +209,8 @@ func buildResource(ctx context.Context, build BuildInfo) (*resource.Resource, er
 	return res, nil
 }
 
-func newOTLPReader(ctx context.Context, cfg config.OTLPConfig) (*sdkmetric.PeriodicReader, error) {
-	proto := strings.ToLower(strings.TrimSpace(cfg.Protocol))
+func newOTLPReader(ctx context.Context, endpoint, protocol string) (*sdkmetric.PeriodicReader, error) {
+	proto := strings.ToLower(strings.TrimSpace(protocol))
 	if proto == "" {
 		proto = OTLPProtocolGRPC
 	}
@@ -199,18 +222,18 @@ func newOTLPReader(ctx context.Context, cfg config.OTLPConfig) (*sdkmetric.Perio
 	switch proto {
 	case OTLPProtocolGRPC:
 		opts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithInsecure()}
-		if cfg.Endpoint != "" {
-			opts = append(opts, otlpmetricgrpc.WithEndpoint(cfg.Endpoint))
+		if endpoint != "" {
+			opts = append(opts, otlpmetricgrpc.WithEndpoint(endpoint))
 		}
 		exp, err = otlpmetricgrpc.New(ctx, opts...)
 	case OTLPProtocolHTTPProtobuf, "http":
 		opts := []otlpmetrichttp.Option{otlpmetrichttp.WithInsecure()}
-		if cfg.Endpoint != "" {
-			opts = append(opts, otlpmetrichttp.WithEndpoint(cfg.Endpoint))
+		if endpoint != "" {
+			opts = append(opts, otlpmetrichttp.WithEndpoint(endpoint))
 		}
 		exp, err = otlpmetrichttp.New(ctx, opts...)
 	default:
-		return nil, fmt.Errorf("observability: unsupported OTLP protocol %q", cfg.Protocol)
+		return nil, fmt.Errorf("observability: unsupported OTLP protocol %q", protocol)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("observability: create OTLP exporter: %w", err)

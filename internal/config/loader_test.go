@@ -12,35 +12,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
-const sampleGateway = `
-gateway:
-  http:
-    bind: 0.0.0.0:8585
-  shutdown:
-    drain_timeout_seconds: 300
-  reporting:
-    enabled: true
-    nats:
-      url: nats://nats:4222
-      stream: GATEWAY_EVENTS
-      bucket: GATEWAY_EVENT_STASH
-      stash_threshold_bytes: 786432
-      stream_max_age_minutes: 60
-      bucket_ttl_minutes: 75
-      publish_queue_size: 10000
-  observability:
-    prometheus:
-      enabled: true
-      bind: 0.0.0.0:9090
-    otlp:
-      enabled: false
-      endpoint: http://otel-collector:4317
-      protocol: grpc
-    logging:
-      format: json
-      level: debug
-`
-
 const sampleProviders = `
 providers:
   openai:
@@ -138,7 +109,6 @@ func writeFile(t *testing.T, dir, name, body string) {
 func makeFullDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	writeFile(t, dir, "gateway.yaml", sampleGateway)
 	writeFile(t, dir, "providers.yaml", sampleProviders)
 	writeFile(t, dir, "policy.yaml", samplePolicy)
 	return dir
@@ -150,15 +120,6 @@ func TestLoad_HappyPath(t *testing.T) {
 	resolved, err := config.Load(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if resolved.Gateway.HTTP.Bind != "0.0.0.0:8585" {
-		t.Errorf("gateway.http.bind = %q", resolved.Gateway.HTTP.Bind)
-	}
-	if !resolved.Gateway.Reporting.Enabled {
-		t.Error("reporting should be enabled")
-	}
-	if resolved.Gateway.Reporting.NATS.StashThresholdBytes != 786432 {
-		t.Errorf("stash_threshold_bytes = %d", resolved.Gateway.Reporting.NATS.StashThresholdBytes)
 	}
 
 	if _, ok := resolved.Providers["openai"]; !ok {
@@ -243,7 +204,6 @@ func TestLoad_DuplicateKeyWithinSingleFile(t *testing.T) {
 
 func TestLoad_UnknownConfiguration(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "gateway.yaml", sampleGateway)
 	writeFile(t, dir, "providers.yaml", sampleProviders)
 	writeFile(t, dir, "policy.yaml", sampleConfigurations+sampleRulesLibrary+sampleResiliencePoliciesLibrary+`
 api_keys:
@@ -482,20 +442,6 @@ func TestLoad_UnexpectedFile(t *testing.T) {
 	}
 }
 
-func TestLoad_GatewayKeyInPolicyFile(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", sampleConfigurations+`
-gateway:
-  http:
-    bind: 0.0.0.0:8585
-`)
-	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrWrongFileForKey) {
-		t.Fatalf("want ErrWrongFileForKey, got %v", err)
-	}
-}
-
 func TestLoad_PolicyKeyInProvidersFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders+sampleRulesLibrary)
@@ -528,36 +474,6 @@ func TestLoad_CancelledContext(t *testing.T) {
 	_, err := config.Load(ctx, t.TempDir())
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled, got %v", err)
-	}
-}
-
-func TestLoad_InvalidBind(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "gateway.yaml", `
-gateway:
-  http:
-    bind: "not a host port"
-`)
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", samplePolicy)
-	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrInvalidBind) {
-		t.Fatalf("want ErrInvalidBind, got %v", err)
-	}
-}
-
-func TestLoad_InvalidBindPortNotNumeric(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "gateway.yaml", `
-gateway:
-  http:
-    bind: "0.0.0.0:abc"
-`)
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", samplePolicy)
-	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrInvalidBind) {
-		t.Fatalf("want ErrInvalidBind, got %v", err)
 	}
 }
 
@@ -633,15 +549,6 @@ func TestResolvedConfig_ValidateEmpty(t *testing.T) {
 	}
 }
 
-func TestLoad_BindEmpty(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", samplePolicy)
-	if _, err := config.Load(context.Background(), dir); err != nil {
-		t.Fatalf("empty bind should be allowed (no gateway block at all): %v", err)
-	}
-}
-
 func TestLoad_AllowedEndpointsTrimmedNamesAreUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
@@ -672,7 +579,6 @@ func TestLoad_DecodeErrors(t *testing.T) {
 		filename string
 		yaml     string
 	}{
-		{"gateway_not_a_map", "gateway.yaml", "gateway: \"not a map, a string\"\n"},
 		{"providers_not_a_map", "providers.yaml", "providers: \"not a map\"\n"},
 		{"configurations_not_a_map", "policy.yaml", "configurations: 42\n"},
 		{"api_keys_not_a_list", "policy.yaml", "api_keys: \"not a list\"\n"},
@@ -691,30 +597,11 @@ func TestLoad_DecodeErrors(t *testing.T) {
 
 func TestLoad_EmptyYAMLFile(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "gateway.yaml", "")
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", samplePolicy)
-	resolved, err := config.Load(context.Background(), dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if _, ok := resolved.Providers["openai"]; !ok {
-		t.Error("openai missing")
-	}
-}
-
-func TestLoad_BindMissingPort(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "gateway.yaml", `
-gateway:
-  http:
-    bind: ":"
-`)
-	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "providers.yaml", "")
 	writeFile(t, dir, "policy.yaml", samplePolicy)
 	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrInvalidBind) {
-		t.Fatalf("want ErrInvalidBind, got %v", err)
+	if err == nil {
+		t.Fatal("expected error from empty providers.yaml + policy referencing openai")
 	}
 }
 

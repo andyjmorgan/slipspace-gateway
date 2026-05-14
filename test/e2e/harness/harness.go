@@ -267,10 +267,7 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 
 	cmd := exec.Command("go", "run", "./cmd/gateway")
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(),
-		"SLUICE_CONFIG_DIR="+configDir,
-		"LOG_LEVEL=debug",
-	)
+	cmd.Env = append(os.Environ(), h.gatewayEnv(configDir)...)
 	cmd.Stdout = newTestLogWriter(t, "gateway")
 	cmd.Stderr = newTestLogWriter(t, "gateway")
 	setProcessGroup(cmd)
@@ -298,9 +295,11 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 	}
 }
 
-// materializeConfig clones config-dev/ into a tmp dir and rewrites the
-// in-tree placeholders (mockllm:5555, nats:4222) to point at the harness's
-// dynamically-assigned upstreams.
+// materializeConfig clones the policy + providers YAML from config-dev/ into
+// a tmp dir and rewrites the in-tree mockllm placeholder to point at the
+// harness's dynamically-assigned upstream. Server-level configuration is
+// supplied to the gateway via SLUICE_* env vars (see gatewayEnv); the
+// directory contains only policy.yaml + providers.yaml.
 func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 	src := filepath.Join(repoRoot, "config-dev")
 	dst, err := os.MkdirTemp("", "sluice-e2e-config-*")
@@ -314,7 +313,6 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 	}
 
 	mockHost := strings.TrimPrefix(h.MockLLMURL, "http://")
-	natsHost := strings.TrimPrefix(h.NATSURL, "nats://")
 
 	for _, ent := range entries {
 		if ent.IsDir() {
@@ -329,16 +327,6 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 			return "", fmt.Errorf("read %s: %w", name, err)
 		}
 		patched := strings.ReplaceAll(string(raw), "mockllm:5555", mockHost)
-		patched = strings.ReplaceAll(patched, "nats:4222", natsHost)
-		if name == "gateway.yaml" {
-			patched = strings.Replace(patched,
-				"bind: 0.0.0.0:8585",
-				fmt.Sprintf("bind: 127.0.0.1:%d", h.gatewayBindPort), 1)
-			patched = strings.Replace(patched,
-				"bind: 0.0.0.0:9090",
-				fmt.Sprintf("bind: 127.0.0.1:%d", h.promBindPort), 1)
-			patched = h.applyGatewayOverrides(patched)
-		}
 		dstFile := filepath.Join(dst, name)
 		if err := os.WriteFile(dstFile, []byte(patched), 0o600); err != nil { //nolint:gosec // dst is os.MkdirTemp output
 			return "", fmt.Errorf("write %s: %w", name, err)
@@ -347,30 +335,33 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 	return dst, nil
 }
 
-// applyGatewayOverrides rewrites scalar values in gateway.yaml when Options
-// requests them. Implemented as targeted string replacement so we keep the
-// in-tree YAML structure intact for tests that diff against it.
-func (h *Harness) applyGatewayOverrides(yaml string) string {
-	if h.opts.ReportingEnabled != nil {
-		want := "enabled: true"
-		if !*h.opts.ReportingEnabled {
-			want = "enabled: false"
-		}
-		yaml = strings.Replace(yaml, "enabled: true", want, 1)
+// gatewayEnv builds the SLUICE_* env block for the spawned gateway process.
+// Options overrides (ReportingEnabled, StashThresholdBytes, DrainTimeoutSeconds)
+// land here instead of in YAML mutation because the gateway sources these
+// inputs from env vars after the three-plane refactor.
+func (h *Harness) gatewayEnv(configDir string) []string {
+	env := []string{
+		"SLUICE_CONFIG_DIR=" + configDir,
+		fmt.Sprintf("SLUICE_HTTP_BIND=127.0.0.1:%d", h.gatewayBindPort),
+		fmt.Sprintf("SLUICE_PROMETHEUS_BIND=127.0.0.1:%d", h.promBindPort),
+		"SLUICE_LOG_LEVEL=debug",
 	}
+
+	reportingOn := true
+	if h.opts.ReportingEnabled != nil {
+		reportingOn = *h.opts.ReportingEnabled
+	}
+	if reportingOn {
+		env = append(env, "SLUICE_NATS_URL="+h.NATSURL)
+	}
+
 	if h.opts.StashThresholdBytes > 0 {
-		yaml = strings.Replace(yaml,
-			"stash_threshold_bytes: 786432",
-			fmt.Sprintf("stash_threshold_bytes: %d", h.opts.StashThresholdBytes),
-			1)
+		env = append(env, fmt.Sprintf("SLUICE_NATS_STASH_THRESHOLD_BYTES=%d", h.opts.StashThresholdBytes))
 	}
 	if h.opts.DrainTimeoutSeconds > 0 {
-		yaml = strings.Replace(yaml,
-			"drain_timeout_seconds: 300",
-			fmt.Sprintf("drain_timeout_seconds: %d", h.opts.DrainTimeoutSeconds),
-			1)
+		env = append(env, fmt.Sprintf("SLUICE_SHUTDOWN_DRAIN_SECONDS=%d", h.opts.DrainTimeoutSeconds))
 	}
-	return yaml
+	return env
 }
 
 // findRepoRoot walks up from this source file until it finds go.mod.

@@ -280,7 +280,7 @@ func TestConfigValidate_ParseError(t *testing.T) {
 
 func TestConfigValidate_NoConfigurations(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gateway.yaml"), []byte("gateway:\n  http:\n    bind: 0.0.0.0:8585\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "providers.yaml"), []byte("providers: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, code := runCLI(t, "config", "validate", "--dir", dir)
@@ -317,6 +317,32 @@ func TestConfigValidate_BadFlag_ReturnsUsage(t *testing.T) {
 	_, _, code := runCLI(t, "config", "validate", "--nope")
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
+	}
+}
+
+func TestConfigValidate_InvalidEnvBlocksFileLoad(t *testing.T) {
+	t.Setenv("SLUICE_LOG_LEVEL", "shouty")
+	stdout, _, code := runCLI(t, "config", "validate", "--dir", "/nonexistent")
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.HasPrefix(stdout.String(), "FAIL: invalid_env:") {
+		t.Fatalf("stdout = %q, want FAIL: invalid_env prefix", stdout.String())
+	}
+}
+
+func TestConfigValidate_HappyPath_ReportsEnvVarCount(t *testing.T) {
+	repoRoot := repoRootFromCWD(t)
+	dir := filepath.Join(repoRoot, "config-dev")
+	stdout, _, code := runCLI(t, "config", "validate", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stdout=%q", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "env ") {
+		t.Fatalf("stdout missing env count fragment: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "vars resolved") {
+		t.Fatalf("stdout missing 'vars resolved' fragment: %q", stdout.String())
 	}
 }
 
@@ -360,6 +386,10 @@ func TestClassifyConfigErr_AllCategories(t *testing.T) {
 		{config.ErrPrefixRequiredEmpty, "prefix_required_empty"},
 		{config.ErrInvalidBind, "invalid_bind"},
 		{config.ErrParse, "parse_error"},
+		{config.ErrInvalidEnv, "invalid_env"},
+		{config.ErrUnknownLogLevel, "invalid_env"},
+		{config.ErrUnknownLogFormat, "invalid_env"},
+		{config.ErrUnknownOTLPProtocol, "invalid_env"},
 		{errors.New("random"), "other"},
 	}
 	for _, tc := range cases {

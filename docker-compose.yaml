@@ -9,7 +9,12 @@ services:
       - "9090:9090"
     environment:
       SLUICE_CONFIG_DIR: /etc/sluice
-      LOG_LEVEL: debug
+      SLUICE_HTTP_BIND: 0.0.0.0:8585
+      SLUICE_SHUTDOWN_DRAIN_SECONDS: "300"
+      SLUICE_LOG_FORMAT: json
+      SLUICE_LOG_LEVEL: debug
+      SLUICE_PROMETHEUS_BIND: 0.0.0.0:9090
+      SLUICE_NATS_URL: nats://nats:4222
     volumes:
       - ./config-dev:/etc/sluice:ro
     depends_on:

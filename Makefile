@@ -4,6 +4,13 @@ COVER_OUT  := coverage.out
 COVER_MIN  := 95
 GATE       := scripts/coverage-gate.sh
 
+DEV_ENV := \
+	SLUICE_CONFIG_DIR=./config-dev \
+	SLUICE_HTTP_BIND=0.0.0.0:8585 \
+	SLUICE_PROMETHEUS_BIND=0.0.0.0:9090 \
+	SLUICE_NATS_URL=nats://localhost:4222 \
+	SLUICE_LOG_LEVEL=debug
+
 .PHONY: all build test lint fmt vet coverage dev dev-with-overlay e2e py-compat clean tools
 
 all: lint vet test
@@ -30,12 +37,12 @@ coverage: test
 
 dev:
 	docker compose -f docker-compose.yaml up -d mockllm nats
-	SLUICE_CONFIG_DIR=./config-dev $(GO) run ./cmd/gateway
+	$(DEV_ENV) $(GO) run ./cmd/gateway
 
 dev-with-overlay:
 	@test -f docker-compose.dev.yaml || { echo "docker-compose.dev.yaml not found; copy docker-compose.dev.yaml.example"; exit 1; }
 	docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d mockllm nats
-	SLUICE_CONFIG_DIR=./config-dev $(GO) run ./cmd/gateway
+	$(DEV_ENV) $(GO) run ./cmd/gateway
 
 e2e:
 	$(GO) test -tags=e2e -race -timeout=2m ./test/e2e/...
