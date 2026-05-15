@@ -5,7 +5,7 @@ ARG VERSION=dev
 FROM alpine:3 AS certs
 RUN apk add --no-cache ca-certificates
 
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 ARG VERSION
 WORKDIR /src
 COPY go.mod go.sum ./
