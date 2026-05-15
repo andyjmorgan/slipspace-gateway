@@ -62,3 +62,19 @@ jobs:
           name: coverage
           path: coverage.out
           if-no-files-found: ignore
+
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      # Ryuk (testcontainers' reaper container) is flaky on ephemeral
+      # CI runners and not needed when the runner itself disposes of
+      # the workspace. Disabling keeps the suite reliable.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          check-latest: true
+          cache: true
+      - run: make e2e

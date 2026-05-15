@@ -78,6 +78,11 @@ var errEventTimeout = errors.New("timeout waiting for event")
 // startEventTap installs a wildcard subscription on gateway.> that buffers
 // every received message into eventBuf. Must be called before the gateway
 // is started so no event is missed.
+//
+// We flush the connection after subscribing so the server has acked the
+// SUB before any publish can race past it — without the flush, parallel
+// test pressure can cause the first event to publish before the subscription
+// is fully active server-side, dropping it.
 func (h *Harness) startEventTap() error {
 	if h.NATS == nil {
 		return errors.New("nats connection not initialized")
@@ -87,31 +92,60 @@ func (h *Harness) startEventTap() error {
 	if err != nil {
 		return fmt.Errorf("subscribe gateway.>: %w", err)
 	}
+	if err := h.NATS.FlushTimeout(5 * time.Second); err != nil {
+		return fmt.Errorf("flush after subscribe: %w", err)
+	}
 	h.eventSub = sub
 	return nil
 }
 
+// waitEvent returns the next envelope whose subject satisfies the
+// supplied NATS-style pattern, or errEventTimeout when none arrives
+// within the window.
+//
+// Events that arrive but do NOT match the pattern are buffered in
+// h.pendingEvents for a later ExpectEvent call to consume — NATS
+// fan-out across different subjects can deliver out of publish
+// order, and tests that assert on multiple subjects per request
+// would otherwise race on which event arrives first.
 func (h *Harness) waitEvent(subject string, timeout time.Duration) (Envelope, error) {
 	if h.eventBuf == nil {
 		return Envelope{}, errors.New("event tap not started")
 	}
+
+	h.pendingMu.Lock()
+	for i, msg := range h.pendingEvents {
+		if subjectMatches(subject, msg.Subject) {
+			h.pendingEvents = append(h.pendingEvents[:i], h.pendingEvents[i+1:]...)
+			h.pendingMu.Unlock()
+			return decodeEnvelope(msg)
+		}
+	}
+	h.pendingMu.Unlock()
 
 	deadline := time.After(timeout)
 	for {
 		select {
 		case msg := <-h.eventBuf:
 			if !subjectMatches(subject, msg.Subject) {
+				h.pendingMu.Lock()
+				h.pendingEvents = append(h.pendingEvents, msg)
+				h.pendingMu.Unlock()
 				continue
 			}
-			var env Envelope
-			if err := msgpack.Unmarshal(msg.Data, &env); err != nil {
-				return Envelope{}, fmt.Errorf("decode envelope: %w", err)
-			}
-			return env, nil
+			return decodeEnvelope(msg)
 		case <-deadline:
 			return Envelope{}, errEventTimeout
 		}
 	}
+}
+
+func decodeEnvelope(msg *nats.Msg) (Envelope, error) {
+	var env Envelope
+	if err := msgpack.Unmarshal(msg.Data, &env); err != nil {
+		return Envelope{}, fmt.Errorf("decode envelope: %w", err)
+	}
+	return env, nil
 }
 
 // subjectMatches reports whether actual satisfies a NATS-style subscription

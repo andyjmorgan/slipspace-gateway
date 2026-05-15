@@ -253,26 +253,37 @@ func endpointAllowed(cfg *contractsconfig.Configuration, provider, endpoint stri
 // Unknown providers fall back to a Bearer Authorization swap; the header name
 // reflects that.
 func authSwap(provider, credential string) (http.Header, []string, string) {
+	name, value := UpstreamCredentialHeader(provider, credential)
 	set := http.Header{}
-	drop := []string{HeaderConfiguration}
-	var authHeader string
+	set.Set(name, value)
 
-	switch provider {
-	case providerAnthropic:
-		set.Set(headerAnthropicAPIKey, credential)
+	drop := []string{HeaderConfiguration}
+	if name != HeaderAuthorization {
 		drop = append(drop, HeaderAuthorization)
-		authHeader = headerAnthropicAPIKey
-	case providerGemini:
-		set.Set(headerGeminiAPIKey, credential)
-		drop = append(drop, HeaderAuthorization)
-		authHeader = headerGeminiAPIKey
-	case providerOpenAI:
-		set.Set(HeaderAuthorization, bearerPrefix+credential)
-		authHeader = HeaderAuthorization
-	default:
-		set.Set(HeaderAuthorization, bearerPrefix+credential)
-		authHeader = HeaderAuthorization
 	}
 
-	return set, drop, authHeader
+	return set, drop, name
+}
+
+// UpstreamCredentialHeader returns the (header name, header value)
+// pair the gateway uses to convey credential to provider for managed-
+// mode requests. Exported so downstream consumers — chiefly the
+// rules engine's ChangeApiKey action — can re-mint the credential
+// header for a post-rule provider without duplicating the per-
+// provider format table.
+//
+// Unknown providers fall back to a Bearer Authorization swap so a
+// rule that retargets an as-yet-unmodelled provider still produces a
+// reasonable outgoing shape.
+func UpstreamCredentialHeader(provider, credential string) (name string, value string) {
+	switch provider {
+	case providerAnthropic:
+		return headerAnthropicAPIKey, credential
+	case providerGemini:
+		return headerGeminiAPIKey, credential
+	case providerOpenAI:
+		return HeaderAuthorization, bearerPrefix + credential
+	default:
+		return HeaderAuthorization, bearerPrefix + credential
+	}
 }

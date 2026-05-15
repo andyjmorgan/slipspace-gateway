@@ -5,6 +5,16 @@ import (
 	"net/url"
 )
 
+// QueryAddition is a single (key, value) pair from
+// AppendQueryStringAction. Stored on MutableState until the
+// destination builder resolves UpstreamURL; deferring the apply
+// avoids requiring the destination to be finalised at action time.
+type QueryAddition struct {
+	Key string
+
+	Value string
+}
+
 // MutableState is the rule engine's write-side handle to per-request
 // state. Action implementations call methods on this value (or assign
 // to its fields) to mutate the destination the request will reach.
@@ -62,6 +72,12 @@ type MutableState struct {
 	// re-encode and replace r.Body before forwarding — skipped when
 	// false so the unchanged path costs nothing.
 	BodyMutated bool
+
+	// QueryAdditions accumulates AppendQueryStringAction deltas. The
+	// destination builder applies them after UpstreamURL is resolved
+	// so the action does not depend on the URL being known at rule-
+	// evaluation time. Order is preserved; duplicates are allowed.
+	QueryAdditions []QueryAddition
 }
 
 // NewMutableState builds a MutableState seeded with the routing

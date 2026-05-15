@@ -45,7 +45,7 @@ dev-with-overlay:
 	$(DEV_ENV) $(GO) run ./cmd/gateway
 
 e2e:
-	$(GO) test -tags=e2e -race -timeout=2m ./test/e2e/...
+	TESTCONTAINERS_RYUK_DISABLED=true $(GO) test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...
 
 py-compat:
 	$(GO) build -o /tmp/sluice-gateway ./cmd/gateway
