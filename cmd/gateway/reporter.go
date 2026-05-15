@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
@@ -20,30 +21,6 @@ import (
 // eventTypeRequest is the bus subject suffix for end-of-pipeline request
 // records. The publisher will emit the full subject as `gateway.request`.
 const eventTypeRequest = "request"
-
-// requestEvent is the JSON-encoded payload for the v1.0 request envelope.
-// The control-plane will eventually consume a richer schema; this shape
-// covers the audit fields the dashboards need on day one.
-type requestEvent struct {
-	CorrelationID string `json:"correlation_id,omitempty"`
-
-	Provider string `json:"provider,omitempty"`
-
-	Endpoint string `json:"endpoint,omitempty"`
-
-	// Model is the outbound model identifier — the model the gateway
-	// forwarded to upstream, after routing and (in v1.1) any rule
-	// mutations. Empty for endpoints that carry no model.
-	Model string `json:"model,omitempty"`
-
-	StatusCode int `json:"status_code"`
-
-	DurationMs int64 `json:"duration_ms"`
-
-	Streaming bool `json:"streaming,omitempty"`
-
-	UpstreamError string `json:"upstream_error,omitempty"`
-}
 
 // modelLabelMaxLen caps the length of the `model` metric label value to
 // keep cardinality bounded against a misbehaving client that injects long
@@ -169,6 +146,13 @@ type reporterRun struct {
 	// upstream captures the transport error from OnUpstreamError; nil on
 	// the success path.
 	upstream error
+
+	// ruleMatches buffers events.RuleMatched records driven by the rules
+	// middleware via OnRuleMatched. Drained at OnComplete in the
+	// telemetry PR; held here in PR 1 so callers can construct the
+	// observer against the final lifecycle surface without behavioural
+	// churn later.
+	ruleMatches []events.RuleMatched
 }
 
 func (r *reporterRun) OnRequestStart(ctx context.Context, _ proxy.Destination) {
@@ -197,7 +181,7 @@ func (r *reporterRun) OnUpstreamError(ctx context.Context, err error) {
 }
 
 func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int64) {
-	ev := requestEvent{
+	ev := events.Request{
 		CorrelationID: observability.CorrelationIDFromContext(ctx),
 		Provider:      r.provider,
 		Endpoint:      r.endpoint,
@@ -257,6 +241,13 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		"ttfb_ms", ttfbMs,
 		"upstream_error", ev.UpstreamError,
 	)
+}
+
+// OnRuleMatched buffers a per-rule match record for batched emission at
+// OnComplete. PR 1 only retains the records; the telemetry PR adds the
+// publish + meter increment.
+func (r *reporterRun) OnRuleMatched(_ context.Context, match events.RuleMatched) {
+	r.ruleMatches = append(r.ruleMatches, match)
 }
 
 // providerEndpointModelAttrs builds the (provider, endpoint, model)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"sync"
+
+	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 )
 
 const (
@@ -11,6 +13,7 @@ const (
 	eventHeaders  = "headers"
 	eventError    = "upstream_error"
 	eventComplete = "complete"
+	eventRule     = "rule_matched"
 )
 
 type observerEvent struct {
@@ -21,6 +24,7 @@ type observerEvent struct {
 	durationMs int64
 	err        error
 	dest       Destination
+	rule       events.RuleMatched
 }
 
 type recordingObserver struct {
@@ -69,6 +73,12 @@ func (o *recordingObserver) OnComplete(_ context.Context, status int, durationMs
 		statusCode: status,
 		durationMs: durationMs,
 	})
+}
+
+func (o *recordingObserver) OnRuleMatched(_ context.Context, match events.RuleMatched) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.events = append(o.events, observerEvent{kind: eventRule, rule: match})
 }
 
 // staticObserver returns an ObserverFactory that hands every Forward the

@@ -682,6 +682,147 @@ func TestLoad_LibraryHappyPath(t *testing.T) {
 	}
 }
 
+// TestLoad_PerConfigurationRules_PrioritySort confirms PerConfigurationRules
+// re-orders rules by Priority ascending regardless of rule_names listing
+// order — the data-plane reads this slice directly and must not pay for a
+// per-request sort.
+func TestLoad_PerConfigurationRules_PrioritySort(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - openai.chat_completions
+    rule_names:
+      - low
+      - high
+      - mid
+
+rules:
+  - name: high
+    priority: 50
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: setHeader
+        headerName: X-Test
+        headerAction: Set
+        headerValue: noop
+  - name: mid
+    priority: 100
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: setHeader
+        headerName: X-Test
+        headerAction: Set
+        headerValue: noop
+  - name: low
+    priority: 200
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: setHeader
+        headerName: X-Test
+        headerAction: Set
+        headerValue: noop
+`)
+
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := resolved.PerConfigurationRules["dev"]
+	if len(got) != 3 {
+		t.Fatalf("PerConfigurationRules[dev] len = %d", len(got))
+	}
+	want := []string{"high", "mid", "low"}
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Errorf("PerConfigurationRules[dev][%d] = %q, want %q", i, got[i].Name, w)
+		}
+	}
+}
+
+// TestLoad_PerConfigurationRules_StableTieBreak confirms equal-priority
+// rules keep their rule_names listing order — operator authoring order is
+// the documented tie-breaker.
+func TestLoad_PerConfigurationRules_StableTieBreak(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - openai.chat_completions
+    rule_names:
+      - c
+      - a
+      - b
+
+rules:
+  - name: a
+    priority: 100
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: setHeader
+        headerName: X-Test
+        headerAction: Set
+        headerValue: noop
+  - name: b
+    priority: 100
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: setHeader
+        headerName: X-Test
+        headerAction: Set
+        headerValue: noop
+  - name: c
+    priority: 100
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: setHeader
+        headerName: X-Test
+        headerAction: Set
+        headerValue: noop
+`)
+
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := resolved.PerConfigurationRules["dev"]
+	if len(got) != 3 {
+		t.Fatalf("PerConfigurationRules[dev] len = %d", len(got))
+	}
+	want := []string{"c", "a", "b"}
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Errorf("PerConfigurationRules[dev][%d] = %q, want %q (stable sort lost authoring order)", i, got[i].Name, w)
+		}
+	}
+}
+
+// TestLoad_PerConfigurationRules_EmptyRuleNames keeps the absence-of-rules
+// behaviour explicit: configurations with no rule_names get no entry in
+// PerConfigurationRules.
+func TestLoad_PerConfigurationRules_EmptyRuleNames(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  bare:
+    allowed_endpoints:
+      - openai.chat_completions
+`)
+
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, ok := resolved.PerConfigurationRules["bare"]; ok {
+		t.Errorf("PerConfigurationRules[bare] should be absent, got %v", got)
+	}
+}
+
 func TestLoad_LibraryUnknownRuleName(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)

@@ -3,6 +3,8 @@ package proxy
 import (
 	"context"
 	"net/http"
+
+	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 )
 
 // Observer receives lifecycle signals from the Forwarder. Implementations
@@ -33,6 +35,17 @@ type Observer interface {
 	// aborted). statusCode reflects whatever the client actually saw —
 	// the upstream status on success, 502 on transport failure.
 	OnComplete(ctx context.Context, statusCode int, durationMs int64)
+
+	// OnRuleMatched fires once per rule that matched on this request,
+	// driven by the rules middleware between bodycapture and the
+	// forwarder. Implementations should buffer the match and flush all
+	// buffered matches in OnComplete so the bus sees one batch per
+	// request rather than mid-pipeline bursts.
+	//
+	// The supplied event has CorrelationID empty by convention — the
+	// rules middleware does not depend on observability plumbing.
+	// Observer implementations populate CorrelationID at flush.
+	OnRuleMatched(ctx context.Context, match events.RuleMatched)
 }
 
 // ObserverFactory produces a fresh Observer for a single Forward call. The
@@ -52,6 +65,7 @@ func (nopObserver) OnRequestStart(context.Context, Destination)               {}
 func (nopObserver) OnResponseHeaders(context.Context, int, http.Header, bool) {}
 func (nopObserver) OnUpstreamError(context.Context, error)                    {}
 func (nopObserver) OnComplete(context.Context, int, int64)                    {}
+func (nopObserver) OnRuleMatched(context.Context, events.RuleMatched)         {}
 
 // nopObserverFactory is the default factory installed when New is given a
 // nil ObserverFactory. It allocates nothing per request.
