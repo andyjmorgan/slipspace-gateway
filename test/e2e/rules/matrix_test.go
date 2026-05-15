@@ -1,0 +1,478 @@
+//go:build e2e
+
+package rules_test
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+)
+
+// matrixPolicy builds a policy.yaml with the dev configuration's
+// stock allowed_endpoints + credentials, and the supplied rules YAML
+// inlined as the rules library. The "dev" configuration's
+// rule_names list is overridden to ruleNames so each test exercises
+// only its declared rules.
+func matrixPolicy(rulesYAML string, ruleNames ...string) string {
+	names := ""
+	for _, n := range ruleNames {
+		names += "      - " + n + "\n"
+	}
+	return `
+configurations:
+  dev:
+    allowed_endpoints:
+      - openai.chat_completions
+      - openai.responses
+      - openai.models
+      - anthropic.messages
+      - anthropic.models
+      - gemini.generate_content
+      - gemini.models
+    upstream_credentials:
+      openai: sk-dev-mock
+      anthropic: sk-ant-dev-mock
+      gemini: dev-mock
+    rule_names:
+` + names + `    resilience_name: high-availability
+
+api_keys:
+  - secret: sk_dev_local_development_only_not_for_production
+    name: "Local dev"
+    configuration: dev
+    enabled: true
+
+rules:
+` + rulesYAML + `
+resilience_policies:
+  - name: high-availability
+    mode: failover
+    timeout_seconds: 30
+    targets:
+      - provider: openai
+        order: 0
+`
+}
+
+// stageChatOK installs a canned 200 response on the upstream's
+// chat-completions path. Tests that route a chat request through
+// the gateway need this to avoid 404s from the mock LLM.
+func stageChatOK(h *harness.Harness) {
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"chatcmpl","object":"chat.completion"}`,
+	})
+}
+
+func chatBody() map[string]any {
+	return map[string]any{
+		"model":    "gpt-4o-mini",
+		"messages": []map[string]string{{"role": "user", "content": "hi"}},
+	}
+}
+
+func fireChat(t *testing.T, h *harness.Harness, extraHeaders http.Header) *harness.Response {
+	t.Helper()
+	resp := h.PostJSON("/v1/chat/completions", chatBody(), extraHeaders)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("gateway status = %d (body=%s)", resp.StatusCode, string(resp.Body))
+	}
+	return resp
+}
+
+// ─── Conditions ────────────────────────────────────────────────────
+
+func TestConditions_EndpointCondition_Matches(t *testing.T) {
+	t.Parallel()
+	policy := matrixPolicy(`
+  - name: tag-on-chat
+    priority: 100
+    condition:
+      type: endpoint
+      operator: Equals
+      expectedEndpoint: chat_completions
+    actions:
+      - type: setHeader
+        headerName: X-Test-Endpoint-Cond
+        headerAction: Set
+        headerValue: matched
+`, "tag-on-chat")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	fireChat(t, h, nil)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil || cap.Headers["X-Test-Endpoint-Cond"] != "matched" {
+		t.Fatalf("EndpointCondition did not fire; captured = %+v", cap)
+	}
+}
+
+func TestConditions_ModelNameCondition_StartsWith(t *testing.T) {
+	t.Parallel()
+	policy := matrixPolicy(`
+  - name: tag-on-gpt
+    priority: 100
+    condition:
+      type: modelName
+      operator: StartsWith
+      expectedModelName: gpt-
+    actions:
+      - type: setHeader
+        headerName: X-Test-Model-Cond
+        headerAction: Set
+        headerValue: matched
+`, "tag-on-gpt")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	fireChat(t, h, nil)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil || cap.Headers["X-Test-Model-Cond"] != "matched" {
+		t.Fatalf("ModelNameCondition StartsWith did not fire; captured = %+v", cap)
+	}
+}
+
+func TestConditions_HeaderCondition_Matches(t *testing.T) {
+	t.Parallel()
+	policy := matrixPolicy(`
+  - name: tag-on-header
+    priority: 100
+    condition:
+      type: header
+      keyOperator: Equals
+      keyPattern: X-Tenant-Id
+      valueOperator: Equals
+      valuePattern: acme
+    actions:
+      - type: setHeader
+        headerName: X-Test-Header-Cond
+        headerAction: Set
+        headerValue: matched
+`, "tag-on-header")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	hdr := http.Header{}
+	hdr.Set("X-Tenant-Id", "acme")
+	fireChat(t, h, hdr)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil || cap.Headers["X-Test-Header-Cond"] != "matched" {
+		t.Fatalf("HeaderCondition did not fire; captured = %+v", cap)
+	}
+}
+
+func TestConditions_RuleGroup_AndMatches(t *testing.T) {
+	t.Parallel()
+	policy := matrixPolicy(`
+  - name: tag-on-and
+    priority: 100
+    condition:
+      type: group
+      logicalOperator: And
+      children:
+        - type: provider
+          operator: Equals
+          expectedProvider: openai
+        - type: modelName
+          operator: StartsWith
+          expectedModelName: gpt-
+    actions:
+      - type: setHeader
+        headerName: X-Test-Group-Cond
+        headerAction: Set
+        headerValue: matched
+`, "tag-on-and")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	fireChat(t, h, nil)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil || cap.Headers["X-Test-Group-Cond"] != "matched" {
+		t.Fatalf("RuleGroup AND did not fire; captured = %+v", cap)
+	}
+}
+
+// ─── Non-terminating actions ───────────────────────────────────────
+
+func TestActions_ChangeProvider_RetargetsUpstream(t *testing.T) {
+	t.Parallel()
+	// ChangeProvider on its own does NOT remap endpoint names — the
+	// .NET predecessor's deliberate behaviour, which we match.
+	// Rules retargeting to a provider whose endpoint name differs
+	// must pair with ChangeUrl. Here we move openai.chat_completions
+	// → anthropic.messages, which is the realistic "fail over to a
+	// different vendor" scenario rule authors will write.
+	policy := matrixPolicy(`
+  - name: reroute-to-anthropic
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: changeProvider
+        newProvider: anthropic
+      - type: changeUrl
+        newUrl: http://mockllm:5555/v1/messages
+`, "reroute-to-anthropic")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/messages",
+		Body:   `{"id":"msg_x","type":"message"}`,
+	})
+	fireChat(t, h, nil)
+
+	// The gateway.request event records the post-rule provider —
+	// confirms changeProvider was honoured at destination time.
+	env := h.ExpectEvent("gateway.request", 5*time.Second)
+	var ev events.Request
+	if err := json.Unmarshal(env.InlinePayload, &ev); err != nil {
+		t.Fatalf("decode request event: %v", err)
+	}
+	if ev.Provider != "anthropic" {
+		t.Errorf("post-rule provider = %q, want anthropic", ev.Provider)
+	}
+
+	// And the upstream-bound request landed on the rewritten path
+	// (the changeUrl target) with anthropic's native x-api-key.
+	cap := h.LastCapturedRequest()
+	if cap == nil {
+		t.Fatal("upstream not called")
+	}
+	if cap.Path != "/v1/messages" {
+		t.Errorf("upstream path = %q, want /v1/messages", cap.Path)
+	}
+	if cap.Headers["X-Api-Key"] != "sk-ant-dev-mock" {
+		t.Errorf("anthropic x-api-key header missing; got %+v", cap.Headers)
+	}
+}
+
+func TestActions_ChangeModelName_BodyRemarshalled(t *testing.T) {
+	t.Parallel()
+	policy := matrixPolicy(`
+  - name: pin-gpt-4o
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: changeModelName
+        newModelName: gpt-4o
+`, "pin-gpt-4o")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	fireChat(t, h, nil)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil {
+		t.Fatal("upstream not called")
+	}
+	if !strings.Contains(cap.Body, `"model":"gpt-4o"`) {
+		t.Errorf("re-marshalled body should carry new model; body = %s", cap.Body)
+	}
+
+	env := h.ExpectEvent("gateway.request", 5*time.Second)
+	var ev events.Request
+	if err := json.Unmarshal(env.InlinePayload, &ev); err != nil {
+		t.Fatalf("decode request event: %v", err)
+	}
+	if ev.Model != "gpt-4o" {
+		t.Errorf("gateway.request.model = %q, want gpt-4o", ev.Model)
+	}
+}
+
+func TestActions_ChangeUrl_OverridesUpstream(t *testing.T) {
+	t.Parallel()
+	// Rewrite the upstream URL to the OpenAI /v1/responses endpoint
+	// on the same mockllm host. The mockllm handles both paths, so
+	// the success criterion is "captured request lands on the
+	// rewritten path".
+	policy := matrixPolicy(`
+  - name: reroute-url
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: changeUrl
+        newUrl: http://mockllm:5555/v1/responses
+`, "reroute-url")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/responses",
+		Body:   `{"id":"resp","object":"response"}`,
+	})
+	fireChat(t, h, nil)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil || cap.Path != "/v1/responses" {
+		t.Fatalf("upstream path = %q, want /v1/responses", cap.Path)
+	}
+}
+
+func TestActions_ChangeApiKey_OverridesCredential(t *testing.T) {
+	t.Parallel()
+	// changeApiKey writes the override credential; the destination
+	// builder uses it in place of Configuration.UpstreamCredentials.
+	policy := matrixPolicy(`
+  - name: swap-key
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: changeApiKey
+        apiKey: sk-rule-injected
+`, "swap-key")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	fireChat(t, h, nil)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil {
+		t.Fatal("upstream not called")
+	}
+	if !strings.Contains(cap.Headers["Authorization"], "sk-rule-injected") {
+		t.Errorf("Authorization header should carry rule-injected key; got %q", cap.Headers["Authorization"])
+	}
+}
+
+func TestActions_AppendQueryString_ExtendsQuery(t *testing.T) {
+	t.Parallel()
+	policy := matrixPolicy(`
+  - name: tag-with-query
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: appendQueryString
+        key: trace
+        value: sluice-rules
+`, "tag-with-query")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	fireChat(t, h, nil)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil {
+		t.Fatal("upstream not called")
+	}
+	if !strings.Contains(cap.Query, "trace=sluice-rules") {
+		t.Errorf("upstream query missing appended param; got %q", cap.Query)
+	}
+}
+
+// ─── Behavior + ordering ───────────────────────────────────────────
+
+func TestRules_BehaviorExit_HaltsIteration(t *testing.T) {
+	t.Parallel()
+	policy := matrixPolicy(`
+  - name: first-and-exit
+    priority: 50
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: setHeader
+        headerName: X-First
+        headerAction: Set
+        headerValue: yes
+    behavior: exit
+  - name: second-should-not-fire
+    priority: 100
+    condition:
+      type: provider
+      operator: Equals
+      expectedProvider: openai
+    actions:
+      - type: setHeader
+        headerName: X-Second
+        headerAction: Set
+        headerValue: yes
+`, "first-and-exit", "second-should-not-fire")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	fireChat(t, h, nil)
+
+	cap := h.LastCapturedRequest()
+	if cap == nil {
+		t.Fatal("upstream not called")
+	}
+	if cap.Headers["X-First"] != "yes" {
+		t.Errorf("first rule did not fire; X-First = %q", cap.Headers["X-First"])
+	}
+	if got, present := cap.Headers["X-Second"]; present {
+		t.Errorf("Behavior=Exit should have halted iteration; X-Second = %q", got)
+	}
+
+	// Only one gateway.rule.matched event should arrive (for the
+	// first rule). Wait briefly for any second emission that should
+	// not happen.
+	first := h.ExpectEvent("gateway.rule.matched", 5*time.Second)
+	var fm events.RuleMatched
+	if err := json.Unmarshal(first.InlinePayload, &fm); err != nil {
+		t.Fatalf("decode first rule.matched: %v", err)
+	}
+	if fm.RuleName != "first-and-exit" {
+		t.Errorf("first rule.matched = %q, want first-and-exit", fm.RuleName)
+	}
+	h.ExpectNoEvent("gateway.rule.matched", 750*time.Millisecond)
+}
+
+func TestRules_PriorityOrdering(t *testing.T) {
+	t.Parallel()
+	// Three rules with shuffled rule_names ordering. The loader
+	// sorts by priority ascending — the rule.matched events should
+	// arrive in priority order regardless of the rule_names list.
+	policy := matrixPolicy(`
+  - name: pri-300
+    priority: 300
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - {type: setHeader, headerName: X-Order-300, headerAction: Set, headerValue: "3"}
+  - name: pri-100
+    priority: 100
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - {type: setHeader, headerName: X-Order-100, headerAction: Set, headerValue: "1"}
+  - name: pri-200
+    priority: 200
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - {type: setHeader, headerName: X-Order-200, headerAction: Set, headerValue: "2"}
+`, "pri-300", "pri-100", "pri-200")
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
+	stageChatOK(h)
+	fireChat(t, h, nil)
+
+	want := []string{"pri-100", "pri-200", "pri-300"}
+	for i, expect := range want {
+		env := h.ExpectEvent("gateway.rule.matched", 5*time.Second)
+		var rm events.RuleMatched
+		if err := json.Unmarshal(env.InlinePayload, &rm); err != nil {
+			t.Fatalf("decode rule.matched[%d]: %v", i, err)
+		}
+		if rm.RuleName != expect {
+			t.Errorf("event[%d] = %q, want %q", i, rm.RuleName, expect)
+		}
+	}
+}
+
+// hard-coded sanity reference for fmt usage when test names get
+// long enough to need formatted comparisons.
+var _ = fmt.Sprintf

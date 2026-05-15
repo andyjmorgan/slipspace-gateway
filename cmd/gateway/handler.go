@@ -58,8 +58,15 @@ func buildDataPlaneHandler(
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
-		endpoint, ok := provider.Endpoints[state.Endpoint]
-		if !ok {
+		// Endpoint lookup is only load-bearing when the destination
+		// builder needs to derive the upstream path from the
+		// endpoint's template (state.UpstreamURL == nil case). A rule
+		// that retargets via ChangeUrl supplies the full URL, so the
+		// endpoint name on the new provider doesn't need to exist —
+		// matches the .NET predecessor's behaviour and lets rules
+		// route openai.chat_completions → anthropic.messages cleanly.
+		endpoint, endpointOK := provider.Endpoints[state.Endpoint]
+		if !endpointOK && state.UpstreamURL == nil {
 			log.ErrorContext(ctx, "forwarder: unknown endpoint", "provider", state.Provider, "endpoint", state.Endpoint)
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
@@ -181,6 +188,14 @@ func buildDestination(
 		upstream.RawPath = ""
 	}
 
+	if len(state.QueryAdditions) > 0 {
+		q := upstream.Query()
+		for _, add := range state.QueryAdditions {
+			q.Add(add.Key, add.Value)
+		}
+		upstream.RawQuery = q.Encode()
+	}
+
 	outgoing := http.Header{}
 	for k, v := range provider.RequiredHeaders {
 		outgoing.Set(k, v)
@@ -190,13 +205,46 @@ func buildDestination(
 			outgoing.Add(k, v)
 		}
 	}
+	// Re-mint the credential header when a rule changed the provider
+	// or supplied an explicit override. The auth middleware sets
+	// SetHeaders for the original provider; rule mutations need the
+	// destination builder to update it. Resolution order:
+	//
+	//   1. ChangeApiKey explicit override: state.UpstreamCredentialOverride
+	//      replaces the credential value, formatted per state.Provider.
+	//   2. ChangeProvider without explicit override: look up the new
+	//      provider's credential in Configuration.UpstreamCredentials
+	//      (managed-mode) and mint with the new provider's format.
+	//   3. Otherwise: leave SetHeaders as the auth middleware emitted.
+	//
+	// Empty override is the UseSluiceKey sentinel — handled by the
+	// passthrough branch below.
+	if state.UpstreamCredentialOverride != nil && *state.UpstreamCredentialOverride != "" {
+		name, value := auth.UpstreamCredentialHeader(state.Provider, *state.UpstreamCredentialOverride)
+		outgoing.Del(auth.HeaderAuthorization)
+		outgoing.Del("X-Api-Key")
+		outgoing.Del("X-Goog-Api-Key")
+		outgoing.Set(name, value)
+	} else if state.UpstreamCredentialOverride == nil &&
+		authResult.Mode == auth.ModeManaged &&
+		state.Provider != authResult.Provider &&
+		authResult.Configuration != nil {
+		if cred, ok := authResult.Configuration.UpstreamCredentials[state.Provider]; ok {
+			name, value := auth.UpstreamCredentialHeader(state.Provider, cred)
+			outgoing.Del(auth.HeaderAuthorization)
+			outgoing.Del("X-Api-Key")
+			outgoing.Del("X-Goog-Api-Key")
+			outgoing.Set(name, value)
+		}
+	}
 	for k, vs := range state.OutgoingHeaders {
 		outgoing.Del(k)
 		for _, v := range vs {
 			outgoing.Add(k, v)
 		}
 	}
-	if authResult.Mode == auth.ModePassthrough {
+	if authResult.Mode == auth.ModePassthrough ||
+		(state.UpstreamCredentialOverride != nil && *state.UpstreamCredentialOverride == "") {
 		if inbound := req.Header.Get(auth.HeaderAuthorization); inbound != "" {
 			if outgoing.Get(auth.HeaderAuthorization) == "" {
 				outgoing.Set(auth.HeaderAuthorization, inbound)

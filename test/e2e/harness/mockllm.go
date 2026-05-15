@@ -120,6 +120,56 @@ func (h *Harness) MockRequestCount() uint64 {
 	return h.FetchMockState().RequestCount
 }
 
+// CapturedRequest mirrors cmd/mockllm.CapturedRequest. Kept here so
+// test packages do not depend on the mockllm internal package.
+type CapturedRequest struct {
+	Method string `json:"method"`
+
+	Path string `json:"path"`
+
+	Query string `json:"query,omitempty"`
+
+	Headers map[string]string `json:"headers"`
+
+	Body string `json:"body"`
+}
+
+// FetchCapturedRequests pulls the upstream-bound requests the mock
+// LLM observed. E2E tests inspect these to verify rule-driven
+// mutations (changeUrl, changeApiKey, setHeader, appendQueryString)
+// produced the expected outgoing request shape.
+func (h *Harness) FetchCapturedRequests() []CapturedRequest {
+	h.T.Helper()
+	resp, err := h.HTTP.Get(h.MockLLMURL + "/control/captured")
+	if err != nil {
+		h.T.Fatalf("harness: GET /control/captured: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		buf, _ := io.ReadAll(resp.Body)
+		h.T.Fatalf("harness: /control/captured status=%d body=%s", resp.StatusCode, string(buf))
+	}
+	var wrap struct {
+		Captured []CapturedRequest `json:"captured"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrap); err != nil {
+		h.T.Fatalf("harness: decode captured: %v", err)
+	}
+	return wrap.Captured
+}
+
+// LastCapturedRequest returns the most recent upstream-bound
+// request the mock LLM observed, or nil when none have arrived.
+// Convenience for tests that fire one request and assert on its
+// outgoing shape.
+func (h *Harness) LastCapturedRequest() *CapturedRequest {
+	all := h.FetchCapturedRequests()
+	if len(all) == 0 {
+		return nil
+	}
+	return &all[len(all)-1]
+}
+
 // FetchStashObject reads a payload from the NATS Object Store. Used by tests
 // asserting the large-payload stash code path published a fetchable object.
 func (h *Harness) FetchStashObject(bucket, key string) ([]byte, error) {

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -22,12 +23,71 @@ type server struct {
 	reg *registry
 
 	requestCount atomic.Uint64
+
+	captured *capturedLog
+}
+
+// CapturedRequest is the snapshot of an inbound provider-handler
+// request the mock LLM took at receive time. E2E tests inspect
+// these to assert the gateway's rule engine produced the expected
+// outgoing request shape (headers, query, body) on the upstream-
+// bound side of the wire.
+type CapturedRequest struct {
+	Method string `json:"method"`
+
+	Path string `json:"path"`
+
+	Query string `json:"query,omitempty"`
+
+	Headers map[string]string `json:"headers"`
+
+	Body string `json:"body"`
+}
+
+// capturedLog is the bounded ring of captured requests. Tests
+// usually only need the latest, but holding the last few covers
+// rare cases that fire multiple upstream calls per test (e.g.
+// resilience retries in v1.1).
+type capturedLog struct {
+	mu sync.Mutex
+
+	max int
+
+	entries []CapturedRequest
+}
+
+func newCapturedLog(max int) *capturedLog { return &capturedLog{max: max} }
+
+func (c *capturedLog) record(req CapturedRequest) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = append(c.entries, req)
+	if len(c.entries) > c.max {
+		// Drop the oldest entries; keep the tail.
+		drop := len(c.entries) - c.max
+		c.entries = append([]CapturedRequest(nil), c.entries[drop:]...)
+	}
+}
+
+func (c *capturedLog) snapshot() []CapturedRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]CapturedRequest, len(c.entries))
+	copy(out, c.entries)
+	return out
+}
+
+func (c *capturedLog) clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = nil
 }
 
 func newServer(reg *registry) *server {
 	s := &server{
-		mux: http.NewServeMux(),
-		reg: reg,
+		mux:      http.NewServeMux(),
+		reg:      reg,
+		captured: newCapturedLog(32),
 	}
 	s.routes()
 	return s
@@ -42,6 +102,7 @@ func (s *server) routes() {
 
 	s.mux.HandleFunc("/control/responses", s.controlResponses)
 	s.mux.HandleFunc("/control/state", s.controlState)
+	s.mux.HandleFunc("/control/captured", s.controlCaptured)
 
 	provider := s.providerHandler()
 
@@ -76,6 +137,14 @@ func (s *server) providerHandler() http.HandlerFunc {
 			return
 		}
 		_ = r.Body.Close()
+
+		s.captured.record(CapturedRequest{
+			Method:  r.Method,
+			Path:    r.URL.Path,
+			Query:   r.URL.RawQuery,
+			Headers: flattenHeader(r.Header),
+			Body:    string(body),
+		})
 
 		canned, ok := s.reg.match(r.Method, r.URL.Path, string(body))
 		if !ok {
@@ -209,4 +278,38 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// controlCaptured exposes the captured-request log to e2e tests.
+//
+//	GET    — returns {"captured": [...]} for inspection
+//	DELETE — clears the log (used by tests that rerun within one harness)
+func (s *server) controlCaptured(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, struct {
+			Captured []CapturedRequest `json:"captured"`
+		}{Captured: s.captured.snapshot()})
+	case http.MethodDelete:
+		s.captured.clear()
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.Header().Set("Allow", "GET, DELETE")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+// flattenHeader collapses http.Header to a single-value map. Tests
+// don't currently assert on multi-value headers; if that changes
+// we'd switch to map[string][]string here.
+func flattenHeader(h http.Header) map[string]string {
+	out := make(map[string]string, len(h))
+	for k, vs := range h {
+		if len(vs) == 1 {
+			out[k] = vs[0]
+		} else if len(vs) > 1 {
+			out[k] = strings.Join(vs, ", ")
+		}
+	}
+	return out
 }

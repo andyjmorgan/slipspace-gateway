@@ -63,6 +63,9 @@ type Harness struct {
 	eventBuf chan *nats.Msg
 	eventSub *nats.Subscription
 
+	pendingMu     sync.Mutex
+	pendingEvents []*nats.Msg
+
 	mockllmCmd  *exec.Cmd
 	mockllmDone chan struct{}
 

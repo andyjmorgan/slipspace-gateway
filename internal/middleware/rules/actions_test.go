@@ -3,7 +3,6 @@ package rules
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"testing"
 
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
@@ -308,53 +307,51 @@ func TestApplySetHeader(t *testing.T) {
 func TestApplyAppendQueryString(t *testing.T) {
 	t.Parallel()
 
-	t.Run("appends to existing query", func(t *testing.T) {
+	t.Run("accumulates pair on QueryAdditions", func(t *testing.T) {
 		t.Parallel()
 		s := freshState(t)
-		u, _ := url.Parse("https://api.example.com/v1?alpha=1")
-		s.UpstreamURL = u
-		_, err := applyAction(&contractsrules.AppendQueryStringAction{Key: "beta", Value: "2"}, s, nil)
+		_, err := applyAction(&contractsrules.AppendQueryStringAction{Key: "trace", Value: "rules"}, s, nil)
 		if err != nil {
 			t.Fatalf("apply: %v", err)
 		}
-		q := s.UpstreamURL.Query()
-		if q.Get("alpha") != "1" || q.Get("beta") != "2" {
-			t.Errorf("query = %v", s.UpstreamURL.RawQuery)
+		if len(s.QueryAdditions) != 1 ||
+			s.QueryAdditions[0].Key != "trace" || s.QueryAdditions[0].Value != "rules" {
+			t.Errorf("QueryAdditions = %+v", s.QueryAdditions)
 		}
 	})
 
-	t.Run("duplicates allowed", func(t *testing.T) {
+	t.Run("duplicates preserved in order", func(t *testing.T) {
 		t.Parallel()
 		s := freshState(t)
-		u, _ := url.Parse("https://api.example.com/v1?tag=a")
-		s.UpstreamURL = u
-		_, err := applyAction(&contractsrules.AppendQueryStringAction{Key: "tag", Value: "b"}, s, nil)
-		if err != nil {
-			t.Fatalf("apply: %v", err)
-		}
-		q := s.UpstreamURL.Query()
-		if got := q["tag"]; len(got) != 2 || got[0] != "a" || got[1] != "b" {
-			t.Errorf("tag values = %v, want [a b]", got)
+		_, _ = applyAction(&contractsrules.AppendQueryStringAction{Key: "tag", Value: "a"}, s, nil)
+		_, _ = applyAction(&contractsrules.AppendQueryStringAction{Key: "tag", Value: "b"}, s, nil)
+		if len(s.QueryAdditions) != 2 ||
+			s.QueryAdditions[0].Value != "a" || s.QueryAdditions[1].Value != "b" {
+			t.Errorf("QueryAdditions = %+v, want [{tag a}, {tag b}]", s.QueryAdditions)
 		}
 	})
 
 	t.Run("empty key errors", func(t *testing.T) {
 		t.Parallel()
 		s := freshState(t)
-		u, _ := url.Parse("https://api.example.com/v1")
-		s.UpstreamURL = u
 		_, err := applyAction(&contractsrules.AppendQueryStringAction{Value: "x"}, s, nil)
 		if !errors.Is(err, errEmptyValue) {
 			t.Fatalf("err = %v", err)
 		}
 	})
 
-	t.Run("missing URL errors", func(t *testing.T) {
+	t.Run("queries can be accumulated before UpstreamURL is set", func(t *testing.T) {
 		t.Parallel()
 		s := freshState(t)
+		if s.UpstreamURL != nil {
+			t.Fatal("freshState should have no UpstreamURL")
+		}
 		_, err := applyAction(&contractsrules.AppendQueryStringAction{Key: "k", Value: "v"}, s, nil)
-		if err == nil {
-			t.Fatal("expected error when UpstreamURL is nil")
+		if err != nil {
+			t.Fatalf("apply: %v (action must not depend on UpstreamURL)", err)
+		}
+		if len(s.QueryAdditions) != 1 {
+			t.Errorf("QueryAdditions empty: %+v", s.QueryAdditions)
 		}
 	})
 }

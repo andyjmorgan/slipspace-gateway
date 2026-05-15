@@ -178,27 +178,21 @@ func applySetHeader(a contractsrules.SetHeaderAction, state *MutableState) (cont
 	return contractsrules.Outcome{}, nil
 }
 
-// applyAppendQueryString appends a (key, value) pair to the upstream
-// URL's query string. Duplicates are allowed — matches the .NET
-// behaviour and accommodates upstream APIs that interpret repeated
-// keys as a list (e.g. ?tag=a&tag=b).
+// applyAppendQueryString accumulates a (key, value) pair on
+// state.QueryAdditions. The destination builder applies the
+// accumulated deltas after UpstreamURL is resolved — this lets the
+// action fire regardless of whether ChangeUrl has run yet (rule
+// order is operator-authored, not engine-imposed).
 //
-// Requires state.UpstreamURL to be set. When the rule fires before
-// the destination has resolved (i.e. no ChangeUrl yet), the engine's
-// caller is expected to call this only after the destination is
-// known. We surface the missing-URL case as an error so it fails
-// loudly rather than silently dropping the parameter.
+// Duplicates are allowed: an upstream API that interprets repeated
+// keys as a list (?tag=a&tag=b) will see both values in the order
+// the rules appended them.
 func applyAppendQueryString(a contractsrules.AppendQueryStringAction, state *MutableState) (contractsrules.Outcome, error) {
 	key := strings.TrimSpace(a.Key)
 	if key == "" {
 		return contractsrules.Outcome{}, fmt.Errorf("rules: appendQueryString: %w", errEmptyValue)
 	}
-	if state.UpstreamURL == nil {
-		return contractsrules.Outcome{}, fmt.Errorf("rules: appendQueryString: upstream URL not yet resolved")
-	}
-	q := state.UpstreamURL.Query()
-	q.Add(key, a.Value)
-	state.UpstreamURL.RawQuery = q.Encode()
+	state.QueryAdditions = append(state.QueryAdditions, QueryAddition{Key: key, Value: a.Value})
 	return contractsrules.Outcome{}, nil
 }
 
