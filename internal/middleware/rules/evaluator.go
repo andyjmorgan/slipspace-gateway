@@ -1,59 +1,197 @@
-// Package rules holds the gateway's rule engine. v1.0 ships a no-op
-// Evaluator that always returns a passthrough Outcome; the public schema
-// lives in contracts/rules. The v1.1 engine flips evaluation on per the
-// algorithm in the "Rule Schema" design note.
+// Package rules holds the gateway's rule engine.
+//
+// The public schema lives in contracts/rules. This package owns
+// evaluation: per-condition Matches, per-action Apply, the per-
+// request middleware that drives the engine, and the body re-marshal
+// step that re-serialises a mutated typed body before forwarding.
 package rules
 
 import (
 	"context"
 	"net/http"
+	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
+	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
-// Evaluator runs rule evaluation against a GatewayContext.
+// Evaluator runs the rule engine for a single request.
 //
-// v1.0 always returns Outcome{Terminate: false} regardless of the configured
-// rules — the engine is wired but inert so the YAML schema is locked in
-// place ahead of v1.1, which flips evaluation on without a config
-// migration.
+// Construction is config-load → NewEvaluator → long-lived shared
+// instance. Evaluate is goroutine-safe — every per-request mutable
+// piece (state, match buffer) is owned by the caller; the evaluator
+// holds only read-only references to rules + meters + the depth cap.
 type Evaluator struct {
-	// rules is the configured rule set, retained by reference. Read-only
-	// after construction; the v1.1 engine iterates this in priority order.
-	rules []contractsrules.RuleContract
+	// perConfigRules maps configuration name to its priority-sorted
+	// rule slice. Populated by config.Resolved.PerConfigurationRules;
+	// looked up once per request.
+	perConfigRules map[string][]*contractsrules.RuleContract
+
+	// maxGroupDepth caps recursive RuleGroup descent. Sourced from
+	// ServerEnv.RulesMaxGroupDepth; exceeding the cap fires
+	// gateway.rule.errors.total{error_kind="group_depth"} and the
+	// offending group evaluates to false.
+	maxGroupDepth int
+
+	// meters carries the OTel handles for rule-engine instruments.
+	// nil-tolerant — callers (mostly tests) that don't wire telemetry
+	// pass nil and the engine quietly skips emission.
+	meters *observability.Meters
 }
 
-// NewEvaluator constructs an Evaluator from the configured rule set.
+// NewEvaluator builds an Evaluator. The perConfigRules map is
+// retained, not copied; callers must not mutate it concurrently.
+func NewEvaluator(
+	perConfigRules map[string][]*contractsrules.RuleContract,
+	maxGroupDepth int,
+	meters *observability.Meters,
+) *Evaluator {
+	if maxGroupDepth <= 0 {
+		maxGroupDepth = 8
+	}
+	return &Evaluator{
+		perConfigRules: perConfigRules,
+		maxGroupDepth:  maxGroupDepth,
+		meters:         meters,
+	}
+}
+
+// Evaluate walks the rules attached to gc.ConfigurationName in
+// priority-sorted order. On each matched rule the actions run in
+// sequence, each Apply call gets the same MutableState handle so
+// later actions observe earlier mutations.
 //
-// The slice is retained, not copied; callers must not mutate it
-// concurrently. The intended lifecycle is config-load → NewEvaluator →
-// long-lived shared instance.
-func NewEvaluator(rules []contractsrules.RuleContract) *Evaluator {
-	return &Evaluator{rules: rules}
+// Behavior=Exit halts iteration after the current rule's actions
+// run; it does NOT set Outcome.Terminate — that flag is reserved
+// for terminating actions (returnStatusCode, llmImpersonation in
+// PR 3-4). The distinction matters for telemetry: "rule asked us
+// to stop iterating" is not the same as "a synthetic response
+// short-circuited the pipeline".
+//
+// MatchBuffer pulled from ctx receives one events.RuleMatched per
+// matched rule. The forwarder's observer drains it at OnComplete.
+func (e *Evaluator) Evaluate(
+	ctx context.Context,
+	gc GatewayContext,
+	state *MutableState,
+	body any,
+) (contractsrules.Outcome, error) {
+	if e == nil {
+		return contractsrules.Outcome{}, nil
+	}
+
+	rules := e.perConfigRules[gc.ConfigurationName]
+	start := time.Now()
+	defer func() {
+		if e.meters != nil && e.meters.RuleEvaluationDuration != nil {
+			e.meters.RuleEvaluationDuration.Record(ctx,
+				time.Since(start).Seconds(),
+				metric.WithAttributes(attribute.String("configuration", gc.ConfigurationName)),
+			)
+		}
+	}()
+
+	if len(rules) == 0 {
+		return contractsrules.Outcome{}, nil
+	}
+
+	buffer := MatchBufferFromContext(ctx)
+
+	for _, rule := range rules {
+		matched := matchCondition(rule.Condition, gc, 0, e.maxGroupDepth, func() {
+			e.recordError(ctx, rule, "group_depth")
+		})
+		if !matched {
+			continue
+		}
+
+		applied, lastErr := e.applyRuleActions(ctx, rule, state, body)
+		match := events.RuleMatched{
+			RuleName:       rule.Name,
+			Configuration:  gc.ConfigurationName,
+			MatchedAt:      time.Now().UTC(),
+			ActionsApplied: applied,
+			Terminated:     false,
+		}
+		if rule.ID != nil {
+			match.RuleID = rule.ID.String()
+		}
+		if lastErr != nil {
+			match.ErrorMessage = lastErr.Error()
+		}
+		buffer.Record(match)
+
+		if e.meters != nil && e.meters.RuleMatchesTotal != nil {
+			e.meters.RuleMatchesTotal.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("rule_name", rule.Name),
+				attribute.String("rule_id", match.RuleID),
+				attribute.Bool("terminated", false),
+				attribute.Int("action_count", len(applied)),
+			))
+		}
+
+		if rule.Behavior == contractsrules.BehaviorExit {
+			break
+		}
+	}
+
+	return contractsrules.Outcome{}, nil
 }
 
-// Rules returns the rule set the evaluator was constructed with. The slice
-// is shared with the evaluator's internal state; callers must not mutate
-// it.
-func (e *Evaluator) Rules() []contractsrules.RuleContract { return e.rules }
+// applyRuleActions runs each action in order. Each Apply call sees
+// the cumulative MutableState from earlier actions. On error the
+// loop continues — the .NET predecessor's silent-on-error behaviour
+// is replaced with a metric increment + the error attached to the
+// rule's events.RuleMatched payload, so operators can see WHICH
+// action failed without scraping logs.
+func (e *Evaluator) applyRuleActions(
+	ctx context.Context,
+	rule *contractsrules.RuleContract,
+	state *MutableState,
+	body any,
+) ([]string, error) {
+	applied := make([]string, 0, len(rule.Actions))
+	var lastErr error
+	for _, act := range rule.Actions {
+		if _, err := applyAction(act, state, body); err != nil {
+			e.recordError(ctx, rule, "action_apply")
+			lastErr = err
+			// Still record the action type — it ran, even if it
+			// errored — so operators can see the intended sequence.
+		}
+		applied = append(applied, act.ActionType())
+	}
+	return applied, lastErr
+}
 
-// Evaluate iterates the configured rules in priority order and returns the
-// resulting Outcome. v1.0 short-circuits to a passthrough Outcome; the real
-// engine lands in v1.1 per the "Rule Schema" design note.
-func (e *Evaluator) Evaluate(_ context.Context, _ GatewayContext) (contractsrules.Outcome, error) {
-	return contractsrules.Outcome{Terminate: false}, nil
+// recordError fires the rule-error counter with stable label
+// cardinality (rule_name + rule_id + error_kind). The kind taxonomy
+// is intentionally small to keep dashboards readable:
+//   - "group_depth": a RuleGroup tree exceeded the configured cap.
+//   - "action_apply": an Apply call returned an error.
+//   - "body_remarshal" (PR 2 body re-marshal middleware).
+func (e *Evaluator) recordError(ctx context.Context, rule *contractsrules.RuleContract, kind string) {
+	if e.meters == nil || e.meters.RuleErrorsTotal == nil {
+		return
+	}
+	ruleID := ""
+	if rule.ID != nil {
+		ruleID = rule.ID.String()
+	}
+	e.meters.RuleErrorsTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("rule_name", rule.Name),
+		attribute.String("rule_id", ruleID),
+		attribute.String("error_kind", kind),
+	))
 }
 
 // GatewayContext is the read-only slice of request state a rule's
-// Condition inspects. v1.0 carried only the routing identifiers and
-// inbound headers; v1.0.1 extends it with the resolved Configuration
-// name (for telemetry) and the decoded typed Body so content-based
-// conditions can read structured fields without re-parsing Raw bytes.
-//
-// Actions mutate state via MutableState, not GatewayContext. Splitting
-// them keeps the read/write surfaces explicit and lets the evaluator
-// pass GatewayContext by value to Condition.Matches without leaking a
-// mutable handle into condition implementations.
+// Condition inspects. Actions mutate via MutableState; splitting
+// the read/write surfaces keeps Condition implementations honest.
 type GatewayContext struct {
 	// Provider is the routed upstream provider name (e.g. "openai").
 	Provider string
@@ -63,21 +201,23 @@ type GatewayContext struct {
 	Endpoint string
 
 	// Model is the model identifier the client requested, read from
-	// the routing match or the decoded body. Empty for endpoints that
-	// carry no model.
+	// the routing match or the decoded body. Empty for endpoints
+	// that carry no model.
 	Model string
 
-	// Headers is the inbound request header set. HeaderCondition reads
-	// from this; rule-driven mutations land on MutableState.
+	// Headers is the inbound request header set. HeaderCondition
+	// reads from this; rule-driven mutations land on
+	// MutableState.OutgoingHeaders.
 	Headers http.Header
 
-	// ConfigurationName is the resolved configuration the request was
-	// authorised under. Surfaces on rule-match telemetry labels and on
-	// the gateway.rule.matched event.
+	// ConfigurationName is the resolved configuration the request
+	// was authorised under. The evaluator uses this to look up the
+	// applicable rule slice; the rule-matched event records it for
+	// downstream subscribers.
 	ConfigurationName string
 
 	// Body is the typed decoded request body when the route carries
-	// one (bodycapture.Captured.Body) — nil for passthrough endpoints.
-	// Content-based conditions type-switch on this.
+	// one (bodycapture.Captured.Body) — nil for passthrough
+	// endpoints. Content-based conditions type-switch on this.
 	Body any
 }

@@ -9,13 +9,9 @@ import (
 func TestNewMutableState_SeedsFromRouting(t *testing.T) {
 	t.Parallel()
 
-	headers := http.Header{}
-	headers.Set("X-Test", "v1")
-	headers.Add("Accept", "application/json")
-
 	s := NewMutableState("openai", "chat_completions",
 		map[string]string{"model": "gpt-4o-mini"},
-		headers,
+		http.Header{"X-Test": []string{"v1"}}, // intentionally ignored
 	)
 
 	if s.Provider != "openai" {
@@ -27,8 +23,8 @@ func TestNewMutableState_SeedsFromRouting(t *testing.T) {
 	if got := s.PathParams["model"]; got != "gpt-4o-mini" {
 		t.Errorf("PathParams[model] = %q, want gpt-4o-mini", got)
 	}
-	if got := s.OutgoingHeaders.Get("X-Test"); got != "v1" {
-		t.Errorf("OutgoingHeaders X-Test = %q, want v1", got)
+	if got := s.OutgoingHeaders.Get("X-Test"); got != "" {
+		t.Errorf("OutgoingHeaders should start empty; got X-Test = %q", got)
 	}
 	if s.UpstreamURL != nil {
 		t.Errorf("UpstreamURL should be nil pre-mutation, got %v", s.UpstreamURL)
@@ -44,26 +40,16 @@ func TestNewMutableState_SeedsFromRouting(t *testing.T) {
 func TestNewMutableState_IsolatesFromCaller(t *testing.T) {
 	t.Parallel()
 
-	// Caller mutates inputs after construction; the state must not see
-	// the change. Confirms the constructor clones rather than retains.
+	// Caller mutates path params after construction; the state must not
+	// see the change. Confirms the constructor clones rather than
+	// retains. (Outgoing headers do not seed from the inbound set, so
+	// no leak check needed there.)
 	srcParams := map[string]string{"model": "gpt-4o"}
-	srcHeaders := http.Header{}
-	srcHeaders.Set("X-Original", "yes")
-
-	s := NewMutableState("openai", "chat_completions", srcParams, srcHeaders)
-
+	s := NewMutableState("openai", "chat_completions", srcParams, nil)
 	srcParams["model"] = "claude-3"
-	srcHeaders.Set("X-Original", "no")
-	srcHeaders.Set("X-Added", "later")
 
 	if got := s.PathParams["model"]; got != "gpt-4o" {
 		t.Errorf("PathParams clone leaked: got %q, want gpt-4o", got)
-	}
-	if got := s.OutgoingHeaders.Get("X-Original"); got != "yes" {
-		t.Errorf("Headers clone leaked: X-Original = %q, want yes", got)
-	}
-	if got := s.OutgoingHeaders.Get("X-Added"); got != "" {
-		t.Errorf("Headers clone leaked: X-Added should be empty, got %q", got)
 	}
 }
 

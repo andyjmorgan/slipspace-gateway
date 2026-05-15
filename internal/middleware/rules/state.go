@@ -64,28 +64,27 @@ type MutableState struct {
 	BodyMutated bool
 }
 
-// NewMutableState builds a MutableState seeded with the values
-// routing + bodycapture had resolved by the time the rules middleware
-// fires. The caller hands in the routed (provider, endpoint, params)
-// tuple and the inbound headers to clone — mutations through this
-// state are isolated to the per-request lifetime.
-func NewMutableState(provider, endpoint string, pathParams map[string]string, inboundHeaders http.Header) *MutableState {
+// NewMutableState builds a MutableState seeded with the routing
+// resolution (provider, endpoint, path params). OutgoingHeaders
+// starts EMPTY — the destination builder layers provider-required
+// + auth-resolved headers on top of the auth defaults, and rule-set
+// values overlay those. The inbound header set is read-only and
+// reaches conditions via GatewayContext.Headers.
+//
+// inboundHeaders is intentionally unused beyond signalling the
+// caller's intent; the parameter is retained on the public API so
+// future evolutions (header echoing, audit) can opt in without a
+// signature break.
+func NewMutableState(provider, endpoint string, pathParams map[string]string, _ http.Header) *MutableState {
 	params := make(map[string]string, len(pathParams))
 	for k, v := range pathParams {
 		params[k] = v
-	}
-
-	headers := make(http.Header, len(inboundHeaders))
-	for k, vs := range inboundHeaders {
-		cloned := make([]string, len(vs))
-		copy(cloned, vs)
-		headers[k] = cloned
 	}
 
 	return &MutableState{
 		Provider:        provider,
 		Endpoint:        endpoint,
 		PathParams:      params,
-		OutgoingHeaders: headers,
+		OutgoingHeaders: make(http.Header),
 	}
 }

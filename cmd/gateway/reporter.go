@@ -14,13 +14,17 @@ import (
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 )
 
-// eventTypeRequest is the bus subject suffix for end-of-pipeline request
-// records. The publisher will emit the full subject as `gateway.request`.
-const eventTypeRequest = "request"
+// Bus subject suffixes; the publisher emits the full subject as
+// `gateway.<type>`.
+const (
+	eventTypeRequest     = "request"
+	eventTypeRuleMatched = "rule.matched"
+)
 
 // modelLabelMaxLen caps the length of the `model` metric label value to
 // keep cardinality bounded against a misbehaving client that injects long
@@ -230,6 +234,8 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		}
 	}
 
+	r.flushRuleMatches(ctx, ev.CorrelationID)
+
 	logger := observability.FromContext(ctx)
 	logger.InfoContext(ctx, "request completed",
 		"status_code", ev.StatusCode,
@@ -243,11 +249,48 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 	)
 }
 
-// OnRuleMatched buffers a per-rule match record for batched emission at
-// OnComplete. PR 1 only retains the records; the telemetry PR adds the
-// publish + meter increment.
+// OnRuleMatched buffers a per-rule match record for batched emission
+// at OnComplete. The rules middleware writes through this hook in
+// addition to the context-stashed rules.MatchBuffer; both paths
+// converge at flushRuleMatches.
 func (r *reporterRun) OnRuleMatched(_ context.Context, match events.RuleMatched) {
 	r.ruleMatches = append(r.ruleMatches, match)
+}
+
+// flushRuleMatches drains the per-request MatchBuffer (the rules
+// middleware writes there directly) and merges it with the
+// observer's OnRuleMatched buffer, then publishes one
+// gateway.rule.matched envelope per record. CorrelationID is
+// stamped here so the evaluator can stay ignorant of observability
+// plumbing.
+func (r *reporterRun) flushRuleMatches(ctx context.Context, correlationID string) {
+	matches := r.ruleMatches
+	if buf := rules.MatchBufferFromContext(ctx); buf != nil {
+		matches = append(matches, buf.Drain()...)
+	}
+	if len(matches) == 0 {
+		return
+	}
+	if r.factory.publisher == nil {
+		return
+	}
+	for _, m := range matches {
+		if m.CorrelationID == "" {
+			m.CorrelationID = correlationID
+		}
+		payload, err := json.Marshal(m)
+		if err != nil {
+			r.factory.logger.WarnContext(ctx, "reporter: marshal rule match", "err", err.Error())
+			continue
+		}
+		r.factory.publisher.Publish(bus.Envelope{
+			EventID:       uuid.NewString(),
+			EventType:     eventTypeRuleMatched,
+			Timestamp:     time.Now().UTC(),
+			Mode:          bus.PayloadInline,
+			InlinePayload: payload,
+		})
+	}
 }
 
 // providerEndpointModelAttrs builds the (provider, endpoint, model)

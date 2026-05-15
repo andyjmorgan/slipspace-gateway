@@ -17,3 +17,11 @@ func FromContext(ctx context.Context) (Captured, bool) {
 func withCaptured(ctx context.Context, c Captured) context.Context {
 	return context.WithValue(ctx, capturedKey{}, c)
 }
+
+// WithCaptured attaches a Captured to ctx. Exported so downstream
+// middleware (notably the rules engine + body re-marshal) can be
+// tested in isolation by installing a Captured directly rather than
+// re-running the full HTTPHandler chain.
+func WithCaptured(ctx context.Context, c Captured) context.Context {
+	return withCaptured(ctx, c)
+}

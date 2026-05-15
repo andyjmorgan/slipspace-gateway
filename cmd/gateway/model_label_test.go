@@ -18,6 +18,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
@@ -29,72 +30,79 @@ import (
 func TestOutboundModel(t *testing.T) {
 	t.Parallel()
 
+	stateWith := func(provider, endpoint string, params map[string]string) *rules.MutableState {
+		return rules.NewMutableState(provider, endpoint, params, nil)
+	}
+
 	cases := []struct {
 		name     string
 		captured bodycapture.Captured
-		match    routing.Match
+		state    *rules.MutableState
 		want     string
 	}{
 		{
 			name:     "openai chat body model",
 			captured: bodycapture.Captured{Kind: bodycapture.KindChat, Body: &openaichat.ChatCompletionRequest{Model: "gpt-4o-mini"}},
-			match:    routing.Match{Provider: "openai", Endpoint: "chat_completions"},
+			state:    stateWith("openai", "chat_completions", nil),
 			want:     "gpt-4o-mini",
 		},
 		{
 			name:     "openai responses body model",
 			captured: bodycapture.Captured{Kind: bodycapture.KindResponses, Body: &openairesponses.ResponsesRequest{Model: "o1-mini"}},
-			match:    routing.Match{Provider: "openai", Endpoint: "responses"},
+			state:    stateWith("openai", "responses", nil),
 			want:     "o1-mini",
 		},
 		{
 			name:     "anthropic messages body model",
 			captured: bodycapture.Captured{Kind: bodycapture.KindMessages, Body: &messages.MessagesRequest{Model: "claude-haiku-4-5-20251001"}},
-			match:    routing.Match{Provider: "anthropic", Endpoint: "messages"},
+			state:    stateWith("anthropic", "messages", nil),
 			want:     "claude-haiku-4-5-20251001",
 		},
 		{
-			name:  "gemini route param wins",
-			match: routing.Match{Provider: "gemini", Endpoint: "generate_content", Params: map[string]string{"model": "gemini-2.5-pro"}},
+			name:  "gemini path param wins",
+			state: stateWith("gemini", "generate_content", map[string]string{"model": "gemini-2.5-pro"}),
 			want:  "gemini-2.5-pro",
 		},
 		{
-			name:  "route param trumps body when both present",
-			match: routing.Match{Params: map[string]string{"model": "gemini-2.0-flash"}},
-			// A typed body present alongside a route param is non-physical
-			// today (only Gemini carries a route model param, and its body
-			// type has no Model field), but the precedence is locked
-			// regardless to keep the rule unambiguous.
+			name:     "path param trumps body when both present",
+			state:    stateWith("", "", map[string]string{"model": "gemini-2.0-flash"}),
 			captured: bodycapture.Captured{Body: &openaichat.ChatCompletionRequest{Model: "should-be-ignored"}},
 			want:     "gemini-2.0-flash",
 		},
 		{
 			name:     "passthrough listing endpoint",
 			captured: bodycapture.Captured{Kind: bodycapture.KindPassthrough},
-			match:    routing.Match{Provider: "openai", Endpoint: "models"},
+			state:    stateWith("openai", "models", nil),
 			want:     "",
 		},
 		{
 			name:     "whitespace trimmed on body",
 			captured: bodycapture.Captured{Kind: bodycapture.KindChat, Body: &openaichat.ChatCompletionRequest{Model: "  gpt-4o  "}},
+			state:    stateWith("", "", nil),
 			want:     "gpt-4o",
 		},
 		{
 			name:  "whitespace trimmed on path param",
-			match: routing.Match{Params: map[string]string{"model": "  gemini-2.0-flash  "}},
+			state: stateWith("", "", map[string]string{"model": "  gemini-2.0-flash  "}),
 			want:  "gemini-2.0-flash",
 		},
 		{
 			name:     "empty body model returns empty",
 			captured: bodycapture.Captured{Kind: bodycapture.KindChat, Body: &openaichat.ChatCompletionRequest{}},
+			state:    stateWith("", "", nil),
 			want:     "",
+		},
+		{
+			name:  "nil state returns empty",
+			state: nil,
+			want:  "",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := outboundModel(tc.captured, tc.match)
+			got := outboundModel(tc.captured, tc.state)
 			if got != tc.want {
 				t.Fatalf("outboundModel = %q, want %q", got, tc.want)
 			}
@@ -232,9 +240,10 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 
 	reporter := newReporterFactory(nil, logger, meters)
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
+	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, 8, meters)
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, resolved.Providers, meters, errs, logger)
 	root := correlationMiddleware(logger, dataPlane)
 
 	gateway := httptest.NewServer(root)
