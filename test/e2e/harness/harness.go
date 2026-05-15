@@ -111,6 +111,13 @@ func NewWithOptions(t *testing.T, opts Options) *Harness {
 	return h
 }
 
+// PromURL returns the base URL of the gateway's Prometheus scrape endpoint.
+// Tests that assert metric labels survive end-to-end issue a GET against
+// "<PromURL>/metrics" after a request and parse the resulting text exposition.
+func (h *Harness) PromURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d", h.promBindPort)
+}
+
 // SendGatewaySignal forwards sig to the gateway process group. Used by drain
 // tests that need to send SIGTERM mid-request and verify in-flight completion
 // before the process exits. Returns nil if the gateway process is gone.

@@ -15,6 +15,8 @@ type RequestEvent struct {
 
 	Endpoint string `json:"endpoint,omitempty"`
 
+	Model string `json:"model,omitempty"`
+
 	StatusCode int `json:"status_code"`
 
 	DurationMs int64 `json:"duration_ms"`

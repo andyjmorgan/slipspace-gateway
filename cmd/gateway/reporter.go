@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,11 @@ type requestEvent struct {
 
 	Endpoint string `json:"endpoint,omitempty"`
 
+	// Model is the outbound model identifier — the model the gateway
+	// forwarded to upstream, after routing and (in v1.1) any rule
+	// mutations. Empty for endpoints that carry no model.
+	Model string `json:"model,omitempty"`
+
 	StatusCode int `json:"status_code"`
 
 	DurationMs int64 `json:"duration_ms"`
@@ -37,6 +43,35 @@ type requestEvent struct {
 	Streaming bool `json:"streaming,omitempty"`
 
 	UpstreamError string `json:"upstream_error,omitempty"`
+}
+
+// modelLabelMaxLen caps the length of the `model` metric label value to
+// keep cardinality bounded against a misbehaving client that injects long
+// or unique strings. Real-world provider model names top out around 30
+// characters; 80 leaves headroom for dated variants
+// (gpt-4o-mini-2024-07-18, claude-haiku-4-5-20251001) without risking
+// runaway label series.
+const modelLabelMaxLen = 80
+
+// modelLabelOther is the bucket label used when an inbound model string
+// fails the length cap. We deliberately collapse pathological values into
+// a single series rather than dropping the request — operators still see
+// the request count, just without a useful breakdown.
+const modelLabelOther = "other"
+
+// sanitiseModelLabel normalises a raw model identifier into a value safe
+// for use as a Prometheus label. Empty input is preserved (passthrough
+// endpoints like /v1/models have no model in scope); overlong input
+// collapses to modelLabelOther so cardinality stays bounded.
+func sanitiseModelLabel(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return ""
+	}
+	if len(v) > modelLabelMaxLen {
+		return modelLabelOther
+	}
+	return v
 }
 
 // reporterObserver bridges proxy.Forwarder lifecycle hooks into bus.Envelope
@@ -80,7 +115,7 @@ func (o *reporterObserver) OnResponseHeaders(ctx context.Context, status int, _ 
 
 	if !startedAt.IsZero() && o.meters != nil && o.meters.RequestTimeToFirstByte != nil {
 		ttfb := time.Since(startedAt).Seconds()
-		o.meters.RequestTimeToFirstByte.Record(ctx, ttfb, withProviderEndpoint(ctx))
+		o.meters.RequestTimeToFirstByte.Record(ctx, ttfb, withProviderEndpointModel(ctx))
 	}
 }
 
@@ -91,7 +126,7 @@ func (o *reporterObserver) OnUpstreamError(ctx context.Context, err error) {
 		s.mu.Unlock()
 	}
 	if o.meters != nil && o.meters.UpstreamErrorsTotal != nil {
-		o.meters.UpstreamErrorsTotal.Add(ctx, 1, withProviderEndpoint(ctx))
+		o.meters.UpstreamErrorsTotal.Add(ctx, 1, withProviderEndpointModel(ctx))
 	}
 }
 
@@ -106,6 +141,7 @@ func (o *reporterObserver) OnComplete(ctx context.Context, status int, durationM
 		state.mu.Lock()
 		ev.Provider = state.provider
 		ev.Endpoint = state.endpoint
+		ev.Model = state.model
 		ev.Streaming = state.streaming
 		if state.statusCode != 0 {
 			ev.StatusCode = state.statusCode
@@ -120,7 +156,7 @@ func (o *reporterObserver) OnComplete(ctx context.Context, status int, durationM
 	}
 
 	if o.meters != nil {
-		attrs := withProviderEndpointStatus(ev.Provider, ev.Endpoint, status)
+		attrs := withProviderEndpointModelStatus(ev.Provider, ev.Endpoint, ev.Model, status)
 		if o.meters.RequestsTotal != nil {
 			o.meters.RequestsTotal.Add(ctx, 1, attrs)
 		}
@@ -153,13 +189,19 @@ func (o *reporterObserver) OnComplete(ctx context.Context, status int, durationM
 		"duration_ms", ev.DurationMs,
 		"provider", ev.Provider,
 		"endpoint", ev.Endpoint,
+		"model", ev.Model,
 		"streaming", ev.Streaming,
 		"ttfb_ms", ttfbMs,
 		"upstream_error", ev.UpstreamError,
 	)
 }
 
-func withProviderEndpoint(ctx context.Context) metric.MeasurementOption {
+// withProviderEndpointModel builds the (provider, endpoint, model)
+// attribute set used by per-request meters that fire mid-request
+// (TimeToFirstByte, UpstreamErrors). Values are read off the reqState
+// stashed by the handler at destination-finalisation time so they reflect
+// the routed-and-rules-applied destination, not the inbound request.
+func withProviderEndpointModel(ctx context.Context) metric.MeasurementOption {
 	s := reqStateFromContext(ctx)
 	if s == nil {
 		return metric.WithAttributes()
@@ -169,13 +211,18 @@ func withProviderEndpoint(ctx context.Context) metric.MeasurementOption {
 	return metric.WithAttributes(
 		attribute.String("provider", s.provider),
 		attribute.String("endpoint", s.endpoint),
+		attribute.String("model", sanitiseModelLabel(s.model)),
 	)
 }
 
-func withProviderEndpointStatus(provider, endpoint string, status int) metric.MeasurementOption {
+// withProviderEndpointModelStatus extends withProviderEndpointModel with
+// the final response status code. Used at OnComplete where status is
+// authoritative (post-ErrorHandler) so it can't be read from reqState.
+func withProviderEndpointModelStatus(provider, endpoint, model string, status int) metric.MeasurementOption {
 	return metric.WithAttributes(
 		attribute.String("provider", provider),
 		attribute.String("endpoint", endpoint),
+		attribute.String("model", sanitiseModelLabel(model)),
 		attribute.Int("status_code", status),
 	)
 }

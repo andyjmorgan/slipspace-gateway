@@ -14,6 +14,9 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
+	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
+	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
+	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
 )
 
 // buildDataPlaneHandler composes routing, auth, bodycapture and the forwarder
@@ -59,9 +62,11 @@ func buildDataPlaneHandler(
 		}
 
 		if s := reqStateFromContext(ctx); s != nil {
+			captured, _ := bodycapture.FromContext(ctx)
 			s.mu.Lock()
 			s.provider = match.Provider
 			s.endpoint = match.Endpoint
+			s.model = outboundModel(captured, match)
 			s.mu.Unlock()
 		}
 
@@ -180,6 +185,38 @@ func substitutePlaceholders(path string, params map[string]string) string {
 		out = strings.ReplaceAll(out, "{"+name+"}", value)
 	}
 	return out
+}
+
+// outboundModel returns the model identifier the gateway is about to send
+// upstream — read at destination-finalisation time so it reflects the post-
+// routing destination (and, in v1.1, the post-rules destination too).
+//
+// Resolution order:
+//
+//  1. The `{model}` placeholder captured by routing, when present. Gemini
+//     puts the model in the URL path (/v1beta/models/{model}:generateContent)
+//     so the routed Match.Params is authoritative.
+//  2. The Model field on the typed captured body for chat / responses /
+//     messages. v1.1 rule mutations to these typed values are observed here
+//     because Captured.Body is a pointer and bodycapture runs upstream of
+//     the rules middleware.
+//
+// Returns "" when no model is in scope (e.g. /v1/models listing endpoints
+// with request_kind: passthrough). Callers are expected to sanitise the
+// result before using it as a metric-label value.
+func outboundModel(captured bodycapture.Captured, match routing.Match) string {
+	if v := strings.TrimSpace(match.Params["model"]); v != "" {
+		return v
+	}
+	switch b := captured.Body.(type) {
+	case *openaichat.ChatCompletionRequest:
+		return strings.TrimSpace(b.Model)
+	case *openairesponses.ResponsesRequest:
+		return strings.TrimSpace(b.Model)
+	case *messages.MessagesRequest:
+		return strings.TrimSpace(b.Model)
+	}
+	return ""
 }
 
 func joinPaths(base, target string) string {

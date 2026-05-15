@@ -31,8 +31,17 @@ type reqState struct {
 	// when the upstream returned no headers (transport failure).
 	firstByte time.Time
 
-	provider   string
-	endpoint   string
+	provider string
+	endpoint string
+
+	// model is the outbound model identifier as seen at the destination-
+	// finalisation point in the handler — after routing and (when v1.1
+	// flips it on) after rules. Empty for endpoints that carry no model
+	// (e.g. /v1/models listings). Used as the `model` label on every
+	// per-request metric so dashboards can break down latency, errors,
+	// and (later) token counts by model.
+	model string
+
 	statusCode int
 	streaming  bool
 	upstream   error
