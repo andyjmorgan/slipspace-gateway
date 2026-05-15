@@ -98,7 +98,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, 8, meters)
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, resolved.Providers, meters, errs, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, reporter.Factory(), resolved.Providers, meters, errs, logger)
 	root := correlationMiddleware(logger, dataPlane)
 
 	mux := http.NewServeMux()

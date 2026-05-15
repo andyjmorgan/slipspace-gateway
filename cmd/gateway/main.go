@@ -99,12 +99,13 @@ func run(ctx context.Context) error {
 	resolver := auth.NewResolver(resolved)
 
 	reporter := newReporterFactory(publisher, logger, obs.Meters)
-	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
+	observerFactory := reporter.Factory()
+	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: observerFactory})
 
 	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, env.RulesMaxGroupDepth, obs.Meters)
 
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, resolved.Providers, obs.Meters, errs, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, obs.Meters, errs, logger)
 
 	root := correlationMiddleware(logger, dataPlane)
 

@@ -23,6 +23,13 @@ type Options struct {
 	// DrainTimeoutSeconds sets SLUICE_SHUTDOWN_DRAIN_SECONDS. 0 = leave
 	// default. Short values exercise drain-timeout escalation.
 	DrainTimeoutSeconds int
+
+	// PolicyYAML, when non-empty, replaces the policy.yaml content the
+	// harness would otherwise copy from config-dev/. Tests that need
+	// custom rules (terminating actions, multi-rule priority ordering,
+	// etc.) supply a full policy.yaml here; providers.yaml is still
+	// copied from config-dev/ so the upstream wiring stays consistent.
+	PolicyYAML string
 }
 
 // BoolPtr returns a pointer to b. Convenience for the Options.ReportingEnabled

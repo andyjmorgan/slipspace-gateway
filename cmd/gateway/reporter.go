@@ -55,31 +55,6 @@ func sanitiseModelLabel(raw string) string {
 	return v
 }
 
-// requestLabels carries the routed (provider, endpoint, model) the handler
-// resolves at destination-finalisation time so the per-request observer
-// can label its metrics. It rides on context as an immutable value — a
-// single writer (the handler) sets it before invoking the forwarder, and
-// a single reader (the observer factory) consumes it once.
-type requestLabels struct {
-	provider string
-	endpoint string
-	model    string
-}
-
-type requestLabelsKey struct{}
-
-func withRequestLabels(ctx context.Context, l requestLabels) context.Context {
-	return context.WithValue(ctx, requestLabelsKey{}, l)
-}
-
-func requestLabelsFromContext(ctx context.Context) requestLabels {
-	if ctx == nil {
-		return requestLabels{}
-	}
-	l, _ := ctx.Value(requestLabelsKey{}).(requestLabels)
-	return l
-}
-
 // reporterFactory captures the dependencies needed by every per-request
 // reporter observer — the publisher, logger, and meter handles are
 // process-lifetime values. Factory() satisfies proxy.ObserverFactory so the
@@ -102,12 +77,12 @@ func newReporterFactory(publisher *bus.Publisher, logger *slog.Logger, meters *o
 // read as a single expression.
 func (f *reporterFactory) Factory() proxy.ObserverFactory {
 	return func(ctx context.Context, _ proxy.Destination) proxy.Observer {
-		labels := requestLabelsFromContext(ctx)
+		labels := observability.RequestLabelsFromContext(ctx)
 		return &reporterRun{
 			factory:  f,
-			provider: labels.provider,
-			endpoint: labels.endpoint,
-			model:    labels.model,
+			provider: labels.Provider,
+			endpoint: labels.Endpoint,
+			model:    labels.Model,
 		}
 	}
 }
