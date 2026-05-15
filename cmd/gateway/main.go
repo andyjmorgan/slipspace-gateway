@@ -97,8 +97,8 @@ func run(ctx context.Context) error {
 
 	resolver := auth.NewResolver(resolved)
 
-	observer := newReporterObserver(publisher, logger, obs.Meters)
-	forwarder := proxy.New(proxy.Options{Logger: logger, Observer: observer})
+	reporter := newReporterFactory(publisher, logger, obs.Meters)
+	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
 
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)

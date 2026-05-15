@@ -92,8 +92,8 @@ func newTestEnv(t *testing.T) *testEnv {
 		cancel()
 		t.Fatalf("NewMeters: %v", err)
 	}
-	observer := newReporterObserver(nil, logger, meters)
-	forwarder := proxy.New(proxy.Options{Logger: logger, Observer: observer})
+	reporter := newReporterFactory(nil, logger, meters)
+	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)

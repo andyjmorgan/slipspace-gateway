@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -131,8 +132,8 @@ func TestSanitiseModelLabel(t *testing.T) {
 // TestGateway_RequestsMetricCarriesModelLabel exercises the full handler
 // chain with a real meter SDK and asserts the model attribute is present
 // on gateway.requests.total after a chat request. This is the unit-side
-// guarantee that the label survives from the typed body → reqState →
-// withProviderEndpointModelStatus → OTel.
+// guarantee that the label survives from the typed body through the
+// per-request reporter observer to OTel.
 func TestGateway_RequestsMetricCarriesModelLabel(t *testing.T) {
 	env := newTestEnvWithMeters(t)
 
@@ -147,11 +148,7 @@ func TestGateway_RequestsMetricCarriesModelLabel(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var rm metricdata.ResourceMetrics
-	if err := env.reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("collect: %v", err)
-	}
-
+	rm := collectUntilRecorded(t, env.reader, observability.MetricRequestsTotal)
 	requireAttribute(t, &rm, observability.MetricRequestsTotal, "model", "gpt-4o-mini")
 	requireAttribute(t, &rm, observability.MetricRequestDuration, "model", "gpt-4o-mini")
 }
@@ -171,11 +168,7 @@ func TestGateway_RequestsMetricEmptyModelForPassthrough(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var rm metricdata.ResourceMetrics
-	if err := env.reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("collect: %v", err)
-	}
-
+	rm := collectUntilRecorded(t, env.reader, observability.MetricRequestsTotal)
 	requireAttribute(t, &rm, observability.MetricRequestsTotal, "model", "")
 }
 
@@ -237,8 +230,8 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 		t.Fatalf("NewMeters: %v", err)
 	}
 
-	observer := newReporterObserver(nil, logger, meters)
-	forwarder := proxy.New(proxy.Options{Logger: logger, Observer: observer})
+	reporter := newReporterFactory(nil, logger, meters)
+	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)
@@ -258,6 +251,36 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 	}
 	t.Cleanup(te.shutdown)
 	return &meterEnv{testEnv: te, reader: reader}
+}
+
+// collectUntilRecorded scrapes the ManualReader in a short loop until the
+// named metric appears or the deadline elapses. The HTTP client returns to
+// the test goroutine as soon as the proxy flushes the response body, but
+// reporterRun.OnComplete (which records gateway.requests.total) only fires
+// after rp.ServeHTTP returns on the server goroutine. Without this wait
+// the first Collect occasionally lands before OnComplete and the test
+// reads an empty scope.
+func collectUntilRecorded(t *testing.T, reader *sdkmetric.ManualReader, metricName string) metricdata.ResourceMetrics {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var rm metricdata.ResourceMetrics
+	for {
+		rm = metricdata.ResourceMetrics{}
+		if err := reader.Collect(context.Background(), &rm); err != nil {
+			t.Fatalf("collect: %v", err)
+		}
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				if m.Name == metricName {
+					return rm
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("metric %q never recorded within timeout", metricName)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func requireAttribute(t *testing.T, rm *metricdata.ResourceMetrics, metricName, key, wantValue string) {

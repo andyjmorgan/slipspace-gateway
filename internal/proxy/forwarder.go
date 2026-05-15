@@ -41,19 +41,22 @@ type Forwarder struct {
 	// context via observability.WithLogger.
 	logger *slog.Logger
 
-	// observer receives lifecycle signals so telemetry and (in a follow-up
-	// wave) the typed-message pipeline can react to forwards without
-	// coupling to the proxy internals. Never nil — New substitutes a no-op
-	// when callers pass nil.
-	observer Observer
+	// observerFactory mints a fresh Observer for every Forward call so
+	// implementations can own per-request state as plain struct fields
+	// instead of stashing it on context under a mutex. Never nil — New
+	// substitutes a no-op factory when callers pass nil.
+	observerFactory ObserverFactory
 }
 
 // Options configures a new Forwarder. Both fields are optional; New
-// substitutes slog.Default and a no-op Observer for nil values.
+// substitutes slog.Default and a no-op ObserverFactory for nil values.
 type Options struct {
 	Logger *slog.Logger
 
-	Observer Observer
+	// ObserverFactory is invoked once per Forward call to produce the
+	// Observer that receives lifecycle signals for that single request.
+	// A nil factory falls back to one that returns a no-op observer.
+	ObserverFactory ObserverFactory
 }
 
 // Destination describes the resolved upstream target for a single Forward
@@ -87,20 +90,20 @@ type Destination struct {
 }
 
 // New constructs a Forwarder. A nil Logger falls back to slog.Default and a
-// nil Observer falls back to a no-op.
+// nil ObserverFactory falls back to one that returns a no-op observer.
 func New(opts Options) *Forwarder {
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	observer := opts.Observer
-	if observer == nil {
-		observer = nopObserver{}
+	factory := opts.ObserverFactory
+	if factory == nil {
+		factory = nopObserverFactory
 	}
 	return &Forwarder{
-		transports: make(map[string]*http.Transport),
-		logger:     logger,
-		observer:   observer,
+		transports:      make(map[string]*http.Transport),
+		logger:          logger,
+		observerFactory: factory,
 	}
 }
 
@@ -132,12 +135,16 @@ var alwaysDropHeaders = []string{
 // surfaced via Observer.OnUpstreamError, with a 502 Bad Gateway written to
 // the client.
 //
-// Observer lifecycle for a single call:
+// A fresh Observer is minted at the top of Forward via the configured
+// ObserverFactory. All four lifecycle hooks fire from this goroutine, so
+// Observer implementations may hold per-request state as plain struct
+// fields without internal synchronisation:
 //
 //  1. OnRequestStart fires synchronously before the upstream call.
-//  2. OnResponseHeaders fires once the upstream response headers arrive.
+//  2. OnResponseHeaders fires once the upstream response headers arrive,
+//     inside httputil.ReverseProxy.ModifyResponse.
 //  3. OnUpstreamError fires instead of OnResponseHeaders on transport
-//     failure.
+//     failure, inside httputil.ReverseProxy.ErrorHandler.
 //  4. OnComplete fires once after ServeHTTP returns, carrying the captured
 //     final status (via statusWriter) and total wall-clock duration.
 //
@@ -158,6 +165,11 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 	baseKey := destBaseKey(dest)
 	if baseKey == "" {
 		return errors.New("proxy: forward: destination missing BaseURL")
+	}
+
+	observer := f.observerFactory(ctx, dest)
+	if observer == nil {
+		observer = nopObserver{}
 	}
 
 	transport := f.getOrCreateTransport(baseKey)
@@ -226,12 +238,12 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 				)
 			}
 
-			f.observer.OnResponseHeaders(ctx, resp.StatusCode, resp.Header, streaming)
+			observer.OnResponseHeaders(ctx, resp.StatusCode, resp.Header, streaming)
 			return nil
 		},
 		ErrorHandler: func(rw http.ResponseWriter, _ *http.Request, err error) {
 			upstreamErr = err
-			f.observer.OnUpstreamError(ctx, err)
+			observer.OnUpstreamError(ctx, err)
 			f.logger.ErrorContext(ctx, "proxy: upstream forward failed",
 				slog.String("destination", baseKey),
 				slog.Any("error", err),
@@ -242,12 +254,12 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 		FlushInterval: -1,
 	}
 
-	f.observer.OnRequestStart(ctx, dest)
+	observer.OnRequestStart(ctx, dest)
 	start := time.Now()
 
 	rp.ServeHTTP(cw, req)
 
-	f.observer.OnComplete(ctx, cw.Status(), time.Since(start).Milliseconds())
+	observer.OnComplete(ctx, cw.Status(), time.Since(start).Milliseconds())
 
 	if upstreamErr == nil {
 		f.logger.InfoContext(ctx, "proxy: upstream completed",

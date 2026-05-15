@@ -70,3 +70,10 @@ func (o *recordingObserver) OnComplete(_ context.Context, status int, durationMs
 		durationMs: durationMs,
 	})
 }
+
+// staticObserver returns an ObserverFactory that hands every Forward the
+// same Observer instance. Tests that own a recordingObserver and want to
+// read its events after the call use this to bridge to the factory API.
+func staticObserver(o Observer) ObserverFactory {
+	return func(context.Context, Destination) Observer { return o }
+}
