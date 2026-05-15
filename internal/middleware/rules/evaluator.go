@@ -44,10 +44,16 @@ func (e *Evaluator) Evaluate(_ context.Context, _ GatewayContext) (contractsrule
 	return contractsrules.Outcome{Terminate: false}, nil
 }
 
-// GatewayContext is the minimal slice of request state a rule needs to
-// inspect or mutate. v1.0 carries only the routing identifiers and inbound
-// headers; v1.1 extends it with decoded-body access for content-based
-// conditions.
+// GatewayContext is the read-only slice of request state a rule's
+// Condition inspects. v1.0 carried only the routing identifiers and
+// inbound headers; v1.0.1 extends it with the resolved Configuration
+// name (for telemetry) and the decoded typed Body so content-based
+// conditions can read structured fields without re-parsing Raw bytes.
+//
+// Actions mutate state via MutableState, not GatewayContext. Splitting
+// them keeps the read/write surfaces explicit and lets the evaluator
+// pass GatewayContext by value to Condition.Matches without leaking a
+// mutable handle into condition implementations.
 type GatewayContext struct {
 	// Provider is the routed upstream provider name (e.g. "openai").
 	Provider string
@@ -56,13 +62,22 @@ type GatewayContext struct {
 	// "chat_completions").
 	Endpoint string
 
-	// Model is the model identifier the client requested. Populated from
-	// the decoded request body when the endpoint carries one; empty
-	// otherwise.
+	// Model is the model identifier the client requested, read from
+	// the routing match or the decoded body. Empty for endpoints that
+	// carry no model.
 	Model string
 
-	// Headers is the inbound request header set. Rules that match on
-	// header values read this; mutation here is observed by downstream
-	// middleware.
+	// Headers is the inbound request header set. HeaderCondition reads
+	// from this; rule-driven mutations land on MutableState.
 	Headers http.Header
+
+	// ConfigurationName is the resolved configuration the request was
+	// authorised under. Surfaces on rule-match telemetry labels and on
+	// the gateway.rule.matched event.
+	ConfigurationName string
+
+	// Body is the typed decoded request body when the route carries
+	// one (bodycapture.Captured.Body) — nil for passthrough endpoints.
+	// Content-based conditions type-switch on this.
+	Body any
 }

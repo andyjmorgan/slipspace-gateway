@@ -21,6 +21,17 @@ const (
 	DefaultNATSStashThresholdBytes = 786432
 	DefaultNATSPublishQueueSize    = 10000
 	DefaultConfigDir               = "/etc/sluice/"
+
+	// DefaultRulesMaxGroupDepth caps recursion through nested RuleGroup
+	// children during evaluation. The cap is a guardrail against
+	// pathological YAML that would otherwise blow the stack; 8 fits
+	// every realistic operator-authored policy with headroom.
+	DefaultRulesMaxGroupDepth = 8
+
+	// MaxRulesMaxGroupDepth is the upper bound accepted by Validate.
+	// Beyond this, the cost of authoring + evaluating a tree this deep
+	// outweighs any expressive gain; a flat priority chain is clearer.
+	MaxRulesMaxGroupDepth = 64
 )
 
 // SLUICE_* env var names. Exported so callers (CLI validator, tests,
@@ -39,6 +50,7 @@ const (
 	EnvNATSStashThresholdBytes = "SLUICE_NATS_STASH_THRESHOLD_BYTES"
 	EnvNATSPublishQueueSize    = "SLUICE_NATS_PUBLISH_QUEUE_SIZE"
 	EnvConfigDir               = "SLUICE_CONFIG_DIR"
+	EnvRulesMaxGroupDepth      = "SLUICE_RULES_MAX_GROUP_DEPTH"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -58,6 +70,7 @@ var envVarNames = []string{
 	EnvNATSStashThresholdBytes,
 	EnvNATSPublishQueueSize,
 	EnvConfigDir,
+	EnvRulesMaxGroupDepth,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -120,6 +133,12 @@ type ServerEnv struct {
 	// ConfigDir holds the policy + providers YAML directory loaded by
 	// Load. The CLI's --dir flag overrides this for the file load only.
 	ConfigDir string
+
+	// RulesMaxGroupDepth caps recursive descent through nested
+	// RuleGroup children during evaluation. Operator-authored policies
+	// rarely need more than 3-4 levels; the cap is a guardrail against
+	// pathological YAML triggering stack overflow in the evaluator.
+	RulesMaxGroupDepth int
 }
 
 // ReportingEnabled reports whether NATS reporting is configured. False
@@ -151,6 +170,10 @@ func LoadEnv() (*ServerEnv, error) {
 	if err != nil {
 		return nil, err
 	}
+	groupDepth, err := envInt(EnvRulesMaxGroupDepth, DefaultRulesMaxGroupDepth)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ServerEnv{
 		HTTPBind:                envString(EnvHTTPBind, DefaultHTTPBind),
@@ -166,6 +189,7 @@ func LoadEnv() (*ServerEnv, error) {
 		NATSStashThresholdBytes: stash,
 		NATSPublishQueueSize:    queue,
 		ConfigDir:               envString(EnvConfigDir, DefaultConfigDir),
+		RulesMaxGroupDepth:      groupDepth,
 	}, nil
 }
 
@@ -188,6 +212,9 @@ func (e *ServerEnv) Validate() error {
 	}
 	if e.NATSPublishQueueSize <= 0 {
 		return fmt.Errorf("%s=%d: %w: must be positive", EnvNATSPublishQueueSize, e.NATSPublishQueueSize, ErrInvalidEnv)
+	}
+	if e.RulesMaxGroupDepth < 1 || e.RulesMaxGroupDepth > MaxRulesMaxGroupDepth {
+		return fmt.Errorf("%s=%d: %w: must be in [1, %d]", EnvRulesMaxGroupDepth, e.RulesMaxGroupDepth, ErrInvalidEnv, MaxRulesMaxGroupDepth)
 	}
 	switch strings.ToLower(strings.TrimSpace(e.LogLevel)) {
 	case "debug", "info", "warn", "error":

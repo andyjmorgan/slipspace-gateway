@@ -355,6 +355,27 @@ func (r *ResolvedConfig) buildIndexes() {
 		r.RuleIndex[rule.Name] = rule
 	}
 
+	// Resolve each configuration's RuleNames into a priority-sorted slice
+	// of pointer-stable rule references. Unknown names are caught by
+	// validateLibraries before this runs; skip silently here rather than
+	// duplicate the error surface.
+	r.PerConfigurationRules = make(map[string][]*rulescontract.RuleContract, len(r.Configurations))
+	for name, cfg := range r.Configurations {
+		if len(cfg.RuleNames) == 0 {
+			continue
+		}
+		rules := make([]*rulescontract.RuleContract, 0, len(cfg.RuleNames))
+		for _, ruleName := range cfg.RuleNames {
+			if rule, ok := r.RuleIndex[ruleName]; ok {
+				rules = append(rules, rule)
+			}
+		}
+		sort.SliceStable(rules, func(i, j int) bool {
+			return rules[i].Priority < rules[j].Priority
+		})
+		r.PerConfigurationRules[name] = rules
+	}
+
 	r.ResilienceIndex = make(map[string]*resilience.ResilienceConfig, len(r.ResiliencePolicies))
 	for i := range r.ResiliencePolicies {
 		pol := &r.ResiliencePolicies[i]

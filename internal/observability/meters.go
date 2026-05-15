@@ -31,6 +31,14 @@ const (
 	MetricEventsInlineBytes      = "gateway.events.inline_bytes"
 
 	MetricActiveRequests = "gateway.active_requests"
+
+	// Rule-engine instruments. Each is labelled by rule_name (always)
+	// and rule_id (when the rule was minted by the control plane);
+	// cardinality is bounded by the configured policy library, not by
+	// inbound traffic.
+	MetricRuleMatchesTotal       = "gateway.rule.matches.total"
+	MetricRuleErrorsTotal        = "gateway.rule.errors.total"
+	MetricRuleEvaluationDuration = "gateway.rule.evaluation.duration"
 )
 
 // Histogram bucket boundaries. Defined as package-level vars (not consts)
@@ -42,6 +50,12 @@ var (
 	TimeToFirstByteBuckets = []float64{0, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}
 
 	InlineBytesBuckets = []float64{1024, 4096, 16384, 65536, 262144, 786432}
+
+	// RuleEvaluationDurationBuckets gives sub-millisecond resolution
+	// since the engine runs synchronously on the request path; the
+	// long tail captures pathological policies (deep groups, regex
+	// catastrophes) without polluting the common case.
+	RuleEvaluationDurationBuckets = []float64{0, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1}
 )
 
 // Meters bundles every gateway instrument so that callers can pass a
@@ -72,6 +86,18 @@ type Meters struct {
 	EventsInlineBytes      metric.Int64Histogram
 
 	ActiveRequests metric.Int64UpDownCounter
+
+	// RuleMatchesTotal counts rules that matched a request. Labels:
+	// rule_name, rule_id (optional), terminated, action_count.
+	RuleMatchesTotal metric.Int64Counter
+
+	// RuleErrorsTotal counts action execution failures during rule
+	// evaluation. Labels: rule_name, rule_id (optional), error_kind.
+	RuleErrorsTotal metric.Int64Counter
+
+	// RuleEvaluationDuration records the full per-request rule
+	// evaluation cycle. Labels: configuration.
+	RuleEvaluationDuration metric.Float64Histogram
 }
 
 // NewMeters constructs the Meters bundle from the supplied meter. The
@@ -112,6 +138,8 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricConfigReloadTotal, "Configuration reload attempts.", "1", &m.ConfigReloadTotal},
 		{MetricUpstreamErrorsTotal, "Errors returned by upstream providers.", "1", &m.UpstreamErrorsTotal},
 		{MetricErrorResponsesTotal, "JSON error responses written by the gateway middleware chain.", "1", &m.ErrorResponsesTotal},
+		{MetricRuleMatchesTotal, "Rules that matched on a request.", "1", &m.RuleMatchesTotal},
+		{MetricRuleErrorsTotal, "Action execution failures during rule evaluation.", "1", &m.RuleErrorsTotal},
 	} {
 		if err := int64Counter(c.name, c.desc, c.unit, c.dst); err != nil {
 			return nil, err
@@ -156,6 +184,16 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		return nil, fmt.Errorf("observability: create up-down counter %s: %w", MetricActiveRequests, err)
 	}
 	m.ActiveRequests = active
+
+	ruleEval, err := meter.Float64Histogram(MetricRuleEvaluationDuration,
+		metric.WithDescription("Per-request rule evaluation cycle duration."),
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(RuleEvaluationDurationBuckets...),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricRuleEvaluationDuration, err)
+	}
+	m.RuleEvaluationDuration = ruleEval
 
 	return m, nil
 }

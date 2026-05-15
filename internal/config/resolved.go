@@ -62,6 +62,16 @@ type ResolvedConfig struct {
 	// resolve a Configuration's RuleNames reference with a single map read.
 	RuleIndex map[string]*rulescontract.RuleContract
 
+	// PerConfigurationRules maps configuration name to the configuration's
+	// resolved rule slice — pointer-stable references into Rules, sorted by
+	// Priority ascending. The order in Configuration.RuleNames is preserved
+	// as the tie-breaker when two rules share a priority, so operator
+	// authoring order is deterministic.
+	//
+	// The data-plane rules middleware reads this per request rather than
+	// re-resolving and re-sorting on the hot path.
+	PerConfigurationRules map[string][]*rulescontract.RuleContract
+
 	// ResilienceIndex maps resilience policy name to a pointer into
 	// ResiliencePolicies.
 	ResilienceIndex map[string]*resilience.ResilienceConfig

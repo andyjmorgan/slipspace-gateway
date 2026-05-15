@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -531,6 +532,7 @@ func TestNopObserverImplementsObserver(t *testing.T) {
 	obs.OnResponseHeaders(context.Background(), 200, http.Header{}, false)
 	obs.OnUpstreamError(context.Background(), errors.New("boom"))
 	obs.OnComplete(context.Background(), 200, 5)
+	obs.OnRuleMatched(context.Background(), events.RuleMatched{RuleName: "noop"})
 }
 
 func TestNew_DefaultsApplied(t *testing.T) {

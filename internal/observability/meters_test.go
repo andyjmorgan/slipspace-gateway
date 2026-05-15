@@ -53,6 +53,9 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 	meters.EventsInlineBytes.Record(ctx, 4096)
 	meters.ActiveRequests.Add(ctx, 1)
 	meters.ActiveRequests.Add(ctx, -1)
+	meters.RuleMatchesTotal.Add(ctx, 1)
+	meters.RuleErrorsTotal.Add(ctx, 1)
+	meters.RuleEvaluationDuration.Record(ctx, 0.0007)
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(ctx, &rm); err != nil {
@@ -82,6 +85,9 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 		observability.MetricRequestTimeToFirstByte,
 		observability.MetricEventsInlineBytes,
 		observability.MetricActiveRequests,
+		observability.MetricRuleMatchesTotal,
+		observability.MetricRuleErrorsTotal,
+		observability.MetricRuleEvaluationDuration,
 	}
 	for _, name := range want {
 		if !got[name] {
@@ -161,6 +167,7 @@ func TestNewMeters_HistogramBoundariesMatchSpec(t *testing.T) {
 	meters.RequestDuration.Record(ctx, 0.5)
 	meters.RequestTimeToFirstByte.Record(ctx, 0.05)
 	meters.EventsInlineBytes.Record(ctx, 16384)
+	meters.RuleEvaluationDuration.Record(ctx, 0.002)
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(ctx, &rm); err != nil {
@@ -170,6 +177,7 @@ func TestNewMeters_HistogramBoundariesMatchSpec(t *testing.T) {
 	checks := map[string][]float64{
 		observability.MetricRequestDuration:        observability.RequestDurationBuckets,
 		observability.MetricRequestTimeToFirstByte: observability.TimeToFirstByteBuckets,
+		observability.MetricRuleEvaluationDuration: observability.RuleEvaluationDurationBuckets,
 	}
 
 	intChecks := map[string][]float64{
@@ -268,6 +276,7 @@ func TestNewMeters_PropagatesConstructionErrors(t *testing.T) {
 		{"ttfb", &failMeter{failFloat64HistAt: 2}},
 		{"inline_bytes", &failMeter{failInt64Histogram: true}},
 		{"active_requests", &failMeter{failInt64UpDown: true}},
+		{"rule_eval_duration", &failMeter{failFloat64HistAt: 3}},
 	}
 
 	for _, tc := range cases {

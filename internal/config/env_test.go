@@ -35,6 +35,7 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 		{"NATSStashThresholdBytes", env.NATSStashThresholdBytes, config.DefaultNATSStashThresholdBytes},
 		{"NATSPublishQueueSize", env.NATSPublishQueueSize, config.DefaultNATSPublishQueueSize},
 		{"ConfigDir", env.ConfigDir, config.DefaultConfigDir},
+		{"RulesMaxGroupDepth", env.RulesMaxGroupDepth, config.DefaultRulesMaxGroupDepth},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
@@ -67,6 +68,7 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	t.Setenv(config.EnvNATSStashThresholdBytes, "12345")
 	t.Setenv(config.EnvNATSPublishQueueSize, "999")
 	t.Setenv(config.EnvConfigDir, "/somewhere/else")
+	t.Setenv(config.EnvRulesMaxGroupDepth, "16")
 
 	env, err := config.LoadEnv()
 	if err != nil {
@@ -88,6 +90,9 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	if env.NATSStashThresholdBytes != 12345 {
 		t.Errorf("StashThresholdBytes = %d", env.NATSStashThresholdBytes)
 	}
+	if env.RulesMaxGroupDepth != 16 {
+		t.Errorf("RulesMaxGroupDepth = %d", env.RulesMaxGroupDepth)
+	}
 	if !env.ReportingEnabled() || !env.PrometheusEnabled() || !env.OTLPEnabled() {
 		t.Errorf("toggles wrong: rep=%v prom=%v otlp=%v",
 			env.ReportingEnabled(), env.PrometheusEnabled(), env.OTLPEnabled())
@@ -102,6 +107,7 @@ func TestLoadEnv_BadIntWrapsErrInvalidEnv(t *testing.T) {
 		{"drain", config.EnvShutdownDrainSeconds},
 		{"stash", config.EnvNATSStashThresholdBytes},
 		{"queue", config.EnvNATSPublishQueueSize},
+		{"group_depth", config.EnvRulesMaxGroupDepth},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,6 +152,8 @@ func TestServerEnv_Validate_NonPositiveInts(t *testing.T) {
 		{"drain", func(e *config.ServerEnv) { e.ShutdownDrainSeconds = 0 }},
 		{"stash", func(e *config.ServerEnv) { e.NATSStashThresholdBytes = -1 }},
 		{"queue", func(e *config.ServerEnv) { e.NATSPublishQueueSize = 0 }},
+		{"group_depth_low", func(e *config.ServerEnv) { e.RulesMaxGroupDepth = 0 }},
+		{"group_depth_high", func(e *config.ServerEnv) { e.RulesMaxGroupDepth = config.MaxRulesMaxGroupDepth + 1 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
