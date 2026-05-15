@@ -329,6 +329,15 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 			continue
 		}
+		if name == "policy.yaml" && h.opts.PolicyYAML != "" {
+			// Override: substitute the test-supplied policy verbatim.
+			// Providers wiring still comes from config-dev/.
+			content := strings.ReplaceAll(h.opts.PolicyYAML, "mockllm:5555", mockHost)
+			if err := os.WriteFile(filepath.Join(dst, name), []byte(content), 0o600); err != nil { //nolint:gosec // dst is os.MkdirTemp output
+				return "", fmt.Errorf("write override %s: %w", name, err)
+			}
+			continue
+		}
 		raw, err := os.ReadFile(filepath.Join(src, name)) //nolint:gosec // repo-controlled config-dev/* path
 		if err != nil {
 			return "", fmt.Errorf("read %s: %w", name, err)

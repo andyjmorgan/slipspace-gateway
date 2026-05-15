@@ -60,6 +60,22 @@ func NewEvaluator(
 	}
 }
 
+// Result is the engine's per-request evaluation summary handed to
+// the middleware. SourceRule is non-nil only when Outcome.Terminate
+// is true — it names the rule whose action short-circuited the
+// pipeline, used by the middleware to compose X-Sluice-Synthetic
+// and to record the synthetic status on the reporter.
+type Result struct {
+	// Outcome carries the terminating Response when set; zero-value
+	// (Terminate=false, Response=nil) means evaluation completed
+	// without a synthetic response.
+	Outcome contractsrules.Outcome
+
+	// SourceRule is the rule whose terminating action produced
+	// Outcome. Nil when no terminating action fired.
+	SourceRule *contractsrules.RuleContract
+}
+
 // Evaluate walks the rules attached to gc.ConfigurationName in
 // priority-sorted order. On each matched rule the actions run in
 // sequence, each Apply call gets the same MutableState handle so
@@ -67,10 +83,10 @@ func NewEvaluator(
 //
 // Behavior=Exit halts iteration after the current rule's actions
 // run; it does NOT set Outcome.Terminate — that flag is reserved
-// for terminating actions (returnStatusCode, llmImpersonation in
-// PR 3-4). The distinction matters for telemetry: "rule asked us
-// to stop iterating" is not the same as "a synthetic response
-// short-circuited the pipeline".
+// for terminating actions (returnStatusCode, llmImpersonation).
+// The distinction matters for telemetry: "rule asked us to stop
+// iterating" is not the same as "a synthetic response short-
+// circuited the pipeline".
 //
 // MatchBuffer pulled from ctx receives one events.RuleMatched per
 // matched rule. The forwarder's observer drains it at OnComplete.
@@ -79,9 +95,9 @@ func (e *Evaluator) Evaluate(
 	gc GatewayContext,
 	state *MutableState,
 	body any,
-) (contractsrules.Outcome, error) {
+) (Result, error) {
 	if e == nil {
-		return contractsrules.Outcome{}, nil
+		return Result{}, nil
 	}
 
 	rules := e.perConfigRules[gc.ConfigurationName]
@@ -96,10 +112,11 @@ func (e *Evaluator) Evaluate(
 	}()
 
 	if len(rules) == 0 {
-		return contractsrules.Outcome{}, nil
+		return Result{}, nil
 	}
 
 	buffer := MatchBufferFromContext(ctx)
+	var result Result
 
 	for _, rule := range rules {
 		matched := matchCondition(rule.Condition, gc, 0, e.maxGroupDepth, func() {
@@ -109,13 +126,13 @@ func (e *Evaluator) Evaluate(
 			continue
 		}
 
-		applied, lastErr := e.applyRuleActions(ctx, rule, state, body)
+		applied, outcome, lastErr := e.applyRuleActions(ctx, rule, state, body)
 		match := events.RuleMatched{
 			RuleName:       rule.Name,
 			Configuration:  gc.ConfigurationName,
 			MatchedAt:      time.Now().UTC(),
 			ActionsApplied: applied,
-			Terminated:     false,
+			Terminated:     outcome.Terminate,
 		}
 		if rule.ID != nil {
 			match.RuleID = rule.ID.String()
@@ -129,9 +146,15 @@ func (e *Evaluator) Evaluate(
 			e.meters.RuleMatchesTotal.Add(ctx, 1, metric.WithAttributes(
 				attribute.String("rule_name", rule.Name),
 				attribute.String("rule_id", match.RuleID),
-				attribute.Bool("terminated", false),
+				attribute.Bool("terminated", outcome.Terminate),
 				attribute.Int("action_count", len(applied)),
 			))
+		}
+
+		if outcome.Terminate {
+			result.Outcome = outcome
+			result.SourceRule = rule
+			break
 		}
 
 		if rule.Behavior == contractsrules.BehaviorExit {
@@ -139,7 +162,7 @@ func (e *Evaluator) Evaluate(
 		}
 	}
 
-	return contractsrules.Outcome{}, nil
+	return result, nil
 }
 
 // applyRuleActions runs each action in order. Each Apply call sees
@@ -148,24 +171,36 @@ func (e *Evaluator) Evaluate(
 // is replaced with a metric increment + the error attached to the
 // rule's events.RuleMatched payload, so operators can see WHICH
 // action failed without scraping logs.
+//
+// A terminating action (returnStatusCode, llmImpersonation) stops
+// the per-rule action loop immediately — subsequent actions on the
+// same rule do NOT run, because the request is about to be
+// short-circuited with a synthetic response. The terminating
+// Outcome is returned for the caller to surface upstream.
 func (e *Evaluator) applyRuleActions(
 	ctx context.Context,
 	rule *contractsrules.RuleContract,
 	state *MutableState,
 	body any,
-) ([]string, error) {
+) ([]string, contractsrules.Outcome, error) {
 	applied := make([]string, 0, len(rule.Actions))
 	var lastErr error
+	var terminating contractsrules.Outcome
 	for _, act := range rule.Actions {
-		if _, err := applyAction(act, state, body); err != nil {
+		out, err := applyAction(act, state, body)
+		if err != nil {
 			e.recordError(ctx, rule, "action_apply")
 			lastErr = err
 			// Still record the action type — it ran, even if it
 			// errored — so operators can see the intended sequence.
 		}
 		applied = append(applied, act.ActionType())
+		if out.Terminate {
+			terminating = out
+			break
+		}
 	}
-	return applied, lastErr
+	return applied, terminating, lastErr
 }
 
 // recordError fires the rule-error counter with stable label

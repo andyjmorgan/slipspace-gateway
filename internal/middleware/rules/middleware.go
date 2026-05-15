@@ -4,10 +4,13 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
+	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
 	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
 	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
@@ -38,7 +41,7 @@ type MatchFromContextFunc func(ctx context.Context) (provider string, endpoint s
 // Empty rule set (no Configuration match, or a Configuration with no
 // rule_names) is byte-identical to the v1.0 path: the evaluator
 // returns immediately and the unchanged state flows downstream.
-func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, next http.Handler) http.Handler {
+func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactory proxy.ObserverFactory, next http.Handler) http.Handler {
 	if eval == nil {
 		panic("rules: HTTPHandler called with nil evaluator")
 	}
@@ -75,7 +78,8 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, next http.Hand
 			Body:              captured.Body,
 		}
 
-		if _, err := eval.Evaluate(ctx, gc, state, captured.Body); err != nil {
+		result, err := eval.Evaluate(ctx, gc, state, captured.Body)
+		if err != nil {
 			// Engine errors today are surfaced via per-match
 			// ErrorMessage + the gateway.rule.errors.total counter;
 			// Evaluate itself returning err is reserved for future
@@ -84,8 +88,82 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, next http.Hand
 			logger.WarnContext(ctx, "rules: evaluate", "err", err.Error())
 		}
 
-		next.ServeHTTP(w, r.WithContext(WithMutableState(ctx, state)))
+		ctx = WithMutableState(ctx, state)
+
+		if result.Outcome.Terminate && result.Outcome.Response != nil {
+			ctx = withSyntheticOutcome(ctx, result)
+			ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
+				Provider: state.Provider,
+				Endpoint: state.Endpoint,
+				Model:    extractInboundModel(captured, state.PathParams),
+			})
+			driveSyntheticLifecycle(ctx, w, result, observerFactory)
+			return
+		}
+
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// driveSyntheticLifecycle writes the synthetic response and runs
+// the per-request reporter observer lifecycle inline — the
+// forwarder never sees this request, but the gateway.request event
+// must still fire with the rule-derived status code so dashboards
+// and billing see a uniform stream regardless of synthetic vs
+// upstream-served responses.
+//
+// The factory is invoked with an empty Destination because the rule
+// short-circuited before the destination was finalised; the
+// observer's metric labels come from request-level context labels
+// the cmd/gateway handler sets before invoking the chain, so the
+// missing destination is not load-bearing.
+func driveSyntheticLifecycle(ctx context.Context, w http.ResponseWriter, result Result, factory proxy.ObserverFactory) {
+	resp := result.Outcome.Response
+
+	start := time.Now()
+	var observer proxy.Observer
+	if factory != nil {
+		observer = factory(ctx, proxy.Destination{})
+		observer.OnRequestStart(ctx, proxy.Destination{})
+	}
+
+	headers := http.Header{}
+	headers.Set("Content-Type", contentTypeFor(resp.BodyType))
+	if result.SourceRule != nil {
+		headers.Set("X-Sluice-Synthetic", "rule:"+result.SourceRule.Name)
+	}
+	if id := observability.CorrelationIDFromContext(ctx); id != "" {
+		headers.Set("X-Sluice-Correlation-Id", id)
+	}
+
+	if observer != nil {
+		observer.OnResponseHeaders(ctx, resp.StatusCode, headers, false)
+	}
+
+	for k, v := range headers {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(resp.StatusCode)
+	if len(resp.Body) > 0 {
+		_, _ = w.Write(resp.Body)
+	}
+
+	if observer != nil {
+		observer.OnComplete(ctx, resp.StatusCode, time.Since(start).Milliseconds())
+	}
+}
+
+func contentTypeFor(bt contractsrules.StatusCodeBodyType) string {
+	switch bt {
+	case contractsrules.StatusBodyJSON:
+		return "application/json"
+	case contractsrules.StatusBodyHTML:
+		return "text/html; charset=utf-8"
+	case contractsrules.StatusBodyText:
+		return "text/plain; charset=utf-8"
+	default:
+		return "text/plain; charset=utf-8"
+	}
 }
 
 // extractInboundModel reads the inbound model for condition matching.
@@ -117,12 +195,37 @@ func extractInboundModel(captured bodycapture.Captured, params map[string]string
 
 type mutableStateKey struct{}
 
+type syntheticOutcomeKey struct{}
+
 // WithMutableState attaches a MutableState to ctx. Exported so
 // downstream middleware (notably the body re-marshal step) can be
 // tested in isolation by installing a state directly rather than
 // re-running the full HTTPHandler chain.
 func WithMutableState(ctx context.Context, s *MutableState) context.Context {
 	return context.WithValue(ctx, mutableStateKey{}, s)
+}
+
+// withSyntheticOutcome stashes a terminating Result on ctx so the
+// per-request reporter observer can read the rule-derived status
+// code and record it on gateway.request. The middleware writes the
+// outcome here right before the synthetic response goes out so the
+// reporter's OnComplete (invoked from the same goroutine after the
+// write) sees the correct status.
+func withSyntheticOutcome(ctx context.Context, r Result) context.Context {
+	return context.WithValue(ctx, syntheticOutcomeKey{}, r)
+}
+
+// SyntheticOutcomeFromContext returns the terminating Result the
+// rules middleware wrote, or the zero value when the request was
+// forwarded normally. The reporter uses this to override
+// status_code on the gateway.request event for synthetic
+// responses.
+func SyntheticOutcomeFromContext(ctx context.Context) (Result, bool) {
+	if ctx == nil {
+		return Result{}, false
+	}
+	r, ok := ctx.Value(syntheticOutcomeKey{}).(Result)
+	return r, ok
 }
 
 // MutableStateFromContext returns the post-rule MutableState the

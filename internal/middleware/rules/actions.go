@@ -44,13 +44,14 @@ func applyAction(
 		return applySetHeader(*a, state)
 	case *contractsrules.AppendQueryStringAction:
 		return applyAppendQueryString(*a, state)
+	case *contractsrules.ReturnStatusCodeAction:
+		return applyReturnStatusCode(*a)
 	case *contractsrules.UnknownAction:
 		return contractsrules.Outcome{}, nil
 	default:
-		// Terminating actions (returnStatusCode, llmImpersonation)
-		// land in later PRs. Until then, treat them as passthrough
-		// so YAML authored against the eventual schema doesn't break
-		// the engine when this build encounters them.
+		// LlmImpersonation lands in a later PR. Until then, treat
+		// unmodelled action types as passthrough so YAML authored
+		// against the eventual schema doesn't break the engine.
 		return contractsrules.Outcome{}, nil
 	}
 }
@@ -207,3 +208,27 @@ func applyAppendQueryString(a contractsrules.AppendQueryStringAction, state *Mut
 // belt-and-braces against an UnknownAction that round-tripped
 // through DynamicProperties with a missing field.
 var errEmptyValue = errors.New("rules: required value is empty")
+
+// applyReturnStatusCode is TERMINATING. It returns an Outcome with
+// Terminate=true and a Response carrying the configured status,
+// body, and body-type — the rules middleware writes the synthetic
+// response to the client and short-circuits the pipeline before the
+// forwarder runs.
+//
+// StatusCode must be in [100, 599]; values outside that band fall
+// back to 500 so a misconfigured rule produces a recognisably-bad
+// response rather than a panic in net/http.
+func applyReturnStatusCode(a contractsrules.ReturnStatusCodeAction) (contractsrules.Outcome, error) {
+	status := a.StatusCode
+	if status < 100 || status > 599 {
+		status = 500
+	}
+	return contractsrules.Outcome{
+		Terminate: true,
+		Response: &contractsrules.Response{
+			StatusCode: status,
+			Body:       []byte(a.Body),
+			BodyType:   a.BodyType,
+		},
+	}, nil
+}

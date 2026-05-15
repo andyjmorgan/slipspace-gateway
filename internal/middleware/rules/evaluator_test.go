@@ -49,7 +49,7 @@ func TestEvaluator_EmptyRules_NoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if out.Terminate {
+	if out.Outcome.Terminate {
 		t.Errorf("empty rule set should not terminate")
 	}
 }
@@ -73,7 +73,7 @@ func TestEvaluator_SingleRule_AppliesAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if out.Terminate {
+	if out.Outcome.Terminate {
 		t.Errorf("unexpected Terminate")
 	}
 	if got := state.OutgoingHeaders.Get("X-Sluice-Tagged"); got != "yes" {

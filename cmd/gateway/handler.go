@@ -29,6 +29,7 @@ func buildDataPlaneHandler(
 	resolver *auth.Resolver,
 	forwarder *proxy.Forwarder,
 	evaluator *rules.Evaluator,
+	observerFactory proxy.ObserverFactory,
 	providers contractsconfig.ProvidersConfig,
 	meters *observability.Meters,
 	errs *httperr.Writer,
@@ -65,10 +66,10 @@ func buildDataPlaneHandler(
 		}
 
 		captured, _ := bodycapture.FromContext(ctx)
-		ctx = withRequestLabels(ctx, requestLabels{
-			provider: state.Provider,
-			endpoint: state.Endpoint,
-			model:    outboundModel(captured, state),
+		ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
+			Provider: state.Provider,
+			Endpoint: state.Endpoint,
+			Model:    outboundModel(captured, state),
 		})
 
 		dest, err := buildDestination(provider, endpoint, state, authResult, r)
@@ -89,7 +90,7 @@ func buildDataPlaneHandler(
 
 	var h http.Handler = final
 	h = rules.BodyRemarshalHandler(meters, h)
-	h = rules.HTTPHandler(evaluator, ruleMatchFromContext, h)
+	h = rules.HTTPHandler(evaluator, ruleMatchFromContext, observerFactory, h)
 	h = bodycapture.HTTPHandler(kindFrom, h)
 	h = auth.HTTPHandler(resolver, routeFromContext, h)
 	h = routingMiddleware(router, errs, h)
