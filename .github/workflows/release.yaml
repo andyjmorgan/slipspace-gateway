@@ -1,0 +1,122 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: sluice-gateway
+            dockerfile: deploy/docker/Dockerfile
+          - name: sluice-mockllm
+            dockerfile: deploy/docker/Dockerfile.mockllm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Mark package public
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+        run: |
+          gh api --method PATCH \
+            "/user/packages/container/${{ matrix.name }}" \
+            -f visibility=public
+
+  release:
+    needs: build-push
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${{ github.ref_name }}"
+          stripped="${version#v}"
+          cat > /tmp/release-notes.md <<EOF
+          sluice-gateway ${version} — observable AI provider gateway.
+
+          ## Images
+
+          Multi-arch (linux/amd64, linux/arm64), scratch base, ~5.5 MB.
+
+          \`\`\`
+          docker pull ghcr.io/${{ github.repository_owner }}/sluice-gateway:${stripped}
+          docker pull ghcr.io/${{ github.repository_owner }}/sluice-mockllm:${stripped}
+          \`\`\`
+
+          ## Quick run
+
+          \`\`\`
+          docker run --rm \\
+            -e SLUICE_CONFIG_DIR=/etc/sluice \\
+            -e SLUICE_NATS_URL=nats://nats:4222 \\
+            -v ./config-dev:/etc/sluice:ro \\
+            -p 8585:8585 \\
+            ghcr.io/${{ github.repository_owner }}/sluice-gateway:${stripped}
+          \`\`\`
+
+          Minimal production env: \`SLUICE_CONFIG_DIR\` plus optionally \`SLUICE_NATS_URL\` (enables reporting) and \`SLUICE_OTLP_ENDPOINT\` (enables OTLP push). See \`CLAUDE.md\` for the full deployment shape.
+
+          ## What's in v1.0
+
+          - Forwards OpenAI, Anthropic, and Gemini native APIs with managed and passthrough auth modes
+          - Prefix-aware routing, body-capture with typed deserialization, NATS reporting with envelope pattern (768 KiB threshold + Object Store stash, non-blocking drop)
+          - OTel meters (Prometheus + OTLP), graceful 300s drain, /healthz
+          - Rules + resilience schemas parsed; evaluators are no-op until v1.1
+          - 38 E2E tests + 24 Python SDK compat tests against real openai/anthropic/google-genai PyPI packages
+
+          See \`CLAUDE.md\` and the project's design notes for the load-bearing invariants and the v1.1 roadmap.
+          EOF
+
+          gh release create "${version}" \
+            --title "sluice-gateway ${version}" \
+            --notes-file /tmp/release-notes.md
