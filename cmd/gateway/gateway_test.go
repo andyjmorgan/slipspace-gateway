@@ -19,6 +19,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
@@ -94,9 +95,10 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	reporter := newReporterFactory(nil, logger, meters)
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
+	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, 8, meters)
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, resolved.Providers, meters, errs, logger)
 	root := correlationMiddleware(logger, dataPlane)
 
 	mux := http.NewServeMux()

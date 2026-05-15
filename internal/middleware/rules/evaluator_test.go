@@ -5,78 +5,282 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
+
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
+	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
 )
 
-func TestEvaluator_NoOp_AlwaysPassthrough(t *testing.T) {
-	configured := []contractsrules.RuleContract{
-		{
-			Name:      "rule-1",
-			Priority:  1,
-			Condition: &contractsrules.ProviderCondition{Type: "provider", Operator: contractsrules.EnumEquals, ExpectedProvider: "openai"},
-			Actions: []contractsrules.Action{
-				&contractsrules.ReturnStatusCodeAction{Type: "returnStatusCode", StatusCode: 429, BodyType: contractsrules.StatusBodyText},
-			},
-			Behavior: contractsrules.BehaviorExit,
-		},
-	}
-
-	tests := []struct {
-		name string
-		gw   rules.GatewayContext
-	}{
-		{
-			name: "empty context",
-			gw:   rules.GatewayContext{},
-		},
-		{
-			name: "matching context",
-			gw: rules.GatewayContext{
-				Provider: "openai",
-				Endpoint: "chat_completions",
-				Model:    "gpt-4o",
-				Headers:  http.Header{"X-Tenant": []string{"acme"}},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := rules.NewEvaluator(configured)
-			out, err := e.Evaluate(context.Background(), tt.gw)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if out.Terminate {
-				t.Errorf("v1.0 evaluator must not terminate; got %+v", out)
-			}
-			if out.Response != nil {
-				t.Errorf("v1.0 evaluator must not populate Response; got %+v", out.Response)
-			}
-		})
+func newGC(configuration string, headers http.Header) rules.GatewayContext {
+	return rules.GatewayContext{
+		Provider:          "openai",
+		Endpoint:          "chat_completions",
+		Model:             "gpt-4o-mini",
+		Headers:           headers,
+		ConfigurationName: configuration,
 	}
 }
 
-func TestEvaluator_NoOp_NoRules(t *testing.T) {
-	e := rules.NewEvaluator(nil)
-	out, err := e.Evaluate(context.Background(), rules.GatewayContext{})
+func setHeaderAction(name, value string) contractsrules.Action {
+	return &contractsrules.SetHeaderAction{
+		Type:         "setHeader",
+		HeaderName:   name,
+		HeaderAction: contractsrules.HeaderSet,
+		HeaderValue:  value,
+	}
+}
+
+func providerCondition(p string) contractsrules.Condition {
+	return &contractsrules.ProviderCondition{
+		Type:             "provider",
+		Operator:         contractsrules.EnumEquals,
+		ExpectedProvider: p,
+	}
+}
+
+func TestEvaluator_EmptyRules_NoOp(t *testing.T) {
+	t.Parallel()
+	e := rules.NewEvaluator(nil, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	out, err := e.Evaluate(context.Background(), newGC("dev", nil), state, nil)
 	if err != nil {
-		t.Fatalf("err: %v", err)
+		t.Fatalf("Evaluate: %v", err)
 	}
 	if out.Terminate {
-		t.Errorf("expected passthrough, got %+v", out)
+		t.Errorf("empty rule set should not terminate")
 	}
 }
 
-func TestEvaluator_Rules_Accessor(t *testing.T) {
-	configured := []contractsrules.RuleContract{
-		{Name: "a"},
-		{Name: "b"},
+func TestEvaluator_SingleRule_AppliesAction(t *testing.T) {
+	t.Parallel()
+	r1 := &contractsrules.RuleContract{
+		Name:      "tag-openai",
+		Priority:  100,
+		Condition: providerCondition("openai"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-Tagged", "yes")},
 	}
-	e := rules.NewEvaluator(configured)
-	got := e.Rules()
-	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" {
-		t.Errorf("Rules() = %+v", got)
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{
+		"dev": {r1},
+	}, 8, nil)
+
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, buf := rules.WithMatchBuffer(context.Background())
+
+	out, err := e.Evaluate(ctx, newGC("dev", nil), state, nil)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if out.Terminate {
+		t.Errorf("unexpected Terminate")
+	}
+	if got := state.OutgoingHeaders.Get("X-Sluice-Tagged"); got != "yes" {
+		t.Errorf("header = %q, want yes", got)
+	}
+	records := buf.Drain()
+	if len(records) != 1 {
+		t.Fatalf("got %d matches, want 1", len(records))
+	}
+	rec := records[0]
+	if rec.RuleName != "tag-openai" || rec.Configuration != "dev" {
+		t.Errorf("record = %+v", rec)
+	}
+	if len(rec.ActionsApplied) != 1 || rec.ActionsApplied[0] != "setHeader" {
+		t.Errorf("ActionsApplied = %v", rec.ActionsApplied)
+	}
+	if rec.Terminated {
+		t.Errorf("Terminated should be false for non-terminating action")
+	}
+	if rec.MatchedAt.IsZero() {
+		t.Errorf("MatchedAt should be set")
+	}
+}
+
+func TestEvaluator_RuleIDPropagates(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	r := &contractsrules.RuleContract{
+		ID:        &id,
+		Name:      "with-id",
+		Condition: providerCondition("openai"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-Test", "v")},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, buf := rules.WithMatchBuffer(context.Background())
+	if _, err := e.Evaluate(ctx, newGC("dev", nil), state, nil); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	records := buf.Drain()
+	if len(records) != 1 || records[0].RuleID != id.String() {
+		t.Errorf("RuleID = %q, want %s", records[0].RuleID, id.String())
+	}
+}
+
+func TestEvaluator_NoMatch_NoRecord(t *testing.T) {
+	t.Parallel()
+	r := &contractsrules.RuleContract{
+		Name:      "anthropic-only",
+		Condition: providerCondition("anthropic"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-Test", "v")},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, buf := rules.WithMatchBuffer(context.Background())
+	if _, err := e.Evaluate(ctx, newGC("dev", nil), state, nil); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if got := state.OutgoingHeaders.Get("X-Test"); got != "" {
+		t.Errorf("header should be untouched, got %q", got)
+	}
+	if records := buf.Drain(); len(records) != 0 {
+		t.Errorf("no rules matched, expected 0 records, got %d", len(records))
+	}
+}
+
+func TestEvaluator_BehaviorExit_HaltsIteration(t *testing.T) {
+	t.Parallel()
+	first := &contractsrules.RuleContract{
+		Name:      "first",
+		Priority:  50,
+		Condition: providerCondition("openai"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-First", "yes")},
+		Behavior:  contractsrules.BehaviorExit,
+	}
+	second := &contractsrules.RuleContract{
+		Name:      "second",
+		Priority:  100,
+		Condition: providerCondition("openai"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, buf := rules.WithMatchBuffer(context.Background())
+	if _, err := e.Evaluate(ctx, newGC("dev", nil), state, nil); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if got := state.OutgoingHeaders.Get("X-First"); got != "yes" {
+		t.Errorf("X-First = %q", got)
+	}
+	if got := state.OutgoingHeaders.Get("X-Second"); got != "" {
+		t.Errorf("X-Second should be empty (Exit halted iteration), got %q", got)
+	}
+	records := buf.Drain()
+	if len(records) != 1 || records[0].RuleName != "first" {
+		t.Errorf("Behavior=Exit should record only first rule, got %+v", records)
+	}
+}
+
+func TestEvaluator_BehaviorContinue_IsDefault(t *testing.T) {
+	t.Parallel()
+	first := &contractsrules.RuleContract{
+		Name: "first", Priority: 50,
+		Condition: providerCondition("openai"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-First", "yes")},
+	}
+	second := &contractsrules.RuleContract{
+		Name: "second", Priority: 100,
+		Condition: providerCondition("openai"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, _ := rules.WithMatchBuffer(context.Background())
+	if _, err := e.Evaluate(ctx, newGC("dev", nil), state, nil); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if got := state.OutgoingHeaders.Get("X-First"); got != "yes" {
+		t.Errorf("X-First = %q", got)
+	}
+	if got := state.OutgoingHeaders.Get("X-Second"); got != "yes" {
+		t.Errorf("X-Second = %q (default Continue should reach the second rule)", got)
+	}
+}
+
+func TestEvaluator_TypedBody_ChangeModelName(t *testing.T) {
+	t.Parallel()
+	r := &contractsrules.RuleContract{
+		Name:      "rewrite-model",
+		Condition: providerCondition("openai"),
+		Actions: []contractsrules.Action{
+			&contractsrules.ChangeModelNameAction{Type: "changeModelName", NewModelName: "gpt-4o"},
+		},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	body := &openaichat.ChatCompletionRequest{Model: "gpt-3.5"}
+	ctx, _ := rules.WithMatchBuffer(context.Background())
+
+	if _, err := e.Evaluate(ctx, newGC("dev", nil), state, body); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if body.Model != "gpt-4o" {
+		t.Errorf("body.Model = %q, want gpt-4o", body.Model)
+	}
+	if !state.BodyMutated {
+		t.Errorf("BodyMutated should be true after changeModelName")
+	}
+}
+
+func TestEvaluator_ActionError_RecordedOnEvent(t *testing.T) {
+	t.Parallel()
+	r := &contractsrules.RuleContract{
+		Name:      "bad-url",
+		Condition: providerCondition("openai"),
+		Actions: []contractsrules.Action{
+			&contractsrules.ChangeUrlAction{Type: "changeUrl", NewURL: "://busted"},
+		},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, buf := rules.WithMatchBuffer(context.Background())
+	if _, err := e.Evaluate(ctx, newGC("dev", nil), state, nil); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	records := buf.Drain()
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if records[0].ErrorMessage == "" {
+		t.Errorf("ErrorMessage should carry the action error")
+	}
+	if len(records[0].ActionsApplied) != 1 || records[0].ActionsApplied[0] != "changeUrl" {
+		t.Errorf("ActionsApplied = %v (action type should be recorded even on error)", records[0].ActionsApplied)
+	}
+}
+
+func TestEvaluator_UnknownConfigName_NoOp(t *testing.T) {
+	t.Parallel()
+	r := &contractsrules.RuleContract{
+		Name:      "ghost",
+		Condition: providerCondition("openai"),
+		Actions:   []contractsrules.Action{setHeaderAction("X", "v")},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"prod": {r}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, buf := rules.WithMatchBuffer(context.Background())
+	if _, err := e.Evaluate(ctx, newGC("dev", nil), state, nil); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if records := buf.Drain(); len(records) != 0 {
+		t.Errorf("unknown config should have no records, got %d", len(records))
+	}
+}
+
+func TestEvaluator_NilReceiver(t *testing.T) {
+	t.Parallel()
+	var e *rules.Evaluator
+	if _, err := e.Evaluate(context.Background(), newGC("dev", nil), nil, nil); err != nil {
+		t.Errorf("nil evaluator should be a no-op, got %v", err)
+	}
+}
+
+func TestEvaluator_DefaultMaxGroupDepth(t *testing.T) {
+	t.Parallel()
+	// Passing 0 (or negative) should fall back to the package default.
+	e := rules.NewEvaluator(nil, 0, nil)
+	if e == nil {
+		t.Fatal("nil evaluator returned")
 	}
 }

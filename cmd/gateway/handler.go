@@ -11,6 +11,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
@@ -27,7 +28,9 @@ func buildDataPlaneHandler(
 	router *routing.Router,
 	resolver *auth.Resolver,
 	forwarder *proxy.Forwarder,
+	evaluator *rules.Evaluator,
 	providers contractsconfig.ProvidersConfig,
+	meters *observability.Meters,
 	errs *httperr.Writer,
 	_ *slog.Logger,
 ) http.Handler {
@@ -35,9 +38,9 @@ func buildDataPlaneHandler(
 		ctx := r.Context()
 		log := observability.FromContext(ctx)
 
-		match, ok := matchFromContext(ctx)
-		if !ok {
-			log.ErrorContext(ctx, "forwarder: no route on context")
+		state := rules.MutableStateFromContext(ctx)
+		if state == nil {
+			log.ErrorContext(ctx, "forwarder: no rules state on context")
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
@@ -48,27 +51,27 @@ func buildDataPlaneHandler(
 			return
 		}
 
-		provider, ok := providers[match.Provider]
+		provider, ok := providers[state.Provider]
 		if !ok {
-			log.ErrorContext(ctx, "forwarder: unknown provider", "provider", match.Provider)
+			log.ErrorContext(ctx, "forwarder: unknown provider", "provider", state.Provider)
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
-		endpoint, ok := provider.Endpoints[match.Endpoint]
+		endpoint, ok := provider.Endpoints[state.Endpoint]
 		if !ok {
-			log.ErrorContext(ctx, "forwarder: unknown endpoint", "provider", match.Provider, "endpoint", match.Endpoint)
+			log.ErrorContext(ctx, "forwarder: unknown endpoint", "provider", state.Provider, "endpoint", state.Endpoint)
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
 
 		captured, _ := bodycapture.FromContext(ctx)
 		ctx = withRequestLabels(ctx, requestLabels{
-			provider: match.Provider,
-			endpoint: match.Endpoint,
-			model:    outboundModel(captured, match),
+			provider: state.Provider,
+			endpoint: state.Endpoint,
+			model:    outboundModel(captured, state),
 		})
 
-		dest, err := buildDestination(provider, endpoint, match, authResult, r)
+		dest, err := buildDestination(provider, endpoint, state, authResult, r)
 		if err != nil {
 			log.ErrorContext(ctx, "forwarder: destination", "err", err.Error())
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
@@ -85,10 +88,23 @@ func buildDataPlaneHandler(
 	kindFrom := makeKindFromContext(providers)
 
 	var h http.Handler = final
+	h = rules.BodyRemarshalHandler(meters, h)
+	h = rules.HTTPHandler(evaluator, ruleMatchFromContext, h)
 	h = bodycapture.HTTPHandler(kindFrom, h)
 	h = auth.HTTPHandler(resolver, routeFromContext, h)
 	h = routingMiddleware(router, errs, h)
 	return h
+}
+
+// ruleMatchFromContext adapts matchFromContext to the rules
+// middleware's MatchFromContextFunc signature, so the rules package
+// does not need to import internal/routing.
+func ruleMatchFromContext(ctx context.Context) (string, string, map[string]string, bool) {
+	m, ok := matchFromContext(ctx)
+	if !ok {
+		return "", "", nil, false
+	}
+	return m.Provider, m.Endpoint, m.Params, true
 }
 
 // routeFromContext adapts matchFromContext to the auth middleware's expected
@@ -126,16 +142,26 @@ func makeKindFromContext(providers contractsconfig.ProvidersConfig) bodycapture.
 	}
 }
 
-// buildDestination resolves the upstream URL and outgoing headers for a single
-// request. The endpoint's canonical Path field is the upstream template;
-// `{name}` placeholders are substituted from match.Params, and the result is
-// joined onto the provider's BaseURL. In passthrough mode the inbound
-// Authorization header is forwarded verbatim because the forwarder always
-// drops Authorization unless OutgoingHeaders re-sets it.
+// buildDestination resolves the upstream URL and outgoing headers
+// from the post-rule MutableState. Resolution order:
+//
+//  1. UpstreamURL — if a rule wrote an explicit override via
+//     ChangeUrlAction, use it verbatim. Otherwise compute the URL
+//     from the (provider, endpoint) under the post-rule provider's
+//     BaseURL with {name} placeholders substituted from
+//     state.PathParams.
+//  2. Outgoing headers — provider.RequiredHeaders + auth-resolved
+//     SetHeaders + state.OutgoingHeaders. Rule-supplied headers
+//     overlay the auth defaults; passthrough Authorization is
+//     forwarded verbatim when present.
+//
+// In passthrough mode the inbound Authorization header is forwarded
+// verbatim because the forwarder always drops Authorization unless
+// OutgoingHeaders re-sets it.
 func buildDestination(
 	provider contractsconfig.Provider,
 	endpoint contractsconfig.Endpoint,
-	match routing.Match,
+	state *rules.MutableState,
 	authResult auth.AuthResult,
 	req *http.Request,
 ) (proxy.Destination, error) {
@@ -144,16 +170,27 @@ func buildDestination(
 		return proxy.Destination{}, err
 	}
 
-	upstreamPath := substitutePlaceholders(endpoint.Path, match.Params)
-	upstream := *baseURL
-	upstream.Path = joinPaths(baseURL.Path, upstreamPath)
-	upstream.RawPath = ""
+	var upstream url.URL
+	if state.UpstreamURL != nil {
+		upstream = *state.UpstreamURL
+	} else {
+		upstream = *baseURL
+		upstreamPath := substitutePlaceholders(endpoint.Path, state.PathParams)
+		upstream.Path = joinPaths(baseURL.Path, upstreamPath)
+		upstream.RawPath = ""
+	}
 
 	outgoing := http.Header{}
 	for k, v := range provider.RequiredHeaders {
 		outgoing.Set(k, v)
 	}
 	for k, vs := range authResult.SetHeaders {
+		for _, v := range vs {
+			outgoing.Add(k, v)
+		}
+	}
+	for k, vs := range state.OutgoingHeaders {
+		outgoing.Del(k)
 		for _, v := range vs {
 			outgoing.Add(k, v)
 		}
@@ -185,26 +222,27 @@ func substitutePlaceholders(path string, params map[string]string) string {
 	return out
 }
 
-// outboundModel returns the model identifier the gateway is about to send
-// upstream — read at destination-finalisation time so it reflects the post-
-// routing destination (and, in v1.1, the post-rules destination too).
+// outboundModel returns the model identifier the gateway is about
+// to send upstream — read at destination-finalisation time so it
+// reflects rule mutations as well as routing.
 //
 // Resolution order:
 //
-//  1. The `{model}` placeholder captured by routing, when present. Gemini
-//     puts the model in the URL path (/v1beta/models/{model}:generateContent)
-//     so the routed Match.Params is authoritative.
-//  2. The Model field on the typed captured body for chat / responses /
-//     messages. v1.1 rule mutations to these typed values are observed here
-//     because Captured.Body is a pointer and bodycapture runs upstream of
-//     the rules middleware.
+//  1. state.PathParams["model"] — Gemini's path-based addressing,
+//     and any rule that updated the {model} placeholder via
+//     ChangeModelNameAction.
+//  2. The Model field on the typed captured body for
+//     chat/responses/messages. Captured.Body is a pointer so rule
+//     mutations through it are visible here.
 //
-// Returns "" when no model is in scope (e.g. /v1/models listing endpoints
-// with request_kind: passthrough). Callers are expected to sanitise the
-// result before using it as a metric-label value.
-func outboundModel(captured bodycapture.Captured, match routing.Match) string {
-	if v := strings.TrimSpace(match.Params["model"]); v != "" {
-		return v
+// Returns "" when no model is in scope (e.g. /v1/models listing
+// endpoints with request_kind: passthrough). Callers are expected
+// to sanitise the result before using it as a metric-label value.
+func outboundModel(captured bodycapture.Captured, state *rules.MutableState) string {
+	if state != nil {
+		if v := strings.TrimSpace(state.PathParams["model"]); v != "" {
+			return v
+		}
 	}
 	switch b := captured.Body.(type) {
 	case *openaichat.ChatCompletionRequest:

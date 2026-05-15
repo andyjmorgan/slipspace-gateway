@@ -19,6 +19,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
@@ -100,8 +101,10 @@ func run(ctx context.Context) error {
 	reporter := newReporterFactory(publisher, logger, obs.Meters)
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
 
+	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, env.RulesMaxGroupDepth, obs.Meters)
+
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, resolved.Providers, obs.Meters, errs, logger)
 
 	root := correlationMiddleware(logger, dataPlane)
 
