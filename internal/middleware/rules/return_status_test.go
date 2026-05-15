@@ -237,6 +237,69 @@ func TestSyntheticOutcomeFromContext_Nil(t *testing.T) {
 	}
 }
 
+func TestApplyLlmImpersonation_TerminatesWithPlainText(t *testing.T) {
+	t.Parallel()
+	r := &contractsrules.RuleContract{
+		Name:      "imp",
+		Condition: providerCondition("openai"),
+		Actions: []contractsrules.Action{
+			&contractsrules.LlmImpersonationAction{
+				Type:    "llmImpersonation",
+				Message: "Blocked: PII filter triggered",
+			},
+		},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, buf := rules.WithMatchBuffer(context.Background())
+
+	result, err := e.Evaluate(ctx, newGC(), state, nil)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if !result.Outcome.Terminate {
+		t.Fatal("expected Terminate=true")
+	}
+	if result.Outcome.Response == nil {
+		t.Fatal("expected Response populated")
+	}
+	if result.Outcome.Response.StatusCode != 200 {
+		t.Errorf("StatusCode = %d, want 200", result.Outcome.Response.StatusCode)
+	}
+	if string(result.Outcome.Response.Body) != "Blocked: PII filter triggered" {
+		t.Errorf("Body = %q", result.Outcome.Response.Body)
+	}
+	if result.Outcome.Response.BodyType != contractsrules.StatusBodyText {
+		t.Errorf("BodyType = %q, want text", result.Outcome.Response.BodyType)
+	}
+	if records := buf.Drain(); len(records) != 1 || !records[0].Terminated {
+		t.Errorf("rule.matched record terminated=true expected, got %+v", records)
+	}
+}
+
+func TestApplyLlmImpersonation_EmptyMessageErrors(t *testing.T) {
+	t.Parallel()
+	r := &contractsrules.RuleContract{
+		Name:      "imp",
+		Condition: providerCondition("openai"),
+		Actions: []contractsrules.Action{
+			&contractsrules.LlmImpersonationAction{Type: "llmImpersonation", Message: "   "},
+		},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	ctx, buf := rules.WithMatchBuffer(context.Background())
+
+	result, _ := e.Evaluate(ctx, newGC(), state, nil)
+	if result.Outcome.Terminate {
+		t.Error("empty message should not terminate (action errored)")
+	}
+	records := buf.Drain()
+	if len(records) != 1 || records[0].ErrorMessage == "" {
+		t.Errorf("rule.matched should carry ErrorMessage; got %+v", records)
+	}
+}
+
 func TestSyntheticOutcomeFromContext_RoundTrip(t *testing.T) {
 	t.Parallel()
 	// Cannot use unexported withSyntheticOutcome from outside the

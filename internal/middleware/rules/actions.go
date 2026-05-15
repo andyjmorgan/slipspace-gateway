@@ -46,12 +46,14 @@ func applyAction(
 		return applyAppendQueryString(*a, state)
 	case *contractsrules.ReturnStatusCodeAction:
 		return applyReturnStatusCode(*a)
+	case *contractsrules.LlmImpersonationAction:
+		return applyLlmImpersonation(*a)
 	case *contractsrules.UnknownAction:
 		return contractsrules.Outcome{}, nil
 	default:
-		// LlmImpersonation lands in a later PR. Until then, treat
-		// unmodelled action types as passthrough so YAML authored
-		// against the eventual schema doesn't break the engine.
+		// Unmodelled action types round-trip via DynamicProperties
+		// and no-op here — forward-compat for control-plane-minted
+		// types this build does not yet implement.
 		return contractsrules.Outcome{}, nil
 	}
 }
@@ -202,6 +204,40 @@ func applyAppendQueryString(a contractsrules.AppendQueryStringAction, state *Mut
 // belt-and-braces against an UnknownAction that round-tripped
 // through DynamicProperties with a missing field.
 var errEmptyValue = errors.New("rules: required value is empty")
+
+// applyLlmImpersonation is TERMINATING. v1.0.1 ships a stub
+// implementation: it short-circuits the pipeline and writes the
+// rule's Message as a plain-text response. The full design
+// (per-provider response-shape synthesisers — chat.completion /
+// response / message / candidates with streaming variants) is
+// deferred to v1.0.3+ once the rest of the engine is mileage-tested
+// in production.
+//
+// The stub is deliberately honest: an operator pointing the OpenAI
+// SDK at the gateway and triggering an llmImpersonation rule sees a
+// text/plain response with the configured message, NOT a fake
+// chat.completion JSON shape. That makes the stubbed nature
+// obvious in monitoring and keeps SDK round-tripping from masking
+// the deferral with subtly-wrong output.
+//
+// Empty Message returns errEmptyValue — the contract package's
+// Validate already enforces non-empty Message at load time; this
+// is the runtime belt-and-braces against an UnknownAction that
+// round-tripped through DynamicProperties with a missing field.
+func applyLlmImpersonation(a contractsrules.LlmImpersonationAction) (contractsrules.Outcome, error) {
+	msg := strings.TrimSpace(a.Message)
+	if msg == "" {
+		return contractsrules.Outcome{}, fmt.Errorf("rules: llmImpersonation: %w", errEmptyValue)
+	}
+	return contractsrules.Outcome{
+		Terminate: true,
+		Response: &contractsrules.Response{
+			StatusCode: 200,
+			Body:       []byte(msg),
+			BodyType:   contractsrules.StatusBodyText,
+		},
+	}, nil
+}
 
 // applyReturnStatusCode is TERMINATING. It returns an Outcome with
 // Terminate=true and a Response carrying the configured status,
