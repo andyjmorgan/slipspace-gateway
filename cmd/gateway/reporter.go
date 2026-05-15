@@ -74,106 +74,169 @@ func sanitiseModelLabel(raw string) string {
 	return v
 }
 
-// reporterObserver bridges proxy.Forwarder lifecycle hooks into bus.Envelope
-// publishes for end-of-request reporting and OTel meters for live counters.
-// All per-request state is read from reqState on the request context — a
-// single observer instance serves every request.
-type reporterObserver struct {
+// requestLabels carries the routed (provider, endpoint, model) the handler
+// resolves at destination-finalisation time so the per-request observer
+// can label its metrics. It rides on context as an immutable value — a
+// single writer (the handler) sets it before invoking the forwarder, and
+// a single reader (the observer factory) consumes it once.
+type requestLabels struct {
+	provider string
+	endpoint string
+	model    string
+}
+
+type requestLabelsKey struct{}
+
+func withRequestLabels(ctx context.Context, l requestLabels) context.Context {
+	return context.WithValue(ctx, requestLabelsKey{}, l)
+}
+
+func requestLabelsFromContext(ctx context.Context) requestLabels {
+	if ctx == nil {
+		return requestLabels{}
+	}
+	l, _ := ctx.Value(requestLabelsKey{}).(requestLabels)
+	return l
+}
+
+// reporterFactory captures the dependencies needed by every per-request
+// reporter observer — the publisher, logger, and meter handles are
+// process-lifetime values. Factory() satisfies proxy.ObserverFactory so the
+// forwarder can mint one fresh reporterRun per Forward call.
+type reporterFactory struct {
 	publisher *bus.Publisher
 	logger    *slog.Logger
 	meters    *observability.Meters
 }
 
-func newReporterObserver(publisher *bus.Publisher, logger *slog.Logger, meters *observability.Meters) *reporterObserver {
+func newReporterFactory(publisher *bus.Publisher, logger *slog.Logger, meters *observability.Meters) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &reporterObserver{publisher: publisher, logger: logger, meters: meters}
+	return &reporterFactory{publisher: publisher, logger: logger, meters: meters}
 }
 
-func (o *reporterObserver) OnRequestStart(ctx context.Context, _ proxy.Destination) {
-	if s := reqStateFromContext(ctx); s != nil {
-		s.mu.Lock()
-		s.started = time.Now()
-		s.mu.Unlock()
-	}
-	if o.meters != nil && o.meters.ActiveRequests != nil {
-		o.meters.ActiveRequests.Add(ctx, 1)
-	}
-}
-
-func (o *reporterObserver) OnResponseHeaders(ctx context.Context, status int, _ http.Header, streaming bool) {
-	var startedAt time.Time
-	if s := reqStateFromContext(ctx); s != nil {
-		s.mu.Lock()
-		startedAt = s.started
-		s.firstByte = time.Now()
-		s.statusCode = status
-		s.streaming = streaming
-		s.mu.Unlock()
-	}
-
-	if !startedAt.IsZero() && o.meters != nil && o.meters.RequestTimeToFirstByte != nil {
-		ttfb := time.Since(startedAt).Seconds()
-		o.meters.RequestTimeToFirstByte.Record(ctx, ttfb, withProviderEndpointModel(ctx))
+// Factory returns a proxy.ObserverFactory bound to this factory's
+// dependencies. The closure form makes the wiring in cmd/gateway main.go
+// read as a single expression.
+func (f *reporterFactory) Factory() proxy.ObserverFactory {
+	return func(ctx context.Context, _ proxy.Destination) proxy.Observer {
+		labels := requestLabelsFromContext(ctx)
+		return &reporterRun{
+			factory:  f,
+			provider: labels.provider,
+			endpoint: labels.endpoint,
+			model:    labels.model,
+		}
 	}
 }
 
-func (o *reporterObserver) OnUpstreamError(ctx context.Context, err error) {
-	if s := reqStateFromContext(ctx); s != nil {
-		s.mu.Lock()
-		s.upstream = err
-		s.mu.Unlock()
-	}
-	if o.meters != nil && o.meters.UpstreamErrorsTotal != nil {
-		o.meters.UpstreamErrorsTotal.Add(ctx, 1, withProviderEndpointModel(ctx))
+// reporterRun is the per-request proxy.Observer produced by reporterFactory.
+//
+// All four lifecycle methods (OnRequestStart, OnResponseHeaders,
+// OnUpstreamError, OnComplete) fire from the same goroutine: the request
+// handler invoking proxy.Forwarder.Forward. OnResponseHeaders runs inside
+// httputil.ReverseProxy.ModifyResponse and OnUpstreamError inside
+// ErrorHandler — both are called from rp.ServeHTTP on the same goroutine.
+// No internal locking is required to coordinate writes across the fields
+// below.
+type reporterRun struct {
+	factory *reporterFactory
+
+	// provider, endpoint, model are the routed labels captured at
+	// construction time from the request context. They are emitted on
+	// every metric this observer fires and on the bus event at completion.
+	provider string
+	endpoint string
+	model    string
+
+	// started is set in OnRequestStart and used both as the base for the
+	// overall duration log and as the reference for the TTFB measurement.
+	started time.Time
+
+	// firstByte is set in OnResponseHeaders. Zero when the upstream
+	// returned no headers (transport failure).
+	firstByte time.Time
+
+	// statusCode captures the upstream-reported status from
+	// OnResponseHeaders. OnComplete prefers this over the final-written
+	// status when non-zero so the event records what the upstream sent
+	// even if ErrorHandler later overwrote the body.
+	statusCode int
+
+	streaming bool
+
+	// upstream captures the transport error from OnUpstreamError; nil on
+	// the success path.
+	upstream error
+}
+
+func (r *reporterRun) OnRequestStart(ctx context.Context, _ proxy.Destination) {
+	r.started = time.Now()
+	if r.factory.meters != nil && r.factory.meters.ActiveRequests != nil {
+		r.factory.meters.ActiveRequests.Add(ctx, 1)
 	}
 }
 
-func (o *reporterObserver) OnComplete(ctx context.Context, status int, durationMs int64) {
-	state := reqStateFromContext(ctx)
-	var ev requestEvent
-	ev.StatusCode = status
-	ev.DurationMs = durationMs
-	ev.CorrelationID = observability.CorrelationIDFromContext(ctx)
+func (r *reporterRun) OnResponseHeaders(ctx context.Context, status int, _ http.Header, streaming bool) {
+	r.firstByte = time.Now()
+	r.statusCode = status
+	r.streaming = streaming
+
+	if !r.started.IsZero() && r.factory.meters != nil && r.factory.meters.RequestTimeToFirstByte != nil {
+		ttfb := time.Since(r.started).Seconds()
+		r.factory.meters.RequestTimeToFirstByte.Record(ctx, ttfb, r.providerEndpointModelAttrs())
+	}
+}
+
+func (r *reporterRun) OnUpstreamError(ctx context.Context, err error) {
+	r.upstream = err
+	if r.factory.meters != nil && r.factory.meters.UpstreamErrorsTotal != nil {
+		r.factory.meters.UpstreamErrorsTotal.Add(ctx, 1, r.providerEndpointModelAttrs())
+	}
+}
+
+func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int64) {
+	ev := requestEvent{
+		CorrelationID: observability.CorrelationIDFromContext(ctx),
+		Provider:      r.provider,
+		Endpoint:      r.endpoint,
+		Model:         r.model,
+		StatusCode:    status,
+		DurationMs:    durationMs,
+		Streaming:     r.streaming,
+	}
+	if r.statusCode != 0 {
+		ev.StatusCode = r.statusCode
+	}
+	if r.upstream != nil {
+		ev.UpstreamError = r.upstream.Error()
+	}
+
 	var ttfbMs int64
-	if state != nil {
-		state.mu.Lock()
-		ev.Provider = state.provider
-		ev.Endpoint = state.endpoint
-		ev.Model = state.model
-		ev.Streaming = state.streaming
-		if state.statusCode != 0 {
-			ev.StatusCode = state.statusCode
-		}
-		if state.upstream != nil {
-			ev.UpstreamError = state.upstream.Error()
-		}
-		if !state.started.IsZero() && !state.firstByte.IsZero() {
-			ttfbMs = state.firstByte.Sub(state.started).Milliseconds()
-		}
-		state.mu.Unlock()
+	if !r.started.IsZero() && !r.firstByte.IsZero() {
+		ttfbMs = r.firstByte.Sub(r.started).Milliseconds()
 	}
 
-	if o.meters != nil {
+	if r.factory.meters != nil {
 		attrs := withProviderEndpointModelStatus(ev.Provider, ev.Endpoint, ev.Model, status)
-		if o.meters.RequestsTotal != nil {
-			o.meters.RequestsTotal.Add(ctx, 1, attrs)
+		if r.factory.meters.RequestsTotal != nil {
+			r.factory.meters.RequestsTotal.Add(ctx, 1, attrs)
 		}
-		if o.meters.RequestDuration != nil {
-			o.meters.RequestDuration.Record(ctx, float64(durationMs)/1000.0, attrs)
+		if r.factory.meters.RequestDuration != nil {
+			r.factory.meters.RequestDuration.Record(ctx, float64(durationMs)/1000.0, attrs)
 		}
-		if o.meters.ActiveRequests != nil {
-			o.meters.ActiveRequests.Add(ctx, -1)
+		if r.factory.meters.ActiveRequests != nil {
+			r.factory.meters.ActiveRequests.Add(ctx, -1)
 		}
 	}
 
-	if o.publisher != nil {
+	if r.factory.publisher != nil {
 		payload, err := json.Marshal(ev)
 		if err != nil {
-			o.logger.WarnContext(ctx, "reporter: marshal event", "err", err.Error())
+			r.factory.logger.WarnContext(ctx, "reporter: marshal event", "err", err.Error())
 		} else {
-			o.publisher.Publish(bus.Envelope{
+			r.factory.publisher.Publish(bus.Envelope{
 				EventID:       uuid.NewString(),
 				EventType:     eventTypeRequest,
 				Timestamp:     time.Now().UTC(),
@@ -196,28 +259,23 @@ func (o *reporterObserver) OnComplete(ctx context.Context, status int, durationM
 	)
 }
 
-// withProviderEndpointModel builds the (provider, endpoint, model)
+// providerEndpointModelAttrs builds the (provider, endpoint, model)
 // attribute set used by per-request meters that fire mid-request
-// (TimeToFirstByte, UpstreamErrors). Values are read off the reqState
-// stashed by the handler at destination-finalisation time so they reflect
-// the routed-and-rules-applied destination, not the inbound request.
-func withProviderEndpointModel(ctx context.Context) metric.MeasurementOption {
-	s := reqStateFromContext(ctx)
-	if s == nil {
-		return metric.WithAttributes()
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// (TimeToFirstByte, UpstreamErrors). Values are owned by the observer
+// struct itself; see the OnComplete helper for the post-completion variant
+// that also carries the final status code.
+func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
 	return metric.WithAttributes(
-		attribute.String("provider", s.provider),
-		attribute.String("endpoint", s.endpoint),
-		attribute.String("model", sanitiseModelLabel(s.model)),
+		attribute.String("provider", r.provider),
+		attribute.String("endpoint", r.endpoint),
+		attribute.String("model", sanitiseModelLabel(r.model)),
 	)
 }
 
-// withProviderEndpointModelStatus extends withProviderEndpointModel with
-// the final response status code. Used at OnComplete where status is
-// authoritative (post-ErrorHandler) so it can't be read from reqState.
+// withProviderEndpointModelStatus extends the per-request attribute set
+// with the final response status code. Used at OnComplete where status is
+// authoritative (post-ErrorHandler) so it can't be read from the observer
+// struct fields alone.
 func withProviderEndpointModelStatus(provider, endpoint, model string, status int) metric.MeasurementOption {
 	return metric.WithAttributes(
 		attribute.String("provider", provider),

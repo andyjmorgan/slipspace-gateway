@@ -131,8 +131,8 @@ func TestSanitiseModelLabel(t *testing.T) {
 // TestGateway_RequestsMetricCarriesModelLabel exercises the full handler
 // chain with a real meter SDK and asserts the model attribute is present
 // on gateway.requests.total after a chat request. This is the unit-side
-// guarantee that the label survives from the typed body → reqState →
-// withProviderEndpointModelStatus → OTel.
+// guarantee that the label survives from the typed body through the
+// per-request reporter observer to OTel.
 func TestGateway_RequestsMetricCarriesModelLabel(t *testing.T) {
 	env := newTestEnvWithMeters(t)
 
@@ -237,8 +237,8 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 		t.Fatalf("NewMeters: %v", err)
 	}
 
-	observer := newReporterObserver(nil, logger, meters)
-	forwarder := proxy.New(proxy.Options{Logger: logger, Observer: observer})
+	reporter := newReporterFactory(nil, logger, meters)
+	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, resolved.Providers, errs, logger)

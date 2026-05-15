@@ -61,14 +61,12 @@ func buildDataPlaneHandler(
 			return
 		}
 
-		if s := reqStateFromContext(ctx); s != nil {
-			captured, _ := bodycapture.FromContext(ctx)
-			s.mu.Lock()
-			s.provider = match.Provider
-			s.endpoint = match.Endpoint
-			s.model = outboundModel(captured, match)
-			s.mu.Unlock()
-		}
+		captured, _ := bodycapture.FromContext(ctx)
+		ctx = withRequestLabels(ctx, requestLabels{
+			provider: match.Provider,
+			endpoint: match.Endpoint,
+			model:    outboundModel(captured, match),
+		})
 
 		dest, err := buildDestination(provider, endpoint, match, authResult, r)
 		if err != nil {

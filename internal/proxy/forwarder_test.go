@@ -43,7 +43,7 @@ func TestForward_HappyPath(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	obs := newRecordingObserver()
-	f := New(Options{Observer: obs})
+	f := New(Options{ObserverFactory: staticObserver(obs)})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/models", nil)
@@ -243,7 +243,7 @@ func TestForward_Streaming(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	obs := newRecordingObserver()
-	f := New(Options{Observer: obs})
+	f := New(Options{ObserverFactory: staticObserver(obs)})
 
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		dest := newDestination(t, upstream.URL+"/v1/stream")
@@ -321,7 +321,7 @@ func TestForward_Upstream5xxPassesThrough(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	obs := newRecordingObserver()
-	f := New(Options{Observer: obs})
+	f := New(Options{ObserverFactory: staticObserver(obs)})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
 	dest := newDestination(t, upstream.URL+"/v1/x")
@@ -343,7 +343,7 @@ func TestForward_Upstream5xxPassesThrough(t *testing.T) {
 
 func TestForward_DialFailure(t *testing.T) {
 	obs := newRecordingObserver()
-	f := New(Options{Observer: obs})
+	f := New(Options{ObserverFactory: staticObserver(obs)})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
@@ -538,8 +538,11 @@ func TestNew_DefaultsApplied(t *testing.T) {
 	if f.logger == nil {
 		t.Fatalf("default logger should be set")
 	}
-	if f.observer == nil {
-		t.Fatalf("default observer should be set")
+	if f.observerFactory == nil {
+		t.Fatalf("default observer factory should be set")
+	}
+	if obs := f.observerFactory(context.Background(), Destination{}); obs == nil {
+		t.Fatalf("default observer factory should return a non-nil observer")
 	}
 }
 
@@ -693,7 +696,7 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	f := New(Options{Observer: newRecordingObserver()})
+	f := New(Options{ObserverFactory: staticObserver(newRecordingObserver())})
 	const n = 25
 	var wg sync.WaitGroup
 	wg.Add(n)
