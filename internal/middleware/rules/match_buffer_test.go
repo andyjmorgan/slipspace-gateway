@@ -19,6 +19,7 @@ func TestMatchBuffer_NilReceiverIsSafe(t *testing.T) {
 
 func TestMatchBufferFromContext_Nil(t *testing.T) {
 	t.Parallel()
+	//nolint:staticcheck // exercising the nil-ctx defensive branch
 	if got := rules.MatchBufferFromContext(nil); got != nil {
 		t.Errorf("nil ctx should yield nil buffer, got %v", got)
 	}

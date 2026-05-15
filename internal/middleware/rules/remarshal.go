@@ -69,4 +69,3 @@ func recordRemarshalError(ctx context.Context, meters *observability.Meters) {
 		attribute.String("error_kind", "body_remarshal"),
 	))
 }
-

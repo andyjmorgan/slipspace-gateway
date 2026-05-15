@@ -10,9 +10,9 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 )
 
-func stubMatch(provider, endpoint string, params map[string]string) rules.MatchFromContextFunc {
+func stubMatch(provider, endpoint string) rules.MatchFromContextFunc {
 	return func(context.Context) (string, string, map[string]string, bool) {
-		return provider, endpoint, params, true
+		return provider, endpoint, nil, true
 	}
 }
 
@@ -22,9 +22,13 @@ func TestHTTPHandler_NilArgsPanic(t *testing.T) {
 		name string
 		fn   func()
 	}{
-		{"nil evaluator", func() { rules.HTTPHandler(nil, stubMatch("o", "e", nil), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})) }},
-		{"nil matchFrom", func() { rules.HTTPHandler(rules.NewEvaluator(nil, 8, nil), nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})) }},
-		{"nil next", func() { rules.HTTPHandler(rules.NewEvaluator(nil, 8, nil), stubMatch("o", "e", nil), nil) }},
+		{"nil evaluator", func() {
+			rules.HTTPHandler(nil, stubMatch("o", "e"), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		}},
+		{"nil matchFrom", func() {
+			rules.HTTPHandler(rules.NewEvaluator(nil, 8, nil), nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		}},
+		{"nil next", func() { rules.HTTPHandler(rules.NewEvaluator(nil, 8, nil), stubMatch("o", "e"), nil) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,7 +56,7 @@ func TestHTTPHandler_RuleAppliesStashesState(t *testing.T) {
 	next := http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
 		stateSeen = rules.MutableStateFromContext(req.Context())
 	})
-	h := rules.HTTPHandler(e, stubMatch("openai", "chat_completions", nil), next)
+	h := rules.HTTPHandler(e, stubMatch("openai", "chat_completions"), next)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	w := httptest.NewRecorder()
@@ -89,7 +93,7 @@ func TestHTTPHandler_EmptyRules_PassesThrough(t *testing.T) {
 	t.Parallel()
 	e := rules.NewEvaluator(nil, 8, nil)
 	called := false
-	h := rules.HTTPHandler(e, stubMatch("openai", "chat_completions", nil), http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+	h := rules.HTTPHandler(e, stubMatch("openai", "chat_completions"), http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
 		called = true
 		if rules.MutableStateFromContext(req.Context()) == nil {
 			t.Error("MutableState should be set even with empty rules")
@@ -104,6 +108,7 @@ func TestHTTPHandler_EmptyRules_PassesThrough(t *testing.T) {
 
 func TestMutableStateFromContext_Nil(t *testing.T) {
 	t.Parallel()
+	//nolint:staticcheck // exercising the nil-ctx defensive branch
 	if rules.MutableStateFromContext(nil) != nil {
 		t.Error("nil ctx should yield nil state")
 	}

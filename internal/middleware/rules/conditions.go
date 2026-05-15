@@ -162,4 +162,3 @@ func matchString(op contractsrules.StringOperator, pattern, subject string, case
 		return false
 	}
 }
-
