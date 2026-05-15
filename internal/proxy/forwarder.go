@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
 // Forwarder wraps httputil.ReverseProxy with per-destination transports and
@@ -102,12 +104,26 @@ func New(opts Options) *Forwarder {
 	}
 }
 
-// alwaysDropHeaders are headers the gateway never forwards upstream. The
-// Authorization header must be re-set by the auth middleware via
-// Destination.OutgoingHeaders for managed-mode requests.
+// alwaysDropHeaders are headers the gateway never forwards upstream.
+//
+// Authorization and X-Sluice-Configuration carry the gateway's own auth
+// state and must not propagate; the auth middleware re-injects the
+// upstream credential via Destination.OutgoingHeaders for managed mode,
+// and the cmd/gateway destination builder re-adds the inbound
+// Authorization verbatim for passthrough mode.
+//
+// Origin, Referer, and Cookie are browser-session state. They have no
+// meaning to upstream LLM APIs and, worse, trigger provider-side
+// browser-CORS detection — Anthropic in particular rejects any request
+// carrying a browser Origin header for organisations with custom
+// retention policy. We strip them in both managed and passthrough modes
+// because the gateway is the upstream's client, not the user's browser.
 var alwaysDropHeaders = []string{
 	"X-Sluice-Configuration",
 	"Authorization",
+	"Origin",
+	"Referer",
+	"Cookie",
 }
 
 // Forward sends req upstream as described by dest and writes the response
@@ -149,7 +165,13 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 	dropHeaders := append([]string{}, alwaysDropHeaders...)
 	dropHeaders = append(dropHeaders, dest.DropHeaders...)
 
-	cw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+	reqLogger := observability.FromContext(ctx)
+	cw := &statusWriter{
+		ResponseWriter: w,
+		status:         http.StatusOK,
+		ctx:            ctx,
+		logger:         reqLogger,
+	}
 
 	// upstreamErr is set by ErrorHandler so the success-log path can skip
 	// emission when the transport failed — the error log there is the
@@ -158,19 +180,52 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			rewriteURL(pr, dest.UpstreamURL)
-			for _, h := range dropHeaders {
-				pr.Out.Header.Del(h)
+			if reqLogger.Enabled(ctx, slog.LevelDebug) {
+				reqLogger.DebugContext(ctx, "proxy: inbound headers",
+					slog.Any("headers", redactSensitive(pr.In.Header)),
+				)
 			}
+
+			rewriteURL(pr, dest.UpstreamURL)
+
+			var dropped []string
+			for _, h := range dropHeaders {
+				if pr.Out.Header.Get(h) != "" {
+					pr.Out.Header.Del(h)
+					dropped = append(dropped, h)
+				}
+			}
+			if len(dropped) > 0 && reqLogger.Enabled(ctx, slog.LevelDebug) {
+				reqLogger.DebugContext(ctx, "proxy: stripped headers",
+					slog.Any("headers", dropped),
+				)
+			}
+
 			for k, vs := range dest.OutgoingHeaders {
 				cloned := make([]string, len(vs))
 				copy(cloned, vs)
 				pr.Out.Header[http.CanonicalHeaderKey(k)] = cloned
 			}
+
+			if reqLogger.Enabled(ctx, slog.LevelDebug) {
+				reqLogger.DebugContext(ctx, "proxy: outbound headers",
+					slog.String("destination", dest.UpstreamURL.String()),
+					slog.Any("headers", redactSensitive(pr.Out.Header)),
+				)
+			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			streaming := isSSE(resp.Header)
 			cw.streaming = streaming
+
+			if reqLogger.Enabled(ctx, slog.LevelDebug) {
+				reqLogger.DebugContext(ctx, "proxy: upstream response headers",
+					slog.Int("status_code", resp.StatusCode),
+					slog.Bool("streaming", streaming),
+					slog.Any("headers", redactSensitive(resp.Header)),
+				)
+			}
+
 			f.observer.OnResponseHeaders(ctx, resp.StatusCode, resp.Header, streaming)
 			return nil
 		},
@@ -241,4 +296,48 @@ func writeBadGateway(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadGateway)
 	_, _ = w.Write([]byte(`{"error":{"type":"upstream_unavailable","message":"upstream provider unreachable"}}`))
+}
+
+// redactSensitive returns a shallow copy of h with values replaced by
+// "[REDACTED]" for any header name that looks credential-bearing.
+//
+// Match is substring-based on the lowercased name so it catches every
+// variant in one rule: Authorization, Proxy-Authorization, X-Api-Key,
+// x-api-key, Anthropic-Api-Key, X-Goog-Api-Key, Cookie, Set-Cookie,
+// X-Auth-Token, X-CSRF-Token, X-API-Secret, etc. — without enumerating
+// each. Over-redacting in logs is the safer error.
+//
+// Used only by the debug-level header trace logs in Forward; production
+// log output at info level is unaffected.
+func redactSensitive(h http.Header) map[string][]string {
+	if len(h) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(h))
+	for k, vs := range h {
+		if isSensitiveHeaderName(k) {
+			masked := make([]string, len(vs))
+			for i := range vs {
+				masked[i] = "[REDACTED]"
+			}
+			out[k] = masked
+			continue
+		}
+		cloned := make([]string, len(vs))
+		copy(cloned, vs)
+		out[k] = cloned
+	}
+	return out
+}
+
+// isSensitiveHeaderName reports whether a header name looks credential-
+// bearing under a permissive lowercase-substring match.
+func isSensitiveHeaderName(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.Contains(lower, "auth") ||
+		strings.Contains(lower, "api-key") ||
+		strings.Contains(lower, "apikey") ||
+		strings.Contains(lower, "token") ||
+		strings.Contains(lower, "cookie") ||
+		strings.Contains(lower, "secret")
 }

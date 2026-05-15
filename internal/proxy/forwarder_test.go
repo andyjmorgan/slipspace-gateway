@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
 func newDestination(t *testing.T, upstreamURL string) Destination {
@@ -176,6 +178,9 @@ func TestForward_HeaderRewrite(t *testing.T) {
 	req.Header.Set("X-Sluice-Configuration", "openai-default")
 	req.Header.Set("X-Custom-Drop", "yes")
 	req.Header.Set("X-Keep", "yes")
+	req.Header.Set("Origin", "https://sluice.example.com")
+	req.Header.Set("Referer", "https://sluice.example.com/chat")
+	req.Header.Set("Cookie", "session=abc; other=def")
 
 	dest := newDestination(t, upstream.URL+"/v1/messages")
 	dest.DropHeaders = []string{"X-Custom-Drop"}
@@ -202,6 +207,11 @@ func TestForward_HeaderRewrite(t *testing.T) {
 	}
 	if got := captured.Get("X-Provider-Header"); got != "abc" {
 		t.Fatalf("X-Provider-Header should be set, got %q", got)
+	}
+	for _, name := range []string{"Origin", "Referer", "Cookie"} {
+		if got := captured.Get(name); got != "" {
+			t.Errorf("browser header %s should be stripped, got %q", name, got)
+		}
 	}
 }
 
@@ -530,6 +540,148 @@ func TestNew_DefaultsApplied(t *testing.T) {
 	}
 	if f.observer == nil {
 		t.Fatalf("default observer should be set")
+	}
+}
+
+func TestIsSensitiveHeaderName(t *testing.T) {
+	cases := map[string]bool{
+		"Authorization":          true,
+		"authorization":          true,
+		"Proxy-Authorization":    true,
+		"X-Sluice-Authorization": true,
+		"X-Api-Key":              true,
+		"x-api-key":              true,
+		"X-API-KEY":              true,
+		"Anthropic-Api-Key":      true,
+		"X-Goog-Api-Key":         true,
+		"X-APIKey":               true,
+		"Cookie":                 true,
+		"Set-Cookie":             true,
+		"X-CSRF-Token":           true,
+		"X-Auth-Token":           true,
+		"Authorization-Bearer":   true,
+		"X-API-Secret":           true,
+
+		"Content-Type":            false,
+		"X-Custom-Header":         false,
+		"User-Agent":              false,
+		"X-Sluice-Correlation-Id": false,
+		"X-Provider-Header":       false,
+	}
+	for name, want := range cases {
+		if got := isSensitiveHeaderName(name); got != want {
+			t.Errorf("isSensitiveHeaderName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestRedactSensitive(t *testing.T) {
+	t.Run("nil and empty", func(t *testing.T) {
+		if got := redactSensitive(nil); got != nil {
+			t.Errorf("redactSensitive(nil) = %v, want nil", got)
+		}
+		if got := redactSensitive(http.Header{}); got != nil {
+			t.Errorf("redactSensitive(empty) = %v, want nil", got)
+		}
+	})
+	t.Run("redacts only sensitive names", func(t *testing.T) {
+		in := http.Header{}
+		in.Set("Authorization", "Bearer sk_live_secret")
+		in.Set("X-Api-Key", "sk-real-anthropic-key")
+		in.Set("X-Goog-Api-Key", "AIza...")
+		in.Set("Cookie", "session=abc")
+		in.Set("Content-Type", "application/json")
+		in.Set("X-Provider-Header", "leave-me-alone")
+		in.Add("Set-Cookie", "first=1")
+		in.Add("Set-Cookie", "second=2")
+
+		out := redactSensitive(in)
+
+		for _, k := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key", "Cookie"} {
+			vals := out[http.CanonicalHeaderKey(k)]
+			if len(vals) == 0 || vals[0] != "[REDACTED]" {
+				t.Errorf("%s not redacted: %v", k, vals)
+			}
+		}
+		if vals := out["Set-Cookie"]; len(vals) != 2 || vals[0] != "[REDACTED]" || vals[1] != "[REDACTED]" {
+			t.Errorf("Set-Cookie multi-value not fully redacted: %v", vals)
+		}
+		if vals := out["Content-Type"]; len(vals) != 1 || vals[0] != "application/json" {
+			t.Errorf("Content-Type should pass through, got %v", vals)
+		}
+		if vals := out["X-Provider-Header"]; len(vals) != 1 || vals[0] != "leave-me-alone" {
+			t.Errorf("X-Provider-Header should pass through, got %v", vals)
+		}
+	})
+	t.Run("returns independent slice copies", func(t *testing.T) {
+		in := http.Header{"X-Keep": []string{"original"}}
+		out := redactSensitive(in)
+		out["X-Keep"][0] = "mutated"
+		if got := in.Get("X-Keep"); got != "original" {
+			t.Errorf("input mutated through redactSensitive copy: %q", got)
+		}
+	})
+}
+
+func TestForward_DebugLoggingEmitsHeaderTrace(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Upstream-Trace", "yes")
+		w.Header().Set("Set-Cookie", "upstream=zzz")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := observability.WithLogger(context.Background(), logger)
+
+	f := New(Options{Logger: logger})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://gateway.local/v1/messages", strings.NewReader("{}"))
+	req = req.WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer client-token")
+	req.Header.Set("Origin", "https://sluice.example.com")
+	req.Header.Set("X-Keep", "yes")
+
+	dest := newDestination(t, upstream.URL+"/v1/messages")
+	dest.OutgoingHeaders = http.Header{"X-Goog-Api-Key": []string{"AIza-upstream"}}
+
+	if err := f.Forward(ctx, rec, req, dest); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	out := buf.String()
+	for _, expect := range []string{
+		`"msg":"proxy: inbound headers"`,
+		`"msg":"proxy: stripped headers"`,
+		`"msg":"proxy: outbound headers"`,
+		`"msg":"proxy: upstream response headers"`,
+		`"msg":"proxy: final response headers"`,
+	} {
+		if !strings.Contains(out, expect) {
+			t.Errorf("expected log line %s in trace output:\n%s", expect, out)
+		}
+	}
+
+	// Authorization in inbound/outbound traces must be redacted; the
+	// upstream's Set-Cookie must be redacted in upstream-response trace.
+	if !strings.Contains(out, `"Authorization":["[REDACTED]"]`) {
+		t.Errorf("inbound Authorization should be redacted in trace; got:\n%s", out)
+	}
+	if !strings.Contains(out, `"X-Goog-Api-Key":["[REDACTED]"]`) {
+		t.Errorf("outbound X-Goog-Api-Key should be redacted in trace; got:\n%s", out)
+	}
+	if !strings.Contains(out, `"Set-Cookie":["[REDACTED]"]`) {
+		t.Errorf("upstream Set-Cookie should be redacted in trace; got:\n%s", out)
+	}
+	// Stripped headers list should contain Origin (we set it on the inbound).
+	if !strings.Contains(out, `"Origin"`) {
+		t.Errorf("stripped headers list should reference Origin; got:\n%s", out)
+	}
+	// Non-sensitive header should pass through verbatim.
+	if !strings.Contains(out, `"X-Keep":["yes"]`) {
+		t.Errorf("non-sensitive X-Keep should appear verbatim in trace; got:\n%s", out)
 	}
 }
 

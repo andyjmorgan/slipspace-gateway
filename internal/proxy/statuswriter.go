@@ -1,6 +1,10 @@
 package proxy
 
-import "net/http"
+import (
+	"context"
+	"log/slog"
+	"net/http"
+)
 
 // statusWriter is a minimal http.ResponseWriter wrapper that captures the
 // final status code so the Forwarder can pass it to Observer.OnComplete.
@@ -9,6 +13,13 @@ import "net/http"
 // writer. The pipeline-aware capture writer is a follow-up wave.
 type statusWriter struct {
 	http.ResponseWriter
+
+	// ctx + logger are present so WriteHeader can log the final response
+	// headers at debug level — the value the client actually sees after
+	// httputil.ReverseProxy's hop-by-hop strip and any prior middleware
+	// additions (correlation_id, session_id).
+	ctx    context.Context
+	logger *slog.Logger
 
 	status      int
 	wroteHeader bool
@@ -26,6 +37,14 @@ func (w *statusWriter) WriteHeader(code int) {
 	}
 	w.status = code
 	w.wroteHeader = true
+
+	if w.logger != nil && w.logger.Enabled(w.ctx, slog.LevelDebug) {
+		w.logger.DebugContext(w.ctx, "proxy: final response headers",
+			slog.Int("status_code", code),
+			slog.Any("headers", redactSensitive(w.Header())),
+		)
+	}
+
 	w.ResponseWriter.WriteHeader(code)
 }
 
