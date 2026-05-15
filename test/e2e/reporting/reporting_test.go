@@ -52,6 +52,9 @@ func TestReporting_RequestEvent_Inline(t *testing.T) {
 	if ev.Endpoint != "chat_completions" {
 		t.Errorf("Endpoint=%q want chat_completions", ev.Endpoint)
 	}
+	if ev.Model != "gpt" {
+		t.Errorf("Model=%q want gpt", ev.Model)
+	}
 	if ev.StatusCode != http.StatusOK {
 		t.Errorf("StatusCode=%d want 200", ev.StatusCode)
 	}

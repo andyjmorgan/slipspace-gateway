@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -87,6 +88,59 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 			t.Errorf("missing metric %q in collected output", name)
 		}
 	}
+}
+
+// TestMeters_RequestsTotalCarriesModelAttribute proves the
+// gateway.requests.total instrument accepts and surfaces a `model`
+// attribute. The attribute itself is applied by the cmd/gateway reporter;
+// this test exists per the issue-#4 acceptance check so a meter-level
+// regression (e.g. instrument swapped for one with attribute filtering)
+// fails here rather than at the dashboard.
+func TestMeters_RequestsTotalCarriesModelAttribute(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+
+	meters, err := observability.NewMeters(mp.Meter(observability.MeterName))
+	if err != nil {
+		t.Fatalf("NewMeters: %v", err)
+	}
+
+	ctx := context.Background()
+	meters.RequestsTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("provider", "openai"),
+		attribute.String("endpoint", "chat_completions"),
+		attribute.String("model", "gpt-4o-mini"),
+		attribute.Int("status_code", 200),
+	))
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(ctx, &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != observability.MetricRequestsTotal {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("%s: expected int64 sum, got %T", m.Name, m.Data)
+			}
+			if len(sum.DataPoints) == 0 {
+				t.Fatalf("%s: no data points", m.Name)
+			}
+			got, ok := sum.DataPoints[0].Attributes.Value("model")
+			if !ok || got.AsString() != "gpt-4o-mini" {
+				t.Fatalf("%s: model attribute = %q, ok=%v; want %q", m.Name, got.AsString(), ok, "gpt-4o-mini")
+			}
+			return
+		}
+	}
+	t.Fatalf("%s not collected", observability.MetricRequestsTotal)
 }
 
 func TestNewMeters_HistogramBoundariesMatchSpec(t *testing.T) {
