@@ -150,22 +150,37 @@ func makeKindFromContext(providers contractsconfig.ProvidersConfig) bodycapture.
 	}
 }
 
-// buildDestination resolves the upstream URL and outgoing headers
-// from the post-rule MutableState. Resolution order:
+// buildDestination resolves the upstream URL, outgoing headers, and
+// drop list from the post-rule MutableState plus the auth decision.
+// It is the single mint site for the upstream credential header —
+// the auth middleware resolves identity + policy but does not touch
+// credentials.
 //
-//  1. UpstreamURL — if a rule wrote an explicit override via
-//     ChangeUrlAction, use it verbatim. Otherwise compute the URL
-//     from the (provider, endpoint) under the post-rule provider's
-//     BaseURL with {name} placeholders substituted from
-//     state.PathParams.
-//  2. Outgoing headers — provider.RequiredHeaders + auth-resolved
-//     SetHeaders + state.OutgoingHeaders. Rule-supplied headers
-//     overlay the auth defaults; passthrough Authorization is
-//     forwarded verbatim when present.
+// URL resolution: UpstreamURL (rule ChangeUrl override) wins;
+// otherwise compute from baseURL + endpoint template with PathParams
+// substituted. QueryAdditions overlay on the final URL.
 //
-// In passthrough mode the inbound Authorization header is forwarded
-// verbatim because the forwarder always drops Authorization unless
-// OutgoingHeaders re-sets it.
+// Credential resolution follows this decision table on
+// (authResult.Mode, state.UpstreamCredentialOverride, configured
+// Configuration.UpstreamCredentials[state.Provider]):
+//
+//	managed + override non-nil and non-empty
+//	    → drop inbound Authorization + cousins; set per state.Provider's format
+//	managed + override == &""           (UseSluiceKey sentinel)
+//	    → forward inbound Authorization verbatim
+//	managed + override nil, cred non-empty
+//	    → drop inbound Authorization + cousins; set per state.Provider's format
+//	managed + override nil, cred empty or missing
+//	    → drop inbound Authorization + cousins; SET NOTHING (private endpoint)
+//	passthrough + override non-nil and non-empty
+//	    → drop inbound Authorization + cousins; set per state.Provider's format
+//	passthrough + override == &""       (UseSluiceKey sentinel; redundant)
+//	    → forward inbound Authorization verbatim
+//	passthrough + override nil
+//	    → forward inbound Authorization verbatim (Claude Code path)
+//
+// After the credential decision, state.OutgoingHeaders (rule
+// SetHeader writes) overlays. Rules win the last word on the wire.
 func buildDestination(
 	provider contractsconfig.Provider,
 	endpoint contractsconfig.Endpoint,
@@ -200,55 +215,45 @@ func buildDestination(
 	for k, v := range provider.RequiredHeaders {
 		outgoing.Set(k, v)
 	}
-	for k, vs := range authResult.SetHeaders {
-		for _, v := range vs {
-			outgoing.Add(k, v)
-		}
-	}
-	// Re-mint the credential header when a rule changed the provider
-	// or supplied an explicit override. The auth middleware sets
-	// SetHeaders for the original provider; rule mutations need the
-	// destination builder to update it. Resolution order:
-	//
-	//   1. ChangeApiKey explicit override: state.UpstreamCredentialOverride
-	//      replaces the credential value, formatted per state.Provider.
-	//   2. ChangeProvider without explicit override: look up the new
-	//      provider's credential in Configuration.UpstreamCredentials
-	//      (managed-mode) and mint with the new provider's format.
-	//   3. Otherwise: leave SetHeaders as the auth middleware emitted.
-	//
-	// Empty override is the UseSluiceKey sentinel — handled by the
-	// passthrough branch below.
-	if state.UpstreamCredentialOverride != nil && *state.UpstreamCredentialOverride != "" {
-		name, value := auth.UpstreamCredentialHeader(state.Provider, *state.UpstreamCredentialOverride)
-		outgoing.Del(auth.HeaderAuthorization)
-		outgoing.Del("X-Api-Key")
-		outgoing.Del("X-Goog-Api-Key")
+
+	dropHeaders := append([]string(nil), authResult.DropHeaders...)
+
+	switch credentialStrategy(authResult, state) {
+	case credSetFromProvider:
+		cred := credentialFor(authResult, state)
+		name, value := auth.UpstreamCredentialHeader(state.Provider, cred)
 		outgoing.Set(name, value)
-	} else if state.UpstreamCredentialOverride == nil &&
-		authResult.Mode == auth.ModeManaged &&
-		state.Provider != authResult.Provider &&
-		authResult.Configuration != nil {
-		if cred, ok := authResult.Configuration.UpstreamCredentials[state.Provider]; ok {
-			name, value := auth.UpstreamCredentialHeader(state.Provider, cred)
-			outgoing.Del(auth.HeaderAuthorization)
-			outgoing.Del("X-Api-Key")
-			outgoing.Del("X-Goog-Api-Key")
-			outgoing.Set(name, value)
+		// Drop every credential header name the inbound request
+		// might carry that is NOT the one we just set, so a managed
+		// → anthropic forwarder doesn't accidentally pass the
+		// inbound openai-style Bearer through.
+		for _, h := range credentialHeaderNames {
+			if h != name {
+				dropHeaders = appendUnique(dropHeaders, h)
+			}
+		}
+	case credStripNoSet:
+		// Private endpoint or missing credential mapping. Strip
+		// every credential header — the inbound request must not
+		// leak a token to an endpoint we did not authenticate it
+		// against.
+		for _, h := range credentialHeaderNames {
+			dropHeaders = appendUnique(dropHeaders, h)
+		}
+	case credForwardInbound:
+		// Passthrough or UseSluiceKey sentinel. The forwarder strips
+		// Authorization unconditionally via alwaysDropHeaders, so
+		// we re-inject the inbound value via OutgoingHeaders to make
+		// the forwarder put it back on the upstream request.
+		if inbound := req.Header.Get(auth.HeaderAuthorization); inbound != "" {
+			outgoing.Set(auth.HeaderAuthorization, inbound)
 		}
 	}
+
 	for k, vs := range state.OutgoingHeaders {
 		outgoing.Del(k)
 		for _, v := range vs {
 			outgoing.Add(k, v)
-		}
-	}
-	if authResult.Mode == auth.ModePassthrough ||
-		(state.UpstreamCredentialOverride != nil && *state.UpstreamCredentialOverride == "") {
-		if inbound := req.Header.Get(auth.HeaderAuthorization); inbound != "" {
-			if outgoing.Get(auth.HeaderAuthorization) == "" {
-				outgoing.Set(auth.HeaderAuthorization, inbound)
-			}
 		}
 	}
 
@@ -256,8 +261,69 @@ func buildDestination(
 		BaseURL:         baseURL,
 		UpstreamURL:     &upstream,
 		OutgoingHeaders: outgoing,
-		DropHeaders:     authResult.DropHeaders,
+		DropHeaders:     dropHeaders,
 	}, nil
+}
+
+// credentialHeaderNames is the closed set of headers the gateway may
+// inject (or strip) for upstream authentication. Other headers
+// authored by rules via SetHeader are not constrained here.
+var credentialHeaderNames = []string{
+	auth.HeaderAuthorization,
+	"X-Api-Key",
+	"X-Goog-Api-Key",
+}
+
+// credStrategy is the credential decision derived from auth mode +
+// rule state. The destination builder consumes this to decide
+// whether to Set a credential header, strip credentials entirely,
+// or forward the inbound Authorization verbatim.
+type credStrategy int
+
+const (
+	credForwardInbound credStrategy = iota
+	credSetFromProvider
+	credStripNoSet
+)
+
+func credentialStrategy(authResult auth.AuthResult, state *rules.MutableState) credStrategy {
+	if state.UpstreamCredentialOverride != nil {
+		if *state.UpstreamCredentialOverride == "" {
+			return credForwardInbound // UseSluiceKey sentinel
+		}
+		return credSetFromProvider
+	}
+	if authResult.Mode == auth.ModePassthrough {
+		return credForwardInbound
+	}
+	// managed mode
+	if authResult.Configuration == nil {
+		return credStripNoSet
+	}
+	cred, ok := authResult.Configuration.UpstreamCredentials[state.Provider]
+	if !ok || cred == "" {
+		return credStripNoSet
+	}
+	return credSetFromProvider
+}
+
+func credentialFor(authResult auth.AuthResult, state *rules.MutableState) string {
+	if state.UpstreamCredentialOverride != nil {
+		return *state.UpstreamCredentialOverride
+	}
+	if authResult.Configuration == nil {
+		return ""
+	}
+	return authResult.Configuration.UpstreamCredentials[state.Provider]
+}
+
+func appendUnique(slice []string, v string) []string {
+	for _, s := range slice {
+		if s == v {
+			return slice
+		}
+	}
+	return append(slice, v)
 }
 
 func substitutePlaceholders(path string, params map[string]string) string {
