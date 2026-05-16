@@ -205,11 +205,14 @@ func TestConditions_RuleGroup_AndMatches(t *testing.T) {
 func TestActions_ChangeProvider_RetargetsUpstream(t *testing.T) {
 	t.Parallel()
 	// ChangeProvider on its own does NOT remap endpoint names — the
-	// .NET predecessor's deliberate behaviour, which we match.
-	// Rules retargeting to a provider whose endpoint name differs
-	// must pair with ChangeUrl. Here we move openai.chat_completions
-	// → anthropic.messages, which is the realistic "fail over to a
-	// different vendor" scenario rule authors will write.
+	// .NET predecessor's deliberate behaviour, which we match. With
+	// v1.0.2 the destination builder re-resolves the endpoint on the
+	// new provider after changeProvider fires, so when both providers
+	// define the same endpoint name (here `chat_completions`), the
+	// rewritten request picks up the destination provider's endpoint
+	// — including its `auth_header`/`auth_format` override. Anthropic's
+	// OpenAI-compat chat surface uses `Authorization: Bearer`, not the
+	// native `x-api-key`, and that's what should land on the wire.
 	policy := matrixPolicy(`
   - name: reroute-to-anthropic
     priority: 100
@@ -221,13 +224,13 @@ func TestActions_ChangeProvider_RetargetsUpstream(t *testing.T) {
       - type: changeProvider
         newProvider: anthropic
       - type: changeUrl
-        newUrl: http://mockllm:5555/v1/messages
+        newUrl: http://mockllm:5555/v1/chat/completions
 `, "reroute-to-anthropic")
 	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
 	h.StageMockResponse(harness.CannedResponse{
 		Method: http.MethodPost,
-		Path:   "/v1/messages",
-		Body:   `{"id":"msg_x","type":"message"}`,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"chatcmpl","object":"chat.completion"}`,
 	})
 	fireChat(t, h, nil)
 
@@ -242,23 +245,23 @@ func TestActions_ChangeProvider_RetargetsUpstream(t *testing.T) {
 		t.Errorf("post-rule provider = %q, want anthropic", ev.Provider)
 	}
 
-	// And the upstream-bound request landed on the rewritten path
-	// (the changeUrl target) with the configured anthropic credential
-	// minted into the Authorization header. ChangeProvider does not
-	// remap the endpoint name — the destination builder still resolves
+	// The upstream request lands on the rewritten path (changeUrl
+	// target) with the configured anthropic credential minted into
+	// the Authorization header. ChangeProvider does not remap the
+	// endpoint name — the destination builder still resolves
 	// anthropic.chat_completions, whose auth_header / auth_format
-	// override (Authorization: Bearer {key}) is what fires here, not
-	// anthropic's native x-api-key. Rules that need the native messages
-	// auth must point at an endpoint without the override.
+	// override (Authorization: Bearer {key}) is what fires here,
+	// not anthropic's native x-api-key. Rules that need the native
+	// messages auth must point at an endpoint without the override.
 	cap := h.LastCapturedRequest()
 	if cap == nil {
 		t.Fatal("upstream not called")
 	}
-	if cap.Path != "/v1/messages" {
-		t.Errorf("upstream path = %q, want /v1/messages", cap.Path)
+	if cap.Path != "/v1/chat/completions" {
+		t.Errorf("upstream path = %q, want /v1/chat/completions", cap.Path)
 	}
 	if got := cap.Headers["Authorization"]; got != "Bearer sk-ant-dev-mock" {
-		t.Errorf("Authorization header = %q, want %q", got, "Bearer sk-ant-dev-mock")
+		t.Errorf("Authorization header = %q, want Bearer sk-ant-dev-mock; got headers %+v", got, cap.Headers)
 	}
 	if got, present := cap.Headers["X-Api-Key"]; present {
 		t.Errorf("native x-api-key should not be set when endpoint declares Authorization override; got %q", got)

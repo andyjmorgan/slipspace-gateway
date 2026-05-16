@@ -62,9 +62,11 @@ func TestRules_MatchPublishesEvent(t *testing.T) {
 	}
 }
 
-// TestRules_NoMatchEmitsNoEvent fires a request the config-dev rule
-// does NOT match (anthropic prefix, redact-emails is provider=openai
-// only). Verifies the engine is selective — no gateway.rule.matched
+// TestRules_NoMatchEmitsNoEvent fires a request that none of the
+// config-dev library rules match: anthropic provider (so the openai-only
+// `redact-emails` skips), and a model name that starts with neither
+// `claude-` nor `gemini-` (so the v1.0.2 `route-*-models-to-*` rules
+// skip). Verifies the engine is selective — no gateway.rule.matched
 // envelope arrives within a short window.
 func TestRules_NoMatchEmitsNoEvent(t *testing.T) {
 	t.Parallel()
@@ -73,12 +75,12 @@ func TestRules_NoMatchEmitsNoEvent(t *testing.T) {
 	h.StageMockResponse(harness.CannedResponse{
 		Method: http.MethodPost,
 		Path:   "/v1/messages",
-		Body:   `{"id":"msg_x","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":0}}`,
+		Body:   `{"id":"msg_x","type":"message","role":"assistant","model":"anthropic-internal","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":0}}`,
 	})
 
 	resp := h.PostJSON("/anthropic/v1/messages",
 		map[string]any{
-			"model":      "claude-haiku-4-5",
+			"model":      "anthropic-internal",
 			"max_tokens": 64,
 			"messages":   []map[string]string{{"role": "user", "content": "hi"}},
 		},
