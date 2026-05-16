@@ -16,7 +16,7 @@ Both modes resolve to a named **Configuration** — a reusable policy bundle (al
 
 ## Where the canonical design lives
 
-**DonkeyWork project `793a6cba-bd53-4b7e-8913-20fee7cb5f87`** ("Sluice Gateway") holds the source of truth: 14 design notes, 4 milestones, 35 tasks with acceptance criteria.
+**DonkeyWork project `793a6cba-bd53-4b7e-8913-20fee7cb5f87`** ("Sluice Gateway") holds the source of truth: 16 design notes, 7 milestones, 40+ tasks with acceptance criteria.
 
 Fetch via:
 - `mcp__donkeywork__notes_list_by_project` for the design notes
@@ -38,17 +38,22 @@ The notes you'll reference most often:
 - **.NET → Go Translation Table** — pattern mapping from `airia-ai-gateway`
 - **Local Dev Setup + Mock LLM** — docker-compose, mock LLM rules
 - **HTTP Forwarder Wrapper Design** — the thin `httputil.ReverseProxy` layer
+- **OpenAI Compat Quirks** — anthropic/gemini OpenAI-compat surfaces, per-endpoint `auth_header` / `auth_format`, direct-route vs rule-redirect pattern (v1.0.2)
 
 When in doubt, check the notes — they're the long-form. This file is the index.
 
 ## Phased scope
 
-| Milestone | What ships |
-|---|---|
-| **v0.1 Foundation** | Repo scaffold, three `cmd/` binaries, Helm chart, mock LLM Go rewrite, CI with 95% coverage gate. No request forwarding. |
-| **v1.0 Data Plane MVP** | Forwards OpenAI (chat/responses/models), Anthropic (messages/models), Gemini (generate_content/models). Streaming + non-streaming. NATS reporting. Rules + resilience schemas accepted in YAML but **not evaluated**. |
-| **v1.1 Control Plane** | `api` REST binary + Web UI. CRUD over configurations & api keys. Rules + resilience evaluation **flip on**. |
-| **v1.2+ Beyond** | Cross-provider translation, real DLP guardrails, AWS Bedrock, sibling repos (`sluice-a2a`, `sluice-mcp`), hot reload, RBAC. |
+| Milestone | Status | What shipped / will ship |
+|---|---|---|
+| **v0.1 Foundation** | done | Repo scaffold, three `cmd/` binaries, Helm chart, mock LLM Go rewrite, CI with 95% coverage gate. No request forwarding. |
+| **v1.0 Data Plane MVP** | done | Forwards OpenAI (chat/responses/models), Anthropic (messages/models), Gemini (generate_content/models). Streaming + non-streaming. NATS reporting. Rules + resilience schemas accepted in YAML but **not evaluated**. |
+| **v1.0.1 Rules Engine** | done | Rules engine flipped on. Five conditions (provider, endpoint, modelName, header, group). Six non-terminating actions (changeProvider, changeModelName, changeUrl, changeApiKey, setHeader, appendQueryString). Two terminating actions (returnStatusCode real; `llmImpersonation` plain-text stub). E2E matrix. |
+| **v1.0.2 OpenAI-Compat Chat** | done | `/anthropic/v1/chat/completions` + `/gemini/v1beta/openai/chat/completions` registered. Per-endpoint `auth_header`/`auth_format` override. Model-keyed `changeProvider` rule example. README populated. |
+| **v1.0.3 Impersonation + Release Polish** | queued | Real per-provider `llmImpersonation` synthesisers; `Create GitHub Release` workflow idempotence. |
+| **v1.0.4 CI Hygiene** | queued | Flake audit, NATS-ordering convention, scope failure emails to `main`. |
+| **v1.1 Control Plane** | queued | `api` REST binary + Web UI. CRUD over configurations & api keys. Resilience evaluation flips on. |
+| **v1.2+ Beyond** | queued | Cross-provider translation, real DLP guardrails, AWS Bedrock, sibling repos (`sluice-a2a`, `sluice-mcp`), hot reload, RBAC. |
 
 ## Load-bearing invariants (NEVER violate)
 
@@ -63,6 +68,12 @@ These are the rules that, if broken, silently break customers or destabilize the
 4. **Reporting and telemetry are separate channels.** OTel meters carry counters/histograms/gauges (ops, scrape/push). NATS carries end-of-pipeline event payloads (audit, billing, UI logs). The .NET predecessor conflates them; we do not.
 
 5. **YAML schema accepts rules + resilience in v1.0 even though evaluation is off.** Locks the shape so v1.1 flips evaluation on without YAML migration.
+
+6. **Credential header format lives in one place per `(provider, endpoint)`.** Managed-mode credential resolution flows: endpoint override (`auth_header` / `auth_format` in `providers.yaml`) → provider override → per-provider default in `auth.UpstreamCredentialHeader`. The destination builder (`cmd/gateway/handler.go::resolveCredentialHeader`) is the only mint site. Bypassing it — minting in auth, in a rule, in middleware — fragments the table and causes silent credential mismatches. OpenAI-compat surfaces on Anthropic and Gemini depend on this: same provider, different credential conventions per endpoint.
+
+7. **`changeProvider` re-resolves the endpoint on the new provider.** The destination builder reads `state.Provider` post-rule and looks up the endpoint map on that provider — not the original. This is what makes the model-keyed redirect pattern work (claude-* on `/openai/v1/chat/completions` lands on anthropic's `chat_completions` endpoint with anthropic's credential + auth header). Don't add code that bypasses the post-rule endpoint lookup.
+
+8. **Tests reading NATS event order MUST sort by `MatchedAt`.** The bus publisher uses `defaultWorkers = 2` (`internal/bus/publisher.go`), so adjacent envelopes can arrive at the subscriber inverted. `TestRules_PriorityOrdering` was passing by chance until v1.0.2 tipped the dice. Any test that consumes `gateway.rule.matched` / `gateway.request` events and asserts ordering needs a stable per-request key (`MatchedAt` for rule events, `Started` for request events) — never receive order.
 
 ## Engineering standards
 
@@ -365,8 +376,9 @@ Live in `test/e2e/`. Build the `gateway` binary, spin up mock LLM + NATS via tes
 |---|---|---|
 | Unit | `*_test.go` next to code | stdlib `testing`, table-driven with `t.Run(name, func(t *testing.T) {...})` |
 | Integration | `*_test.go` with `//go:build integration` tag | testcontainers-go for NATS, etc. |
-| E2E | `test/e2e/` | spawn `gateway` binary via `exec.Command`, hit via real HTTP |
-| Compatibility | `test/python/` | pytest with the official OpenAI, Anthropic, Gemini SDKs |
+| E2E | `test/e2e/` (build tag `e2e`) | spawn `gateway` binary, mockllm + NATS via testcontainers, hit via real HTTP. `make e2e` |
+| Wire compat | `test/python/` | pytest with the official OpenAI, Anthropic, Gemini SDKs against a spawned gateway + mockllm stack. `make py-compat`. Release-blocking. |
+| Smoke (post-deploy) | `test/smoke/` | pytest with the official SDKs against a **live deploy** (`SLUICE_BASE_URL`, `SLUICE_API_KEY`). `make smoke`. Set `SLUICE_SMOKE_QWEN=true` for the cluster-side qwen redirect tests. |
 
 ### Patterns
 
@@ -376,6 +388,8 @@ Live in `test/e2e/`. Build the `gateway` binary, spin up mock LLM + NATS via tes
 - **`-race` everywhere.** `goleak` verifies no goroutine leaks at package teardown.
 - **Fuzz tests** (`testing.F`) for JSON unmarshallers, YAML loader, route detection, envelope round-trip. Corpora committed under `testdata/fuzz/`.
 - **Golden round-trip tests** for every provider model type using captured real-provider JSON in `test/fixtures/`.
+- **Never hardcode `config-dev` strings as probes.** Tests that pick `claude-haiku-4-5` or `gemini-2.0-flash-001` as a *no-match* model break when the policy library grows a rule that matches that prefix (this happened twice during v1.0.2). For negative probes, use synthetic names like `nomatch-internal` / `unmapped-model` that no real rule will ever target.
+- **Tests reading NATS events sort by `MatchedAt`, never receive order.** See load-bearing invariant #8.
 
 ### What we explicitly cover
 
@@ -493,6 +507,9 @@ Assert:
 - The C# mock LLM at `~/Source/Repos/airia-llmock/` is used pre-v0.1; `cmd/mockllm/` (Go) replaces it
 - `docker-compose.dev.yaml` is gitignored and overlays the local C# mock image until the Go rewrite ships
 - `nats sub "gateway.>"` watches live events during dev (install: `brew install nats-io/nats-tools/nats`)
+- `make e2e` runs the e2e matrix against a spawned binary (Docker required for testcontainers)
+- `make py-compat` runs the wire-compat suite against a spawned stack
+- `SLUICE_API_KEY=sk_live_... make smoke` runs the post-deploy harness against `sluice.donkeywork.dev` (or `SLUICE_BASE_URL=...`). Use this after every cluster roll. `SLUICE_SMOKE_QWEN=true` enables the cluster-side qwen redirect tests.
 - See the *Local Dev Setup + Mock LLM* note for the full setup
 
 ## PR discipline
@@ -502,6 +519,12 @@ Assert:
 - Then bullets: what changed and why, not a play-by-play of files touched
 - Always paste the PR URL when you create one (draft or otherwise)
 - No emojis anywhere in code or docs unless explicitly requested
+
+### Stacked PRs
+
+When shipping a series of dependent PRs (foundation → wiring → tests → docs), branch each PR off the parent's branch, not main. When the parent merges, rebase each dependent onto the new main and `git push --force-with-lease`. **Each dependent PR may already include a fix for a test that the parent also fixed** — the rebase will conflict; resolve to the on-main version. v1.0.2 saw three PRs independently patching `TestActions_ChangeProvider_RetargetsUpstream`; the rebase merge surfaced clean conflicts in each case.
+
+When committing PR work, always confirm `git branch --show-current` matches the intended branch before `git commit` — it's easy to land a commit on the parent branch when you meant the dependent. If you do, recover with `git checkout <intended> && git cherry-pick <sha> && git checkout <parent> && git reset --hard <prior>`.
 
 ## Working style for AI assistants
 
