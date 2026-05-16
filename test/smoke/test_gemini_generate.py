@@ -1,18 +1,31 @@
-"""Smoke test: Gemini generateContent via sluice-gateway managed mode."""
+"""Smoke test: Gemini generateContent via sluice-gateway managed mode.
+
+Parametrized over both surface forms (v1.0.6):
+  - prefixed:  POST /gemini/v1beta/models/{model}:generateContent  (namespaced)
+  - bare:      POST /v1beta/models/{model}:generateContent         (vanilla SDK)
+
+Both must succeed on the live gateway.
+"""
 
 from __future__ import annotations
 
+import pytest
 from google import genai
 from google.genai import types
 
 
-def test_gemini_generate_content(base_url: str, api_key: str) -> None:
+@pytest.mark.parametrize(
+    "prefix",
+    ["/gemini", ""],
+    ids=["prefixed", "bare-prefix-optional"],
+)
+def test_gemini_generate_content(base_url: str, api_key: str, prefix: str) -> None:
     # google-genai ships `x-goog-api-key`; sluice keys managed auth off the
     # Authorization bearer, so we inject it via HttpOptions.headers.
     client = genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
-            base_url=f"{base_url}/gemini",
+            base_url=f"{base_url}{prefix}",
             headers={"Authorization": f"Bearer {api_key}"},
         ),
     )

@@ -88,4 +88,19 @@ type Endpoint struct {
 	// used. Empty (with an override AuthHeader set) renders the raw
 	// credential.
 	AuthFormat string `yaml:"auth_format,omitempty" json:"auth_format,omitempty"`
+
+	// PrefixOptional, when true, escapes Provider.PrefixRequired for
+	// this single endpoint — bare AcceptedPaths emit as routes even
+	// though the rest of the provider's endpoints stay prefix-only.
+	// The mechanism is provider-agnostic: any prefix-required provider
+	// can flip individual endpoints back to bare-routable to expose a
+	// native upstream path at the gateway root while keeping
+	// collision-prone endpoints behind the prefix. Anthropic's
+	// `/v1/messages` is the canonical example: bare so vanilla
+	// Anthropic SDKs work pointed at the gateway root, while the
+	// OpenAI-compat `/v1/chat/completions` on the same provider stays
+	// prefix-only to avoid colliding with openai. No effect when
+	// Provider.PrefixRequired is false (the endpoint already emits
+	// both forms).
+	PrefixOptional bool `yaml:"prefix_optional,omitempty" json:"prefix_optional,omitempty"`
 }

@@ -48,6 +48,57 @@ def _client(
     )
 
 
+def _client_bare(gateway_url: str, *, api_key: str = API_KEY) -> genai.Client:
+    """google-genai SDK pointed at the gateway root (no /gemini prefix).
+
+    Exercises v1.0.6's prefix_optional on gemini.generate_content — a
+    vanilla SDK with base_url=https://sluice.example.com must reach the
+    generateContent endpoint via /v1beta/... without the prefix.
+    """
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            base_url=gateway_url,
+            headers={"Authorization": f"Bearer {api_key}"},
+        ),
+    )
+
+
+def test_generate_content_managed_bare_route(gateway_url: str, mockllm_url: str) -> None:
+    """Same payload as test_generate_content_managed but via the bare route."""
+    stage_response(
+        mockllm_url,
+        method="POST",
+        path="/v1beta/models/gemini-2.0-flash:generateContent",
+        body={
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "pong"}], "role": "model"},
+                    "finishReason": "STOP",
+                    "index": 0,
+                    "safetyRatings": [],
+                }
+            ],
+            "promptFeedback": {"safetyRatings": []},
+            "usageMetadata": {
+                "promptTokenCount": 1,
+                "candidatesTokenCount": 1,
+                "totalTokenCount": 2,
+            },
+            "modelVersion": "gemini-2.0-flash",
+        },
+    )
+
+    client = _client_bare(gateway_url)
+    resp = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents="ping",
+    )
+
+    assert resp.candidates[0].content.parts[0].text == "pong"
+    assert resp.candidates[0].finish_reason == types.FinishReason.STOP
+
+
 def test_generate_content_managed(gateway_url: str, mockllm_url: str) -> None:
     stage_response(
         mockllm_url,
