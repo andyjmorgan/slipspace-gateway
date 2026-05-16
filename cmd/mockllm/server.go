@@ -119,6 +119,11 @@ var providerPaths = []string{
 	"/v1/models",
 	"/v1/messages",
 	"/v1beta/models",
+	// OpenAI-compat surface on Gemini — Anthropic's compat path is
+	// the same /v1/chat/completions string and is already covered
+	// above. Gemini publishes its own distinct path so the mock
+	// needs to claim it explicitly.
+	"/v1beta/openai/chat/completions",
 }
 
 func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {

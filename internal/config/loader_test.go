@@ -189,6 +189,21 @@ func TestLoad_ConfigDevFixtures(t *testing.T) {
 	if _, ok := resolved.RouteIndex["/v1/messages"]; ok {
 		t.Errorf("anthropic has prefix_required=true; bare /v1/messages must not be in the route index")
 	}
+	// v1.0.2: OpenAI-compat chat surface on anthropic + gemini.
+	if got, ok := resolved.RouteIndex["/anthropic/v1/chat/completions"]; !ok || got.Provider != "anthropic" || got.Endpoint != "chat_completions" {
+		t.Errorf("RouteIndex /anthropic/v1/chat/completions = %+v, want anthropic.chat_completions", got)
+	}
+	if got, ok := resolved.RouteIndex["/gemini/v1beta/openai/chat/completions"]; !ok || got.Provider != "gemini" || got.Endpoint != "chat_completions" {
+		t.Errorf("RouteIndex /gemini/v1beta/openai/chat/completions = %+v, want gemini.chat_completions", got)
+	}
+	anth := resolved.Providers["anthropic"].Endpoints["chat_completions"]
+	if anth.AuthHeader != "Authorization" || anth.AuthFormat != "Bearer {key}" {
+		t.Errorf("anthropic.chat_completions auth override missing: header=%q format=%q", anth.AuthHeader, anth.AuthFormat)
+	}
+	gem := resolved.Providers["gemini"].Endpoints["chat_completions"]
+	if gem.AuthHeader != "Authorization" || gem.AuthFormat != "Bearer {key}" {
+		t.Errorf("gemini.chat_completions auth override missing: header=%q format=%q", gem.AuthHeader, gem.AuthFormat)
+	}
 }
 
 func TestLoad_DuplicateKeyWithinSingleFile(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -242,7 +243,13 @@ func TestActions_ChangeProvider_RetargetsUpstream(t *testing.T) {
 	}
 
 	// And the upstream-bound request landed on the rewritten path
-	// (the changeUrl target) with anthropic's native x-api-key.
+	// (the changeUrl target) with the configured anthropic credential
+	// minted into the Authorization header. ChangeProvider does not
+	// remap the endpoint name — the destination builder still resolves
+	// anthropic.chat_completions, whose auth_header / auth_format
+	// override (Authorization: Bearer {key}) is what fires here, not
+	// anthropic's native x-api-key. Rules that need the native messages
+	// auth must point at an endpoint without the override.
 	cap := h.LastCapturedRequest()
 	if cap == nil {
 		t.Fatal("upstream not called")
@@ -250,8 +257,11 @@ func TestActions_ChangeProvider_RetargetsUpstream(t *testing.T) {
 	if cap.Path != "/v1/messages" {
 		t.Errorf("upstream path = %q, want /v1/messages", cap.Path)
 	}
-	if cap.Headers["X-Api-Key"] != "sk-ant-dev-mock" {
-		t.Errorf("anthropic x-api-key header missing; got %+v", cap.Headers)
+	if got := cap.Headers["Authorization"]; got != "Bearer sk-ant-dev-mock" {
+		t.Errorf("Authorization header = %q, want %q", got, "Bearer sk-ant-dev-mock")
+	}
+	if got, present := cap.Headers["X-Api-Key"]; present {
+		t.Errorf("native x-api-key should not be set when endpoint declares Authorization override; got %q", got)
 	}
 }
 
@@ -460,15 +470,28 @@ func TestRules_PriorityOrdering(t *testing.T) {
 	stageChatOK(h)
 	fireChat(t, h, nil)
 
+	// Drain all three rule.matched events, then sort by MatchedAt
+	// (set inside Evaluate, which runs sequentially per request) to
+	// recover evaluation order. The publisher dispatches envelopes via
+	// multiple worker goroutines, so the receive order at the NATS
+	// subscriber is not the publish order; MatchedAt is the
+	// authoritative per-event timestamp.
 	want := []string{"pri-100", "pri-200", "pri-300"}
-	for i, expect := range want {
+	matches := make([]events.RuleMatched, 0, len(want))
+	for i := range want {
 		env := h.ExpectEvent("gateway.rule.matched", 5*time.Second)
 		var rm events.RuleMatched
 		if err := json.Unmarshal(env.InlinePayload, &rm); err != nil {
 			t.Fatalf("decode rule.matched[%d]: %v", i, err)
 		}
-		if rm.RuleName != expect {
-			t.Errorf("event[%d] = %q, want %q", i, rm.RuleName, expect)
+		matches = append(matches, rm)
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].MatchedAt.Before(matches[j].MatchedAt)
+	})
+	for i, expect := range want {
+		if matches[i].RuleName != expect {
+			t.Errorf("matches[%d].RuleName = %q, want %q (sorted by MatchedAt)", i, matches[i].RuleName, expect)
 		}
 	}
 }
