@@ -9,6 +9,7 @@ package rules
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -17,6 +18,10 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
+	"github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
+	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
+	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
 )
 
 // Evaluator runs the rule engine for a single request.
@@ -119,7 +124,16 @@ func (e *Evaluator) Evaluate(
 	var result Result
 
 	for _, rule := range rules {
-		matched := matchCondition(rule.Condition, gc, 0, e.maxGroupDepth, func() {
+		// Cascade: each rule's Condition sees the live state left by
+		// every earlier rule's actions — not the frozen snapshot from
+		// the start of Evaluate. liveGatewayContext derives Provider
+		// / Endpoint / Model / Headers from state + body so a catch-
+		// all rule keyed on a normalised model name fires regardless
+		// of which upstream rule normalised it. Each rule still
+		// matches at most once per request; the single-pass loop
+		// bounds the cascade with no risk of oscillation.
+		live := liveGatewayContext(gc, state, body)
+		matched := matchCondition(rule.Condition, live, 0, e.maxGroupDepth, func() {
 			e.recordError(ctx, rule, "group_depth")
 		})
 		if !matched {
@@ -224,9 +238,97 @@ func (e *Evaluator) recordError(ctx context.Context, rule *contractsrules.RuleCo
 	))
 }
 
+// liveGatewayContext returns a GatewayContext that reflects the
+// post-mutation state — Provider / Endpoint from state, Model from
+// the live body pointer (or state.PathParams for Gemini's path-
+// based model addressing), Headers merged from the inbound set and
+// any SetHeader writes. Called once per rule iteration in Evaluate
+// so each Condition sees the result of every prior rule's actions.
+//
+// ConfigurationName is never mutated; it propagates from the
+// entry-time gc verbatim. Body propagates the live pointer so
+// content-based conditions (none today, but conceivable for v1.2+)
+// observe rule-driven body mutations without a deep copy.
+//
+// The merge order on Headers is inbound first, then OutgoingHeaders
+// — a SetHeader/HeaderSet overwrites the inbound value, mirroring
+// what the destination builder will send upstream.
+func liveGatewayContext(initial GatewayContext, state *MutableState, body any) GatewayContext {
+	gc := initial
+	if state != nil {
+		gc.Provider = state.Provider
+		gc.Endpoint = state.Endpoint
+	}
+	gc.Body = body
+	if model := liveModelName(state, body); model != "" {
+		gc.Model = model
+	}
+	gc.Headers = mergeRuleHeaders(initial.Headers, headersFromState(state))
+	return gc
+}
+
+// liveModelName mirrors the destination builder's outboundModel
+// resolution order: PathParams first (Gemini's URL-templated model
+// + the value ChangeModelNameAction writes there), then the typed
+// body's Model field for the OpenAI/Anthropic shapes.
+func liveModelName(state *MutableState, body any) string {
+	if state != nil {
+		if v := strings.TrimSpace(state.PathParams["model"]); v != "" {
+			return v
+		}
+	}
+	switch b := body.(type) {
+	case *openaichat.ChatCompletionRequest:
+		return strings.TrimSpace(b.Model)
+	case *openairesponses.ResponsesRequest:
+		return strings.TrimSpace(b.Model)
+	case *messages.MessagesRequest:
+		return strings.TrimSpace(b.Model)
+	case *content.GenerateContentRequest:
+		// Gemini carries the model on the URL path, not the body —
+		// the PathParams branch above handles it.
+		return ""
+	}
+	return ""
+}
+
+func headersFromState(state *MutableState) http.Header {
+	if state == nil {
+		return nil
+	}
+	return state.OutgoingHeaders
+}
+
+// mergeRuleHeaders combines the inbound header set with any
+// SetHeader writes the rule engine has accumulated. Outgoing values
+// win on key collision; inbound values pass through unmodified
+// otherwise.
+func mergeRuleHeaders(inbound, outgoing http.Header) http.Header {
+	if len(inbound) == 0 && len(outgoing) == 0 {
+		return nil
+	}
+	merged := make(http.Header, len(inbound)+len(outgoing))
+	for k, vs := range inbound {
+		copied := make([]string, len(vs))
+		copy(copied, vs)
+		merged[k] = copied
+	}
+	for k, vs := range outgoing {
+		copied := make([]string, len(vs))
+		copy(copied, vs)
+		merged[k] = copied
+	}
+	return merged
+}
+
 // GatewayContext is the read-only slice of request state a rule's
 // Condition inspects. Actions mutate via MutableState; splitting
 // the read/write surfaces keeps Condition implementations honest.
+//
+// Within Evaluate the gc handed to each Condition is rebuilt per
+// iteration via liveGatewayContext so the cascade semantic holds —
+// Provider, Endpoint, Model, and Headers always reflect the state
+// every prior rule left behind.
 type GatewayContext struct {
 	// Provider is the routed upstream provider name (e.g. "openai").
 	Provider string
