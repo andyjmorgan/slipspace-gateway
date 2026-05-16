@@ -518,6 +518,25 @@ Assert:
 
 ## PR discipline
 
+### Run the full test surface before every commit
+
+**Hard rule.** Before every commit and push, run:
+
+```sh
+make coverage   # go test ./... + the 95% gate
+make e2e        # spawned binary + testcontainers (Docker required)
+```
+
+For changes that touch request/response shape, the proxy, response writer wrappers, streaming, or anything customers' SDKs interact with on the wire, also run:
+
+```sh
+make py-compat  # official OpenAI / Anthropic / Gemini SDKs against a spawned stack
+```
+
+`make e2e` is ~30-60s once testcontainers are warm — small price relative to the cost of pushing a regression. **Don't push hoping CI catches it.** This rule exists because PR #24 shipped a `recordingResponseWriter` that broke the proxy's `(http.Flusher)` type assertion; `go test ./...` (no `-tags=e2e`) passed locally, `make e2e` would have caught it immediately.
+
+### Other PR rules
+
 - **Semantic PR titles** with a conventional commit prefix: `fix:`, `feat:`, `chore:`, `refactor:`, `docs:`, `test:`, `perf:`, `ci:`, `build:`. Lowercase after the prefix, imperative mood, under 70 characters.
 - Lead the description with **why** — one line of motivation
 - Then bullets: what changed and why, not a play-by-play of files touched
