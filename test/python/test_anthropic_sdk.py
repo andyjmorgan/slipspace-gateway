@@ -42,6 +42,53 @@ def _client(
     )
 
 
+def _client_bare(
+    gateway_url: str,
+    *,
+    api_key: str = API_KEY,
+) -> anthropic.Anthropic:
+    """Anthropic SDK pointed at the gateway root (no /anthropic prefix).
+
+    Exercises v1.0.6's prefix_optional on anthropic.messages — a vanilla
+    SDK with base_url=https://sluice.example.com must reach the messages
+    endpoint via /v1/messages without the namespacing prefix.
+    """
+    return anthropic.Anthropic(
+        base_url=gateway_url,
+        api_key=api_key,
+        default_headers={"Authorization": f"Bearer {api_key}"},
+        max_retries=0,
+    )
+
+
+def test_messages_managed_bare_route(gateway_url: str, mockllm_url: str) -> None:
+    """Same payload as test_messages_managed but via the prefix-optional bare route."""
+    stage_response(
+        mockllm_url,
+        method="POST",
+        path="/v1/messages",
+        body={
+            "id": "msg_pycompat_bare",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-3-5-sonnet-latest",
+            "content": [{"type": "text", "text": "pong"}],
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        },
+    )
+
+    client = _client_bare(gateway_url)
+    resp = client.messages.create(
+        model="claude-3-5-sonnet-latest",
+        max_tokens=64,
+        messages=[{"role": "user", "content": "ping"}],
+    )
+    assert resp.id == "msg_pycompat_bare"
+    assert resp.content[0].text == "pong"
+
+
 def test_messages_managed(gateway_url: str, mockllm_url: str) -> None:
     stage_response(
         mockllm_url,

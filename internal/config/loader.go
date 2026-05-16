@@ -311,9 +311,16 @@ type emittedRoute struct {
 
 // emitRoutes expands a (provider, endpoint) pair into every accepted_path it
 // claims, generating both the prefixed and bare forms unless prefix_required
-// pins it to prefixed-only.
+// pins it to prefixed-only. An endpoint may set PrefixOptional: true to
+// escape the provider's prefix_required for its own accepted_paths only —
+// the bare form emits alongside the prefixed one regardless of the
+// provider-level setting. This is what lets Anthropic expose its native
+// /v1/messages at the gateway root while keeping /anthropic/v1/chat/completions
+// and /anthropic/v1/models behind the prefix (where they'd collide with
+// openai's bare claims on the same paths).
 func emitRoutes(providerName, endpointName string, p contractsconfig.Provider, e contractsconfig.Endpoint) []emittedRoute {
 	out := make([]emittedRoute, 0, len(e.AcceptedPaths)*2)
+	bareEmits := !p.PrefixRequired || e.PrefixOptional
 	for _, ap := range e.AcceptedPaths {
 		if p.Prefix != "" {
 			out = append(out, emittedRoute{
@@ -322,7 +329,7 @@ func emitRoutes(providerName, endpointName string, p contractsconfig.Provider, e
 				Endpoint: endpointName,
 			})
 		}
-		if !p.PrefixRequired {
+		if bareEmits {
 			out = append(out, emittedRoute{
 				Path:     ap,
 				Provider: providerName,

@@ -186,8 +186,34 @@ func TestLoad_ConfigDevFixtures(t *testing.T) {
 	if got, ok := resolved.RouteIndex["/gemini/v1beta/models"]; !ok || got.Provider != "gemini" {
 		t.Errorf("RouteIndex /gemini/v1beta/models = %+v, want gemini.models", got)
 	}
-	if _, ok := resolved.RouteIndex["/v1/messages"]; ok {
-		t.Errorf("anthropic has prefix_required=true; bare /v1/messages must not be in the route index")
+	// v1.0.6: bare /v1/messages IS expected to route (anthropic.messages
+	// has prefix_optional: true). Asserted positively below.
+	// v1.0.6: anthropic.messages exposes prefix_optional so the
+	// native /v1/messages and /messages routes also resolve to
+	// anthropic alongside the prefixed forms. The prefixed forms
+	// stay routable because the provider's prefix_required is still
+	// true for everything else.
+	if got, ok := resolved.RouteIndex["/v1/messages"]; !ok || got.Provider != "anthropic" || got.Endpoint != "messages" {
+		t.Errorf("RouteIndex /v1/messages = %+v, want anthropic.messages (prefix_optional)", got)
+	}
+	if got, ok := resolved.RouteIndex["/messages"]; !ok || got.Provider != "anthropic" || got.Endpoint != "messages" {
+		t.Errorf("RouteIndex /messages = %+v, want anthropic.messages (prefix_optional)", got)
+	}
+	if got, ok := resolved.RouteIndex["/anthropic/v1/messages"]; !ok || got.Provider != "anthropic" || got.Endpoint != "messages" {
+		t.Errorf("RouteIndex /anthropic/v1/messages = %+v, prefixed form must still route", got)
+	}
+	// v1.0.6: gemini.generate_content also exposes prefix_optional so a
+	// vanilla Gemini SDK pointed at the gateway root resolves without the
+	// /gemini prefix. The prefixed form stays routable, and gemini.models
+	// + gemini.chat_completions remain prefix-only.
+	if got, ok := resolved.RouteIndex["/v1beta/models/{model}:generateContent"]; !ok || got.Provider != "gemini" || got.Endpoint != "generate_content" {
+		t.Errorf("RouteIndex /v1beta/models/{model}:generateContent = %+v, want gemini.generate_content (prefix_optional)", got)
+	}
+	if got, ok := resolved.RouteIndex["/gemini/v1beta/models/{model}:generateContent"]; !ok || got.Provider != "gemini" || got.Endpoint != "generate_content" {
+		t.Errorf("RouteIndex /gemini/v1beta/models/{model}:generateContent = %+v, prefixed form must still route", got)
+	}
+	if _, ok := resolved.RouteIndex["/v1beta/models"]; ok {
+		t.Errorf("RouteIndex /v1beta/models must not be claimed bare; gemini.models stays prefix-only")
 	}
 	// v1.0.2: OpenAI-compat chat surface on anthropic + gemini.
 	if got, ok := resolved.RouteIndex["/anthropic/v1/chat/completions"]; !ok || got.Provider != "anthropic" || got.Endpoint != "chat_completions" {
@@ -204,6 +230,105 @@ func TestLoad_ConfigDevFixtures(t *testing.T) {
 	if gem.AuthHeader != "Authorization" || gem.AuthFormat != "Bearer {key}" {
 		t.Errorf("gemini.chat_completions auth override missing: header=%q format=%q", gem.AuthHeader, gem.AuthFormat)
 	}
+}
+
+// TestLoad_PrefixOptional_Matrix walks every combination of provider-level
+// prefix_required and endpoint-level prefix_optional to lock in the emission
+// rule: bare AcceptedPaths emit when (NOT prefix_required) OR (prefix_optional);
+// the prefixed form emits whenever the provider has a non-empty prefix. The
+// matrix is exhaustive so a future change to emitRoutes that only fixes one
+// quadrant can't slip through.
+func TestLoad_PrefixOptional_Matrix(t *testing.T) {
+	cases := []struct {
+		name           string
+		prefixRequired bool
+		prefixOptional bool
+		wantPaths      []string
+		notWantPaths   []string
+	}{
+		{
+			name:           "not_required_optional_off_emits_both",
+			prefixRequired: false,
+			prefixOptional: false,
+			wantPaths:      []string{"/p/native", "/native"},
+		},
+		{
+			name:           "not_required_optional_on_still_emits_both",
+			prefixRequired: false,
+			prefixOptional: true,
+			wantPaths:      []string{"/p/native", "/native"},
+		},
+		{
+			name:           "required_optional_off_prefixed_only",
+			prefixRequired: true,
+			prefixOptional: false,
+			wantPaths:      []string{"/p/native"},
+			notWantPaths:   []string{"/native"},
+		},
+		{
+			name:           "required_optional_on_emits_both",
+			prefixRequired: true,
+			prefixOptional: true,
+			wantPaths:      []string{"/p/native", "/native"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			providers := "providers:\n" +
+				"  acme:\n" +
+				"    prefix: p\n"
+			if tc.prefixRequired {
+				providers += "    prefix_required: true\n"
+			}
+			providers += "    base_url: http://mockllm:5555\n" +
+				"    endpoints:\n" +
+				"      generate:\n" +
+				"        path: /native\n" +
+				"        method: [POST]\n" +
+				"        accepted_paths: [/native]\n" +
+				"        request_kind: chat\n"
+			if tc.prefixOptional {
+				providers += "        prefix_optional: true\n"
+			}
+			writeFile(t, dir, "providers.yaml", providers)
+			writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - acme.generate
+api_keys:
+  - secret: sk_dev_xxx
+    name: dev
+    configuration: dev
+    enabled: true
+`)
+
+			resolved, err := config.Load(context.Background(), dir)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			for _, p := range tc.wantPaths {
+				if _, ok := resolved.RouteIndex[p]; !ok {
+					t.Errorf("RouteIndex missing expected path %q (have %v)", p, mapKeys(resolved.RouteIndex))
+				}
+			}
+			for _, p := range tc.notWantPaths {
+				if _, ok := resolved.RouteIndex[p]; ok {
+					t.Errorf("RouteIndex contains unwanted path %q", p)
+				}
+			}
+		})
+	}
+}
+
+func mapKeys(m map[string]config.Route) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func TestLoad_DuplicateKeyWithinSingleFile(t *testing.T) {
