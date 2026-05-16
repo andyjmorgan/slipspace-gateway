@@ -369,6 +369,155 @@ func TestUpstreamCredentialHeader_ByProvider(t *testing.T) {
 	}
 }
 
+// v1.0.7: vanilla provider SDKs ship their native API key header by default
+// (anthropic.Anthropic → x-api-key, google-genai → x-goog-api-key). The
+// resolver discovers the Sluice secret from any of three inbound headers so
+// callers don't need to inject Authorization manually.
+
+func TestResolver_Managed_DiscoversViaXAPIKey(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
+
+	ar, err := r.Resolve(headers, "anthropic", "messages")
+	if err != nil {
+		t.Fatalf("want success, got %v", err)
+	}
+	if ar.Mode != ModeManaged {
+		t.Fatalf("mode = %q want managed", ar.Mode)
+	}
+	if !sliceContains(ar.DropHeaders, headerAnthropicAPIKey) {
+		t.Fatalf("x-api-key must be dropped from outbound; got %v", ar.DropHeaders)
+	}
+	if !sliceContains(ar.DropHeaders, HeaderConfiguration) {
+		t.Fatalf("policy header must always be dropped; got %v", ar.DropHeaders)
+	}
+}
+
+func TestResolver_Managed_DiscoversViaXGoogAPIKey(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(headerGeminiAPIKey, "sk_live_enabled")
+
+	ar, err := r.Resolve(headers, "gemini", "generate_content")
+	if err != nil {
+		t.Fatalf("want success, got %v", err)
+	}
+	if ar.Mode != ModeManaged {
+		t.Fatalf("mode = %q want managed", ar.Mode)
+	}
+	if !sliceContains(ar.DropHeaders, headerGeminiAPIKey) {
+		t.Fatalf("x-goog-api-key must be dropped from outbound; got %v", ar.DropHeaders)
+	}
+}
+
+// TestResolver_Managed_AuthorizationWinsOverNativeHeaders fixes the
+// discovery order: when Authorization Bearer carries a valid Sluice secret,
+// any concurrent x-api-key / x-goog-api-key is ignored even if it would also
+// resolve. Bearer is the explicit, historical signal — making it primary
+// minimises behaviour change for existing clients.
+func TestResolver_Managed_AuthorizationWinsOverNativeHeaders(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
+	headers.Set(headerAnthropicAPIKey, "sk_live_orphan") // would route to a different (broken) configuration
+	headers.Set(headerGeminiAPIKey, "sk_live_disabled")  // would 401
+
+	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	if err != nil {
+		t.Fatalf("want success via Authorization, got %v", err)
+	}
+	if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
+		t.Fatalf("Authorization Bearer must win; got APIKey=%+v", ar.APIKey)
+	}
+	if !sliceContains(ar.DropHeaders, HeaderAuthorization) {
+		t.Fatalf("Authorization must be dropped on managed-mode success; got %v", ar.DropHeaders)
+	}
+}
+
+// TestResolver_Managed_XAPIKeyWinsOverXGoogAPIKey covers the secondary
+// priority — when there is no Authorization, anthropic-native beats
+// gemini-native. The order is fixed (not provider-aware) so a single client
+// hitting multiple endpoints behaves predictably.
+func TestResolver_Managed_XAPIKeyWinsOverXGoogAPIKey(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
+	headers.Set(headerGeminiAPIKey, "sk_live_disabled") // would 401 if it won
+
+	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	if err != nil {
+		t.Fatalf("want success via x-api-key, got %v", err)
+	}
+	if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
+		t.Fatalf("x-api-key must win; got %+v", ar.APIKey)
+	}
+}
+
+// TestResolver_Managed_MalformedAuthorizationFallsThroughToNative locks the
+// behaviour where a malformed Authorization (e.g. "Token foo") does not
+// short-circuit — the resolver tries x-api-key next, matching Airia's
+// "any-header-can-carry-the-key" pattern.
+func TestResolver_Managed_MalformedAuthorizationFallsThroughToNative(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderAuthorization, "Token bogus")
+	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
+
+	ar, err := r.Resolve(headers, "anthropic", "messages")
+	if err != nil {
+		t.Fatalf("want success via x-api-key fallthrough, got %v", err)
+	}
+	if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
+		t.Fatalf("APIKey not resolved via x-api-key fallthrough")
+	}
+}
+
+// TestResolver_Managed_NativeHeaderUnknownSecret enforces that an x-api-key
+// value not present in SecretIndex returns ErrUnauthorized — does NOT fall
+// through to x-goog-api-key. Otherwise an attacker could probe by stuffing
+// every header.
+func TestResolver_Managed_NativeHeaderUnknownSecret(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(headerAnthropicAPIKey, "sk-anthropic-customer-byok") // not a Sluice secret
+	headers.Set(headerGeminiAPIKey, "sk_live_enabled")               // ignored, x-api-key short-circuits
+
+	_, err := r.Resolve(headers, "anthropic", "messages")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("want ErrUnauthorized (no x-api-key→x-goog-api-key fallthrough), got %v", err)
+	}
+}
+
+// TestResolver_Passthrough_NativeHeaderIgnored guards the load-bearing
+// invariant: when X-Sluice-Configuration is present, the resolver never
+// looks at x-api-key / x-goog-api-key. The client's upstream credential
+// stays in its native header and is forwarded verbatim. Critical for the
+// Claude Code passthrough flow where x-api-key carries an Anthropic key
+// that must not be confused with a Sluice secret.
+func TestResolver_Passthrough_NativeHeaderIgnored(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderConfiguration, "prod")
+	headers.Set(headerAnthropicAPIKey, "sk_live_enabled") // would resolve in managed mode
+
+	ar, err := r.Resolve(headers, "anthropic", "messages")
+	if err != nil {
+		t.Fatalf("want passthrough success, got %v", err)
+	}
+	if ar.Mode != ModePassthrough {
+		t.Fatalf("mode = %q want passthrough", ar.Mode)
+	}
+	if ar.APIKey != nil {
+		t.Fatalf("APIKey must be nil in passthrough")
+	}
+	for _, h := range ar.DropHeaders {
+		if h == headerAnthropicAPIKey {
+			t.Fatalf("x-api-key MUST NOT be dropped in passthrough — it carries the upstream key")
+		}
+	}
+}
+
 func sliceContains(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {

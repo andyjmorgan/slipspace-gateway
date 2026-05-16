@@ -30,15 +30,14 @@ def _client(
     api_key: str = API_KEY,
     extra_headers: dict[str, str] | None = None,
 ) -> genai.Client:
-    """Build a Gemini client that talks Authorization-bearer to sluice.
+    """Build a Gemini client pointed at sluice.
 
-    The google-genai SDK only sends `x-goog-api-key` by default. Sluice's
-    managed-auth path keys off `Authorization: Bearer ...`, so we inject
-    it via HttpOptions.headers.
+    v1.0.7: Sluice discovers the managed-mode key from `x-goog-api-key` (the
+    google-genai SDK's native default), so no Authorization injection is
+    required. Tests that need extra inbound headers can pass them via
+    `extra_headers`.
     """
-    headers = {"Authorization": f"Bearer {api_key}"}
-    if extra_headers:
-        headers.update(extra_headers)
+    headers = extra_headers or {}
     return genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
@@ -51,16 +50,14 @@ def _client(
 def _client_bare(gateway_url: str, *, api_key: str = API_KEY) -> genai.Client:
     """google-genai SDK pointed at the gateway root (no /gemini prefix).
 
-    Exercises v1.0.6's prefix_optional on gemini.generate_content — a
-    vanilla SDK with base_url=https://sluice.example.com must reach the
-    generateContent endpoint via /v1beta/... without the prefix.
+    Exercises v1.0.6's prefix_optional on gemini.generate_content and
+    v1.0.7's x-goog-api-key discovery — a vanilla SDK with
+    base_url=https://sluice... and api_key=sk_live_... must reach
+    /v1beta/... with no extra config.
     """
     return genai.Client(
         api_key=api_key,
-        http_options=types.HttpOptions(
-            base_url=gateway_url,
-            headers={"Authorization": f"Bearer {api_key}"},
-        ),
+        http_options=types.HttpOptions(base_url=gateway_url),
     )
 
 
