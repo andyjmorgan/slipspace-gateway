@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"runtime/debug"
 
@@ -95,4 +97,28 @@ func (w *recordingResponseWriter) Write(p []byte) (int, error) {
 // the rwUnwrapper interface contract.
 func (w *recordingResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
+}
+
+// Flush delegates to the inner writer via http.ResponseController so
+// streaming flushes (httputil.ReverseProxy with FlushInterval=-1) reach
+// the underlying connection. Without this explicit method the proxy's
+// `(http.Flusher)` type assertion fails on the wrapper — and Unwrap
+// alone does not help, because the assertion is on the immediate type,
+// not the chain. SSE then buffers until the upstream closes the body,
+// which presents to clients as a slow gateway.
+func (w *recordingResponseWriter) Flush() {
+	_ = http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// Hijack delegates to the inner writer via http.ResponseController so
+// HTTP/1.1 upgrade paths (websockets, raw byte streams) keep working
+// through the wrap. Same reasoning as Flush: a Hijacker type-assertion
+// on the wrapper would otherwise miss.
+func (w *recordingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, brw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	w.headersWritten = true
+	return conn, brw, nil
 }

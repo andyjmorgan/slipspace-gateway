@@ -138,3 +138,36 @@ func TestRecoverMiddleware_UnwrapAllowsHijack(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req.WithContext(context.Background()))
 }
+
+// TestRecoverMiddleware_DirectFlusherAssertionWorks — load-bearing for
+// SSE: httputil.ReverseProxy and the proxy's statusWriter both do a
+// direct `(http.Flusher)` type assertion on the writer they receive,
+// not an Unwrap walk. If the wrapper doesn't itself implement Flusher,
+// chunks buffer until the upstream closes the body and clients see the
+// gateway as slow (the e2e streaming test caught exactly this).
+func TestRecoverMiddleware_DirectFlusherAssertionWorks(t *testing.T) {
+	t.Parallel()
+	meters := newMetersForTest(t)
+	errs := httperr.New(meters.ErrorResponsesTotal, newTestLogger(t))
+
+	var sawFlusher bool
+	probe := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		f, ok := w.(http.Flusher)
+		if !ok {
+			t.Errorf("wrapper does not implement http.Flusher via direct assertion")
+			return
+		}
+		sawFlusher = true
+		f.Flush()
+		w.WriteHeader(http.StatusOK)
+	})
+	h := recoverMiddleware(meters, errs, probe)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req.WithContext(context.Background()))
+
+	if !sawFlusher {
+		t.Fatalf("inner handler never observed a Flusher on the wrapper")
+	}
+}
