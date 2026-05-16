@@ -158,7 +158,28 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
         accepted_paths: [/v1/messages]
         accepts_streaming: true
         request_kind: messages
-`, upstreamURL, upstreamURL)
+      chat_completions:
+        path: /v1/chat/completions
+        method: [POST]
+        accepted_paths: [/v1/chat/completions]
+        accepts_streaming: true
+        request_kind: chat
+        auth_header: Authorization
+        auth_format: "Bearer {key}"
+  gemini:
+    prefix: gemini
+    prefix_required: true
+    base_url: %s
+    endpoints:
+      chat_completions:
+        path: /v1beta/openai/chat/completions
+        method: [POST]
+        accepted_paths: [/v1beta/openai/chat/completions]
+        accepts_streaming: true
+        request_kind: chat
+        auth_header: Authorization
+        auth_format: "Bearer {key}"
+`, upstreamURL, upstreamURL, upstreamURL)
 
 	//nolint:gosec // test fixture keys; not real credentials
 	policyYAML := `configurations:
@@ -167,9 +188,12 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
       - openai.chat_completions
       - openai.models
       - anthropic.messages
+      - anthropic.chat_completions
+      - gemini.chat_completions
     upstream_credentials:
       openai: sk-upstream-openai
       anthropic: sk-upstream-anthropic
+      gemini: gm-upstream-gemini
   empty:
     allowed_endpoints: []
     upstream_credentials: {}
@@ -340,6 +364,67 @@ func TestGateway_PassthroughMode(t *testing.T) {
 	}
 	if got := headers.Get("X-Sluice-Configuration"); got != "" {
 		t.Errorf("upstream X-Sluice-Configuration = %q, want stripped", got)
+	}
+}
+
+// TestGateway_AnthropicChatCompletions_OpenAICompatSurface exercises the
+// new v1.0.2 surface: the gateway routes /anthropic/v1/chat/completions
+// to Anthropic's OpenAI-compatible chat completions endpoint, swapping
+// the upstream credential into Authorization: Bearer (not the native
+// x-api-key).
+func TestGateway_AnthropicChatCompletions_OpenAICompatSurface(t *testing.T) {
+	env := newTestEnv(t)
+
+	body := `{"model":"claude-haiku-4-5","messages":[{"role":"user","content":"hi"}]}`
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/anthropic/v1/chat/completions", body)
+	req.Header.Set("Authorization", "Bearer sk_dev_local")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := doReq(t, req)
+	defer closeBody(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	_, path, headers, _, _ := env.upstream.snapshot()
+	if path != "/v1/chat/completions" {
+		t.Errorf("upstream path = %q, want /v1/chat/completions (prefix stripped)", path)
+	}
+	if got := headers.Get("Authorization"); got != "Bearer sk-upstream-anthropic" {
+		t.Errorf("upstream Authorization = %q, want Bearer sk-upstream-anthropic", got)
+	}
+	if got := headers.Get("x-api-key"); got != "" {
+		t.Errorf("upstream x-api-key = %q, want empty (override is Authorization)", got)
+	}
+}
+
+// TestGateway_GeminiChatCompletions_OpenAICompatSurface mirrors the
+// anthropic case for Gemini's distinct OpenAI-compat path.
+func TestGateway_GeminiChatCompletions_OpenAICompatSurface(t *testing.T) {
+	env := newTestEnv(t)
+
+	body := `{"model":"gemini-2.0-flash-001","messages":[{"role":"user","content":"hi"}]}`
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/gemini/v1beta/openai/chat/completions", body)
+	req.Header.Set("Authorization", "Bearer sk_dev_local")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := doReq(t, req)
+	defer closeBody(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	_, path, headers, _, _ := env.upstream.snapshot()
+	if path != "/v1beta/openai/chat/completions" {
+		t.Errorf("upstream path = %q, want /v1beta/openai/chat/completions (prefix stripped)", path)
+	}
+	if got := headers.Get("Authorization"); got != "Bearer gm-upstream-gemini" {
+		t.Errorf("upstream Authorization = %q, want Bearer gm-upstream-gemini", got)
+	}
+	if got := headers.Get("x-goog-api-key"); got != "" {
+		t.Errorf("upstream x-goog-api-key = %q, want empty (override is Authorization)", got)
 	}
 }
 
