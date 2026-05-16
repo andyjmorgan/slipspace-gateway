@@ -54,6 +54,49 @@ func TestAuth_Matrix(t *testing.T) {
 			wantCode: http.StatusUnauthorized,
 		},
 		{
+			// v1.0.7: native Anthropic-style header carries the Sluice
+			// secret. Vanilla anthropic SDK pointed at sluice just works.
+			// Empty Authorization overrides the harness's auto-injection
+			// of a Bearer fallback so we exercise the x-api-key path
+			// alone.
+			name: "managed_via_x_api_key",
+			headers: http.Header{
+				"Authorization": []string{""},
+				"X-Api-Key":     []string{h.APIKey},
+			},
+			wantCode: http.StatusOK,
+		},
+		{
+			// v1.0.7: native Gemini-style header carries the Sluice secret.
+			// Vanilla google-genai client pointed at sluice just works.
+			name: "managed_via_x_goog_api_key",
+			headers: http.Header{
+				"Authorization":  []string{""},
+				"X-Goog-Api-Key": []string{h.APIKey},
+			},
+			wantCode: http.StatusOK,
+		},
+		{
+			// Authorization wins when present alongside native headers.
+			name: "managed_authorization_wins_over_native",
+			headers: http.Header{
+				"Authorization": []string{"Bearer " + h.APIKey},
+				"X-Api-Key":     []string{"sk_live_does_not_exist"},
+			},
+			wantCode: http.StatusOK,
+		},
+		{
+			// Unknown secret on x-api-key does NOT fall through to
+			// x-goog-api-key. Anti-stuffing guard.
+			name: "managed_x_api_key_unknown_no_fallthrough",
+			headers: http.Header{
+				"Authorization":  []string{""},
+				"X-Api-Key":      []string{"sk_live_does_not_exist"},
+				"X-Goog-Api-Key": []string{h.APIKey},
+			},
+			wantCode: http.StatusUnauthorized,
+		},
+		{
 			name: "passthrough_valid",
 			headers: http.Header{
 				"Authorization":          []string{"Bearer customer-supplied-token"},
@@ -79,6 +122,44 @@ func TestAuth_Matrix(t *testing.T) {
 				t.Fatalf("status=%d want %d body=%s", resp.StatusCode, tc.wantCode, resp.Body)
 			}
 		})
+	}
+}
+
+// TestAuth_Passthrough_PreservesXAPIKey covers the v1.0.7 load-bearing
+// invariant: when X-Sluice-Configuration selects passthrough mode, the
+// client's native API-key header (x-api-key carrying a real upstream
+// Anthropic key, for example) MUST be forwarded verbatim and NOT consumed
+// by sluice's managed-mode discovery. We assert by reading back the
+// header the mockllm received.
+func TestAuth_Passthrough_PreservesXAPIKey(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/messages",
+		Body:   `{"id":"msg_pt","type":"message","role":"assistant","content":[],"model":"x","stop_reason":"end_turn"}`,
+	})
+
+	const customerKey = "sk-ant-customer-upstream-byok"
+	body := map[string]any{"model": "x", "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "."}}}
+	resp := h.PostJSON("/anthropic/v1/messages", body, http.Header{
+		"X-Api-Key":              []string{customerKey},
+		"X-Sluice-Configuration": []string{"dev"},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("passthrough w/ x-api-key: status=%d body=%s", resp.StatusCode, resp.Body)
+	}
+
+	cap := h.LastCapturedRequest()
+	if cap == nil {
+		t.Fatal("no upstream request captured")
+	}
+	if got := cap.Headers["X-Api-Key"]; got != customerKey {
+		t.Fatalf("upstream x-api-key = %q, want passthrough verbatim %q", got, customerKey)
+	}
+	if cap.Headers["X-Sluice-Configuration"] != "" {
+		t.Errorf("X-Sluice-Configuration must not leak upstream")
 	}
 }
 

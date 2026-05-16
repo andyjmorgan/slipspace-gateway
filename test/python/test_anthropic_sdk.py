@@ -24,20 +24,17 @@ def _client(
     api_key: str = API_KEY,
     headers: dict[str, str] | None = None,
 ) -> anthropic.Anthropic:
-    """Build an Anthropic client whose Authorization bearer is the sluice key.
+    """Build an Anthropic client pointed at sluice.
 
-    Sluice resolves auth from `Authorization: Bearer ...` (managed mode) or
-    `X-Sluice-Configuration` (passthrough), regardless of provider. The
-    Anthropic SDK only sends `x-api-key` by default, so the bearer is
-    injected via `default_headers`.
+    v1.0.7: Sluice discovers the managed-mode key from `x-api-key` (the
+    Anthropic SDK's native default), so no Authorization injection is
+    required. Tests that need an explicit Authorization header can pass it
+    via `headers`.
     """
-    merged = {"Authorization": f"Bearer {api_key}"}
-    if headers:
-        merged.update(headers)
     return anthropic.Anthropic(
         base_url=f"{gateway_url}/anthropic",
         api_key=api_key,
-        default_headers=merged,
+        default_headers=headers,
         max_retries=0,
     )
 
@@ -49,14 +46,13 @@ def _client_bare(
 ) -> anthropic.Anthropic:
     """Anthropic SDK pointed at the gateway root (no /anthropic prefix).
 
-    Exercises v1.0.6's prefix_optional on anthropic.messages — a vanilla
-    SDK with base_url=https://sluice.example.com must reach the messages
-    endpoint via /v1/messages without the namespacing prefix.
+    Exercises v1.0.6's prefix_optional on anthropic.messages and v1.0.7's
+    x-api-key discovery — a vanilla SDK with base_url=https://sluice...
+    and api_key=sk_live_... must reach /v1/messages with no extra config.
     """
     return anthropic.Anthropic(
         base_url=gateway_url,
         api_key=api_key,
-        default_headers={"Authorization": f"Bearer {api_key}"},
         max_retries=0,
     )
 
