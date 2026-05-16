@@ -18,6 +18,8 @@ configurations:
 
     rule_names:
       - redact-emails
+      - route-claude-models-to-anthropic
+      - route-gemini-models-to-gemini
 
     resilience_name: high-availability
 
@@ -42,6 +44,34 @@ rules:
         headerName: X-Sluice-Redacted
         headerAction: Set
         headerValue: emails
+    behavior: continue
+
+  # v1.0.2: route OpenAI-surface traffic to anthropic's OpenAI-compat
+  # chat endpoint when the model name starts with `claude-`. The
+  # destination builder re-resolves anthropic.chat_completions on
+  # state.Provider change and picks up the endpoint's auth_header /
+  # auth_format override automatically — no changeUrl, no setHeader,
+  # no credential in the rule YAML.
+  - name: route-claude-models-to-anthropic
+    priority: 50
+    condition:
+      type: modelName
+      operator: StartsWith
+      expectedModelName: claude-
+    actions:
+      - type: changeProvider
+        newProvider: anthropic
+    behavior: continue
+
+  - name: route-gemini-models-to-gemini
+    priority: 50
+    condition:
+      type: modelName
+      operator: StartsWith
+      expectedModelName: gemini-
+    actions:
+      - type: changeProvider
+        newProvider: gemini
     behavior: continue
 
 resilience_policies:
