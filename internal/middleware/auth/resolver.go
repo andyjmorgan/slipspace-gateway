@@ -77,24 +77,13 @@ type AuthResult struct {
 	Endpoint string
 
 	// DropHeaders names inbound headers the forwarder must strip before
-	// sending upstream — always includes X-Sluice-Configuration and, for
-	// providers with non-bearer credentials, the inbound Authorization
-	// header. DropHeaders is applied before SetHeaders, so setting and
-	// dropping the same name is a no-op net of the set.
+	// sending upstream. Auth always emits X-Sluice-Configuration here —
+	// it is policy-routing metadata, not a credential. The destination
+	// builder layers additional drops on top based on the post-rule
+	// provider + credential decision (e.g. dropping the inbound
+	// Authorization when managed mode is forwarding to a provider that
+	// uses a non-Bearer credential header).
 	DropHeaders []string
-
-	// SetHeaders carries the upstream credential headers the forwarder
-	// must inject (e.g. Authorization, x-api-key, x-goog-api-key). Empty
-	// in passthrough mode — the client's own credential header is
-	// forwarded verbatim.
-	SetHeaders http.Header
-
-	// AuthHeader names the upstream HTTP header the gateway will set on the
-	// outgoing request to carry the resolved credential. For managed mode:
-	// "Authorization" for OpenAI, "x-api-key" for Anthropic, "x-goog-api-key"
-	// for Gemini. For passthrough mode this is empty — the inbound
-	// Authorization is forwarded verbatim by the cmd/gateway layer.
-	AuthHeader string
 }
 
 // Resolver decides the auth outcome for a request: given inbound headers and
@@ -154,6 +143,7 @@ func (r *Resolver) resolvePassthrough(configName, provider, endpoint string) (Au
 		ConfigurationName: configName,
 		Provider:          provider,
 		Endpoint:          endpoint,
+		DropHeaders:       []string{HeaderConfiguration},
 	}, nil
 }
 
@@ -199,8 +189,6 @@ func (r *Resolver) resolveManaged(headers http.Header, provider, endpoint string
 		}, ErrEndpointNotAllowed
 	}
 
-	set, drop, authHeader := authSwap(provider, cfg.UpstreamCredentials[provider])
-
 	return AuthResult{
 		Mode:              ModeManaged,
 		APIKey:            key,
@@ -208,9 +196,7 @@ func (r *Resolver) resolveManaged(headers http.Header, provider, endpoint string
 		ConfigurationName: key.Configuration,
 		Provider:          provider,
 		Endpoint:          endpoint,
-		SetHeaders:        set,
-		DropHeaders:       drop,
-		AuthHeader:        authHeader,
+		DropHeaders:       []string{HeaderConfiguration},
 	}, nil
 }
 
@@ -238,31 +224,6 @@ func endpointAllowed(cfg *contractsconfig.Configuration, provider, endpoint stri
 		}
 	}
 	return false
-}
-
-// authSwap builds the header set/drop pair the forwarder applies to the
-// outgoing managed-mode request, plus the name of the upstream credential
-// header for diagnostic logging. The inbound X-Sluice-Configuration header is
-// always dropped — it has no meaning upstream and would only be present if the
-// client tried to mix modes. For Anthropic / Gemini the inbound Authorization
-// header is also dropped because the upstream credential lives on a
-// provider-specific header instead.
-//
-// The third return value is the canonical name of the credential header
-// injected into SetHeaders ("Authorization", "x-api-key", "x-goog-api-key").
-// Unknown providers fall back to a Bearer Authorization swap; the header name
-// reflects that.
-func authSwap(provider, credential string) (http.Header, []string, string) {
-	name, value := UpstreamCredentialHeader(provider, credential)
-	set := http.Header{}
-	set.Set(name, value)
-
-	drop := []string{HeaderConfiguration}
-	if name != HeaderAuthorization {
-		drop = append(drop, HeaderAuthorization)
-	}
-
-	return set, drop, name
 }
 
 // UpstreamCredentialHeader returns the (header name, header value)

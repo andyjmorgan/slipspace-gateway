@@ -3,8 +3,6 @@ package auth
 import (
 	"errors"
 	"net/http"
-	"reflect"
-	"sort"
 	"testing"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
@@ -82,20 +80,22 @@ func TestResolver_Managed_OpenAI(t *testing.T) {
 	if ar.Mode != ModeManaged {
 		t.Fatalf("mode = %q want %q", ar.Mode, ModeManaged)
 	}
-	if got := ar.SetHeaders.Get(HeaderAuthorization); got != "Bearer sk-openai-upstream" {
-		t.Fatalf("Authorization set header = %q want Bearer sk-openai-upstream", got)
+	if ar.Configuration == nil {
+		t.Fatal("Configuration should be resolved on success")
+	}
+	// After the refactor, the auth resolver no longer mints the
+	// upstream credential header — that's the destination builder's
+	// job. The resolver propagates the Configuration pointer so the
+	// destination builder can look up the credential. DropHeaders
+	// is reduced to the policy header only.
+	if cred := ar.Configuration.UpstreamCredentials["openai"]; cred != "sk-openai-upstream" { //nolint:gosec // test fixture, not a real credential
+		t.Fatalf("Configuration.UpstreamCredentials[openai] = %q want sk-openai-upstream", cred)
 	}
 	if !sliceContains(ar.DropHeaders, HeaderConfiguration) {
 		t.Fatalf("X-Sluice-Configuration should be dropped, got %v", ar.DropHeaders)
 	}
-	if sliceContains(ar.DropHeaders, HeaderAuthorization) {
-		t.Fatalf("Authorization should not be dropped for openai (it is replaced via SetHeaders)")
-	}
 	if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
 		t.Fatalf("APIKey not set correctly")
-	}
-	if ar.AuthHeader != HeaderAuthorization {
-		t.Fatalf("AuthHeader = %q want %q", ar.AuthHeader, HeaderAuthorization)
 	}
 }
 
@@ -108,17 +108,14 @@ func TestResolver_Managed_Anthropic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
-	if got := ar.SetHeaders.Get(headerAnthropicAPIKey); got != "ak-anthropic-upstream" {
-		t.Fatalf("x-api-key = %q want ak-anthropic-upstream", got)
+	if ar.Configuration == nil {
+		t.Fatal("Configuration should be resolved")
 	}
-	if !sliceContains(ar.DropHeaders, HeaderAuthorization) {
-		t.Fatalf("Authorization must be dropped for anthropic, got %v", ar.DropHeaders)
+	if cred := ar.Configuration.UpstreamCredentials["anthropic"]; cred != "ak-anthropic-upstream" { //nolint:gosec // test fixture
+		t.Fatalf("anthropic credential = %q want ak-anthropic-upstream", cred)
 	}
 	if !sliceContains(ar.DropHeaders, HeaderConfiguration) {
 		t.Fatalf("X-Sluice-Configuration must be dropped, got %v", ar.DropHeaders)
-	}
-	if ar.AuthHeader != headerAnthropicAPIKey {
-		t.Fatalf("AuthHeader = %q want %q", ar.AuthHeader, headerAnthropicAPIKey)
 	}
 }
 
@@ -131,33 +128,18 @@ func TestResolver_Managed_Gemini(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
-	if got := ar.SetHeaders.Get(headerGeminiAPIKey); got != "AIza-gemini-upstream" {
-		t.Fatalf("x-goog-api-key = %q want AIza-gemini-upstream", got)
+	if ar.Configuration == nil {
+		t.Fatal("Configuration should be resolved")
 	}
-	if !sliceContains(ar.DropHeaders, HeaderAuthorization) {
-		t.Fatalf("Authorization must be dropped for gemini, got %v", ar.DropHeaders)
-	}
-	if ar.AuthHeader != headerGeminiAPIKey {
-		t.Fatalf("AuthHeader = %q want %q", ar.AuthHeader, headerGeminiAPIKey)
+	if cred := ar.Configuration.UpstreamCredentials["gemini"]; cred != "AIza-gemini-upstream" { //nolint:gosec // test fixture
+		t.Fatalf("gemini credential = %q want AIza-gemini-upstream", cred)
 	}
 }
 
-func TestResolver_Managed_UnknownProvider(t *testing.T) {
-	r := NewResolver(fixtureConfig())
-	headers := http.Header{}
-	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
-
-	ar, err := r.Resolve(headers, "custom", "foo")
-	if err != nil {
-		t.Fatalf("expected success, got %v", err)
-	}
-	if got := ar.SetHeaders.Get(HeaderAuthorization); got != "Bearer custom-upstream" {
-		t.Fatalf("Authorization = %q want Bearer custom-upstream", got)
-	}
-	if ar.AuthHeader != HeaderAuthorization {
-		t.Fatalf("AuthHeader = %q want %q for unknown provider fallback", ar.AuthHeader, HeaderAuthorization)
-	}
-}
+// Unknown-provider credential-format fallback is now exercised
+// directly via TestUpstreamCredentialHeader_ByProvider — the auth
+// resolver no longer mints the header itself, so there is nothing
+// provider-specific left to test at this layer.
 
 func TestResolver_Managed_MissingBearer(t *testing.T) {
 	r := NewResolver(fixtureConfig())
@@ -264,17 +246,11 @@ func TestResolver_Passthrough_Happy(t *testing.T) {
 	if ar.APIKey != nil {
 		t.Fatalf("APIKey must be nil in passthrough")
 	}
-	if len(ar.DropHeaders) != 0 {
-		t.Fatalf("DropHeaders must be empty in passthrough, got %v", ar.DropHeaders)
-	}
-	if len(ar.SetHeaders) != 0 {
-		t.Fatalf("SetHeaders must be empty in passthrough, got %v", ar.SetHeaders)
+	if len(ar.DropHeaders) != 1 || ar.DropHeaders[0] != HeaderConfiguration {
+		t.Fatalf("passthrough DropHeaders must be [%s] (policy header), got %v", HeaderConfiguration, ar.DropHeaders)
 	}
 	if ar.ConfigurationName != "prod" {
 		t.Fatalf("ConfigurationName = %q want prod", ar.ConfigurationName)
-	}
-	if ar.AuthHeader != "" {
-		t.Fatalf("AuthHeader must be empty in passthrough, got %q", ar.AuthHeader)
 	}
 }
 
@@ -361,34 +337,25 @@ func TestResolver_NilGuards(t *testing.T) {
 	}
 }
 
-func TestAuthSwap_DropHeadersSorted(t *testing.T) {
+func TestUpstreamCredentialHeader_ByProvider(t *testing.T) {
 	tests := []struct {
-		provider       string
-		wantSet        string
-		wantValue      string
-		wantDrop       []string
-		wantAuthHeader string
+		provider  string
+		wantName  string
+		wantValue string
 	}{
-		{providerOpenAI, HeaderAuthorization, "Bearer cred", []string{HeaderConfiguration}, HeaderAuthorization},
-		{providerAnthropic, headerAnthropicAPIKey, "cred", []string{HeaderAuthorization, HeaderConfiguration}, headerAnthropicAPIKey},
-		{providerGemini, headerGeminiAPIKey, "cred", []string{HeaderAuthorization, HeaderConfiguration}, headerGeminiAPIKey},
-		{"unknown-provider", HeaderAuthorization, "Bearer cred", []string{HeaderConfiguration}, HeaderAuthorization},
+		{providerOpenAI, HeaderAuthorization, "Bearer cred"},
+		{providerAnthropic, headerAnthropicAPIKey, "cred"},
+		{providerGemini, headerGeminiAPIKey, "cred"},
+		{"unknown-provider", HeaderAuthorization, "Bearer cred"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.provider, func(t *testing.T) {
-			set, drop, authHeader := authSwap(tc.provider, "cred")
-			if got := set.Get(tc.wantSet); got != tc.wantValue {
-				t.Fatalf("%s = %q want %q", tc.wantSet, got, tc.wantValue)
+			name, value := UpstreamCredentialHeader(tc.provider, "cred")
+			if name != tc.wantName {
+				t.Errorf("name = %q want %q", name, tc.wantName)
 			}
-			gotDrop := append([]string(nil), drop...)
-			sort.Strings(gotDrop)
-			want := append([]string(nil), tc.wantDrop...)
-			sort.Strings(want)
-			if !reflect.DeepEqual(gotDrop, want) {
-				t.Fatalf("drop = %v want %v", gotDrop, want)
-			}
-			if authHeader != tc.wantAuthHeader {
-				t.Fatalf("authHeader = %q want %q", authHeader, tc.wantAuthHeader)
+			if value != tc.wantValue {
+				t.Errorf("value = %q want %q", value, tc.wantValue)
 			}
 		})
 	}

@@ -59,8 +59,11 @@ func TestHTTPHandler_HappyPathManaged(t *testing.T) {
 	if captured.Mode != ModeManaged {
 		t.Fatalf("captured mode = %q", captured.Mode)
 	}
-	if captured.SetHeaders.Get(HeaderAuthorization) != "Bearer sk-openai-upstream" {
-		t.Fatalf("auth swap did not propagate to context")
+	if captured.Configuration == nil {
+		t.Fatal("Configuration should propagate on success")
+	}
+	if got := captured.Configuration.UpstreamCredentials["openai"]; got != "sk-openai-upstream" {
+		t.Fatalf("Configuration.UpstreamCredentials[openai] = %q, want sk-openai-upstream", got)
 	}
 	if !strings.Contains(logs.String(), `"result":"success"`) {
 		t.Fatalf("success result not logged: %s", logs.String())
@@ -76,8 +79,10 @@ func TestHTTPHandler_HappyPathPassthrough(t *testing.T) {
 		if ar.Mode != ModePassthrough {
 			t.Fatalf("mode = %q want passthrough", ar.Mode)
 		}
-		if len(ar.SetHeaders) != 0 || len(ar.DropHeaders) != 0 {
-			t.Fatalf("passthrough must not mutate headers; set=%v drop=%v", ar.SetHeaders, ar.DropHeaders)
+		// Passthrough still drops the policy header (X-Sluice-Configuration);
+		// it must NOT inject any credential-bearing header.
+		if len(ar.DropHeaders) != 1 || ar.DropHeaders[0] != HeaderConfiguration {
+			t.Fatalf("passthrough DropHeaders should be [%s], got %v", HeaderConfiguration, ar.DropHeaders)
 		}
 		w.WriteHeader(http.StatusOK)
 	})
