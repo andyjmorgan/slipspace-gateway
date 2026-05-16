@@ -21,3 +21,6 @@ airia-llmock/
 .idea/
 .vscode/
 .DS_Store
+
+# Claude Code per-project state (agent worktrees, transient logs, hooks)
+.claude/
