@@ -156,7 +156,7 @@ func TestGateway_RequestsMetricCarriesModelLabel(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	rm := collectUntilRecorded(t, env.reader, observability.MetricRequestsTotal)
+	rm := collectUntilRecorded(t, env.reader, observability.MetricRequestsTotal, observability.MetricRequestDuration)
 	requireAttribute(t, &rm, observability.MetricRequestsTotal, "model", "gpt-4o-mini")
 	requireAttribute(t, &rm, observability.MetricRequestDuration, "model", "gpt-4o-mini")
 }
@@ -262,15 +262,24 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 	return &meterEnv{testEnv: te, reader: reader}
 }
 
-// collectUntilRecorded scrapes the ManualReader in a short loop until the
-// named metric appears or the deadline elapses. The HTTP client returns to
-// the test goroutine as soon as the proxy flushes the response body, but
-// reporterRun.OnComplete (which records gateway.requests.total) only fires
-// after rp.ServeHTTP returns on the server goroutine. Without this wait
-// the first Collect occasionally lands before OnComplete and the test
-// reads an empty scope.
-func collectUntilRecorded(t *testing.T, reader *sdkmetric.ManualReader, metricName string) metricdata.ResourceMetrics {
+// collectUntilRecorded scrapes the ManualReader in a short loop until
+// every requested metric name appears (or the deadline elapses). The
+// HTTP client returns to the test goroutine as soon as the proxy
+// flushes the response body, but reporterRun.OnComplete (which
+// records gateway.requests.total + gateway.request.duration) only
+// fires after rp.ServeHTTP returns on the server goroutine. Counter
+// and histogram are independent atomic writes; without waiting for
+// both, a Collect can land between them and the caller's assertion
+// on the second metric falls into a "metric %q not collected" hole.
+//
+// Pass every metric the caller intends to assert on so the wait
+// covers the slowest record. Each name need only appear once across
+// any ScopeMetrics entry.
+func collectUntilRecorded(t *testing.T, reader *sdkmetric.ManualReader, metricNames ...string) metricdata.ResourceMetrics {
 	t.Helper()
+	if len(metricNames) == 0 {
+		t.Fatalf("collectUntilRecorded: no metric names provided")
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	var rm metricdata.ResourceMetrics
 	for {
@@ -278,15 +287,23 @@ func collectUntilRecorded(t *testing.T, reader *sdkmetric.ManualReader, metricNa
 		if err := reader.Collect(context.Background(), &rm); err != nil {
 			t.Fatalf("collect: %v", err)
 		}
+		present := make(map[string]bool, len(metricNames))
 		for _, sm := range rm.ScopeMetrics {
 			for _, m := range sm.Metrics {
-				if m.Name == metricName {
-					return rm
-				}
+				present[m.Name] = true
 			}
 		}
+		missing := make([]string, 0, len(metricNames))
+		for _, name := range metricNames {
+			if !present[name] {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) == 0 {
+			return rm
+		}
 		if time.Now().After(deadline) {
-			t.Fatalf("metric %q never recorded within timeout", metricName)
+			t.Fatalf("metrics never recorded within timeout: %v", missing)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
