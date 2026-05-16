@@ -40,6 +40,14 @@ providers:
         method: [GET]
         accepted_paths: [/v1/models]
         request_kind: passthrough
+      chat_completions:
+        path: /v1/chat/completions
+        method: [POST]
+        accepted_paths: [/v1/chat/completions]
+        accepts_streaming: true
+        request_kind: chat
+        auth_header: Authorization
+        auth_format: "Bearer {key}"
 
   gemini:
     prefix: gemini
@@ -57,3 +65,11 @@ providers:
         method: [GET]
         accepted_paths: [/v1beta/models]
         request_kind: passthrough
+      chat_completions:
+        path: /v1beta/openai/chat/completions
+        method: [POST]
+        accepted_paths: [/v1beta/openai/chat/completions]
+        accepts_streaming: true
+        request_kind: chat
+        auth_header: Authorization
+        auth_format: "Bearer {key}"
