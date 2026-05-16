@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/pipeline"
+	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 )
 
 // Inspector is the seam where v1.2+ DLP engines plug in. Implementations
@@ -42,7 +43,7 @@ func (NopInspector) Inspect(_ context.Context, msg pipeline.Message) (pipeline.M
 func Middleware(ctx context.Context, inspector Inspector) pipeline.Middleware {
 	return func(in <-chan pipeline.Message) <-chan pipeline.Message {
 		out := make(chan pipeline.Message)
-		go func() {
+		safego.Go(ctx, "guardrails.inspect", nil, nil, func() {
 			defer close(out)
 			for {
 				select {
@@ -67,7 +68,7 @@ func Middleware(ctx context.Context, inspector Inspector) pipeline.Middleware {
 					}
 				}
 			}
-		}()
+		})
 		return out
 	}
 }

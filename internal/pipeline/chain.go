@@ -1,6 +1,10 @@
 package pipeline
 
-import "context"
+import (
+	"context"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+)
 
 // Middleware is the unit of pipeline composition: it consumes a stream of
 // Message values and returns the downstream stream. Implementations spawn a
@@ -30,7 +34,7 @@ func Chain(mws ...Middleware) Middleware {
 func Pass(ctx context.Context) Middleware {
 	return func(in <-chan Message) <-chan Message {
 		out := make(chan Message)
-		go func() {
+		safego.Go(ctx, "pipeline.pass", nil, nil, func() {
 			defer close(out)
 			for {
 				select {
@@ -54,7 +58,7 @@ func Pass(ctx context.Context) Middleware {
 					}
 				}
 			}
-		}()
+		})
 		return out
 	}
 }
