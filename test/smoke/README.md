@@ -5,6 +5,18 @@ Gemini Python SDKs against a deployed sluice-gateway with a real managed-mode
 API key — meaning the gateway resolves the key to a configuration and swaps in
 real upstream provider credentials before forwarding.
 
+## TL;DR
+
+```sh
+SLUICE_API_KEY=sk_live_... make smoke
+```
+
+Or, for the qwen redirect tests too (cluster-specific):
+
+```sh
+SLUICE_API_KEY=sk_live_... SLUICE_SMOKE_QWEN=true make smoke
+```
+
 Distinct from the wire-compat suite in `test/python/`:
 
 | | `test/python/` (wire-compat) | `test/smoke/` (this dir) |
@@ -41,3 +53,12 @@ secrets are configured.
 | `test_anthropic_chat.py` | `POST /anthropic/v1/chat/completions` (OpenAI-compat surface) |
 | `test_gemini_generate.py` | `POST /gemini/v1beta/models/{model}:generateContent` |
 | `test_gemini_chat.py` | `POST /gemini/v1beta/openai/chat/completions` (OpenAI-compat surface) |
+| `test_changeprovider_redirect.py` | model-keyed `changeProvider` rules: claude-* / gemini-* on the openai surface |
+| `test_qwen_redirect.py` | cluster-side qwen rules (opt-in via `SLUICE_SMOKE_QWEN=true`) |
+
+## Adding a new smoke
+
+1. Create `test_<provider>_<surface>.py` next to the existing tests. Reuse the `base_url` and `api_key` fixtures from `conftest.py`.
+2. Drive the official SDK with `base_url=f"{base_url}/<route prefix>"`. Don't `requests.post` directly — using the SDK is what makes this a wire-compat check.
+3. If the assertion depends on a rule or configuration that only exists in a specific deploy, gate it on an env var and skip cleanly when unset (see `test_qwen_redirect.py` for the pattern).
+4. Update this table.

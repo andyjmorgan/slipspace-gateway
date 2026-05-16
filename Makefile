@@ -11,7 +11,7 @@ DEV_ENV := \
 	SLUICE_NATS_URL=nats://localhost:4222 \
 	SLUICE_LOG_LEVEL=debug
 
-.PHONY: all build test lint fmt vet coverage dev dev-with-overlay e2e py-compat clean tools
+.PHONY: all build test lint fmt vet coverage dev dev-with-overlay e2e py-compat smoke clean tools
 
 all: lint vet test
 
@@ -51,6 +51,14 @@ py-compat:
 	$(GO) build -o /tmp/sluice-gateway ./cmd/gateway
 	$(GO) build -o /tmp/sluice-mockllm ./cmd/mockllm
 	cd test/python && uv run --project . pytest -v
+
+# Run the post-deploy smoke suite against a live gateway.
+#
+# Required:  SLUICE_API_KEY=sk_live_...           (managed-mode key)
+# Optional:  SLUICE_BASE_URL=https://...          (default: https://sluice.donkeywork.dev)
+#            SLUICE_SMOKE_QWEN=true               (enable cluster-side qwen redirect tests)
+smoke:
+	cd test/smoke && uv run --project . pytest -v
 
 clean:
 	rm -f $(COVER_OUT) coverage.html
