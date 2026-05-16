@@ -12,6 +12,9 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/vmihailenco/msgpack/v5"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 )
 
 // Defaults for the Publisher Options.
@@ -82,6 +85,12 @@ type Options struct {
 	StashThreshold int
 
 	Logger *slog.Logger
+
+	// Meters is the gateway's metrics bundle. Used only to record
+	// goroutine-panic events caught by the worker's safego wrap.
+	// Nil-safe — when nil, panics are still recovered + logged,
+	// just not metered.
+	Meters *observability.Meters
 }
 
 // Publisher is the non-blocking event publisher. Publish enqueues or
@@ -131,6 +140,10 @@ type Publisher struct {
 	stashCnt   atomic.Uint64
 
 	logger *slog.Logger
+
+	// meters is retained from Options for the safego worker wrap so
+	// panics caught inside run() increment gateway.goroutine.panics.total.
+	meters *observability.Meters
 }
 
 // New constructs a Publisher. It does not spawn workers — call Start.
@@ -160,6 +173,7 @@ func New(opts Options) *Publisher {
 		js:          opts.JS,
 		store:       opts.ObjectStore,
 		stashBucket: bucket,
+		meters:      opts.Meters,
 		queue:       make(chan Envelope, queueSize),
 		threshold:   threshold,
 		workers:     workers,
@@ -173,7 +187,7 @@ func New(opts Options) *Publisher {
 func (p *Publisher) Start(ctx context.Context) {
 	for i := 0; i < p.workers; i++ {
 		p.wg.Add(1)
-		go p.run(ctx)
+		safego.Go(ctx, "bus.publisher.worker", p.logger, p.meters, func() { p.run(ctx) })
 	}
 }
 
@@ -186,10 +200,10 @@ func (p *Publisher) Stop(timeout time.Duration) bool {
 	p.stopOnce.Do(func() { close(p.stopCh) })
 
 	done := make(chan struct{})
-	go func() {
+	safego.Go(context.Background(), "bus.publisher.stop_join", p.logger, p.meters, func() {
 		p.wg.Wait()
 		close(done)
-	}()
+	})
 
 	select {
 	case <-done:

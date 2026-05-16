@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
 
@@ -58,14 +59,14 @@ func run(ctx context.Context) error {
 	}
 
 	errCh := make(chan error, 1)
-	go func() {
+	safego.Go(ctx, "api.serve", slog.Default(), nil, func() {
 		slog.Info("listening", "addr", bindAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
 		errCh <- nil
-	}()
+	})
 
 	select {
 	case <-ctx.Done():

@@ -23,6 +23,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
+	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/server"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
@@ -85,7 +86,7 @@ func run(ctx context.Context) error {
 
 	logger := obs.Logger
 
-	publisher, busCleanup, err := setupBus(ctx, env, logger)
+	publisher, busCleanup, err := setupBus(ctx, env, logger, obs.Meters)
 	if err != nil {
 		return fmt.Errorf("gateway: bus setup: %w", err)
 	}
@@ -107,7 +108,11 @@ func run(ctx context.Context) error {
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, obs.Meters, errs, logger)
 
-	root := correlationMiddleware(logger, dataPlane)
+	// recoverMiddleware sits between correlation (so the captured
+	// log carries the correlation_id) and the data-plane chain, so
+	// any panic in routing/auth/bodycapture/rules/forwarder is
+	// converted to a logged 500 instead of crashing the goroutine.
+	root := correlationMiddleware(logger, recoverMiddleware(obs.Meters, errs, dataPlane))
 
 	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
 
@@ -116,6 +121,7 @@ func run(ctx context.Context) error {
 		Handler:      root,
 		DrainTimeout: drain,
 		Logger:       logger,
+		Meters:       obs.Meters,
 	})
 
 	if obs.PromHandler != nil {
@@ -140,7 +146,7 @@ func run(ctx context.Context) error {
 // is returned (with a no-op cleanup) when reporting is off or NATS is
 // unreachable — the request path must never block on reporting, so a missing
 // bus degrades gracefully into "events dropped" rather than aborting startup.
-func setupBus(ctx context.Context, env *config.ServerEnv, logger *slog.Logger) (*bus.Publisher, func(), error) {
+func setupBus(ctx context.Context, env *config.ServerEnv, logger *slog.Logger, meters *observability.Meters) (*bus.Publisher, func(), error) {
 	noop := func() {}
 	if !env.ReportingEnabled() {
 		return nil, noop, nil
@@ -177,10 +183,11 @@ func setupBus(ctx context.Context, env *config.ServerEnv, logger *slog.Logger) (
 		QueueSize:      env.NATSPublishQueueSize,
 		StashThreshold: env.NATSStashThresholdBytes,
 		Logger:         logger,
+		Meters:         meters,
 	})
 	pub.Start(ctx)
 
-	cleanup := func() {
+	cleanup := func() { //nolint:contextcheck // pub.Stop's internal join goroutine uses context.Background intentionally — shutdown must not race the parent ctx cancel
 		pub.Stop(publisherStopTimeout)
 		nc.Close()
 	}
@@ -201,16 +208,16 @@ func startPrometheus(ctx context.Context, bind string, handler http.Handler, log
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	go func() {
+	safego.Go(ctx, "gateway.prometheus.serve", logger, nil, func() {
 		logger.InfoContext(ctx, "prometheus listening", "addr", bind)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.ErrorContext(ctx, "prometheus listener exited", "err", err.Error())
 		}
-	}()
-	go func() {
+	})
+	safego.Go(ctx, "gateway.prometheus.shutdown_watcher", logger, nil, func() {
 		<-ctx.Done()
 		shutdownPromServer(srv) //nolint:contextcheck // shutdown context is intentionally detached
-	}()
+	})
 }
 
 // shutdownPromServer detaches the shutdown context from the cancelled parent

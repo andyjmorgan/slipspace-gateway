@@ -39,6 +39,16 @@ const (
 	MetricRuleMatchesTotal       = "gateway.rule.matches.total"
 	MetricRuleErrorsTotal        = "gateway.rule.errors.total"
 	MetricRuleEvaluationDuration = "gateway.rule.evaluation.duration"
+
+	// Crash-safety instruments. Both surface a panic that the
+	// gateway's recover() wrappers converted to a logged error
+	// rather than letting the process exit. A non-zero rate on
+	// either is an operator-attention signal: the request-side
+	// counter implies a buggy code path on the data plane; the
+	// goroutine-side counter implies an unhandled edge in a
+	// background worker (NATS dispatch, drain handler, etc.).
+	MetricGoroutinePanicsTotal = "gateway.goroutine.panics.total"
+	MetricRequestPanicsTotal   = "gateway.request.panics.total"
 )
 
 // Histogram bucket boundaries. Defined as package-level vars (not consts)
@@ -98,6 +108,18 @@ type Meters struct {
 	// RuleEvaluationDuration records the full per-request rule
 	// evaluation cycle. Labels: configuration.
 	RuleEvaluationDuration metric.Float64Histogram
+
+	// GoroutinePanicsTotal counts panics caught by safego.Go in
+	// background goroutines. Label: site (the identifier the caller
+	// passed to safego.Go — e.g. "bus.publisher.worker").
+	GoroutinePanicsTotal metric.Int64Counter
+
+	// RequestPanicsTotal counts panics caught by the request-path
+	// recovery middleware. Labels: provider, endpoint (where
+	// resolvable — best-effort from context). A non-zero rate
+	// implies a buggy middleware or handler is leaking panics that
+	// the recovery filter is converting to 500s.
+	RequestPanicsTotal metric.Int64Counter
 }
 
 // NewMeters constructs the Meters bundle from the supplied meter. The
@@ -140,6 +162,8 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricErrorResponsesTotal, "JSON error responses written by the gateway middleware chain.", "1", &m.ErrorResponsesTotal},
 		{MetricRuleMatchesTotal, "Rules that matched on a request.", "1", &m.RuleMatchesTotal},
 		{MetricRuleErrorsTotal, "Action execution failures during rule evaluation.", "1", &m.RuleErrorsTotal},
+		{MetricGoroutinePanicsTotal, "Panics caught by safego.Go in background goroutines (process kept alive).", "1", &m.GoroutinePanicsTotal},
+		{MetricRequestPanicsTotal, "Panics caught by the request-path recovery middleware (client got 500, process kept alive).", "1", &m.RequestPanicsTotal},
 	} {
 		if err := int64Counter(c.name, c.desc, c.unit, c.dst); err != nil {
 			return nil, err

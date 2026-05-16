@@ -14,6 +14,9 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 )
 
 // DefaultDrainTimeout matches Helm's terminationGracePeriodSeconds: 330 with
@@ -43,6 +46,10 @@ type Options struct {
 	ReadHeaderTimeout time.Duration
 
 	Logger *slog.Logger
+
+	// Meters is the gateway's metrics bundle. Used only to record
+	// panics caught by the Serve-goroutine safego wrap. Nil-safe.
+	Meters *observability.Meters
 }
 
 // Server wraps net/http.Server with drain lifecycle and an automatically
@@ -60,6 +67,12 @@ type Server struct {
 	drain time.Duration
 
 	logger *slog.Logger
+
+	// meters is retained for the Serve-goroutine safego wrap so a
+	// panic inside http.Server.Serve increments the goroutine-panics
+	// counter (very unlikely, but the invariant is no goroutine without
+	// recover). Nil-tolerant.
+	meters *observability.Meters
 
 	// healthz is the readiness probe handler. Mounted on the internal
 	// mux at construction and exposed via Healthz() so tests can inspect
@@ -111,6 +124,7 @@ func New(opts Options) *Server {
 		bind:    opts.Bind,
 		drain:   drain,
 		logger:  logger,
+		meters:  opts.Meters,
 		healthz: healthz,
 	}
 }
@@ -154,14 +168,14 @@ func (s *Server) Run(ctx context.Context) error {
 	s.httpSrv.BaseContext = func(_ net.Listener) context.Context { return ctx }
 
 	listenErr := make(chan error, 1)
-	go func() {
+	safego.Go(ctx, "server.serve", s.logger, s.meters, func() {
 		s.logger.InfoContext(ctx, "server listening", "addr", s.addr)
 		serveErr := s.httpSrv.Serve(listener)
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			listenErr <- serveErr
 		}
 		close(listenErr)
-	}()
+	})
 
 	select {
 	case err, ok := <-listenErr:
