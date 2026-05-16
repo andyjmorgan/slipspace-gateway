@@ -41,6 +41,16 @@ var ErrPathCollision = errors.New("config: route path claimed by multiple endpoi
 // but no prefix value — the provider would be unreachable.
 var ErrPrefixRequiredEmpty = errors.New("config: prefix_required is true but prefix is empty")
 
+// ErrInvalidAuthFormat is returned when a provider- or endpoint-level
+// `auth_format` does not contain exactly one `{key}` placeholder.
+var ErrInvalidAuthFormat = errors.New("config: auth_format must contain {key} exactly once")
+
+// ErrAuthFormatWithoutHeader is returned when `auth_format` is set on a
+// provider or endpoint that does not also set `auth_header`. The format is
+// only consulted when an override header is in effect — set without a header,
+// the format would be silently ignored, which is almost always a mistake.
+var ErrAuthFormatWithoutHeader = errors.New("config: auth_format requires auth_header at the same level")
+
 // ErrInvalidBind is returned when a bind env var (SLUICE_HTTP_BIND,
 // SLUICE_PROMETHEUS_BIND) is not a valid host:port.
 var ErrInvalidBind = errors.New("config: bind must be host:port")
