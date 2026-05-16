@@ -221,7 +221,7 @@ func buildDestination(
 	switch credentialStrategy(authResult, state) {
 	case credSetFromProvider:
 		cred := credentialFor(authResult, state)
-		name, value := auth.UpstreamCredentialHeader(state.Provider, cred)
+		name, value := resolveCredentialHeader(provider, endpoint, state.Provider, cred)
 		outgoing.Set(name, value)
 		// Drop every credential header name the inbound request
 		// might carry that is NOT the one we just set, so a managed
@@ -272,6 +272,53 @@ var credentialHeaderNames = []string{
 	auth.HeaderAuthorization,
 	"X-Api-Key",
 	"X-Goog-Api-Key",
+}
+
+// authFormatPlaceholder is the literal substring the destination builder
+// substitutes with the resolved credential when an endpoint or provider
+// declares a custom auth_format. Kept in sync with the loader's
+// validation constant.
+const authFormatPlaceholder = "{key}"
+
+// resolveCredentialHeader returns the (header name, header value) the
+// destination builder will set for managed-mode credentials, preferring
+// — in order — the endpoint-level override, the provider-level override,
+// and finally the per-provider default in auth.UpstreamCredentialHeader.
+//
+// An override is "in effect" when AuthHeader is non-empty at that level;
+// AuthFormat is consulted alongside but defaults to "{key}" (raw
+// credential) when only the header was overridden.
+//
+// The OpenAI-compat surfaces on Anthropic and Gemini both want
+// `Authorization: Bearer {key}` rather than the provider's native
+// header; the override path expresses that without splitting the
+// destination builder by endpoint.
+func resolveCredentialHeader(
+	provider contractsconfig.Provider,
+	endpoint contractsconfig.Endpoint,
+	providerName, credential string,
+) (string, string) {
+	header, format := pickAuthHeaderAndFormat(provider, endpoint)
+	if header == "" {
+		return auth.UpstreamCredentialHeader(providerName, credential)
+	}
+	if format == "" {
+		return header, credential
+	}
+	return header, strings.ReplaceAll(format, authFormatPlaceholder, credential)
+}
+
+// pickAuthHeaderAndFormat applies the endpoint-then-provider fallback for
+// the auth header override. Returns ("", "") when neither level overrides,
+// signalling the caller to fall back to the per-provider default.
+func pickAuthHeaderAndFormat(p contractsconfig.Provider, e contractsconfig.Endpoint) (string, string) {
+	if e.AuthHeader != "" {
+		return e.AuthHeader, e.AuthFormat
+	}
+	if p.AuthHeader != "" {
+		return p.AuthHeader, p.AuthFormat
+	}
+	return "", ""
 }
 
 // credStrategy is the credential decision derived from auth mode +

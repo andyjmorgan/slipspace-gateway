@@ -27,6 +27,22 @@ type Provider struct {
 	// request to this provider (e.g., "anthropic-version: 2023-06-01").
 	RequiredHeaders map[string]string `yaml:"required_headers,omitempty" json:"required_headers,omitempty"`
 
+	// AuthHeader, when non-empty, overrides the outgoing HTTP header name
+	// into which managed-mode credentials are injected for every endpoint
+	// of this provider. Empty defers to the per-endpoint override or, if
+	// that is also empty, to the historical provider-native default
+	// (Authorization for OpenAI, x-api-key for Anthropic, x-goog-api-key
+	// for Gemini).
+	AuthHeader string `yaml:"auth_header,omitempty" json:"auth_header,omitempty"`
+
+	// AuthFormat templates the credential value injected into AuthHeader.
+	// Supports a single `{key}` placeholder substituted with the resolved
+	// upstream credential. Only consulted when an override AuthHeader is
+	// in effect; with the default header path the per-provider format is
+	// used. Empty (with an override AuthHeader set) renders the raw
+	// credential.
+	AuthFormat string `yaml:"auth_format,omitempty" json:"auth_format,omitempty"`
+
 	// Endpoints is the provider's endpoint catalogue keyed by logical name
 	// (e.g., "chat_completions", "messages"). The key is the value referenced
 	// from Configuration.AllowedEndpoints.
@@ -55,4 +71,21 @@ type Endpoint struct {
 	// "anthropic.messages") so middleware can deserialise the body into the
 	// right model type with DynamicProperties preservation.
 	RequestKind string `yaml:"request_kind" json:"request_kind"`
+
+	// AuthHeader, when non-empty, overrides the outgoing HTTP header name
+	// into which managed-mode credentials are injected for this endpoint.
+	// Empty defers to the provider-level override or, if that is also
+	// empty, to the historical provider-native default. The override is
+	// load-bearing for OpenAI-compat surfaces on Anthropic and Gemini —
+	// both want Authorization: Bearer rather than the provider's native
+	// header.
+	AuthHeader string `yaml:"auth_header,omitempty" json:"auth_header,omitempty"`
+
+	// AuthFormat templates the credential value injected into AuthHeader.
+	// Supports a single `{key}` placeholder substituted with the resolved
+	// upstream credential. Only consulted when an override AuthHeader is
+	// in effect; with the default header path the per-provider format is
+	// used. Empty (with an override AuthHeader set) renders the raw
+	// credential.
+	AuthFormat string `yaml:"auth_format,omitempty" json:"auth_format,omitempty"`
 }

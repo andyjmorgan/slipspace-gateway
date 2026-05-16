@@ -273,6 +273,9 @@ func (r *ResolvedConfig) Validate() error {
 		if p.PrefixRequired && p.Prefix == "" {
 			return fmt.Errorf("config: provider %q: %w", providerName, ErrPrefixRequiredEmpty)
 		}
+		if err := validateAuthOverride(p.AuthHeader, p.AuthFormat); err != nil {
+			return fmt.Errorf("config: provider %q: %w", providerName, err)
+		}
 		endpointNames := make([]string, 0, len(p.Endpoints))
 		for name := range p.Endpoints {
 			endpointNames = append(endpointNames, name)
@@ -280,6 +283,9 @@ func (r *ResolvedConfig) Validate() error {
 		sort.Strings(endpointNames)
 		for _, endpointName := range endpointNames {
 			e := p.Endpoints[endpointName]
+			if err := validateAuthOverride(e.AuthHeader, e.AuthFormat); err != nil {
+				return fmt.Errorf("config: provider %q endpoint %q: %w", providerName, endpointName, err)
+			}
 			for _, route := range emitRoutes(providerName, endpointName, p, e) {
 				if prev, dup := seen[route.Path]; dup {
 					return fmt.Errorf(
@@ -453,4 +459,27 @@ func splitProviderEndpoint(s string) (string, string, error) {
 		return "", "", ErrMalformedAllowedEndpoint
 	}
 	return provider, endpoint, nil
+}
+
+// authFormatPlaceholder is the literal substring the auth_format
+// validator and the destination builder both look for. Kept here so the
+// two sites cannot drift.
+const authFormatPlaceholder = "{key}"
+
+// validateAuthOverride enforces the auth_header / auth_format invariants
+// the destination builder relies on: setting a format without a header
+// would be silently ignored at runtime, so we reject it at load time; and
+// every format must carry exactly one {key} placeholder so the runtime
+// substitution is unambiguous.
+func validateAuthOverride(header, format string) error {
+	if format == "" {
+		return nil
+	}
+	if header == "" {
+		return ErrAuthFormatWithoutHeader
+	}
+	if strings.Count(format, authFormatPlaceholder) != 1 {
+		return ErrInvalidAuthFormat
+	}
+	return nil
 }

@@ -414,6 +414,207 @@ configurations:
 	}
 }
 
+// TestLoad_AuthOverride_EndpointHappyPath: an endpoint may override the
+// auth header + format; the loader accepts and round-trips both fields.
+func TestLoad_AuthOverride_EndpointHappyPath(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", `
+providers:
+  anthropic:
+    prefix: anthropic
+    prefix_required: true
+    base_url: http://a
+    endpoints:
+      chat_completions:
+        path: /v1/chat/completions
+        method: [POST]
+        accepted_paths: [/v1/chat/completions]
+        request_kind: chat
+        auth_header: Authorization
+        auth_format: "Bearer {key}"
+`)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - anthropic.chat_completions
+`)
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := resolved.Providers["anthropic"].Endpoints["chat_completions"]
+	if got.AuthHeader != "Authorization" || got.AuthFormat != "Bearer {key}" {
+		t.Fatalf("auth override not preserved: header=%q format=%q", got.AuthHeader, got.AuthFormat)
+	}
+}
+
+// TestLoad_AuthOverride_ProviderHappyPath: provider-level override is also
+// accepted and round-trips.
+func TestLoad_AuthOverride_ProviderHappyPath(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", `
+providers:
+  acme:
+    prefix: acme
+    prefix_required: true
+    base_url: http://a
+    auth_header: X-Acme-Token
+    auth_format: "Token {key}"
+    endpoints:
+      chat:
+        path: /v1/chat
+        method: [POST]
+        accepted_paths: [/v1/chat]
+        request_kind: chat
+`)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - acme.chat
+`)
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := resolved.Providers["acme"]
+	if got.AuthHeader != "X-Acme-Token" || got.AuthFormat != "Token {key}" {
+		t.Fatalf("provider auth override not preserved: header=%q format=%q", got.AuthHeader, got.AuthFormat)
+	}
+}
+
+// TestLoad_AuthOverride_FormatWithoutHeaderRejected: auth_format alone is
+// silently ignored at runtime, so the loader rejects it.
+func TestLoad_AuthOverride_FormatWithoutHeaderRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "endpoint-level",
+			yaml: `
+providers:
+  acme:
+    prefix: acme
+    prefix_required: true
+    base_url: http://a
+    endpoints:
+      chat:
+        path: /v1/chat
+        method: [POST]
+        accepted_paths: [/v1/chat]
+        request_kind: chat
+        auth_format: "Bearer {key}"
+`,
+		},
+		{
+			name: "provider-level",
+			yaml: `
+providers:
+  acme:
+    prefix: acme
+    prefix_required: true
+    base_url: http://a
+    auth_format: "Bearer {key}"
+    endpoints:
+      chat:
+        path: /v1/chat
+        method: [POST]
+        accepted_paths: [/v1/chat]
+        request_kind: chat
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "providers.yaml", tc.yaml)
+			writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - acme.chat
+`)
+			_, err := config.Load(context.Background(), dir)
+			if !errors.Is(err, config.ErrAuthFormatWithoutHeader) {
+				t.Fatalf("want ErrAuthFormatWithoutHeader, got %v", err)
+			}
+		})
+	}
+}
+
+// TestLoad_AuthOverride_InvalidFormatRejected: auth_format must carry
+// exactly one {key} placeholder.
+func TestLoad_AuthOverride_InvalidFormatRejected(t *testing.T) {
+	cases := []struct {
+		name   string
+		format string
+	}{
+		{"missing placeholder", "Bearer no-placeholder"},
+		{"double placeholder", "Bearer {key}{key}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "providers.yaml", `
+providers:
+  acme:
+    prefix: acme
+    prefix_required: true
+    base_url: http://a
+    endpoints:
+      chat:
+        path: /v1/chat
+        method: [POST]
+        accepted_paths: [/v1/chat]
+        request_kind: chat
+        auth_header: Authorization
+        auth_format: "`+tc.format+`"
+`)
+			writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - acme.chat
+`)
+			_, err := config.Load(context.Background(), dir)
+			if !errors.Is(err, config.ErrInvalidAuthFormat) {
+				t.Fatalf("want ErrInvalidAuthFormat, got %v", err)
+			}
+		})
+	}
+}
+
+// TestLoad_AuthOverride_HeaderWithoutFormatAllowed: header alone is valid —
+// the destination builder falls back to raw {key} substitution.
+func TestLoad_AuthOverride_HeaderWithoutFormatAllowed(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", `
+providers:
+  acme:
+    prefix: acme
+    prefix_required: true
+    base_url: http://a
+    endpoints:
+      chat:
+        path: /v1/chat
+        method: [POST]
+        accepted_paths: [/v1/chat]
+        request_kind: chat
+        auth_header: X-Acme-Token
+`)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev:
+    allowed_endpoints:
+      - acme.chat
+`)
+	if _, err := config.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
 func TestLoad_EmptyDirectory(t *testing.T) {
 	dir := t.TempDir()
 	_, err := config.Load(context.Background(), dir)
