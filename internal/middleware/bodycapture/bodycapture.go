@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
@@ -192,6 +193,36 @@ func allocate(kind RequestKind) (any, error) {
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownKind, string(kind))
 	}
+}
+
+// Model returns the model identifier carried on a decoded typed
+// request body, or the empty string if body is nil, of an
+// unmodelled type, or of a kind that does not carry a model field
+// (Gemini's GenerateContentRequest puts the model on the URL path
+// via PathParams, not on the body).
+//
+// Centralises the type-switch that previously lived in three
+// places — `cmd/gateway/handler.go::outboundModel`,
+// `internal/middleware/rules/middleware.go::extractInboundModel`,
+// and this package's own `allocate`. Add a case here whenever a
+// new typed request body lands that carries a top-level Model
+// string field, and the rule engine + telemetry pick it up for
+// free.
+//
+// Callers that need the routing-driven {model} path param (Gemini)
+// must compose with their own param lookup first — see
+// `cmd/gateway/handler.go::outboundModel` for the canonical
+// PathParams-then-body pattern.
+func Model(body any) string {
+	switch b := body.(type) {
+	case *openaichat.ChatCompletionRequest:
+		return strings.TrimSpace(b.Model)
+	case *openairesponses.ResponsesRequest:
+		return strings.TrimSpace(b.Model)
+	case *messages.MessagesRequest:
+		return strings.TrimSpace(b.Model)
+	}
+	return ""
 }
 
 // readBody buffers r.Body with a one-byte overshoot so we can distinguish

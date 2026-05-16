@@ -263,6 +263,14 @@ func TestResolver_Passthrough_UnknownConfiguration(t *testing.T) {
 	if !errors.Is(err, ErrUnknownConfiguration) {
 		t.Fatalf("want ErrUnknownConfiguration, got %v", err)
 	}
+	// Sentinel-wrap regression guard: ErrUnknownConfiguration in this
+	// package wraps config.ErrUnknownConfiguration so a single
+	// errors.Is succeeds against either sentinel. Important for the
+	// v1.1 api server, which will do both load-time validate and
+	// request-time resolve in one call site.
+	if !errors.Is(err, config.ErrUnknownConfiguration) {
+		t.Fatalf("want errors.Is(err, config.ErrUnknownConfiguration) to succeed via the auth wrap, got %v", err)
+	}
 }
 
 func TestResolver_Passthrough_EndpointNotAllowed(t *testing.T) {

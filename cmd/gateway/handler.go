@@ -15,9 +15,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
-	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
 )
 
 // buildDataPlaneHandler composes routing, auth, bodycapture and the forwarder
@@ -406,15 +403,7 @@ func outboundModel(captured bodycapture.Captured, state *rules.MutableState) str
 			return v
 		}
 	}
-	switch b := captured.Body.(type) {
-	case *openaichat.ChatCompletionRequest:
-		return strings.TrimSpace(b.Model)
-	case *openairesponses.ResponsesRequest:
-		return strings.TrimSpace(b.Model)
-	case *messages.MessagesRequest:
-		return strings.TrimSpace(b.Model)
-	}
-	return ""
+	return bodycapture.Model(captured.Body)
 }
 
 func joinPaths(base, target string) string {
