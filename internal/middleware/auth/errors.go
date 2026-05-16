@@ -1,6 +1,11 @@
 package auth
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
+)
 
 // ErrUnauthorized covers every managed-mode failure where we refuse to reveal
 // whether a key exists: missing bearer, malformed bearer, unknown secret,
@@ -8,8 +13,11 @@ import "errors"
 var ErrUnauthorized = errors.New("auth: unauthorized")
 
 // ErrUnknownConfiguration is returned when a referenced configuration name does
-// not exist in the loaded configuration index.
-var ErrUnknownConfiguration = errors.New("auth: unknown configuration")
+// not exist in the loaded configuration index. Wraps config.ErrUnknownConfiguration
+// so callers that do `errors.Is(err, config.ErrUnknownConfiguration)` succeed
+// regardless of whether the failure was raised at load time (config validate)
+// or at request time (auth resolve). One conceptual error, two phrasing layers.
+var ErrUnknownConfiguration = fmt.Errorf("auth: %w", config.ErrUnknownConfiguration)
 
 // ErrEndpointNotAllowed is returned when the routed (provider, endpoint) is not
 // in the resolved configuration's allowed_endpoints list.

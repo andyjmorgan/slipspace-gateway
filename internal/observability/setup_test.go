@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
@@ -14,6 +15,21 @@ import (
 
 func build() observability.BuildInfo {
 	return observability.BuildInfo{Service: "sluice-gateway", Version: "v0.0.0-test"}
+}
+
+// shutdownProv bounds the OTel provider Shutdown to a short deadline.
+// Without this, tests that point the OTLP gRPC exporter at an unbound
+// port (`127.0.0.1:14317` in TestSetup_OTLPOnlyGRPC,
+// TestSetup_OTLPDefaultsToGRPC, TestSetup_BothExportersCoexist) block
+// for the full gRPC reconnect retry window (~10s) on every cleanup —
+// trivial individually but compounds under `-count=N` and times out
+// `make test`. Applied to every Setup() callsite for consistency; the
+// 200ms cap is well under any real Shutdown but well over the
+// "already-closed / no in-flight exports" fast path.
+func shutdownProv(prov *observability.Provider) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_ = prov.Shutdown(ctx)
 }
 
 func TestSetup_NeitherExporterInstallsNoopProvider(t *testing.T) {
@@ -26,7 +42,7 @@ func TestSetup_NeitherExporterInstallsNoopProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+	t.Cleanup(func() { shutdownProv(prov) })
 
 	if prov.PromHandler != nil {
 		t.Errorf("expected nil PromHandler when neither exporter enabled")
@@ -54,7 +70,7 @@ func TestSetup_PrometheusOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+	t.Cleanup(func() { shutdownProv(prov) })
 
 	if prov.PromHandler == nil {
 		t.Fatalf("expected PromHandler when Prometheus enabled")
@@ -92,7 +108,7 @@ func TestSetup_OTLPOnlyGRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+	t.Cleanup(func() { shutdownProv(prov) })
 
 	if prov.PromHandler != nil {
 		t.Errorf("expected nil PromHandler when only OTLP enabled")
@@ -114,7 +130,7 @@ func TestSetup_OTLPHTTPProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+	t.Cleanup(func() { shutdownProv(prov) })
 }
 
 func TestSetup_OTLPDefaultsToGRPC(t *testing.T) {
@@ -128,7 +144,7 @@ func TestSetup_OTLPDefaultsToGRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+	t.Cleanup(func() { shutdownProv(prov) })
 }
 
 func TestSetup_OTLPUnknownProtocolFails(t *testing.T) {
@@ -158,7 +174,7 @@ func TestSetup_BothExportersCoexist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+	t.Cleanup(func() { shutdownProv(prov) })
 
 	if prov.PromHandler == nil {
 		t.Errorf("expected PromHandler when Prometheus enabled")
@@ -188,7 +204,7 @@ func TestSetup_DeploymentEnvironmentAttribute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+	t.Cleanup(func() { shutdownProv(prov) })
 }
 
 func TestProvider_ShutdownIsIdempotent(t *testing.T) {

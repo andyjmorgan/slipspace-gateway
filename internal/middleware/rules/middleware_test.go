@@ -106,6 +106,40 @@ func TestHTTPHandler_EmptyRules_PassesThrough(t *testing.T) {
 	}
 }
 
+// TestHTTPHandler_ExtractInboundModel_PathParamsBranch covers the
+// PathParams-first branch of extractInboundModel (Gemini's URL-
+// templated model). Without this case, the only branch hit by other
+// tests is the body-extraction delegate to bodycapture.Model — the
+// early return on a non-empty path-param model goes unexercised.
+func TestHTTPHandler_ExtractInboundModel_PathParamsBranch(t *testing.T) {
+	t.Parallel()
+	tagOnGemini := &contractsrules.RuleContract{
+		Name:      "tag-gemini",
+		Condition: modelCondition(contractsrules.StringEquals, "gemini-2.0-flash-001"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-Match", "yes")},
+	}
+	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"": {tagOnGemini}}, 8, nil)
+	matchWithParams := func(context.Context) (string, string, map[string]string, bool) {
+		return "gemini", "generate_content", map[string]string{"model": "gemini-2.0-flash-001"}, true
+	}
+
+	var stateSeen *rules.MutableState
+	next := http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		stateSeen = rules.MutableStateFromContext(req.Context())
+	})
+	h := rules.HTTPHandler(e, matchWithParams, nil, next)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.0-flash-001:generateContent", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if stateSeen == nil {
+		t.Fatal("MutableState not stashed on context")
+	}
+	if got := stateSeen.OutgoingHeaders.Get("X-Match"); got != "yes" {
+		t.Errorf("modelName condition did NOT match against PathParams[model]; got header %q", got)
+	}
+}
+
 func TestMutableStateFromContext_Nil(t *testing.T) {
 	t.Parallel()
 	//nolint:staticcheck // exercising the nil-ctx defensive branch

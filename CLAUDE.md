@@ -220,17 +220,21 @@ for _, rule := range rules {
 
 ### Dependencies
 
-Keep the dep graph small. Approved deps for v1.0:
+Keep the dep graph small. Approved deps:
 
-- `github.com/go-chi/chi/v5` — routing
 - `github.com/nats-io/nats.go` — NATS client
 - `github.com/vmihailenco/msgpack/v5` — envelope serialization
 - `gopkg.in/yaml.v3` — YAML
 - `github.com/google/uuid` — UUIDs
 - `github.com/knadh/koanf/v2` — layered config (YAML + env)
 - `go.opentelemetry.io/otel` + exporters — OTel
+- `github.com/prometheus/client_golang` — Prometheus registry the OTel→Prom bridge requires (`otelprom` needs a `prometheus.Registerer`)
 - `github.com/testcontainers/testcontainers-go` — tests only
 - `go.uber.org/goleak` — tests only
+
+Conditionally approved (decide on first use):
+
+- `github.com/go-chi/chi/v5` — routing. Not currently imported. Reach for it if `cmd/api`'s control-plane REST routes need pattern matching beyond stdlib `http.ServeMux`; otherwise drop from this list when v1.1 lands.
 
 Anything else needs justification in the PR description.
 
