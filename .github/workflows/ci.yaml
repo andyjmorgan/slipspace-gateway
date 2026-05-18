@@ -56,8 +56,12 @@ jobs:
           check-latest: true
           cache: true
       - run: make coverage
+      # The coverage gate runs inline in `make coverage`; the artifact is just
+      # for browsing the .out file. Tolerate upload failures (e.g. transient
+      # GH Actions artifact-storage-quota errors) so they don't fail the job.
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: coverage
           path: coverage.out
