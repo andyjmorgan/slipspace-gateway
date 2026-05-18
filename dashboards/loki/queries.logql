@@ -1,0 +1,185 @@
+## Sluice Gateway — Loki query library
+##
+## Datasource:        loki (uid: loki)
+## Stream selector:   {service_name="sluice-gateway"}
+## Body shape:        OTLP-wrapped. The slog JSON sits inside `.body` as a string,
+##                    so every query in this file starts with the canonical
+##                    double-unwrap:
+##
+##                        | json | line_format "{{.body}}" | json
+##
+##                    The OTel collector also auto-extracts some inner fields as
+##                    stream labels (provider, endpoint, model, correlation_id,
+##                    status_code, …) — the double-unwrap is kept anyway so queries
+##                    are stable across collector config changes.
+##
+## Fields available after the double-unwrap:
+##   msg, level, time, service, version,
+##   correlation_id, api_key_id, configuration,
+##   provider, endpoint, model,
+##   status_code, duration_ms, ttfb_ms, streaming, upstream_error
+##
+## Substitution placeholders ($name) are not LogQL — replace them with literal
+## values before running, or wire them to a Grafana variable.
+
+# ----------------------------------------------------------------------------
+# Triage — most-used
+# ----------------------------------------------------------------------------
+
+# Tail one correlation id end-to-end (every line for the request).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | correlation_id = "$cid"
+
+# All failed requests in the last hour (4xx + 5xx).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | status_code =~ "[45].."
+
+# Transport failures — the upstream never sent headers. More serious than 5xx
+# because the client got nothing useful at all.
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | upstream_error != ""
+
+# Slow requests (> 5 seconds end-to-end).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | duration_ms > 5000
+
+# Slow streaming requests by time-to-first-byte (> 2 seconds before any output).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | streaming = "true"
+  | ttfb_ms > 2000
+
+# ----------------------------------------------------------------------------
+# Per-provider
+# ----------------------------------------------------------------------------
+
+# Everything one provider just did, newest first.
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | provider = "$provider"
+
+# One provider's 5xx only.
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | provider = "$provider"
+  | status_code =~ "5.."
+
+# A single provider/endpoint combo (e.g. anthropic + messages).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | provider = "$provider"
+  | endpoint = "$endpoint"
+
+# ----------------------------------------------------------------------------
+# Per-API-key
+# ----------------------------------------------------------------------------
+
+# Tail one API key's recent requests. api_key_id is populated only on
+# managed-mode requests; for passthrough it's empty.
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | api_key_id = "$key"
+
+# Configuration-scoped tail (works for both auth modes).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "request completed"
+  | configuration = "$configuration"
+
+# ----------------------------------------------------------------------------
+# Auth resolution
+# ----------------------------------------------------------------------------
+
+# All auth failures in the last hour. Tells you who's hammering us with bad keys.
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "auth failed"
+
+# Auth resolutions of a specific configuration.
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "auth resolved"
+  | configuration = "$configuration"
+
+# ----------------------------------------------------------------------------
+# Routing & method errors (no provider context yet — these failed before auth)
+# ----------------------------------------------------------------------------
+
+# Routing misses (404 — path didn't match any provider's accepted_paths).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "routing miss"
+
+# Method-not-allowed (path matched but HTTP method didn't).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | msg = "routing method not allowed"
+
+# ----------------------------------------------------------------------------
+# Panics — should always be empty. If not, page someone.
+# ----------------------------------------------------------------------------
+
+# Request-path panics (recovered to 500; the request didn't crash the process).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | level = "ERROR"
+  | stack != ""
+
+# Background goroutine panics (caught by safego, logged with `site`).
+{service_name="sluice-gateway"}
+  | json | line_format "{{.body}}" | json
+  | level = "ERROR"
+  | site != ""
+
+# ----------------------------------------------------------------------------
+# Log-derived metrics (LogQL aggregations)
+# ----------------------------------------------------------------------------
+# Loki returns numeric series for these — useful when Prometheus is unavailable
+# or when you need a field (e.g. correlation_id, api_key_id) that isn't on the
+# metric labels.
+
+# Requests/sec by provider (LogQL version of gateway_requests_total).
+sum by (provider) (
+  rate(
+    {service_name="sluice-gateway"}
+      | json | line_format "{{.body}}" | json
+      | msg = "request completed"
+    [1m]
+  )
+)
+
+# 5xx rate per provider — useful for proving the metric agrees with the logs.
+sum by (provider) (
+  rate(
+    {service_name="sluice-gateway"}
+      | json | line_format "{{.body}}" | json
+      | msg = "request completed"
+      | status_code =~ "5.."
+    [1m]
+  )
+)
+
+# Top 10 API keys by request volume in the last hour.
+topk(10,
+  sum by (api_key_id) (
+    count_over_time(
+      {service_name="sluice-gateway"}
+        | json | line_format "{{.body}}" | json
+        | msg = "request completed"
+        | api_key_id != ""
+      [1h]
+    )
+  )
+)
