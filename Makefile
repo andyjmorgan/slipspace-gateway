@@ -1,4 +1,5 @@
 GO         ?= go
+NPM        ?= npm
 GOLANGCI   ?= golangci-lint
 COVER_OUT  := coverage.out
 COVER_MIN  := 95
@@ -11,12 +12,39 @@ DEV_ENV := \
 	SLUICE_NATS_URL=nats://localhost:4222 \
 	SLUICE_LOG_LEVEL=debug
 
-.PHONY: all build test lint fmt vet coverage dev dev-with-overlay e2e py-compat smoke clean tools
+# When the SPA is built, Vite emits to internal/admin/webdist/. The
+# committed placeholder.html stands in for index.html on a fresh
+# checkout so go:embed has something to attach.
+WEB_OUT := internal/admin/webdist/index.html
+
+.PHONY: all build test lint fmt vet coverage dev dev-with-overlay dev-compose dev-compose-down dev-real dev-real-down e2e py-compat smoke clean tools web web-install web-dev
 
 all: lint vet test
 
+# `make build` includes a fresh SPA bundle. Skip the dependency with
+# `make build NO_WEB=1` if you've already run `make web` and want to
+# avoid the (~1s) Vite invocation.
+ifndef NO_WEB
+build: web
+endif
 build:
 	$(GO) build ./...
+
+web: web-install
+	# Vite's emptyOutDir is off so placeholder.html + .gitignore survive
+	# rebuilds. Clear only the generated artefacts here before invoking
+	# Vite — anything not in this list is preserved.
+	rm -rf internal/admin/webdist/index.html \
+		internal/admin/webdist/assets \
+		internal/admin/webdist/favicon.ico \
+		internal/admin/webdist/sluice.png
+	cd web && $(NPM) run build
+
+web-install:
+	cd web && $(NPM) install --silent
+
+web-dev: web-install
+	cd web && $(NPM) run dev
 
 vet:
 	$(GO) vet ./...
@@ -29,7 +57,7 @@ lint:
 	$(GOLANGCI) run ./...
 
 test:
-	$(GO) test -race -coverprofile=$(COVER_OUT) -covermode=atomic ./...
+	$(GO) test -race -coverprofile=$(COVER_OUT) -covermode=atomic $$($(GO) list ./... | grep -v 'web/node_modules')
 
 coverage: test
 	@if [ -s $(COVER_OUT) ]; then $(GO) tool cover -func=$(COVER_OUT) | tail -n 1; fi
@@ -43,6 +71,30 @@ dev-with-overlay:
 	@test -f docker-compose.dev.yaml || { echo "docker-compose.dev.yaml not found; copy docker-compose.dev.yaml.example"; exit 1; }
 	docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d mockllm nats
 	$(DEV_ENV) $(GO) run ./cmd/gateway
+
+# Full-stack compose: gateway image (SPA embedded) + mockllm + nats. Use this
+# to exercise the production-shaped flow end-to-end — admin console on :8081,
+# data plane on :8585. Slower iteration than `make dev` (image rebuild on Go
+# or SPA changes); for SPA-only hot reload, leave this running and start
+# `make web-dev` separately (the Vite dev server proxies /api/v1 to :8081).
+dev-compose:
+	docker compose up -d --build
+
+dev-compose-down:
+	docker compose down
+
+# Real-upstream compose: generates config-dev.real/ from .env, then
+# brings up gateway+nats pointed at api.openai.com / api.anthropic.com
+# / generativelanguage.googleapis.com + a host-port-forwarded ollama.
+# Requires .env to contain OPENAI_API_KEY, ANTHROPIC_API_KEY,
+# GEMINI_API_KEY. For the qwen-ollama path you need a kubectl
+# port-forward to host port 11434 running separately.
+dev-real:
+	bash scripts/dev-real-config.sh
+	docker compose -f docker-compose.yaml -f docker-compose.real.yaml --env-file .env up -d --no-deps --build gateway nats
+
+dev-real-down:
+	docker compose -f docker-compose.yaml -f docker-compose.real.yaml down
 
 e2e:
 	TESTCONTAINERS_RYUK_DISABLED=true $(GO) test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...

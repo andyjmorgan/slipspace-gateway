@@ -1,0 +1,11 @@
+# admin.yaml used by docker-compose. Binds 0.0.0.0 so the host port
+# forward reaches the listener inside the container — the workstation
+# config-dev/admin.yaml binds 127.0.0.1 because go-run from the host
+# doesn't have that constraint.
+#
+# Password is intentionally absent — docker-compose.yaml exports
+# SLUICE_ADMIN_PASSWORD which wins over yaml. Override in your local
+# environment (or a .env file) for non-default operator credentials.
+admin:
+  enabled: true
+  bind_addr: "0.0.0.0:8081"

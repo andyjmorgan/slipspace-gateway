@@ -1,0 +1,29 @@
+# Trim the docker build context — anything below would either be
+# rebuilt inside the image or doesn't belong in the binary.
+.git
+.github
+.claude
+
+# Test artefacts.
+coverage.out
+coverage.html
+dist/
+bin/
+
+# SPA build inputs ride in via the multi-stage spa-builder; the
+# pre-installed node_modules and any local Vite output would otherwise
+# bloat the build context.
+web/node_modules
+web/dist
+web/.vite
+
+# The committed placeholder.html stays so go:embed has something to
+# attach if the SPA build is skipped; the generated SPA outputs (under
+# webdist/ but not placeholder.html) are produced fresh in the image.
+internal/admin/webdist/index.html
+internal/admin/webdist/assets
+
+# Local dev overlays.
+docker-compose.dev.yaml
+.env
+*.log

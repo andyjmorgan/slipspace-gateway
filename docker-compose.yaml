@@ -5,8 +5,9 @@ services:
       dockerfile: deploy/docker/Dockerfile
     image: sluice-gateway:dev
     ports:
-      - "8585:8585"
-      - "9090:9090"
+      - "8585:8585"  # data plane
+      - "8081:8081"  # admin console (SPA + /api/v1)
+      - "9090:9090"  # prometheus scrape
     environment:
       SLUICE_CONFIG_DIR: /etc/sluice
       SLUICE_HTTP_BIND: 0.0.0.0:8585
@@ -15,16 +16,32 @@ services:
       SLUICE_LOG_LEVEL: debug
       SLUICE_PROMETHEUS_BIND: 0.0.0.0:9090
       SLUICE_NATS_URL: nats://nats:4222
+      # Operator credential for the admin console. Wins over any
+      # `password:` field in admin.yaml. Override per developer.
+      SLUICE_ADMIN_PASSWORD: ${SLUICE_ADMIN_PASSWORD:-sluice-gateway}
+      # Tight snapshot cadence so the dashboard reflects local traffic
+      # within seconds; production defaults to 300000 (5 minutes).
+      SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS: ${SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS:-2000}
     volumes:
       - ./config-dev:/etc/sluice:ro
+      # Overlay the host config-dev/admin.yaml (binds loopback for native
+      # go-run) with one that binds 0.0.0.0 so the host port mapping
+      # reaches the listener.
+      - ./deploy/compose/admin.yaml:/etc/sluice/admin.yaml:ro
     depends_on:
       - mockllm
       - nats
 
   mockllm:
-    image: ghcr.io/andyjmorgan/sluice-mockllm:latest
-    ports:
-      - "5555:5555"
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.mockllm
+    image: sluice-mockllm:dev
+    # No host port mapping — the gateway reaches mockllm via the
+    # compose network alias `mockllm:5555`. Uncomment the ports block
+    # if you want to curl the mock LLM directly from the host.
+    # ports:
+    #   - "5555:5555"
 
   nats:
     image: nats:2.10
