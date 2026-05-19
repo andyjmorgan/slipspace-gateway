@@ -56,6 +56,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 	meters.RuleMatchesTotal.Add(ctx, 1)
 	meters.RuleErrorsTotal.Add(ctx, 1)
 	meters.RuleEvaluationDuration.Record(ctx, 0.0007)
+	meters.AdminRequestsTotal.Add(ctx, 1)
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(ctx, &rm); err != nil {
@@ -88,6 +89,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 		observability.MetricRuleMatchesTotal,
 		observability.MetricRuleErrorsTotal,
 		observability.MetricRuleEvaluationDuration,
+		observability.MetricAdminRequestsTotal,
 	}
 	for _, name := range want {
 		if !got[name] {

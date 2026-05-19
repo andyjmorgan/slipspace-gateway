@@ -43,12 +43,64 @@ SLUICE_API_KEY=sk_live_... uv run --project test/smoke pytest -v
 
 ## Configuration
 
-Two YAML files live in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`):
+Three YAML files live in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`):
 
 - **`providers.yaml`** — operator-owned route table. One entry per provider; one entry per endpoint under each provider. Per-endpoint `auth_header` / `auth_format` overrides let a single provider expose multiple credential conventions.
 - **`policy.yaml`** — configurations, API keys, rule library, resilience library. The control plane (v1.1) will write this exclusively.
+- **`admin.yaml`** *(optional, v1.1)* — gates the management console. Off by default. When enabled, the gateway starts a second listener on `bind_addr` serving the embedded SPA at `/` and the control-plane API under `/api/v1/*`. Username is hardcoded to `admin`; the password is read from `SLUICE_ADMIN_PASSWORD` if set, otherwise from the yaml `password` field.
 
-See [config-dev/](config-dev/) for a working example. Server-level configuration (`SLUICE_*` env vars) is documented in [CLAUDE.md](CLAUDE.md).
+See [config-dev/](config-dev/) for working examples. Server-level configuration (`SLUICE_*` env vars) is documented in [CLAUDE.md](CLAUDE.md).
+
+## Management console (v1.1)
+
+The console is a Vite + React + shadcn SPA embedded into the gateway binary via `//go:embed`. Source lives in [`web/`](web/); build output lands at `internal/admin/webdist/`.
+
+```sh
+# Build the SPA into the gateway's embed FS.
+make web
+
+# Or build everything (SPA + binary) in one go.
+make build
+```
+
+### Local dev — full stack from docker-compose
+
+The fastest way to exercise the SPA + gateway together end-to-end:
+
+```sh
+make dev-compose          # builds + starts gateway, mockllm, nats
+# open http://localhost:8081 and sign in:
+#   username: admin
+#   password: sluice-gateway   (override via SLUICE_ADMIN_PASSWORD env)
+make dev-compose-down     # tear it down
+```
+
+The gateway image bakes the SPA in at build time. Override the operator password by exporting `SLUICE_ADMIN_PASSWORD=...` before `make dev-compose`. Ports exposed on the host:
+
+| Host port | Container port | Surface |
+|---|---|---|
+| `8585` | `8585` | Data plane (provider proxy) |
+| `8081` | `8081` | Admin console (SPA + `/api/v1`) |
+| `9090` | `9090` | Prometheus scrape |
+| `4222` / `8222` | `4222` / `8222` | NATS / monitoring |
+
+### SPA hot-reload against a running gateway
+
+For SPA-only iteration without rebuilding the image, leave `make dev-compose` running and start the Vite dev server in a second terminal:
+
+```sh
+make web-dev   # Vite on :5180, proxies /api/v1 to localhost:8081
+```
+
+Open `http://localhost:5180`. Changes to `web/src/**` reload instantly; the compose-served gateway continues serving the API.
+
+### Pure-Go dev loop (no compose for the gateway)
+
+```sh
+make dev   # docker compose up -d mockllm nats; go run ./cmd/gateway
+```
+
+`config-dev/admin.yaml` has the console enabled on `127.0.0.1:8081` with the placeholder password. To iterate on Go code without rebuilding an image, this is the fastest path.
 
 ## Where the canonical design lives
 

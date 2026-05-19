@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Sluice console — design tokens (ported from prototype styles.css)
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Surfaces — dark theme defaults */
+  --bg:             oklch(0.155 0.006 250);
+  --bg-1:           oklch(0.195 0.006 250);
+  --bg-2:           oklch(0.225 0.006 250);
+  --bg-3:           oklch(0.265 0.006 250);
+  --border:         oklch(0.305 0.006 250);
+  --border-strong: oklch(0.40 0.006 250);
+  --hover:          oklch(0.245 0.006 250);
+
+  --text:    oklch(0.96 0.005 250);
+  --text-2:  oklch(0.78 0.008 250);
+  --text-3:  oklch(0.62 0.010 250);
+  --text-4:  oklch(0.46 0.012 250);
+
+  --accent:    oklch(0.75 0.13 235);
+  --accent-fg: oklch(0.18 0.04 240);
+  --accent-bg: oklch(0.30 0.08 235 / 0.18);
+
+  --ok:        oklch(0.78 0.14 158);
+  --ok-bg:     oklch(0.78 0.14 158 / 0.13);
+  --warn:      oklch(0.82 0.13 75);
+  --warn-bg:   oklch(0.82 0.13 75 / 0.13);
+  --err:       oklch(0.70 0.18 22);
+  --err-bg:    oklch(0.70 0.18 22 / 0.16);
+  --info:      oklch(0.75 0.13 235);
+  --info-bg:   oklch(0.75 0.13 235 / 0.15);
+  --violet:    oklch(0.74 0.14 300);
+  --violet-bg: oklch(0.74 0.14 300 / 0.14);
+
+  --p-openai:         oklch(0.78 0.13 158);
+  --p-openai-bg:      oklch(0.78 0.13 158 / 0.14);
+  --p-anthropic:      oklch(0.80 0.13 60);
+  --p-anthropic-bg:   oklch(0.80 0.13 60 / 0.14);
+  --p-gemini:         oklch(0.77 0.13 240);
+  --p-gemini-bg:      oklch(0.77 0.13 240 / 0.16);
+  --p-qwen-vllm:      oklch(0.76 0.13 300);
+  --p-qwen-vllm-bg:   oklch(0.76 0.13 300 / 0.15);
+  --p-qwen-ollama:    oklch(0.78 0.13 348);
+  --p-qwen-ollama-bg: oklch(0.78 0.13 348 / 0.15);
+
+  --radius:     6px;
+  --radius-lg: 10px;
+
+  --shadow-sm:  0 1px 0 oklch(0 0 0 / 0.30);
+  --shadow-md:  0 6px 24px -8px oklch(0 0 0 / 0.45), 0 1px 0 oklch(0 0 0 / 0.20);
+  --shadow-pop: 0 24px 64px -12px oklch(0 0 0 / 0.55), 0 1px 0 oklch(0 0 0 / 0.30);
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --sidebar-w: 232px;
+  --header-h:  56px;
+
+  color-scheme: dark;
+}
+
+:root.light {
+  --bg:             oklch(0.985 0.002 250);
+  --bg-1:           oklch(1.00 0.000 250);
+  --bg-2:           oklch(0.965 0.004 250);
+  --bg-3:           oklch(0.940 0.005 250);
+  --border:         oklch(0.895 0.005 250);
+  --border-strong: oklch(0.80 0.008 250);
+  --hover:          oklch(0.955 0.004 250);
+
+  --text:    oklch(0.20 0.012 250);
+  --text-2:  oklch(0.36 0.012 250);
+  --text-3:  oklch(0.52 0.012 250);
+  --text-4:  oklch(0.66 0.012 250);
+
+  --accent:    oklch(0.52 0.16 235);
+  --accent-fg: oklch(0.99 0 0);
+  --accent-bg: oklch(0.52 0.16 235 / 0.12);
+
+  --ok:        oklch(0.55 0.16 158);
+  --ok-bg:     oklch(0.55 0.16 158 / 0.13);
+  --warn:      oklch(0.62 0.15 65);
+  --warn-bg:   oklch(0.62 0.15 65 / 0.13);
+  --err:       oklch(0.55 0.20 22);
+  --err-bg:    oklch(0.55 0.20 22 / 0.13);
+  --info:      oklch(0.52 0.16 235);
+  --info-bg:   oklch(0.52 0.16 235 / 0.13);
+  --violet:    oklch(0.50 0.18 300);
+  --violet-bg: oklch(0.50 0.18 300 / 0.13);
+
+  --p-openai:         oklch(0.45 0.14 158);
+  --p-openai-bg:      oklch(0.55 0.14 158 / 0.16);
+  --p-anthropic:      oklch(0.48 0.14 55);
+  --p-anthropic-bg:   oklch(0.62 0.13 55 / 0.18);
+  --p-gemini:         oklch(0.50 0.15 240);
+  --p-gemini-bg:      oklch(0.55 0.16 240 / 0.16);
+  --p-qwen-vllm:      oklch(0.48 0.16 300);
+  --p-qwen-vllm-bg:   oklch(0.55 0.15 300 / 0.16);
+  --p-qwen-ollama:    oklch(0.50 0.16 348);
+  --p-qwen-ollama-bg: oklch(0.55 0.15 348 / 0.16);
+
+  --shadow-sm:  0 1px 0 oklch(0 0 0 / 0.04);
+  --shadow-md:  0 6px 24px -10px oklch(0 0 0 / 0.16), 0 1px 0 oklch(0 0 0 / 0.04);
+  --shadow-pop: 0 24px 64px -16px oklch(0 0 0 / 0.18), 0 1px 0 oklch(0 0 0 / 0.06);
+
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg:             var(--bg);
+  --color-bg-1:           var(--bg-1);
+  --color-bg-2:           var(--bg-2);
+  --color-bg-3:           var(--bg-3);
+  --color-border:         var(--border);
+  --color-border-strong:  var(--border-strong);
+  --color-hover:          var(--hover);
+
+  --color-fg:    var(--text);
+  --color-fg-2:  var(--text-2);
+  --color-fg-3:  var(--text-3);
+  --color-fg-4:  var(--text-4);
+
+  --color-accent:    var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-bg: var(--accent-bg);
+
+  --color-ok:        var(--ok);
+  --color-ok-bg:     var(--ok-bg);
+  --color-warn:      var(--warn);
+  --color-warn-bg:   var(--warn-bg);
+  --color-err:       var(--err);
+  --color-err-bg:    var(--err-bg);
+  --color-info:      var(--info);
+  --color-info-bg:   var(--info-bg);
+  --color-violet:    var(--violet);
+  --color-violet-bg: var(--violet-bg);
+
+  --color-p-openai:         var(--p-openai);
+  --color-p-openai-bg:      var(--p-openai-bg);
+  --color-p-anthropic:      var(--p-anthropic);
+  --color-p-anthropic-bg:   var(--p-anthropic-bg);
+  --color-p-gemini:         var(--p-gemini);
+  --color-p-gemini-bg:      var(--p-gemini-bg);
+  --color-p-qwen-vllm:      var(--p-qwen-vllm);
+  --color-p-qwen-vllm-bg:   var(--p-qwen-vllm-bg);
+  --color-p-qwen-ollama:    var(--p-qwen-ollama);
+  --color-p-qwen-ollama-bg: var(--p-qwen-ollama-bg);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: 4px;
+  --radius:    var(--radius);
+  --radius-lg: var(--radius-lg);
+
+  --shadow-sm:  var(--shadow-sm);
+  --shadow-md:  var(--shadow-md);
+  --shadow-pop: var(--shadow-pop);
+}
+
+/* Base */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-feature-settings: "ss01", "cv11", "tnum";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+#root { min-height: 100%; }
+.mono { font-family: var(--font-mono); font-feature-settings: "tnum", "ss01"; }
+.tnum { font-variant-numeric: tabular-nums; }

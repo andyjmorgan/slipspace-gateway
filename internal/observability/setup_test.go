@@ -32,9 +32,11 @@ func shutdownProv(prov *observability.Provider) {
 	_ = prov.Shutdown(ctx)
 }
 
-func TestSetup_NeitherExporterInstallsNoopProvider(t *testing.T) {
+func TestSetup_NeitherExporterStillBuildsSDKWithSnapshotter(t *testing.T) {
 	t.Parallel()
 
+	// Even without prom/otlp, Setup builds an SDK MeterProvider so the
+	// in-process snapshotter (and downstream admin console) works.
 	prov, err := observability.Setup(context.Background(), observability.Config{
 		LogFormat: "json",
 		LogLevel:  "info",
@@ -45,18 +47,28 @@ func TestSetup_NeitherExporterInstallsNoopProvider(t *testing.T) {
 	t.Cleanup(func() { shutdownProv(prov) })
 
 	if prov.PromHandler != nil {
-		t.Errorf("expected nil PromHandler when neither exporter enabled")
+		t.Errorf("expected nil PromHandler when Prometheus disabled")
 	}
-	if _, ok := prov.MeterProvider.(*sdkmetric.MeterProvider); ok {
-		t.Errorf("expected noop MeterProvider, got sdk provider")
+	if _, ok := prov.MeterProvider.(*sdkmetric.MeterProvider); !ok {
+		t.Errorf("expected SDK MeterProvider, got %T", prov.MeterProvider)
 	}
 	if prov.Meters == nil {
-		t.Fatalf("expected Meters to be installed even on noop path")
+		t.Fatalf("expected Meters to be installed")
+	}
+	if prov.Snapshotter == nil {
+		t.Fatalf("expected Snapshotter to be installed")
 	}
 
 	prov.Meters.RequestsTotal.Add(context.Background(), 1)
 	prov.Meters.RequestDuration.Record(context.Background(), 0.1)
 	prov.Meters.ActiveRequests.Add(context.Background(), 1)
+
+	if err := prov.Snapshotter.Snapshot(context.Background()); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if _, ok := prov.Snapshotter.Latest(); !ok {
+		t.Error("Snapshotter.Latest unavailable after explicit Snapshot")
+	}
 }
 
 func TestSetup_PrometheusOnly(t *testing.T) {

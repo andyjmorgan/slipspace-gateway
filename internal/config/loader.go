@@ -13,6 +13,7 @@ import (
 	"github.com/knadh/koanf/v2"
 	"gopkg.in/yaml.v3"
 
+	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
@@ -24,11 +25,13 @@ const (
 	keyAPIKeys            = "api_keys"
 	keyRules              = "rules"
 	keyResiliencePolicies = "resilience_policies"
+	keyAdmin              = "admin"
 )
 
 const (
 	filenameProviders = "providers.yaml"
 	filenamePolicy    = "policy.yaml"
+	filenameAdmin     = "admin.yaml"
 )
 
 // allowedKeysByFile pins each accepted filename to the top-level keys it is
@@ -43,6 +46,9 @@ var allowedKeysByFile = map[string]map[string]struct{}{
 		keyAPIKeys:            {},
 		keyRules:              {},
 		keyResiliencePolicies: {},
+	},
+	filenameAdmin: {
+		keyAdmin: {},
 	},
 }
 
@@ -213,6 +219,12 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 			return nil, fmt.Errorf("config: decode resilience_policies: %w: %w", ErrParse, err)
 		}
 	}
+	if node, ok := merged.nodes[keyAdmin]; ok {
+		out.Admin = &admin.Config{}
+		if err := node.Decode(out.Admin); err != nil {
+			return nil, fmt.Errorf("config: decode admin: %w: %w", ErrParse, err)
+		}
+	}
 	return out, nil
 }
 
@@ -222,6 +234,11 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 //
 // Returns the first violation as a wrapped sentinel error.
 func (r *ResolvedConfig) Validate() error {
+	if r.Admin != nil {
+		if err := r.Admin.Validate(); err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+	}
 	if len(r.Configurations) == 0 {
 		return fmt.Errorf("config: validate: %w", ErrNoConfigurations)
 	}

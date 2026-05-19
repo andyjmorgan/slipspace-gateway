@@ -28,6 +28,12 @@ const (
 	// every realistic operator-authored policy with headroom.
 	DefaultRulesMaxGroupDepth = 8
 
+	// DefaultAdminSnapshotInterval is how often the admin console's
+	// metric snapshotter reads the in-process registry. 5 minutes
+	// gives the 24h dashboard 288 sample points, matching the design's
+	// chart resolution. E2E tests override via SLUICE_ADMIN_SNAPSHOT_INTERVAL.
+	DefaultAdminSnapshotIntervalMs = 300_000
+
 	// MaxRulesMaxGroupDepth is the upper bound accepted by Validate.
 	// Beyond this, the cost of authoring + evaluating a tree this deep
 	// outweighs any expressive gain; a flat priority chain is clearer.
@@ -51,6 +57,7 @@ const (
 	EnvNATSPublishQueueSize    = "SLUICE_NATS_PUBLISH_QUEUE_SIZE"
 	EnvConfigDir               = "SLUICE_CONFIG_DIR"
 	EnvRulesMaxGroupDepth      = "SLUICE_RULES_MAX_GROUP_DEPTH"
+	EnvAdminSnapshotIntervalMs = "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -71,6 +78,7 @@ var envVarNames = []string{
 	EnvNATSPublishQueueSize,
 	EnvConfigDir,
 	EnvRulesMaxGroupDepth,
+	EnvAdminSnapshotIntervalMs,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -139,6 +147,12 @@ type ServerEnv struct {
 	// rarely need more than 3-4 levels; the cap is a guardrail against
 	// pathological YAML triggering stack overflow in the evaluator.
 	RulesMaxGroupDepth int
+
+	// AdminSnapshotIntervalMs is the interval the admin console's
+	// metric snapshotter uses between Collect calls, in milliseconds.
+	// Production defaults to 5 minutes; e2e tests drop this to ~200ms
+	// so the dashboard reflects real traffic in test wall-clock.
+	AdminSnapshotIntervalMs int
 }
 
 // ReportingEnabled reports whether NATS reporting is configured. False
@@ -174,6 +188,10 @@ func LoadEnv() (*ServerEnv, error) {
 	if err != nil {
 		return nil, err
 	}
+	snapInterval, err := envInt(EnvAdminSnapshotIntervalMs, DefaultAdminSnapshotIntervalMs)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ServerEnv{
 		HTTPBind:                envString(EnvHTTPBind, DefaultHTTPBind),
@@ -190,6 +208,7 @@ func LoadEnv() (*ServerEnv, error) {
 		NATSPublishQueueSize:    queue,
 		ConfigDir:               envString(EnvConfigDir, DefaultConfigDir),
 		RulesMaxGroupDepth:      groupDepth,
+		AdminSnapshotIntervalMs: snapInterval,
 	}, nil
 }
 
@@ -215,6 +234,9 @@ func (e *ServerEnv) Validate() error {
 	}
 	if e.RulesMaxGroupDepth < 1 || e.RulesMaxGroupDepth > MaxRulesMaxGroupDepth {
 		return fmt.Errorf("%s=%d: %w: must be in [1, %d]", EnvRulesMaxGroupDepth, e.RulesMaxGroupDepth, ErrInvalidEnv, MaxRulesMaxGroupDepth)
+	}
+	if e.AdminSnapshotIntervalMs <= 0 {
+		return fmt.Errorf("%s=%d: %w: must be positive", EnvAdminSnapshotIntervalMs, e.AdminSnapshotIntervalMs, ErrInvalidEnv)
 	}
 	switch strings.ToLower(strings.TrimSpace(e.LogLevel)) {
 	case "debug", "info", "warn", "error":

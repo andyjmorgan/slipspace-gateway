@@ -15,6 +15,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
@@ -58,6 +59,8 @@ func mainErr() int {
 }
 
 func run(ctx context.Context) error {
+	startedAt := time.Now().UTC()
+
 	env, err := config.LoadEnv()
 	if err != nil {
 		return fmt.Errorf("gateway: load env: %w", err)
@@ -73,11 +76,12 @@ func run(ctx context.Context) error {
 
 	build := observability.BuildInfo{Service: binaryName, Version: version.Version}
 	obs, err := observability.Setup(ctx, observability.Config{
-		PrometheusBind: env.PrometheusBind,
-		OTLPEndpoint:   env.OTLPEndpoint,
-		OTLPProtocol:   env.OTLPProtocol,
-		LogFormat:      env.LogFormat,
-		LogLevel:       env.LogLevel,
+		PrometheusBind:   env.PrometheusBind,
+		OTLPEndpoint:     env.OTLPEndpoint,
+		OTLPProtocol:     env.OTLPProtocol,
+		LogFormat:        env.LogFormat,
+		LogLevel:         env.LogLevel,
+		SnapshotInterval: time.Duration(env.AdminSnapshotIntervalMs) * time.Millisecond,
 	}, build)
 	if err != nil {
 		return fmt.Errorf("gateway: observability setup: %w", err)
@@ -128,12 +132,19 @@ func run(ctx context.Context) error {
 		startPrometheus(ctx, env.PrometheusBind, obs.PromHandler, logger)
 	}
 
+	// Kick off the snapshotter that backs the admin dashboard. Lifetime
+	// is bound to ctx; the loop exits on cancellation.
+	obs.Snapshotter.Start(ctx)
+
+	startAdmin(ctx, resolved, obs, logger, drain, startedAt)
+
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
 		"config_dir", env.ConfigDir,
 		"providers", len(resolved.Providers),
 		"configurations", len(resolved.Configurations),
 		"api_keys", len(resolved.APIKeys),
+		"admin_enabled", resolved.Admin != nil && resolved.Admin.Enabled,
 	)
 
 	if err := srv.Run(ctx); err != nil {
@@ -226,6 +237,76 @@ func shutdownPromServer(srv *http.Server) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// startAdmin brings up the management-console listener on a second
+// http.Server when resolved.Admin is non-nil and Enabled. The console
+// is fully off when the feature flag is false: no goroutine is spawned,
+// no port is opened.
+//
+// The drain budget mirrors the data plane's so a SIGTERM gives in-flight
+// admin requests the same shutdown headroom as proxy requests.
+func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time) {
+	if resolved.Admin == nil || !resolved.Admin.Enabled {
+		logger.InfoContext(ctx, "admin console disabled")
+		return
+	}
+
+	providers := make([]string, 0, len(resolved.Providers))
+	for name := range resolved.Providers {
+		providers = append(providers, name)
+	}
+
+	ruleAttachments := buildRuleAttachments(resolved)
+
+	handler := admin.NewMux(admin.MuxOptions{
+		Password:         resolved.Admin.ResolvePassword(),
+		Meters:           obs.Meters,
+		Snapshotter:      obs.Snapshotter,
+		Providers:        providers,
+		RuleAttachments:  ruleAttachments,
+		GatewayStartedAt: startedAt,
+	})
+	bind := resolved.Admin.EffectiveBindAddr()
+	srv := &http.Server{
+		Addr:              bind,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	safego.Go(ctx, "gateway.admin.serve", logger, nil, func() {
+		logger.InfoContext(ctx, "admin console listening", "addr", bind)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.ErrorContext(ctx, "admin listener exited", "err", err.Error())
+		}
+	})
+	safego.Go(ctx, "gateway.admin.shutdown_watcher", logger, nil, func() {
+		<-ctx.Done()
+		shutdownAdminServer(srv, drain) //nolint:contextcheck // shutdown context is intentionally detached
+	})
+}
+
+// shutdownAdminServer drains the admin listener with a detached context
+// so the budget survives the SIGTERM that initiated shutdown.
+func shutdownAdminServer(srv *http.Server, drain time.Duration) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), drain)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
+}
+
+// buildRuleAttachments inverts the Configuration → RuleNames map into
+// the rule_name → [configuration, ...] shape the dashboard handler
+// joins against. A rule referenced by zero configurations is omitted —
+// it would never appear in a rules-fired event so the dashboard never
+// needs to render it.
+func buildRuleAttachments(resolved *config.ResolvedConfig) map[string][]string {
+	out := map[string][]string{}
+	for name, cfg := range resolved.Configurations {
+		for _, ruleName := range cfg.RuleNames {
+			out[ruleName] = append(out[ruleName], name)
+		}
+	}
+	return out
 }
 
 // shutdownObservability flushes the telemetry pipeline with a fresh, detached

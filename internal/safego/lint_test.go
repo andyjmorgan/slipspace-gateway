@@ -43,6 +43,13 @@ func TestNoUnsafeGoroutineLaunches(t *testing.T) {
 		// that already errors loudly on harness failure. Not a
 		// production code path.
 		"test/e2e/harness/harness.go": "e2e test harness",
+
+		// observability/snapshot.go lives upstream of safego (safego
+		// imports observability.Meters). The snapshotter's runLoop
+		// carries its own deferred recover() that logs panics to the
+		// configured slog.Logger — equivalent to what safego.Go would
+		// provide.
+		"internal/observability/snapshot.go": "upstream of safego, carries its own recover()",
 	}
 
 	// Skip these directory roots entirely.
