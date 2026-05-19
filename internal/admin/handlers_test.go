@@ -62,4 +62,28 @@ func TestDashboardSummaryHandler_EmptySnapshotter(t *testing.T) {
 			t.Errorf("provider %q Healthy = false; want true on first paint", p.Provider)
 		}
 	}
+
+	// SPA accesses .length and .map() on every slice field without
+	// optional chaining — JSON null would crash the dashboard on
+	// first paint. Lock the no-nil-slices contract here so a future
+	// DashboardSummary field addition either initialises in
+	// emptySummary or fails this gate.
+	if got.ByProvider == nil {
+		t.Error("ByProvider serialised as nil; SPA expects empty array")
+	}
+	if got.ByEndpoint == nil {
+		t.Error("ByEndpoint serialised as nil; SPA expects empty array")
+	}
+	if got.ByConfiguration == nil {
+		t.Error("ByConfiguration serialised as nil; SPA expects empty array")
+	}
+	if got.ByModel == nil {
+		t.Error("ByModel serialised as nil; SPA expects empty array")
+	}
+	if got.RulesFired == nil {
+		t.Error("RulesFired serialised as nil; SPA expects empty array")
+	}
+	if got.ProviderHealth == nil {
+		t.Error("ProviderHealth serialised as nil; SPA expects empty array")
+	}
 }
