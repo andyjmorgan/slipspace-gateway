@@ -35,17 +35,9 @@ providers:
         accepted_paths: [/v1/messages, /messages]
         accepts_streaming: true
         request_kind: messages
-        # prefix_optional is a per-endpoint escape hatch on a
-        # prefix_required provider: this single endpoint also emits
-        # bare routes (/v1/messages, /messages) so a vanilla provider
-        # SDK pointed at the gateway root works without the prefix.
-        # The prefixed form (/anthropic/v1/messages) still emits via
-        # the provider's prefix_required=true. Used here because the
-        # bare paths are not claimed by any other provider; the
-        # OpenAI-compat chat_completions endpoint on this same
-        # provider deliberately keeps prefix_required to avoid
-        # colliding with openai on /v1/chat/completions.
         prefix_optional: true
+        auth_header: x-api-key
+        auth_format: "{key}"
       models:
         path: /v1/models
         method: [GET]
@@ -71,14 +63,6 @@ providers:
         accepted_paths: ["/v1beta/models/{model}:generateContent"]
         accepts_streaming: true
         request_kind: generate_content
-        # Same rationale as anthropic.messages: bare-route this native
-        # endpoint so a vanilla gemini SDK pointed at the gateway root
-        # resolves without the /gemini prefix. /v1beta/models/{model}:
-        # generateContent is unique to gemini — no collisions. The
-        # OpenAI-compat chat_completions endpoint on this same provider
-        # deliberately stays prefix_required to avoid colliding with
-        # openai on /v1/chat/completions, and gemini.models stays
-        # prefix-only too (discovery endpoint, less load-bearing).
         prefix_optional: true
       models:
         path: /v1beta/models
@@ -93,3 +77,79 @@ providers:
         request_kind: chat
         auth_header: Authorization
         auth_format: "Bearer {key}"
+
+  gpt-oss:
+    prefix: gpt-oss
+    prefix_required: true
+    base_url: http://mockllm:5555
+    endpoints:
+      chat_completions:
+        path: /v1/chat/completions
+        method: [POST]
+        accepted_paths: [/v1/chat/completions]
+        accepts_streaming: true
+        request_kind: chat
+      responses:
+        path: /v1/responses
+        method: [POST]
+        accepted_paths: [/v1/responses]
+        accepts_streaming: true
+        request_kind: responses
+      messages:
+        path: /v1/messages
+        method: [POST]
+        accepted_paths: [/v1/messages]
+        accepts_streaming: true
+        request_kind: messages
+      models:
+        path: /v1/models
+        method: [GET]
+        accepted_paths: [/v1/models]
+        request_kind: passthrough
+
+  qwen36:
+    prefix: qwen36
+    prefix_required: true
+    base_url: http://mockllm:5555
+    endpoints:
+      chat_completions:
+        path: /v1/chat/completions
+        method: [POST]
+        accepted_paths: [/v1/chat/completions]
+        accepts_streaming: true
+        request_kind: chat
+      responses:
+        path: /v1/responses
+        method: [POST]
+        accepted_paths: [/v1/responses]
+        accepts_streaming: true
+        request_kind: responses
+      messages:
+        path: /v1/messages
+        method: [POST]
+        accepted_paths: [/v1/messages]
+        accepts_streaming: true
+        request_kind: messages
+      models:
+        path: /v1/models
+        method: [GET]
+        accepted_paths: [/v1/models]
+        request_kind: passthrough
+
+  qwen-ollama:
+    prefix: qwen-ollama
+    prefix_required: true
+    base_url: http://mockllm:5555
+    endpoints:
+      chat_completions:
+        path: /v1/chat/completions
+        method: [POST]
+        accepted_paths: [/v1/chat/completions]
+        accepts_streaming: true
+        request_kind: chat
+      messages:
+        path: /v1/messages
+        method: [POST]
+        accepted_paths: [/v1/messages]
+        accepts_streaming: true
+        request_kind: messages

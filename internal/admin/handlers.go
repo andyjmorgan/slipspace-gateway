@@ -15,7 +15,7 @@ import (
 // validate cached credentials.
 func AuthMeHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{
+		writeJSON(w, map[string]string{
 			"username": adminc.Username,
 		})
 	})
@@ -35,7 +35,7 @@ func DashboardSummaryHandler(snap *observability.Snapshotter, providers []string
 		window := parseWindow(r.URL.Query().Get("window"), dashboardWindow)
 		summary := computeSummary(snap, providers, ruleAttachments, window, fiveMinWindow)
 		summary.GatewayStartedAt = gatewayStartedAt
-		writeJSON(w, http.StatusOK, summary)
+		writeJSON(w, summary)
 	})
 }
 
@@ -94,8 +94,10 @@ func emptySummary(providers []string, window time.Duration) adminc.DashboardSumm
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
+// writeJSON serialises body as JSON with HTTP 200. Error paths use
+// http.Error / http.NotFound directly — keeping this single-purpose
+// avoids a dead-code parameter that the linter flags.
+func writeJSON(w http.ResponseWriter, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }

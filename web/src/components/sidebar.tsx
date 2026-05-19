@@ -2,10 +2,10 @@ import { NavLink } from "react-router"
 import {
   LayoutDashboard,
   Settings as SettingsIcon,
-  KeyRound,
   ListTree,
   Server,
   SlidersHorizontal,
+  Route as RouteIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -18,10 +18,10 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, section: "Manage" },
-  { to: "/apikeys", label: "API Keys", icon: KeyRound },
+  { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, section: "Read-only inspect" },
   { to: "/rules", label: "Rules", icon: ListTree },
-  { to: "/providers", label: "Providers", icon: Server, section: "Read-only" },
+  { to: "/providers", label: "Providers", icon: Server },
+  { to: "/routes", label: "Routes", icon: RouteIcon },
   { to: "/settings", label: "Settings", icon: SettingsIcon, section: "System" },
 ]
 

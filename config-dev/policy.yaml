@@ -1,3 +1,15 @@
+# Two configurations are loaded here:
+#
+# 1. `dev` — the long-standing fixture the e2e harness drives. The
+#    harness hardcodes the api-key secret and the configuration name,
+#    so anything in this block needs to stay backwards-compatible.
+#
+# 2. `production` — a sanitised replica of the cluster sluice-gateway
+#    secret's policy.yaml (office cluster, sluice-gateway namespace).
+#    Every real credential has been swapped for a *-mock or
+#    sk_dev_replica_* equivalent; structure is verbatim from the
+#    cluster so the admin console reflects what's actually running.
+
 configurations:
   dev:
     upstream_credentials:
@@ -15,10 +27,42 @@ configurations:
     tags:
       tier: dev
 
+  production:
+    upstream_credentials:
+      openai: sk-mock-openai
+      anthropic: sk-ant-mock-anthropic
+      gemini: gemini-mock
+      gpt-oss: ""
+      qwen36: ""
+      qwen-ollama: ""
+
+    rule_names:
+      - route-gpt-oss
+      - route-qwen36
+      - route-qwen-ollama
+      - route-claude-models-to-anthropic
+      - route-gemini-models-to-gemini
+
+    tags:
+      tier: production
+
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
     name: "Local dev"
     configuration: dev
+    enabled: true
+
+  - secret: sk_dev_replica_donkeywork_production_local_only
+    name: "sluice.donkeywork.dev production (replica)"
+    configuration: production
+    enabled: true
+  - secret: ollama
+    name: "bash-enrichment-service (ollama default key)"
+    configuration: production
+    enabled: true
+  - secret: sk_dev_replica_smoke_v106_local_only
+    name: "smoke-v106 (replica)"
+    configuration: production
     enabled: true
 
 rules:
@@ -35,12 +79,39 @@ rules:
         headerValue: emails
     behavior: continue
 
-  # v1.0.2: route OpenAI-surface traffic to anthropic's OpenAI-compat
-  # chat endpoint when the model name starts with `claude-`. The
-  # destination builder re-resolves anthropic.chat_completions on
-  # state.Provider change and picks up the endpoint's auth_header /
-  # auth_format override automatically — no changeUrl, no setHeader,
-  # no credential in the rule YAML.
+  - name: route-gpt-oss
+    priority: 100
+    condition:
+      type: modelName
+      operator: StartsWith
+      expectedModelName: gpt-oss
+    actions:
+      - type: changeProvider
+        newProvider: gpt-oss
+    behavior: continue
+
+  - name: route-qwen36
+    priority: 100
+    condition:
+      type: modelName
+      operator: StartsWith
+      expectedModelName: "qwen3.6"
+    actions:
+      - type: changeProvider
+        newProvider: qwen36
+    behavior: continue
+
+  - name: route-qwen-ollama
+    priority: 100
+    condition:
+      type: modelName
+      operator: Equals
+      expectedModelName: "qwen2.5-coder:7b"
+    actions:
+      - type: changeProvider
+        newProvider: qwen-ollama
+    behavior: continue
+
   - name: route-claude-models-to-anthropic
     priority: 50
     condition:
