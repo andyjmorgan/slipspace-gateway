@@ -266,6 +266,7 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 		Providers:        providers,
 		RuleAttachments:  ruleAttachments,
 		GatewayStartedAt: startedAt,
+		Resolved:         resolved,
 	})
 	bind := resolved.Admin.EffectiveBindAddr()
 	srv := &http.Server{

@@ -237,7 +237,7 @@ function ByProviderStrip({ rows }: { rows: DashboardProviderRow[] }) {
                 className="h-full rounded-full"
                 style={{
                   width: `${(r.requests / max) * 100}%`,
-                  background: `var(--p-${r.provider})`,
+                  background: "var(--accent)",
                 }}
               />
             </div>
@@ -280,7 +280,7 @@ function ByEndpointStrip({ rows, window }: { rows: DashboardEndpointRow[]; windo
                 className="h-full rounded-full"
                 style={{
                   width: `${(r.requests / max) * 100}%`,
-                  background: `var(--p-${r.provider})`,
+                  background: "var(--accent)",
                 }}
               />
             </div>

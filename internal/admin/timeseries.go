@@ -39,7 +39,7 @@ func TimeseriesHandler(snap *observability.Snapshotter) http.Handler {
 		if resp.Series == nil {
 			resp.Series = []adminc.DashboardSeries{}
 		}
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, resp)
 	})
 }
 

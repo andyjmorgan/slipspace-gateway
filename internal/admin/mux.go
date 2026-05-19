@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -48,6 +49,13 @@ type MuxOptions struct {
 	// process init happens before this call, so cmd/gateway captures
 	// the actual start before observability/bus/router are wired.
 	GatewayStartedAt time.Time
+
+	// Resolved is the in-memory configuration the gateway is currently
+	// serving. The read-only config endpoints under /api/v1/config/*
+	// marshal redacted projections of these fields straight out of
+	// the structure. Nil disables those endpoints — they return 503
+	// rather than panic, so a partial wiring still boots.
+	Resolved *config.ResolvedConfig
 }
 
 // Prefix is the URL path prefix the console mounts under. Both the
@@ -60,10 +68,15 @@ const Prefix = "/admin"
 // NewMux builds the management-console http.Handler.
 //
 // Routes (all under Prefix):
-//   - GET  /admin/                       — SPA index (auto-redirect from /admin)
-//   - GET  /admin/api/v1/auth/me         — auth probe; 200 + {"username":"admin"}
-//   - GET  /admin/api/v1/dashboard/...   — DashboardSummary / Timeseries JSON
-//   - All other /admin/* paths           — SPA static + index.html fallback
+//   - GET  /admin/                            — SPA index (auto-redirect from /admin)
+//   - GET  /admin/api/v1/auth/me              — auth probe; 200 + {"username":"admin"}
+//   - GET  /admin/api/v1/dashboard/...        — DashboardSummary / Timeseries JSON
+//   - GET  /admin/api/v1/config/api-keys/reveal?configuration=&name=
+//   - GET  /admin/api/v1/config/configurations[/{name}]
+//   - GET  /admin/api/v1/config/rules[/{name}]
+//   - GET  /admin/api/v1/config/providers[/{name}]
+//   - GET  /admin/api/v1/config/routes        — flattened route index
+//   - All other /admin/* paths                — SPA static + index.html fallback
 //
 // HTTP Basic auth wraps the /admin/api/v1/* tree. The SPA's static
 // assets are unauthenticated — the SPA itself drives the API calls
@@ -97,6 +110,42 @@ func NewMux(opts MuxOptions) http.Handler {
 		InstrumentRoute(opts.Meters, "/api/v1/dashboard/timeseries",
 			TimeseriesHandler(opts.Snapshotter),
 		),
+	)
+	// Read-only config inspection. The handlers project the in-memory
+	// ResolvedConfig onto redacted DTOs — every secret (api-key Secret,
+	// upstream credentials) is replaced by a last-4/length stub before
+	// it leaves the package.
+	configList := ConfigurationsListHandler(opts.Resolved)
+	configDetail := ConfigurationDetailHandler(opts.Resolved)
+	rulesList := RulesListHandler(opts.Resolved)
+	ruleDetail := RuleDetailHandler(opts.Resolved)
+	providersList := ProvidersListHandler(opts.Resolved)
+	providerDetail := ProviderDetailHandler(opts.Resolved)
+	routesAll := RoutesHandler(opts.Resolved)
+	apiKeysReveal := APIKeysRevealHandler(opts.Resolved)
+	apiMux.Handle("/api/v1/config/api-keys/reveal",
+		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/reveal", apiKeysReveal),
+	)
+	apiMux.Handle("/api/v1/config/configurations",
+		InstrumentRoute(opts.Meters, "/api/v1/config/configurations", configList),
+	)
+	apiMux.Handle("/api/v1/config/configurations/",
+		InstrumentRoute(opts.Meters, "/api/v1/config/configurations/{name}", configDetail),
+	)
+	apiMux.Handle("/api/v1/config/rules",
+		InstrumentRoute(opts.Meters, "/api/v1/config/rules", rulesList),
+	)
+	apiMux.Handle("/api/v1/config/rules/",
+		InstrumentRoute(opts.Meters, "/api/v1/config/rules/{name}", ruleDetail),
+	)
+	apiMux.Handle("/api/v1/config/providers",
+		InstrumentRoute(opts.Meters, "/api/v1/config/providers", providersList),
+	)
+	apiMux.Handle("/api/v1/config/providers/",
+		InstrumentRoute(opts.Meters, "/api/v1/config/providers/{name}", providerDetail),
+	)
+	apiMux.Handle("/api/v1/config/routes",
+		InstrumentRoute(opts.Meters, "/api/v1/config/routes", routesAll),
 	)
 
 	// adminTree exposes the same routes the listener used to expose at
