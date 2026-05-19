@@ -18,14 +18,6 @@ import (
 const returnStatusPolicy = `
 configurations:
   dev:
-    allowed_endpoints:
-      - openai.chat_completions
-      - openai.responses
-      - openai.models
-      - anthropic.messages
-      - anthropic.models
-      - gemini.generate_content
-      - gemini.models
     upstream_credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock

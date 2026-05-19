@@ -1,16 +1,5 @@
 configurations:
   dev:
-    allowed_endpoints:
-      - openai.chat_completions
-      - openai.responses
-      - openai.models
-      - anthropic.messages
-      - anthropic.models
-      - anthropic.chat_completions
-      - gemini.generate_content
-      - gemini.models
-      - gemini.chat_completions
-
     upstream_credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock

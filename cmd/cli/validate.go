@@ -94,10 +94,6 @@ func classifyConfigErr(err error) string {
 		return "no_configurations"
 	case errors.Is(err, config.ErrUnknownConfiguration):
 		return "unknown_configuration"
-	case errors.Is(err, config.ErrEndpointNotInProvider):
-		return "endpoint_not_in_provider"
-	case errors.Is(err, config.ErrMalformedAllowedEndpoint):
-		return "malformed_allowed_endpoint"
 	case errors.Is(err, config.ErrPathCollision):
 		return "path_collision"
 	case errors.Is(err, config.ErrPrefixRequiredEmpty):

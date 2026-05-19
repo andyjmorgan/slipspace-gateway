@@ -294,7 +294,7 @@ func TestConfigValidate_NoConfigurations(t *testing.T) {
 
 func TestConfigValidate_WrongFileForKey(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte("gateway:\n  http:\n    bind: 0.0.0.0:8585\nconfigurations: {dev: {allowed_endpoints: []}}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte("gateway:\n  http:\n    bind: 0.0.0.0:8585\nconfigurations: {dev: {}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, code := runCLI(t, "config", "validate", "--dir", dir)
@@ -380,8 +380,6 @@ func TestClassifyConfigErr_AllCategories(t *testing.T) {
 		{config.ErrWrongFileForKey, "wrong_file_for_key"},
 		{config.ErrNoConfigurations, "no_configurations"},
 		{config.ErrUnknownConfiguration, "unknown_configuration"},
-		{config.ErrEndpointNotInProvider, "endpoint_not_in_provider"},
-		{config.ErrMalformedAllowedEndpoint, "malformed_allowed_endpoint"},
 		{config.ErrPathCollision, "path_collision"},
 		{config.ErrPrefixRequiredEmpty, "prefix_required_empty"},
 		{config.ErrInvalidBind, "invalid_bind"},

@@ -184,19 +184,10 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
 	//nolint:gosec // test fixture keys; not real credentials
 	policyYAML := `configurations:
   dev:
-    allowed_endpoints:
-      - openai.chat_completions
-      - openai.models
-      - anthropic.messages
-      - anthropic.chat_completions
-      - gemini.chat_completions
     upstream_credentials:
       openai: sk-upstream-openai
       anthropic: sk-upstream-anthropic
       gemini: gm-upstream-gemini
-  empty:
-    allowed_endpoints: []
-    upstream_credentials: {}
 
 api_keys:
   - secret: sk_dev_local
@@ -207,10 +198,6 @@ api_keys:
     name: disabled
     configuration: dev
     enabled: false
-  - secret: sk_dev_restricted
-    name: restricted
-    configuration: empty
-    enabled: true
 `
 
 	for name, body := range map[string]string{
@@ -301,21 +288,6 @@ func TestGateway_DisabledBearer(t *testing.T) {
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
-	}
-}
-
-func TestGateway_EndpointNotAllowed(t *testing.T) {
-	env := newTestEnv(t)
-
-	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{}`)
-	req.Header.Set("Authorization", "Bearer sk_dev_restricted")
-	req.Header.Set("Content-Type", "application/json")
-
-	resp := doReq(t, req)
-	defer closeBody(resp)
-
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
 }
 

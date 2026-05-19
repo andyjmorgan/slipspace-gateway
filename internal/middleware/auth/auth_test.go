@@ -163,23 +163,6 @@ func TestHTTPHandler_UnknownConfiguration(t *testing.T) {
 	assertErrorBody(t, rec.Result().Body, "unknown configuration")
 }
 
-func TestHTTPHandler_EndpointNotAllowed(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
-	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
-
-	h := HTTPHandler(resolver, route.From, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set(HeaderConfiguration, "restricted")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d want 403", rec.Code)
-	}
-	assertErrorBody(t, rec.Result().Body, "endpoint not allowed for this configuration")
-}
-
 func TestHTTPHandler_NoRouteOnContext(t *testing.T) {
 	resolver := NewResolver(fixtureConfig())
 	route := routeStub{ok: false}

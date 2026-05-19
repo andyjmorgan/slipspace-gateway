@@ -216,37 +216,14 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 	return out, nil
 }
 
-// Validate enforces cross-block invariants — every allowed_endpoint resolves
-// to a real provider.endpoint, every api_key references a known configuration,
-// every provider with prefix_required has a prefix, and no two endpoints can
-// claim the same fully-resolved route path.
+// Validate enforces cross-block invariants — every api_key references a
+// known configuration, every provider with prefix_required has a prefix,
+// and no two endpoints can claim the same fully-resolved route path.
 //
 // Returns the first violation as a wrapped sentinel error.
 func (r *ResolvedConfig) Validate() error {
 	if len(r.Configurations) == 0 {
 		return fmt.Errorf("config: validate: %w", ErrNoConfigurations)
-	}
-
-	for name, cfg := range r.Configurations {
-		for _, allowed := range cfg.AllowedEndpoints {
-			provider, endpoint, err := splitProviderEndpoint(allowed)
-			if err != nil {
-				return fmt.Errorf("config: configuration %q allowed_endpoint %q: %w", name, allowed, err)
-			}
-			p, ok := r.Providers[provider]
-			if !ok {
-				return fmt.Errorf(
-					"config: configuration %q allowed_endpoint %q: %w (no such provider)",
-					name, allowed, ErrEndpointNotInProvider,
-				)
-			}
-			if _, ok := p.Endpoints[endpoint]; !ok {
-				return fmt.Errorf(
-					"config: configuration %q allowed_endpoint %q: %w (provider %q has no endpoint %q)",
-					name, allowed, ErrEndpointNotInProvider, provider, endpoint,
-				)
-			}
-		}
 	}
 
 	if err := r.validateLibraries(); err != nil {
@@ -458,14 +435,6 @@ func (r *ResolvedConfig) validateLibraries() error {
 		}
 	}
 	return nil
-}
-
-func splitProviderEndpoint(s string) (string, string, error) {
-	provider, endpoint, ok := strings.Cut(s, ".")
-	if !ok || provider == "" || endpoint == "" {
-		return "", "", ErrMalformedAllowedEndpoint
-	}
-	return provider, endpoint, nil
 }
 
 // authFormatPlaceholder is the literal substring the auth_format

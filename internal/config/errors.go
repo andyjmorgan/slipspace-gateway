@@ -23,14 +23,6 @@ var ErrNoConfigurations = errors.New("config: at least one configuration require
 // name that does not exist in the merged tree.
 var ErrUnknownConfiguration = errors.New("config: api_key references unknown configuration")
 
-// ErrEndpointNotInProvider is returned when a configuration's allowed_endpoints
-// references a provider.endpoint pair that is not in the merged providers block.
-var ErrEndpointNotInProvider = errors.New("config: allowed_endpoint references unknown provider.endpoint")
-
-// ErrMalformedAllowedEndpoint is returned when an allowed_endpoints entry is not
-// in the form "provider.endpoint".
-var ErrMalformedAllowedEndpoint = errors.New("config: allowed_endpoint must be provider.endpoint")
-
 // ErrPathCollision is returned when two providers claim the same fully-resolved
 // route path. With prefix disambiguation, collisions are only possible when
 // two providers both have `prefix_required: false` and share an accepted_path,

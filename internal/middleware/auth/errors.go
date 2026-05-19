@@ -19,10 +19,6 @@ var ErrUnauthorized = errors.New("auth: unauthorized")
 // or at request time (auth resolve). One conceptual error, two phrasing layers.
 var ErrUnknownConfiguration = fmt.Errorf("auth: %w", config.ErrUnknownConfiguration)
 
-// ErrEndpointNotAllowed is returned when the routed (provider, endpoint) is not
-// in the resolved configuration's allowed_endpoints list.
-var ErrEndpointNotAllowed = errors.New("auth: endpoint not allowed")
-
 // ErrNoRoute signals the auth middleware was invoked without a routing decision
 // on the request context. This is a programming error in the middleware wiring
 // — auth must run downstream of routing.
@@ -43,8 +39,6 @@ const (
 	ResultDisabledKey Result = "disabled_key"
 
 	ResultUnknownConfiguration Result = "unknown_configuration"
-
-	ResultEndpointNotAllowed Result = "endpoint_not_allowed"
 
 	ResultMalformedBearer Result = "malformed_bearer"
 

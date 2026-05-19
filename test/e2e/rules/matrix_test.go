@@ -15,11 +15,10 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
 )
 
-// matrixPolicy builds a policy.yaml with the dev configuration's
-// stock allowed_endpoints + credentials, and the supplied rules YAML
-// inlined as the rules library. The "dev" configuration's
-// rule_names list is overridden to ruleNames so each test exercises
-// only its declared rules.
+// matrixPolicy builds a policy.yaml with the dev configuration's stock
+// credentials and the supplied rules YAML inlined as the rules library.
+// The "dev" configuration's rule_names list is overridden to ruleNames
+// so each test exercises only its declared rules.
 func matrixPolicy(rulesYAML string, ruleNames ...string) string {
 	names := ""
 	for _, n := range ruleNames {
@@ -28,14 +27,6 @@ func matrixPolicy(rulesYAML string, ruleNames ...string) string {
 	return `
 configurations:
   dev:
-    allowed_endpoints:
-      - openai.chat_completions
-      - openai.responses
-      - openai.models
-      - anthropic.messages
-      - anthropic.models
-      - gemini.generate_content
-      - gemini.models
     upstream_credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock

@@ -24,8 +24,8 @@ type ResolvedConfig struct {
 	Providers contractsconfig.ProvidersConfig
 
 	// Configurations is the `configurations` block keyed by configuration
-	// name. Each entry bundles allowed_endpoints, rule references, resilience
-	// references, and upstream credentials.
+	// name. Each entry bundles upstream credentials, rule references, and
+	// resilience references.
 	Configurations contractsconfig.ConfigurationsConfig
 
 	// APIKeys is the `api_keys` block as authored — a flat slice, kept in

@@ -163,7 +163,7 @@ func TestAuth_Passthrough_PreservesXAPIKey(t *testing.T) {
 	}
 }
 
-func TestAuth_EndpointNotAllowed_UnknownConfig(t *testing.T) {
+func TestAuth_UnknownConfig(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
 

@@ -47,7 +47,6 @@ anthropic:
 func TestConfigurationsConfig_LibraryReferences(t *testing.T) {
 	body := `
 dev:
-  allowed_endpoints: [openai.chat]
   rule_names: [redact-emails, block-pii]
   resilience_name: high-availability
   tags:
