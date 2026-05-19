@@ -2,8 +2,8 @@ package observability
 
 import "context"
 
-// RequestLabels carries the (provider, endpoint, model) values
-// resolved at destination-finalisation time. These are the canonical
+// RequestLabels carries the (provider, endpoint, model, configuration)
+// values resolved at destination-finalisation time. These are the canonical
 // labels the per-request reporter stamps on metrics and on the
 // gateway.request event so dashboards and audit feeds see a uniform
 // stream regardless of whether the request was forwarded or short-
@@ -22,6 +22,12 @@ type RequestLabels struct {
 	Endpoint string
 
 	Model string
+
+	// Configuration is the name of the resolved configuration the
+	// request resolved against. Bounded cardinality — operators
+	// define a handful of named configurations (production,
+	// internal-dev, etc.); never derived from client input.
+	Configuration string
 }
 
 type requestLabelsKey struct{}

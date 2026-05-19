@@ -36,6 +36,8 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 	p50, p95, p99 := allLatencyQuantiles(start, end, observability.MetricRequestDuration)
 
 	byProvider := computeByProvider(requestDeltas, start, end)
+	byEndpoint := computeByEndpoint(requestDeltas, start, end)
+	byConfiguration := computeByConfiguration(requestDeltas, start, end)
 	byModel := computeByModel(requestDeltas)
 	rulesFired := computeRulesFired(start, end, ruleAttachments)
 	providerHealth := computeProviderHealth(providers, fiveMinStart, fiveMinEnd)
@@ -61,10 +63,12 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 			P95: int64(math.Round(p95 * 1000)),
 			P99: int64(math.Round(p99 * 1000)),
 		},
-		ByProvider:     byProvider,
-		ByModel:        byModel,
-		RulesFired:     rulesFired,
-		ProviderHealth: providerHealth,
+		ByProvider:      byProvider,
+		ByEndpoint:      byEndpoint,
+		ByConfiguration: byConfiguration,
+		ByModel:         byModel,
+		RulesFired:      rulesFired,
+		ProviderHealth:  providerHealth,
 	}
 }
 
@@ -269,6 +273,134 @@ func computeByProvider(requestDeltas map[observability.LabelKey]int64, start, en
 			P95LatencyMs: int64(quantile(a.hist, 0.95) * 1000),
 		}
 		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Requests > out[j].Requests })
+	return out
+}
+
+// computeByEndpoint partitions request deltas + latency histogram
+// deltas by the (provider, endpoint) pair. Endpoint is repeated on
+// each provider that exposes it (openai.chat_completions vs
+// anthropic.chat_completions are distinct rows) so model-keyed
+// changeProvider rules don't collapse into a single bucket.
+func computeByEndpoint(requestDeltas map[observability.LabelKey]int64, start, end observability.Sample) []adminc.DashboardEndpointRow {
+	type acc struct {
+		requests int64
+		errored  int64
+		hist     observability.HistogramSnapshot
+	}
+	type groupKey struct {
+		provider, endpoint string
+	}
+	perEndpoint := map[groupKey]*acc{}
+	for key, v := range requestDeltas {
+		gk := groupKey{provider: key.Get("provider"), endpoint: key.Get("endpoint")}
+		if gk.provider == "" || gk.endpoint == "" {
+			continue
+		}
+		a := perEndpoint[gk]
+		if a == nil {
+			a = &acc{}
+			perEndpoint[gk] = a
+		}
+		a.requests += v
+		status := key.Get("status_code")
+		if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
+			a.errored += v
+		}
+	}
+	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
+		gk := groupKey{provider: key.Get("provider"), endpoint: key.Get("endpoint")}
+		a := perEndpoint[gk]
+		if a == nil {
+			continue
+		}
+		s := start.HistogramValue(observability.MetricRequestDuration, key)
+		delta := subtractHistogram(s, eHist)
+		if len(a.hist.Counts) == 0 {
+			a.hist = observability.HistogramSnapshot{
+				Bounds: delta.Bounds,
+				Counts: make([]uint64, len(delta.Counts)),
+			}
+		}
+		a.hist.Sum += delta.Sum
+		a.hist.Count += delta.Count
+		for i, c := range delta.Counts {
+			a.hist.Counts[i] += c
+		}
+	}
+	out := make([]adminc.DashboardEndpointRow, 0, len(perEndpoint))
+	for gk, a := range perEndpoint {
+		out = append(out, adminc.DashboardEndpointRow{
+			Provider:     gk.provider,
+			Endpoint:     gk.endpoint,
+			Requests:     a.requests,
+			ErrorRate:    safeRatio(a.errored, a.requests),
+			P95LatencyMs: int64(quantile(a.hist, 0.95) * 1000),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Requests > out[j].Requests })
+	return out
+}
+
+// computeByConfiguration partitions request deltas + latency histogram
+// deltas by the resolved configuration name. Series with no
+// configuration attribute (request lifecycle aborted before auth
+// resolved one) are dropped.
+func computeByConfiguration(requestDeltas map[observability.LabelKey]int64, start, end observability.Sample) []adminc.DashboardConfigurationRow {
+	type acc struct {
+		requests int64
+		errored  int64
+		hist     observability.HistogramSnapshot
+	}
+	perConfig := map[string]*acc{}
+	for key, v := range requestDeltas {
+		c := key.Get("configuration")
+		if c == "" {
+			continue
+		}
+		a := perConfig[c]
+		if a == nil {
+			a = &acc{}
+			perConfig[c] = a
+		}
+		a.requests += v
+		status := key.Get("status_code")
+		if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
+			a.errored += v
+		}
+	}
+	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
+		c := key.Get("configuration")
+		if c == "" {
+			continue
+		}
+		a := perConfig[c]
+		if a == nil {
+			continue
+		}
+		s := start.HistogramValue(observability.MetricRequestDuration, key)
+		delta := subtractHistogram(s, eHist)
+		if len(a.hist.Counts) == 0 {
+			a.hist = observability.HistogramSnapshot{
+				Bounds: delta.Bounds,
+				Counts: make([]uint64, len(delta.Counts)),
+			}
+		}
+		a.hist.Sum += delta.Sum
+		a.hist.Count += delta.Count
+		for i, c := range delta.Counts {
+			a.hist.Counts[i] += c
+		}
+	}
+	out := make([]adminc.DashboardConfigurationRow, 0, len(perConfig))
+	for name, a := range perConfig {
+		out = append(out, adminc.DashboardConfigurationRow{
+			Configuration: name,
+			Requests:      a.requests,
+			ErrorRate:     safeRatio(a.errored, a.requests),
+			P95LatencyMs:  int64(quantile(a.hist, 0.95) * 1000),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Requests > out[j].Requests })
 	return out

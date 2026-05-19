@@ -71,9 +71,10 @@ func buildDataPlaneHandler(
 
 		captured, _ := bodycapture.FromContext(ctx)
 		ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
-			Provider: state.Provider,
-			Endpoint: state.Endpoint,
-			Model:    outboundModel(captured, state),
+			Provider:      state.Provider,
+			Endpoint:      state.Endpoint,
+			Model:         outboundModel(captured, state),
+			Configuration: authResult.ConfigurationName,
 		})
 
 		dest, err := buildDestination(provider, endpoint, state, authResult, r)

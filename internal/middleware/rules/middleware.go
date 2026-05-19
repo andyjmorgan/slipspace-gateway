@@ -90,9 +90,10 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 		if result.Outcome.Terminate && result.Outcome.Response != nil {
 			ctx = withSyntheticOutcome(ctx, result)
 			ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
-				Provider: state.Provider,
-				Endpoint: state.Endpoint,
-				Model:    extractInboundModel(captured, state.PathParams),
+				Provider:      state.Provider,
+				Endpoint:      state.Endpoint,
+				Model:         extractInboundModel(captured, state.PathParams),
+				Configuration: ar.ConfigurationName,
 			})
 			driveSyntheticLifecycle(ctx, w, result, observerFactory)
 			return
