@@ -4,6 +4,7 @@
 package config
 
 import (
+	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
@@ -75,6 +76,12 @@ type ResolvedConfig struct {
 	// ResilienceIndex maps resilience policy name to a pointer into
 	// ResiliencePolicies.
 	ResilienceIndex map[string]*resilience.ResilienceConfig
+
+	// Admin is the `admin:` block from admin.yaml. Nil when the file
+	// is absent — the management console is off by default and never
+	// starts in that case. When non-nil, AdminConfig.Validate has
+	// already passed (called from ResolvedConfig.Validate).
+	Admin *admin.Config
 }
 
 // Route names the (provider, endpoint) pair that owns an accepted_paths entry
