@@ -13,7 +13,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
-func newSnapshotterWithReader(t *testing.T) (*observability.Snapshotter, *sdkmetric.ManualReader, metric.Meter) {
+func newSnapshotterWithReader(t *testing.T) (*observability.Snapshotter, metric.Meter) {
 	t.Helper()
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -28,11 +28,11 @@ func newSnapshotterWithReader(t *testing.T) (*observability.Snapshotter, *sdkmet
 	if err != nil {
 		t.Fatalf("NewSnapshotter: %v", err)
 	}
-	return s, reader, mp.Meter("test")
+	return s, mp.Meter("test")
 }
 
 func TestSnapshotter_RingEvictsOldest(t *testing.T) {
-	s, _, meter := newSnapshotterWithReader(t)
+	s, meter := newSnapshotterWithReader(t)
 	ctr, err := meter.Int64Counter("c.test")
 	if err != nil {
 		t.Fatalf("Int64Counter: %v", err)
@@ -61,7 +61,7 @@ func TestSnapshotter_RingEvictsOldest(t *testing.T) {
 }
 
 func TestSnapshotter_LabelsAreEncoded(t *testing.T) {
-	s, _, meter := newSnapshotterWithReader(t)
+	s, meter := newSnapshotterWithReader(t)
 	ctr, _ := meter.Int64Counter("c.labelled")
 
 	ctx := context.Background()
@@ -86,7 +86,7 @@ func TestSnapshotter_LabelsAreEncoded(t *testing.T) {
 }
 
 func TestSnapshotter_HistogramSnapshot(t *testing.T) {
-	s, _, meter := newSnapshotterWithReader(t)
+	s, meter := newSnapshotterWithReader(t)
 	hist, _ := meter.Float64Histogram("h.test",
 		metric.WithExplicitBucketBoundaries(0.1, 0.5, 1),
 	)
@@ -117,7 +117,7 @@ func TestSnapshotter_HistogramSnapshot(t *testing.T) {
 }
 
 func TestSnapshotter_WindowEnds_RingTooSmall(t *testing.T) {
-	s, _, meter := newSnapshotterWithReader(t)
+	s, meter := newSnapshotterWithReader(t)
 	ctr, _ := meter.Int64Counter("c.x")
 	ctx := context.Background()
 	// Empty ring.
@@ -184,7 +184,7 @@ func TestSnapshotter_WindowEnds_FallsBackToOldest(t *testing.T) {
 }
 
 func TestSnapshotter_ConcurrentAppendAndRead(t *testing.T) {
-	s, _, meter := newSnapshotterWithReader(t)
+	s, meter := newSnapshotterWithReader(t)
 	ctr, _ := meter.Int64Counter("c.race")
 	ctx := context.Background()
 
@@ -223,7 +223,7 @@ func TestSnapshotter_ConcurrentAppendAndRead(t *testing.T) {
 }
 
 func TestSnapshotter_StartTakesImmediateSnapshot(t *testing.T) {
-	s, _, meter := newSnapshotterWithReader(t)
+	s, meter := newSnapshotterWithReader(t)
 	ctr, _ := meter.Int64Counter("c.boot")
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -257,7 +257,7 @@ func TestLabelKey_Get(t *testing.T) {
 		{"a=1,b=2", "a", "1"},
 		{"a=1,b=2", "b", "2"},
 		{"a=1,b=2,c=3", "c", "3"},
-		{"endpoint=foo", "point", ""},          // partial match must not match
+		{"endpoint=foo", "point", ""},           // partial match must not match
 		{"a=1,endpoint=foo", "endpoint", "foo"}, // boundary check on later key
 		{"a=1,b=2", "missing", ""},
 	}
@@ -269,7 +269,7 @@ func TestLabelKey_Get(t *testing.T) {
 }
 
 func TestSnapshotter_Interval(t *testing.T) {
-	s, _, _ := newSnapshotterWithReader(t)
+	s, _ := newSnapshotterWithReader(t)
 	if got := s.Interval(); got != 10*time.Millisecond {
 		t.Errorf("Interval() = %v, want 10ms", got)
 	}
@@ -297,7 +297,7 @@ func TestEncodeLabels_Empty(t *testing.T) {
 }
 
 func TestSnapshotter_HandlesFloat64Counter(t *testing.T) {
-	s, _, meter := newSnapshotterWithReader(t)
+	s, meter := newSnapshotterWithReader(t)
 	ctr, err := meter.Float64Counter("c.float")
 	if err != nil {
 		t.Fatalf("Float64Counter: %v", err)
@@ -314,7 +314,7 @@ func TestSnapshotter_HandlesFloat64Counter(t *testing.T) {
 }
 
 func TestSnapshotter_LoopTakesPeriodicSnapshots(t *testing.T) {
-	s, _, meter := newSnapshotterWithReader(t)
+	s, meter := newSnapshotterWithReader(t)
 	ctr, _ := meter.Int64Counter("c.loop")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

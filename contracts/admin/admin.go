@@ -22,6 +22,8 @@ const Username = "admin"
 // resolution time. When set (non-empty after trim), it wins over the
 // yaml Password field. Use this to keep the admin secret out of the
 // yaml file in production while leaving yaml workable for dev.
+//
+//nolint:gosec // G101: this is the env-var NAME, not a credential value
 const EnvPassword = "SLUICE_ADMIN_PASSWORD"
 
 // DefaultBindAddr is the listener address used when Config.BindAddr is

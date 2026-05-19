@@ -35,6 +35,13 @@ linters:
       excludes:
         - G104 # duplicate of errcheck
 
+  # web/node_modules ships some npm packages (e.g. flatted) that bundle a
+  # nested Go directory. They're not part of our module and would otherwise
+  # produce noise; exclude here rather than per-linter.
+  exclusions:
+    paths:
+      - web/node_modules
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

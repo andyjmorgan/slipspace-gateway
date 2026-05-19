@@ -22,7 +22,11 @@ func setCounter(s observability.Sample, metric string, attrs []attribute.KeyValu
 	s.Counters[metric][observability.EncodeLabels(attrs)] = value
 }
 
-func setHistogram(s observability.Sample, metric string, attrs []attribute.KeyValue, sum float64, count uint64, bounds []float64, counts []uint64) {
+// setHistogram seeds the request-duration histogram on a Sample. Today
+// every test uses the same metric name; if a future test needs a
+// different histogram, take metric back as a parameter.
+func setHistogram(s observability.Sample, attrs []attribute.KeyValue, sum float64, count uint64, bounds []float64, counts []uint64) {
+	const metric = observability.MetricRequestDuration
 	if s.Histograms[metric] == nil {
 		s.Histograms[metric] = map[observability.LabelKey]observability.HistogramSnapshot{}
 	}
@@ -52,8 +56,8 @@ func TestBuildDashboardSummary_TotalsAndRates(t *testing.T) {
 	}
 
 	setCounter(start, observability.MetricRequestsTotal, openai200, 10)
-	setCounter(end, observability.MetricRequestsTotal, openai200, 3610) // +3600
-	setCounter(end, observability.MetricRequestsTotal, openai500, 200)  // +200
+	setCounter(end, observability.MetricRequestsTotal, openai200, 3610)  // +3600
+	setCounter(end, observability.MetricRequestsTotal, openai500, 200)   // +200
 	setCounter(end, observability.MetricRequestsTotal, anthropic404, 50) // +50
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
@@ -87,7 +91,7 @@ func TestBuildDashboardSummary_LatencyQuantiles(t *testing.T) {
 	// cumulative bucket counts at end (per-bucket, not running):
 	// (-Inf,0.1]=10, (0.1,0.5]=40, (0.5,1]=30, (1,2]=15, (2,5]=4, (5,+Inf]=1
 	endCounts := []uint64{10, 40, 30, 15, 4, 1}
-	setHistogram(end, observability.MetricRequestDuration, nil, 100, 100, bounds, endCounts)
+	setHistogram(end, nil, 100, 100, bounds, endCounts)
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
 
@@ -117,8 +121,8 @@ func TestBuildDashboardSummary_ByProviderSortedDescending(t *testing.T) {
 	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "200")}, 200)
 	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "500")}, 10)
 
-	setHistogram(end, observability.MetricRequestDuration, []attribute.KeyValue{attribute.String("provider", "openai")}, 1, 1, bounds, one)
-	setHistogram(end, observability.MetricRequestDuration, []attribute.KeyValue{attribute.String("provider", "anthropic")}, 1, 1, bounds, one)
+	setHistogram(end, []attribute.KeyValue{attribute.String("provider", "openai")}, 1, 1, bounds, one)
+	setHistogram(end, []attribute.KeyValue{attribute.String("provider", "anthropic")}, 1, 1, bounds, one)
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
 

@@ -79,9 +79,9 @@ func TestP95ByProviderSeries_OneSeriesPerProvider(t *testing.T) {
 	// One observation in bucket 0 (<=0.1) — p95 of {0.1} is 0.1 → 100ms.
 	openaiCounts := []uint64{1, 0, 0, 0, 0, 0}
 	anthropicCounts := []uint64{0, 0, 0, 0, 0, 1} // in +Inf bucket → 5000ms (clamped)
-	setHistogram(samples[1], observability.MetricRequestDuration,
+	setHistogram(samples[1],
 		[]attribute.KeyValue{attribute.String("provider", "openai")}, 0.1, 1, bounds, openaiCounts)
-	setHistogram(samples[1], observability.MetricRequestDuration,
+	setHistogram(samples[1],
 		[]attribute.KeyValue{attribute.String("provider", "anthropic")}, 10, 1, bounds, anthropicCounts)
 
 	series := p95ByProviderSeries(samples)

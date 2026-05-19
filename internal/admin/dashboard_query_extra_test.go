@@ -81,7 +81,7 @@ func TestComputeByProvider_StartHistogramShorterThanEnd(t *testing.T) {
 	one := []uint64{0, 1, 0, 0}
 	setCounter(end, observability.MetricRequestsTotal,
 		[]attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "200")}, 1)
-	setHistogram(end, observability.MetricRequestDuration,
+	setHistogram(end,
 		[]attribute.KeyValue{attribute.String("provider", "openai")}, 1, 1, bounds, one)
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)

@@ -57,9 +57,9 @@ type DashboardSummary struct {
 
 // DashboardTotals headlines the volume + outcome split over Window.
 type DashboardTotals struct {
-	Requests         int64 `json:"requests"`
-	RequestsSuccess  int64 `json:"requests_success"`
-	RequestsErrored  int64 `json:"requests_errored"`
+	Requests        int64 `json:"requests"`
+	RequestsSuccess int64 `json:"requests_success"`
+	RequestsErrored int64 `json:"requests_errored"`
 }
 
 // DashboardRates carries the rate-style aggregates.
@@ -79,10 +79,10 @@ type DashboardLatency struct {
 
 // DashboardProviderRow is one row of ByProvider.
 type DashboardProviderRow struct {
-	Provider       string  `json:"provider"`
-	Requests       int64   `json:"requests"`
-	P95LatencyMs   int64   `json:"p95_latency_ms"`
-	ErrorRate      float64 `json:"error_rate"`
+	Provider     string  `json:"provider"`
+	Requests     int64   `json:"requests"`
+	P95LatencyMs int64   `json:"p95_latency_ms"`
+	ErrorRate    float64 `json:"error_rate"`
 }
 
 // DashboardModelRow is one row of ByModel.
@@ -95,9 +95,9 @@ type DashboardModelRow struct {
 // DashboardRuleFiredRow counts matches for one rule across the window
 // and lists the configurations that reference the rule.
 type DashboardRuleFiredRow struct {
-	RuleName              string   `json:"rule_name"`
-	FireCount             int64    `json:"fire_count"`
-	UsedByConfigurations  []string `json:"used_by_configurations"`
+	RuleName             string   `json:"rule_name"`
+	FireCount            int64    `json:"fire_count"`
+	UsedByConfigurations []string `json:"used_by_configurations"`
 }
 
 // DashboardProviderHealth is one row of ProviderHealth.

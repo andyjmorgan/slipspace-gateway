@@ -136,9 +136,7 @@ func run(ctx context.Context) error {
 	// is bound to ctx; the loop exits on cancellation.
 	obs.Snapshotter.Start(ctx)
 
-	if err := startAdmin(ctx, resolved, obs, logger, drain, startedAt); err != nil {
-		return fmt.Errorf("gateway: admin listener: %w", err)
-	}
+	startAdmin(ctx, resolved, obs, logger, drain, startedAt)
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -248,10 +246,10 @@ func shutdownPromServer(srv *http.Server) {
 //
 // The drain budget mirrors the data plane's so a SIGTERM gives in-flight
 // admin requests the same shutdown headroom as proxy requests.
-func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time) error {
+func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time) {
 	if resolved.Admin == nil || !resolved.Admin.Enabled {
 		logger.InfoContext(ctx, "admin console disabled")
-		return nil
+		return
 	}
 
 	providers := make([]string, 0, len(resolved.Providers))
@@ -286,7 +284,6 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 		<-ctx.Done()
 		shutdownAdminServer(srv, drain) //nolint:contextcheck // shutdown context is intentionally detached
 	})
-	return nil
 }
 
 // shutdownAdminServer drains the admin listener with a detached context

@@ -86,7 +86,7 @@ func serveEntry(w http.ResponseWriter, sub fs.FS, name string) {
 		http.Error(w, "spa entry missing", http.StatusInternalServerError)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = io.Copy(w, f)
 }
