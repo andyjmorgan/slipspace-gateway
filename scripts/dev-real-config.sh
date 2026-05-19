@@ -153,19 +153,6 @@ YAML
 cat >"$out/policy.yaml" <<YAML
 configurations:
   real:
-    allowed_endpoints:
-      - openai.chat_completions
-      - openai.responses
-      - openai.models
-      - anthropic.messages
-      - anthropic.models
-      - anthropic.chat_completions
-      - gemini.generate_content
-      - gemini.models
-      - gemini.chat_completions
-      - qwen-ollama.chat_completions
-      - qwen-ollama.models
-
     upstream_credentials:
       openai: ${OPENAI_API_KEY}
       anthropic: ${ANTHROPIC_API_KEY}
