@@ -27,6 +27,7 @@ export type DashboardProviderHealth = {
   provider: string
   healthy: boolean
   error_rate_5m: number
+  requests_5m: number
 }
 
 export type DashboardSummary = {

@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button"
 import { KPI } from "@/components/atoms/kpi"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Segmented } from "@/components/atoms/segmented"
-import { Sparkline } from "@/components/atoms/sparkline"
 import { LineChart } from "@/components/atoms/line-chart"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { fmt } from "@/lib/fmt"
@@ -256,46 +255,41 @@ function ProviderHealth({ rows }: { rows: DashboardProviderHealth[] }) {
   if (!rows.length) {
     return <EmptyCard title="Provider health" sub="5m error rate" message="No providers configured." />
   }
-  const anyUnhealthy = rows.some((p) => !p.healthy)
+  const anyUnhealthy = rows.some((p) => !p.healthy && p.requests_5m > 0)
   return (
     <PanelCard accent={anyUnhealthy ? "warn" : "ok"}>
       <PanelHead title="Provider health" sub="5m error rate" />
       <div className="grid grid-cols-2">
         {rows.map((p, i) => {
-          const base = p.error_rate_5m
-          const points = Array.from({ length: 30 }, (_, k) =>
-            Math.max(
-              0,
-              base +
-                (Math.sin(k * 0.6 + i) * 0.4 + (((i * 17 + k * 13) % 7) / 100 - 0.03)) *
-                  (p.healthy ? 0.5 : 1.6),
-            ),
-          )
           const isLastRow = i >= rows.length - 2
           const isRight = i % 2 === 1
+          const hasTraffic = p.requests_5m > 0
+          // Dot: green when healthy AND saw traffic, grey when idle
+          // (no signal either way), red when unhealthy. Avoids the
+          // misleading "everything's green" when nothing's running.
+          const dotColor = !hasTraffic
+            ? "var(--text-4)"
+            : p.healthy
+              ? "var(--ok)"
+              : "var(--err)"
           return (
             <div
               key={p.provider}
-              className="px-3.5 py-3"
+              className="flex items-center gap-2 px-3.5 py-2.5"
               style={{
                 borderRight: isRight ? "none" : "1px solid var(--border)",
                 borderBottom: isLastRow ? "none" : "1px solid var(--border)",
               }}
             >
-              <div className="flex items-center gap-2 mb-1.5">
-                <span
-                  className="inline-block size-1.5 rounded-full"
-                  style={{ background: p.healthy ? "var(--ok)" : "var(--err)" }}
-                />
-                <ProviderChip name={p.provider} />
-                <span
-                  className="mono tnum ml-auto text-[11px]"
-                  style={{ color: p.healthy ? "var(--ok)" : "var(--err)" }}
-                >
-                  {fmt.pctRaw(base * 100, 1)}
-                </span>
-              </div>
-              <Sparkline points={points} color={p.healthy ? "var(--ok)" : "var(--err)"} height={28} />
+              <span className="inline-block size-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
+              <ProviderChip name={p.provider} />
+              <span
+                className="mono tnum ml-auto text-[11px] shrink-0"
+                style={{ color: hasTraffic ? (p.healthy ? "var(--ok)" : "var(--err)") : "var(--text-4)" }}
+                title={hasTraffic ? `${p.requests_5m} req in last 5m` : "no traffic in last 5m"}
+              >
+                {hasTraffic ? fmt.pctRaw(p.error_rate_5m * 100, 1) : "—"}
+              </span>
             </div>
           )
         })}
