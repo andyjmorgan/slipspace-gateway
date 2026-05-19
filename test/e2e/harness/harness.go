@@ -46,6 +46,15 @@ type Harness struct {
 	MockLLMURL string
 	NATSURL    string
 
+	// AdminURL is the http://127.0.0.1:<port> root of the admin
+	// listener when Options.AdminEnabled is true. Empty otherwise.
+	AdminURL string
+
+	// AdminPassword is the credential the harness wrote into admin.yaml
+	// for this run. Tests use it via http.Request.SetBasicAuth(Username,
+	// AdminPassword).
+	AdminPassword string
+
 	APIKey string
 
 	HTTP *http.Client
@@ -55,6 +64,7 @@ type Harness struct {
 
 	gatewayBindPort int
 	promBindPort    int
+	adminBindPort   int
 
 	configDir string
 
@@ -266,8 +276,21 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 	if err != nil {
 		t.Fatalf("harness: alloc prometheus port: %v", err)
 	}
+	adminPort, err := freePort()
+	if err != nil {
+		t.Fatalf("harness: alloc admin port: %v", err)
+	}
 	h.gatewayBindPort = gwPort
 	h.promBindPort = promPort
+	h.adminBindPort = adminPort
+	if h.opts.AdminEnabled {
+		password := h.opts.AdminPassword
+		if password == "" {
+			password = "test-password"
+		}
+		h.AdminPassword = password
+		h.AdminURL = fmt.Sprintf("http://127.0.0.1:%d", adminPort)
+	}
 
 	configDir, err := h.materializeConfig(repoRoot)
 	if err != nil {
@@ -303,6 +326,13 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 		stopProcess(cmd, done)
 		t.Fatalf("harness: gateway did not become ready: %v", err)
 	}
+
+	if h.opts.AdminEnabled {
+		if err := waitForHTTP(h.HTTP, h.AdminURL+"/api/v1/auth/me", startupTimeout); err != nil {
+			stopProcess(cmd, done)
+			t.Fatalf("harness: admin listener did not become ready: %v", err)
+		}
+	}
 }
 
 // materializeConfig clones the policy + providers YAML from config-dev/ into
@@ -332,6 +362,11 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 			continue
 		}
+		// admin.yaml is harness-controlled per-test (free port, opt-in
+		// enabled flag) so we never inherit the config-dev copy.
+		if name == "admin.yaml" {
+			continue
+		}
 		if name == "policy.yaml" && h.opts.PolicyYAML != "" {
 			// Override: substitute the test-supplied policy verbatim.
 			// Providers wiring still comes from config-dev/.
@@ -351,7 +386,27 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 			return "", fmt.Errorf("write %s: %w", name, err)
 		}
 	}
+
+	if err := h.writeAdminYAML(dst); err != nil {
+		return "", err
+	}
 	return dst, nil
+}
+
+// writeAdminYAML emits a per-test admin.yaml in dst. Disabled blocks
+// still write the file so the loader's "admin.yaml exists" path is
+// exercised on every run; enabled blocks bind to the harness-assigned
+// free port so parallel tests don't collide.
+func (h *Harness) writeAdminYAML(dst string) error {
+	enabled := "false"
+	if h.opts.AdminEnabled {
+		enabled = "true"
+	}
+	body := fmt.Sprintf("admin:\n  enabled: %s\n  bind_addr: \"127.0.0.1:%d\"\n", enabled, h.adminBindPort)
+	if h.opts.AdminEnabled {
+		body += fmt.Sprintf("  password: %q\n", h.AdminPassword)
+	}
+	return os.WriteFile(filepath.Join(dst, "admin.yaml"), []byte(body), 0o600) //nolint:gosec // dst is os.MkdirTemp output
 }
 
 // gatewayEnv builds the SLUICE_* env block for the spawned gateway process.
@@ -379,6 +434,12 @@ func (h *Harness) gatewayEnv(configDir string) []string {
 	}
 	if h.opts.DrainTimeoutSeconds > 0 {
 		env = append(env, fmt.Sprintf("SLUICE_SHUTDOWN_DRAIN_SECONDS=%d", h.opts.DrainTimeoutSeconds))
+	}
+	// Tight snapshot interval so the admin dashboard reflects real
+	// traffic within an e2e test's wall-clock budget. Production
+	// default is 5 minutes (configured at the env var's default).
+	if h.opts.AdminEnabled {
+		env = append(env, "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS=200")
 	}
 	return env
 }

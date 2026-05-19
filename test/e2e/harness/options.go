@@ -30,6 +30,18 @@ type Options struct {
 	// etc.) supply a full policy.yaml here; providers.yaml is still
 	// copied from config-dev/ so the upstream wiring stays consistent.
 	PolicyYAML string
+
+	// AdminEnabled flips the management console on for this harness.
+	// The harness always allocates a free port for the admin listener
+	// — collision-free across parallel tests — and writes an admin.yaml
+	// into the materialized config dir. Disabled by default so existing
+	// tests pay no extra setup cost.
+	AdminEnabled bool
+
+	// AdminPassword sets the operator credential the harness will issue
+	// to the gateway. Empty defaults to "test-password" when
+	// AdminEnabled. Ignored when AdminEnabled is false.
+	AdminPassword string
 }
 
 // BoolPtr returns a pointer to b. Convenience for the Options.ReportingEnabled
