@@ -15,7 +15,7 @@ import (
 func FuzzLoad(f *testing.F) {
 	seeds := []string{
 		"",
-		"providers: {}\nconfigurations: {dev: {allowed_endpoints: []}}\n",
+		"providers: {}\nconfigurations: {dev: {}}\n",
 		"api_keys:\n  - secret: x\n    configuration: dev\n",
 		"::: not yaml :::\n  - [unclosed",
 		"- a\n- b\n- c\n",

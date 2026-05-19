@@ -131,16 +131,6 @@ func (r *Resolver) resolvePassthrough(configName, provider, endpoint string) (Au
 		return AuthResult{}, ErrUnknownConfiguration
 	}
 
-	if !endpointAllowed(cfg, provider, endpoint) {
-		return AuthResult{
-			Mode:              ModePassthrough,
-			Configuration:     cfg,
-			ConfigurationName: configName,
-			Provider:          provider,
-			Endpoint:          endpoint,
-		}, ErrEndpointNotAllowed
-	}
-
 	return AuthResult{
 		Mode:              ModePassthrough,
 		Configuration:     cfg,
@@ -216,17 +206,6 @@ func (r *Resolver) resolveManaged(headers http.Header, provider, endpoint string
 		}, ErrUnknownConfiguration
 	}
 
-	if !endpointAllowed(cfg, provider, endpoint) {
-		return AuthResult{
-			Mode:              ModeManaged,
-			APIKey:            key,
-			Configuration:     cfg,
-			ConfigurationName: key.Configuration,
-			Provider:          provider,
-			Endpoint:          endpoint,
-		}, ErrEndpointNotAllowed
-	}
-
 	drops := []string{HeaderConfiguration}
 	// Always drop whichever native header carried the Sluice secret. The
 	// destination builder will mint the correct upstream credential header
@@ -263,16 +242,6 @@ func extractBearer(v string) (string, bool) {
 		return "", false
 	}
 	return token, true
-}
-
-func endpointAllowed(cfg *contractsconfig.Configuration, provider, endpoint string) bool {
-	want := provider + "." + endpoint
-	for _, allowed := range cfg.AllowedEndpoints {
-		if allowed == want {
-			return true
-		}
-	}
-	return false
 }
 
 // UpstreamCredentialHeader returns the (header name, header value)

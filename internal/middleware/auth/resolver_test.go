@@ -29,12 +29,6 @@ func fixtureConfig() *config.ResolvedConfig {
 		Enabled:       true,
 	}
 	openaiCfg := contractsconfig.Configuration{
-		AllowedEndpoints: []string{
-			"openai.chat_completions",
-			"anthropic.messages",
-			"gemini.generate_content",
-			"custom.foo",
-		},
 		UpstreamCredentials: map[string]string{
 			"openai":    "sk-openai-upstream",
 			"anthropic": "ak-anthropic-upstream",
@@ -43,7 +37,6 @@ func fixtureConfig() *config.ResolvedConfig {
 		},
 	}
 	restricted := contractsconfig.Configuration{
-		AllowedEndpoints: []string{"openai.models"},
 		UpstreamCredentials: map[string]string{
 			"openai": "sk-openai-restricted",
 		},
@@ -215,21 +208,6 @@ func TestResolver_Managed_UnknownConfigurationOnKey(t *testing.T) {
 	}
 }
 
-func TestResolver_Managed_EndpointNotAllowed(t *testing.T) {
-	cfg := fixtureConfig()
-	cfg.APIKeys[0].Configuration = "restricted"
-	cfg.SecretIndex["sk_live_enabled"].Configuration = "restricted"
-
-	r := NewResolver(cfg)
-	headers := http.Header{}
-	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
-
-	_, err := r.Resolve(headers, "openai", "chat_completions")
-	if !errors.Is(err, ErrEndpointNotAllowed) {
-		t.Fatalf("want ErrEndpointNotAllowed, got %v", err)
-	}
-}
-
 func TestResolver_Passthrough_Happy(t *testing.T) {
 	r := NewResolver(fixtureConfig())
 	headers := http.Header{}
@@ -270,17 +248,6 @@ func TestResolver_Passthrough_UnknownConfiguration(t *testing.T) {
 	// request-time resolve in one call site.
 	if !errors.Is(err, config.ErrUnknownConfiguration) {
 		t.Fatalf("want errors.Is(err, config.ErrUnknownConfiguration) to succeed via the auth wrap, got %v", err)
-	}
-}
-
-func TestResolver_Passthrough_EndpointNotAllowed(t *testing.T) {
-	r := NewResolver(fixtureConfig())
-	headers := http.Header{}
-	headers.Set(HeaderConfiguration, "restricted")
-
-	_, err := r.Resolve(headers, "openai", "chat_completions")
-	if !errors.Is(err, ErrEndpointNotAllowed) {
-		t.Fatalf("want ErrEndpointNotAllowed, got %v", err)
 	}
 }
 

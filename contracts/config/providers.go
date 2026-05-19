@@ -44,8 +44,8 @@ type Provider struct {
 	AuthFormat string `yaml:"auth_format,omitempty" json:"auth_format,omitempty"`
 
 	// Endpoints is the provider's endpoint catalogue keyed by logical name
-	// (e.g., "chat_completions", "messages"). The key is the value referenced
-	// from Configuration.AllowedEndpoints.
+	// (e.g., "chat_completions", "messages"). The key seeds the route index
+	// and shows up in telemetry as the resolved endpoint name.
 	Endpoints map[string]Endpoint `yaml:"endpoints" json:"endpoints"`
 }
 

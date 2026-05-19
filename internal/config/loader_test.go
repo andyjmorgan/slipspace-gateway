@@ -44,10 +44,6 @@ providers:
 const sampleConfigurations = `
 configurations:
   dev:
-    allowed_endpoints:
-      - openai.chat_completions
-      - openai.models
-      - anthropic.messages
     upstream_credentials:
       openai: sk-dev-mock
     rule_names:
@@ -132,9 +128,6 @@ func TestLoad_HappyPath(t *testing.T) {
 	dev, ok := resolved.Configurations["dev"]
 	if !ok {
 		t.Fatal("missing dev configuration")
-	}
-	if len(dev.AllowedEndpoints) != 3 {
-		t.Errorf("allowed_endpoints = %v", dev.AllowedEndpoints)
 	}
 	if len(dev.RuleNames) != 1 || dev.RuleNames[0] != "redact-emails" {
 		t.Errorf("rule_names = %v", dev.RuleNames)
@@ -295,9 +288,7 @@ func TestLoad_PrefixOptional_Matrix(t *testing.T) {
 			writeFile(t, dir, "providers.yaml", providers)
 			writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - acme.generate
+  dev: {}
 api_keys:
   - secret: sk_dev_xxx
     name: dev
@@ -358,51 +349,6 @@ api_keys:
 	}
 }
 
-func TestLoad_AllowedEndpointMissingProvider(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", `
-configurations:
-  dev:
-    allowed_endpoints:
-      - bedrock.invoke
-`)
-	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrEndpointNotInProvider) {
-		t.Fatalf("want ErrEndpointNotInProvider, got %v", err)
-	}
-}
-
-func TestLoad_AllowedEndpointMissingEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", `
-configurations:
-  dev:
-    allowed_endpoints:
-      - openai.embeddings
-`)
-	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrEndpointNotInProvider) {
-		t.Fatalf("want ErrEndpointNotInProvider, got %v", err)
-	}
-}
-
-func TestLoad_MalformedAllowedEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", `
-configurations:
-  dev:
-    allowed_endpoints:
-      - openai_chat
-`)
-	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrMalformedAllowedEndpoint) {
-		t.Fatalf("want ErrMalformedAllowedEndpoint, got %v", err)
-	}
-}
-
 func TestLoad_PathCollision(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", `
@@ -426,9 +372,7 @@ providers:
 `)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - openai.chat
+  dev: {}
 `)
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrPathCollision) {
@@ -466,10 +410,7 @@ providers:
 `)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - openai.models
-      - anthropic.models
+  dev: {}
 `)
 	resolved, err := config.Load(context.Background(), dir)
 	if err != nil {
@@ -504,9 +445,7 @@ providers:
 `)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - broken.chat
+  dev: {}
 `)
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrPrefixRequiredEmpty) {
@@ -544,9 +483,7 @@ providers:
 `)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - openai.models
+  dev: {}
 `)
 	_, err := config.Load(context.Background(), dir)
 	if !errors.Is(err, config.ErrPathCollision) {
@@ -575,9 +512,7 @@ providers:
 `)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - anthropic.chat_completions
+  dev: {}
 `)
 	resolved, err := config.Load(context.Background(), dir)
 	if err != nil {
@@ -610,9 +545,7 @@ providers:
 `)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - acme.chat
+  dev: {}
 `)
 	resolved, err := config.Load(context.Background(), dir)
 	if err != nil {
@@ -672,9 +605,7 @@ providers:
 			writeFile(t, dir, "providers.yaml", tc.yaml)
 			writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - acme.chat
+  dev: {}
 `)
 			_, err := config.Load(context.Background(), dir)
 			if !errors.Is(err, config.ErrAuthFormatWithoutHeader) {
@@ -714,9 +645,7 @@ providers:
 `)
 			writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - acme.chat
+  dev: {}
 `)
 			_, err := config.Load(context.Background(), dir)
 			if !errors.Is(err, config.ErrInvalidAuthFormat) {
@@ -746,9 +675,7 @@ providers:
 `)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints:
-      - acme.chat
+  dev: {}
 `)
 	if _, err := config.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -866,7 +793,7 @@ func TestRoute_ZeroValue(t *testing.T) {
 func TestResolvedConfig_ValidateDirect(t *testing.T) {
 	rc := &config.ResolvedConfig{
 		Configurations: contractsconfig.ConfigurationsConfig{
-			"dev": {AllowedEndpoints: []string{"openai.chat"}},
+			"dev": {},
 		},
 		Providers: contractsconfig.ProvidersConfig{
 			"openai": {
@@ -887,21 +814,6 @@ func TestResolvedConfig_ValidateEmpty(t *testing.T) {
 	err := rc.Validate()
 	if !errors.Is(err, config.ErrNoConfigurations) {
 		t.Errorf("want ErrNoConfigurations, got %v", err)
-	}
-}
-
-func TestLoad_AllowedEndpointsTrimmedNamesAreUnchanged(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", `
-configurations:
-  dev:
-    allowed_endpoints:
-      - " openai.chat_completions"
-`)
-	_, err := config.Load(context.Background(), dir)
-	if !errors.Is(err, config.ErrEndpointNotInProvider) {
-		t.Fatalf("expected unknown-endpoint error for whitespace-prefixed name, got %v", err)
 	}
 }
 
@@ -936,13 +848,20 @@ func TestLoad_DecodeErrors(t *testing.T) {
 	}
 }
 
-func TestLoad_EmptyYAMLFile(t *testing.T) {
+// TestLoad_EmptyProvidersFile: an empty providers.yaml is valid — the
+// loader produces a resolved config with an empty RouteIndex. The
+// gateway will 404 every request at runtime, but that is a routing
+// concern, not a load-time error.
+func TestLoad_EmptyProvidersFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", "")
 	writeFile(t, dir, "policy.yaml", samplePolicy)
-	_, err := config.Load(context.Background(), dir)
-	if err == nil {
-		t.Fatal("expected error from empty providers.yaml + policy referencing openai")
+	resolved, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(resolved.RouteIndex) != 0 {
+		t.Errorf("RouteIndex should be empty with no providers, got %v", resolved.RouteIndex)
 	}
 }
 
@@ -951,8 +870,6 @@ func TestLoad_EmptyYAMLFile(t *testing.T) {
 const libraryConfigurations = `
 configurations:
   dev:
-    allowed_endpoints:
-      - openai.chat_completions
     rule_names:
       - redact-emails
       - block-pii
@@ -1033,8 +950,6 @@ func TestLoad_PerConfigurationRules_PrioritySort(t *testing.T) {
 	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
-    allowed_endpoints:
-      - openai.chat_completions
     rule_names:
       - low
       - high
@@ -1092,8 +1007,6 @@ func TestLoad_PerConfigurationRules_StableTieBreak(t *testing.T) {
 	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
-    allowed_endpoints:
-      - openai.chat_completions
     rule_names:
       - c
       - a
@@ -1150,9 +1063,7 @@ func TestLoad_PerConfigurationRules_EmptyRuleNames(t *testing.T) {
 	writeFile(t, dir, "providers.yaml", sampleProviders)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  bare:
-    allowed_endpoints:
-      - openai.chat_completions
+  bare: {}
 `)
 
 	resolved, err := config.Load(context.Background(), dir)
@@ -1170,7 +1081,6 @@ func TestLoad_LibraryUnknownRuleName(t *testing.T) {
 	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
-    allowed_endpoints: [openai.chat_completions]
     rule_names: [ghost]
 `+libraryRulesAndPolicies)
 	_, err := config.Load(context.Background(), dir)
@@ -1185,7 +1095,6 @@ func TestLoad_LibraryUnknownResilienceName(t *testing.T) {
 	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
-    allowed_endpoints: [openai.chat_completions]
     resilience_name: ghost
 `+libraryRulesAndPolicies)
 	_, err := config.Load(context.Background(), dir)
@@ -1199,8 +1108,7 @@ func TestLoad_LibraryDuplicateRuleName(t *testing.T) {
 	writeFile(t, dir, "providers.yaml", sampleProviders)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints: [openai.chat_completions]
+  dev: {}
 
 rules:
   - name: dup
@@ -1223,8 +1131,7 @@ func TestLoad_LibraryDuplicateRuleID(t *testing.T) {
 	writeFile(t, dir, "providers.yaml", sampleProviders)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints: [openai.chat_completions]
+  dev: {}
 
 rules:
   - id: 550e8400-e29b-41d4-a716-446655440000
@@ -1249,8 +1156,7 @@ func TestLoad_LibraryDuplicateResilienceName(t *testing.T) {
 	writeFile(t, dir, "providers.yaml", sampleProviders)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints: [openai.chat_completions]
+  dev: {}
 
 resilience_policies:
   - name: dup
@@ -1269,8 +1175,7 @@ func TestLoad_LibraryDuplicateResilienceID(t *testing.T) {
 	writeFile(t, dir, "providers.yaml", sampleProviders)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
-  dev:
-    allowed_endpoints: [openai.chat_completions]
+  dev: {}
 
 resilience_policies:
   - id: 550e8400-e29b-41d4-a716-446655440000

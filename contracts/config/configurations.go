@@ -7,12 +7,13 @@ type ConfigurationsConfig map[string]Configuration
 // Configuration is a reusable policy bundle. Rules and resilience are attached
 // by name from the top-level `rules:` and `resilience_policies:` libraries
 // declared alongside the configurations in `policy.yaml`.
+//
+// Per-endpoint authorization is implicit: managed mode can only forward to
+// providers that have an entry in UpstreamCredentials (no credential, no
+// forward); passthrough mode is gated by the upstream's own auth on the
+// BYOK token the client carries. A per-endpoint allow-list adds no real
+// authorization on top of that, so the field is intentionally absent.
 type Configuration struct {
-	// AllowedEndpoints is the list of "<provider>.<endpoint>" identifiers a
-	// request resolved to this Configuration is permitted to call. Anything
-	// else gets 403'd before forwarding.
-	AllowedEndpoints []string `yaml:"allowed_endpoints" json:"allowed_endpoints"`
-
 	// UpstreamCredentials maps provider name to the upstream API key the
 	// gateway substitutes on the way out. Populated for managed-mode auth;
 	// passthrough mode leaves the client's Authorization header intact.
