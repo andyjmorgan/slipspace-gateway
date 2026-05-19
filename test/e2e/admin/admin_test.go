@@ -299,8 +299,15 @@ func TestAdmin_PortIsolation(t *testing.T) {
 	}
 }
 
+// stripScheme returns host:port from a URL, dropping the scheme and
+// any path component (AdminURL carries "/admin" so net.Dial would
+// reject the host:port-plus-path form).
 func stripScheme(u string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(u, "http://"), "https://")
+	u = strings.TrimPrefix(strings.TrimPrefix(u, "http://"), "https://")
+	if i := strings.Index(u, "/"); i >= 0 {
+		u = u[:i]
+	}
+	return u
 }
 
 func portOf(hostport string) string {

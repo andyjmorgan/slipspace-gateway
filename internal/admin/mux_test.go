@@ -27,7 +27,7 @@ func newServer(t *testing.T) *httptest.Server {
 
 func TestMux_SPAIsUnauthenticated(t *testing.T) {
 	srv := newServer(t)
-	resp, err := http.Get(srv.URL + "/")
+	resp, err := http.Get(srv.URL + admin.Prefix + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestMux_SPAIsUnauthenticated(t *testing.T) {
 
 func TestMux_SPADeepLinkServedWithoutAuth(t *testing.T) {
 	srv := newServer(t)
-	resp, err := http.Get(srv.URL + "/dashboard")
+	resp, err := http.Get(srv.URL + admin.Prefix + "/dashboard")
 	if err != nil {
 		t.Fatalf("GET /dashboard: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestMux_SPADeepLinkServedWithoutAuth(t *testing.T) {
 
 func TestMux_APIRequiresBasicAuth(t *testing.T) {
 	srv := newServer(t)
-	resp, err := http.Get(srv.URL + "/api/v1/auth/me")
+	resp, err := http.Get(srv.URL + admin.Prefix + "/api/v1/auth/me")
 	if err != nil {
 		t.Fatalf("GET /api/v1/auth/me: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestMux_APIRequiresBasicAuth(t *testing.T) {
 
 func TestMux_APIWithGoodCredsReturnsJSON(t *testing.T) {
 	srv := newServer(t)
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/auth/me", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+admin.Prefix+"/api/v1/auth/me", nil)
 	req.SetBasicAuth("admin", testPassword)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestMux_DashboardSummaryAuthed(t *testing.T) {
 	// exercised in the e2e suite where the gateway feeds a live
 	// snapshotter; here we only verify the wire contract decodes.
 	srv := newServer(t)
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/dashboard/summary", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+admin.Prefix+"/api/v1/dashboard/summary", nil)
 	req.SetBasicAuth("admin", testPassword)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestMux_DashboardSummaryAuthed(t *testing.T) {
 
 func TestMux_DashboardSummaryRequiresAuth(t *testing.T) {
 	srv := newServer(t)
-	resp, err := http.Get(srv.URL + "/api/v1/dashboard/summary")
+	resp, err := http.Get(srv.URL + admin.Prefix + "/api/v1/dashboard/summary")
 	if err != nil {
 		t.Fatalf("GET /api/v1/dashboard/summary: %v", err)
 	}

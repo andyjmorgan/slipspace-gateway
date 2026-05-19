@@ -7,9 +7,12 @@ import { bootstrapTheme } from "@/lib/theme"
 
 bootstrapTheme()
 
+// Both the SPA bundle and the API live under /admin (see
+// internal/admin.Prefix on the Go side); BrowserRouter basename keeps
+// react-router URLs aligned with what's actually served.
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename="/admin">
       <App />
     </BrowserRouter>
   </StrictMode>,

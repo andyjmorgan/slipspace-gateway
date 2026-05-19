@@ -1,9 +1,16 @@
 // Thin fetch wrapper that injects the cached Basic auth header on
-// every /api/v1/* call. A 401 response means the cached credentials
-// were rejected — we drop them locally and surface a typed error so
-// pages can route back to /login.
+// every /admin/api/v1/* call. A 401 response means the cached
+// credentials were rejected — we drop them locally and surface a
+// typed error so pages can route back to /login.
+//
+// Callers pass paths starting with "/api/v1/..."; apiFetch prepends
+// the API_BASE prefix that matches internal/admin.Prefix on the Go
+// side. Keeping the prefix in one place means hook callers don't
+// have to thread it through.
 
 import { auth } from "@/lib/auth"
+
+const API_BASE = "/admin"
 
 export class UnauthorizedError extends Error {
   constructor() {
@@ -33,7 +40,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     headers.set("Authorization", authHeader)
   }
   headers.set("Accept", "application/json")
-  const res = await fetch(path, { ...init, headers })
+  const res = await fetch(API_BASE + path, { ...init, headers })
   if (res.status === 401) {
     auth.clear()
     throw new UnauthorizedError()
