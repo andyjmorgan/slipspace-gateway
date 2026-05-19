@@ -70,7 +70,7 @@ export function LoginPage() {
       >
         <div className="flex items-center gap-2.5 pb-5 mb-5 border-b border-[color:var(--border)]">
           <img
-            src="/sluice.png"
+            src={`${import.meta.env.BASE_URL}sluice.png`}
             alt=""
             width={36}
             height={36}

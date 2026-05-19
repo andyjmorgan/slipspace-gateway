@@ -380,6 +380,7 @@ func computeProviderHealth(providers []string, start, end *observability.Sample)
 			Provider:    p,
 			Healthy:     rate <= healthyErrorRate5mCeiling,
 			ErrorRate5m: rate,
+			Requests5m:  a.total,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })

@@ -102,17 +102,22 @@ type DashboardRuleFiredRow struct {
 
 // DashboardProviderHealth is one row of ProviderHealth.
 //
-// Only the {Provider, Healthy, ErrorRate5m} fields are populated by
-// v1.1 because that's all the in-process registry can compute from
+// Only {Provider, Healthy, ErrorRate5m, Requests5m} are populated by
+// v1.1 because that's what the in-process registry can compute from
 // gateway.requests.total alone. Tail fields (consecutive errors, last
 // error message, last success timestamp) require a probe goroutine
 // that doesn't exist yet — they were removed from the contract rather
 // than left at zero-value placeholders the SPA had to defensively
 // hide.
+//
+// Requests5m lets the SPA distinguish "0% errors over many requests"
+// (healthy + traffic) from "0% errors because no traffic" (healthy
+// but uninformative). Without it the user can't tell idle from green.
 type DashboardProviderHealth struct {
 	Provider    string  `json:"provider"`
 	Healthy     bool    `json:"healthy"`
 	ErrorRate5m float64 `json:"error_rate_5m"`
+	Requests5m  int64   `json:"requests_5m"`
 }
 
 // DashboardTimeseries is the response shape for
