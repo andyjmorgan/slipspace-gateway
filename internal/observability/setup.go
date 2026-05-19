@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -18,7 +19,6 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
@@ -68,21 +68,24 @@ type Config struct {
 
 	// LogLevel is the minimum slog level ("debug"/"info"/"warn"/"error").
 	LogLevel string
+
+	// SnapshotInterval overrides the snapshotter's sample cadence.
+	// Zero (the default) falls back to the snapshotter's built-in
+	// default (5 minutes). E2E harnesses drop this to ~200ms so the
+	// dashboard reflects real traffic in test wall-clock.
+	SnapshotInterval time.Duration
 }
 
 // Provider bundles the live telemetry pipeline. Shutdown must be invoked
 // during graceful termination so the OTLP exporter can flush its
 // in-memory queue.
 type Provider struct {
-	// Meters is the pre-built instrument bundle. Always non-nil — Setup
-	// installs the no-op bundle when no exporter is enabled.
+	// Meters is the pre-built instrument bundle. Always non-nil.
 	Meters *Meters
 
-	// MeterProvider is the underlying provider. The same one is
+	// MeterProvider is the underlying SDK provider. The same one is
 	// registered globally via otel.SetMeterProvider so any code that
-	// reaches for the global meter still routes here. May be a
-	// sdkmetric.MeterProvider with one or two Readers (Prometheus and/or
-	// OTLP) or a noop.MeterProvider in the no-exporter case.
+	// reaches for the global meter still routes here.
 	MeterProvider metric.MeterProvider
 
 	// Logger is the service-enriched root logger. Per-request loggers
@@ -94,6 +97,12 @@ type Provider struct {
 	// branch on the field rather than calling it unconditionally.
 	PromHandler http.Handler
 
+	// Snapshotter is the in-process windowed snapshot store fed by a
+	// ManualReader attached to the SDK MeterProvider. Always non-nil —
+	// the admin console reads from it to compute dashboard windows.
+	// Caller must invoke Snapshotter.Start(ctx) once at startup.
+	Snapshotter *Snapshotter
+
 	// Shutdown flushes and shuts down the OTLP exporter and the
 	// MeterProvider. Safe to call multiple times: the inner once.Do
 	// makes subsequent invocations no-ops that return the same joined
@@ -102,9 +111,10 @@ type Provider struct {
 }
 
 // Setup constructs the telemetry stack from the supplied configuration.
-// It is safe to call with both, either, or neither exporter enabled:
-// when neither is on it installs a no-op MeterProvider so middleware can
-// emit metrics without nil checks.
+// It is safe to call with both, either, or neither external exporter
+// enabled — the SDK MeterProvider is always built with at least an
+// in-process ManualReader so the snapshotter (and therefore the admin
+// console's dashboard) works without depending on Prometheus or OTLP.
 //
 // Setup also calls otel.SetMeterProvider on the returned provider so any
 // stray code that reaches for the global meter still routes to the same
@@ -119,16 +129,12 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 	promEnabled := cfg.PrometheusBind != ""
 	otlpEnabled := cfg.OTLPEndpoint != ""
 
-	if !promEnabled && !otlpEnabled {
-		return newNoopProvider(logger)
-	}
-
 	res, err := buildResource(ctx, build)
 	if err != nil {
 		return nil, err
 	}
 
-	readers := make([]sdkmetric.Reader, 0, 2)
+	readers := make([]sdkmetric.Reader, 0, 3)
 
 	shutdownFns := make([]func(context.Context) error, 0, 2)
 
@@ -153,6 +159,13 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 		shutdownFns = append(shutdownFns, exp.Shutdown)
 	}
 
+	// Always attach a ManualReader. The snapshotter (and the admin
+	// dashboard handler downstream of it) pulls from this; it does
+	// nothing externally without a Collect call so the cost when neither
+	// prom nor otlp is configured is essentially zero.
+	manual := sdkmetric.NewManualReader()
+	readers = append(readers, manual)
+
 	opts := []sdkmetric.Option{sdkmetric.WithResource(res)}
 	for _, r := range readers {
 		opts = append(opts, sdkmetric.WithReader(r))
@@ -167,27 +180,22 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 		return nil, err
 	}
 
+	snap, err := NewSnapshotter(SnapshotterOptions{
+		Reader:   manual,
+		Interval: cfg.SnapshotInterval,
+	})
+	if err != nil {
+		_ = mp.Shutdown(ctx)
+		return nil, fmt.Errorf("observability: snapshotter: %w", err)
+	}
+
 	return &Provider{
 		Meters:        meters,
 		MeterProvider: mp,
 		Logger:        logger,
 		PromHandler:   promHandler,
+		Snapshotter:   snap,
 		Shutdown:      idempotentShutdown(shutdownFns),
-	}, nil
-}
-
-func newNoopProvider(logger *slog.Logger) (*Provider, error) {
-	mp := noop.NewMeterProvider()
-	otel.SetMeterProvider(mp)
-	meters, err := NewMeters(mp.Meter(MeterName))
-	if err != nil {
-		return nil, err
-	}
-	return &Provider{
-		Meters:        meters,
-		MeterProvider: mp,
-		Logger:        logger,
-		Shutdown:      idempotentShutdown(nil),
 	}, nil
 }
 

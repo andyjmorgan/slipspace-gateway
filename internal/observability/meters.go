@@ -49,6 +49,13 @@ const (
 	// background worker (NATS dispatch, drain handler, etc.).
 	MetricGoroutinePanicsTotal = "gateway.goroutine.panics.total"
 	MetricRequestPanicsTotal   = "gateway.request.panics.total"
+
+	// MetricAdminRequestsTotal counts requests to the management
+	// console's listener — the second http.Server bound to
+	// gateway.admin.bind_addr. Separate from MetricRequestsTotal so
+	// dashboards and SLOs for the data plane stay disjoint from
+	// operator UI traffic.
+	MetricAdminRequestsTotal = "gateway.admin.requests.total"
 )
 
 // Histogram bucket boundaries. Defined as package-level vars (not consts)
@@ -120,6 +127,12 @@ type Meters struct {
 	// implies a buggy middleware or handler is leaking panics that
 	// the recovery filter is converting to 500s.
 	RequestPanicsTotal metric.Int64Counter
+
+	// AdminRequestsTotal counts requests handled by the management-
+	// console listener. Labels: route (the matched route — e.g.
+	// "/api/v1/auth/me", "static" for SPA assets, "fallback" for
+	// index.html SPA fallbacks), status (HTTP status code).
+	AdminRequestsTotal metric.Int64Counter
 }
 
 // NewMeters constructs the Meters bundle from the supplied meter. The
@@ -164,6 +177,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricRuleErrorsTotal, "Action execution failures during rule evaluation.", "1", &m.RuleErrorsTotal},
 		{MetricGoroutinePanicsTotal, "Panics caught by safego.Go in background goroutines (process kept alive).", "1", &m.GoroutinePanicsTotal},
 		{MetricRequestPanicsTotal, "Panics caught by the request-path recovery middleware (client got 500, process kept alive).", "1", &m.RequestPanicsTotal},
+		{MetricAdminRequestsTotal, "Requests handled by the management-console listener (separate from data-plane requests).", "1", &m.AdminRequestsTotal},
 	} {
 		if err := int64Counter(c.name, c.desc, c.unit, c.dst); err != nil {
 			return nil, err
