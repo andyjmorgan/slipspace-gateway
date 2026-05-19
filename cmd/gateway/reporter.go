@@ -79,10 +79,11 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 	return func(ctx context.Context, _ proxy.Destination) proxy.Observer {
 		labels := observability.RequestLabelsFromContext(ctx)
 		return &reporterRun{
-			factory:  f,
-			provider: labels.Provider,
-			endpoint: labels.Endpoint,
-			model:    labels.Model,
+			factory:       f,
+			provider:      labels.Provider,
+			endpoint:      labels.Endpoint,
+			model:         labels.Model,
+			configuration: labels.Configuration,
 		}
 	}
 }
@@ -99,12 +100,16 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 type reporterRun struct {
 	factory *reporterFactory
 
-	// provider, endpoint, model are the routed labels captured at
-	// construction time from the request context. They are emitted on
-	// every metric this observer fires and on the bus event at completion.
-	provider string
-	endpoint string
-	model    string
+	// provider, endpoint, model, configuration are the routed labels
+	// captured at construction time from the request context. They are
+	// emitted on every metric this observer fires and on the bus event at
+	// completion. Configuration carries the named-policy bundle the
+	// request resolved against and has bounded cardinality (handful of
+	// operator-defined names, never client-derived).
+	provider      string
+	endpoint      string
+	model         string
+	configuration string
 
 	// started is set in OnRequestStart and used both as the base for the
 	// overall duration log and as the reference for the TTFB measurement.
@@ -182,7 +187,7 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 	}
 
 	if r.factory.meters != nil {
-		attrs := withProviderEndpointModelStatus(ev.Provider, ev.Endpoint, ev.Model, status)
+		attrs := withCompletionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration, status)
 		if r.factory.meters.RequestsTotal != nil {
 			r.factory.meters.RequestsTotal.Add(ctx, 1, attrs)
 		}
@@ -281,15 +286,18 @@ func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
 	)
 }
 
-// withProviderEndpointModelStatus extends the per-request attribute set
-// with the final response status code. Used at OnComplete where status is
-// authoritative (post-ErrorHandler) so it can't be read from the observer
-// struct fields alone.
-func withProviderEndpointModelStatus(provider, endpoint, model string, status int) metric.MeasurementOption {
+// withCompletionAttrs extends the per-request attribute set with the
+// resolved configuration and the final response status code. Used at
+// OnComplete where status is authoritative (post-ErrorHandler) and the
+// configuration name has already been resolved by auth, so the dashboard
+// aggregator can slice traffic by both endpoint and configuration without
+// going to logs.
+func withCompletionAttrs(provider, endpoint, model, configuration string, status int) metric.MeasurementOption {
 	return metric.WithAttributes(
 		attribute.String("provider", provider),
 		attribute.String("endpoint", endpoint),
 		attribute.String("model", sanitiseModelLabel(model)),
+		attribute.String("configuration", configuration),
 		attribute.Int("status_code", status),
 	)
 }

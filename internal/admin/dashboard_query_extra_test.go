@@ -110,6 +110,194 @@ func TestBuildTimeseries_DispatchesAllNames(t *testing.T) {
 	}
 }
 
+func TestComputeByEndpoint_PartitionsByProviderEndpointPair(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	start := makeSample(t0)
+	end := makeSample(t1)
+
+	rows := []struct {
+		attrs []attribute.KeyValue
+		v     int64
+	}{
+		{[]attribute.KeyValue{
+			attribute.String("provider", "openai"),
+			attribute.String("endpoint", "chat_completions"),
+			attribute.String("status_code", "200"),
+		}, 30},
+		{[]attribute.KeyValue{
+			attribute.String("provider", "openai"),
+			attribute.String("endpoint", "chat_completions"),
+			attribute.String("status_code", "500"),
+		}, 2},
+		{[]attribute.KeyValue{
+			attribute.String("provider", "anthropic"),
+			attribute.String("endpoint", "messages"),
+			attribute.String("status_code", "200"),
+		}, 10},
+		// missing endpoint label — must be skipped.
+		{[]attribute.KeyValue{
+			attribute.String("provider", "openai"),
+			attribute.String("status_code", "200"),
+		}, 99},
+	}
+	for _, r := range rows {
+		setCounter(end, observability.MetricRequestsTotal, r.attrs, r.v)
+	}
+
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	if len(sum.ByEndpoint) != 2 {
+		t.Fatalf("len(ByEndpoint) = %d, want 2", len(sum.ByEndpoint))
+	}
+	// Sorted by requests desc — openai/chat_completions has 32, anthropic/messages has 10.
+	if sum.ByEndpoint[0].Provider != "openai" || sum.ByEndpoint[0].Endpoint != "chat_completions" {
+		t.Errorf("ByEndpoint[0] = %+v, want openai/chat_completions", sum.ByEndpoint[0])
+	}
+	if sum.ByEndpoint[0].Requests != 32 {
+		t.Errorf("ByEndpoint[0].Requests = %d, want 32", sum.ByEndpoint[0].Requests)
+	}
+	if got := sum.ByEndpoint[0].ErrorRate; got <= 0 || got > 0.1 {
+		t.Errorf("ByEndpoint[0].ErrorRate = %f, want roughly 2/32", got)
+	}
+	if sum.ByEndpoint[1].Provider != "anthropic" || sum.ByEndpoint[1].Endpoint != "messages" {
+		t.Errorf("ByEndpoint[1] = %+v, want anthropic/messages", sum.ByEndpoint[1])
+	}
+}
+
+func TestComputeByEndpoint_HistogramFolding(t *testing.T) {
+	// Exercise the histogram-folding path: end has a (provider, endpoint)
+	// pair with both a counter row and a histogram. The first histogram
+	// observation initialises the per-pair accumulator's Bounds/Counts
+	// slices; the second observation accumulates onto them.
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	start := makeSample(t0)
+	end := makeSample(t1)
+	bounds := []float64{0.5, 1, 2}
+
+	attrs200 := []attribute.KeyValue{
+		attribute.String("provider", "openai"),
+		attribute.String("endpoint", "chat_completions"),
+		attribute.String("status_code", "200"),
+	}
+	attrs500 := []attribute.KeyValue{
+		attribute.String("provider", "openai"),
+		attribute.String("endpoint", "chat_completions"),
+		attribute.String("status_code", "500"),
+	}
+	setCounter(end, observability.MetricRequestsTotal, attrs200, 1)
+	setCounter(end, observability.MetricRequestsTotal, attrs500, 1)
+	setHistogram(end, attrs200, 0.6, 1, bounds, []uint64{0, 1, 0, 0})
+	setHistogram(end, attrs500, 1.8, 1, bounds, []uint64{0, 0, 1, 0})
+
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	if len(sum.ByEndpoint) != 1 {
+		t.Fatalf("len(ByEndpoint) = %d, want 1", len(sum.ByEndpoint))
+	}
+	if sum.ByEndpoint[0].P95LatencyMs == 0 {
+		t.Error("P95LatencyMs = 0; expected folded observations to be reflected")
+	}
+}
+
+func TestComputeByEndpoint_HistogramSkippedWhenNoCounter(t *testing.T) {
+	// Defensive: a histogram label-set with no matching counter row in
+	// the same window should not produce a phantom endpoint row.
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	start := makeSample(t0)
+	end := makeSample(t1)
+	bounds := []float64{0.5, 1, 2}
+
+	histOnly := []attribute.KeyValue{
+		attribute.String("provider", "openai"),
+		attribute.String("endpoint", "responses"),
+		attribute.String("status_code", "200"),
+	}
+	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
+
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	if len(sum.ByEndpoint) != 0 {
+		t.Fatalf("len(ByEndpoint) = %d, want 0 (no counter row)", len(sum.ByEndpoint))
+	}
+}
+
+func TestComputeByConfiguration_HistogramSkippedWhenNoCounter(t *testing.T) {
+	// Mirror of TestComputeByEndpoint_HistogramSkippedWhenNoCounter for
+	// the configuration partition: histogram-only series must not
+	// produce a phantom configuration row.
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	start := makeSample(t0)
+	end := makeSample(t1)
+	bounds := []float64{0.5, 1, 2}
+
+	histOnly := []attribute.KeyValue{
+		attribute.String("provider", "openai"),
+		attribute.String("configuration", "production"),
+		attribute.String("status_code", "200"),
+	}
+	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
+
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	if len(sum.ByConfiguration) != 0 {
+		t.Fatalf("len(ByConfiguration) = %d, want 0 (no counter row)", len(sum.ByConfiguration))
+	}
+}
+
+func TestComputeByConfiguration_SkipsMissingConfigurationLabel(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	start := makeSample(t0)
+	end := makeSample(t1)
+
+	withConfig := []attribute.KeyValue{
+		attribute.String("provider", "openai"),
+		attribute.String("configuration", "production"),
+		attribute.String("status_code", "200"),
+	}
+	withoutConfig := []attribute.KeyValue{
+		attribute.String("provider", "openai"),
+		attribute.String("status_code", "200"),
+	}
+	setCounter(end, observability.MetricRequestsTotal, withConfig, 17)
+	setCounter(end, observability.MetricRequestsTotal, withoutConfig, 4)
+
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	if len(sum.ByConfiguration) != 1 {
+		t.Fatalf("len(ByConfiguration) = %d, want 1", len(sum.ByConfiguration))
+	}
+	if sum.ByConfiguration[0].Configuration != "production" {
+		t.Errorf("Configuration = %q, want production", sum.ByConfiguration[0].Configuration)
+	}
+	if sum.ByConfiguration[0].Requests != 17 {
+		t.Errorf("Requests = %d, want 17", sum.ByConfiguration[0].Requests)
+	}
+}
+
+func TestComputeByConfiguration_HistogramFolding(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	start := makeSample(t0)
+	end := makeSample(t1)
+
+	bounds := []float64{0.5, 1, 2}
+	attrs := []attribute.KeyValue{
+		attribute.String("provider", "openai"),
+		attribute.String("configuration", "production"),
+		attribute.String("status_code", "200"),
+	}
+	setCounter(end, observability.MetricRequestsTotal, attrs, 1)
+	setHistogram(end, attrs, 0.75, 1, bounds, []uint64{0, 1, 0, 0})
+
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	if len(sum.ByConfiguration) != 1 {
+		t.Fatalf("len(ByConfiguration) = %d", len(sum.ByConfiguration))
+	}
+	if sum.ByConfiguration[0].P95LatencyMs == 0 {
+		t.Error("P95LatencyMs = 0; expected the lone observation to be reflected")
+	}
+}
+
 func TestRpsSeries_DropsZeroOrNegativeIntervals(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// Two samples at the same timestamp — interval seconds = 0.

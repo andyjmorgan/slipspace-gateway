@@ -40,6 +40,17 @@ type DashboardSummary struct {
 	// least one request in Window.
 	ByProvider []DashboardProviderRow `json:"by_provider"`
 
+	// ByEndpoint breaks requests + p95 + error rate down by the routed
+	// (provider, endpoint) pair — e.g. openai.chat_completions vs
+	// anthropic.messages. Cardinality is bounded by the providers map
+	// (a handful of named endpoints per provider).
+	ByEndpoint []DashboardEndpointRow `json:"by_endpoint"`
+
+	// ByConfiguration breaks requests + p95 + error rate down by the
+	// resolved configuration name. Cardinality is bounded by the
+	// operator-defined configurations YAML; never client-derived.
+	ByConfiguration []DashboardConfigurationRow `json:"by_configuration"`
+
 	// ByModel breaks requests down by upstream model (the model
 	// label on gateway.requests.total).
 	ByModel []DashboardModelRow `json:"by_model"`
@@ -83,6 +94,26 @@ type DashboardProviderRow struct {
 	Requests     int64   `json:"requests"`
 	P95LatencyMs int64   `json:"p95_latency_ms"`
 	ErrorRate    float64 `json:"error_rate"`
+}
+
+// DashboardEndpointRow is one row of ByEndpoint. Provider is repeated
+// alongside Endpoint so the SPA can render a single readable label
+// (e.g. "openai · chat_completions") without joining tables.
+type DashboardEndpointRow struct {
+	Provider     string  `json:"provider"`
+	Endpoint     string  `json:"endpoint"`
+	Requests     int64   `json:"requests"`
+	P95LatencyMs int64   `json:"p95_latency_ms"`
+	ErrorRate    float64 `json:"error_rate"`
+}
+
+// DashboardConfigurationRow is one row of ByConfiguration. The
+// Configuration name matches the keys in configurations.yaml.
+type DashboardConfigurationRow struct {
+	Configuration string  `json:"configuration"`
+	Requests      int64   `json:"requests"`
+	P95LatencyMs  int64   `json:"p95_latency_ms"`
+	ErrorRate     float64 `json:"error_rate"`
 }
 
 // DashboardModelRow is one row of ByModel.

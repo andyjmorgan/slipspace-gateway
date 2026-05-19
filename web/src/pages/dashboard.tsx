@@ -14,6 +14,8 @@ import {
   type DashboardSummary,
   type DashboardProviderHealth,
   type DashboardProviderRow,
+  type DashboardEndpointRow,
+  type DashboardConfigurationRow,
   type DashboardModelRow,
   type DashboardRuleFiredRow,
   type DashboardSeries,
@@ -151,6 +153,11 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
         <ProviderHealth rows={d.provider_health} />
       </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+        <ByEndpointStrip rows={d.by_endpoint} window={d.window} />
+        <ByConfigurationStrip rows={d.by_configuration} window={d.window} />
+      </div>
+
       <RulesFired rows={d.rules_fired} />
 
       <ModelsCard rows={d.by_model} />
@@ -231,6 +238,90 @@ function ByProviderStrip({ rows }: { rows: DashboardProviderRow[] }) {
                 style={{
                   width: `${(r.requests / max) * 100}%`,
                   background: `var(--p-${r.provider})`,
+                }}
+              />
+            </div>
+            <div className="mono tnum text-[12px] text-right w-14">{fmt.compact(r.requests)}</div>
+            <div
+              className="mono tnum text-[11.5px] text-right w-12"
+              style={{ color: r.error_rate > 0.04 ? "var(--err)" : "var(--text-3)" }}
+            >
+              {fmt.pct(r.error_rate, 1)}
+            </div>
+            <div className="mono tnum text-[11.5px] text-right w-12 text-[color:var(--text-3)]">
+              {fmt.ms(r.p95_latency_ms)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </PanelCard>
+  )
+}
+
+function ByEndpointStrip({ rows, window }: { rows: DashboardEndpointRow[]; window: string }) {
+  const sub = `requests · ${window}`
+  if (!rows.length) return <EmptyCard title="Traffic by endpoint" sub={sub} message="No traffic recorded yet." />
+  const max = Math.max(...rows.map((r) => r.requests))
+  return (
+    <PanelCard>
+      <PanelHead title="Traffic by endpoint" sub={sub} />
+      <div className="px-4 py-3 flex flex-col gap-2.5">
+        {rows.map((r) => (
+          <div
+            key={`${r.provider}.${r.endpoint}`}
+            className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <ProviderChip name={r.provider} />
+              <span className="mono text-[11.5px] text-[color:var(--text-3)] truncate">{r.endpoint}</span>
+            </div>
+            <div className="h-2 rounded-full bg-[color:var(--bg-2)] overflow-hidden">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${(r.requests / max) * 100}%`,
+                  background: `var(--p-${r.provider})`,
+                }}
+              />
+            </div>
+            <div className="mono tnum text-[12px] text-right w-14">{fmt.compact(r.requests)}</div>
+            <div
+              className="mono tnum text-[11.5px] text-right w-12"
+              style={{ color: r.error_rate > 0.04 ? "var(--err)" : "var(--text-3)" }}
+            >
+              {fmt.pct(r.error_rate, 1)}
+            </div>
+            <div className="mono tnum text-[11.5px] text-right w-12 text-[color:var(--text-3)]">
+              {fmt.ms(r.p95_latency_ms)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </PanelCard>
+  )
+}
+
+function ByConfigurationStrip({ rows, window }: { rows: DashboardConfigurationRow[]; window: string }) {
+  const sub = `requests · ${window}`
+  if (!rows.length) {
+    return <EmptyCard title="Traffic by configuration" sub={sub} message="No traffic recorded yet." />
+  }
+  const max = Math.max(...rows.map((r) => r.requests))
+  return (
+    <PanelCard>
+      <PanelHead title="Traffic by configuration" sub={sub} />
+      <div className="px-4 py-3 flex flex-col gap-2.5">
+        {rows.map((r) => (
+          <div key={r.configuration} className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3">
+            <div className="mono text-[12px] truncate" title={r.configuration}>
+              {r.configuration}
+            </div>
+            <div className="h-2 rounded-full bg-[color:var(--bg-2)] overflow-hidden">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${(r.requests / max) * 100}%`,
+                  background: "var(--accent)",
                 }}
               />
             </div>
