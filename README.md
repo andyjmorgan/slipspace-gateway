@@ -69,7 +69,7 @@ The fastest way to exercise the SPA + gateway together end-to-end:
 
 ```sh
 make dev-compose          # builds + starts gateway, mockllm, nats
-# open http://localhost:8081 and sign in:
+# open http://localhost:8081/admin and sign in:
 #   username: admin
 #   password: sluice-gateway   (override via SLUICE_ADMIN_PASSWORD env)
 make dev-compose-down     # tear it down
@@ -89,7 +89,7 @@ The gateway image bakes the SPA in at build time. Override the operator password
 For SPA-only iteration without rebuilding the image, leave `make dev-compose` running and start the Vite dev server in a second terminal:
 
 ```sh
-make web-dev   # Vite on :5180, proxies /api/v1 to localhost:8081
+make web-dev   # Vite on :5180/admin, proxies /admin/api/v1 to localhost:8081
 ```
 
 Open `http://localhost:5180`. Changes to `web/src/**` reload instantly; the compose-served gateway continues serving the API.

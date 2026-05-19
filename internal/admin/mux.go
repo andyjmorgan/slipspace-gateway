@@ -50,17 +50,25 @@ type MuxOptions struct {
 	GatewayStartedAt time.Time
 }
 
+// Prefix is the URL path prefix the console mounts under. Both the
+// SPA and the control-plane API live below this prefix so the gateway
+// can sit behind a shared ingress on the same host as the data plane
+// (e.g. sluice.donkeywork.dev/admin/) without any path stripping
+// on the ingress side — keeping the routing rules dumb.
+const Prefix = "/admin"
+
 // NewMux builds the management-console http.Handler.
 //
-// Routes:
-//   - GET  /api/v1/auth/me           — auth probe; returns 200 with {"username":"admin"}
-//   - GET  /api/v1/dashboard/summary — DashboardSummary JSON, real data from the snapshotter
-//   - All other paths                — SPA static + index.html fallback
+// Routes (all under Prefix):
+//   - GET  /admin/                       — SPA index (auto-redirect from /admin)
+//   - GET  /admin/api/v1/auth/me         — auth probe; 200 + {"username":"admin"}
+//   - GET  /admin/api/v1/dashboard/...   — DashboardSummary / Timeseries JSON
+//   - All other /admin/* paths           — SPA static + index.html fallback
 //
-// HTTP Basic auth wraps the /api/v1/* tree. The SPA's static assets at
-// root are unauthenticated — the SPA itself triggers the API calls
-// behind auth, and a 401 from /api/v1/auth/me sends the user back to
-// the login page.
+// HTTP Basic auth wraps the /admin/api/v1/* tree. The SPA's static
+// assets are unauthenticated — the SPA itself drives the API calls
+// behind auth, and a 401 from /admin/api/v1/auth/me sends the user
+// back to the login page.
 //
 // Each route is wrapped in InstrumentRoute so gateway.admin.requests.total
 // carries a stable {route, status} label set rather than picking the
@@ -91,9 +99,19 @@ func NewMux(opts MuxOptions) http.Handler {
 		),
 	)
 
+	// adminTree exposes the same routes the listener used to expose at
+	// root; StripPrefix below converts incoming /admin/foo requests
+	// into /foo before they reach this mux, so the inner handlers do
+	// not need to know about the prefix.
+	adminTree := http.NewServeMux()
+	adminTree.Handle("/api/v1/", BasicAuth(opts.Password, apiMux))
+	adminTree.Handle("/", InstrumentRoute(opts.Meters, "spa", SPAHandler()))
+
 	root := http.NewServeMux()
-	root.Handle("/api/v1/", BasicAuth(opts.Password, apiMux))
-	root.Handle("/", InstrumentRoute(opts.Meters, "spa", SPAHandler()))
+	// "/admin/" matches /admin/ and anything below; ServeMux also
+	// auto-redirects a bare /admin to /admin/ so the user never lands
+	// on an empty SPA root.
+	root.Handle(Prefix+"/", http.StripPrefix(Prefix, adminTree))
 
 	return root
 }

@@ -8,13 +8,17 @@ import tailwindcss from "@tailwindcss/vite"
 // target invokes `npm run build` in this directory; the resulting
 // internal/admin/webdist/ is what //go:embed reads.
 //
-// Dev mode proxies /api/v1 to the gateway's admin listener (default
-// 0.0.0.0:8081 — see contracts/admin/admin.go). Override with
-// SLUICE_ADMIN_URL when the gateway runs elsewhere.
+// Both the SPA and the control-plane API live under /admin on the
+// gateway's admin listener (see internal/admin.Prefix). `base` makes
+// Vite emit asset URLs under /admin/ so they survive a path-routing
+// ingress unmodified; the dev proxy forwards /admin/api/v1/* to the
+// gateway. Override the upstream with SLUICE_ADMIN_URL when the
+// gateway runs elsewhere.
 const adminURL = process.env.SLUICE_ADMIN_URL ?? "http://localhost:8081"
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  base: "/admin/",
   build: {
     outDir: "../internal/admin/webdist",
     // emptyOutDir would wipe the committed placeholder.html and
@@ -26,7 +30,9 @@ export default defineConfig({
     port: 5180,
     strictPort: true,
     proxy: {
-      "/api": {
+      // /admin/api/v1/* is the API; the gateway's admin listener
+      // serves it natively under that same path so no rewrite needed.
+      "/admin/api": {
         target: adminURL,
         changeOrigin: true,
       },

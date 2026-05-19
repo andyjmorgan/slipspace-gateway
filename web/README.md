@@ -12,7 +12,7 @@ Vite + React + shadcn-ui SPA for the management console. Embedded into the gatew
 
 ## Dev loop
 
-The dev server runs on `:5180` (pinned, `strictPort: true`) and proxies `/api/v1/*` to the gateway's admin listener. The gateway must be running with the admin console enabled.
+The dev server runs on `:5180` (pinned, `strictPort: true`) under `/admin` (matching the SPA's Vite `base`), and proxies `/admin/api/v1/*` to the gateway's admin listener. The gateway must be running with the admin console enabled.
 
 ```sh
 # Terminal 1: gateway with admin enabled
@@ -25,7 +25,7 @@ make web-dev
 # or: cd web && npm run dev
 ```
 
-Open <http://localhost:5180>. Sign in with username `admin` and the password you exported above.
+Open <http://localhost:5180/admin>. Sign in with username `admin` and the password you exported above.
 
 Override the proxy target with `SLUICE_ADMIN_URL=http://other-host:8081 npm run dev` if the gateway runs elsewhere.
 

@@ -46,8 +46,10 @@ type Harness struct {
 	MockLLMURL string
 	NATSURL    string
 
-	// AdminURL is the http://127.0.0.1:<port> root of the admin
-	// listener when Options.AdminEnabled is true. Empty otherwise.
+	// AdminURL is the http://127.0.0.1:<port>/admin base of the
+	// management console when Options.AdminEnabled is true — includes
+	// the /admin path prefix so tests can append "/api/v1/..." or
+	// "/dashboard" without hardcoding the prefix. Empty otherwise.
 	AdminURL string
 
 	// AdminPassword is the credential the harness wrote into admin.yaml
@@ -289,7 +291,7 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 			password = "test-password"
 		}
 		h.AdminPassword = password
-		h.AdminURL = fmt.Sprintf("http://127.0.0.1:%d", adminPort)
+		h.AdminURL = fmt.Sprintf("http://127.0.0.1:%d/admin", adminPort)
 	}
 
 	configDir, err := h.materializeConfig(repoRoot)
