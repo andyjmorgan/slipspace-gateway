@@ -149,18 +149,18 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-        <ByProviderStrip rows={d.by_provider} />
-        <ProviderHealth rows={d.provider_health} />
+        <ByProviderStrip rows={d.by_provider ?? []} />
+        <ProviderHealth rows={d.provider_health ?? []} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-        <ByEndpointStrip rows={d.by_endpoint} window={d.window} />
-        <ByConfigurationStrip rows={d.by_configuration} window={d.window} />
+        <ByEndpointStrip rows={d.by_endpoint ?? []} window={d.window} />
+        <ByConfigurationStrip rows={d.by_configuration ?? []} window={d.window} />
       </div>
 
-      <RulesFired rows={d.rules_fired} />
+      <RulesFired rows={d.rules_fired ?? []} />
 
-      <ModelsCard rows={d.by_model} />
+      <ModelsCard rows={d.by_model ?? []} />
     </>
   )
 }
@@ -390,7 +390,7 @@ function ProviderHealth({ rows }: { rows: DashboardProviderHealth[] }) {
 }
 
 function RulesFired({ rows }: { rows: DashboardRuleFiredRow[] }) {
-  if (!rows.length) {
+  if (!rows?.length) {
     return <EmptyCard title="Rules fired" sub="match counts · 24h" message="No rules have matched yet." />
   }
   const max = Math.max(...rows.map((r) => r.fire_count))
@@ -411,9 +411,9 @@ function RulesFired({ rows }: { rows: DashboardRuleFiredRow[] }) {
               <div className="mono tnum text-[12px] w-12 text-right">{fmt.compact(r.fire_count)}</div>
             </div>
             <div className="text-[11px] text-[color:var(--text-3)] truncate">
-              {r.used_by_configurations.length === 1
-                ? r.used_by_configurations[0]
-                : `${r.used_by_configurations.length} configs`}
+              {(r.used_by_configurations?.length ?? 0) === 1
+                ? r.used_by_configurations![0]
+                : `${r.used_by_configurations?.length ?? 0} configs`}
             </div>
           </div>
         ))}

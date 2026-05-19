@@ -84,13 +84,20 @@ func emptySummary(providers []string, window time.Duration) adminc.DashboardSumm
 	for _, p := range providers {
 		health = append(health, adminc.DashboardProviderHealth{Provider: p, Healthy: true})
 	}
+	// Every slice field is initialised to a zero-length slice rather
+	// than left nil — the SPA reads `.length` and `.map(...)` on these
+	// without optional chaining, so a nil here lands as JSON null and
+	// blows up the dashboard on first paint. New slice fields added to
+	// DashboardSummary MUST be initialised here too.
 	return adminc.DashboardSummary{
-		Window:         formatWindow(window),
-		GeneratedAt:    time.Now().UTC(),
-		ByProvider:     []adminc.DashboardProviderRow{},
-		ByModel:        []adminc.DashboardModelRow{},
-		RulesFired:     []adminc.DashboardRuleFiredRow{},
-		ProviderHealth: health,
+		Window:          formatWindow(window),
+		GeneratedAt:     time.Now().UTC(),
+		ByProvider:      []adminc.DashboardProviderRow{},
+		ByEndpoint:      []adminc.DashboardEndpointRow{},
+		ByConfiguration: []adminc.DashboardConfigurationRow{},
+		ByModel:         []adminc.DashboardModelRow{},
+		RulesFired:      []adminc.DashboardRuleFiredRow{},
+		ProviderHealth:  health,
 	}
 }
 
