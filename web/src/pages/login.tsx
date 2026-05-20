@@ -163,12 +163,6 @@ export function LoginPage() {
             {busy ? "Signing in…" : "Sign in"}
           </Button>
         </form>
-
-        <div className="flex items-center gap-1.5 flex-wrap mt-6 pt-4 border-t border-[color:var(--border)] text-[12px] text-[color:var(--text-3)]">
-          <span className="mono">cluster-internal access</span>
-          <span className="text-[color:var(--text-4)]">·</span>
-          <span>contact your platform admin for credentials</span>
-        </div>
       </div>
     </div>
   )
