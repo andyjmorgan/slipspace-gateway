@@ -46,12 +46,11 @@ type APIKeyReveal struct {
 }
 
 // RuleAttachment is a configuration's view of one attached rule:
-// the rule name + priority + a one-line summary that the SPA renders
-// without needing to fetch the rule detail.
+// the rule name + a one-line summary that the SPA renders without
+// needing to fetch the rule detail. Position in the parent slice IS
+// the evaluation order — there is no separate priority field.
 type RuleAttachment struct {
 	Name string `json:"name"`
-
-	Priority int `json:"priority"`
 
 	ConditionSummary string `json:"condition_summary"`
 
@@ -80,8 +79,6 @@ type ConfigurationDetail struct {
 type RuleSummary struct {
 	Name string `json:"name"`
 
-	Priority int `json:"priority"`
-
 	ConditionSummary string `json:"condition_summary"`
 
 	ActionTypes []string `json:"action_types"`
@@ -93,13 +90,11 @@ type RuleSummary struct {
 	UsedBy []string `json:"used_by"`
 }
 
-// RuleDetail is the full read-only view of one rule: name + priority +
+// RuleDetail is the full read-only view of one rule: name +
 // the raw condition / actions (already JSON-friendly via the rules
 // contract's MarshalJSON) + the used-by backlink.
 type RuleDetail struct {
 	Name string `json:"name"`
-
-	Priority int `json:"priority"`
 
 	Behavior rulescontract.RuleBehavior `json:"behavior,omitempty"`
 

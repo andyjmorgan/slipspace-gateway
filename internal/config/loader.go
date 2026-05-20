@@ -377,9 +377,7 @@ func (r *ResolvedConfig) buildIndexes() {
 				rules = append(rules, rule)
 			}
 		}
-		sort.SliceStable(rules, func(i, j int) bool {
-			return rules[i].Priority < rules[j].Priority
-		})
+		// Evaluation order = YAML list order. No priority sort.
 		r.PerConfigurationRules[name] = rules
 	}
 

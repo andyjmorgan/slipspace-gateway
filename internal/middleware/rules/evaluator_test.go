@@ -58,7 +58,6 @@ func TestEvaluator_SingleRule_AppliesAction(t *testing.T) {
 	t.Parallel()
 	r1 := &contractsrules.RuleContract{
 		Name:      "tag-openai",
-		Priority:  100,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-Tagged", "yes")},
 	}
@@ -144,14 +143,12 @@ func TestEvaluator_BehaviorExit_HaltsIteration(t *testing.T) {
 	t.Parallel()
 	first := &contractsrules.RuleContract{
 		Name:      "first",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-First", "yes")},
 		Behavior:  contractsrules.BehaviorExit,
 	}
 	second := &contractsrules.RuleContract{
 		Name:      "second",
-		Priority:  100,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
 	}
@@ -176,12 +173,12 @@ func TestEvaluator_BehaviorExit_HaltsIteration(t *testing.T) {
 func TestEvaluator_BehaviorContinue_IsDefault(t *testing.T) {
 	t.Parallel()
 	first := &contractsrules.RuleContract{
-		Name: "first", Priority: 50,
+		Name:      "first",
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-First", "yes")},
 	}
 	second := &contractsrules.RuleContract{
-		Name: "second", Priority: 100,
+		Name:      "second",
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
 	}

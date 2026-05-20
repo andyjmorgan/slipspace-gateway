@@ -9,6 +9,11 @@
 #    Every real credential has been swapped for a *-mock or
 #    sk_dev_replica_* equivalent; structure is verbatim from the
 #    cluster so the admin console reflects what's actually running.
+#
+# Rule evaluation order is the YAML list position in `rule_names` —
+# there is no separate priority field. More-specific rules (claude/
+# gemini model routing) come first so they short-circuit before the
+# coarser ones (provider-equals header injection).
 
 configurations:
   dev:
@@ -18,9 +23,9 @@ configurations:
       gemini: dev-mock
 
     rule_names:
-      - redact-emails
       - route-claude-models-to-anthropic
       - route-gemini-models-to-gemini
+      - redact-emails
 
     resilience_name: high-availability
 
@@ -37,11 +42,11 @@ configurations:
       qwen-ollama: ""
 
     rule_names:
+      - route-claude-models-to-anthropic
+      - route-gemini-models-to-gemini
       - route-gpt-oss
       - route-qwen36
       - route-qwen-ollama
-      - route-claude-models-to-anthropic
-      - route-gemini-models-to-gemini
 
     tags:
       tier: production
@@ -67,7 +72,6 @@ api_keys:
 
 rules:
   - name: redact-emails
-    priority: 100
     condition:
       type: provider
       operator: Equals
@@ -80,7 +84,6 @@ rules:
     behavior: continue
 
   - name: route-gpt-oss
-    priority: 100
     condition:
       type: modelName
       operator: StartsWith
@@ -91,7 +94,6 @@ rules:
     behavior: continue
 
   - name: route-qwen36
-    priority: 100
     condition:
       type: modelName
       operator: StartsWith
@@ -102,7 +104,6 @@ rules:
     behavior: continue
 
   - name: route-qwen-ollama
-    priority: 100
     condition:
       type: modelName
       operator: Equals
@@ -113,7 +114,6 @@ rules:
     behavior: continue
 
   - name: route-claude-models-to-anthropic
-    priority: 50
     condition:
       type: modelName
       operator: StartsWith
@@ -124,7 +124,6 @@ rules:
     behavior: continue
 
   - name: route-gemini-models-to-gemini
-    priority: 50
     condition:
       type: modelName
       operator: StartsWith

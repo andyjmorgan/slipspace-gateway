@@ -110,7 +110,7 @@ function UpstreamCredentialsCard({ creds }: { creds: Record<string, RedactedSecr
 function AttachedRulesCard({ rules }: { rules: RuleAttachment[] }) {
   return (
     <PanelCard>
-      <PanelHead title="Attached rules" sub={`in priority order (low → high) · ${rules.length}`} />
+      <PanelHead title="Attached rules" sub={`evaluated top-to-bottom · ${rules.length}`} />
       {rules.length === 0 && (
         <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No rules attached.</div>
       )}
@@ -118,7 +118,6 @@ function AttachedRulesCard({ rules }: { rules: RuleAttachment[] }) {
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-right font-medium px-4 py-2 w-16">Priority</th>
               <th className="text-left font-medium px-4 py-2">Name</th>
               <th className="text-left font-medium px-4 py-2">Condition</th>
               <th className="text-left font-medium px-4 py-2">Actions</th>
@@ -128,7 +127,6 @@ function AttachedRulesCard({ rules }: { rules: RuleAttachment[] }) {
           <tbody>
             {rules.map((r) => (
               <tr key={r.name} className="border-t border-[color:var(--border)] hover:bg-[color:var(--hover)]">
-                <td className="mono tnum text-right px-4 py-2.5">{r.priority}</td>
                 <td className="px-4 py-2.5">
                   <Link to={`/rules/${encodeURIComponent(r.name)}`} className="mono hover:underline">{r.name}</Link>
                 </td>

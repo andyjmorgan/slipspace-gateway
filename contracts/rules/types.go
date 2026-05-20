@@ -87,9 +87,11 @@ const (
 )
 
 // RuleContract is one rule applied to a request as it flows through the
-// pipeline. Rules are evaluated in ascending Priority order. On match, every
-// Action in Actions fires in sequence; terminating actions short-circuit the
-// pipeline. Behavior controls whether evaluation continues after this rule.
+// pipeline. Rules are evaluated in the order the owning Configuration lists
+// them in `rule_names` — the YAML list position IS the evaluation order;
+// there is no separate priority field. On match, every Action in Actions
+// fires in sequence; terminating actions short-circuit the pipeline.
+// Behavior controls whether evaluation continues after this rule.
 type RuleContract struct {
 	// ID is optional; populated by the control plane when minted via the
 	// management API. Empty in operator-authored static config — the gateway
@@ -100,10 +102,6 @@ type RuleContract struct {
 	// Configuration.RuleNames references.
 	Name string `yaml:"name" json:"name"`
 
-	// Priority orders evaluation. Lower values run first; ties break on the
-	// rule's position in the Configuration.
-	Priority int `yaml:"priority" json:"priority"`
-
 	// Condition is the predicate that must match for the rule's Actions to
 	// fire. Polymorphic; see Condition and its concrete types.
 	Condition Condition `yaml:"condition" json:"condition"`
@@ -112,7 +110,7 @@ type RuleContract struct {
 	// short-circuits the pipeline regardless of Behavior.
 	Actions []Action `yaml:"actions" json:"actions"`
 
-	// Behavior controls whether evaluation continues to lower-priority rules
+	// Behavior controls whether evaluation continues to subsequent rules
 	// after this rule's Actions complete. Empty defaults to BehaviorContinue.
 	Behavior RuleBehavior `yaml:"behavior,omitempty" json:"behavior,omitempty"`
 }
@@ -125,8 +123,6 @@ type ruleContractWire struct {
 	ID *string `json:"id,omitempty"`
 
 	Name string `json:"name"`
-
-	Priority int `json:"priority"`
 
 	Condition json.RawMessage `json:"condition"`
 
@@ -150,7 +146,6 @@ func (r *RuleContract) UnmarshalJSON(data []byte) error {
 		r.ID = &parsed
 	}
 	r.Name = w.Name
-	r.Priority = w.Priority
 	r.Behavior = w.Behavior
 
 	if len(w.Condition) > 0 && !isJSONNull(w.Condition) {
@@ -184,7 +179,6 @@ func (r *RuleContract) UnmarshalYAML(value *yaml.Node) error {
 	type scalarAlias struct {
 		ID       string       `yaml:"id,omitempty"`
 		Name     string       `yaml:"name"`
-		Priority int          `yaml:"priority"`
 		Behavior RuleBehavior `yaml:"behavior,omitempty"`
 	}
 	var s scalarAlias
@@ -199,7 +193,6 @@ func (r *RuleContract) UnmarshalYAML(value *yaml.Node) error {
 		r.ID = &parsed
 	}
 	r.Name = s.Name
-	r.Priority = s.Priority
 	r.Behavior = s.Behavior
 
 	for i := 0; i < len(value.Content); i += 2 {

@@ -922,7 +922,7 @@ func TestLoad_LibraryHappyPath(t *testing.T) {
 	if got := resolved.RuleIndex["redact-emails"]; got == nil || got.Name != "redact-emails" {
 		t.Errorf("RuleIndex redact-emails = %+v", got)
 	}
-	if got := resolved.RuleIndex["block-pii"]; got == nil || got.Priority != 200 {
+	if got := resolved.RuleIndex["block-pii"]; got == nil || got.Name != "block-pii" {
 		t.Errorf("RuleIndex block-pii = %+v", got)
 	}
 	if len(resolved.ResiliencePolicies) != 1 {
@@ -940,46 +940,35 @@ func TestLoad_LibraryHappyPath(t *testing.T) {
 	}
 }
 
-// TestLoad_PerConfigurationRules_PrioritySort confirms PerConfigurationRules
-// re-orders rules by Priority ascending regardless of rule_names listing
-// order — the data-plane reads this slice directly and must not pay for a
-// per-request sort.
-func TestLoad_PerConfigurationRules_PrioritySort(t *testing.T) {
+// TestLoad_PerConfigurationRules_ListOrder confirms PerConfigurationRules
+// preserves the rule_names list order verbatim. The YAML list is the only
+// source of evaluation order — rule definition order in the `rules:`
+// library is irrelevant to evaluation. The data-plane reads this slice
+// directly and must not re-order on the hot path.
+func TestLoad_PerConfigurationRules_ListOrder(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
 	writeFile(t, dir, "policy.yaml", `
 configurations:
   dev:
     rule_names:
-      - low
-      - high
-      - mid
+      - alpha
+      - charlie
+      - bravo
 
 rules:
-  - name: high
-    priority: 50
+  # Library definition order intentionally differs from the
+  # rule_names attachment order — neither this block's order nor
+  # any other implicit sort should affect evaluation order.
+  - name: bravo
     condition: {type: provider, operator: Equals, expectedProvider: openai}
-    actions:
-      - type: setHeader
-        headerName: X-Test
-        headerAction: Set
-        headerValue: noop
-  - name: mid
-    priority: 100
+    actions: [{type: setHeader, headerName: X-Test, headerAction: Set, headerValue: bravo}]
+  - name: alpha
     condition: {type: provider, operator: Equals, expectedProvider: openai}
-    actions:
-      - type: setHeader
-        headerName: X-Test
-        headerAction: Set
-        headerValue: noop
-  - name: low
-    priority: 200
+    actions: [{type: setHeader, headerName: X-Test, headerAction: Set, headerValue: alpha}]
+  - name: charlie
     condition: {type: provider, operator: Equals, expectedProvider: openai}
-    actions:
-      - type: setHeader
-        headerName: X-Test
-        headerAction: Set
-        headerValue: noop
+    actions: [{type: setHeader, headerName: X-Test, headerAction: Set, headerValue: charlie}]
 `)
 
 	resolved, err := config.Load(context.Background(), dir)
@@ -990,67 +979,10 @@ rules:
 	if len(got) != 3 {
 		t.Fatalf("PerConfigurationRules[dev] len = %d", len(got))
 	}
-	want := []string{"high", "mid", "low"}
+	want := []string{"alpha", "charlie", "bravo"}
 	for i, w := range want {
 		if got[i].Name != w {
-			t.Errorf("PerConfigurationRules[dev][%d] = %q, want %q", i, got[i].Name, w)
-		}
-	}
-}
-
-// TestLoad_PerConfigurationRules_StableTieBreak confirms equal-priority
-// rules keep their rule_names listing order — operator authoring order is
-// the documented tie-breaker.
-func TestLoad_PerConfigurationRules_StableTieBreak(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "providers.yaml", sampleProviders)
-	writeFile(t, dir, "policy.yaml", `
-configurations:
-  dev:
-    rule_names:
-      - c
-      - a
-      - b
-
-rules:
-  - name: a
-    priority: 100
-    condition: {type: provider, operator: Equals, expectedProvider: openai}
-    actions:
-      - type: setHeader
-        headerName: X-Test
-        headerAction: Set
-        headerValue: noop
-  - name: b
-    priority: 100
-    condition: {type: provider, operator: Equals, expectedProvider: openai}
-    actions:
-      - type: setHeader
-        headerName: X-Test
-        headerAction: Set
-        headerValue: noop
-  - name: c
-    priority: 100
-    condition: {type: provider, operator: Equals, expectedProvider: openai}
-    actions:
-      - type: setHeader
-        headerName: X-Test
-        headerAction: Set
-        headerValue: noop
-`)
-
-	resolved, err := config.Load(context.Background(), dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	got := resolved.PerConfigurationRules["dev"]
-	if len(got) != 3 {
-		t.Fatalf("PerConfigurationRules[dev] len = %d", len(got))
-	}
-	want := []string{"c", "a", "b"}
-	for i, w := range want {
-		if got[i].Name != w {
-			t.Errorf("PerConfigurationRules[dev][%d] = %q, want %q (stable sort lost authoring order)", i, got[i].Name, w)
+			t.Errorf("PerConfigurationRules[dev][%d] = %q, want %q (rule_names list order must be preserved)", i, got[i].Name, w)
 		}
 	}
 }

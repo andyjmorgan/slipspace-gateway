@@ -20,7 +20,6 @@ export type ConfigurationSummary = {
 
 export type RuleAttachment = {
   name: string
-  priority: number
   condition_summary: string
   action_types: string[]
   behavior?: string
@@ -42,7 +41,6 @@ export type ConfigurationDetail = {
 
 export type RuleSummary = {
   name: string
-  priority: number
   condition_summary: string
   action_types: string[]
   behavior?: string
@@ -51,7 +49,6 @@ export type RuleSummary = {
 
 export type RuleDetail = {
   name: string
-  priority: number
   behavior?: string
   // Polymorphic — interrogated as-is by the SPA. The Go side already
   // marshals the concrete condition/action shapes via the contract types'

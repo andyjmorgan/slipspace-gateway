@@ -20,7 +20,6 @@ func TestRuleContract_Validate(t *testing.T) {
 			name: "valid minimal",
 			rule: rules.RuleContract{
 				Name:      "rule-1",
-				Priority:  1,
 				Condition: cond,
 				Actions:   []rules.Action{act},
 			},

@@ -64,13 +64,13 @@ type ResolvedConfig struct {
 	RuleIndex map[string]*rulescontract.RuleContract
 
 	// PerConfigurationRules maps configuration name to the configuration's
-	// resolved rule slice — pointer-stable references into Rules, sorted by
-	// Priority ascending. The order in Configuration.RuleNames is preserved
-	// as the tie-breaker when two rules share a priority, so operator
-	// authoring order is deterministic.
+	// resolved rule slice — pointer-stable references into Rules, ordered
+	// by the position each name occupies in Configuration.RuleNames. The
+	// YAML list is the single source of evaluation order; there is no
+	// separate priority field.
 	//
 	// The data-plane rules middleware reads this per request rather than
-	// re-resolving and re-sorting on the hot path.
+	// re-resolving on the hot path.
 	PerConfigurationRules map[string][]*rulescontract.RuleContract
 
 	// ResilienceIndex maps resilience policy name to a pointer into

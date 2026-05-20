@@ -34,7 +34,6 @@ api_keys:
 
 rules:
   - name: rate-limit-openai
-    priority: 100
     condition:
       type: provider
       operator: Equals

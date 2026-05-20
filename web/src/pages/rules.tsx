@@ -30,17 +30,16 @@ export function RulesPage() {
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-                <th className="text-right font-medium px-4 py-2 w-16">Priority</th>
                 <th className="text-left font-medium px-4 py-2">Name</th>
                 <th className="text-left font-medium px-4 py-2">Condition</th>
                 <th className="text-left font-medium px-4 py-2">Actions</th>
+                <th className="text-left font-medium px-4 py-2">Behavior</th>
                 <th className="text-left font-medium px-4 py-2">Used by</th>
               </tr>
             </thead>
             <tbody>
               {state.data.map((r) => (
                 <tr key={r.name} className="border-t border-[color:var(--border)] hover:bg-[color:var(--hover)]">
-                  <td className="mono tnum text-right px-4 py-2.5">{r.priority}</td>
                   <td className="px-4 py-2.5">
                     <Link to={`/rules/${encodeURIComponent(r.name)}`} className="mono font-medium hover:underline">{r.name}</Link>
                   </td>
@@ -57,6 +56,9 @@ export function RulesPage() {
                     </div>
                   </td>
                   <td className="px-4 py-2.5">
+                    <BehaviorBadge behavior={r.behavior} />
+                  </td>
+                  <td className="px-4 py-2.5">
                     <UsedBy names={r.used_by} kind="configurations" linkPrefix="/configurations" />
                   </td>
                 </tr>
@@ -67,6 +69,12 @@ export function RulesPage() {
       )}
     </div>
   )
+}
+
+export function BehaviorBadge({ behavior }: { behavior?: string }) {
+  if (!behavior || behavior === "continue") return <Tag variant="default">continue</Tag>
+  if (behavior === "exit") return <Tag variant="warn">exit</Tag>
+  return <Tag variant="ghost">{behavior}</Tag>
 }
 
 export function UsedBy({
