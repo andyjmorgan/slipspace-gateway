@@ -14,6 +14,13 @@ import (
 // the response status code so the instrumentation middleware can label
 // the counter after the handler runs. Defaults to 200 if WriteHeader
 // is never called (the stdlib's documented contract).
+//
+// Optional ResponseWriter capability interfaces (http.Flusher today;
+// Hijacker / pusher could be added later if needed) are forwarded
+// explicitly. Wrapping a Flusher and silently dropping the capability
+// breaks SSE handlers downstream — the /api/v1/messages/stream route
+// is the immediate consumer; PR #24's recordingResponseWriter shipped
+// the same bug in the data plane.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -29,6 +36,17 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.status = http.StatusOK
 	}
 	return s.ResponseWriter.Write(b)
+}
+
+// Flush forwards to the wrapped ResponseWriter when it implements
+// http.Flusher. Required for SSE: net/http's *response satisfies
+// Flusher for HTTP/1.1 + HTTP/2, so production paths exercise the
+// forward; the no-op fallback keeps tests with bare recorders working
+// without panicking.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // InstrumentRoute wraps next with a counter increment on response. The
