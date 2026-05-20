@@ -42,6 +42,20 @@ const (
 	// SLUICE_ADMIN_LIVE_FEED_CAPACITY=0 to disable the pane entirely.
 	DefaultAdminLiveFeedCapacity = 100
 
+	// DefaultAdminLiveFeedBodyBytes is the total byte budget of the
+	// in-process body LRU that backs GET /admin/api/v1/messages/{id}/body.
+	// 200 MB holds ~25 max-sized bodies or hundreds of typical-sized
+	// ones. Set to 0 to disable body capture entirely; the live-tail
+	// pane still renders metadata.
+	DefaultAdminLiveFeedBodyBytes = 200 * 1024 * 1024
+
+	// DefaultAdminLiveFeedBodyMaxBytes caps per-body capture before
+	// truncation. 8 MB fits OpenAI vision payloads and most Claude /
+	// Gemini messages without surprises; bodies above the cap are
+	// stored head-only with a truncated flag so the operator can see
+	// something rather than nothing.
+	DefaultAdminLiveFeedBodyMaxBytes = 8 * 1024 * 1024
+
 	// MaxRulesMaxGroupDepth is the upper bound accepted by Validate.
 	// Beyond this, the cost of authoring + evaluating a tree this deep
 	// outweighs any expressive gain; a flat priority chain is clearer.
@@ -51,22 +65,24 @@ const (
 // SLUICE_* env var names. Exported so callers (CLI validator, tests,
 // integration harness) can read or set them by symbolic name.
 const (
-	EnvHTTPBind                = "SLUICE_HTTP_BIND"
-	EnvShutdownDrainSeconds    = "SLUICE_SHUTDOWN_DRAIN_SECONDS"
-	EnvLogFormat               = "SLUICE_LOG_FORMAT"
-	EnvLogLevel                = "SLUICE_LOG_LEVEL"
-	EnvPrometheusBind          = "SLUICE_PROMETHEUS_BIND"
-	EnvOTLPEndpoint            = "SLUICE_OTLP_ENDPOINT"
-	EnvOTLPProtocol            = "SLUICE_OTLP_PROTOCOL"
-	EnvNATSURL                 = "SLUICE_NATS_URL"
-	EnvNATSStream              = "SLUICE_NATS_STREAM"
-	EnvNATSBucket              = "SLUICE_NATS_BUCKET"
-	EnvNATSStashThresholdBytes = "SLUICE_NATS_STASH_THRESHOLD_BYTES"
-	EnvNATSPublishQueueSize    = "SLUICE_NATS_PUBLISH_QUEUE_SIZE"
-	EnvConfigDir               = "SLUICE_CONFIG_DIR"
-	EnvRulesMaxGroupDepth      = "SLUICE_RULES_MAX_GROUP_DEPTH"
-	EnvAdminSnapshotIntervalMs = "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS"
-	EnvAdminLiveFeedCapacity   = "SLUICE_ADMIN_LIVE_FEED_CAPACITY"
+	EnvHTTPBind                  = "SLUICE_HTTP_BIND"
+	EnvShutdownDrainSeconds      = "SLUICE_SHUTDOWN_DRAIN_SECONDS"
+	EnvLogFormat                 = "SLUICE_LOG_FORMAT"
+	EnvLogLevel                  = "SLUICE_LOG_LEVEL"
+	EnvPrometheusBind            = "SLUICE_PROMETHEUS_BIND"
+	EnvOTLPEndpoint              = "SLUICE_OTLP_ENDPOINT"
+	EnvOTLPProtocol              = "SLUICE_OTLP_PROTOCOL"
+	EnvNATSURL                   = "SLUICE_NATS_URL"
+	EnvNATSStream                = "SLUICE_NATS_STREAM"
+	EnvNATSBucket                = "SLUICE_NATS_BUCKET"
+	EnvNATSStashThresholdBytes   = "SLUICE_NATS_STASH_THRESHOLD_BYTES"
+	EnvNATSPublishQueueSize      = "SLUICE_NATS_PUBLISH_QUEUE_SIZE"
+	EnvConfigDir                 = "SLUICE_CONFIG_DIR"
+	EnvRulesMaxGroupDepth        = "SLUICE_RULES_MAX_GROUP_DEPTH"
+	EnvAdminSnapshotIntervalMs   = "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS"
+	EnvAdminLiveFeedCapacity     = "SLUICE_ADMIN_LIVE_FEED_CAPACITY"
+	EnvAdminLiveFeedBodyBytes    = "SLUICE_ADMIN_LIVE_FEED_BODY_BYTES"
+	EnvAdminLiveFeedBodyMaxBytes = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -89,6 +105,8 @@ var envVarNames = []string{
 	EnvRulesMaxGroupDepth,
 	EnvAdminSnapshotIntervalMs,
 	EnvAdminLiveFeedCapacity,
+	EnvAdminLiveFeedBodyBytes,
+	EnvAdminLiveFeedBodyMaxBytes,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -168,6 +186,16 @@ type ServerEnv struct {
 	// requests that backs the admin console's live-messages pane.
 	// Zero disables the ring (and the messages endpoints).
 	AdminLiveFeedCapacity int
+
+	// AdminLiveFeedBodyBytes is the total byte budget of the body LRU
+	// that backs the per-event body endpoint. Zero disables body
+	// capture; the live-tail pane still renders metadata.
+	AdminLiveFeedBodyBytes int
+
+	// AdminLiveFeedBodyMaxBytes caps per-body capture before
+	// truncation. Bodies above the cap are stored head-only with a
+	// truncated flag. Ignored when AdminLiveFeedBodyBytes is zero.
+	AdminLiveFeedBodyMaxBytes int
 }
 
 // ReportingEnabled reports whether NATS reporting is configured. False
@@ -187,6 +215,14 @@ func (e *ServerEnv) OTLPEnabled() bool { return e.OTLPEndpoint != "" }
 // rejects). When false, cmd/gateway skips constructing the ring and the
 // admin mux degrades the /messages/* endpoints to 503.
 func (e *ServerEnv) LiveFeedEnabled() bool { return e.AdminLiveFeedCapacity > 0 }
+
+// LiveFeedBodiesEnabled reports whether the admin body LRU is wired.
+// False when AdminLiveFeedBodyBytes is zero. Body capture also requires
+// LiveFeedEnabled() — without a ring, no event_id exists to key bodies
+// against.
+func (e *ServerEnv) LiveFeedBodiesEnabled() bool {
+	return e.LiveFeedEnabled() && e.AdminLiveFeedBodyBytes > 0
+}
 
 // LoadEnv parses the SLUICE_* env vars and returns a populated
 // ServerEnv. Absent or empty vars fall back to the documented defaults.
@@ -217,24 +253,34 @@ func LoadEnv() (*ServerEnv, error) {
 	if err != nil {
 		return nil, err
 	}
+	bodyBytes, err := envInt(EnvAdminLiveFeedBodyBytes, DefaultAdminLiveFeedBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	bodyMaxBytes, err := envInt(EnvAdminLiveFeedBodyMaxBytes, DefaultAdminLiveFeedBodyMaxBytes)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ServerEnv{
-		HTTPBind:                envString(EnvHTTPBind, DefaultHTTPBind),
-		ShutdownDrainSeconds:    drain,
-		LogFormat:               envString(EnvLogFormat, DefaultLogFormat),
-		LogLevel:                envString(EnvLogLevel, DefaultLogLevel),
-		PrometheusBind:          envString(EnvPrometheusBind, ""),
-		OTLPEndpoint:            envString(EnvOTLPEndpoint, ""),
-		OTLPProtocol:            envString(EnvOTLPProtocol, DefaultOTLPProtocol),
-		NATSURL:                 envString(EnvNATSURL, ""),
-		NATSStream:              envString(EnvNATSStream, DefaultNATSStream),
-		NATSBucket:              envString(EnvNATSBucket, DefaultNATSBucket),
-		NATSStashThresholdBytes: stash,
-		NATSPublishQueueSize:    queue,
-		ConfigDir:               envString(EnvConfigDir, DefaultConfigDir),
-		RulesMaxGroupDepth:      groupDepth,
-		AdminSnapshotIntervalMs: snapInterval,
-		AdminLiveFeedCapacity:   liveFeedCap,
+		HTTPBind:                  envString(EnvHTTPBind, DefaultHTTPBind),
+		ShutdownDrainSeconds:      drain,
+		LogFormat:                 envString(EnvLogFormat, DefaultLogFormat),
+		LogLevel:                  envString(EnvLogLevel, DefaultLogLevel),
+		PrometheusBind:            envString(EnvPrometheusBind, ""),
+		OTLPEndpoint:              envString(EnvOTLPEndpoint, ""),
+		OTLPProtocol:              envString(EnvOTLPProtocol, DefaultOTLPProtocol),
+		NATSURL:                   envString(EnvNATSURL, ""),
+		NATSStream:                envString(EnvNATSStream, DefaultNATSStream),
+		NATSBucket:                envString(EnvNATSBucket, DefaultNATSBucket),
+		NATSStashThresholdBytes:   stash,
+		NATSPublishQueueSize:      queue,
+		ConfigDir:                 envString(EnvConfigDir, DefaultConfigDir),
+		RulesMaxGroupDepth:        groupDepth,
+		AdminSnapshotIntervalMs:   snapInterval,
+		AdminLiveFeedCapacity:     liveFeedCap,
+		AdminLiveFeedBodyBytes:    bodyBytes,
+		AdminLiveFeedBodyMaxBytes: bodyMaxBytes,
 	}, nil
 }
 
@@ -266,6 +312,15 @@ func (e *ServerEnv) Validate() error {
 	}
 	if e.AdminLiveFeedCapacity < 0 {
 		return fmt.Errorf("%s=%d: %w: must be non-negative (0 disables)", EnvAdminLiveFeedCapacity, e.AdminLiveFeedCapacity, ErrInvalidEnv)
+	}
+	if e.AdminLiveFeedBodyBytes < 0 {
+		return fmt.Errorf("%s=%d: %w: must be non-negative (0 disables)", EnvAdminLiveFeedBodyBytes, e.AdminLiveFeedBodyBytes, ErrInvalidEnv)
+	}
+	if e.AdminLiveFeedBodyMaxBytes < 0 {
+		return fmt.Errorf("%s=%d: %w: must be non-negative", EnvAdminLiveFeedBodyMaxBytes, e.AdminLiveFeedBodyMaxBytes, ErrInvalidEnv)
+	}
+	if e.AdminLiveFeedBodyBytes > 0 && e.AdminLiveFeedBodyMaxBytes == 0 {
+		return fmt.Errorf("%s must be > 0 when %s is non-zero: %w", EnvAdminLiveFeedBodyMaxBytes, EnvAdminLiveFeedBodyBytes, ErrInvalidEnv)
 	}
 	switch strings.ToLower(strings.TrimSpace(e.LogLevel)) {
 	case "debug", "info", "warn", "error":

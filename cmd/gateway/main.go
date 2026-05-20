@@ -109,7 +109,12 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("gateway: live feed: %w", err)
 	}
 
-	reporter := newReporterFactory(publisher, logger, obs.Meters, liveFeed)
+	bodyStore, err := buildBodyStore(env, logger)
+	if err != nil {
+		return fmt.Errorf("gateway: body store: %w", err)
+	}
+
+	reporter := newReporterFactory(publisher, logger, obs.Meters, liveFeed, bodyStore)
 	observerFactory := reporter.Factory()
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: observerFactory})
 
@@ -118,11 +123,17 @@ func run(ctx context.Context) error {
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, obs.Meters, errs, logger)
 
+	// responseCaptureMiddleware sits between recover and the data
+	// plane so every panic is still logged, but the per-request
+	// response buffer is allocated before any handler runs. Nil-safe
+	// when bodies are disabled — the wrapper degrades to passthrough.
+	captured := responseCaptureMiddleware(env.AdminLiveFeedBodyMaxBytes, bodyStore != nil, dataPlane)
+
 	// recoverMiddleware sits between correlation (so the captured
 	// log carries the correlation_id) and the data-plane chain, so
 	// any panic in routing/auth/bodycapture/rules/forwarder is
 	// converted to a logged 500 instead of crashing the goroutine.
-	root := correlationMiddleware(logger, recoverMiddleware(obs.Meters, errs, dataPlane))
+	root := correlationMiddleware(logger, recoverMiddleware(obs.Meters, errs, captured))
 
 	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
 
@@ -142,7 +153,7 @@ func run(ctx context.Context) error {
 	// is bound to ctx; the loop exits on cancellation.
 	obs.Snapshotter.Start(ctx)
 
-	startAdmin(ctx, resolved, obs, logger, drain, startedAt, liveFeed)
+	startAdmin(ctx, resolved, obs, logger, drain, startedAt, liveFeed, bodyStore)
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -229,6 +240,44 @@ func buildLiveFeed(env *config.ServerEnv, logger *slog.Logger) (*livefeed.Ring, 
 	return ring, nil
 }
 
+// buildBodyStore constructs the byte-bounded LRU that backs the
+// /admin/api/v1/messages/{id}/body endpoint. Returns (nil, nil) when
+// disabled — the reporter and the body endpoint both no-op against
+// nil so wiring stays uniform.
+func buildBodyStore(env *config.ServerEnv, logger *slog.Logger) (*livefeed.BodyStore, error) {
+	if !env.LiveFeedBodiesEnabled() {
+		logger.Info("admin live feed body capture disabled")
+		return nil, nil
+	}
+	store, err := livefeed.NewBodyStore(env.AdminLiveFeedBodyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("livefeed bodystore: %w", err)
+	}
+	logger.Info("admin live feed body capture enabled",
+		"total_bytes", env.AdminLiveFeedBodyBytes,
+		"per_body_max_bytes", env.AdminLiveFeedBodyMaxBytes,
+	)
+	return store, nil
+}
+
+// responseCaptureMiddleware allocates a per-request ResponseBuffer,
+// stashes it on context for the reporter to read at OnComplete, and
+// wraps w so every Write tees into the buffer. When enabled is false,
+// returns next unchanged — the rest of the chain is identical either
+// way, and the reporter degrades to "no body captured" without a
+// branch at every read site.
+func responseCaptureMiddleware(maxBytes int, enabled bool, next http.Handler) http.Handler {
+	if !enabled {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := livefeed.NewResponseBuffer(maxBytes)
+		ctx := livefeed.WithResponseBuffer(r.Context(), buf)
+		wrapped := livefeed.WrapResponseWriter(w, buf)
+		next.ServeHTTP(wrapped, r.WithContext(ctx))
+	})
+}
+
 // startPrometheus mounts the scrape handler on a separate listener so the
 // data-plane port is reserved for client traffic. The two goroutines exit on
 // ctx cancellation.
@@ -270,7 +319,7 @@ func shutdownPromServer(srv *http.Server) {
 //
 // The drain budget mirrors the data plane's so a SIGTERM gives in-flight
 // admin requests the same shutdown headroom as proxy requests.
-func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring) {
+func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore) {
 	if resolved.Admin == nil || !resolved.Admin.Enabled {
 		logger.InfoContext(ctx, "admin console disabled")
 		return
@@ -292,6 +341,7 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 		GatewayStartedAt: startedAt,
 		Resolved:         resolved,
 		LiveFeed:         liveFeed,
+		BodyStore:        bodyStore,
 	})
 	bind := resolved.Admin.EffectiveBindAddr()
 	srv := &http.Server{

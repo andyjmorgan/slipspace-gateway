@@ -21,6 +21,61 @@ const sseRetryMs = 1000
 // with ':' and are ignored by EventSource.
 const sseHeartbeatInterval = 15 * time.Second
 
+// MessageBodyHandler serves the captured request/response bodies for
+// a single event_id from the in-process body LRU. Returns 503 when
+// the body store is nil (capture disabled) and 404 when the event_id
+// has rolled out of the LRU.
+//
+// The mux registers this at the 1.22+ pattern
+// `/api/v1/messages/{event_id}/body`; the event_id is read via
+// r.PathValue.
+func MessageBodyHandler(store *livefeed.BodyStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			http.Error(w, "body capture disabled", http.StatusServiceUnavailable)
+			return
+		}
+		eventID := r.PathValue("event_id")
+		if eventID == "" {
+			http.Error(w, "missing event_id", http.StatusBadRequest)
+			return
+		}
+		env, ok := store.Get(eventID)
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, toMessageBodyDetail(eventID, env))
+	})
+}
+
+// toMessageBodyDetail projects a livefeed.BodyEnvelope onto the wire
+// DTO. Single mapping point so future field additions touch one site.
+func toMessageBodyDetail(eventID string, env livefeed.BodyEnvelope) adminc.MessageBodyDetail {
+	out := adminc.MessageBodyDetail{
+		EventID:            eventID,
+		Request:            string(env.Request),
+		RequestTotalBytes:  env.RequestTotalBytes,
+		RequestTruncated:   env.RequestTruncated,
+		Response:           string(env.Response),
+		ResponseTotalBytes: env.ResponseTotalBytes,
+		ResponseTruncated:  env.ResponseTruncated,
+		ResponseAssembled:  env.ResponseAssembled,
+		AssemblyPartial:    env.AssemblyPartial,
+	}
+	if len(env.ToolCalls) > 0 {
+		out.ToolCalls = make([]adminc.BodyToolCall, 0, len(env.ToolCalls))
+		for _, tc := range env.ToolCalls {
+			out.ToolCalls = append(out.ToolCalls, adminc.BodyToolCall{
+				ID:        tc.ID,
+				Name:      tc.Name,
+				Arguments: tc.Arguments,
+			})
+		}
+	}
+	return out
+}
+
 // MessagesRecentHandler serves the current ring as JSON. Returns 503
 // when the live feed is disabled (ring is nil).
 //
