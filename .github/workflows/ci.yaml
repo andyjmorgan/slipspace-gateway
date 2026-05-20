@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -22,7 +22,7 @@ jobs:
       - run: go build ./...
 
   vet:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -33,7 +33,7 @@ jobs:
       - run: go vet ./...
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -47,7 +47,7 @@ jobs:
           args: --timeout=5m
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -68,7 +68,7 @@ jobs:
           if-no-files-found: ignore
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     env:
       # Ryuk (testcontainers' reaper container) is flaky on ephemeral
       # CI runners and not needed when the runner itself disposes of
