@@ -77,12 +77,7 @@ jobs:
           if-no-files-found: ignore
 
   e2e:
-    # Stays on ubuntu-latest until DinD is sorted on the office-cluster
-    # runner pods — testcontainers starts NATS + mockllm via the docker
-    # socket, and the in-pod docker daemon currently times out on
-    # container creates. The other four jobs in this workflow run on
-    # self-hosted; e2e is the only one with this dependency.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     env:
       # Ryuk (testcontainers' reaper container) is flaky on ephemeral
       # CI runners and not needed when the runner itself disposes of
@@ -95,6 +90,12 @@ jobs:
           go-version: '1.25'
           check-latest: true
           cache: true
-      # Inline equivalent of `make e2e` — see `make coverage` note above.
+      # Inline equivalent of `make e2e` (the runner image is minimal —
+      # no `make`). -p 1 forces one test package at a time: the runner
+      # pod shares one network namespace, so parallel packages race on
+      # ephemeral-port allocation and intermittently land on the same
+      # bind address. Serialising is the cheapest fix that holds today;
+      # revisit if individual e2e packages get slow enough that the
+      # serial wall-clock matters.
       - name: go test e2e
-        run: go test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...
+        run: go test -tags=e2e -race -count=1 -p 1 -timeout=10m ./test/e2e/...
