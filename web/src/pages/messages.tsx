@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { useNavigate } from "react-router"
-import { Pause, Play, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronUp, Pause, Play, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard } from "@/components/atoms/card"
 import { StatusPill } from "@/components/atoms/status-pill"
@@ -210,8 +211,15 @@ export function MessagesPage() {
               </tbody>
             </table>
           </PanelCard>
-          {selected && <Detail entry={selected} onClose={() => setSelectedId(null)} />}
         </>
+      )}
+      {selected && (
+        <MessageModal
+          entries={ordered}
+          selectedId={selected.event_id}
+          onSelect={setSelectedId}
+          onClose={() => setSelectedId(null)}
+        />
       )}
     </div>
   )
@@ -311,40 +319,135 @@ function Row({
   )
 }
 
-function Detail({ entry, onClose }: { entry: MessageEntry; onClose: () => void }) {
-  return (
-    <PanelCard className="p-4">
-      <div className="mb-3 flex items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium">Request detail</div>
-          <div className="mono text-[11.5px] text-[color:var(--text-3)]">
-            {entry.correlation_id ?? entry.event_id}
+// MessageModal renders the per-request detail in a centered overlay
+// instead of pushed below the table — keeps the detail visible while
+// new rows stream in. Up / Down buttons (and ArrowUp / ArrowDown keys)
+// scan through entries without re-clicking from the table; Up = newer
+// (lower index in `entries`, which is reversed-newest-first), Down =
+// older. Esc + backdrop click + X close.
+function MessageModal({
+  entries,
+  selectedId,
+  onSelect,
+  onClose,
+}: {
+  entries: MessageEntry[]
+  selectedId: string
+  onSelect: (id: string) => void
+  onClose: () => void
+}) {
+  const index = useMemo(
+    () => entries.findIndex((e) => e.event_id === selectedId),
+    [entries, selectedId],
+  )
+  const entry = index >= 0 ? entries[index] : null
+
+  const goNewer = useCallback(() => {
+    if (index > 0) onSelect(entries[index - 1].event_id)
+  }, [entries, index, onSelect])
+  const goOlder = useCallback(() => {
+    if (index >= 0 && index < entries.length - 1) onSelect(entries[index + 1].event_id)
+  }, [entries, index, onSelect])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose()
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault()
+        goNewer()
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault()
+        goOlder()
+      }
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [goNewer, goOlder, onClose])
+
+  // If the selected entry rolled off the ring while the modal was
+  // open, close rather than render nothing — keeps the SPA honest
+  // about why the detail disappeared.
+  useEffect(() => {
+    if (index < 0) onClose()
+  }, [index, onClose])
+
+  if (!entry) return null
+
+  const canNewer = index > 0
+  const canOlder = index >= 0 && index < entries.length - 1
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Request detail"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="text-[13px] font-medium">Request detail</div>
+            <div className="mono text-[11.5px] text-[color:var(--text-3)] truncate">
+              {entry.correlation_id ?? entry.event_id}
+            </div>
+            <div className="mono mt-0.5 text-[10.5px] text-[color:var(--text-4)]">
+              {index + 1} of {entries.length}
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={goNewer}
+              disabled={!canNewer}
+              aria-label="Newer entry (Arrow Up)"
+              title="Newer (↑)"
+            >
+              <ChevronUp />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={goOlder}
+              disabled={!canOlder}
+              aria-label="Older entry (Arrow Down)"
+              title="Older (↓)"
+            >
+              <ChevronDown />
+            </Button>
+            <Button variant="outline" size="sm" onClick={onClose} aria-label="Close">
+              <X />
+            </Button>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={onClose}>
-          Close
-        </Button>
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-3">
+          <Field label="Status" value={String(entry.status_code)} />
+          <Field label="Duration" value={`${entry.duration_ms} ms`} />
+          <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
+          <Field label="Provider" value={entry.provider ?? "—"} />
+          <Field label="Endpoint" value={entry.endpoint ?? "—"} />
+          <Field label="Model" value={entry.model ?? "—"} />
+          <Field label="Configuration" value={entry.configuration ?? "—"} />
+          <Field label="At" value={entry.at} />
+        </dl>
+        {entry.upstream_error && (
+          <div className="mt-3 rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
+            <div className="mono text-[11px] uppercase text-[color:var(--err)]">upstream error</div>
+            <div className="mono mt-1 text-[color:var(--text-2)]">{entry.upstream_error}</div>
+          </div>
+        )}
+        {entry.rules_matched && entry.rules_matched.length > 0 && (
+          <RulesList rules={entry.rules_matched} />
+        )}
       </div>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-3">
-        <Field label="Status" value={String(entry.status_code)} />
-        <Field label="Duration" value={`${entry.duration_ms} ms`} />
-        <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
-        <Field label="Provider" value={entry.provider ?? "—"} />
-        <Field label="Endpoint" value={entry.endpoint ?? "—"} />
-        <Field label="Model" value={entry.model ?? "—"} />
-        <Field label="Configuration" value={entry.configuration ?? "—"} />
-        <Field label="At" value={entry.at} />
-      </dl>
-      {entry.upstream_error && (
-        <div className="mt-3 rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
-          <div className="mono text-[11px] uppercase text-[color:var(--err)]">upstream error</div>
-          <div className="mono mt-1 text-[color:var(--text-2)]">{entry.upstream_error}</div>
-        </div>
-      )}
-      {entry.rules_matched && entry.rules_matched.length > 0 && (
-        <RulesList rules={entry.rules_matched} />
-      )}
-    </PanelCard>
+    </div>,
+    document.body,
   )
 }
 
