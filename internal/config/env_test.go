@@ -36,6 +36,7 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 		{"NATSPublishQueueSize", env.NATSPublishQueueSize, config.DefaultNATSPublishQueueSize},
 		{"ConfigDir", env.ConfigDir, config.DefaultConfigDir},
 		{"RulesMaxGroupDepth", env.RulesMaxGroupDepth, config.DefaultRulesMaxGroupDepth},
+		{"AdminLiveFeedCapacity", env.AdminLiveFeedCapacity, config.DefaultAdminLiveFeedCapacity},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
@@ -96,6 +97,34 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	if !env.ReportingEnabled() || !env.PrometheusEnabled() || !env.OTLPEnabled() {
 		t.Errorf("toggles wrong: rep=%v prom=%v otlp=%v",
 			env.ReportingEnabled(), env.PrometheusEnabled(), env.OTLPEnabled())
+	}
+	if !env.LiveFeedEnabled() {
+		t.Errorf("LiveFeedEnabled() = false with default capacity")
+	}
+}
+
+func TestServerEnv_LiveFeedDisabledByZero(t *testing.T) {
+	for _, name := range config.EnvVarNames() {
+		t.Setenv(name, "")
+	}
+	t.Setenv(config.EnvAdminLiveFeedCapacity, "0")
+	env, err := config.LoadEnv()
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if err := env.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if env.LiveFeedEnabled() {
+		t.Errorf("LiveFeedEnabled() = true with capacity=0")
+	}
+}
+
+func TestServerEnv_Validate_NegativeLiveFeedCapacity(t *testing.T) {
+	env := defaultEnv(t)
+	env.AdminLiveFeedCapacity = -1
+	if err := env.Validate(); !errors.Is(err, config.ErrInvalidEnv) {
+		t.Fatalf("err = %v, want ErrInvalidEnv", err)
 	}
 }
 

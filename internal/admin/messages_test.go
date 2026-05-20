@@ -1,0 +1,302 @@
+package admin
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
+)
+
+func TestMessagesRecentHandler_503WhenRingNil(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/recent", nil)
+	MessagesRecentHandler(nil).ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want 503", rec.Code)
+	}
+}
+
+func TestMessagesRecentHandler_ReturnsEntries(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(4)
+	ring.Append(livefeed.Entry{EventID: "a", At: time.Now().UTC(), Provider: "openai", StatusCode: 200})
+	ring.Append(livefeed.Entry{EventID: "b", At: time.Now().UTC(), Provider: "anthropic", StatusCode: 503})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/recent", nil)
+	MessagesRecentHandler(ring).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200", rec.Code)
+	}
+	var got adminc.MessagesRecentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Capacity != 4 {
+		t.Errorf("Capacity=%d want 4", got.Capacity)
+	}
+	if len(got.Entries) != 2 {
+		t.Fatalf("Entries=%d want 2", len(got.Entries))
+	}
+	if got.Entries[0].EventID != "a" || got.Entries[1].EventID != "b" {
+		t.Errorf("wrong order: %+v", got.Entries)
+	}
+}
+
+func TestMessagesRecentHandler_HonoursLimitQuery(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(8)
+	for i := 0; i < 5; i++ {
+		ring.Append(livefeed.Entry{EventID: "e", At: time.Now().UTC()})
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/recent?limit=2", nil)
+	MessagesRecentHandler(ring).ServeHTTP(rec, req)
+	var got adminc.MessagesRecentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Entries) != 2 {
+		t.Fatalf("Entries=%d want 2", len(got.Entries))
+	}
+}
+
+func TestMessagesRecentHandler_RejectsBadLimit(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(4)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/recent?limit=abc", nil)
+	MessagesRecentHandler(ring).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/messages/recent?limit=0", nil)
+	MessagesRecentHandler(ring).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400", rec.Code)
+	}
+}
+
+func TestMessagesRecentHandler_EmptyRingReturnsEmptyArray(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(4)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/recent", nil)
+	MessagesRecentHandler(ring).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200", rec.Code)
+	}
+	// Body must contain `[]`, not `null`, so the SPA can map it.
+	if !strings.Contains(rec.Body.String(), `"entries":[]`) {
+		t.Errorf("expected empty entries array, got %s", rec.Body.String())
+	}
+}
+
+func TestMessagesRecentHandler_RuleHitsMappedOntoWire(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(4)
+	ring.Append(livefeed.Entry{
+		EventID:    "with-rules",
+		At:         time.Now().UTC(),
+		StatusCode: 200,
+		RulesMatched: []livefeed.RuleHit{
+			{
+				RuleName:       "claude-haiku-redirect",
+				ActionsApplied: []string{"changeProvider", "setHeader"},
+				Terminated:     false,
+			},
+			{
+				RuleName:     "fallback-block",
+				Terminated:   true,
+				ErrorMessage: "blocked by policy",
+			},
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/recent", nil)
+	MessagesRecentHandler(ring).ServeHTTP(rec, req)
+
+	var got adminc.MessagesRecentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Entries) != 1 || len(got.Entries[0].RulesMatched) != 2 {
+		t.Fatalf("expected 1 entry with 2 rule hits, got %+v", got)
+	}
+	first := got.Entries[0].RulesMatched[0]
+	if first.RuleName != "claude-haiku-redirect" || len(first.ActionsApplied) != 2 {
+		t.Errorf("first rule = %+v", first)
+	}
+	second := got.Entries[0].RulesMatched[1]
+	if !second.Terminated || second.ErrorMessage != "blocked by policy" {
+		t.Errorf("second rule = %+v", second)
+	}
+}
+
+// nonFlushingRecorder embeds httptest.ResponseRecorder without exposing
+// http.Flusher. The streaming handler rejects responses that can't
+// flush, which is the only code path we cover here.
+type nonFlushingRecorder struct{ rec *httptest.ResponseRecorder }
+
+func (n *nonFlushingRecorder) Header() http.Header        { return n.rec.Header() }
+func (n *nonFlushingRecorder) Write(p []byte) (int, error) { return n.rec.Write(p) }
+func (n *nonFlushingRecorder) WriteHeader(c int)          { n.rec.WriteHeader(c) }
+
+func TestMessagesStreamHandler_500WhenResponseCannotFlush(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(4)
+	rec := &nonFlushingRecorder{rec: httptest.NewRecorder()}
+	req := httptest.NewRequest(http.MethodGet, "/messages/stream", nil)
+	MessagesStreamHandler(ring).ServeHTTP(rec, req)
+	if rec.rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d want 500", rec.rec.Code)
+	}
+}
+
+func TestMessagesStreamHandler_503WhenRingNil(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/stream", nil)
+	MessagesStreamHandler(nil).ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want 503", rec.Code)
+	}
+}
+
+func TestMessagesStreamHandler_DeliversAppendedEntries(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(4)
+	srv := httptest.NewServer(MessagesStreamHandler(ring))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type=%q want text/event-stream", ct)
+	}
+
+	// Wait until the handler has registered its subscriber before we
+	// publish; otherwise the entry can land before SubscribeCtx adds
+	// the subscriber and the test races.
+	deadline := time.Now().Add(2 * time.Second)
+	for ring.SubscriberCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("subscriber never registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	ring.Append(livefeed.Entry{EventID: "e1", At: time.Now().UTC(), Provider: "openai", StatusCode: 200})
+
+	// Read until we see the event frame.
+	br := bufio.NewReader(resp.Body)
+	got, err := readUntilEvent(br, "message", 3*time.Second)
+	if err != nil {
+		t.Fatalf("readUntilEvent: %v", err)
+	}
+	var entry adminc.MessageEntry
+	if err := json.Unmarshal([]byte(got), &entry); err != nil {
+		t.Fatalf("unmarshal SSE data %q: %v", got, err)
+	}
+	if entry.EventID != "e1" || entry.Provider != "openai" {
+		t.Errorf("entry = %+v want EventID=e1 Provider=openai", entry)
+	}
+}
+
+func TestMessagesStreamHandler_DropEventOnBufferOverflow(t *testing.T) {
+	t.Parallel()
+	// Capacity 1 makes the per-subscriber buffer (default 32 in
+	// SubscribeCtx) the tighter constraint. We push enough entries
+	// to overflow, then drain — the handler should emit a `drop`
+	// event before the next `message`.
+	ring, _ := livefeed.NewRing(200)
+	srv := httptest.NewServer(MessagesStreamHandler(ring))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Wait for subscription so the first appends actually fan out to it.
+	deadline := time.Now().Add(2 * time.Second)
+	for ring.SubscriberCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("subscriber never registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Append many entries faster than the handler can read them — the
+	// handler reads at line speed but the bufio readers below haven't
+	// started draining yet. Force a drop by piling on before any read.
+	for i := 0; i < 200; i++ {
+		ring.Append(livefeed.Entry{EventID: "burst", At: time.Now().UTC()})
+	}
+
+	// Drain SSE frames; assert we eventually see a drop event.
+	br := bufio.NewReader(resp.Body)
+	seenDrop := false
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			break
+		}
+		if strings.HasPrefix(line, "event: drop") {
+			seenDrop = true
+			break
+		}
+	}
+	if !seenDrop {
+		t.Fatalf("never saw drop event despite buffer overflow")
+	}
+}
+
+// readUntilEvent reads SSE frames from br until it sees an
+// `event: <name>` line, then returns the immediately following
+// `data:` payload. Times out per the deadline.
+func readUntilEvent(br *bufio.Reader, name string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		if !strings.HasPrefix(line, "event: ") {
+			continue
+		}
+		if strings.TrimSpace(strings.TrimPrefix(line, "event:")) != name {
+			continue
+		}
+		// next non-empty line should be `data: <payload>`
+		data, err := br.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(strings.TrimPrefix(data, "data:")), nil
+	}
+	return "", context.DeadlineExceeded
+}

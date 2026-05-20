@@ -9,6 +9,7 @@ import { RuleDetailPage } from "@/pages/rule-detail"
 import { ProvidersPage } from "@/pages/providers"
 import { ProviderDetailPage } from "@/pages/provider-detail"
 import { RoutesPage } from "@/pages/routes"
+import { MessagesPage } from "@/pages/messages"
 import { AppLayout } from "@/components/app-layout"
 import { ProtectedRoute } from "@/components/protected-route"
 
@@ -25,6 +26,7 @@ export default function App() {
       >
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/messages" element={<MessagesPage />} />
         <Route path="/configurations" element={<ConfigurationsPage />} />
         <Route path="/configurations/:name" element={<ConfigurationDetailPage />} />
         <Route path="/rules" element={<RulesPage />} />

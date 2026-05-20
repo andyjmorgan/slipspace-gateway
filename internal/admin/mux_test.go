@@ -9,6 +9,7 @@ import (
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 )
 
 const testPassword = "secret"
@@ -100,6 +101,65 @@ func TestMux_DashboardSummaryAuthed(t *testing.T) {
 	}
 	if got.Window == "" {
 		t.Error("Window = empty")
+	}
+}
+
+func TestMux_MessagesRecent_RequiresAuth(t *testing.T) {
+	srv := newServer(t)
+	resp, err := http.Get(srv.URL + admin.Prefix + "/api/v1/messages/recent")
+	if err != nil {
+		t.Fatalf("GET /api/v1/messages/recent: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestMux_MessagesRecent_503WhenLiveFeedDisabled(t *testing.T) {
+	srv := newServer(t)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+admin.Prefix+"/api/v1/messages/recent", nil)
+	req.SetBasicAuth("admin", testPassword)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/messages/recent: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestMux_MessagesRecent_WithLiveFeedReturnsJSON(t *testing.T) {
+	meters, _ := newMeters(t)
+	ring, err := livefeed.NewRing(4)
+	if err != nil {
+		t.Fatalf("NewRing: %v", err)
+	}
+	h := admin.NewMux(admin.MuxOptions{
+		Password: testPassword,
+		Meters:   meters,
+		LiveFeed: ring,
+	})
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+admin.Prefix+"/api/v1/messages/recent", nil)
+	req.SetBasicAuth("admin", testPassword)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/messages/recent: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var got adminc.MessagesRecentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Capacity != 4 {
+		t.Errorf("Capacity = %d, want 4", got.Capacity)
 	}
 }
 
