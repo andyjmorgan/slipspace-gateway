@@ -95,6 +95,13 @@ func TestConfig_Validate(t *testing.T) {
 			name: "enabled with default bind passes",
 			cfg:  admin.Config{Enabled: true, Password: "p"},
 		},
+		{
+			// SplitHostPort(":") parses as both empty — neither host
+			// nor port supplied. Must reject as an invalid bind.
+			name:    "enabled with empty host and empty port fails",
+			cfg:     admin.Config{Enabled: true, Password: "p", BindAddr: ":"},
+			wantErr: admin.ErrInvalidBindAddr,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

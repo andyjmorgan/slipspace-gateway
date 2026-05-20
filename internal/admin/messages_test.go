@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,6 +187,19 @@ func TestMessageBodyHandler_404WhenMissing(t *testing.T) {
 	}
 }
 
+func TestMessageBodyHandler_400WhenEventIDMissing(t *testing.T) {
+	t.Parallel()
+	store, _ := livefeed.NewBodyStore(1024)
+	rec := httptest.NewRecorder()
+	// No SetPathValue — r.PathValue("event_id") returns "" and the
+	// handler should reject with 400.
+	req := httptest.NewRequest(http.MethodGet, "/messages//body", nil)
+	MessageBodyHandler(store).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400", rec.Code)
+	}
+}
+
 func TestMessageBodyHandler_ReturnsStoredEnvelope(t *testing.T) {
 	t.Parallel()
 	store, _ := livefeed.NewBodyStore(64 * 1024)
@@ -215,6 +229,61 @@ func TestMessageBodyHandler_ReturnsStoredEnvelope(t *testing.T) {
 	}
 	if len(got.ToolCalls) != 1 || got.ToolCalls[0].Name != "search" {
 		t.Errorf("tool calls = %+v", got.ToolCalls)
+	}
+}
+
+// failingWriter is a minimal http.ResponseWriter that returns an
+// error on Write after a configurable number of successful calls.
+// Used to drive the writeSSE* error paths without a real network
+// stack.
+type failingWriter struct {
+	header http.Header
+	allow  int // number of writes allowed before failing
+	writes int
+}
+
+func (f *failingWriter) Header() http.Header {
+	if f.header == nil {
+		f.header = http.Header{}
+	}
+	return f.header
+}
+
+func (f *failingWriter) Write(p []byte) (int, error) {
+	f.writes++
+	if f.writes > f.allow {
+		return 0, errors.New("write failed")
+	}
+	return len(p), nil
+}
+
+func (f *failingWriter) WriteHeader(int) {}
+
+func TestWriteSSEEntry_PropagatesWriteError(t *testing.T) {
+	t.Parallel()
+	// First Write succeeds (the SSE preamble), second fails (the JSON
+	// payload). writeSSEEntry should return the underlying error.
+	w := &failingWriter{allow: 1}
+	err := writeSSEEntry(w, livefeed.Entry{EventID: "e", At: time.Now().UTC()})
+	if err == nil {
+		t.Fatal("writeSSEEntry should propagate write error")
+	}
+}
+
+func TestWriteSSEEntry_FailsOnFirstWrite(t *testing.T) {
+	t.Parallel()
+	w := &failingWriter{allow: 0}
+	err := writeSSEEntry(w, livefeed.Entry{EventID: "e", At: time.Now().UTC()})
+	if err == nil {
+		t.Fatal("writeSSEEntry should propagate first-write error")
+	}
+}
+
+func TestWriteSSEDrop_PropagatesWriteError(t *testing.T) {
+	t.Parallel()
+	w := &failingWriter{allow: 0}
+	if err := writeSSEDrop(w, 3); err == nil {
+		t.Fatal("writeSSEDrop should propagate write error")
 	}
 }
 

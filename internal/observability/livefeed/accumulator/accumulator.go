@@ -57,7 +57,14 @@ var registry = map[string]accumulatorFn{
 // returns its Result. Recognised=false means the dispatcher had no
 // accumulator for this endpoint; the caller should surface the raw
 // bytes unchanged.
-func Accumulate(_ /* provider */, endpoint string, raw []byte) Result {
+//
+// provider is currently unused — dispatch keys on endpoint alone
+// because the OpenAI-compat surfaces on Anthropic/Gemini emit the
+// OpenAI chunk shape under the same `chat_completions` name. It
+// stays in the signature so a future provider with a name collision
+// can disambiguate without breaking callers.
+func Accumulate(provider, endpoint string, raw []byte) Result {
+	_ = provider
 	fn, ok := registry[endpoint]
 	if !ok || len(raw) == 0 {
 		return Result{}
