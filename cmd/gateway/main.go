@@ -22,6 +22,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
@@ -103,7 +104,12 @@ func run(ctx context.Context) error {
 
 	resolver := auth.NewResolver(resolved)
 
-	reporter := newReporterFactory(publisher, logger, obs.Meters)
+	liveFeed, err := buildLiveFeed(env, logger)
+	if err != nil {
+		return fmt.Errorf("gateway: live feed: %w", err)
+	}
+
+	reporter := newReporterFactory(publisher, logger, obs.Meters, liveFeed)
 	observerFactory := reporter.Factory()
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: observerFactory})
 
@@ -136,7 +142,7 @@ func run(ctx context.Context) error {
 	// is bound to ctx; the loop exits on cancellation.
 	obs.Snapshotter.Start(ctx)
 
-	startAdmin(ctx, resolved, obs, logger, drain, startedAt)
+	startAdmin(ctx, resolved, obs, logger, drain, startedAt, liveFeed)
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -205,6 +211,24 @@ func setupBus(ctx context.Context, env *config.ServerEnv, logger *slog.Logger, m
 	return pub, cleanup, nil
 }
 
+// buildLiveFeed constructs the in-process ring that backs the admin
+// console's live-messages pane. Returns (nil, nil) when the feature is
+// disabled via SLUICE_ADMIN_LIVE_FEED_CAPACITY=0 — the reporter and
+// admin mux both no-op against a nil ring, so the rest of the wiring
+// stays uniform either way.
+func buildLiveFeed(env *config.ServerEnv, logger *slog.Logger) (*livefeed.Ring, error) {
+	if !env.LiveFeedEnabled() {
+		logger.Info("admin live feed disabled (capacity=0)")
+		return nil, nil
+	}
+	ring, err := livefeed.NewRing(env.AdminLiveFeedCapacity)
+	if err != nil {
+		return nil, fmt.Errorf("livefeed: %w", err)
+	}
+	logger.Info("admin live feed enabled", "capacity", env.AdminLiveFeedCapacity)
+	return ring, nil
+}
+
 // startPrometheus mounts the scrape handler on a separate listener so the
 // data-plane port is reserved for client traffic. The two goroutines exit on
 // ctx cancellation.
@@ -246,7 +270,7 @@ func shutdownPromServer(srv *http.Server) {
 //
 // The drain budget mirrors the data plane's so a SIGTERM gives in-flight
 // admin requests the same shutdown headroom as proxy requests.
-func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time) {
+func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring) {
 	if resolved.Admin == nil || !resolved.Admin.Enabled {
 		logger.InfoContext(ctx, "admin console disabled")
 		return
@@ -267,6 +291,7 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 		RuleAttachments:  ruleAttachments,
 		GatewayStartedAt: startedAt,
 		Resolved:         resolved,
+		LiveFeed:         liveFeed,
 	})
 	bind := resolved.Admin.EffectiveBindAddr()
 	srv := &http.Server{

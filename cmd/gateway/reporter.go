@@ -16,6 +16,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 )
 
@@ -63,13 +64,14 @@ type reporterFactory struct {
 	publisher *bus.Publisher
 	logger    *slog.Logger
 	meters    *observability.Meters
+	liveFeed  *livefeed.Ring
 }
 
-func newReporterFactory(publisher *bus.Publisher, logger *slog.Logger, meters *observability.Meters) *reporterFactory {
+func newReporterFactory(publisher *bus.Publisher, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &reporterFactory{publisher: publisher, logger: logger, meters: meters}
+	return &reporterFactory{publisher: publisher, logger: logger, meters: meters, liveFeed: liveFeed}
 }
 
 // Factory returns a proxy.ObserverFactory bound to this factory's
@@ -132,10 +134,9 @@ type reporterRun struct {
 	upstream error
 
 	// ruleMatches buffers events.RuleMatched records driven by the rules
-	// middleware via OnRuleMatched. Drained at OnComplete in the
-	// telemetry PR; held here in PR 1 so callers can construct the
-	// observer against the final lifecycle surface without behavioural
-	// churn later.
+	// middleware via OnRuleMatched. Merged with the context MatchBuffer
+	// at OnComplete and fanned out to the bus publisher and the
+	// in-process live-feed ring.
 	ruleMatches []events.RuleMatched
 }
 
@@ -214,7 +215,9 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		}
 	}
 
-	r.flushRuleMatches(ctx, ev.CorrelationID)
+	matches := r.drainRuleMatches(ctx, ev.CorrelationID)
+	r.publishRuleMatches(ctx, matches)
+	r.appendLiveFeed(ev, matches)
 
 	logger := observability.FromContext(ctx)
 	logger.InfoContext(ctx, "request completed",
@@ -237,27 +240,31 @@ func (r *reporterRun) OnRuleMatched(_ context.Context, match events.RuleMatched)
 	r.ruleMatches = append(r.ruleMatches, match)
 }
 
-// flushRuleMatches drains the per-request MatchBuffer (the rules
-// middleware writes there directly) and merges it with the
-// observer's OnRuleMatched buffer, then publishes one
-// gateway.rule.matched envelope per record. CorrelationID is
-// stamped here so the evaluator can stay ignorant of observability
-// plumbing.
-func (r *reporterRun) flushRuleMatches(ctx context.Context, correlationID string) {
+// drainRuleMatches merges the observer's OnRuleMatched buffer with the
+// per-request MatchBuffer the rules middleware writes through, stamps
+// the correlation ID onto any record that was authored without one,
+// and returns the consolidated slice. The MatchBuffer is consumed.
+func (r *reporterRun) drainRuleMatches(ctx context.Context, correlationID string) []events.RuleMatched {
 	matches := r.ruleMatches
 	if buf := rules.MatchBufferFromContext(ctx); buf != nil {
 		matches = append(matches, buf.Drain()...)
 	}
-	if len(matches) == 0 {
-		return
+	for i := range matches {
+		if matches[i].CorrelationID == "" {
+			matches[i].CorrelationID = correlationID
+		}
 	}
-	if r.factory.publisher == nil {
+	return matches
+}
+
+// publishRuleMatches emits one gateway.rule.matched envelope per
+// record. A nil publisher is a no-op; this keeps the bus fan-out
+// optional without forcing every caller to gate the call site.
+func (r *reporterRun) publishRuleMatches(ctx context.Context, matches []events.RuleMatched) {
+	if r.factory.publisher == nil || len(matches) == 0 {
 		return
 	}
 	for _, m := range matches {
-		if m.CorrelationID == "" {
-			m.CorrelationID = correlationID
-		}
 		payload, err := json.Marshal(m)
 		if err != nil {
 			r.factory.logger.WarnContext(ctx, "reporter: marshal rule match", "err", err.Error())
@@ -271,6 +278,38 @@ func (r *reporterRun) flushRuleMatches(ctx context.Context, correlationID string
 			InlinePayload: payload,
 		})
 	}
+}
+
+// appendLiveFeed tees the completed request + its rule matches into the
+// in-process ring that backs the admin console's live-messages pane.
+// A nil ring is a no-op (live feed disabled via env var).
+func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMatched) {
+	if r.factory.liveFeed == nil {
+		return
+	}
+	hits := make([]livefeed.RuleHit, 0, len(matches))
+	for _, m := range matches {
+		hits = append(hits, livefeed.RuleHit{
+			RuleName:       m.RuleName,
+			ActionsApplied: append([]string(nil), m.ActionsApplied...),
+			Terminated:     m.Terminated,
+			ErrorMessage:   m.ErrorMessage,
+		})
+	}
+	r.factory.liveFeed.Append(livefeed.Entry{
+		EventID:       uuid.NewString(),
+		At:            time.Now().UTC(),
+		CorrelationID: ev.CorrelationID,
+		Provider:      ev.Provider,
+		Endpoint:      ev.Endpoint,
+		Model:         ev.Model,
+		Configuration: r.configuration,
+		StatusCode:    ev.StatusCode,
+		DurationMs:    ev.DurationMs,
+		Streaming:     ev.Streaming,
+		UpstreamError: ev.UpstreamError,
+		RulesMatched:  hits,
+	})
 }
 
 // providerEndpointModelAttrs builds the (provider, endpoint, model)

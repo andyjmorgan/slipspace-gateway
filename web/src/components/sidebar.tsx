@@ -7,6 +7,7 @@ import {
   Server,
   SlidersHorizontal,
   Route as RouteIcon,
+  Activity,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { fetchVersion } from "@/lib/api"
@@ -20,6 +21,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/messages", label: "Live messages", icon: Activity },
   { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, section: "Read-only inspect" },
   { to: "/rules", label: "Rules", icon: ListTree },
   { to: "/providers", label: "Providers", icon: Server },

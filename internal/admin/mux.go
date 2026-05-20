@@ -6,6 +6,7 @@ import (
 
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 )
 
 // MuxOptions carries the inputs NewMux needs beyond the auth credential.
@@ -56,6 +57,12 @@ type MuxOptions struct {
 	// the structure. Nil disables those endpoints — they return 503
 	// rather than panic, so a partial wiring still boots.
 	Resolved *config.ResolvedConfig
+
+	// LiveFeed is the in-process ring of completed requests that backs
+	// the /api/v1/messages/* endpoints. Nil disables the endpoints
+	// (they return 503), letting the gateway boot cleanly when
+	// SLUICE_ADMIN_LIVE_FEED_CAPACITY=0.
+	LiveFeed *livefeed.Ring
 }
 
 // Prefix is the URL path prefix the console mounts under. Both the
@@ -147,6 +154,15 @@ func NewMux(opts MuxOptions) http.Handler {
 	)
 	apiMux.Handle("/api/v1/config/routes",
 		InstrumentRoute(opts.Meters, "/api/v1/config/routes", routesAll),
+	)
+	// Live-messages pane endpoints. Both handlers degrade to 503 when
+	// LiveFeed is nil — the SPA reads that as "feature disabled" and
+	// hides the pane.
+	apiMux.Handle("/api/v1/messages/recent",
+		InstrumentRoute(opts.Meters, "/api/v1/messages/recent", MessagesRecentHandler(opts.LiveFeed)),
+	)
+	apiMux.Handle("/api/v1/messages/stream",
+		InstrumentRoute(opts.Meters, "/api/v1/messages/stream", MessagesStreamHandler(opts.LiveFeed)),
 	)
 
 	// adminTree exposes the same routes the listener used to expose at

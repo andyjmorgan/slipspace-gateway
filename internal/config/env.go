@@ -34,6 +34,14 @@ const (
 	// chart resolution. E2E tests override via SLUICE_ADMIN_SNAPSHOT_INTERVAL.
 	DefaultAdminSnapshotIntervalMs = 300_000
 
+	// DefaultAdminLiveFeedCapacity sizes the in-process ring of completed
+	// requests that backs the admin console's live-messages pane. 100 is
+	// deliberately small: a 1M-token-context request body can be 4 MB+,
+	// and the pane is honest about the fact that this is a few-minute
+	// live tail, not an audit log. Operators set
+	// SLUICE_ADMIN_LIVE_FEED_CAPACITY=0 to disable the pane entirely.
+	DefaultAdminLiveFeedCapacity = 100
+
 	// MaxRulesMaxGroupDepth is the upper bound accepted by Validate.
 	// Beyond this, the cost of authoring + evaluating a tree this deep
 	// outweighs any expressive gain; a flat priority chain is clearer.
@@ -58,6 +66,7 @@ const (
 	EnvConfigDir               = "SLUICE_CONFIG_DIR"
 	EnvRulesMaxGroupDepth      = "SLUICE_RULES_MAX_GROUP_DEPTH"
 	EnvAdminSnapshotIntervalMs = "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS"
+	EnvAdminLiveFeedCapacity   = "SLUICE_ADMIN_LIVE_FEED_CAPACITY"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -79,6 +88,7 @@ var envVarNames = []string{
 	EnvConfigDir,
 	EnvRulesMaxGroupDepth,
 	EnvAdminSnapshotIntervalMs,
+	EnvAdminLiveFeedCapacity,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -153,6 +163,11 @@ type ServerEnv struct {
 	// Production defaults to 5 minutes; e2e tests drop this to ~200ms
 	// so the dashboard reflects real traffic in test wall-clock.
 	AdminSnapshotIntervalMs int
+
+	// AdminLiveFeedCapacity sizes the in-process ring of completed
+	// requests that backs the admin console's live-messages pane.
+	// Zero disables the ring (and the messages endpoints).
+	AdminLiveFeedCapacity int
 }
 
 // ReportingEnabled reports whether NATS reporting is configured. False
@@ -166,6 +181,12 @@ func (e *ServerEnv) PrometheusEnabled() bool { return e.PrometheusBind != "" }
 // OTLPEnabled reports whether the OTLP exporter is configured. False
 // when OTLPEndpoint is empty.
 func (e *ServerEnv) OTLPEnabled() bool { return e.OTLPEndpoint != "" }
+
+// LiveFeedEnabled reports whether the admin live-messages ring is wired.
+// False when AdminLiveFeedCapacity is zero (or negative, which Validate
+// rejects). When false, cmd/gateway skips constructing the ring and the
+// admin mux degrades the /messages/* endpoints to 503.
+func (e *ServerEnv) LiveFeedEnabled() bool { return e.AdminLiveFeedCapacity > 0 }
 
 // LoadEnv parses the SLUICE_* env vars and returns a populated
 // ServerEnv. Absent or empty vars fall back to the documented defaults.
@@ -192,6 +213,10 @@ func LoadEnv() (*ServerEnv, error) {
 	if err != nil {
 		return nil, err
 	}
+	liveFeedCap, err := envInt(EnvAdminLiveFeedCapacity, DefaultAdminLiveFeedCapacity)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ServerEnv{
 		HTTPBind:                envString(EnvHTTPBind, DefaultHTTPBind),
@@ -209,6 +234,7 @@ func LoadEnv() (*ServerEnv, error) {
 		ConfigDir:               envString(EnvConfigDir, DefaultConfigDir),
 		RulesMaxGroupDepth:      groupDepth,
 		AdminSnapshotIntervalMs: snapInterval,
+		AdminLiveFeedCapacity:   liveFeedCap,
 	}, nil
 }
 
@@ -237,6 +263,9 @@ func (e *ServerEnv) Validate() error {
 	}
 	if e.AdminSnapshotIntervalMs <= 0 {
 		return fmt.Errorf("%s=%d: %w: must be positive", EnvAdminSnapshotIntervalMs, e.AdminSnapshotIntervalMs, ErrInvalidEnv)
+	}
+	if e.AdminLiveFeedCapacity < 0 {
+		return fmt.Errorf("%s=%d: %w: must be non-negative (0 disables)", EnvAdminLiveFeedCapacity, e.AdminLiveFeedCapacity, ErrInvalidEnv)
 	}
 	switch strings.ToLower(strings.TrimSpace(e.LogLevel)) {
 	case "debug", "info", "warn", "error":
