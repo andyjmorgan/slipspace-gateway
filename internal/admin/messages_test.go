@@ -148,9 +148,9 @@ func TestMessagesRecentHandler_RuleHitsMappedOntoWire(t *testing.T) {
 // flush, which is the only code path we cover here.
 type nonFlushingRecorder struct{ rec *httptest.ResponseRecorder }
 
-func (n *nonFlushingRecorder) Header() http.Header        { return n.rec.Header() }
+func (n *nonFlushingRecorder) Header() http.Header         { return n.rec.Header() }
 func (n *nonFlushingRecorder) Write(p []byte) (int, error) { return n.rec.Write(p) }
-func (n *nonFlushingRecorder) WriteHeader(c int)          { n.rec.WriteHeader(c) }
+func (n *nonFlushingRecorder) WriteHeader(c int)           { n.rec.WriteHeader(c) }
 
 func TestMessagesStreamHandler_500WhenResponseCannotFlush(t *testing.T) {
 	t.Parallel()
@@ -186,7 +186,7 @@ func TestMessagesStreamHandler_DeliversAppendedEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d want 200", resp.StatusCode)
 	}
@@ -238,7 +238,7 @@ func TestMessagesStreamHandler_DropEventOnBufferOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Wait for subscription so the first appends actually fan out to it.
 	deadline := time.Now().Add(2 * time.Second)
