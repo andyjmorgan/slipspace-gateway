@@ -52,7 +52,7 @@ When in doubt, check the notes — they're the long-form. This file is the index
 | **v1.0.2 OpenAI-Compat Chat** | done | `/anthropic/v1/chat/completions` + `/gemini/v1beta/openai/chat/completions` registered. Per-endpoint `auth_header`/`auth_format` override. Model-keyed `changeProvider` rule example. README populated. |
 | **v1.0.3 Impersonation + Release Polish** | queued | Real per-provider `llmImpersonation` synthesisers; `Create GitHub Release` workflow idempotence. |
 | **v1.0.4 CI Hygiene** | queued | Flake audit, NATS-ordering convention, scope failure emails to `main`. |
-| **v1.1 Control Plane** | queued | `api` REST binary + Web UI. CRUD over configurations & api keys. Resilience evaluation flips on. |
+| **v1.1 Admin Console (read-only)** | in flight | Mono-pod admin listener (default `:8081`) inside `cmd/gateway` with HTTP Basic auth + embedded SPA. Dashboard (totals/rates/quantiles/by-provider/by-endpoint/by-configuration/by-model/rules-fired/provider-health, 1h+24h windows), config inspector (configurations / rules with Visual+JSON tabs / providers / routes / api-key reveal), live messages pane (in-process ring, SSE stream, body capture + per-provider streaming-response assembly). CRUD editors + resilience evaluation still pending. |
 | **v1.2+ Beyond** | queued | Cross-provider translation, real DLP guardrails, AWS Bedrock, sibling repos (`sluice-a2a`, `sluice-mcp`), hot reload, RBAC. |
 
 ## Load-bearing invariants (NEVER violate)

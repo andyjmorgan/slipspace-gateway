@@ -86,3 +86,23 @@ func TestItoa_Zero(t *testing.T) {
 		t.Errorf("itoa(0) = %q, want 0", got)
 	}
 }
+
+func TestParseWindow(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		raw      string
+		fallback time.Duration
+		want     time.Duration
+	}{
+		{raw: "1h", fallback: 24 * time.Hour, want: time.Hour},
+		{raw: "24h", fallback: time.Hour, want: 24 * time.Hour},
+		{raw: "", fallback: 12 * time.Hour, want: 12 * time.Hour},
+		{raw: "5m", fallback: time.Hour, want: time.Hour}, // unrecognised → fallback
+		{raw: "garbage", fallback: 7 * time.Hour, want: 7 * time.Hour},
+	}
+	for _, tc := range cases {
+		if got := parseWindow(tc.raw, tc.fallback); got != tc.want {
+			t.Errorf("parseWindow(%q, %v) = %v, want %v", tc.raw, tc.fallback, got, tc.want)
+		}
+	}
+}

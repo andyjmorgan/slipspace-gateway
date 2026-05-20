@@ -206,6 +206,32 @@ func TestServerEnv_Validate_BadPrometheusBind(t *testing.T) {
 	}
 }
 
+func TestServerEnv_Validate_BindEdgeCases(t *testing.T) {
+	cases := []struct {
+		name    string
+		bind    string
+		wantErr bool
+	}{
+		{name: "empty host with numeric port", bind: ":9000", wantErr: false},
+		{name: "non-numeric port", bind: "127.0.0.1:notaport", wantErr: true},
+		{name: "both halves empty", bind: ":", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := defaultEnv(t)
+			env.HTTPBind = tc.bind
+			err := env.Validate()
+			gotErr := err != nil
+			if gotErr != tc.wantErr {
+				t.Fatalf("Validate(%q) err=%v want-err=%v", tc.bind, err, tc.wantErr)
+			}
+			if tc.wantErr && !errors.Is(err, config.ErrInvalidBind) {
+				t.Fatalf("err = %v, want ErrInvalidBind", err)
+			}
+		})
+	}
+}
+
 func TestServerEnv_Validate_EmptyPrometheusBindAllowed(t *testing.T) {
 	env := defaultEnv(t)
 	env.PrometheusBind = ""
