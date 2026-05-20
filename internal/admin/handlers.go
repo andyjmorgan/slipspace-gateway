@@ -7,6 +7,7 @@ import (
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
 
 // AuthMeHandler returns 200 with a minimal JSON body when the request
@@ -17,6 +18,19 @@ func AuthMeHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]string{
 			"username": adminc.Username,
+		})
+	})
+}
+
+// VersionHandler returns the gateway's build-time version string.
+// Intentionally unauthenticated so the SPA's login page can render it
+// before any credential is entered — the value is already in the
+// container image labels and the gateway's startup logs, so exposing
+// it pre-auth leaks no operational information.
+func VersionHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]string{
+			"version": version.Version,
 		})
 	})
 }

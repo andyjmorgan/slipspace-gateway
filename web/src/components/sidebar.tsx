@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { NavLink } from "react-router"
 import {
   LayoutDashboard,
@@ -8,6 +9,7 @@ import {
   Route as RouteIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { fetchVersion } from "@/lib/api"
 
 type NavItem = {
   to: string
@@ -26,6 +28,7 @@ const NAV: NavItem[] = [
 ]
 
 export function Sidebar() {
+  const version = useGatewayVersion()
   let lastSection: string | undefined
   return (
     <aside
@@ -41,7 +44,7 @@ export function Sidebar() {
           className="size-7 rounded-md"
         />
         <span className="font-semibold tracking-tight text-[15px]">sluice</span>
-        <span className="mono ml-auto text-[10.5px] text-[color:var(--text-4)]">v1.1.0-rc2</span>
+        <span className="mono ml-auto text-[10.5px] text-[color:var(--text-4)]">{version ?? "…"}</span>
       </div>
 
       <nav className="flex-1 py-2 overflow-y-auto">
@@ -84,4 +87,26 @@ export function Sidebar() {
       </div>
     </aside>
   )
+}
+
+// useGatewayVersion fetches the binary's build-time version from the
+// unauthenticated /api/v1/version endpoint once on mount. Returns null
+// while in flight or on error — the sidebar renders "…" in either
+// case rather than blocking the layout on it.
+function useGatewayVersion(): string | null {
+  const [version, setVersion] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetchVersion()
+      .then((v) => {
+        if (!cancelled) setVersion(v)
+      })
+      .catch(() => {
+        // /version is best-effort cosmetic; swallow.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  return version
 }

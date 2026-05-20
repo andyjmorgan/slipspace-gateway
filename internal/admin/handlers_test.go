@@ -32,6 +32,26 @@ func TestAuthMeHandler_ReturnsJSON(t *testing.T) {
 	}
 }
 
+func TestVersionHandler_ReturnsBuildVersion(t *testing.T) {
+	h := admin.VersionHandler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Source builds default to "dev"; tagged release builds inject
+	// the tag name via ldflags. Either is a non-empty string.
+	if body["version"] == "" {
+		t.Errorf(`version = ""; want non-empty (default "dev" or ldflags-injected tag)`)
+	}
+}
+
 func TestDashboardSummaryHandler_EmptySnapshotter(t *testing.T) {
 	// A handler built with a snapshotter that has no samples yet must
 	// still return a well-shaped, decodable DashboardSummary so the SPA

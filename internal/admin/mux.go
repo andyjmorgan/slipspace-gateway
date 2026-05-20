@@ -69,6 +69,7 @@ const Prefix = "/admin"
 //
 // Routes (all under Prefix):
 //   - GET  /admin/                            — SPA index (auto-redirect from /admin)
+//   - GET  /admin/api/v1/version              — unauthenticated; binary version
 //   - GET  /admin/api/v1/auth/me              — auth probe; 200 + {"username":"admin"}
 //   - GET  /admin/api/v1/dashboard/...        — DashboardSummary / Timeseries JSON
 //   - GET  /admin/api/v1/config/api-keys/reveal?configuration=&name=
@@ -152,8 +153,17 @@ func NewMux(opts MuxOptions) http.Handler {
 	// root; StripPrefix below converts incoming /admin/foo requests
 	// into /foo before they reach this mux, so the inner handlers do
 	// not need to know about the prefix.
+	// /api/v1/version sits OUTSIDE the BasicAuth tree so the SPA's
+	// login screen can render the gateway's version pre-credential.
+	// Everything else under /api/v1/ stays behind BasicAuth.
+	publicAPI := http.NewServeMux()
+	publicAPI.Handle("/api/v1/version",
+		InstrumentRoute(opts.Meters, "/api/v1/version", VersionHandler()),
+	)
+	publicAPI.Handle("/api/v1/", BasicAuth(opts.Password, apiMux))
+
 	adminTree := http.NewServeMux()
-	adminTree.Handle("/api/v1/", BasicAuth(opts.Password, apiMux))
+	adminTree.Handle("/api/v1/", publicAPI)
 	adminTree.Handle("/", InstrumentRoute(opts.Meters, "spa", SPAHandler()))
 
 	root := http.NewServeMux()
