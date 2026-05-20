@@ -108,6 +108,35 @@ func TestInstrumentRoute_StatusDefaultsTo200(t *testing.T) {
 	}
 }
 
+// TestInstrumentRoute_ForwardsFlusher pins the SSE-friendliness of the
+// statusRecorder wrapper. The /api/v1/messages/stream route depends on
+// the underlying http.ResponseWriter still satisfying http.Flusher
+// after instrumentation; if the wrapper drops the capability, the SSE
+// handler bails with "streaming unsupported" (500) — which is exactly
+// the bug that shipped in v1.1.7.
+func TestInstrumentRoute_ForwardsFlusher(t *testing.T) {
+	meters, _ := newMeters(t)
+	var sawFlusher bool
+	h := admin.InstrumentRoute(meters, "/probe",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if _, ok := w.(http.Flusher); ok {
+				sawFlusher = true
+			}
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL + "/probe")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if !sawFlusher {
+		t.Fatalf("handler did not observe http.Flusher through the wrapper")
+	}
+}
+
 func TestInstrumentRoute_NilMetersIsPassthrough(t *testing.T) {
 	called := false
 	h := admin.InstrumentRoute(nil, "noop", http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {

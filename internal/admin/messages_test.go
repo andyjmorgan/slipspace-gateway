@@ -10,9 +10,29 @@ import (
 	"testing"
 	"time"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 )
+
+// newMessagesTestMeters mints a minimal observability.Meters bundle
+// against a fresh ManualReader so the instrumented messages tests can
+// run InstrumentRoute without standing up the full observability
+// pipeline. Defined locally because instrument_test.go's helper lives
+// in package admin_test.
+func newMessagesTestMeters(t *testing.T) (*observability.Meters, *sdkmetric.ManualReader) {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	m, err := observability.NewMeters(mp.Meter(observability.MeterName))
+	if err != nil {
+		t.Fatalf("NewMeters: %v", err)
+	}
+	return m, reader
+}
 
 func TestMessagesRecentHandler_503WhenRingNil(t *testing.T) {
 	t.Parallel()
@@ -218,6 +238,53 @@ func TestMessagesStreamHandler_DeliversAppendedEntries(t *testing.T) {
 	}
 	if entry.EventID != "e1" || entry.Provider != "openai" {
 		t.Errorf("entry = %+v want EventID=e1 Provider=openai", entry)
+	}
+}
+
+// TestMessagesStream_ThroughInstrumentRoute pins the production path:
+// the SSE handler must keep working when InstrumentRoute wraps it.
+// statusRecorder embeds http.ResponseWriter without exposing Flusher
+// by default — this test would have caught the v1.1.7 regression where
+// the wrapper stripped Flush and the stream handler bailed with 500.
+func TestMessagesStream_ThroughInstrumentRoute(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(4)
+	meters, _ := newMessagesTestMeters(t)
+	srv := httptest.NewServer(InstrumentRoute(meters, "/api/v1/messages/stream", MessagesStreamHandler(ring)))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (wrapper likely stripped Flusher)", resp.StatusCode)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for ring.SubscriberCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("subscriber never registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	ring.Append(livefeed.Entry{EventID: "wrapped", At: time.Now().UTC(), Provider: "openai", StatusCode: 200})
+
+	br := bufio.NewReader(resp.Body)
+	data, err := readUntilEvent(br, "message", 3*time.Second)
+	if err != nil {
+		t.Fatalf("readUntilEvent through instrumented wrapper: %v", err)
+	}
+	var entry adminc.MessageEntry
+	if err := json.Unmarshal([]byte(data), &entry); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if entry.EventID != "wrapped" {
+		t.Fatalf("entry.EventID = %q want wrapped", entry.EventID)
 	}
 }
 
