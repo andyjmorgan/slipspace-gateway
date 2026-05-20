@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -22,7 +22,7 @@ jobs:
       - run: go build ./...
 
   vet:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -33,7 +33,7 @@ jobs:
       - run: go vet ./...
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -47,7 +47,7 @@ jobs:
           args: --timeout=5m
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, office-cluster]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -55,10 +55,19 @@ jobs:
           go-version: '1.25'
           check-latest: true
           cache: true
-      - run: make coverage
-      # The coverage gate runs inline in `make coverage`; the artifact is just
-      # for browsing the .out file. Tolerate upload failures (e.g. transient
-      # GH Actions artifact-storage-quota errors) so they don't fail the job.
+      # Inline the steps `make coverage` runs — the office-cluster
+      # runner image is minimal and doesn't ship `make`. Keeps the
+      # Makefile as the local dev entry point without coupling CI to
+      # whatever ships in /usr/bin.
+      - name: go test with coverage
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic \
+            $(go list ./... | grep -v 'web/node_modules')
+      - name: coverage gate
+        run: bash scripts/coverage-gate.sh
+      # The coverage gate ran above; the artifact is just for browsing the
+      # .out file. Tolerate upload failures (e.g. transient GH Actions
+      # artifact-storage-quota errors) so they don't fail the job.
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true
@@ -68,6 +77,11 @@ jobs:
           if-no-files-found: ignore
 
   e2e:
+    # Stays on ubuntu-latest until DinD is sorted on the office-cluster
+    # runner pods — testcontainers starts NATS + mockllm via the docker
+    # socket, and the in-pod docker daemon currently times out on
+    # container creates. The other four jobs in this workflow run on
+    # self-hosted; e2e is the only one with this dependency.
     runs-on: ubuntu-latest
     env:
       # Ryuk (testcontainers' reaper container) is flaky on ephemeral
@@ -81,4 +95,6 @@ jobs:
           go-version: '1.25'
           check-latest: true
           cache: true
-      - run: make e2e
+      # Inline equivalent of `make e2e` — see `make coverage` note above.
+      - name: go test e2e
+        run: go test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...
