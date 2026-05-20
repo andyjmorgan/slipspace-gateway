@@ -192,11 +192,12 @@ func TestRuleContract_UnmarshalJSON_MalformedTop(t *testing.T) {
 }
 
 // TestRuleContract_UnmarshalYAML_BadScalarAlias triggers the scalarAlias
-// decode failure by providing a non-int priority.
+// decode failure by providing a non-scalar behavior — yaml.v3 cannot
+// decode a sequence into a string-typed RuleBehavior.
 func TestRuleContract_UnmarshalYAML_BadScalarAlias(t *testing.T) {
 	src := `
 name: r
-priority: "not-an-int"
+behavior: [continue, exit]
 condition:
   type: provider
   operator: Equals

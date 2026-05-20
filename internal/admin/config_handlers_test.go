@@ -77,8 +77,7 @@ func fixtureResolved(t *testing.T) *config.ResolvedConfig {
 		},
 		Rules: []rulescontract.RuleContract{
 			{
-				Name:     "only-openai",
-				Priority: 10,
+				Name: "only-openai",
 				Condition: &rulescontract.ProviderCondition{
 					Type:             "provider",
 					Operator:         rulescontract.EnumEquals,
@@ -261,7 +260,7 @@ func TestConfigurationDetailHandler_NotFound(t *testing.T) {
 	}
 }
 
-func TestRulesListHandler_OrdersByPriorityAndIncludesUsedBy(t *testing.T) {
+func TestRulesListHandler_AlphabeticalAndIncludesUsedBy(t *testing.T) {
 	rc := fixtureResolved(t)
 	h := admin.RulesListHandler(rc)
 	rec := httptest.NewRecorder()
@@ -277,7 +276,7 @@ func TestRulesListHandler_OrdersByPriorityAndIncludesUsedBy(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len = %d", len(got))
 	}
-	if got[0].Name != "only-openai" || got[0].Priority != 10 {
+	if got[0].Name != "only-openai" {
 		t.Errorf("got %+v", got[0])
 	}
 	if len(got[0].UsedBy) != 1 || got[0].UsedBy[0] != "dev" {
@@ -300,7 +299,6 @@ func TestRuleDetailHandler_HappyPath(t *testing.T) {
 	// shadow struct here.
 	var got struct {
 		Name      string            `json:"name"`
-		Priority  int               `json:"priority"`
 		Behavior  string            `json:"behavior,omitempty"`
 		Condition json.RawMessage   `json:"condition"`
 		Actions   []json.RawMessage `json:"actions"`

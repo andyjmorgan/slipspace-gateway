@@ -85,7 +85,6 @@ func TestEvaluator_ReturnStatusCode_StopsRuleLoop(t *testing.T) {
 	t.Parallel()
 	first := &contractsrules.RuleContract{
 		Name:      "synthetic",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions: []contractsrules.Action{
 			&contractsrules.ReturnStatusCodeAction{Type: "returnStatusCode", StatusCode: 429, BodyType: contractsrules.StatusBodyText},
@@ -93,7 +92,6 @@ func TestEvaluator_ReturnStatusCode_StopsRuleLoop(t *testing.T) {
 	}
 	second := &contractsrules.RuleContract{
 		Name:      "tag",
-		Priority:  100,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Should-Not-Set", "v")},
 	}

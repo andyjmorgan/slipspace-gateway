@@ -90,19 +90,16 @@ func RulesListHandler(resolved *config.ResolvedConfig) http.Handler {
 			rule := &resolved.Rules[i]
 			out = append(out, RuleSummary{
 				Name:             rule.Name,
-				Priority:         rule.Priority,
 				ConditionSummary: summariseCondition(rule.Condition),
 				ActionTypes:      summariseActionTypes(rule.Actions),
 				Behavior:         rule.Behavior,
 				UsedBy:           sortedCopy(ruleAttach[rule.Name]),
 			})
 		}
-		sort.Slice(out, func(i, j int) bool {
-			if out[i].Priority != out[j].Priority {
-				return out[i].Priority < out[j].Priority
-			}
-			return out[i].Name < out[j].Name
-		})
+		// Library sorted alphabetically — evaluation order is per
+		// configuration (see ConfigurationDetail.Rules), not a library
+		// concern.
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		writeJSON(w, out)
 	})
 }
@@ -128,7 +125,6 @@ func RuleDetailHandler(resolved *config.ResolvedConfig) http.Handler {
 		ruleAttach := invertRuleUsage(resolved)
 		out := RuleDetail{
 			Name:      rule.Name,
-			Priority:  rule.Priority,
 			Behavior:  rule.Behavior,
 			Condition: rule.Condition,
 			Actions:   rule.Actions,
@@ -322,7 +318,6 @@ func buildRuleAttachments(configName string, resolved *config.ResolvedConfig) []
 	for _, rule := range attached {
 		out = append(out, RuleAttachment{
 			Name:             rule.Name,
-			Priority:         rule.Priority,
 			ConditionSummary: summariseCondition(rule.Condition),
 			ActionTypes:      summariseActionTypes(rule.Actions),
 			Behavior:         rule.Behavior,

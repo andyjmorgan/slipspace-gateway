@@ -55,9 +55,6 @@ func TestRuleContract_YAMLRoundTrip(t *testing.T) {
 	if r.Name != "route-gpt-4-to-anthropic" {
 		t.Errorf("Name = %q", r.Name)
 	}
-	if r.Priority != 10 {
-		t.Errorf("Priority = %d", r.Priority)
-	}
 	if r.Behavior != rules.BehaviorExit {
 		t.Errorf("Behavior = %q", r.Behavior)
 	}
@@ -148,7 +145,7 @@ func TestRuleContract_JSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal([]byte(src), &r); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
-	if r.Name != "rule-json" || r.Priority != 5 || r.Behavior != rules.BehaviorContinue {
+	if r.Name != "rule-json" || r.Behavior != rules.BehaviorContinue {
 		t.Errorf("top fields: %+v", r)
 	}
 	if _, ok := r.Condition.(*rules.ProviderCondition); !ok {

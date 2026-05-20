@@ -27,7 +27,6 @@ func TestLlmImpersonation_E2E(t *testing.T) {
 
 	policy := matrixPolicy(`
   - name: pii-impersonator
-    priority: 100
     condition:
       type: provider
       operator: Equals

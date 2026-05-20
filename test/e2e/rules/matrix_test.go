@@ -85,7 +85,6 @@ func TestConditions_EndpointCondition_Matches(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
   - name: tag-on-chat
-    priority: 100
     condition:
       type: endpoint
       operator: Equals
@@ -110,7 +109,6 @@ func TestConditions_ModelNameCondition_StartsWith(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
   - name: tag-on-gpt
-    priority: 100
     condition:
       type: modelName
       operator: StartsWith
@@ -135,7 +133,6 @@ func TestConditions_HeaderCondition_Matches(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
   - name: tag-on-header
-    priority: 100
     condition:
       type: header
       keyOperator: Equals
@@ -164,7 +161,6 @@ func TestConditions_RuleGroup_AndMatches(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
   - name: tag-on-and
-    priority: 100
     condition:
       type: group
       logicalOperator: And
@@ -206,7 +202,6 @@ func TestActions_ChangeProvider_RetargetsUpstream(t *testing.T) {
 	// native `x-api-key`, and that's what should land on the wire.
 	policy := matrixPolicy(`
   - name: reroute-to-anthropic
-    priority: 100
     condition:
       type: provider
       operator: Equals
@@ -263,7 +258,6 @@ func TestActions_ChangeModelName_BodyRemarshalled(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
   - name: pin-gpt-4o
-    priority: 100
     condition:
       type: provider
       operator: Equals
@@ -302,7 +296,6 @@ func TestActions_ChangeUrl_OverridesUpstream(t *testing.T) {
 	// rewritten path".
 	policy := matrixPolicy(`
   - name: reroute-url
-    priority: 100
     condition:
       type: provider
       operator: Equals
@@ -331,7 +324,6 @@ func TestActions_ChangeApiKey_OverridesCredential(t *testing.T) {
 	// builder uses it in place of Configuration.UpstreamCredentials.
 	policy := matrixPolicy(`
   - name: swap-key
-    priority: 100
     condition:
       type: provider
       operator: Equals
@@ -357,7 +349,6 @@ func TestActions_AppendQueryString_ExtendsQuery(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
   - name: tag-with-query
-    priority: 100
     condition:
       type: provider
       operator: Equals
@@ -386,7 +377,6 @@ func TestRules_BehaviorExit_HaltsIteration(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
   - name: first-and-exit
-    priority: 50
     condition:
       type: provider
       operator: Equals
@@ -398,7 +388,6 @@ func TestRules_BehaviorExit_HaltsIteration(t *testing.T) {
         headerValue: yes
     behavior: exit
   - name: second-should-not-fire
-    priority: 100
     condition:
       type: provider
       operator: Equals
@@ -438,28 +427,25 @@ func TestRules_BehaviorExit_HaltsIteration(t *testing.T) {
 	h.ExpectNoEvent("gateway.rule.matched", 750*time.Millisecond)
 }
 
-func TestRules_PriorityOrdering(t *testing.T) {
+func TestRules_ListOrderEvaluation(t *testing.T) {
 	t.Parallel()
-	// Three rules with shuffled rule_names ordering. The loader
-	// sorts by priority ascending — the rule.matched events should
-	// arrive in priority order regardless of the rule_names list.
+	// rule_names list position IS the evaluation order. The rules
+	// library can declare them in any order; only the configuration's
+	// rule_names sequence drives execution.
 	policy := matrixPolicy(`
-  - name: pri-300
-    priority: 300
+  - name: rule-c
     condition: {type: provider, operator: Equals, expectedProvider: openai}
     actions:
-      - {type: setHeader, headerName: X-Order-300, headerAction: Set, headerValue: "3"}
-  - name: pri-100
-    priority: 100
+      - {type: setHeader, headerName: X-Order-C, headerAction: Set, headerValue: "3"}
+  - name: rule-a
     condition: {type: provider, operator: Equals, expectedProvider: openai}
     actions:
-      - {type: setHeader, headerName: X-Order-100, headerAction: Set, headerValue: "1"}
-  - name: pri-200
-    priority: 200
+      - {type: setHeader, headerName: X-Order-A, headerAction: Set, headerValue: "1"}
+  - name: rule-b
     condition: {type: provider, operator: Equals, expectedProvider: openai}
     actions:
-      - {type: setHeader, headerName: X-Order-200, headerAction: Set, headerValue: "2"}
-`, "pri-300", "pri-100", "pri-200")
+      - {type: setHeader, headerName: X-Order-B, headerAction: Set, headerValue: "2"}
+`, "rule-a", "rule-b", "rule-c")
 	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
 	stageChatOK(h)
 	fireChat(t, h, nil)
@@ -470,7 +456,7 @@ func TestRules_PriorityOrdering(t *testing.T) {
 	// multiple worker goroutines, so the receive order at the NATS
 	// subscriber is not the publish order; MatchedAt is the
 	// authoritative per-event timestamp.
-	want := []string{"pri-100", "pri-200", "pri-300"}
+	want := []string{"rule-a", "rule-b", "rule-c"}
 	matches := make([]events.RuleMatched, 0, len(want))
 	for i := range want {
 		env := h.ExpectEvent("gateway.rule.matched", 5*time.Second)

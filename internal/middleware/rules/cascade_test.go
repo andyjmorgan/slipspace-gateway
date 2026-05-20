@@ -61,13 +61,11 @@ func TestCascade_ProviderMutationVisibleToLaterRule(t *testing.T) {
 	t.Parallel()
 	flip := &contractsrules.RuleContract{
 		Name:      "flip-to-anthropic",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{changeProvider("anthropic")},
 	}
 	tag := &contractsrules.RuleContract{
 		Name:      "tag-anthropic",
-		Priority:  100,
 		Condition: providerCondition("anthropic"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-PostFlip", "yes")},
 	}
@@ -98,13 +96,11 @@ func TestCascade_ModelMutationVisibleToLaterRule(t *testing.T) {
 	t.Parallel()
 	normalise := &contractsrules.RuleContract{
 		Name:      "normalise-to-cheap",
-		Priority:  50,
 		Condition: modelCondition(contractsrules.StringStartsWith, "gpt-"),
 		Actions:   []contractsrules.Action{changeModelName("tier-cheap")},
 	}
 	catchall := &contractsrules.RuleContract{
 		Name:      "catchall-on-cheap",
-		Priority:  100,
 		Condition: modelCondition(contractsrules.StringEquals, "tier-cheap"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Cost-Tier", "low")},
 	}
@@ -146,14 +142,12 @@ func TestCascade_ModelMutationVisibleToCatchAll_MultipleSources(t *testing.T) {
 	rule := func(name, prefix string) *contractsrules.RuleContract {
 		return &contractsrules.RuleContract{
 			Name:      name,
-			Priority:  50,
 			Condition: modelCondition(contractsrules.StringStartsWith, prefix),
 			Actions:   []contractsrules.Action{changeModelName("tier-cheap")},
 		}
 	}
 	catchall := &contractsrules.RuleContract{
 		Name:      "catchall-on-cheap",
-		Priority:  100,
 		Condition: modelCondition(contractsrules.StringEquals, "tier-cheap"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Cost-Tier", "low")},
 	}
@@ -189,13 +183,11 @@ func TestCascade_HeaderMutationVisibleToLaterRule(t *testing.T) {
 	t.Parallel()
 	tagger := &contractsrules.RuleContract{
 		Name:      "tag-tenant",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Tenant-Class", "premium")},
 	}
 	gate := &contractsrules.RuleContract{
 		Name:      "premium-only-injection",
-		Priority:  100,
 		Condition: headerCondition("X-Tenant-Class", "premium"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Premium-Feature", "enabled")},
 	}
@@ -223,14 +215,12 @@ func TestCascade_BehaviorExit_StopsAfterCascadeMutation(t *testing.T) {
 	t.Parallel()
 	flipAndExit := &contractsrules.RuleContract{
 		Name:      "flip-and-exit",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{changeProvider("anthropic")},
 		Behavior:  contractsrules.BehaviorExit,
 	}
 	wouldFire := &contractsrules.RuleContract{
 		Name:      "would-fire-on-anthropic",
-		Priority:  100,
 		Condition: providerCondition("anthropic"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Should-Not-Appear", "y")},
 	}
@@ -257,7 +247,6 @@ func TestCascade_TerminatingAction_StopsImmediately(t *testing.T) {
 	t.Parallel()
 	terminate := &contractsrules.RuleContract{
 		Name:      "block-openai",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions: []contractsrules.Action{
 			&contractsrules.ReturnStatusCodeAction{
@@ -267,7 +256,6 @@ func TestCascade_TerminatingAction_StopsImmediately(t *testing.T) {
 	}
 	follower := &contractsrules.RuleContract{
 		Name:      "would-tag",
-		Priority:  100,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Should-Not-Appear", "y")},
 	}
@@ -299,19 +287,16 @@ func TestCascade_NoOscillation(t *testing.T) {
 	t.Parallel()
 	flipForward := &contractsrules.RuleContract{
 		Name:      "flip-to-anthropic",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{changeProvider("anthropic")},
 	}
 	flipBack := &contractsrules.RuleContract{
 		Name:      "flip-back-to-openai",
-		Priority:  100,
 		Condition: providerCondition("anthropic"),
 		Actions:   []contractsrules.Action{changeProvider("openai")},
 	}
 	wouldRefire := &contractsrules.RuleContract{
 		Name:      "would-refire-if-we-looped",
-		Priority:  200,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Loop-Marker", "fired")},
 	}
@@ -372,13 +357,11 @@ func TestCascade_NoMutation_FrozenBehaviorIntact(t *testing.T) {
 	t.Parallel()
 	first := &contractsrules.RuleContract{
 		Name:      "tag-openai",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-First", "yes")},
 	}
 	second := &contractsrules.RuleContract{
 		Name:      "tag-openai-again",
-		Priority:  100,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
 	}
@@ -409,13 +392,11 @@ func TestCascade_LiveModelFromGeminiBodyPathParams(t *testing.T) {
 	t.Parallel()
 	normalise := &contractsrules.RuleContract{
 		Name:      "normalise-gemini",
-		Priority:  50,
 		Condition: modelCondition(contractsrules.StringStartsWith, "gemini-"),
 		Actions:   []contractsrules.Action{changeModelName("tier-multimodal")},
 	}
 	catchall := &contractsrules.RuleContract{
 		Name:      "catchall-on-tier",
-		Priority:  100,
 		Condition: modelCondition(contractsrules.StringEquals, "tier-multimodal"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Tier", "multimodal")},
 	}
@@ -453,13 +434,11 @@ func TestCascade_LiveModelFromAnthropicBody(t *testing.T) {
 	t.Parallel()
 	normalise := &contractsrules.RuleContract{
 		Name:      "normalise-claude",
-		Priority:  50,
 		Condition: modelCondition(contractsrules.StringStartsWith, "claude-"),
 		Actions:   []contractsrules.Action{changeModelName("tier-cheap")},
 	}
 	catchall := &contractsrules.RuleContract{
 		Name:      "catchall-on-cheap",
-		Priority:  100,
 		Condition: modelCondition(contractsrules.StringEquals, "tier-cheap"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Cost-Tier", "low")},
 	}
@@ -487,13 +466,11 @@ func TestCascade_LiveModelFromOpenAIResponsesBody(t *testing.T) {
 	t.Parallel()
 	normalise := &contractsrules.RuleContract{
 		Name:      "normalise-responses",
-		Priority:  50,
 		Condition: modelCondition(contractsrules.StringStartsWith, "gpt-"),
 		Actions:   []contractsrules.Action{changeModelName("tier-cheap")},
 	}
 	catchall := &contractsrules.RuleContract{
 		Name:      "catchall-on-cheap",
-		Priority:  100,
 		Condition: modelCondition(contractsrules.StringEquals, "tier-cheap"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Cost-Tier", "low")},
 	}
@@ -524,13 +501,11 @@ func TestCascade_EndpointCondition_FrozenWhenNoActionMutatesEndpoint(t *testing.
 	t.Parallel()
 	flip := &contractsrules.RuleContract{
 		Name:      "flip-provider",
-		Priority:  50,
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{changeProvider("anthropic")},
 	}
 	endpointGate := &contractsrules.RuleContract{
 		Name:      "tag-chat-endpoint",
-		Priority:  100,
 		Condition: endpointCondition("chat_completions"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Endpoint-Tag", "matched")},
 	}

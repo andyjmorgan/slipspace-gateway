@@ -29,7 +29,6 @@ export function RuleDetailPage() {
         sub={
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             <Tag variant="default"><span className="mono">rule</span></Tag>
-            <Tag variant="ghost"><span className="mono">priority {r.priority}</span></Tag>
             <BehaviorBadge behavior={r.behavior} />
           </div>
         }
