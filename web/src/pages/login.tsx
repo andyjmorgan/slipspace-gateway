@@ -1,11 +1,11 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useNavigate, useLocation } from "react-router"
 import { Eye, EyeOff, Moon, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { auth } from "@/lib/auth"
-import { validateSession } from "@/lib/api"
+import { fetchVersion, validateSession } from "@/lib/api"
 import { useTheme } from "@/lib/theme"
 
 export function LoginPage() {
@@ -18,6 +18,21 @@ export function LoginPage() {
   const [showPw, setShowPw] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [version, setVersion] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchVersion()
+      .then((v) => {
+        if (!cancelled) setVersion(v)
+      })
+      .catch(() => {
+        /* cosmetic — swallow */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const from = (loc.state as { from?: string } | null)?.from ?? "/dashboard"
 
@@ -77,7 +92,7 @@ export function LoginPage() {
             className="size-9 rounded-md"
           />
           <span className="text-[16px] font-semibold tracking-tight">sluice</span>
-          <span className="mono ml-auto text-[11px] text-[color:var(--text-4)]">v1.1.0-rc2</span>
+          <span className="mono ml-auto text-[11px] text-[color:var(--text-4)]">{version ?? "…"}</span>
         </div>
 
         <h1 className="text-[20px] font-semibold tracking-[-0.02em] mb-1">Sign in</h1>

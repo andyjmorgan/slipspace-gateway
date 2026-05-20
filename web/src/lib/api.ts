@@ -65,3 +65,18 @@ export async function validateSession(): Promise<boolean> {
     throw e
   }
 }
+
+/**
+ * Fetch the gateway's build-time version from the unauthenticated
+ * /api/v1/version endpoint. Used by the sidebar and login page so the
+ * displayed version always matches the binary actually serving the
+ * console.
+ */
+export async function fetchVersion(): Promise<string> {
+  const res = await fetch(API_BASE + "/api/v1/version", { headers: { Accept: "application/json" } })
+  if (!res.ok) {
+    throw new APIError(res.status, res.statusText)
+  }
+  const body = (await res.json()) as { version: string }
+  return body.version
+}
