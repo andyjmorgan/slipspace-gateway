@@ -1,7 +1,11 @@
+import { useState } from "react"
 import { Link, useParams } from "react-router"
 import { useRule } from "@/lib/config-api"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
+import { ConditionView, type RawCondition } from "@/components/atoms/condition-view"
+import { ActionView, type RawAction } from "@/components/atoms/action-view"
+import { cn } from "@/lib/utils"
 import {
   PageHeader,
   LoadingPanel,
@@ -11,10 +15,13 @@ import {
 } from "@/components/atoms/page-states"
 import { UsedBy } from "@/pages/rules"
 
+type Tab = "visual" | "json"
+
 export function RuleDetailPage() {
   const { name } = useParams<{ name: string }>()
   const { state } = useRule(name)
   useUnauthorizedRedirect(state)
+  const [tab, setTab] = useState<Tab>("visual")
 
   if (state.status === "loading") return <Wrap name={name}><LoadingPanel /></Wrap>
   if (state.status === "error") return <Wrap name={name}><ErrorPanel message={state.message} /></Wrap>
@@ -22,6 +29,9 @@ export function RuleDetailPage() {
   if (state.status !== "ok") return null
 
   const r = state.data
+  const condition = r.condition as RawCondition
+  const actions = (r.actions as RawAction[] | undefined) ?? []
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
@@ -40,27 +50,15 @@ export function RuleDetailPage() {
       />
 
       <PanelCard>
-        <PanelHead title="Condition" sub="predicate that must match for actions to fire" />
-        <JsonBlock value={r.condition} />
-      </PanelCard>
-
-      <PanelCard>
-        <PanelHead title="Actions" sub={`executed in order on match · ${r.actions?.length ?? 0}`} />
-        {(!r.actions || r.actions.length === 0) && (
-          <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No actions.</div>
-        )}
-        {r.actions && r.actions.length > 0 && (
-          <div className="px-4 py-3 flex flex-col gap-3">
-            {r.actions.map((a, i) => (
-              <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] overflow-hidden">
-                <div className="px-3 py-1.5 border-b border-[color:var(--border)] bg-[color:var(--bg-2)] flex items-center gap-2">
-                  <span className="text-[11px] text-[color:var(--text-4)] mono">#{i + 1}</span>
-                  <span className="mono text-[12px] font-semibold">{String(a.type ?? "?")}</span>
-                </div>
-                <JsonBlock value={a} compact />
-              </div>
-            ))}
-          </div>
+        <PanelHead
+          title="Body"
+          sub="when this matches, do these actions"
+          action={<Tabs value={tab} onChange={setTab} />}
+        />
+        {tab === "visual" ? (
+          <VisualBody condition={condition} actions={actions} />
+        ) : (
+          <JsonBody condition={condition} actions={actions} />
         )}
       </PanelCard>
 
@@ -74,6 +72,84 @@ export function RuleDetailPage() {
   )
 }
 
+function VisualBody({ condition, actions }: { condition: RawCondition; actions: RawAction[] }) {
+  return (
+    <div className="px-4 py-4 flex flex-col gap-4">
+      <Section title="WHEN" sub="predicate that must match for the actions to fire">
+        <ConditionView condition={condition} />
+      </Section>
+      <Section title="THEN" sub={`${actions.length} action${actions.length === 1 ? "" : "s"} · executed in order on match`}>
+        {actions.length === 0 ? (
+          <div className="text-[12.5px] text-[color:var(--text-4)]">No actions.</div>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {actions.map((a, i) => (
+              <ActionView key={i} action={a} index={i} />
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  )
+}
+
+function JsonBody({ condition, actions }: { condition: RawCondition; actions: RawAction[] }) {
+  return (
+    <div className="px-4 py-4 flex flex-col gap-3">
+      <Section title="condition" sub="raw condition body">
+        <JsonBlock value={condition} />
+      </Section>
+      <Section title="actions" sub={`${actions.length} ordered`}>
+        <JsonBlock value={actions} />
+      </Section>
+    </div>
+  )
+}
+
+function Section({
+  title,
+  sub,
+  children,
+}: {
+  title: string
+  sub?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-2">
+        <span className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-2)] font-semibold">
+          {title}
+        </span>
+        {sub && <span className="text-[11px] text-[color:var(--text-4)]">{sub}</span>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
+  return (
+    <div className="inline-flex items-center rounded-[5px] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-0.5 text-[11.5px]">
+      {(["visual", "json"] as Tab[]).map((t) => (
+        <button
+          key={t}
+          type="button"
+          onClick={() => onChange(t)}
+          className={cn(
+            "px-2 py-0.5 rounded-[4px] transition-colors",
+            value === t
+              ? "bg-[color:var(--bg-3)] text-[color:var(--text)]"
+              : "text-[color:var(--text-3)] hover:text-[color:var(--text)]",
+          )}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function Wrap({ name, children }: { name?: string; children: React.ReactNode }) {
   return (
     <div>
@@ -83,16 +159,10 @@ function Wrap({ name, children }: { name?: string; children: React.ReactNode }) 
   )
 }
 
-function JsonBlock({ value, compact = false }: { value: unknown; compact?: boolean }) {
+function JsonBlock({ value }: { value: unknown }) {
   return (
-    <pre
-      className="mono text-[11.5px] overflow-x-auto px-4 py-3 bg-[color:var(--bg-0)]"
-      style={{
-        margin: 0,
-        borderTop: compact ? undefined : "0",
-      }}
-    >
-      {JSON.stringify(value, null, 2)}
+    <pre className="mono text-[11.5px] overflow-x-auto px-3 py-2 bg-[color:var(--bg-0)] rounded-[var(--radius)]">
+      {JSON.stringify(value ?? null, null, 2)}
     </pre>
   )
 }
