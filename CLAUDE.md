@@ -518,11 +518,12 @@ Assert:
 
 ## PR discipline
 
-### Run the full test surface before every commit
+### Run the full test surface AND lint before every commit
 
 **Hard rule.** Before every commit and push, run:
 
 ```sh
+make lint       # golangci-lint run ./...
 make coverage   # go test ./... + the 95% gate
 make e2e        # spawned binary + testcontainers (Docker required)
 ```
@@ -533,7 +534,12 @@ For changes that touch request/response shape, the proxy, response writer wrappe
 make py-compat  # official OpenAI / Anthropic / Gemini SDKs against a spawned stack
 ```
 
-`make e2e` is ~30-60s once testcontainers are warm — small price relative to the cost of pushing a regression. **Don't push hoping CI catches it.** This rule exists because PR #24 shipped a `recordingResponseWriter` that broke the proxy's `(http.Flusher)` type assertion; `go test ./...` (no `-tags=e2e`) passed locally, `make e2e` would have caught it immediately.
+`make e2e` is ~30-60s once testcontainers are warm — small price relative to the cost of pushing a regression. **Don't push hoping CI catches it.** This rule exists because:
+
+- PR #24 shipped a `recordingResponseWriter` that broke the proxy's `(http.Flusher)` type assertion; `go test ./...` (no `-tags=e2e`) passed locally, `make e2e` would have caught it immediately.
+- PR #44 (live messages pane) tripped CI on gofmt + errcheck issues in a new test file. User: **"DO NOT PUSH WITHOUT FULL TESTING AND LINTING LOCALLY."** `make lint` is non-negotiable.
+
+If `golangci-lint` isn't installed (`command -v golangci-lint` returns nothing), install it once: `brew install golangci-lint`. If lint reports phantom errors against deleted sibling-worktree paths, `golangci-lint cache clean` clears the stale package cache.
 
 ### Other PR rules
 
