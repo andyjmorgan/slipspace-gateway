@@ -77,7 +77,12 @@ jobs:
           if-no-files-found: ignore
 
   e2e:
-    runs-on: [self-hosted, office-cluster]
+    # Stays on ubuntu-latest until DinD is sorted on the office-cluster
+    # runner pods — testcontainers starts NATS + mockllm via the docker
+    # socket, and the in-pod docker daemon currently times out on
+    # container creates. The other four jobs in this workflow run on
+    # self-hosted; e2e is the only one with this dependency.
+    runs-on: ubuntu-latest
     env:
       # Ryuk (testcontainers' reaper container) is flaky on ephemeral
       # CI runners and not needed when the runner itself disposes of
