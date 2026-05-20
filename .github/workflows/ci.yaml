@@ -91,11 +91,13 @@ jobs:
           check-latest: true
           cache: true
       # Inline equivalent of `make e2e` (the runner image is minimal —
-      # no `make`). -p 1 forces one test package at a time: the runner
-      # pod shares one network namespace, so parallel packages race on
-      # ephemeral-port allocation and intermittently land on the same
-      # bind address. Serialising is the cheapest fix that holds today;
-      # revisit if individual e2e packages get slow enough that the
-      # serial wall-clock matters.
+      # no `make`). The runner pod shares one network namespace, so
+      # any port-races in the harness's bind-on-zero-then-close-and-
+      # reopen pattern surface as flakes. Both knobs needed:
+      #   -p 1         — one package at a time (between packages)
+      #   -parallel=1  — one t.Parallel() test at a time (within a package)
+      # Full serial; trades wall-clock for reliability until the
+      # harness binds directly on :0 without the close-and-reopen
+      # round-trip that creates the TOCTOU window.
       - name: go test e2e
-        run: go test -tags=e2e -race -count=1 -p 1 -timeout=10m ./test/e2e/...
+        run: go test -tags=e2e -race -count=1 -p 1 -parallel 1 -timeout=15m ./test/e2e/...
