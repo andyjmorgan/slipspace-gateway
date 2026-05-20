@@ -47,6 +47,41 @@ export async function fetchRecentMessages(limit?: number): Promise<MessagesRecen
   return apiFetch<MessagesRecentResponse>(`/api/v1/messages/recent${qs}`)
 }
 
+export type BodyToolCall = {
+  id?: string
+  name: string
+  arguments?: string
+}
+
+export type MessageBodyDetail = {
+  event_id: string
+  request?: string
+  request_total_bytes: number
+  request_truncated?: boolean
+  response?: string
+  response_total_bytes: number
+  response_truncated?: boolean
+  response_assembled?: string
+  tool_calls?: BodyToolCall[]
+  assembly_partial?: boolean
+}
+
+/**
+ * Fetches the captured request + response bodies for a single event
+ * id. Returns null when the body store is disabled (503) or the
+ * event_id has rolled out of the LRU (404). Anything else bubbles up
+ * as a normal APIError / UnauthorizedError.
+ */
+export async function fetchMessageBody(eventId: string): Promise<MessageBodyDetail | null> {
+  try {
+    return await apiFetch<MessageBodyDetail>(`/api/v1/messages/${encodeURIComponent(eventId)}/body`)
+  } catch (err) {
+    const status = (err as { status?: number }).status
+    if (status === 404 || status === 503) return null
+    throw err
+  }
+}
+
 export type StreamHandlers = {
   onMessage: (entry: MessageEntry) => void
   onDrop?: (count: number) => void

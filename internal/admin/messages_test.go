@@ -163,6 +163,61 @@ func TestMessagesRecentHandler_RuleHitsMappedOntoWire(t *testing.T) {
 	}
 }
 
+func TestMessageBodyHandler_503WhenStoreNil(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/abc/body", nil)
+	req.SetPathValue("event_id", "abc")
+	MessageBodyHandler(nil).ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want 503", rec.Code)
+	}
+}
+
+func TestMessageBodyHandler_404WhenMissing(t *testing.T) {
+	t.Parallel()
+	store, _ := livefeed.NewBodyStore(1024)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/missing/body", nil)
+	req.SetPathValue("event_id", "missing")
+	MessageBodyHandler(store).ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d want 404", rec.Code)
+	}
+}
+
+func TestMessageBodyHandler_ReturnsStoredEnvelope(t *testing.T) {
+	t.Parallel()
+	store, _ := livefeed.NewBodyStore(64 * 1024)
+	store.Put("evt-1", livefeed.BodyEnvelope{
+		Request:            []byte(`{"prompt":"hi"}`),
+		RequestTotalBytes:  15,
+		Response:           []byte(`raw sse bytes`),
+		ResponseTotalBytes: 13,
+		ResponseAssembled:  "hello world",
+		ToolCalls: []livefeed.AssembledToolCall{
+			{ID: "call_1", Name: "search", Arguments: `{"q":"x"}`},
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/messages/evt-1/body", nil)
+	req.SetPathValue("event_id", "evt-1")
+	MessageBodyHandler(store).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200", rec.Code)
+	}
+	var got adminc.MessageBodyDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Request != `{"prompt":"hi"}` || got.ResponseAssembled != "hello world" {
+		t.Errorf("body detail = %+v", got)
+	}
+	if len(got.ToolCalls) != 1 || got.ToolCalls[0].Name != "search" {
+		t.Errorf("tool calls = %+v", got.ToolCalls)
+	}
+}
+
 // nonFlushingRecorder embeds httptest.ResponseRecorder without exposing
 // http.Flusher. The streaming handler rejects responses that can't
 // flush, which is the only code path we cover here.

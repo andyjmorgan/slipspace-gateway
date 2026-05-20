@@ -63,6 +63,12 @@ type MuxOptions struct {
 	// (they return 503), letting the gateway boot cleanly when
 	// SLUICE_ADMIN_LIVE_FEED_CAPACITY=0.
 	LiveFeed *livefeed.Ring
+
+	// BodyStore is the byte-bounded LRU of per-event captured bodies
+	// backing GET /api/v1/messages/{event_id}/body. Nil disables the
+	// endpoint (returns 503) — the live-tail pane still works on
+	// metadata alone.
+	BodyStore *livefeed.BodyStore
 }
 
 // Prefix is the URL path prefix the console mounts under. Both the
@@ -163,6 +169,13 @@ func NewMux(opts MuxOptions) http.Handler {
 	)
 	apiMux.Handle("/api/v1/messages/stream",
 		InstrumentRoute(opts.Meters, "/api/v1/messages/stream", MessagesStreamHandler(opts.LiveFeed)),
+	)
+	// Per-event body endpoint uses the 1.22+ servemux placeholder
+	// syntax so r.PathValue picks the event_id without a trim-prefix
+	// dance. The longest-match rule keeps the exact /recent and
+	// /stream routes above winning over this pattern.
+	apiMux.Handle("/api/v1/messages/{event_id}/body",
+		InstrumentRoute(opts.Meters, "/api/v1/messages/{event_id}/body", MessageBodyHandler(opts.BodyStore)),
 	)
 
 	// adminTree exposes the same routes the listener used to expose at

@@ -37,6 +37,8 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 		{"ConfigDir", env.ConfigDir, config.DefaultConfigDir},
 		{"RulesMaxGroupDepth", env.RulesMaxGroupDepth, config.DefaultRulesMaxGroupDepth},
 		{"AdminLiveFeedCapacity", env.AdminLiveFeedCapacity, config.DefaultAdminLiveFeedCapacity},
+		{"AdminLiveFeedBodyBytes", env.AdminLiveFeedBodyBytes, config.DefaultAdminLiveFeedBodyBytes},
+		{"AdminLiveFeedBodyMaxBytes", env.AdminLiveFeedBodyMaxBytes, config.DefaultAdminLiveFeedBodyMaxBytes},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
@@ -101,6 +103,42 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	if !env.LiveFeedEnabled() {
 		t.Errorf("LiveFeedEnabled() = false with default capacity")
 	}
+	if !env.LiveFeedBodiesEnabled() {
+		t.Errorf("LiveFeedBodiesEnabled() = false with default body bytes")
+	}
+}
+
+func TestServerEnv_LiveFeedBodiesDisabledByZeroBytes(t *testing.T) {
+	for _, name := range config.EnvVarNames() {
+		t.Setenv(name, "")
+	}
+	t.Setenv(config.EnvAdminLiveFeedBodyBytes, "0")
+	env, err := config.LoadEnv()
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if err := env.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if env.LiveFeedBodiesEnabled() {
+		t.Errorf("LiveFeedBodiesEnabled() = true with body_bytes=0")
+	}
+}
+
+func TestServerEnv_Validate_RejectsMaxBytesZeroWhenBytesPositive(t *testing.T) {
+	env := defaultEnv(t)
+	env.AdminLiveFeedBodyMaxBytes = 0
+	if err := env.Validate(); !errors.Is(err, config.ErrInvalidEnv) {
+		t.Fatalf("err = %v, want ErrInvalidEnv", err)
+	}
+}
+
+func TestServerEnv_Validate_NegativeLiveFeedBodyBytes(t *testing.T) {
+	env := defaultEnv(t)
+	env.AdminLiveFeedBodyBytes = -1
+	if err := env.Validate(); !errors.Is(err, config.ErrInvalidEnv) {
+		t.Fatalf("err = %v, want ErrInvalidEnv", err)
+	}
 }
 
 func TestServerEnv_LiveFeedDisabledByZero(t *testing.T) {
@@ -137,6 +175,9 @@ func TestLoadEnv_BadIntWrapsErrInvalidEnv(t *testing.T) {
 		{"stash", config.EnvNATSStashThresholdBytes},
 		{"queue", config.EnvNATSPublishQueueSize},
 		{"group_depth", config.EnvRulesMaxGroupDepth},
+		{"live_feed_capacity", config.EnvAdminLiveFeedCapacity},
+		{"live_feed_body_bytes", config.EnvAdminLiveFeedBodyBytes},
+		{"live_feed_body_max_bytes", config.EnvAdminLiveFeedBodyMaxBytes},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

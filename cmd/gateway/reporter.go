@@ -14,9 +14,11 @@ import (
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed/accumulator"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 )
 
@@ -65,13 +67,20 @@ type reporterFactory struct {
 	logger    *slog.Logger
 	meters    *observability.Meters
 	liveFeed  *livefeed.Ring
+	bodyStore *livefeed.BodyStore
 }
 
-func newReporterFactory(publisher *bus.Publisher, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring) *reporterFactory {
+func newReporterFactory(publisher *bus.Publisher, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &reporterFactory{publisher: publisher, logger: logger, meters: meters, liveFeed: liveFeed}
+	return &reporterFactory{
+		publisher: publisher,
+		logger:    logger,
+		meters:    meters,
+		liveFeed:  liveFeed,
+		bodyStore: bodyStore,
+	}
 }
 
 // Factory returns a proxy.ObserverFactory bound to this factory's
@@ -217,7 +226,8 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 
 	matches := r.drainRuleMatches(ctx, ev.CorrelationID)
 	r.publishRuleMatches(ctx, matches)
-	r.appendLiveFeed(ev, matches)
+	entryID := r.appendLiveFeed(ev, matches)
+	r.captureBody(ctx, entryID, ev)
 
 	logger := observability.FromContext(ctx)
 	logger.InfoContext(ctx, "request completed",
@@ -282,10 +292,12 @@ func (r *reporterRun) publishRuleMatches(ctx context.Context, matches []events.R
 
 // appendLiveFeed tees the completed request + its rule matches into the
 // in-process ring that backs the admin console's live-messages pane.
-// A nil ring is a no-op (live feed disabled via env var).
-func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMatched) {
+// A nil ring is a no-op (live feed disabled via env var). Returns the
+// minted event ID so subsequent steps (body capture, etc.) can key
+// against the same identifier.
+func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMatched) string {
 	if r.factory.liveFeed == nil {
-		return
+		return ""
 	}
 	hits := make([]livefeed.RuleHit, 0, len(matches))
 	for _, m := range matches {
@@ -296,8 +308,9 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 			ErrorMessage:   m.ErrorMessage,
 		})
 	}
+	id := uuid.NewString()
 	r.factory.liveFeed.Append(livefeed.Entry{
-		EventID:       uuid.NewString(),
+		EventID:       id,
 		At:            time.Now().UTC(),
 		CorrelationID: ev.CorrelationID,
 		Provider:      ev.Provider,
@@ -310,6 +323,50 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		UpstreamError: ev.UpstreamError,
 		RulesMatched:  hits,
 	})
+	return id
+}
+
+// captureBody writes the per-request body envelope to the in-process
+// body store keyed by entryID. No-ops when:
+//   - bodies are disabled (nil store)
+//   - the ring entry was not created (empty entryID, caused by a nil
+//     ring — same disabled-feature path)
+//
+// Streaming responses run through the per-provider accumulator so the
+// modal can render the assembled text + structured tool calls. Raw
+// bytes are kept alongside (subject to the per-body cap) for the
+// "raw chunks" toggle.
+func (r *reporterRun) captureBody(ctx context.Context, entryID string, ev events.Request) {
+	if r.factory.bodyStore == nil || entryID == "" {
+		return
+	}
+	env := livefeed.BodyEnvelope{}
+
+	if captured, ok := bodycapture.FromContext(ctx); ok && len(captured.Raw) > 0 {
+		env.Request = captured.Raw
+		env.RequestTotalBytes = int64(len(captured.Raw))
+	}
+
+	if buf, ok := livefeed.ResponseBufferFromContext(ctx); ok && buf != nil {
+		env.Response = buf.Bytes()
+		env.ResponseTotalBytes = buf.Total()
+		env.ResponseTruncated = buf.Truncated()
+		if ev.Streaming && len(env.Response) > 0 {
+			res := accumulator.Accumulate(ev.Provider, ev.Endpoint, env.Response)
+			if res.Recognised {
+				env.ResponseAssembled = res.Text
+				env.AssemblyPartial = res.Partial
+				if len(res.ToolCalls) > 0 {
+					env.ToolCalls = make([]livefeed.AssembledToolCall, 0, len(res.ToolCalls))
+					for _, tc := range res.ToolCalls {
+						env.ToolCalls = append(env.ToolCalls, livefeed.AssembledToolCall(tc))
+					}
+				}
+			}
+		}
+	}
+
+	r.factory.bodyStore.Put(entryID, env)
 }
 
 // providerEndpointModelAttrs builds the (provider, endpoint, model)

@@ -8,8 +8,11 @@ import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { LoadingPanel, ErrorPanel, PageHeader } from "@/components/atoms/page-states"
 import {
+  fetchMessageBody,
   fetchRecentMessages,
   openMessageStream,
+  type BodyToolCall,
+  type MessageBodyDetail,
   type MessageEntry,
   type RuleHit,
 } from "@/lib/messages"
@@ -445,10 +448,220 @@ function MessageModal({
         {entry.rules_matched && entry.rules_matched.length > 0 && (
           <RulesList rules={entry.rules_matched} />
         )}
+        <BodyDetail eventId={entry.event_id} streaming={!!entry.streaming} />
       </div>
     </div>,
     document.body,
   )
+}
+
+// BodyDetail lazy-loads /messages/{event_id}/body when the modal
+// opens for a specific entry. Reloads when selectedId changes (i.e.
+// the operator hits the up/down chevron). Renders separately when
+// the body store is disabled (returns null from fetch), missing, or
+// loading.
+function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolean }) {
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "missing" }
+    | { status: "ok"; body: MessageBodyDetail }
+    | { status: "error"; message: string }
+  >({ status: "loading" })
+  const [showRaw, setShowRaw] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setState({ status: "loading" })
+    setShowRaw(false)
+    fetchMessageBody(eventId)
+      .then((body) => {
+        if (cancelled) return
+        if (!body) {
+          setState({ status: "missing" })
+          return
+        }
+        setState({ status: "ok", body })
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setState({ status: "error", message: String((err as Error).message ?? err) })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [eventId])
+
+  if (state.status === "loading") {
+    return (
+      <div className="mt-3 text-[11.5px] text-[color:var(--text-3)]">Loading bodies…</div>
+    )
+  }
+  if (state.status === "missing") {
+    return (
+      <div className="mt-3 rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11.5px] text-[color:var(--text-3)]">
+        Bodies for this request are not available — either body capture is disabled
+        (<span className="mono">SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0</span>) or this
+        event rolled out of the body cache.
+      </div>
+    )
+  }
+  if (state.status === "error") {
+    return (
+      <div className="mt-3 rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[11.5px] text-[color:var(--err)]">
+        {state.message}
+      </div>
+    )
+  }
+  const body = state.body
+  return (
+    <div className="mt-3 flex flex-col gap-3">
+      <BodySection
+        label="Request body"
+        text={body.request}
+        totalBytes={body.request_total_bytes}
+        truncated={body.request_truncated}
+      />
+      {streaming && body.response_assembled !== undefined && (
+        <BodySection
+          label="Response (assembled)"
+          text={body.response_assembled}
+          totalBytes={body.response_total_bytes}
+          truncated={body.response_truncated}
+          headerExtras={
+            <>
+              {body.assembly_partial && (
+                <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
+                  partial
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowRaw((v) => !v)}
+                className="mono rounded-[var(--radius)] border border-[color:var(--border)] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.05em] text-[color:var(--text-3)] hover:bg-[color:var(--hover)]"
+              >
+                {showRaw ? "Hide raw" : "Show raw"}
+              </button>
+            </>
+          }
+        />
+      )}
+      {streaming && showRaw && (
+        <BodySection
+          label="Response (raw SSE)"
+          text={body.response}
+          totalBytes={body.response_total_bytes}
+          truncated={body.response_truncated}
+        />
+      )}
+      {!streaming && (
+        <BodySection
+          label="Response body"
+          text={body.response}
+          totalBytes={body.response_total_bytes}
+          truncated={body.response_truncated}
+        />
+      )}
+      {body.tool_calls && body.tool_calls.length > 0 && (
+        <ToolCallsList toolCalls={body.tool_calls} />
+      )}
+    </div>
+  )
+}
+
+function BodySection({
+  label,
+  text,
+  totalBytes,
+  truncated,
+  headerExtras,
+}: {
+  label: string
+  text?: string
+  totalBytes: number
+  truncated?: boolean
+  headerExtras?: React.ReactNode
+}) {
+  const isEmpty = !text || text.length === 0
+  const pretty = useMemo(() => prettyJSONIfPossible(text ?? ""), [text])
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-2">
+        <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
+          {label}
+        </div>
+        <div className="mono text-[10.5px] text-[color:var(--text-4)]">
+          {formatBytes(totalBytes)}
+        </div>
+        {truncated && (
+          <span className="mono text-[10px] uppercase text-[color:var(--warn)]">truncated</span>
+        )}
+        <div className="ml-auto flex items-center gap-1">{headerExtras}</div>
+      </div>
+      {isEmpty ? (
+        <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
+      ) : (
+        <pre className="mono max-h-72 overflow-auto rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11.5px] text-[color:var(--text-2)] whitespace-pre-wrap break-all">
+          {pretty}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+function ToolCallsList({ toolCalls }: { toolCalls: BodyToolCall[] }) {
+  return (
+    <div>
+      <div className="mb-1 text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
+        Tool calls
+      </div>
+      <ul className="flex flex-col gap-2">
+        {toolCalls.map((tc, i) => {
+          const args = prettyJSONIfPossible(tc.arguments ?? "")
+          return (
+            <li
+              key={`${tc.name}-${i}`}
+              className="rounded-[var(--radius)] border border-[color:var(--border)] p-2 text-[11.5px]"
+            >
+              <div className="flex items-center gap-2">
+                <span className="mono text-[color:var(--text-2)]">{tc.name}</span>
+                {tc.id && (
+                  <span className="mono text-[10.5px] text-[color:var(--text-4)]">
+                    {tc.id}
+                  </span>
+                )}
+              </div>
+              {args && (
+                <pre className="mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all text-[11px] text-[color:var(--text-2)]">
+                  {args}
+                </pre>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+// prettyJSONIfPossible pretty-prints the input when it parses as JSON,
+// otherwise returns it unchanged. Operators get readable Anthropic /
+// OpenAI / Gemini payloads without a manual format step, and SSE
+// streams (raw view) fall through untouched.
+function prettyJSONIfPossible(s: string): string {
+  if (!s) return s
+  const trimmed = s.trim()
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return s
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2)
+  } catch {
+    return s
+  }
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function Field({ label, value }: { label: string; value: string }) {

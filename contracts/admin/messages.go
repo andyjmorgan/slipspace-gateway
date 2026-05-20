@@ -85,3 +85,75 @@ type MessagesRecentResponse struct {
 	// requests since startup.
 	Entries []MessageEntry `json:"entries"`
 }
+
+// MessageBodyDetail is the JSON shape returned by
+// GET /admin/api/v1/messages/{event_id}/body. Holds the captured
+// request and response bodies plus, for streamed responses, the
+// per-provider accumulator's assembled text + structured tool calls.
+//
+// Body fields are raw UTF-8 strings — JSON, SSE, plain text all
+// round-trip as-is. Operators inspecting binary payloads (rare here)
+// see invalid UTF-8 replacement characters; not worth a separate
+// base64 encoding for the live-tail use case.
+type MessageBodyDetail struct {
+	// EventID is the gateway-minted UUID this body belongs to.
+	EventID string `json:"event_id"`
+
+	// Request is the inbound request body bytes captured at the
+	// gateway's edge.
+	Request string `json:"request,omitempty"`
+
+	// RequestTotalBytes is the size of the request body as the
+	// client sent it. Equal to len(Request) when not truncated.
+	RequestTotalBytes int64 `json:"request_total_bytes"`
+
+	// RequestTruncated is true when the request exceeded the
+	// per-body cap and Request holds only the head bytes.
+	RequestTruncated bool `json:"request_truncated,omitempty"`
+
+	// Response is the outbound response body bytes as they left the
+	// gateway. For streamed responses, these are the raw SSE event
+	// bytes; for non-streamed, the full JSON.
+	Response string `json:"response,omitempty"`
+
+	// ResponseTotalBytes is the size of the response body as the
+	// gateway emitted it.
+	ResponseTotalBytes int64 `json:"response_total_bytes"`
+
+	// ResponseTruncated is true when the response exceeded the
+	// per-body cap and Response holds only the head bytes.
+	ResponseTruncated bool `json:"response_truncated,omitempty"`
+
+	// ResponseAssembled is the human-readable text reassembled from
+	// streaming chunks by the per-provider accumulator. Empty for
+	// non-streaming responses and for streams the accumulator could
+	// not parse.
+	ResponseAssembled string `json:"response_assembled,omitempty"`
+
+	// ToolCalls is the list of tool/function-call invocations the
+	// accumulator extracted from streaming chunks. Arguments are the
+	// concatenated delta JSON the model emitted.
+	ToolCalls []BodyToolCall `json:"tool_calls,omitempty"`
+
+	// AssemblyPartial is true when the accumulator hit a malformed
+	// chunk or unknown delta type mid-stream and could not complete
+	// reassembly. The fields above hold whatever was parseable up to
+	// that point.
+	AssemblyPartial bool `json:"assembly_partial,omitempty"`
+}
+
+// BodyToolCall is one tool / function-call invocation extracted from
+// a streaming response. Distinct from RuleHit (which carries rule
+// engine matches) so the SPA can render them separately.
+type BodyToolCall struct {
+	// ID is the provider-assigned call identifier when present.
+	ID string `json:"id,omitempty"`
+
+	// Name is the function or tool identifier the model chose to
+	// invoke.
+	Name string `json:"name"`
+
+	// Arguments is the concatenated argument JSON the model emitted
+	// across stream chunks.
+	Arguments string `json:"arguments,omitempty"`
+}
