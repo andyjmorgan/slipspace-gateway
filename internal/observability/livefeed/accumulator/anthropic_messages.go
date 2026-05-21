@@ -1,41 +1,40 @@
 package accumulator
 
 import (
+	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
 )
 
 // accumulateAnthropicMessages walks an Anthropic /v1/messages SSE
-// stream and reassembles the assistant's textual reply plus any
-// tool-use invocations.
+// stream and reassembles it into the JSON-encoded MessagesResponse
+// the non-streaming endpoint would have returned.
 //
 // The Anthropic stream uses named SSE events:
 //
-//   - message_start            (initial Message envelope)
+//   - message_start            (initial Message envelope — id, role,
+//     model, empty Content, partial Usage)
 //   - content_block_start      (block of kind text|tool_use|thinking)
-//   - content_block_delta      (text_delta | input_json_delta | …)
+//   - content_block_delta      (text_delta | input_json_delta |
+//     thinking_delta | signature_delta)
 //   - content_block_stop
-//   - message_delta            (usage / stop_reason updates)
+//   - message_delta            (terminal stop_reason / stop_sequence /
+//     final Usage)
 //   - message_stop
 //   - ping                     (heartbeat — ignored)
 //
-// Text is collected from TextDelta payloads, indexed by content block
-// so multi-block responses concatenate in block order. Tool calls are
-// initialised from the `content_block_start` event (ToolUseBlock
-// carries id + name) and the InputJSONDelta payloads on subsequent
-// content_block_delta events feed the arguments string.
+// Content blocks are kept in index order. TextBlock.Text accumulates
+// across TextDelta events; ToolUseBlock.Input accumulates across
+// InputJSONDelta events as a JSON string that is parsed once at
+// assembly time. message_delta overlays the terminal stop_reason,
+// stop_sequence, and merges Usage so the assembled response carries
+// the final accounting.
 func accumulateAnthropicMessages(raw []byte) Result {
-	// blockText[i] is the cumulative text for content block at index i.
-	blockText := map[int]*strings.Builder{}
-	// blockOrder preserves insertion order so the final text matches
-	// the stream's block ordering.
-	var blockOrder []int
-
-	tools := map[int]*ToolCall{}
-	var toolOrder []int
-
+	state := newAnthropicState()
 	res := Result{}
+
 	for _, ev := range parseSSE(raw) {
 		if ev.Data == "" {
 			continue
@@ -46,61 +45,177 @@ func accumulateAnthropicMessages(raw []byte) Result {
 			continue
 		}
 		switch e := decoded.(type) {
+		case *messages.MessageStartEvent:
+			state.absorbStart(&e.Message)
 		case *messages.ContentBlockStartEvent:
-			if e.ContentBlock == nil {
-				continue
-			}
-			switch block := e.ContentBlock.(type) {
-			case *messages.TextBlock:
-				if _, ok := blockText[e.Index]; !ok {
-					b := &strings.Builder{}
-					if block.Text != "" {
-						b.WriteString(block.Text)
-					}
-					blockText[e.Index] = b
-					blockOrder = append(blockOrder, e.Index)
-				}
-			case *messages.ToolUseBlock:
-				if _, ok := tools[e.Index]; !ok {
-					tools[e.Index] = &ToolCall{ID: block.ID, Name: block.Name}
-					toolOrder = append(toolOrder, e.Index)
-				}
-			}
+			state.absorbBlockStart(e.Index, e.ContentBlock)
 		case *messages.ContentBlockDeltaEvent:
-			switch d := e.Delta.(type) {
-			case *messages.TextDelta:
-				b, ok := blockText[e.Index]
-				if !ok {
-					b = &strings.Builder{}
-					blockText[e.Index] = b
-					blockOrder = append(blockOrder, e.Index)
-				}
-				b.WriteString(d.Text)
-			case *messages.InputJSONDelta:
-				if tc, ok := tools[e.Index]; ok {
-					tc.Arguments += d.PartialJSON
-				}
-			}
+			state.absorbBlockDelta(e.Index, e.Delta)
+		case *messages.MessageDeltaEvent:
+			state.absorbMessageDelta(e)
 		}
 	}
 
-	if len(blockOrder) > 0 {
-		var b strings.Builder
-		for _, idx := range blockOrder {
-			if sb, ok := blockText[idx]; ok {
-				b.WriteString(sb.String())
-			}
-		}
-		res.Text = b.String()
+	out, err := json.Marshal(state.assemble())
+	if err != nil {
+		res.Partial = true
+		return res
 	}
-	if len(toolOrder) > 0 {
-		out := make([]ToolCall, 0, len(toolOrder))
-		for _, idx := range toolOrder {
-			if tc, ok := tools[idx]; ok {
-				out = append(out, *tc)
-			}
-		}
-		res.ToolCalls = out
-	}
+	res.Assembled = out
 	return res
+}
+
+type anthropicState struct {
+	base       messages.MessagesResponse
+	gotStart   bool
+	blocks     map[int]*anthropicBlockState
+	blockOrder []int
+}
+
+// anthropicBlockState carries the in-flight reconstruction of one
+// content block. Only one of textBuf / toolArgs is populated per
+// block — the kind is fixed at block_start time.
+type anthropicBlockState struct {
+	kind     string
+	textBuf  strings.Builder
+	toolID   string
+	toolName string
+	toolArgs strings.Builder
+	// raw holds the original block as emitted by content_block_start;
+	// kept so unknown block kinds (and any DynamicProperties that
+	// rode in on the start event) survive assembly.
+	raw messages.ContentBlock
+}
+
+func newAnthropicState() *anthropicState {
+	return &anthropicState{blocks: map[int]*anthropicBlockState{}}
+}
+
+func (s *anthropicState) absorbStart(msg *messages.MessagesResponse) {
+	if msg == nil {
+		return
+	}
+	s.base = *msg
+	s.gotStart = true
+}
+
+func (s *anthropicState) absorbBlockStart(index int, block messages.ContentBlock) {
+	st, ok := s.blocks[index]
+	if !ok {
+		st = &anthropicBlockState{}
+		s.blocks[index] = st
+		s.blockOrder = append(s.blockOrder, index)
+	}
+	st.raw = block
+	switch b := block.(type) {
+	case *messages.TextBlock:
+		st.kind = "text"
+		if b != nil && b.Text != "" {
+			st.textBuf.WriteString(b.Text)
+		}
+	case *messages.ToolUseBlock:
+		st.kind = "tool_use"
+		if b != nil {
+			st.toolID = b.ID
+			st.toolName = b.Name
+		}
+	default:
+		// Unknown / thinking / other — keep the raw block as-is; any
+		// subsequent deltas will land on textBuf and round-trip
+		// imperfectly, which is fine for the live-messages viewer.
+	}
+}
+
+func (s *anthropicState) absorbBlockDelta(index int, delta messages.ContentBlockDelta) {
+	st, ok := s.blocks[index]
+	if !ok {
+		// Defensive: some streams emit a delta before the block_start
+		// was observed (truncated capture, in particular). Initialise
+		// as text so the bytes aren't dropped.
+		st = &anthropicBlockState{kind: "text"}
+		s.blocks[index] = st
+		s.blockOrder = append(s.blockOrder, index)
+	}
+	switch d := delta.(type) {
+	case *messages.TextDelta:
+		st.textBuf.WriteString(d.Text)
+	case *messages.InputJSONDelta:
+		st.toolArgs.WriteString(d.PartialJSON)
+	}
+}
+
+func (s *anthropicState) absorbMessageDelta(e *messages.MessageDeltaEvent) {
+	if e == nil {
+		return
+	}
+	if e.Delta.StopReason != nil {
+		v := *e.Delta.StopReason
+		s.base.StopReason = &v
+	}
+	if e.Delta.StopSequence != nil {
+		v := *e.Delta.StopSequence
+		s.base.StopSequence = &v
+	}
+	// MessageDeltaEvent.Usage carries deltas for the final accounting;
+	// Anthropic's convention is that the final OutputTokens overrides
+	// the placeholder set on message_start.
+	if e.Usage.OutputTokens != 0 {
+		s.base.Usage.OutputTokens = e.Usage.OutputTokens
+	}
+	if e.Usage.InputTokens != 0 {
+		s.base.Usage.InputTokens = e.Usage.InputTokens
+	}
+	if e.Usage.CacheCreationInputTokens != nil {
+		v := *e.Usage.CacheCreationInputTokens
+		s.base.Usage.CacheCreationInputTokens = &v
+	}
+	if e.Usage.CacheReadInputTokens != nil {
+		v := *e.Usage.CacheReadInputTokens
+		s.base.Usage.CacheReadInputTokens = &v
+	}
+}
+
+func (s *anthropicState) assemble() messages.MessagesResponse {
+	resp := s.base
+	if !s.gotStart {
+		// Stream truncated before message_start — emit minimal shell so
+		// downstream can still render whatever blocks were parsed.
+		resp.Type = "message"
+		resp.Role = "assistant"
+	}
+
+	sort.Ints(s.blockOrder)
+	content := make([]messages.ContentBlock, 0, len(s.blockOrder))
+	for _, idx := range s.blockOrder {
+		st := s.blocks[idx]
+		switch st.kind {
+		case "text":
+			block := &messages.TextBlock{Type: "text", Text: st.textBuf.String()}
+			if existing, ok := st.raw.(*messages.TextBlock); ok && existing != nil {
+				block.DynamicProperties = existing.DynamicProperties
+			}
+			content = append(content, block)
+		case "tool_use":
+			input := json.RawMessage("{}")
+			if s := st.toolArgs.String(); s != "" {
+				input = json.RawMessage(s)
+			}
+			block := &messages.ToolUseBlock{
+				Type:  "tool_use",
+				ID:    st.toolID,
+				Name:  st.toolName,
+				Input: input,
+			}
+			if existing, ok := st.raw.(*messages.ToolUseBlock); ok && existing != nil {
+				block.DynamicProperties = existing.DynamicProperties
+			}
+			content = append(content, block)
+		default:
+			if st.raw != nil {
+				content = append(content, st.raw)
+			}
+		}
+	}
+	resp.Content = content
+	return resp
 }

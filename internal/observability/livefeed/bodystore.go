@@ -46,41 +46,24 @@ type BodyEnvelope struct {
 	// per-body cap and Response holds only the head bytes.
 	ResponseTruncated bool
 
-	// ResponseAssembled is the human-readable text reassembled from
-	// streaming responses by the per-provider accumulator. Empty for
-	// non-streaming responses and for streams the accumulator could
-	// not parse.
+	// ResponseAssembled is the JSON-encoded reconstruction of the
+	// response the provider would have returned non-streaming, built
+	// by the per-provider accumulator from the streamed chunks. Empty
+	// for non-streaming responses and for streams the accumulator
+	// could not parse.
 	ResponseAssembled string
-
-	// ToolCalls is the list of tool/function calls the accumulator
-	// extracted from streaming chunks. One entry per tool invocation;
-	// arguments are the concatenated delta JSON.
-	ToolCalls []AssembledToolCall
 
 	// AssemblyPartial is true when the accumulator hit a malformed
 	// chunk or unknown delta type mid-stream and could not complete
-	// reassembly. The fields above hold whatever was parseable up to
-	// that point.
+	// reassembly. ResponseAssembled holds whatever was parseable up
+	// to that point.
 	AssemblyPartial bool
-}
-
-// AssembledToolCall is one tool/function-call invocation extracted
-// from a streaming response. The Arguments field carries the JSON the
-// model emitted, concatenated across delta chunks.
-type AssembledToolCall struct {
-	ID        string
-	Name      string
-	Arguments string
 }
 
 // Bytes returns the total bytes this envelope contributes to the
 // store's byte budget. Used by the LRU to track its capacity.
 func (e *BodyEnvelope) Bytes() int {
-	n := len(e.Request) + len(e.Response) + len(e.ResponseAssembled)
-	for _, tc := range e.ToolCalls {
-		n += len(tc.ID) + len(tc.Name) + len(tc.Arguments)
-	}
-	return n
+	return len(e.Request) + len(e.Response) + len(e.ResponseAssembled)
 }
 
 // BodyStore is a byte-bounded LRU of BodyEnvelopes keyed by EventID.

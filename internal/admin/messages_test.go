@@ -208,10 +208,7 @@ func TestMessageBodyHandler_ReturnsStoredEnvelope(t *testing.T) {
 		RequestTotalBytes:  15,
 		Response:           []byte(`raw sse bytes`),
 		ResponseTotalBytes: 13,
-		ResponseAssembled:  "hello world",
-		ToolCalls: []livefeed.AssembledToolCall{
-			{ID: "call_1", Name: "search", Arguments: `{"q":"x"}`},
-		},
+		ResponseAssembled:  `{"choices":[{"index":0,"message":{"role":"assistant","content":"hello world"}}]}`,
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/messages/evt-1/body", nil)
@@ -224,11 +221,11 @@ func TestMessageBodyHandler_ReturnsStoredEnvelope(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.Request != `{"prompt":"hi"}` || got.ResponseAssembled != "hello world" {
-		t.Errorf("body detail = %+v", got)
+	if got.Request != `{"prompt":"hi"}` {
+		t.Errorf("Request = %q", got.Request)
 	}
-	if len(got.ToolCalls) != 1 || got.ToolCalls[0].Name != "search" {
-		t.Errorf("tool calls = %+v", got.ToolCalls)
+	if !strings.Contains(got.ResponseAssembled, `"content":"hello world"`) {
+		t.Errorf("ResponseAssembled = %q", got.ResponseAssembled)
 	}
 }
 

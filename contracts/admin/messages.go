@@ -136,36 +136,18 @@ type MessageBodyDetail struct {
 	// per-body cap and Response holds only the head bytes.
 	ResponseTruncated bool `json:"response_truncated,omitempty"`
 
-	// ResponseAssembled is the human-readable text reassembled from
-	// streaming chunks by the per-provider accumulator. Empty for
-	// non-streaming responses and for streams the accumulator could
-	// not parse.
+	// ResponseAssembled is the JSON-encoded reconstruction of the
+	// response the provider would have returned non-streaming, built
+	// by the per-provider accumulator from the streamed chunks. Shape
+	// matches the provider's non-streaming response type (OpenAI
+	// ChatCompletion, Anthropic MessagesResponse, Gemini
+	// GenerateContentResponse). Empty for non-streaming responses and
+	// for streams the accumulator could not parse.
 	ResponseAssembled string `json:"response_assembled,omitempty"`
-
-	// ToolCalls is the list of tool/function-call invocations the
-	// accumulator extracted from streaming chunks. Arguments are the
-	// concatenated delta JSON the model emitted.
-	ToolCalls []BodyToolCall `json:"tool_calls,omitempty"`
 
 	// AssemblyPartial is true when the accumulator hit a malformed
 	// chunk or unknown delta type mid-stream and could not complete
-	// reassembly. The fields above hold whatever was parseable up to
-	// that point.
+	// reassembly. ResponseAssembled holds whatever was parseable up
+	// to that point.
 	AssemblyPartial bool `json:"assembly_partial,omitempty"`
-}
-
-// BodyToolCall is one tool / function-call invocation extracted from
-// a streaming response. Distinct from RuleHit (which carries rule
-// engine matches) so the SPA can render them separately.
-type BodyToolCall struct {
-	// ID is the provider-assigned call identifier when present.
-	ID string `json:"id,omitempty"`
-
-	// Name is the function or tool identifier the model chose to
-	// invoke.
-	Name string `json:"name"`
-
-	// Arguments is the concatenated argument JSON the model emitted
-	// across stream chunks.
-	Arguments string `json:"arguments,omitempty"`
 }

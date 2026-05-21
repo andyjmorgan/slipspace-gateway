@@ -52,7 +52,7 @@ func MessageBodyHandler(store *livefeed.BodyStore) http.Handler {
 // toMessageBodyDetail projects a livefeed.BodyEnvelope onto the wire
 // DTO. Single mapping point so future field additions touch one site.
 func toMessageBodyDetail(eventID string, env livefeed.BodyEnvelope) adminc.MessageBodyDetail {
-	out := adminc.MessageBodyDetail{
+	return adminc.MessageBodyDetail{
 		EventID:            eventID,
 		Request:            string(env.Request),
 		RequestTotalBytes:  env.RequestTotalBytes,
@@ -63,17 +63,6 @@ func toMessageBodyDetail(eventID string, env livefeed.BodyEnvelope) adminc.Messa
 		ResponseAssembled:  env.ResponseAssembled,
 		AssemblyPartial:    env.AssemblyPartial,
 	}
-	if len(env.ToolCalls) > 0 {
-		out.ToolCalls = make([]adminc.BodyToolCall, 0, len(env.ToolCalls))
-		for _, tc := range env.ToolCalls {
-			out.ToolCalls = append(out.ToolCalls, adminc.BodyToolCall{
-				ID:        tc.ID,
-				Name:      tc.Name,
-				Arguments: tc.Arguments,
-			})
-		}
-	}
-	return out
 }
 
 // MessagesRecentHandler serves the current ring as JSON. Returns 503
