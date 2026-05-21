@@ -1,12 +1,8 @@
 package rules
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
-	"strconv"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -16,10 +12,15 @@ import (
 )
 
 // BodyRemarshalHandler sits between the rules middleware and the
-// downstream forwarder. It re-encodes bodycapture.Captured.Body to
-// bytes when a rule mutated the typed body (state.BodyMutated true)
-// and replaces r.Body + Content-Length on the request. Otherwise it
-// is a no-op — the forwarder reads the unchanged raw bytes.
+// downstream forwarder. It re-encodes the typed request body when a
+// rule mutated it (state.BodyMutated true) and replaces r.Body +
+// Content-Length on the outgoing request. Otherwise it is a no-op —
+// the forwarder reads the unchanged raw bytes.
+//
+// The actual marshal + apply is delegated to bodycapture.RemarshalTyped
+// and bodycapture.ApplyBodyBytes so the v1.2 resilience orchestrator
+// can reuse the same primitives per attempt without duplicating the
+// content-length and reader-replacement logic.
 //
 // Marshal failures surface as a 500 response and increment
 // gateway.rule.errors.total{error_kind="body_remarshal"}; the typed
@@ -38,13 +39,7 @@ func BodyRemarshalHandler(meters *observability.Meters, next http.Handler) http.
 			return
 		}
 
-		captured, ok := bodycapture.FromContext(ctx)
-		if !ok || captured.Body == nil {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		newBytes, err := json.Marshal(captured.Body)
+		newBytes, err := bodycapture.RemarshalTyped(ctx)
 		if err != nil {
 			recordRemarshalError(ctx, meters)
 			logger := observability.FromContext(ctx)
@@ -52,11 +47,13 @@ func BodyRemarshalHandler(meters *observability.Meters, next http.Handler) http.
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		if newBytes == nil {
+			// No typed body captured (admin route / unknown endpoint).
+			next.ServeHTTP(w, r)
+			return
+		}
 
-		r.Body = io.NopCloser(bytes.NewReader(newBytes))
-		r.ContentLength = int64(len(newBytes))
-		r.Header.Set("Content-Length", strconv.Itoa(len(newBytes)))
-
+		bodycapture.ApplyBodyBytes(r, newBytes)
 		next.ServeHTTP(w, r)
 	})
 }
