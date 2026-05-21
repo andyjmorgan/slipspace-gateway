@@ -33,12 +33,19 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 	rps := perSecond(totalReqs, realised)
 	errRate := safeRatio(erroredReqs, totalReqs)
 
+	tokensInDeltas := counterDelta(start, end, observability.MetricTokensInputTotal)
+	tokensOutDeltas := counterDelta(start, end, observability.MetricTokensOutputTotal)
+	tokensInTotal := sumCounter(tokensInDeltas)
+	tokensOutTotal := sumCounter(tokensOutDeltas)
+	tokensCachedTotal := sumCounter(counterDelta(start, end, observability.MetricTokensCachedTotal))
+	tokensCacheCreationTotal := sumCounter(counterDelta(start, end, observability.MetricTokensCacheCreationTotal))
+
 	p50, p95, p99 := allLatencyQuantiles(start, end, observability.MetricRequestDuration)
 
 	byProvider := computeByProvider(requestDeltas, start, end)
 	byEndpoint := computeByEndpoint(requestDeltas, start, end)
 	byConfiguration := computeByConfiguration(requestDeltas, start, end)
-	byModel := computeByModel(requestDeltas)
+	byModel := computeByModel(requestDeltas, tokensInDeltas, tokensOutDeltas)
 	rulesFired := computeRulesFired(start, end, ruleAttachments)
 	providerHealth := computeProviderHealth(providers, fiveMinStart, fiveMinEnd)
 
@@ -46,9 +53,13 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 		Window:      formatWindow(realised),
 		GeneratedAt: end.At,
 		Totals: adminc.DashboardTotals{
-			Requests:        totalReqs,
-			RequestsSuccess: successReqs,
-			RequestsErrored: erroredReqs,
+			Requests:            totalReqs,
+			RequestsSuccess:     successReqs,
+			RequestsErrored:     erroredReqs,
+			TokensIn:            tokensInTotal,
+			TokensOut:           tokensOutTotal,
+			TokensCached:        tokensCachedTotal,
+			TokensCacheCreation: tokensCacheCreationTotal,
 		},
 		Rates: adminc.DashboardRates{
 			RequestsPerSecond: rps,
@@ -82,6 +93,19 @@ func counterDelta(start, end observability.Sample, metric string) map[observabil
 		out[key] = v - start.Counters[metric][key]
 	}
 	return out
+}
+
+// sumCounter folds a counter-delta map into a single grand total.
+// Token totals on the dashboard are reported across every label-set
+// (provider, endpoint, configuration, model, status_code) without a
+// per-bucket breakdown — operators see "X tokens in / Y tokens out
+// over the window".
+func sumCounter(deltas map[observability.LabelKey]int64) int64 {
+	var total int64
+	for _, v := range deltas {
+		total += v
+	}
+	return total
 }
 
 // classifyTotals sums request counts in the {200-299, 400+} buckets and
@@ -406,31 +430,56 @@ func computeByConfiguration(requestDeltas map[observability.LabelKey]int64, star
 	return out
 }
 
-// computeByModel partitions request deltas by the model label.
-func computeByModel(requestDeltas map[observability.LabelKey]int64) []adminc.DashboardModelRow {
+// computeByModel partitions request deltas by the model label and joins
+// per-model token totals on the same key. Token meters carry the same
+// model attribute as requests/duration so the deltas line up exactly;
+// a model that saw traffic but no upstream usage block (interrupted
+// stream) contributes a request count with zero tokens.
+func computeByModel(requestDeltas, tokensInDeltas, tokensOutDeltas map[observability.LabelKey]int64) []adminc.DashboardModelRow {
 	type acc struct {
-		requests int64
-		provider string
+		requests  int64
+		tokensIn  int64
+		tokensOut int64
+		provider  string
 	}
 	perModel := map[string]*acc{}
+	get := func(model, provider string) *acc {
+		a := perModel[model]
+		if a == nil {
+			a = &acc{provider: provider}
+			perModel[model] = a
+		}
+		return a
+	}
 	for key, v := range requestDeltas {
 		m := key.Get("model")
 		if m == "" {
 			continue
 		}
-		a := perModel[m]
-		if a == nil {
-			a = &acc{provider: key.Get("provider")}
-			perModel[m] = a
+		get(m, key.Get("provider")).requests += v
+	}
+	for key, v := range tokensInDeltas {
+		m := key.Get("model")
+		if m == "" {
+			continue
 		}
-		a.requests += v
+		get(m, key.Get("provider")).tokensIn += v
+	}
+	for key, v := range tokensOutDeltas {
+		m := key.Get("model")
+		if m == "" {
+			continue
+		}
+		get(m, key.Get("provider")).tokensOut += v
 	}
 	out := make([]adminc.DashboardModelRow, 0, len(perModel))
 	for name, a := range perModel {
 		out = append(out, adminc.DashboardModelRow{
-			Model:    name,
-			Provider: a.provider,
-			Requests: a.requests,
+			Model:     name,
+			Provider:  a.provider,
+			Requests:  a.requests,
+			TokensIn:  a.tokensIn,
+			TokensOut: a.tokensOut,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Requests > out[j].Requests })

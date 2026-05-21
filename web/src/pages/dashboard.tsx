@@ -96,7 +96,7 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
 
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <KPI
           label="Requests"
           value={fmt.compact(d.totals.requests)}
@@ -119,15 +119,35 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
           sub={`avg · ${d.window}`}
           accent="ok"
         />
+        <KPI
+          label="Tokens in"
+          value={fmt.compact(d.totals.tokens_in)}
+          sub={tokensInSub(d.totals)}
+        />
+        <KPI
+          label="Tokens out"
+          value={fmt.compact(d.totals.tokens_out)}
+          sub={`${tokensRatioLabel(d.totals)} I/O`}
+        />
       </div>
 
-      <TimeseriesPanel
-        title="Requests per second"
-        sub={`${d.window} · per snapshot interval`}
-        series="rps"
-        window={window}
-        formatY={(v) => v.toFixed(2)}
-      />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+        <TimeseriesPanel
+          title="Requests per second"
+          sub={`${d.window} · per snapshot interval`}
+          series="rps"
+          window={window}
+          formatY={(v) => v.toFixed(2)}
+        />
+        <TimeseriesPanel
+          title="Tokens per second"
+          sub={`${d.window} · input + output`}
+          series="tokens_per_second"
+          window={window}
+          colorByLabel="kind"
+          formatY={(v) => v >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0)}
+        />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
         <TimeseriesPanel
@@ -437,6 +457,8 @@ function ModelsCard({ rows }: { rows: DashboardModelRow[] }) {
             <th className="text-left font-medium px-4 py-2">Provider</th>
             <th className="text-right font-medium px-4 py-2">Requests</th>
             <th className="text-right font-medium px-4 py-2">Share</th>
+            <th className="text-right font-medium px-4 py-2">Tokens in</th>
+            <th className="text-right font-medium px-4 py-2">Tokens out</th>
           </tr>
         </thead>
         <tbody>
@@ -450,12 +472,38 @@ function ModelsCard({ rows }: { rows: DashboardModelRow[] }) {
               <td className="mono tnum text-right px-4 py-2 text-[color:var(--text-4)]">
                 {((m.requests / totalReq) * 100).toFixed(1)}%
               </td>
+              <td className="mono tnum text-right px-4 py-2">{fmt.compact(m.tokens_in)}</td>
+              <td className="mono tnum text-right px-4 py-2">{fmt.compact(m.tokens_out)}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </PanelCard>
   )
+}
+
+// tokensInSub renders the secondary line under the Tokens-in KPI tile,
+// surfacing the cache breakdown when present (cache reads are a
+// discount, cache writes a premium — operators care about both).
+function tokensInSub(totals: DashboardSummary["totals"]): string {
+  if (totals.tokens_cached === 0 && totals.tokens_cache_creation === 0) {
+    return "no cache activity"
+  }
+  const parts: string[] = []
+  if (totals.tokens_cached > 0) parts.push(`${fmt.compact(totals.tokens_cached)} cached`)
+  if (totals.tokens_cache_creation > 0) parts.push(`${fmt.compact(totals.tokens_cache_creation)} write`)
+  return parts.join(" · ")
+}
+
+// tokensRatioLabel formats Output:Input as "N:1" or "1:N" so the
+// secondary line on the Tokens-out tile carries useful context
+// without a second numeric KPI.
+function tokensRatioLabel(totals: DashboardSummary["totals"]): string {
+  if (totals.tokens_in === 0 && totals.tokens_out === 0) return "—"
+  if (totals.tokens_in === 0) return "∞:1"
+  const ratio = totals.tokens_out / totals.tokens_in
+  if (ratio >= 1) return `${ratio.toFixed(2)}:1`
+  return `1:${(1 / ratio).toFixed(2)}`
 }
 
 function EmptyCard({ title, sub, message }: { title: string; sub: string; message: string }) {

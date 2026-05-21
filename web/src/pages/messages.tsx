@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { PanelCard } from "@/components/atoms/card"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
+import { fmt } from "@/lib/fmt"
 import { LoadingPanel, ErrorPanel, PageHeader } from "@/components/atoms/page-states"
 import { JsonViewer } from "@/components/atoms/json-viewer"
 import {
@@ -193,17 +194,20 @@ export function MessagesPage() {
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Time</th>
                   <th className="px-3 py-2 text-left font-medium">Status</th>
-                  <th className="px-3 py-2 text-left font-medium">Provider · Endpoint</th>
+                  <th className="px-3 py-2 text-left font-medium">Provider</th>
+                  <th className="px-3 py-2 text-left font-medium">Endpoint</th>
                   <th className="px-3 py-2 text-left font-medium">Model</th>
                   <th className="px-3 py-2 text-left font-medium">Configuration</th>
                   <th className="px-3 py-2 text-right font-medium">Duration</th>
+                  <th className="px-3 py-2 text-right font-medium">Tokens in</th>
+                  <th className="px-3 py-2 text-right font-medium">Tokens out</th>
                   <th className="px-3 py-2 text-left font-medium">Rules</th>
                 </tr>
               </thead>
               <tbody>
                 {ordered.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-8 text-center text-[color:var(--text-3)]">
+                    <td colSpan={10} className="px-3 py-8 text-center text-[color:var(--text-3)]">
                       Waiting for traffic…
                     </td>
                   </tr>
@@ -301,8 +305,10 @@ function Row({
         <StatusPill code={entry.status_code} />
       </td>
       <td className="px-3 py-1.5">
+        {entry.provider ? <ProviderChip name={entry.provider} /> : <span className="text-[color:var(--text-4)]">—</span>}
+      </td>
+      <td className="px-3 py-1.5">
         <div className="flex items-center gap-1.5">
-          {entry.provider && <ProviderChip name={entry.provider} />}
           <span className="mono text-[color:var(--text-3)]">{entry.endpoint ?? "—"}</span>
           {entry.streaming && (
             <span className="mono text-[10px] uppercase text-[color:var(--text-4)]">
@@ -319,6 +325,12 @@ function Row({
       </td>
       <td className="mono px-3 py-1.5 text-right tnum text-[color:var(--text-2)]">
         {entry.duration_ms} ms
+      </td>
+      <td className="mono px-3 py-1.5 text-right tnum text-[color:var(--text-2)]">
+        {entry.tokens_in ? fmt.compact(entry.tokens_in) : "—"}
+      </td>
+      <td className="mono px-3 py-1.5 text-right tnum text-[color:var(--text-2)]">
+        {entry.tokens_out ? fmt.compact(entry.tokens_out) : "—"}
       </td>
       <td className="px-3 py-1.5 text-[color:var(--text-3)]">
         {entry.rules_matched && entry.rules_matched.length > 0

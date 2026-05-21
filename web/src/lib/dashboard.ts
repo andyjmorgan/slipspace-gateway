@@ -15,6 +15,8 @@ export type DashboardModelRow = {
   model: string
   provider: string
   requests: number
+  tokens_in: number
+  tokens_out: number
 }
 
 export type DashboardEndpointRow = {
@@ -53,6 +55,10 @@ export type DashboardSummary = {
     requests: number
     requests_success: number
     requests_errored: number
+    tokens_in: number
+    tokens_out: number
+    tokens_cached: number
+    tokens_cache_creation: number
   }
   rates: {
     requests_per_second: number

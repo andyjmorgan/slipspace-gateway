@@ -318,18 +318,22 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 	}
 	id := uuid.NewString()
 	r.factory.liveFeed.Append(livefeed.Entry{
-		EventID:       id,
-		At:            time.Now().UTC(),
-		CorrelationID: ev.CorrelationID,
-		Provider:      ev.Provider,
-		Endpoint:      ev.Endpoint,
-		Model:         ev.Model,
-		Configuration: r.configuration,
-		StatusCode:    ev.StatusCode,
-		DurationMs:    ev.DurationMs,
-		Streaming:     ev.Streaming,
-		UpstreamError: ev.UpstreamError,
-		RulesMatched:  hits,
+		EventID:             id,
+		At:                  time.Now().UTC(),
+		CorrelationID:       ev.CorrelationID,
+		Provider:            ev.Provider,
+		Endpoint:            ev.Endpoint,
+		Model:               ev.Model,
+		Configuration:       r.configuration,
+		StatusCode:          ev.StatusCode,
+		DurationMs:          ev.DurationMs,
+		Streaming:           ev.Streaming,
+		UpstreamError:       ev.UpstreamError,
+		TokensIn:            ev.TokensIn,
+		TokensOut:           ev.TokensOut,
+		TokensCached:        ev.TokensCached,
+		TokensCacheCreation: ev.TokensCacheCreation,
+		RulesMatched:        hits,
 	})
 	return id
 }

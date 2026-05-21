@@ -33,6 +33,10 @@ export type MessageEntry = {
   duration_ms: number
   streaming?: boolean
   upstream_error?: string
+  tokens_in?: number
+  tokens_out?: number
+  tokens_cached?: number
+  tokens_cache_creation?: number
   rules_matched?: RuleHit[]
 }
 
