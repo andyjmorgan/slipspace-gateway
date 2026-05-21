@@ -190,8 +190,11 @@ func TestReporter_StreamingResponseAccumulated(t *testing.T) {
 	if !ok {
 		t.Fatal("body store missing entry")
 	}
-	if env.ResponseAssembled != "Hello world" {
-		t.Errorf("ResponseAssembled=%q want 'Hello world'", env.ResponseAssembled)
+	// ResponseAssembled is now the JSON-encoded ChatCompletionResponse,
+	// not the bare text — assert the assembled message content survived
+	// instead of the literal "Hello world".
+	if !strings.Contains(env.ResponseAssembled, `"content":"Hello world"`) {
+		t.Errorf("ResponseAssembled=%q (expected to contain assembled content)", env.ResponseAssembled)
 	}
 }
 

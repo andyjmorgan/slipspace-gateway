@@ -47,12 +47,6 @@ export async function fetchRecentMessages(limit?: number): Promise<MessagesRecen
   return apiFetch<MessagesRecentResponse>(`/api/v1/messages/recent${qs}`)
 }
 
-export type BodyToolCall = {
-  id?: string
-  name: string
-  arguments?: string
-}
-
 export type MessageBodyDetail = {
   event_id: string
   request?: string
@@ -62,7 +56,6 @@ export type MessageBodyDetail = {
   response_total_bytes: number
   response_truncated?: boolean
   response_assembled?: string
-  tool_calls?: BodyToolCall[]
   assembly_partial?: boolean
 }
 

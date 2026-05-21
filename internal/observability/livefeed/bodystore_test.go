@@ -169,12 +169,9 @@ func TestBodyEnvelope_BytesAccountsAllFields(t *testing.T) {
 	env := BodyEnvelope{
 		Request:           []byte("req"),
 		Response:          []byte("resp-bytes"),
-		ResponseAssembled: "assembled text",
-		ToolCalls: []AssembledToolCall{
-			{ID: "id1", Name: "search", Arguments: `{"q":"x"}`},
-		},
+		ResponseAssembled: `{"choices":[]}`,
 	}
-	want := len("req") + len("resp-bytes") + len("assembled text") + len("id1") + len("search") + len(`{"q":"x"}`)
+	want := len("req") + len("resp-bytes") + len(`{"choices":[]}`)
 	if got := env.Bytes(); got != want {
 		t.Fatalf("Bytes=%d want %d", got, want)
 	}

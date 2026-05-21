@@ -362,14 +362,8 @@ func (r *reporterRun) captureBody(ctx context.Context, entryID string, ev events
 		if ev.Streaming && len(env.Response) > 0 {
 			res := accumulator.Accumulate(ev.Provider, ev.Endpoint, env.Response)
 			if res.Recognised {
-				env.ResponseAssembled = res.Text
+				env.ResponseAssembled = string(res.Assembled)
 				env.AssemblyPartial = res.Partial
-				if len(res.ToolCalls) > 0 {
-					env.ToolCalls = make([]livefeed.AssembledToolCall, 0, len(res.ToolCalls))
-					for _, tc := range res.ToolCalls {
-						env.ToolCalls = append(env.ToolCalls, livefeed.AssembledToolCall(tc))
-					}
-				}
 			}
 		}
 	}

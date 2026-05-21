@@ -1,18 +1,17 @@
 package accumulator
 
 // Result is the output of accumulating a streamed provider response.
-// Empty Text and ToolCalls with Recognised=false signals the dispatcher
-// has no accumulator for this (provider, endpoint) and the caller
-// should fall back to surfacing the raw bytes.
+// Recognised=false with an empty Assembled signals the dispatcher had
+// no accumulator for this (provider, endpoint) and the caller should
+// fall back to surfacing the raw bytes unchanged.
 type Result struct {
-	// Text is the assembled human-readable response text, concatenated
-	// across stream chunks in arrival order.
-	Text string
-
-	// ToolCalls is the list of tool/function-call invocations extracted
-	// from the stream. Arguments are the concatenated delta JSON the
-	// model emitted.
-	ToolCalls []ToolCall
+	// Assembled is the JSON-encoded reconstruction of the response the
+	// provider would have returned non-streaming. Shape matches the
+	// provider's non-streaming response type exactly — ChatCompletion
+	// for OpenAI, MessagesResponse for Anthropic, GenerateContent for
+	// Gemini — so operators can eyeball streaming and non-streaming
+	// traffic against the same mental model.
+	Assembled []byte
 
 	// Recognised is true when an accumulator was selected for this
 	// (provider, endpoint) and ran. False means the caller should
@@ -20,17 +19,10 @@ type Result struct {
 	Recognised bool
 
 	// Partial is true when the accumulator hit a malformed chunk or
-	// an unknown delta type and stopped before EOF. Text and ToolCalls
-	// still carry whatever the accumulator parsed up to that point.
+	// an unknown delta type and stopped before EOF. Assembled still
+	// carries whatever the accumulator was able to reconstruct up to
+	// that point.
 	Partial bool
-}
-
-// ToolCall is one tool/function-call invocation reassembled from a
-// streaming response.
-type ToolCall struct {
-	ID        string
-	Name      string
-	Arguments string
 }
 
 // accumulatorFn signs every per-protocol implementation.

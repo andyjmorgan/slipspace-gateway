@@ -12,7 +12,6 @@ import {
   fetchMessageBody,
   fetchRecentMessages,
   openMessageStream,
-  type BodyToolCall,
   type MessageBodyDetail,
   type MessageEntry,
   type RuleHit,
@@ -474,12 +473,10 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
     | { status: "ok"; body: MessageBodyDetail }
     | { status: "error"; message: string }
   >({ status: "loading" })
-  const [showRaw, setShowRaw] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setState({ status: "loading" })
-    setShowRaw(false)
     fetchMessageBody(eventId)
       .then((body) => {
         if (cancelled) return
@@ -535,24 +532,15 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
           totalBytes={body.response_total_bytes}
           truncated={body.response_truncated}
           headerExtras={
-            <>
-              {body.assembly_partial && (
-                <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
-                  partial
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => setShowRaw((v) => !v)}
-                className="mono rounded-[var(--radius)] border border-[color:var(--border)] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.05em] text-[color:var(--text-3)] hover:bg-[color:var(--hover)]"
-              >
-                {showRaw ? "Hide raw" : "Show raw"}
-              </button>
-            </>
+            body.assembly_partial && (
+              <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
+                partial
+              </span>
+            )
           }
         />
       )}
-      {streaming && showRaw && (
+      {streaming && (
         <BodySection
           label="Response (raw SSE)"
           text={body.response}
@@ -567,9 +555,6 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
           totalBytes={body.response_total_bytes}
           truncated={body.response_truncated}
         />
-      )}
-      {body.tool_calls && body.tool_calls.length > 0 && (
-        <ToolCallsList toolCalls={body.tool_calls} />
       )}
     </div>
   )
@@ -612,37 +597,6 @@ function BodySection({
           maxHeightClassName=""
         />
       )}
-    </div>
-  )
-}
-
-function ToolCallsList({ toolCalls }: { toolCalls: BodyToolCall[] }) {
-  return (
-    <div>
-      <div className="mb-1 text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
-        Tool calls
-      </div>
-      <ul className="flex flex-col gap-2">
-        {toolCalls.map((tc, i) => {
-          const args = tc.arguments ?? ""
-          return (
-            <li
-              key={`${tc.name}-${i}`}
-              className="rounded-[var(--radius)] border border-[color:var(--border)] p-2 text-[11.5px]"
-            >
-              <div className="flex items-center gap-2">
-                <span className="mono text-[color:var(--text-2)]">{tc.name}</span>
-                {tc.id && (
-                  <span className="mono text-[10.5px] text-[color:var(--text-4)]">
-                    {tc.id}
-                  </span>
-                )}
-              </div>
-              {args && <JsonViewer text={args} maxHeightClassName="max-h-48" className="mt-1" />}
-            </li>
-          )
-        })}
-      </ul>
     </div>
   )
 }
