@@ -7,6 +7,7 @@ import { PanelCard } from "@/components/atoms/card"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { LoadingPanel, ErrorPanel, PageHeader } from "@/components/atoms/page-states"
+import { JsonViewer } from "@/components/atoms/json-viewer"
 import {
   fetchMessageBody,
   fetchRecentMessages,
@@ -582,7 +583,6 @@ function BodySection({
   headerExtras?: React.ReactNode
 }) {
   const isEmpty = !text || text.length === 0
-  const pretty = useMemo(() => prettyJSONIfPossible(text ?? ""), [text])
   return (
     <div>
       <div className="mb-1 flex items-center gap-2">
@@ -600,9 +600,7 @@ function BodySection({
       {isEmpty ? (
         <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
       ) : (
-        <pre className="mono max-h-72 overflow-auto rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11.5px] text-[color:var(--text-2)] whitespace-pre-wrap break-all">
-          {pretty}
-        </pre>
+        <JsonViewer text={text ?? ""} />
       )}
     </div>
   )
@@ -616,7 +614,7 @@ function ToolCallsList({ toolCalls }: { toolCalls: BodyToolCall[] }) {
       </div>
       <ul className="flex flex-col gap-2">
         {toolCalls.map((tc, i) => {
-          const args = prettyJSONIfPossible(tc.arguments ?? "")
+          const args = tc.arguments ?? ""
           return (
             <li
               key={`${tc.name}-${i}`}
@@ -630,32 +628,13 @@ function ToolCallsList({ toolCalls }: { toolCalls: BodyToolCall[] }) {
                   </span>
                 )}
               </div>
-              {args && (
-                <pre className="mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all text-[11px] text-[color:var(--text-2)]">
-                  {args}
-                </pre>
-              )}
+              {args && <JsonViewer text={args} maxHeightClassName="max-h-48" className="mt-1" />}
             </li>
           )
         })}
       </ul>
     </div>
   )
-}
-
-// prettyJSONIfPossible pretty-prints the input when it parses as JSON,
-// otherwise returns it unchanged. Operators get readable Anthropic /
-// OpenAI / Gemini payloads without a manual format step, and SSE
-// streams (raw view) fall through untouched.
-function prettyJSONIfPossible(s: string): string {
-  if (!s) return s
-  const trimmed = s.trim()
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return s
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2)
-  } catch {
-    return s
-  }
 }
 
 function formatBytes(n: number): string {
