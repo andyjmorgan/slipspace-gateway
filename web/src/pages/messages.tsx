@@ -570,20 +570,24 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
         <HeadersSection label="Request headers" headers={body.request_headers} />
       </TabsContent>
       <TabsContent value="response" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
-        {streaming && body.response_assembled !== undefined ? (
-          <BodySection
-            label="Response (assembled)"
-            text={body.response_assembled}
-            totalBytes={body.response_total_bytes}
-            truncated={body.response_truncated}
-            headerExtras={
-              body.assembly_partial && (
-                <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
-                  partial
-                </span>
-              )
-            }
-          />
+        {streaming ? (
+          body.response_assembled !== undefined ? (
+            <BodySection
+              label="Response (assembled)"
+              text={body.response_assembled}
+              totalBytes={body.response_total_bytes}
+              truncated={body.response_truncated}
+              headerExtras={
+                body.assembly_partial && (
+                  <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
+                    partial
+                  </span>
+                )
+              }
+            />
+          ) : (
+            <NoAssemblyPlaceholder />
+          )
         ) : (
           <BodySection
             label="Response body"
@@ -605,6 +609,34 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
         </TabsContent>
       )}
     </Tabs>
+  )
+}
+
+// NoAssemblyPlaceholder fills the Response tab when streaming is on
+// but the per-endpoint accumulator did not produce an assembled JSON.
+// Happens when the endpoint (e.g. `responses`) is not in the
+// accumulator registry, when the stream errored before any chunk
+// parsed, or when the body was empty. The raw bytes are still
+// available on the Raw stream tab — surface that explicitly so the
+// operator does not assume the gateway lost the response.
+function NoAssemblyPlaceholder() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-1 flex flex-none items-center gap-2">
+        <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
+          Response (assembled)
+        </div>
+      </div>
+      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-3 text-[12.5px] text-[color:var(--text-3)]">
+        <div>No accumulated response.</div>
+        <div className="mt-1 text-[11.5px] text-[color:var(--text-4)]">
+          The per-endpoint accumulator did not produce a reconstructed
+          response — usually because the endpoint is not modelled
+          (e.g. <span className="mono">/responses</span>). Raw SSE
+          bytes are on the <span className="mono">Raw stream</span> tab.
+        </div>
+      </div>
+    </div>
   )
 }
 
