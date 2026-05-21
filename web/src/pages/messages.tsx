@@ -425,10 +425,10 @@ function MessageModal({
       onClick={onClose}
     >
       <div
-        className="relative w-[92vw] max-w-7xl h-[92vh] overflow-y-auto rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
+        className="relative flex w-[92vw] max-w-7xl h-[92vh] flex-col rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-start gap-2">
+        <div className="mb-3 flex flex-none items-start gap-2">
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-medium">Request detail</div>
             <div className="mono text-[11.5px] text-[color:var(--text-3)] truncate">
@@ -438,10 +438,10 @@ function MessageModal({
               {index + 1} of {entries.length}
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-none items-center gap-0.5">
             <Button
-              variant="outline"
-              size="sm"
+              variant="ghost"
+              size="icon"
               onClick={goNewer}
               disabled={!canNewer}
               aria-label="Newer entry (Arrow Up)"
@@ -450,8 +450,8 @@ function MessageModal({
               <ChevronUp />
             </Button>
             <Button
-              variant="outline"
-              size="sm"
+              variant="ghost"
+              size="icon"
               onClick={goOlder}
               disabled={!canOlder}
               aria-label="Older entry (Arrow Down)"
@@ -459,13 +459,13 @@ function MessageModal({
             >
               <ChevronDown />
             </Button>
-            <Button variant="outline" size="sm" onClick={onClose} aria-label="Close">
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close" title="Close (Esc)">
               <X />
             </Button>
           </div>
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-3">
+        <dl className="grid flex-none grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-3">
           <Field label="Status" value={String(entry.status_code)} />
           <Field label="Duration" value={`${entry.duration_ms} ms`} />
           <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
@@ -476,13 +476,15 @@ function MessageModal({
           <Field label="At" value={entry.at} />
         </dl>
         {entry.upstream_error && (
-          <div className="mt-3 rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
+          <div className="mt-3 flex-none rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
             <div className="mono text-[11px] uppercase text-[color:var(--err)]">upstream error</div>
             <div className="mono mt-1 text-[color:var(--text-2)]">{entry.upstream_error}</div>
           </div>
         )}
         {entry.rules_matched && entry.rules_matched.length > 0 && (
-          <RulesList rules={entry.rules_matched} />
+          <div className="flex-none">
+            <RulesList rules={entry.rules_matched} />
+          </div>
         )}
         <BodyDetail eventId={entry.event_id} streaming={!!entry.streaming} />
       </div>
@@ -527,12 +529,12 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
 
   if (state.status === "loading") {
     return (
-      <div className="mt-3 text-[11.5px] text-[color:var(--text-3)]">Loading bodies…</div>
+      <div className="mt-3 flex-1 text-[11.5px] text-[color:var(--text-3)]">Loading bodies…</div>
     )
   }
   if (state.status === "missing") {
     return (
-      <div className="mt-3 rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11.5px] text-[color:var(--text-3)]">
+      <div className="mt-3 flex-1 rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11.5px] text-[color:var(--text-3)]">
         Bodies for this request are not available — either body capture is disabled
         (<span className="mono">SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0</span>) or this
         event rolled out of the body cache.
@@ -541,64 +543,60 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
   }
   if (state.status === "error") {
     return (
-      <div className="mt-3 rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[11.5px] text-[color:var(--err)]">
+      <div className="mt-3 flex-1 rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[11.5px] text-[color:var(--err)]">
         {state.message}
       </div>
     )
   }
   const body = state.body
   return (
-    <Tabs defaultValue="request" className="mt-3">
-      <TabsList variant="line">
+    <Tabs defaultValue="request" className="mt-3 flex min-h-0 flex-1 flex-col">
+      <TabsList variant="line" className="flex-none">
         <TabsTrigger value="request">Request</TabsTrigger>
         <TabsTrigger value="response">Response</TabsTrigger>
       </TabsList>
-      <TabsContent value="request" className="mt-2">
-        <div className="flex flex-col gap-3">
-          <BodySection
-            label="Request body"
-            text={body.request}
-            totalBytes={body.request_total_bytes}
-            truncated={body.request_truncated}
-          />
-          <HeadersSection label="Request headers" headers={body.request_headers} />
-        </div>
+      <TabsContent value="request" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
+        <BodySection
+          label="Request body"
+          text={body.request}
+          totalBytes={body.request_total_bytes}
+          truncated={body.request_truncated}
+        />
+        <HeadersSection label="Request headers" headers={body.request_headers} />
       </TabsContent>
-      <TabsContent value="response" className="mt-2">
-        <div className="flex flex-col gap-3">
-          {streaming && body.response_assembled !== undefined && (
-            <BodySection
-              label="Response (assembled)"
-              text={body.response_assembled}
-              totalBytes={body.response_total_bytes}
-              truncated={body.response_truncated}
-              headerExtras={
-                body.assembly_partial && (
-                  <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
-                    partial
-                  </span>
-                )
-              }
-            />
-          )}
-          {streaming && (
-            <BodySection
-              label="Response (raw SSE)"
-              text={body.response}
-              totalBytes={body.response_total_bytes}
-              truncated={body.response_truncated}
-            />
-          )}
-          {!streaming && (
-            <BodySection
-              label="Response body"
-              text={body.response}
-              totalBytes={body.response_total_bytes}
-              truncated={body.response_truncated}
-            />
-          )}
-          <HeadersSection label="Response headers" headers={body.response_headers} />
-        </div>
+      <TabsContent value="response" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
+        {streaming && body.response_assembled !== undefined && (
+          <BodySection
+            label="Response (assembled)"
+            text={body.response_assembled}
+            totalBytes={body.response_total_bytes}
+            truncated={body.response_truncated}
+            headerExtras={
+              body.assembly_partial && (
+                <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
+                  partial
+                </span>
+              )
+            }
+          />
+        )}
+        {streaming && (
+          <BodySection
+            label="Response (raw SSE)"
+            text={body.response}
+            totalBytes={body.response_total_bytes}
+            truncated={body.response_truncated}
+          />
+        )}
+        {!streaming && (
+          <BodySection
+            label="Response body"
+            text={body.response}
+            totalBytes={body.response_total_bytes}
+            truncated={body.response_truncated}
+          />
+        )}
+        <HeadersSection label="Response headers" headers={body.response_headers} />
       </TabsContent>
     </Tabs>
   )
@@ -620,26 +618,34 @@ function HeadersSection({
   }, [headers])
   if (entries.length === 0) return null
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-none flex-col">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)] hover:text-[color:var(--text-2)]"
+        className="flex items-center gap-2 py-0.5 text-left hover:text-[color:var(--text-2)]"
       >
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <span>{label}</span>
-        <span className="mono normal-case tracking-normal text-[10.5px] text-[color:var(--text-4)]">
+        <span className="inline-flex items-center text-[color:var(--text-4)]">
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </span>
+        <span className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
+          {label}
+        </span>
+        <span className="mono text-[10.5px] text-[color:var(--text-4)]">
           {entries.length}
         </span>
       </button>
       {open && (
-        <div className="mono mt-1 max-h-48 overflow-auto rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11px] text-[color:var(--text-2)]">
-          {entries.map(([k, v]) => (
-            <div key={k} className="flex gap-2 whitespace-pre-wrap break-all leading-[1.6]">
-              <span className="shrink-0 text-[color:var(--text-3)]">{k}:</span>
-              <span>{v}</span>
-            </div>
-          ))}
+        <div className="mt-1 max-h-56 overflow-auto rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
+          <dl className="mono grid grid-cols-[minmax(140px,_max-content)_1fr] gap-x-3 gap-y-1 text-[11.5px] text-[color:var(--text-2)]">
+            {entries.map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="truncate text-[color:var(--text-3)]" title={k}>
+                  {k}
+                </dt>
+                <dd className="break-all whitespace-pre-wrap">{v}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
       )}
     </div>
@@ -661,7 +667,7 @@ function BodySection({
 }) {
   const isEmpty = !text || text.length === 0
   return (
-    <div className="flex h-[40vh] flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="mb-1 flex flex-none items-center gap-2">
         <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
           {label}
