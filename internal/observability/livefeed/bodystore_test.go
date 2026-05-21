@@ -39,32 +39,63 @@ func TestBodyStore_Get_MissingReturnsZero(t *testing.T) {
 	}
 }
 
+// probeSlotSize Puts a representative envelope into a throwaway store
+// and reports the compressed footprint the store ended up holding.
+// Lets the LRU tests compute realistic capacity multiples without
+// hard-coding zstd output sizes.
+func probeSlotSize(t *testing.T, payload []byte) int {
+	t.Helper()
+	probe, err := NewBodyStore(1 << 20)
+	if err != nil {
+		t.Fatalf("probe: NewBodyStore: %v", err)
+	}
+	probe.Put("probe", BodyEnvelope{Request: payload})
+	return probe.Bytes()
+}
+
 func TestBodyStore_BytesAccounting(t *testing.T) {
 	t.Parallel()
-	s, _ := NewBodyStore(1024)
-	s.Put("a", BodyEnvelope{Request: []byte("abcd")})
-	s.Put("b", BodyEnvelope{Request: []byte("efghij")})
-	if got := s.Bytes(); got != 10 {
-		t.Errorf("bytes=%d want 10", got)
+	// Realistic chat-completion-style payloads, large enough that zstd
+	// actually shrinks them and small enough that the test stays fast.
+	payloadA := []byte(strings.Repeat(`{"role":"user","content":"hello"}`, 32))
+	payloadB := []byte(strings.Repeat(`{"role":"assistant","content":"hi there"}`, 32))
+
+	s, _ := NewBodyStore(1 << 20)
+	s.Put("a", BodyEnvelope{Request: payloadA})
+	sizeA := s.Bytes()
+	s.Put("b", BodyEnvelope{Request: payloadB})
+	sizeAB := s.Bytes()
+
+	if sizeA <= 0 {
+		t.Errorf("first put produced no accounted bytes")
+	}
+	if sizeAB <= sizeA {
+		t.Errorf("second put did not increase bytes (sizeA=%d sizeAB=%d)", sizeA, sizeAB)
 	}
 	if got := s.Len(); got != 2 {
 		t.Errorf("len=%d want 2", got)
+	}
+	// Compression should leave the stored footprint well under the
+	// uncompressed source.
+	uncompressed := len(payloadA) + len(payloadB)
+	if sizeAB >= uncompressed {
+		t.Errorf("compression did not shrink: stored %d bytes vs raw %d", sizeAB, uncompressed)
 	}
 }
 
 func TestBodyStore_LRUEviction(t *testing.T) {
 	t.Parallel()
-	// Capacity 30 bytes; insert three 10-byte envelopes then a fourth,
-	// expect the oldest to be evicted.
-	s, _ := NewBodyStore(30)
-	body := func(n int) []byte { return []byte(strings.Repeat("x", n)) }
-	s.Put("a", BodyEnvelope{Request: body(10)})
-	s.Put("b", BodyEnvelope{Request: body(10)})
-	s.Put("c", BodyEnvelope{Request: body(10)})
+	// Three envelopes fit; the fourth must evict the oldest.
+	payload := []byte(strings.Repeat(`{"k":"v"}`, 128))
+	slot := probeSlotSize(t, payload)
+	s, _ := NewBodyStore(slot * 3)
+	s.Put("a", BodyEnvelope{Request: payload})
+	s.Put("b", BodyEnvelope{Request: payload})
+	s.Put("c", BodyEnvelope{Request: payload})
 	if got := s.Len(); got != 3 {
 		t.Fatalf("setup: len=%d want 3", got)
 	}
-	s.Put("d", BodyEnvelope{Request: body(10)})
+	s.Put("d", BodyEnvelope{Request: payload})
 	if _, ok := s.Get("a"); ok {
 		t.Fatalf("expected oldest 'a' to be evicted, but it is still present")
 	}
@@ -77,16 +108,17 @@ func TestBodyStore_LRUEviction(t *testing.T) {
 
 func TestBodyStore_GetBumpsRecency(t *testing.T) {
 	t.Parallel()
-	s, _ := NewBodyStore(30)
-	body := func(n int) []byte { return []byte(strings.Repeat("x", n)) }
-	s.Put("a", BodyEnvelope{Request: body(10)})
-	s.Put("b", BodyEnvelope{Request: body(10)})
-	s.Put("c", BodyEnvelope{Request: body(10)})
+	payload := []byte(strings.Repeat(`{"k":"v"}`, 128))
+	slot := probeSlotSize(t, payload)
+	s, _ := NewBodyStore(slot * 3)
+	s.Put("a", BodyEnvelope{Request: payload})
+	s.Put("b", BodyEnvelope{Request: payload})
+	s.Put("c", BodyEnvelope{Request: payload})
 	// Touch 'a' so it becomes most-recently-used; 'b' is now the oldest.
 	if _, ok := s.Get("a"); !ok {
 		t.Fatal("setup: Get('a') !ok")
 	}
-	s.Put("d", BodyEnvelope{Request: body(10)})
+	s.Put("d", BodyEnvelope{Request: payload})
 	if _, ok := s.Get("b"); ok {
 		t.Fatalf("expected 'b' to be evicted, but it remains")
 	}
@@ -174,5 +206,65 @@ func TestBodyEnvelope_BytesAccountsAllFields(t *testing.T) {
 	want := len("req") + len("resp-bytes") + len(`{"choices":[]}`)
 	if got := env.Bytes(); got != want {
 		t.Fatalf("Bytes=%d want %d", got, want)
+	}
+}
+
+func TestBodyStore_RoundTripsThroughCompression(t *testing.T) {
+	t.Parallel()
+	s, _ := NewBodyStore(1 << 20)
+	in := BodyEnvelope{
+		Request:            []byte(`{"prompt":"the quick brown fox jumps over the lazy dog"}`),
+		RequestTotalBytes:  56,
+		RequestTruncated:   true,
+		Response:           []byte(`{"choices":[{"message":{"role":"assistant","content":"woof"}}]}`),
+		ResponseTotalBytes: 64,
+		ResponseTruncated:  false,
+		ResponseAssembled:  `{"id":"chatcmpl-1","object":"chat.completion","choices":[]}`,
+		AssemblyPartial:    true,
+		RequestHeaders:     map[string][]string{"Authorization": {"[REDACTED]"}, "Content-Type": {"application/json"}},
+		ResponseHeaders:    map[string][]string{"Content-Type": {"application/json"}},
+	}
+	s.Put("evt-1", in)
+	out, ok := s.Get("evt-1")
+	if !ok {
+		t.Fatal("Get !ok after Put")
+	}
+	if string(out.Request) != string(in.Request) {
+		t.Errorf("Request mismatch:\n  in: %s\n out: %s", in.Request, out.Request)
+	}
+	if out.RequestTotalBytes != in.RequestTotalBytes || out.RequestTruncated != in.RequestTruncated {
+		t.Errorf("request metadata lost: total=%d truncated=%v", out.RequestTotalBytes, out.RequestTruncated)
+	}
+	if string(out.Response) != string(in.Response) {
+		t.Errorf("Response mismatch:\n  in: %s\n out: %s", in.Response, out.Response)
+	}
+	if out.ResponseAssembled != in.ResponseAssembled {
+		t.Errorf("ResponseAssembled mismatch:\n  in: %s\n out: %s", in.ResponseAssembled, out.ResponseAssembled)
+	}
+	if out.AssemblyPartial != in.AssemblyPartial {
+		t.Errorf("AssemblyPartial lost: %v", out.AssemblyPartial)
+	}
+	if got, want := out.RequestHeaders["Authorization"][0], "[REDACTED]"; got != want {
+		t.Errorf("request header lost: %q", got)
+	}
+	if got, want := out.ResponseHeaders["Content-Type"][0], "application/json"; got != want {
+		t.Errorf("response header lost: %q", got)
+	}
+}
+
+func TestBodyStore_CompressesRealisticPayloads(t *testing.T) {
+	t.Parallel()
+	// Realistic chat-completion JSON has lots of repetition (role,
+	// content, finish_reason, etc.). Even at modest sizes zstd should
+	// produce a 3x+ reduction.
+	body := []byte(strings.Repeat(`{"role":"assistant","content":"thank you for the question","finish_reason":"stop"}`, 64))
+	s, _ := NewBodyStore(1 << 20)
+	s.Put("e", BodyEnvelope{Request: body})
+	stored := s.Bytes()
+	if stored >= len(body) {
+		t.Errorf("compression did not shrink: stored %d vs raw %d", stored, len(body))
+	}
+	if ratio := float64(len(body)) / float64(stored); ratio < 3 {
+		t.Errorf("compression ratio %.1fx is suspiciously low for repetitive JSON", ratio)
 	}
 }

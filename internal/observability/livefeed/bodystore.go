@@ -113,10 +113,11 @@ type BodyStore struct {
 }
 
 // bodyNode is a doubly-linked-list node carrying the per-event
-// envelope plus its position in the recency list.
+// envelope plus its position in the recency list. env is stored in
+// its zstd-compressed form; Get decompresses on the way out.
 type bodyNode struct {
 	eventID string
-	env     BodyEnvelope
+	env     compressedEnvelope
 	bytes   int
 	prev    *bodyNode
 	next    *bodyNode
@@ -153,14 +154,15 @@ func (s *BodyStore) Len() int {
 
 // Put inserts (or replaces) the envelope for eventID, evicting the
 // oldest entries as needed to fit the new envelope under the byte
-// budget. Envelopes larger than the total budget are silently dropped
-// — the LRU still serves smaller entries.
+// budget. The byte-heavy fields (request, response, assembled) are
+// zstd-compressed before storage — the budget tracks compressed
+// memory, so a 200 MB budget commonly holds several gigabytes of
+// logical content. Envelopes whose compressed size still exceeds the
+// total budget are silently dropped (operators need a bigger budget).
 func (s *BodyStore) Put(eventID string, env BodyEnvelope) {
-	size := env.Bytes()
+	compressed := compressEnvelope(env)
+	size := compressed.bytes()
 	if size > s.capacity {
-		// Single envelope larger than the whole budget: refuse rather
-		// than evicting everything else. Operators get nothing for
-		// this event; bigger budget required.
 		return
 	}
 	s.mu.Lock()
@@ -176,14 +178,17 @@ func (s *BodyStore) Put(eventID string, env BodyEnvelope) {
 		s.evictOldestLocked()
 	}
 
-	node := &bodyNode{eventID: eventID, env: env, bytes: size}
+	node := &bodyNode{eventID: eventID, env: compressed, bytes: size}
 	s.entries[eventID] = node
 	s.bytes += size
 	s.pushFront(node)
 }
 
 // Get returns the envelope for eventID and bumps it to most-recently-
-// used. Returns the zero envelope and false when absent.
+// used. The stored compressed form is decoded into a fresh
+// BodyEnvelope on the way out — callers may mutate it without
+// affecting the cache. Returns the zero envelope and false when
+// absent.
 func (s *BodyStore) Get(eventID string) (BodyEnvelope, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -193,7 +198,7 @@ func (s *BodyStore) Get(eventID string) (BodyEnvelope, bool) {
 	}
 	s.remove(node)
 	s.pushFront(node)
-	return node.env, true
+	return decompressEnvelope(node.env), true
 }
 
 // Delete removes the envelope for eventID. No-op when absent.
