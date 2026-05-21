@@ -36,7 +36,7 @@ func TestComputeByModel_RowsSkipMissingModelLabel(t *testing.T) {
 	setCounter(end, observability.MetricRequestsTotal, withModel, 10)
 	setCounter(end, observability.MetricRequestsTotal, withoutModel, 5)
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByModel) != 1 {
 		t.Fatalf("len(ByModel) = %d, want 1", len(sum.ByModel))
 	}
@@ -59,7 +59,7 @@ func TestComputeRulesFired_SkipsAbsentName(t *testing.T) {
 	setCounter(end, observability.MetricRuleMatchesTotal,
 		[]attribute.KeyValue{attribute.String("rule_name", "real-rule")}, 11)
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.RulesFired) != 1 {
 		t.Fatalf("len(RulesFired) = %d, want 1", len(sum.RulesFired))
 	}
@@ -84,7 +84,7 @@ func TestComputeByProvider_StartHistogramShorterThanEnd(t *testing.T) {
 	setHistogram(end,
 		[]attribute.KeyValue{attribute.String("provider", "openai")}, 1, 1, bounds, one)
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByProvider) != 1 {
 		t.Fatalf("len(ByProvider) = %d, want 1", len(sum.ByProvider))
 	}
@@ -145,7 +145,7 @@ func TestComputeByEndpoint_PartitionsByProviderEndpointPair(t *testing.T) {
 		setCounter(end, observability.MetricRequestsTotal, r.attrs, r.v)
 	}
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByEndpoint) != 2 {
 		t.Fatalf("len(ByEndpoint) = %d, want 2", len(sum.ByEndpoint))
 	}
@@ -190,7 +190,7 @@ func TestComputeByEndpoint_HistogramFolding(t *testing.T) {
 	setHistogram(end, attrs200, 0.6, 1, bounds, []uint64{0, 1, 0, 0})
 	setHistogram(end, attrs500, 1.8, 1, bounds, []uint64{0, 0, 1, 0})
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByEndpoint) != 1 {
 		t.Fatalf("len(ByEndpoint) = %d, want 1", len(sum.ByEndpoint))
 	}
@@ -215,7 +215,7 @@ func TestComputeByEndpoint_HistogramSkippedWhenNoCounter(t *testing.T) {
 	}
 	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByEndpoint) != 0 {
 		t.Fatalf("len(ByEndpoint) = %d, want 0 (no counter row)", len(sum.ByEndpoint))
 	}
@@ -238,7 +238,7 @@ func TestComputeByConfiguration_HistogramSkippedWhenNoCounter(t *testing.T) {
 	}
 	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByConfiguration) != 0 {
 		t.Fatalf("len(ByConfiguration) = %d, want 0 (no counter row)", len(sum.ByConfiguration))
 	}
@@ -262,7 +262,7 @@ func TestComputeByConfiguration_SkipsMissingConfigurationLabel(t *testing.T) {
 	setCounter(end, observability.MetricRequestsTotal, withConfig, 17)
 	setCounter(end, observability.MetricRequestsTotal, withoutConfig, 4)
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByConfiguration) != 1 {
 		t.Fatalf("len(ByConfiguration) = %d, want 1", len(sum.ByConfiguration))
 	}
@@ -289,7 +289,7 @@ func TestComputeByConfiguration_HistogramFolding(t *testing.T) {
 	setCounter(end, observability.MetricRequestsTotal, attrs, 1)
 	setHistogram(end, attrs, 0.75, 1, bounds, []uint64{0, 1, 0, 0})
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByConfiguration) != 1 {
 		t.Fatalf("len(ByConfiguration) = %d", len(sum.ByConfiguration))
 	}

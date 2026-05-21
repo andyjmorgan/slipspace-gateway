@@ -40,6 +40,12 @@ export type DashboardRuleFiredRow = {
   used_by_configurations: string[]
 }
 
+export type DashboardTagFiredRow = {
+  tag: string
+  apply_count: number
+  used_by_configurations: string[]
+}
+
 export type DashboardProviderHealth = {
   provider: string
   healthy: boolean
@@ -70,6 +76,7 @@ export type DashboardSummary = {
   by_configuration: DashboardConfigurationRow[]
   by_model: DashboardModelRow[]
   rules_fired: DashboardRuleFiredRow[]
+  tags_fired: DashboardTagFiredRow[]
   provider_health: DashboardProviderHealth[]
 }
 

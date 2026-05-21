@@ -11,6 +11,7 @@ func TestMarkerMethods(t *testing.T) {
 		EndpointCondition{},
 		ModelNameCondition{},
 		HeaderCondition{},
+		TagCondition{},
 		RuleGroup{},
 		UnknownCondition{},
 	}
@@ -23,6 +24,8 @@ func TestMarkerMethods(t *testing.T) {
 		case ModelNameCondition:
 			v.isCondition()
 		case HeaderCondition:
+			v.isCondition()
+		case TagCondition:
 			v.isCondition()
 		case RuleGroup:
 			v.isCondition()
@@ -42,6 +45,7 @@ func TestMarkerMethods(t *testing.T) {
 		AppendQueryStringAction{},
 		ReturnStatusCodeAction{},
 		LlmImpersonationAction{},
+		AddTagAction{},
 		UnknownAction{},
 	}
 	for _, a := range acts {
@@ -61,6 +65,8 @@ func TestMarkerMethods(t *testing.T) {
 		case ReturnStatusCodeAction:
 			v.isAction()
 		case LlmImpersonationAction:
+			v.isAction()
+		case AddTagAction:
 			v.isAction()
 		case UnknownAction:
 			v.isAction()

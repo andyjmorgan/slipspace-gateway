@@ -37,6 +37,7 @@ export type MessageEntry = {
   tokens_out?: number
   tokens_cached?: number
   tokens_cache_creation?: number
+  tags?: string[]
   rules_matched?: RuleHit[]
 }
 

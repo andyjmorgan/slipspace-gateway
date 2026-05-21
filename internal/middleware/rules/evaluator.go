@@ -258,6 +258,7 @@ func liveGatewayContext(initial GatewayContext, state *MutableState, body any) G
 	if state != nil {
 		gc.Provider = state.Provider
 		gc.Endpoint = state.Endpoint
+		gc.Tags = state.Tags
 	}
 	gc.Body = body
 	if model := liveModelName(state, body); model != "" {
@@ -357,4 +358,11 @@ type GatewayContext struct {
 	// one (bodycapture.Captured.Body) — nil for passthrough
 	// endpoints. Content-based conditions type-switch on this.
 	Body any
+
+	// Tags is the set of tags AddTagAction has attached to this
+	// request via earlier rules. TagCondition reads from here.
+	// Rebuilt per iteration via liveGatewayContext, so the cascade
+	// semantic holds — a rule sees only the tags its predecessors
+	// attached.
+	Tags []string
 }

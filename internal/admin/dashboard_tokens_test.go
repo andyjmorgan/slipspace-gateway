@@ -35,7 +35,7 @@ func TestComputeByModel_PopulatesTokenColumns(t *testing.T) {
 	setCounter(end, observability.MetricTokensInputTotal, anthropicAttrs, 9_000)
 	setCounter(end, observability.MetricTokensOutputTotal, anthropicAttrs, 850)
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 
 	if got := sum.Totals.TokensIn; got != 13_000 {
 		t.Errorf("Totals.TokensIn = %d, want 13000", got)
@@ -74,7 +74,7 @@ func TestComputeByModel_TokensWithoutMatchingRequest(t *testing.T) {
 	setCounter(end, observability.MetricTokensInputTotal, attrs, 500)
 	setCounter(end, observability.MetricTokensOutputTotal, attrs, 12)
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByModel) != 1 {
 		t.Fatalf("len(ByModel) = %d", len(sum.ByModel))
 	}

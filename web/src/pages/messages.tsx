@@ -201,12 +201,13 @@ export function MessagesPage() {
                   <th className="px-3 py-2 text-right font-medium">Tokens in</th>
                   <th className="px-3 py-2 text-right font-medium">Tokens out</th>
                   <th className="px-3 py-2 text-left font-medium">Rules</th>
+                  <th className="px-3 py-2 text-left font-medium">Tags</th>
                 </tr>
               </thead>
               <tbody>
                 {ordered.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-8 text-center text-[color:var(--text-3)]">
+                    <td colSpan={11} className="px-3 py-8 text-center text-[color:var(--text-3)]">
                       Waiting for traffic…
                     </td>
                   </tr>
@@ -335,6 +336,22 @@ function Row({
         {entry.rules_matched && entry.rules_matched.length > 0
           ? `${entry.rules_matched.length}`
           : "—"}
+      </td>
+      <td className="px-3 py-1.5">
+        {entry.tags && entry.tags.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {entry.tags.map((t) => (
+              <span
+                key={t}
+                className="inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[10.5px] mono uppercase tracking-[0.04em] border border-[color:var(--border)] text-[color:var(--text-2)] bg-[color:var(--bg-2)]"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[color:var(--text-4)]">—</span>
+        )}
       </td>
     </tr>
   )

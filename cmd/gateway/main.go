@@ -15,6 +15,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
@@ -331,6 +332,7 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 	}
 
 	ruleAttachments := buildRuleAttachments(resolved)
+	tagAttachments := buildTagAttachments(resolved)
 
 	handler := admin.NewMux(admin.MuxOptions{
 		Password:         resolved.Admin.ResolvePassword(),
@@ -338,6 +340,7 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 		Snapshotter:      obs.Snapshotter,
 		Providers:        providers,
 		RuleAttachments:  ruleAttachments,
+		TagAttachments:   tagAttachments,
 		GatewayStartedAt: startedAt,
 		Resolved:         resolved,
 		LiveFeed:         liveFeed,
@@ -380,6 +383,52 @@ func buildRuleAttachments(resolved *config.ResolvedConfig) map[string][]string {
 	for name, cfg := range resolved.Configurations {
 		for _, ruleName := range cfg.RuleNames {
 			out[ruleName] = append(out[ruleName], name)
+		}
+	}
+	return out
+}
+
+// buildTagAttachments derives the tag → [configuration, ...] map the
+// dashboard's tags-fired panel joins against. Walks each
+// configuration's RuleNames in declaration order, dereferences via
+// RuleIndex, and pulls every AddTagAction tag onto the tag's
+// configuration list. A tag attached by zero AddTagAction rules in
+// any configuration is omitted (it would never appear on the
+// gateway.tags.applied.total counter so the dashboard never needs
+// to render it).
+//
+// The same configuration name can appear multiple times for the same
+// tag if multiple rules in that configuration's chain attach it; we
+// dedupe so the SPA sees one entry per (tag, configuration) pair.
+func buildTagAttachments(resolved *config.ResolvedConfig) map[string][]string {
+	out := map[string][]string{}
+	for configName, cfg := range resolved.Configurations {
+		for _, ruleName := range cfg.RuleNames {
+			rule, ok := resolved.RuleIndex[ruleName]
+			if !ok || rule == nil {
+				continue
+			}
+			for _, action := range rule.Actions {
+				addTag, ok := action.(*rulescontract.AddTagAction)
+				if !ok {
+					continue
+				}
+				tag := addTag.Tag
+				if tag == "" {
+					continue
+				}
+				existing := out[tag]
+				found := false
+				for _, c := range existing {
+					if c == configName {
+						found = true
+						break
+					}
+				}
+				if !found {
+					out[tag] = append(existing, configName)
+				}
+			}
 		}
 	}
 	return out

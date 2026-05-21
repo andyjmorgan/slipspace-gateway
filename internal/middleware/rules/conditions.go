@@ -35,6 +35,8 @@ func matchCondition(
 		return invertIf(c.Not, matchModelName(*c, gc))
 	case *contractsrules.HeaderCondition:
 		return invertIf(c.Not, matchHeader(*c, gc))
+	case *contractsrules.TagCondition:
+		return invertIf(c.Not, matchTag(*c, gc))
 	case *contractsrules.RuleGroup:
 		return invertIf(c.Not, matchGroup(*c, gc, depth, maxDepth, groupDepthExceeded))
 	case *contractsrules.UnknownCondition:
@@ -87,6 +89,26 @@ func matchHeader(c contractsrules.HeaderCondition, gc GatewayContext) bool {
 		}
 		joined := strings.Join(vs, ", ")
 		if matchString(*c.ValueOperator, c.ValuePattern, joined, c.CaseInsensitive) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchTag returns true when gc.Tags contains the rule's
+// ExpectedTag. Only EnumEquals is meaningful for a set-valued
+// condition; any other operator evaluates to false (forward-compat
+// for a future control plane that might mint operator values this
+// build does not yet model).
+func matchTag(c contractsrules.TagCondition, gc GatewayContext) bool {
+	if c.Operator != contractsrules.EnumEquals {
+		return false
+	}
+	if c.ExpectedTag == "" {
+		return false
+	}
+	for _, t := range gc.Tags {
+		if t == c.ExpectedTag {
 			return true
 		}
 	}

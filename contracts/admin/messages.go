@@ -58,6 +58,11 @@ type MessageEntry struct {
 
 	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
 
+	// Tags is the set of rule-attached tags (AddTagAction) on this
+	// request, in first-attach order. Empty when no tagging rule
+	// fired.
+	Tags []string `json:"tags,omitempty"`
+
 	// RulesMatched lists every rule that fired, in evaluation order.
 	RulesMatched []RuleHit `json:"rules_matched,omitempty"`
 }

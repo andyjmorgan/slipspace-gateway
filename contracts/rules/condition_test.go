@@ -269,6 +269,7 @@ func TestConditionTypes_BlankImpl(t *testing.T) {
 		{"endpoint", rules.EndpointCondition{}, "endpoint"},
 		{"modelName", rules.ModelNameCondition{}, "modelName"},
 		{"header", rules.HeaderCondition{}, "header"},
+		{"tag", rules.TagCondition{}, "tag"},
 		{"group", rules.RuleGroup{}, "group"},
 		{"unknown", rules.UnknownCondition{Type: "x"}, "x"},
 	}

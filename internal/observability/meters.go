@@ -19,6 +19,7 @@ const (
 	MetricTokensOutputTotal        = "gateway.tokens.output.total"
 	MetricTokensCachedTotal        = "gateway.tokens.cached.total"
 	MetricTokensCacheCreationTotal = "gateway.tokens.cache_creation.total"
+	MetricTagsAppliedTotal         = "gateway.tags.applied.total"
 	MetricEventsPublishedTotal     = "gateway.events_published.total"
 	MetricEventsDroppedTotal       = "gateway.events_dropped.total"
 	MetricEventsStashedTotal       = "gateway.events_stashed.total"
@@ -86,6 +87,14 @@ type Meters struct {
 	TokensOutputTotal        metric.Int64Counter
 	TokensCachedTotal        metric.Int64Counter
 	TokensCacheCreationTotal metric.Int64Counter
+
+	// TagsAppliedTotal counts AddTagAction applications. Labelled
+	// by tag name; cardinality bounded by the configured policy
+	// library (operator-defined, never client-derived). Side-channel
+	// to gateway.requests.total — keeps the request counter's
+	// labelset bounded against the multiplicative blow-up that would
+	// follow from joining tags onto the request series.
+	TagsAppliedTotal metric.Int64Counter
 
 	EventsPublishedTotal metric.Int64Counter
 	EventsDroppedTotal   metric.Int64Counter
@@ -169,6 +178,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricTokensOutputTotal, "Sum of completion tokens reported by upstream providers.", "1", &m.TokensOutputTotal},
 		{MetricTokensCachedTotal, "Sum of provider-reported cached input tokens (cache reads, billed at the discounted rate).", "1", &m.TokensCachedTotal},
 		{MetricTokensCacheCreationTotal, "Sum of provider-reported cache-write tokens (Anthropic's chargeable cache-creation premium).", "1", &m.TokensCacheCreationTotal},
+		{MetricTagsAppliedTotal, "Count of AddTagAction applications labelled by tag name. Cardinality bounded by configured policy.", "1", &m.TagsAppliedTotal},
 		{MetricEventsPublishedTotal, "NATS bus publishes accepted.", "1", &m.EventsPublishedTotal},
 		{MetricEventsDroppedTotal, "NATS bus events dropped because the queue was full or the bus was down.", "1", &m.EventsDroppedTotal},
 		{MetricEventsStashedTotal, "Envelopes whose payload exceeded the inline threshold and was stashed in object storage.", "1", &m.EventsStashedTotal},

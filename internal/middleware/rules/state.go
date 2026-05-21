@@ -78,6 +78,48 @@ type MutableState struct {
 	// so the action does not depend on the URL being known at rule-
 	// evaluation time. Order is preserved; duplicates are allowed.
 	QueryAdditions []QueryAddition
+
+	// Tags is the accumulated set of tags AddTagAction has attached
+	// to this request. Set semantics — AddTag is a no-op for a tag
+	// already present. Order reflects first-attach order so the SPA
+	// can render chips deterministically. The reporter drains this
+	// at OnComplete onto events.Request.Tags and bumps the
+	// gateway.tags.applied.total counter once per tag.
+	Tags []string
+}
+
+// AddTag appends t to Tags iff Tags does not already contain it.
+// Returns true when the tag was newly added; false when it was
+// already present. Trimmed-empty tags are silently ignored —
+// AddTagAction validates non-empty input upstream so this branch is
+// mostly defensive.
+func (s *MutableState) AddTag(t string) bool {
+	if s == nil {
+		return false
+	}
+	if t == "" {
+		return false
+	}
+	for _, existing := range s.Tags {
+		if existing == t {
+			return false
+		}
+	}
+	s.Tags = append(s.Tags, t)
+	return true
+}
+
+// HasTag reports whether Tags contains t. Used by TagCondition.
+func (s *MutableState) HasTag(t string) bool {
+	if s == nil {
+		return false
+	}
+	for _, existing := range s.Tags {
+		if existing == t {
+			return true
+		}
+	}
+	return false
 }
 
 // NewMutableState builds a MutableState seeded with the routing

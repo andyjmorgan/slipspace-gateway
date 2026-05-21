@@ -214,6 +214,7 @@ func TestActionTypes_BlankImpl(t *testing.T) {
 		{"appendQueryString", rules.AppendQueryStringAction{}, "appendQueryString"},
 		{"returnStatusCode", rules.ReturnStatusCodeAction{}, "returnStatusCode"},
 		{"llmImpersonation", rules.LlmImpersonationAction{}, "llmImpersonation"},
+		{"addTag", rules.AddTagAction{}, "addTag"},
 		{"unknown", rules.UnknownAction{Type: "z"}, "z"},
 	}
 	for _, tt := range tests {

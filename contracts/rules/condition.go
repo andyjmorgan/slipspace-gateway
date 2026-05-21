@@ -156,6 +156,46 @@ func (c *HeaderCondition) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (c HeaderCondition) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
 
+// TagCondition matches when the request has been tagged by an earlier
+// rule's AddTagAction. Tags are set-valued, so the only meaningful
+// operator today is EnumEquals — "request set contains ExpectedTag".
+// For "any of {a, b, c}", compose three TagConditions under a
+// RuleGroup with LogicalOr; for "all of", LogicalAnd.
+//
+// Rule order matters: this condition only sees tags attached by rules
+// that ran earlier in the configuration's RuleNames list.
+type TagCondition struct {
+	// Type is the polymorphic discriminator; always "tag".
+	Type string `yaml:"type" json:"type"`
+
+	// Operator is the comparison strategy. Only EnumEquals is
+	// meaningful (set-membership check) — other values evaluate to
+	// false rather than error, matching the engine's forward-compat
+	// pattern.
+	Operator EnumOperator `yaml:"operator" json:"operator"`
+
+	// ExpectedTag is the tag string the condition checks for.
+	ExpectedTag string `yaml:"expectedTag" json:"expected_tag"`
+
+	// Not inverts the match result.
+	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
+
+	models.DynamicProperties
+}
+
+// ConditionType returns the "tag" discriminator.
+func (TagCondition) ConditionType() string { return "tag" }
+
+func (TagCondition) isCondition() {}
+
+// UnmarshalJSON routes unknown fields through DynamicProperties.
+func (c *TagCondition) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, c)
+}
+
+// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+func (c TagCondition) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
+
 // RuleGroup composes Children with LogicalAnd or LogicalOr. Children may be
 // any Condition type, including nested RuleGroups, allowing arbitrarily-deep
 // logic trees.
@@ -321,6 +361,7 @@ var conditionRegistry = models.PolymorphicRegistry[Condition]{
 		"endpoint":  func() Condition { return &EndpointCondition{} },
 		"modelName": func() Condition { return &ModelNameCondition{} },
 		"header":    func() Condition { return &HeaderCondition{} },
+		"tag":       func() Condition { return &TagCondition{} },
 		"group":     func() Condition { return &RuleGroup{} },
 	},
 	Fallback: func(disc string) Condition { return &UnknownCondition{Type: disc} },
