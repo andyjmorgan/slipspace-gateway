@@ -186,7 +186,9 @@ resilience_policies:
     mode: failover
     timeout_seconds: 30
     targets:
-      - provider: openai
-        order: 0
-      - provider: anthropic
+      - name: openai-primary
+        provider: openai
         order: 1
+      - name: anthropic-fallback
+        provider: anthropic
+        order: 2

@@ -62,16 +62,43 @@ type ResilienceConfig struct {
 
 	// Retry configures retry attempts and backoff. Nil disables retries.
 	Retry *RetryConfig `yaml:"retry,omitempty" json:"retry,omitempty"`
+
+	// StrictWeights, when true on a Mode=load_balance policy, disables the
+	// implicit failover-on-error re-roll. The first weighted selection
+	// fails fast — used for canary mirroring where the operator wants the
+	// underweight target's failure rate to surface in customer-facing
+	// error metrics instead of being silently absorbed. Off by default.
+	StrictWeights bool `yaml:"strict_weights,omitempty" json:"strict_weights,omitempty"`
+
+	// ResponseHeaderTimeoutSeconds bounds the per-attempt "time to first
+	// byte" — i.e., how long the orchestrator waits for the upstream to
+	// emit the HTTP status line before treating the attempt as a timeout.
+	// Maps to http.Transport.ResponseHeaderTimeout, not a context deadline,
+	// so post-commit streaming responses are not capped by this value.
+	// Zero falls back to the gateway-wide default (30s in v1.2).
+	ResponseHeaderTimeoutSeconds int `yaml:"response_header_timeout_seconds,omitempty" json:"response_header_timeout_seconds,omitempty"`
+
+	// FailureStatusCodes is the policy-wide retry-trigger set. Per-target
+	// FailureStatusCodes on ResilienceTarget overrides this list for the
+	// target it lives on. Empty falls back to "5xx is a failure" at the
+	// orchestrator (v1.2).
+	FailureStatusCodes []int `yaml:"failure_status_codes,omitempty" json:"failure_status_codes,omitempty"`
 }
 
 // ResilienceTarget is one upstream destination the orchestrator can route to.
 type ResilienceTarget struct {
+	// Name is the per-target telemetry label and admin display anchor.
+	// Required from v1.2 onward; must be unique within the parent
+	// ResilienceConfig.Targets list.
+	Name string `yaml:"name" json:"name"`
+
 	// Provider is the provider name (from providers.yaml) the orchestrator
 	// dispatches to when this target is selected.
 	Provider string `yaml:"provider" json:"provider"`
 
-	// Order is the failover priority for ModeFailover and
-	// ModeLoadBalanceWithFailover; lower values are tried first.
+	// Order is the failover priority for ModeFailover; lower values are
+	// tried first. Required to be > 0 when the parent policy is in
+	// ModeFailover.
 	Order int `yaml:"order,omitempty" json:"order,omitempty"`
 
 	// Weight is the relative weight for ModeLoadBalance and

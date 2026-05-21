@@ -10,7 +10,8 @@ import (
 )
 
 func TestResilienceConfig_Validate(t *testing.T) {
-	validTarget := resilience.ResilienceTarget{Provider: "openai"}
+	validFailoverTarget := resilience.ResilienceTarget{Name: "primary", Provider: "openai", Order: 1}
+	validLoadBalanceTarget := resilience.ResilienceTarget{Name: "primary", Provider: "openai", Weight: 1}
 
 	tests := []struct {
 		name    string
@@ -60,12 +61,59 @@ func TestResilienceConfig_Validate(t *testing.T) {
 			wantErr: resilience.ErrTargetsRequired,
 		},
 		{
-			name: "failover with one target",
+			name: "failover with one valid target",
 			cfg: resilience.ResilienceConfig{
 				Name:    "p",
 				Mode:    resilience.ModeFailover,
-				Targets: []resilience.ResilienceTarget{validTarget},
+				Targets: []resilience.ResilienceTarget{validFailoverTarget},
 			},
+		},
+		{
+			name: "failover target missing order",
+			cfg: resilience.ResilienceConfig{
+				Name:    "p",
+				Mode:    resilience.ModeFailover,
+				Targets: []resilience.ResilienceTarget{{Name: "primary", Provider: "openai"}},
+			},
+			wantErr: resilience.ErrFailoverNeedsOrder,
+		},
+		{
+			name: "load_balance with one valid target",
+			cfg: resilience.ResilienceConfig{
+				Name:    "p",
+				Mode:    resilience.ModeLoadBalance,
+				Targets: []resilience.ResilienceTarget{validLoadBalanceTarget},
+			},
+		},
+		{
+			name: "load_balance target missing weight",
+			cfg: resilience.ResilienceConfig{
+				Name:    "p",
+				Mode:    resilience.ModeLoadBalance,
+				Targets: []resilience.ResilienceTarget{{Name: "primary", Provider: "openai"}},
+			},
+			wantErr: resilience.ErrLoadBalanceNeedsWeight,
+		},
+		{
+			name: "load_balance_with_failover target missing weight",
+			cfg: resilience.ResilienceConfig{
+				Name:    "p",
+				Mode:    resilience.ModeLoadBalanceWithFailover,
+				Targets: []resilience.ResilienceTarget{{Name: "primary", Provider: "openai"}},
+			},
+			wantErr: resilience.ErrLoadBalanceNeedsWeight,
+		},
+		{
+			name: "duplicate target names",
+			cfg: resilience.ResilienceConfig{
+				Name: "p",
+				Mode: resilience.ModeFailover,
+				Targets: []resilience.ResilienceTarget{
+					{Name: "primary", Provider: "openai", Order: 1},
+					{Name: "primary", Provider: "anthropic", Order: 2},
+				},
+			},
+			wantErr: resilience.ErrDuplicateTargetName,
 		},
 		{
 			name: "negative top-level timeout",
@@ -75,6 +123,32 @@ func TestResilienceConfig_Validate(t *testing.T) {
 				TimeoutSeconds: -1,
 			},
 			wantErr: resilience.ErrInvalidThreshold,
+		},
+		{
+			name: "negative response header timeout",
+			cfg: resilience.ResilienceConfig{
+				Name:                         "p",
+				Mode:                         resilience.ModeNone,
+				ResponseHeaderTimeoutSeconds: -5,
+			},
+			wantErr: resilience.ErrInvalidThreshold,
+		},
+		{
+			name: "invalid policy-wide failure status code",
+			cfg: resilience.ResilienceConfig{
+				Name:               "p",
+				Mode:               resilience.ModeNone,
+				FailureStatusCodes: []int{200},
+			},
+			wantErr: resilience.ErrInvalidFailureStatusCode,
+		},
+		{
+			name: "valid policy-wide failure status codes",
+			cfg: resilience.ResilienceConfig{
+				Name:               "p",
+				Mode:               resilience.ModeNone,
+				FailureStatusCodes: []int{500, 502, 503, 504},
+			},
 		},
 		{
 			name: "invalid circuit breaker",
@@ -133,10 +207,19 @@ func TestResilienceConfig_Validate(t *testing.T) {
 				Name: "p",
 				Mode: resilience.ModeFailover,
 				Targets: []resilience.ResilienceTarget{
-					{Provider: ""},
+					{Name: "primary", Provider: "", Order: 1},
 				},
 			},
 			wantErr: resilience.ErrEmptyProvider,
+		},
+		{
+			name: "strict_weights compiles on load_balance",
+			cfg: resilience.ResilienceConfig{
+				Name:          "p",
+				Mode:          resilience.ModeLoadBalance,
+				StrictWeights: true,
+				Targets:       []resilience.ResilienceTarget{validLoadBalanceTarget},
+			},
 		},
 	}
 
@@ -166,19 +249,26 @@ func TestResilienceTarget_Validate(t *testing.T) {
 		wantErr error
 	}{
 		{
+			name:    "missing name",
+			target:  resilience.ResilienceTarget{Provider: "openai"},
+			wantErr: resilience.ErrEmptyTargetName,
+		},
+		{
 			name:    "missing provider",
-			target:  resilience.ResilienceTarget{},
+			target:  resilience.ResilienceTarget{Name: "primary"},
 			wantErr: resilience.ErrEmptyProvider,
 		},
 		{
 			name: "valid minimal",
 			target: resilience.ResilienceTarget{
+				Name:     "primary",
 				Provider: "openai",
 			},
 		},
 		{
 			name: "negative order",
 			target: resilience.ResilienceTarget{
+				Name:     "primary",
 				Provider: "openai",
 				Order:    -1,
 			},
@@ -187,6 +277,7 @@ func TestResilienceTarget_Validate(t *testing.T) {
 		{
 			name: "negative weight",
 			target: resilience.ResilienceTarget{
+				Name:     "primary",
 				Provider: "openai",
 				Weight:   -1,
 			},
@@ -195,22 +286,34 @@ func TestResilienceTarget_Validate(t *testing.T) {
 		{
 			name: "negative timeout",
 			target: resilience.ResilienceTarget{
+				Name:           "primary",
 				Provider:       "openai",
 				TimeoutSeconds: -1,
 			},
 			wantErr: resilience.ErrInvalidThreshold,
 		},
 		{
-			name: "bad status code",
+			name: "bad status code below 400",
 			target: resilience.ResilienceTarget{
+				Name:               "primary",
 				Provider:           "openai",
-				FailureStatusCodes: []int{0},
+				FailureStatusCodes: []int{200},
 			},
-			wantErr: resilience.ErrInvalidThreshold,
+			wantErr: resilience.ErrInvalidFailureStatusCode,
+		},
+		{
+			name: "bad status code above 599",
+			target: resilience.ResilienceTarget{
+				Name:               "primary",
+				Provider:           "openai",
+				FailureStatusCodes: []int{700},
+			},
+			wantErr: resilience.ErrInvalidFailureStatusCode,
 		},
 		{
 			name: "good status codes",
 			target: resilience.ResilienceTarget{
+				Name:               "primary",
 				Provider:           "openai",
 				FailureStatusCodes: []int{500, 502, 503},
 			},
@@ -218,6 +321,7 @@ func TestResilienceTarget_Validate(t *testing.T) {
 		{
 			name: "invalid nested breaker",
 			target: resilience.ResilienceTarget{
+				Name:     "primary",
 				Provider: "openai",
 				CircuitBreaker: &resilience.CircuitBreakerConfig{
 					FailureRateThreshold: -1,
@@ -228,6 +332,7 @@ func TestResilienceTarget_Validate(t *testing.T) {
 		{
 			name: "valid nested breaker",
 			target: resilience.ResilienceTarget{
+				Name:     "primary",
 				Provider: "openai",
 				CircuitBreaker: &resilience.CircuitBreakerConfig{
 					Enabled:              true,

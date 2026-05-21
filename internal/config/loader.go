@@ -444,8 +444,16 @@ func (r *ResolvedConfig) validateLibraries() error {
 			}
 		}
 		if cfg.ResilienceName != nil {
-			if _, ok := policyNames[*cfg.ResilienceName]; !ok {
+			polIdx, ok := policyNames[*cfg.ResilienceName]
+			if !ok {
 				return fmt.Errorf("config: configuration %q resilience_name %q: %w", name, *cfg.ResilienceName, ErrUnknownResilienceName)
+			}
+			pol := &r.ResiliencePolicies[polIdx]
+			for ti, target := range pol.Targets {
+				if _, ok := cfg.UpstreamCredentials[target.Provider]; !ok {
+					return fmt.Errorf("config: configuration %q resilience_name %q targets[%d] %q provider %q: %w",
+						name, *cfg.ResilienceName, ti, target.Name, target.Provider, ErrTargetProviderMissingCredential)
+				}
 			}
 		}
 	}

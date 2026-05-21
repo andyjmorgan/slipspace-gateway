@@ -47,8 +47,9 @@ resilience_policies:
     mode: failover
     timeout_seconds: 30
     targets:
-      - provider: openai
-        order: 0
+      - name: openai-primary
+        provider: openai
+        order: 1
 `
 }
 
