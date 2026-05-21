@@ -38,4 +38,34 @@ type Request struct {
 	// upstream could not be reached or tore the connection before
 	// headers arrived. Empty on the success path.
 	UpstreamError string `json:"upstream_error,omitempty"`
+
+	// TokensIn is the gross prompt-token total billed for the request,
+	// extracted from the upstream `usage` block. Includes any tokens
+	// served from a prompt cache (those are also reported separately
+	// in TokensCached). Zero when the upstream did not return usage
+	// data — e.g. a streaming request that omitted include_usage, a
+	// stream the client cancelled before the terminal chunk arrived,
+	// or a provider response that omitted usage (some Gemini preview
+	// models).
+	TokensIn int `json:"tokens_in,omitempty"`
+
+	// TokensOut is the count of tokens the model generated. For
+	// providers that bill reasoning tokens separately (OpenAI
+	// reasoning models, Gemini thoughts), they are included here —
+	// the field reflects what the customer pays for, not just
+	// user-visible output.
+	TokensOut int `json:"tokens_out,omitempty"`
+
+	// TokensCached is the share of TokensIn that the provider served
+	// from its prompt cache and billed at the cached-read price.
+	// Informational — already counted in TokensIn, not a separate
+	// deduction.
+	TokensCached int `json:"tokens_cached,omitempty"`
+
+	// TokensCacheCreation is the share of TokensIn billed at the
+	// cache-write premium. Anthropic-only today (their cache-write
+	// path costs more than uncached tokens); OpenAI and Gemini cache
+	// writes are implicit and not separately billed, so this field
+	// stays zero for them.
+	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
 }
