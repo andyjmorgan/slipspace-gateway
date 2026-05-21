@@ -121,12 +121,21 @@ func New(opts Options) *Forwarder {
 // carrying a browser Origin header for organisations with custom
 // retention policy. We strip them in both managed and passthrough modes
 // because the gateway is the upstream's client, not the user's browser.
+//
+// Accept-Encoding is stripped so upstreams return uncompressed bodies.
+// The admin live-messages capture tees the response bytes that flow to
+// the client, and compressed bytes render as binary garbage in the
+// viewer. Stripping at the request edge means the capture, the upstream
+// → gateway hop, and the gateway → client hop all carry plaintext
+// without per-hop decompression logic. The .NET predecessor stripped
+// Accept-Encoding for the same reason.
 var alwaysDropHeaders = []string{
 	"X-Sluice-Configuration",
 	"Authorization",
 	"Origin",
 	"Referer",
 	"Cookie",
+	"Accept-Encoding",
 }
 
 // Forward sends req upstream as described by dest and writes the response
