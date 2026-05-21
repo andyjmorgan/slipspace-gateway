@@ -51,6 +51,11 @@
   --p-qwen36:         oklch(0.82 0.13 90);
   --p-qwen36-bg:      oklch(0.82 0.13 90 / 0.15);
 
+  /* Token-throughput chart curves — input vs output share a hue family
+     with the accent (cyan/blue) so they don't fight provider colours. */
+  --p-input:          oklch(0.78 0.10 220);
+  --p-output:         oklch(0.74 0.15 290);
+
   --radius:     6px;
   --radius-lg: 10px;
 
@@ -110,6 +115,9 @@
   --p-gpt-oss-bg:     oklch(0.55 0.13 195 / 0.18);
   --p-qwen36:         oklch(0.55 0.14 90);
   --p-qwen36-bg:      oklch(0.65 0.13 90 / 0.20);
+
+  --p-input:          oklch(0.52 0.13 220);
+  --p-output:         oklch(0.48 0.16 290);
 
   --shadow-sm:  0 1px 0 oklch(0 0 0 / 0.04);
   --shadow-md:  0 6px 24px -10px oklch(0 0 0 / 0.16), 0 1px 0 oklch(0 0 0 / 0.04);

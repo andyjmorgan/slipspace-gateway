@@ -4,12 +4,11 @@ import "time"
 
 // DashboardSummary is the response shape for GET /api/v1/dashboard/summary.
 //
-// The fields are chosen to match what the gateway can credibly compute
-// from the in-process Prometheus registry today — token counters and
-// per-api-key aggregates are deliberately absent because the underlying
-// instruments aren't wired (see DonkeyWork project notes on the v1.1
-// console slice). The schema mirrors the SPA's TypeScript shape
-// (web/src/mock/data.ts) so the SPA decodes without translation.
+// Fields match what the gateway can credibly compute from the in-process
+// Prometheus registry. Per-api-key aggregates are still deliberately
+// absent — the Top API Keys card is a follow-up. The schema mirrors the
+// SPA's TypeScript shape (web/src/lib/dashboard.ts) so the SPA decodes
+// without translation.
 type DashboardSummary struct {
 	// Window is the time range the summary covers (e.g. "24h"). The
 	// SPA renders this verbatim.
@@ -24,8 +23,7 @@ type DashboardSummary struct {
 	// does not need to re-poll for the running duration to update.
 	GatewayStartedAt time.Time `json:"gateway_started_at"`
 
-	// Totals is the request-count headline. No token totals — they
-	// remain unwired in v1.1.
+	// Totals is the request-count headline plus the four token sums.
 	Totals DashboardTotals `json:"totals"`
 
 	// Rates carries the gauge-style aggregates: requests-per-second
@@ -66,11 +64,34 @@ type DashboardSummary struct {
 	ProviderHealth []DashboardProviderHealth `json:"provider_health"`
 }
 
-// DashboardTotals headlines the volume + outcome split over Window.
+// DashboardTotals headlines the volume + outcome split over Window plus
+// the aggregate token counts. Token totals sum across every label-set
+// (provider, endpoint, configuration, model, status_code) so they match
+// the gateway.tokens.* counter rollup exactly.
 type DashboardTotals struct {
-	Requests        int64 `json:"requests"`
+	Requests int64 `json:"requests"`
+
 	RequestsSuccess int64 `json:"requests_success"`
+
 	RequestsErrored int64 `json:"requests_errored"`
+
+	// TokensIn is the sum of prompt tokens billed across every
+	// completed request in Window. Includes any cached portion
+	// (same gross-input semantic as on contracts/events/Request).
+	TokensIn int64 `json:"tokens_in"`
+
+	// TokensOut is the sum of generated tokens billed in Window.
+	// Includes reasoning / thoughts tokens where the provider
+	// reports them.
+	TokensOut int64 `json:"tokens_out"`
+
+	// TokensCached is the share of TokensIn the provider served
+	// from cache (discounted read price). Informational.
+	TokensCached int64 `json:"tokens_cached"`
+
+	// TokensCacheCreation is the share of TokensIn billed at the
+	// cache-write premium. Anthropic-only on today's surface.
+	TokensCacheCreation int64 `json:"tokens_cache_creation"`
 }
 
 // DashboardRates carries the rate-style aggregates.
@@ -116,11 +137,19 @@ type DashboardConfigurationRow struct {
 	ErrorRate     float64 `json:"error_rate"`
 }
 
-// DashboardModelRow is one row of ByModel.
+// DashboardModelRow is one row of ByModel. Token counts are per-model
+// totals across Window — useful for spotting which model burned the
+// most spend even when its request count is modest.
 type DashboardModelRow struct {
-	Model    string `json:"model"`
+	Model string `json:"model"`
+
 	Provider string `json:"provider"`
-	Requests int64  `json:"requests"`
+
+	Requests int64 `json:"requests"`
+
+	TokensIn int64 `json:"tokens_in"`
+
+	TokensOut int64 `json:"tokens_out"`
 }
 
 // DashboardRuleFiredRow counts matches for one rule across the window

@@ -45,6 +45,16 @@ type Entry struct {
 	// headers arrived. Empty on the success path.
 	UpstreamError string
 
+	// TokensIn / TokensOut / TokensCached / TokensCacheCreation mirror
+	// the extracted upstream usage block on contracts/events/Request.
+	// Zero when the response carried no usage data (e.g. streaming
+	// without include_usage, client cancelled before terminal chunk,
+	// or the upstream simply omitted usage).
+	TokensIn            int
+	TokensOut           int
+	TokensCached        int
+	TokensCacheCreation int
+
 	// RulesMatched lists every rule that fired during evaluation, in
 	// the order they ran. Empty when the rule engine matched nothing
 	// or when the configuration has no rules attached.
