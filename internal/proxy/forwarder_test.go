@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -182,6 +183,7 @@ func TestForward_HeaderRewrite(t *testing.T) {
 	req.Header.Set("Origin", "https://sluice.example.com")
 	req.Header.Set("Referer", "https://sluice.example.com/chat")
 	req.Header.Set("Cookie", "session=abc; other=def")
+	req.Header.Set("Accept-Encoding", "gzip, br")
 
 	dest := newDestination(t, upstream.URL+"/v1/messages")
 	dest.DropHeaders = []string{"X-Custom-Drop"}
@@ -213,6 +215,66 @@ func TestForward_HeaderRewrite(t *testing.T) {
 		if got := captured.Get(name); got != "" {
 			t.Errorf("browser header %s should be stripped, got %q", name, got)
 		}
+	}
+	// The client sent "gzip, br" but we strip Accept-Encoding so the
+	// stdlib transport's auto-gzip negotiation can take over. The
+	// upstream must never see brotli — Go's transport can't decode it,
+	// and a br-encoded body would render as binary garbage in the
+	// admin live-messages capture. The transport may add its own
+	// "gzip" header (which it transparently decompresses on the way
+	// back), so we assert on what the upstream observed: no br, and
+	// no propagation of the client's literal value.
+	if ae := captured.Get("Accept-Encoding"); strings.Contains(ae, "br") || ae == "gzip, br" {
+		t.Errorf("Accept-Encoding leaked client value to upstream, got %q", ae)
+	}
+}
+
+// TestForward_GzippedUpstream_DecodedToClient verifies the load-bearing
+// property of stripping Accept-Encoding: a gzipped upstream response is
+// transparently decoded by the stdlib transport, so the client (and the
+// admin live-messages capture that tees writes to the client) sees
+// plaintext bytes. If we ever let a non-gzip encoding propagate to the
+// upstream, the body would arrive still-encoded and render as binary
+// garbage in the viewer.
+func TestForward_GzippedUpstream_DecodedToClient(t *testing.T) {
+	plain := []byte(`{"hello":"world"}`)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		var compressed bytes.Buffer
+		zw := gzip.NewWriter(&compressed)
+		if _, err := zw.Write(plain); err != nil {
+			t.Fatalf("gzip write: %v", err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatalf("gzip close: %v", err)
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(compressed.Bytes()); err != nil {
+			t.Fatalf("upstream write: %v", err)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	f := New(Options{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
+	// Client requests brotli (we strip it). The stdlib transport will
+	// then add Accept-Encoding: gzip on its own and transparently
+	// decompress the upstream response before ReverseProxy reads it.
+	req.Header.Set("Accept-Encoding", "br, gzip")
+
+	dest := newDestination(t, upstream.URL+"/v1/x")
+	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	body := rec.Body.Bytes()
+	if !bytes.Equal(body, plain) {
+		t.Fatalf("client body = %q, want plaintext %q", body, plain)
+	}
+	if ce := rec.Header().Get("Content-Encoding"); ce != "" {
+		t.Errorf("Content-Encoding on client response = %q, want empty (transport should strip after decoding)", ce)
 	}
 }
 
