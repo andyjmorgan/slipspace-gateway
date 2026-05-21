@@ -8,6 +8,7 @@ import { Segmented } from "@/components/atoms/segmented"
 import { LineChart } from "@/components/atoms/line-chart"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { fmt } from "@/lib/fmt"
+import { providerColor } from "@/lib/provider-color"
 import {
   useDashboardSummary,
   useDashboardTimeseries,
@@ -151,19 +152,19 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
         <TimeseriesPanel
-          title="p95 latency by provider"
+          title="Top providers · requests per second"
           sub={`${d.window} · per snapshot interval`}
-          series="p95_by_provider"
+          series="rps_by_provider_top5"
           window={window}
           colorByLabel="provider"
-          formatY={(v) => Math.round(v) + "ms"}
+          formatY={(v) => v.toFixed(2)}
         />
         <TimeseriesPanel
-          title="Error rate"
+          title="Top providers · error rate"
           sub={`${d.window} · per snapshot interval`}
-          series="error_rate"
+          series="error_rate_by_provider_top5"
           window={window}
-          singleColor="var(--err)"
+          colorByLabel="provider"
           formatY={(v) => v.toFixed(1) + "%"}
         />
       </div>
@@ -232,7 +233,7 @@ function TimeseriesPanel({
 
 function colorize(s: DashboardSeries, colorByLabel?: string, fallback?: string): DashboardSeries & { color?: string } {
   if (colorByLabel && s.labels?.[colorByLabel]) {
-    return { ...s, color: `var(--p-${s.labels[colorByLabel]})` }
+    return { ...s, color: providerColor(s.labels[colorByLabel]).fg }
   }
   if (fallback) {
     return { ...s, color: fallback }
