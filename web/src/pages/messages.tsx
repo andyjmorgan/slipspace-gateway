@@ -26,7 +26,11 @@ type FeedState =
   | { status: "error"; message: string }
   | { status: "ok"; capacity: number }
 
-const MAX_ROWS_IN_MEMORY = 500
+// MAX_ROWS_IN_MEMORY caps the visible table and the paused buffer so a
+// long-running pane doesn't OOM the browser. Bodies are fetched
+// on-demand into the modal, but row metadata + the SSE event objects
+// still accumulate — bound both ends.
+const MAX_ROWS_IN_MEMORY = 100
 
 export function MessagesPage() {
   const [feed, setFeed] = useState<FeedState>({ status: "loading" })
@@ -43,11 +47,13 @@ export function MessagesPage() {
   const handleNewEntry = useCallback((e: MessageEntry) => {
     if (pausedRef.current) {
       pendingRef.current.push(e)
+      if (pendingRef.current.length > MAX_ROWS_IN_MEMORY) {
+        pendingRef.current = pendingRef.current.slice(-MAX_ROWS_IN_MEMORY)
+      }
       return
     }
     setEntries((prev) => {
       const next = [...prev, e]
-      // Trim from the head if we overshoot the in-memory cap.
       if (next.length > MAX_ROWS_IN_MEMORY) {
         return next.slice(next.length - MAX_ROWS_IN_MEMORY)
       }
@@ -390,7 +396,7 @@ function MessageModal({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
+        className="relative w-full max-w-6xl max-h-[92vh] overflow-y-auto rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-start gap-2">
@@ -600,7 +606,7 @@ function BodySection({
       {isEmpty ? (
         <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
       ) : (
-        <JsonViewer text={text ?? ""} />
+        <JsonViewer text={text ?? ""} maxHeightClassName="max-h-[60vh]" />
       )}
     </div>
   )
