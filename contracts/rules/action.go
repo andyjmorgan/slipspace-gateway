@@ -308,6 +308,42 @@ func (a *AddTagAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a AddTagAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
+// UseResiliencePolicyAction binds the request to a named resilience
+// policy declared in the top-level `resilience_policies:` library.
+// The rules engine writes state.PolicyRef; the v1.2 orchestrator reads
+// it post-rules and loops over the policy's targets. Non-terminating
+// — earlier or later rules can still mutate headers, attach tags, and
+// so on. Multiple useResiliencePolicy actions in a chain: last writer
+// wins (the rule engine evaluates in declaration order).
+//
+// Set PolicyName to "" to *clear* a previously-set PolicyRef; the
+// orchestrator falls back to single-shot when no policy is in effect.
+type UseResiliencePolicyAction struct {
+	// Type is the polymorphic discriminator; always "useResiliencePolicy".
+	Type string `yaml:"type" json:"type"`
+
+	// PolicyName references a ResilienceConfig.Name in the top-level
+	// `resilience_policies:` library. Validated cross-reference at
+	// config-load time — unknown names are a startup error, not a
+	// silent runtime fall-through.
+	PolicyName string `yaml:"policyName" json:"policyName"`
+
+	models.DynamicProperties
+}
+
+// ActionType returns the "useResiliencePolicy" discriminator.
+func (UseResiliencePolicyAction) ActionType() string { return "useResiliencePolicy" }
+
+func (UseResiliencePolicyAction) isAction() {}
+
+// UnmarshalJSON routes unknown fields through DynamicProperties.
+func (a *UseResiliencePolicyAction) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, a)
+}
+
+// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+func (a UseResiliencePolicyAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
 // UnknownAction is the catch-all fallback for any action discriminator the
 // registry does not recognise. Type carries the unknown discriminator value
 // and every other JSON field lands in DynamicProperties.Extra so the action
@@ -336,15 +372,16 @@ func (a UnknownAction) MarshalJSON() ([]byte, error) { return models.MarshalDyna
 var actionRegistry = models.PolymorphicRegistry[Action]{
 	DiscriminatorField: "type",
 	Factories: map[string]func() Action{
-		"changeProvider":    func() Action { return &ChangeProviderAction{} },
-		"changeModelName":   func() Action { return &ChangeModelNameAction{} },
-		"changeUrl":         func() Action { return &ChangeUrlAction{} },
-		"changeApiKey":      func() Action { return &ChangeApiKeyAction{} },
-		"setHeader":         func() Action { return &SetHeaderAction{} },
-		"appendQueryString": func() Action { return &AppendQueryStringAction{} },
-		"returnStatusCode":  func() Action { return &ReturnStatusCodeAction{} },
-		"llmImpersonation":  func() Action { return &LlmImpersonationAction{} },
-		"addTag":            func() Action { return &AddTagAction{} },
+		"changeProvider":      func() Action { return &ChangeProviderAction{} },
+		"changeModelName":     func() Action { return &ChangeModelNameAction{} },
+		"changeUrl":           func() Action { return &ChangeUrlAction{} },
+		"changeApiKey":        func() Action { return &ChangeApiKeyAction{} },
+		"setHeader":           func() Action { return &SetHeaderAction{} },
+		"appendQueryString":   func() Action { return &AppendQueryStringAction{} },
+		"returnStatusCode":    func() Action { return &ReturnStatusCodeAction{} },
+		"llmImpersonation":    func() Action { return &LlmImpersonationAction{} },
+		"addTag":              func() Action { return &AddTagAction{} },
+		"useResiliencePolicy": func() Action { return &UseResiliencePolicyAction{} },
 	},
 	Fallback: func(disc string) Action { return &UnknownAction{Type: disc} },
 }

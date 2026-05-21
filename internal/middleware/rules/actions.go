@@ -50,6 +50,8 @@ func applyAction(
 		return applyLlmImpersonation(*a)
 	case *contractsrules.AddTagAction:
 		return applyAddTag(*a, state)
+	case *contractsrules.UseResiliencePolicyAction:
+		return applyUseResiliencePolicy(*a, state)
 	case *contractsrules.UnknownAction:
 		return contractsrules.Outcome{}, nil
 	default:
@@ -252,6 +254,21 @@ func applyAddTag(a contractsrules.AddTagAction, state *MutableState) (contractsr
 		return contractsrules.Outcome{}, fmt.Errorf("rules: addTag: %w", errEmptyValue)
 	}
 	state.AddTag(t)
+	return contractsrules.Outcome{}, nil
+}
+
+// applyUseResiliencePolicy writes a.PolicyName into state.PolicyRef.
+// Non-terminating; last writer wins when multiple rules in a chain
+// invoke this action. An empty PolicyName explicitly clears any
+// previously-set PolicyRef — the orchestrator treats that as
+// "single-shot, fall back to configuration default."
+//
+// Trimming is intentionally permissive here: the config-load
+// cross-validator (internal/config) already proves a non-empty
+// PolicyName resolves to a real policy, and trimming an empty value
+// to empty preserves the "clear" semantics.
+func applyUseResiliencePolicy(a contractsrules.UseResiliencePolicyAction, state *MutableState) (contractsrules.Outcome, error) {
+	state.PolicyRef = strings.TrimSpace(a.PolicyName)
 	return contractsrules.Outcome{}, nil
 }
 

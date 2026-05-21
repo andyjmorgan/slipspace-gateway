@@ -46,6 +46,7 @@ func TestMarkerMethods(t *testing.T) {
 		ReturnStatusCodeAction{},
 		LlmImpersonationAction{},
 		AddTagAction{},
+		UseResiliencePolicyAction{},
 		UnknownAction{},
 	}
 	for _, a := range acts {
@@ -67,6 +68,8 @@ func TestMarkerMethods(t *testing.T) {
 		case LlmImpersonationAction:
 			v.isAction()
 		case AddTagAction:
+			v.isAction()
+		case UseResiliencePolicyAction:
 			v.isAction()
 		case UnknownAction:
 			v.isAction()

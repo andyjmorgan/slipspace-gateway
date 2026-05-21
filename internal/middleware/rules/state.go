@@ -86,6 +86,16 @@ type MutableState struct {
 	// at OnComplete onto events.Request.Tags and bumps the
 	// gateway.tags.applied.total counter once per tag.
 	Tags []string
+
+	// PolicyRef names the resilience policy the rules engine resolved
+	// for this request. Set by UseResiliencePolicyAction; consumed
+	// post-rules by the v1.2 orchestrator. Empty means "no policy
+	// selected by rules" — the orchestrator may still fall back to the
+	// configuration's default policy in that case. Multiple
+	// useResiliencePolicy actions in a chain follow last-writer-wins
+	// semantics, so a later rule can replace or clear (via empty
+	// PolicyName) an earlier rule's selection.
+	PolicyRef string
 }
 
 // AddTag appends t to Tags iff Tags does not already contain it.

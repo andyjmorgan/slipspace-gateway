@@ -200,6 +200,46 @@ func TestUnmarshalAction_MissingDiscriminator(t *testing.T) {
 	}
 }
 
+func TestUnmarshalAction_UseResiliencePolicy(t *testing.T) {
+	raw := `{"type":"useResiliencePolicy","policyName":"ha"}`
+	act, err := rules.UnmarshalAction([]byte(raw))
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	up, ok := act.(*rules.UseResiliencePolicyAction)
+	if !ok {
+		t.Fatalf("type = %T", act)
+	}
+	if up.PolicyName != "ha" {
+		t.Errorf("PolicyName = %q", up.PolicyName)
+	}
+	if up.ActionType() != "useResiliencePolicy" {
+		t.Errorf("ActionType = %q", up.ActionType())
+	}
+}
+
+func TestUseResiliencePolicyAction_MarshalRoundTrip(t *testing.T) {
+	original := `{"type":"useResiliencePolicy","policyName":"failover-east-west","custom":42}`
+	act, err := rules.UnmarshalAction([]byte(original))
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	out, err := json.Marshal(act)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatalf("re-unmarshal: %v", err)
+	}
+	if back["type"] != "useResiliencePolicy" || back["policyName"] != "failover-east-west" {
+		t.Errorf("known fields lost: %+v", back)
+	}
+	if back["custom"] != float64(42) {
+		t.Errorf("DynamicProperties did not round-trip the custom field: %+v", back)
+	}
+}
+
 func TestActionTypes_BlankImpl(t *testing.T) {
 	tests := []struct {
 		name string
@@ -215,6 +255,7 @@ func TestActionTypes_BlankImpl(t *testing.T) {
 		{"returnStatusCode", rules.ReturnStatusCodeAction{}, "returnStatusCode"},
 		{"llmImpersonation", rules.LlmImpersonationAction{}, "llmImpersonation"},
 		{"addTag", rules.AddTagAction{}, "addTag"},
+		{"useResiliencePolicy", rules.UseResiliencePolicyAction{}, "useResiliencePolicy"},
 		{"unknown", rules.UnknownAction{Type: "z"}, "z"},
 	}
 	for _, tt := range tests {

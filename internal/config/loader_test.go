@@ -1042,6 +1042,71 @@ configurations:
 	}
 }
 
+func TestLoad_RuleUseResiliencePolicy_UnknownName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev: {}
+
+rules:
+  - name: pick-policy
+    priority: 1
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: useResiliencePolicy
+        policyName: never-declared
+`)
+	_, err := config.Load(context.Background(), dir)
+	if !errors.Is(err, config.ErrUnknownResilienceName) {
+		t.Fatalf("want ErrUnknownResilienceName, got %v", err)
+	}
+}
+
+func TestLoad_RuleUseResiliencePolicy_KnownName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev: {}
+
+rules:
+  - name: pick-policy
+    priority: 1
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: useResiliencePolicy
+        policyName: ha
+
+resilience_policies:
+  - name: ha
+    mode: none
+`)
+	if _, err := config.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestLoad_RuleUseResiliencePolicy_EmptyPolicyNameIsClear(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "providers.yaml", sampleProviders)
+	writeFile(t, dir, "policy.yaml", `
+configurations:
+  dev: {}
+
+rules:
+  - name: clear-policy
+    priority: 1
+    condition: {type: provider, operator: Equals, expectedProvider: openai}
+    actions:
+      - type: useResiliencePolicy
+        policyName: ""
+`)
+	if _, err := config.Load(context.Background(), dir); err != nil {
+		t.Fatalf("empty PolicyName should be a valid clear-action, got %v", err)
+	}
+}
+
 func TestLoad_LibraryDuplicateRuleName(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "providers.yaml", sampleProviders)
