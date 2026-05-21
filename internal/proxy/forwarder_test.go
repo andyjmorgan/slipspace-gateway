@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -636,8 +637,8 @@ func TestIsSensitiveHeaderName(t *testing.T) {
 		"X-Provider-Header":       false,
 	}
 	for name, want := range cases {
-		if got := isSensitiveHeaderName(name); got != want {
-			t.Errorf("isSensitiveHeaderName(%q) = %v, want %v", name, got, want)
+		if got := headers.IsSensitiveHeaderName(name); got != want {
+			t.Errorf("headers.IsSensitiveHeaderName(%q) = %v, want %v", name, got, want)
 		}
 	}
 }

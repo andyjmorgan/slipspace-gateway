@@ -62,6 +62,8 @@ func toMessageBodyDetail(eventID string, env livefeed.BodyEnvelope) adminc.Messa
 		ResponseTruncated:  env.ResponseTruncated,
 		ResponseAssembled:  env.ResponseAssembled,
 		AssemblyPartial:    env.AssemblyPartial,
+		RequestHeaders:     env.RequestHeaders,
+		ResponseHeaders:    env.ResponseHeaders,
 	}
 }
 

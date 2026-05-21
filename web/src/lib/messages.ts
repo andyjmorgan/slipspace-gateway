@@ -61,6 +61,8 @@ export type MessageBodyDetail = {
   response_truncated?: boolean
   response_assembled?: string
   assembly_partial?: boolean
+  request_headers?: Record<string, string[]>
+  response_headers?: Record<string, string[]>
 }
 
 /**
