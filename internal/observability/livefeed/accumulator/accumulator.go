@@ -43,6 +43,7 @@ var registry = map[string]accumulatorFn{
 	"chat_completions": accumulateOpenAIChat,
 	"messages":         accumulateAnthropicMessages,
 	"generate_content": accumulateGeminiContent,
+	"responses":        accumulateOpenAIResponses,
 }
 
 // Accumulate dispatches raw onto the per-endpoint accumulator and
