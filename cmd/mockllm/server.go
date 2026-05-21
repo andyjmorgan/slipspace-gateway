@@ -17,6 +17,11 @@ import (
 
 const maxRequestBody = 8 << 20
 
+// sessionHeader is the inbound HTTP header the server reads to scope a
+// request to a registry session pool. The gateway already echoes this
+// header end-to-end, so tests just set it on the outbound request.
+const sessionHeader = "X-Sluice-Session-Id"
+
 type server struct {
 	mux *http.ServeMux
 
@@ -42,12 +47,18 @@ type CapturedRequest struct {
 	Headers map[string]string `json:"headers"`
 
 	Body string `json:"body"`
+
+	// SessionID is the value of X-Sluice-Session-Id on the inbound
+	// request, empty when no session header was set. Lets tests
+	// scope captured-request assertions to a single scenario via
+	// the ?session=<id> query on /control/captured.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // capturedLog is the bounded ring of captured requests. Tests
 // usually only need the latest, but holding the last few covers
 // rare cases that fire multiple upstream calls per test (e.g.
-// resilience retries in v1.1).
+// resilience retries in v1.2).
 type capturedLog struct {
 	mu sync.Mutex
 
@@ -63,7 +74,6 @@ func (c *capturedLog) record(req CapturedRequest) {
 	defer c.mu.Unlock()
 	c.entries = append(c.entries, req)
 	if len(c.entries) > c.max {
-		// Drop the oldest entries; keep the tail.
 		drop := len(c.entries) - c.max
 		c.entries = append([]CapturedRequest(nil), c.entries[drop:]...)
 	}
@@ -143,18 +153,36 @@ func (s *server) providerHandler() http.HandlerFunc {
 		}
 		_ = r.Body.Close()
 
+		sessionID := r.Header.Get(sessionHeader)
+
 		s.captured.record(CapturedRequest{
-			Method:  r.Method,
-			Path:    r.URL.Path,
-			Query:   r.URL.RawQuery,
-			Headers: flattenHeader(r.Header),
-			Body:    string(body),
+			Method:    r.Method,
+			Path:      r.URL.Path,
+			Query:     r.URL.RawQuery,
+			Headers:   flattenHeader(r.Header),
+			Body:      string(body),
+			SessionID: sessionID,
 		})
 
-		canned, ok := s.reg.match(r.Method, r.URL.Path, string(body))
+		canned, ok := s.reg.match(sessionID, r.Method, r.URL.Path, string(body))
 		if !ok {
-			slog.Debug("no canned response matched", "method", r.Method, "path", r.URL.Path)
+			slog.Debug("no canned response matched", "method", r.Method, "path", r.URL.Path, "session", sessionID)
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no canned response"})
+			return
+		}
+
+		if canned.DelayMs > 0 {
+			if !sleepWithContext(r.Context(), time.Duration(canned.DelayMs)*time.Millisecond) {
+				return
+			}
+		}
+
+		switch canned.Behavior {
+		case BehaviorClose:
+			closeConn(w)
+			return
+		case BehaviorHang:
+			<-r.Context().Done()
 			return
 		}
 
@@ -212,10 +240,8 @@ func (s *server) writeStream(ctx context.Context, w http.ResponseWriter, c Canne
 
 	for _, chunk := range c.StreamChunks {
 		if chunk.DelayMs > 0 {
-			select {
-			case <-ctx.Done():
+			if !sleepWithContext(ctx, time.Duration(chunk.DelayMs)*time.Millisecond) {
 				return
-			case <-time.After(time.Duration(chunk.DelayMs) * time.Millisecond):
 			}
 		}
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", chunk.Data); err != nil {
@@ -225,12 +251,53 @@ func (s *server) writeStream(ctx context.Context, w http.ResponseWriter, c Canne
 	}
 }
 
+// closeConn hijacks the response's underlying TCP connection and
+// closes it without writing any status. Models a transport-error
+// condition for resilience tests. A handler that cannot hijack falls
+// back to writing a 500 so the caller sees the failure rather than
+// silently nothing.
+func closeConn(w http.ResponseWriter) {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "behavior=close requires hijack support"})
+		return
+	}
+	conn, _, err := hijacker.Hijack()
+	if err != nil {
+		slog.Error("hijack for behavior=close failed", "err", err)
+		return
+	}
+	_ = conn.Close()
+}
+
+// sleepWithContext sleeps d, returning true on normal completion and
+// false if ctx is cancelled first. Used by DelayMs and per-chunk
+// delays so client disconnect terminates the handler promptly.
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
 func (s *server) controlResponses(w http.ResponseWriter, r *http.Request) {
+	session := r.URL.Query().Get("session")
 	switch r.Method {
 	case http.MethodPost:
-		s.controlAdd(w, r)
+		s.controlAdd(w, r, session)
 	case http.MethodDelete:
-		s.reg.clear()
+		if session == "" {
+			s.reg.clearAll()
+		} else {
+			s.reg.clearSession(session)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.Header().Set("Allow", "POST, DELETE")
@@ -238,7 +305,7 @@ func (s *server) controlResponses(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) controlAdd(w http.ResponseWriter, r *http.Request) {
+func (s *server) controlAdd(w http.ResponseWriter, r *http.Request, session string) {
 	defer func() { _ = r.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
@@ -259,7 +326,7 @@ func (s *server) controlAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.reg.add(c)
+	s.reg.add(session, c)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -270,10 +337,12 @@ func (s *server) controlState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := struct {
-		Responses    []CannedResponse `json:"responses"`
-		RequestCount uint64           `json:"request_count"`
+		Responses    []CannedResponse            `json:"responses"`
+		Sessions     map[string][]CannedResponse `json:"sessions,omitempty"`
+		RequestCount uint64                      `json:"request_count"`
 	}{
-		Responses:    s.reg.snapshot(),
+		Responses:    s.reg.snapshotGlobal(),
+		Sessions:     s.reg.snapshotSessions(),
 		RequestCount: s.requestCount.Load(),
 	}
 	writeJSON(w, http.StatusOK, state)
@@ -287,14 +356,25 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 // controlCaptured exposes the captured-request log to e2e tests.
 //
-//	GET    — returns {"captured": [...]} for inspection
+//	GET    — returns {"captured": [...]} for inspection. Optional
+//	         ?session=<id> filters to one session's traffic.
 //	DELETE — clears the log (used by tests that rerun within one harness)
 func (s *server) controlCaptured(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		captured := s.captured.snapshot()
+		if session := r.URL.Query().Get("session"); session != "" {
+			filtered := make([]CapturedRequest, 0, len(captured))
+			for _, c := range captured {
+				if c.SessionID == session {
+					filtered = append(filtered, c)
+				}
+			}
+			captured = filtered
+		}
 		writeJSON(w, http.StatusOK, struct {
 			Captured []CapturedRequest `json:"captured"`
-		}{Captured: s.captured.snapshot()})
+		}{Captured: captured})
 	case http.MethodDelete:
 		s.captured.clear()
 		w.WriteHeader(http.StatusNoContent)
