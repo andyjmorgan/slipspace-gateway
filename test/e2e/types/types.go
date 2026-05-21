@@ -24,4 +24,12 @@ type RequestEvent struct {
 	Streaming bool `json:"streaming,omitempty"`
 
 	UpstreamError string `json:"upstream_error,omitempty"`
+
+	TokensIn int `json:"tokens_in,omitempty"`
+
+	TokensOut int `json:"tokens_out,omitempty"`
+
+	TokensCached int `json:"tokens_cached,omitempty"`
+
+	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
 }

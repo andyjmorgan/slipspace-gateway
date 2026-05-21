@@ -1,0 +1,14 @@
+data: {"id":"chatcmpl-FIXTURE0001","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_FIXTURE","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"MiZ4IOHgW"}
+
+data: {"id":"chatcmpl-FIXTURE0001","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_FIXTURE","choices":[{"index":0,"delta":{"content":"P"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"CGh3ahrGkS"}
+
+data: {"id":"chatcmpl-FIXTURE0001","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_FIXTURE","choices":[{"index":0,"delta":{"content":"ong"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"I37d0m9S"}
+
+data: {"id":"chatcmpl-FIXTURE0001","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_FIXTURE","choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"LJ1ej3Y1I5"}
+
+data: {"id":"chatcmpl-FIXTURE0001","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_FIXTURE","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"usage":null,"obfuscation":"obWx9"}
+
+data: {"id":"chatcmpl-FIXTURE0001","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_FIXTURE","choices":[],"usage":{"prompt_tokens":13,"completion_tokens":3,"total_tokens":16,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"KPYI1UVIJn5"}
+
+data: [DONE]
+

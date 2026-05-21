@@ -16,6 +16,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/tokens"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed/accumulator"
@@ -209,6 +210,13 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		}
 	}
 
+	// Tokens are extracted from the captured response and bumped onto
+	// gateway.tokens.* — must run before the bus publish so the
+	// gateway.request payload carries TokensIn/Out/Cached/CacheCreation.
+	// Gated on the response buffer being present; when bodies are
+	// disabled (env.LiveFeedBodiesEnabled=false) tokens stay zero.
+	r.populateTokens(ctx, &ev)
+
 	if r.factory.publisher != nil {
 		payload, err := json.Marshal(ev)
 		if err != nil {
@@ -367,6 +375,54 @@ func (r *reporterRun) captureBody(ctx context.Context, entryID string, ev events
 	}
 
 	r.factory.bodyStore.Put(entryID, env)
+}
+
+// populateTokens reads the captured response (when present) and writes
+// the extracted token snapshot onto ev plus the four gateway.tokens.*
+// counters. Token capture is gated on the live-feed response buffer
+// being on the context — when bodies are disabled there is nothing to
+// parse and tokens stay zero.
+//
+// Counters are bumped only for non-zero buckets so a streaming response
+// that omits include_usage (Recognised=false) and a response that
+// reports e.g. cached=0 produce the same null observation on the
+// gateway.tokens.cached.total series. The status_code attribute mirrors
+// the requests/duration meter labelset so dashboards can join token
+// rate with traffic rate by the same dimensions.
+func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
+	buf, ok := livefeed.ResponseBufferFromContext(ctx)
+	if !ok || buf == nil {
+		return
+	}
+	raw := buf.Bytes()
+	if len(raw) == 0 {
+		return
+	}
+	snap := tokens.Extract(ev.Provider, ev.Endpoint, raw)
+	if !snap.Recognised {
+		return
+	}
+	ev.TokensIn = snap.Input
+	ev.TokensOut = snap.Output
+	ev.TokensCached = snap.Cached
+	ev.TokensCacheCreation = snap.CacheCreation
+
+	if r.factory.meters == nil {
+		return
+	}
+	attrs := withCompletionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration, ev.StatusCode)
+	if snap.Input > 0 && r.factory.meters.TokensInputTotal != nil {
+		r.factory.meters.TokensInputTotal.Add(ctx, int64(snap.Input), attrs)
+	}
+	if snap.Output > 0 && r.factory.meters.TokensOutputTotal != nil {
+		r.factory.meters.TokensOutputTotal.Add(ctx, int64(snap.Output), attrs)
+	}
+	if snap.Cached > 0 && r.factory.meters.TokensCachedTotal != nil {
+		r.factory.meters.TokensCachedTotal.Add(ctx, int64(snap.Cached), attrs)
+	}
+	if snap.CacheCreation > 0 && r.factory.meters.TokensCacheCreationTotal != nil {
+		r.factory.meters.TokensCacheCreationTotal.Add(ctx, int64(snap.CacheCreation), attrs)
+	}
 }
 
 // providerEndpointModelAttrs builds the (provider, endpoint, model)

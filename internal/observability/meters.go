@@ -14,17 +14,18 @@ const MeterName = "sluice-gateway"
 // they sort together in Prometheus and remain disjoint from any future
 // sibling services (a2a., mcp., ...).
 const (
-	MetricRequestsTotal        = "gateway.requests.total"
-	MetricTokensInputTotal     = "gateway.tokens.input.total"
-	MetricTokensOutputTotal    = "gateway.tokens.output.total"
-	MetricTokensCachedTotal    = "gateway.tokens.cached.total"
-	MetricEventsPublishedTotal = "gateway.events_published.total"
-	MetricEventsDroppedTotal   = "gateway.events_dropped.total"
-	MetricEventsStashedTotal   = "gateway.events_stashed.total"
-	MetricUnmappedFieldsTotal  = "gateway.unmapped_fields.total"
-	MetricConfigReloadTotal    = "gateway.config_reload.total"
-	MetricUpstreamErrorsTotal  = "gateway.upstream_errors.total"
-	MetricErrorResponsesTotal  = "gateway.error_responses.total"
+	MetricRequestsTotal            = "gateway.requests.total"
+	MetricTokensInputTotal         = "gateway.tokens.input.total"
+	MetricTokensOutputTotal        = "gateway.tokens.output.total"
+	MetricTokensCachedTotal        = "gateway.tokens.cached.total"
+	MetricTokensCacheCreationTotal = "gateway.tokens.cache_creation.total"
+	MetricEventsPublishedTotal     = "gateway.events_published.total"
+	MetricEventsDroppedTotal       = "gateway.events_dropped.total"
+	MetricEventsStashedTotal       = "gateway.events_stashed.total"
+	MetricUnmappedFieldsTotal      = "gateway.unmapped_fields.total"
+	MetricConfigReloadTotal        = "gateway.config_reload.total"
+	MetricUpstreamErrorsTotal      = "gateway.upstream_errors.total"
+	MetricErrorResponsesTotal      = "gateway.error_responses.total"
 
 	MetricRequestDuration        = "gateway.request.duration"
 	MetricRequestTimeToFirstByte = "gateway.request.time_to_first_byte"
@@ -81,9 +82,10 @@ var (
 type Meters struct {
 	RequestsTotal metric.Int64Counter
 
-	TokensInputTotal  metric.Int64Counter
-	TokensOutputTotal metric.Int64Counter
-	TokensCachedTotal metric.Int64Counter
+	TokensInputTotal         metric.Int64Counter
+	TokensOutputTotal        metric.Int64Counter
+	TokensCachedTotal        metric.Int64Counter
+	TokensCacheCreationTotal metric.Int64Counter
 
 	EventsPublishedTotal metric.Int64Counter
 	EventsDroppedTotal   metric.Int64Counter
@@ -165,7 +167,8 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricRequestsTotal, "Total requests completed.", "1", &m.RequestsTotal},
 		{MetricTokensInputTotal, "Sum of prompt tokens reported by upstream providers.", "1", &m.TokensInputTotal},
 		{MetricTokensOutputTotal, "Sum of completion tokens reported by upstream providers.", "1", &m.TokensOutputTotal},
-		{MetricTokensCachedTotal, "Sum of provider-reported cached input tokens.", "1", &m.TokensCachedTotal},
+		{MetricTokensCachedTotal, "Sum of provider-reported cached input tokens (cache reads, billed at the discounted rate).", "1", &m.TokensCachedTotal},
+		{MetricTokensCacheCreationTotal, "Sum of provider-reported cache-write tokens (Anthropic's chargeable cache-creation premium).", "1", &m.TokensCacheCreationTotal},
 		{MetricEventsPublishedTotal, "NATS bus publishes accepted.", "1", &m.EventsPublishedTotal},
 		{MetricEventsDroppedTotal, "NATS bus events dropped because the queue was full or the bus was down.", "1", &m.EventsDroppedTotal},
 		{MetricEventsStashedTotal, "Envelopes whose payload exceeded the inline threshold and was stashed in object storage.", "1", &m.EventsStashedTotal},

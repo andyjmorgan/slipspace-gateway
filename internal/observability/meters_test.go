@@ -41,6 +41,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 	meters.TokensInputTotal.Add(ctx, 42)
 	meters.TokensOutputTotal.Add(ctx, 21)
 	meters.TokensCachedTotal.Add(ctx, 7)
+	meters.TokensCacheCreationTotal.Add(ctx, 5)
 	meters.EventsPublishedTotal.Add(ctx, 1)
 	meters.EventsDroppedTotal.Add(ctx, 1)
 	meters.EventsStashedTotal.Add(ctx, 1)
@@ -75,6 +76,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 		observability.MetricTokensInputTotal,
 		observability.MetricTokensOutputTotal,
 		observability.MetricTokensCachedTotal,
+		observability.MetricTokensCacheCreationTotal,
 		observability.MetricEventsPublishedTotal,
 		observability.MetricEventsDroppedTotal,
 		observability.MetricEventsStashedTotal,
