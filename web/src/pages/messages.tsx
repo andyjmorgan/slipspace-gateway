@@ -396,7 +396,7 @@ function MessageModal({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-6xl max-h-[92vh] overflow-y-auto rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
+        className="relative w-[92vw] max-w-7xl h-[92vh] overflow-y-auto rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-start gap-2">
@@ -590,8 +590,8 @@ function BodySection({
 }) {
   const isEmpty = !text || text.length === 0
   return (
-    <div>
-      <div className="mb-1 flex items-center gap-2">
+    <div className="flex h-[40vh] flex-col">
+      <div className="mb-1 flex flex-none items-center gap-2">
         <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
           {label}
         </div>
@@ -606,7 +606,11 @@ function BodySection({
       {isEmpty ? (
         <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
       ) : (
-        <JsonViewer text={text ?? ""} maxHeightClassName="max-h-[60vh]" />
+        <JsonViewer
+          text={text ?? ""}
+          className="min-h-0 flex-1"
+          maxHeightClassName=""
+        />
       )}
     </div>
   )

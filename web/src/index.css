@@ -36,21 +36,6 @@
   --violet:    oklch(0.74 0.14 300);
   --violet-bg: oklch(0.74 0.14 300 / 0.14);
 
-  --p-openai:         oklch(0.78 0.13 158);
-  --p-openai-bg:      oklch(0.78 0.13 158 / 0.14);
-  --p-anthropic:      oklch(0.80 0.13 60);
-  --p-anthropic-bg:   oklch(0.80 0.13 60 / 0.14);
-  --p-gemini:         oklch(0.77 0.13 240);
-  --p-gemini-bg:      oklch(0.77 0.13 240 / 0.16);
-  --p-qwen-vllm:      oklch(0.76 0.13 300);
-  --p-qwen-vllm-bg:   oklch(0.76 0.13 300 / 0.15);
-  --p-qwen-ollama:    oklch(0.78 0.13 348);
-  --p-qwen-ollama-bg: oklch(0.78 0.13 348 / 0.15);
-  --p-gpt-oss:        oklch(0.78 0.12 195);
-  --p-gpt-oss-bg:     oklch(0.78 0.12 195 / 0.15);
-  --p-qwen36:         oklch(0.82 0.13 90);
-  --p-qwen36-bg:      oklch(0.82 0.13 90 / 0.15);
-
   --radius:     6px;
   --radius-lg: 10px;
 
@@ -96,21 +81,6 @@
   --violet:    oklch(0.50 0.18 300);
   --violet-bg: oklch(0.50 0.18 300 / 0.13);
 
-  --p-openai:         oklch(0.45 0.14 158);
-  --p-openai-bg:      oklch(0.55 0.14 158 / 0.16);
-  --p-anthropic:      oklch(0.48 0.14 55);
-  --p-anthropic-bg:   oklch(0.62 0.13 55 / 0.18);
-  --p-gemini:         oklch(0.50 0.15 240);
-  --p-gemini-bg:      oklch(0.55 0.16 240 / 0.16);
-  --p-qwen-vllm:      oklch(0.48 0.16 300);
-  --p-qwen-vllm-bg:   oklch(0.55 0.15 300 / 0.16);
-  --p-qwen-ollama:    oklch(0.50 0.16 348);
-  --p-qwen-ollama-bg: oklch(0.55 0.15 348 / 0.16);
-  --p-gpt-oss:        oklch(0.45 0.13 195);
-  --p-gpt-oss-bg:     oklch(0.55 0.13 195 / 0.18);
-  --p-qwen36:         oklch(0.55 0.14 90);
-  --p-qwen36-bg:      oklch(0.65 0.13 90 / 0.20);
-
   --shadow-sm:  0 1px 0 oklch(0 0 0 / 0.04);
   --shadow-md:  0 6px 24px -10px oklch(0 0 0 / 0.16), 0 1px 0 oklch(0 0 0 / 0.04);
   --shadow-pop: 0 24px 64px -16px oklch(0 0 0 / 0.18), 0 1px 0 oklch(0 0 0 / 0.06);
@@ -147,20 +117,6 @@
   --color-violet:    var(--violet);
   --color-violet-bg: var(--violet-bg);
 
-  --color-p-openai:         var(--p-openai);
-  --color-p-openai-bg:      var(--p-openai-bg);
-  --color-p-anthropic:      var(--p-anthropic);
-  --color-p-anthropic-bg:   var(--p-anthropic-bg);
-  --color-p-gemini:         var(--p-gemini);
-  --color-p-gemini-bg:      var(--p-gemini-bg);
-  --color-p-qwen-vllm:      var(--p-qwen-vllm);
-  --color-p-qwen-vllm-bg:   var(--p-qwen-vllm-bg);
-  --color-p-qwen-ollama:    var(--p-qwen-ollama);
-  --color-p-qwen-ollama-bg: var(--p-qwen-ollama-bg);
-  --color-p-gpt-oss:        var(--p-gpt-oss);
-  --color-p-gpt-oss-bg:     var(--p-gpt-oss-bg);
-  --color-p-qwen36:         var(--p-qwen36);
-  --color-p-qwen36-bg:      var(--p-qwen36-bg);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);

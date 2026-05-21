@@ -1,16 +1,8 @@
 import type { DashboardSeries } from "@/lib/dashboard"
 import { fmt } from "@/lib/fmt"
+import { providerColor } from "@/lib/provider-color"
 
 type Series = DashboardSeries
-
-const SERIES_COLORS = [
-  "var(--accent)",
-  "var(--p-anthropic)",
-  "var(--p-openai)",
-  "var(--p-gemini)",
-  "var(--p-qwen-vllm)",
-  "var(--p-qwen-ollama)",
-]
 
 // LineChart renders one or more time series. The SVG uses
 // preserveAspectRatio="none" so the data paths stretch to fill the
@@ -32,8 +24,12 @@ export function LineChart({
   color?: string
 }) {
   const arr = Array.isArray(series) ? series : [series]
-  const seriesColorAt = (si: number, s: Series) =>
-    (s as Series & { color?: string }).color || color || SERIES_COLORS[si % SERIES_COLORS.length]
+  // Single-series usage may pass `color`; per-series may carry its own.
+  // Multi-series with no explicit color falls back to the deterministic
+  // hue derived from the series name, so the same provider always lines
+  // up to the same color in the chart and the chip.
+  const seriesColorAt = (_si: number, s: Series) =>
+    (s as Series & { color?: string }).color || color || providerColor(s.name).fg
   const allValues = arr.flatMap((s) => s.points.map((p) => p.value))
   const lo = Math.min(0, ...allValues)
   const hi = Math.max(...allValues) * 1.1 || 1
