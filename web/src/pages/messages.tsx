@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { useNavigate } from "react-router"
 import { ChevronDown, ChevronUp, Pause, Play, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PanelCard } from "@/components/atoms/card"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
@@ -530,45 +531,55 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
   }
   const body = state.body
   return (
-    <div className="mt-3 flex flex-col gap-3">
-      <BodySection
-        label="Request body"
-        text={body.request}
-        totalBytes={body.request_total_bytes}
-        truncated={body.request_truncated}
-      />
-      {streaming && body.response_assembled !== undefined && (
+    <Tabs defaultValue="request" className="mt-3">
+      <TabsList variant="line">
+        <TabsTrigger value="request">Request</TabsTrigger>
+        <TabsTrigger value="response">Response</TabsTrigger>
+      </TabsList>
+      <TabsContent value="request" className="mt-2">
         <BodySection
-          label="Response (assembled)"
-          text={body.response_assembled}
-          totalBytes={body.response_total_bytes}
-          truncated={body.response_truncated}
-          headerExtras={
-            body.assembly_partial && (
-              <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
-                partial
-              </span>
-            )
-          }
+          label="Request body"
+          text={body.request}
+          totalBytes={body.request_total_bytes}
+          truncated={body.request_truncated}
         />
-      )}
-      {streaming && (
-        <BodySection
-          label="Response (raw SSE)"
-          text={body.response}
-          totalBytes={body.response_total_bytes}
-          truncated={body.response_truncated}
-        />
-      )}
-      {!streaming && (
-        <BodySection
-          label="Response body"
-          text={body.response}
-          totalBytes={body.response_total_bytes}
-          truncated={body.response_truncated}
-        />
-      )}
-    </div>
+      </TabsContent>
+      <TabsContent value="response" className="mt-2">
+        <div className="flex flex-col gap-3">
+          {streaming && body.response_assembled !== undefined && (
+            <BodySection
+              label="Response (assembled)"
+              text={body.response_assembled}
+              totalBytes={body.response_total_bytes}
+              truncated={body.response_truncated}
+              headerExtras={
+                body.assembly_partial && (
+                  <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
+                    partial
+                  </span>
+                )
+              }
+            />
+          )}
+          {streaming && (
+            <BodySection
+              label="Response (raw SSE)"
+              text={body.response}
+              totalBytes={body.response_total_bytes}
+              truncated={body.response_truncated}
+            />
+          )}
+          {!streaming && (
+            <BodySection
+              label="Response body"
+              text={body.response}
+              totalBytes={body.response_total_bytes}
+              truncated={body.response_truncated}
+            />
+          )}
+        </div>
+      </TabsContent>
+    </Tabs>
   )
 }
 
