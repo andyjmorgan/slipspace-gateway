@@ -46,6 +46,18 @@ type MessageEntry struct {
 	// upstream tore the connection before headers arrived.
 	UpstreamError string `json:"upstream_error,omitempty"`
 
+	// TokensIn / TokensOut / TokensCached / TokensCacheCreation mirror
+	// the extracted upstream usage block. Zero when the response
+	// carried no usage data (interrupted stream, include_usage off,
+	// upstream omitted the block, etc.).
+	TokensIn int `json:"tokens_in,omitempty"`
+
+	TokensOut int `json:"tokens_out,omitempty"`
+
+	TokensCached int `json:"tokens_cached,omitempty"`
+
+	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
+
 	// RulesMatched lists every rule that fired, in evaluation order.
 	RulesMatched []RuleHit `json:"rules_matched,omitempty"`
 }

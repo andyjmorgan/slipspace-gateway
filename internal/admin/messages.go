@@ -210,17 +210,21 @@ func writeSSEDrop(w http.ResponseWriter, delta uint64) error {
 // a single mapping point so future field additions touch one site.
 func toMessageEntry(e livefeed.Entry) adminc.MessageEntry {
 	out := adminc.MessageEntry{
-		EventID:       e.EventID,
-		At:            e.At,
-		CorrelationID: e.CorrelationID,
-		Provider:      e.Provider,
-		Endpoint:      e.Endpoint,
-		Model:         e.Model,
-		Configuration: e.Configuration,
-		StatusCode:    e.StatusCode,
-		DurationMs:    e.DurationMs,
-		Streaming:     e.Streaming,
-		UpstreamError: e.UpstreamError,
+		EventID:             e.EventID,
+		At:                  e.At,
+		CorrelationID:       e.CorrelationID,
+		Provider:            e.Provider,
+		Endpoint:            e.Endpoint,
+		Model:               e.Model,
+		Configuration:       e.Configuration,
+		StatusCode:          e.StatusCode,
+		DurationMs:          e.DurationMs,
+		Streaming:           e.Streaming,
+		UpstreamError:       e.UpstreamError,
+		TokensIn:            e.TokensIn,
+		TokensOut:           e.TokensOut,
+		TokensCached:        e.TokensCached,
+		TokensCacheCreation: e.TokensCacheCreation,
 	}
 	if len(e.RulesMatched) > 0 {
 		out.RulesMatched = make([]adminc.RuleHit, 0, len(e.RulesMatched))

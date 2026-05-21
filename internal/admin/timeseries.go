@@ -14,6 +14,7 @@ const (
 	SeriesRequestsPerSecond = "rps"
 	SeriesErrorRate         = "error_rate"
 	SeriesP95ByProvider     = "p95_by_provider"
+	SeriesTokensPerSecond   = "tokens_per_second" //nolint:gosec // series name (gateway.tokens.*), not a credential
 )
 
 // TimeseriesHandler serves chart data computed off the snapshotter's
@@ -71,9 +72,62 @@ func buildTimeseries(name string, samples []observability.Sample) []adminc.Dashb
 		return []adminc.DashboardSeries{errorRateSeries(samples)}
 	case SeriesP95ByProvider:
 		return p95ByProviderSeries(samples)
+	case SeriesTokensPerSecond:
+		return tokensPerSecondSeries(samples)
 	default:
 		return []adminc.DashboardSeries{}
 	}
+}
+
+// tokensPerSecondSeries returns two curves — input and output token
+// rate per second — over each snapshot interval. Cached + cache-write
+// stay off the chart for now to keep the legend uncluttered; the
+// dashboard KPI tiles surface them as standalone totals.
+//
+// Labels are set so the SPA can colour the two curves distinctly via
+// the same colorByLabel mechanism used by p95_by_provider.
+func tokensPerSecondSeries(samples []observability.Sample) []adminc.DashboardSeries {
+	if len(samples) < 2 {
+		return []adminc.DashboardSeries{}
+	}
+	in := adminc.DashboardSeries{
+		Name:   "Tokens in",
+		Unit:   "tok/s",
+		Labels: map[string]string{"kind": "input"},
+		Points: make([]adminc.DashboardPoint, 0, len(samples)),
+	}
+	out := adminc.DashboardSeries{
+		Name:   "Tokens out",
+		Unit:   "tok/s",
+		Labels: map[string]string{"kind": "output"},
+		Points: make([]adminc.DashboardPoint, 0, len(samples)),
+	}
+	for i := 1; i < len(samples); i++ {
+		prev, cur := samples[i-1], samples[i]
+		secs := cur.At.Sub(prev.At).Seconds()
+		if secs <= 0 {
+			continue
+		}
+		dIn := counterDeltaSum(prev, cur, observability.MetricTokensInputTotal)
+		dOut := counterDeltaSum(prev, cur, observability.MetricTokensOutputTotal)
+		in.Points = append(in.Points, adminc.DashboardPoint{Timestamp: cur.At, Value: float64(dIn) / secs})
+		out.Points = append(out.Points, adminc.DashboardPoint{Timestamp: cur.At, Value: float64(dOut) / secs})
+	}
+	return []adminc.DashboardSeries{in, out}
+}
+
+// counterDeltaSum is the per-interval analog of dashboard_query.go's
+// sumCounter — sums (cur - prev) across every label-set under one
+// counter metric. Kept in the timeseries package because it walks the
+// Sample pair shape the timeseries handler already operates on, rather
+// than the (Counters, Histograms) maps the summary handler indexes
+// directly.
+func counterDeltaSum(prev, cur observability.Sample, metric string) int64 {
+	var total int64
+	for key, v := range cur.Counters[metric] {
+		total += v - prev.Counters[metric][key]
+	}
+	return total
 }
 
 // rpsSeries returns one curve: requests per second across all labels,
