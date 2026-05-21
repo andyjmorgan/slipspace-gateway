@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,11 +12,19 @@ import (
 
 // Supported series names for /api/v1/dashboard/timeseries?series=...
 const (
-	SeriesRequestsPerSecond = "rps"
-	SeriesErrorRate         = "error_rate"
-	SeriesP95ByProvider     = "p95_by_provider"
-	SeriesTokensPerSecond   = "tokens_per_second" //nolint:gosec // series name (gateway.tokens.*), not a credential
+	SeriesRequestsPerSecond   = "rps"
+	SeriesErrorRate           = "error_rate"
+	SeriesP95ByProvider       = "p95_by_provider"
+	SeriesTokensPerSecond     = "tokens_per_second" //nolint:gosec // series name (gateway.tokens.*), not a credential
+	SeriesRPSByProviderTop5   = "rps_by_provider_top5"
+	SeriesErrorRateByProvTop5 = "error_rate_by_provider_top5"
 )
+
+// topNProviders is the cap for per-provider time-series panels. Five
+// is enough to show the busiest providers without overwhelming the
+// chart legend; smaller deployments with fewer providers naturally
+// show fewer lines.
+const topNProviders = 5
 
 // TimeseriesHandler serves chart data computed off the snapshotter's
 // ring of Samples. Each consecutive pair of samples produces one point;
@@ -74,6 +83,10 @@ func buildTimeseries(name string, samples []observability.Sample) []adminc.Dashb
 		return p95ByProviderSeries(samples)
 	case SeriesTokensPerSecond:
 		return tokensPerSecondSeries(samples)
+	case SeriesRPSByProviderTop5:
+		return rpsByProviderTopN(samples, topNProviders)
+	case SeriesErrorRateByProvTop5:
+		return errorRateByProviderTopN(samples, topNProviders)
 	default:
 		return []adminc.DashboardSeries{}
 	}
@@ -216,6 +229,157 @@ func p95ByProviderSeries(samples []observability.Sample) []adminc.DashboardSerie
 		out = append(out, series)
 	}
 	return out
+}
+
+// rpsByProviderTopN returns one curve per provider, ranked by total
+// requests across the window, capped at n entries. Tiny providers fall
+// off the chart so the legend stays readable on a busy gateway.
+func rpsByProviderTopN(samples []observability.Sample, n int) []adminc.DashboardSeries {
+	if len(samples) < 2 {
+		return []adminc.DashboardSeries{}
+	}
+	totals := totalsByProvider(samples)
+	providers := topProvidersByTotal(totals, n)
+	if len(providers) == 0 {
+		return []adminc.DashboardSeries{}
+	}
+	out := make([]adminc.DashboardSeries, 0, len(providers))
+	for _, provider := range providers {
+		series := adminc.DashboardSeries{
+			Name:   provider,
+			Unit:   "req/s",
+			Labels: map[string]string{"provider": provider},
+			Points: make([]adminc.DashboardPoint, 0, len(samples)),
+		}
+		for i := 1; i < len(samples); i++ {
+			prev, cur := samples[i-1], samples[i]
+			secs := cur.At.Sub(prev.At).Seconds()
+			if secs <= 0 {
+				continue
+			}
+			delta := providerRequestsDelta(prev, cur, provider)
+			series.Points = append(series.Points, adminc.DashboardPoint{
+				Timestamp: cur.At,
+				Value:     float64(delta) / secs,
+			})
+		}
+		out = append(out, series)
+	}
+	return out
+}
+
+// errorRateByProviderTopN returns one error-rate curve per provider,
+// ranked by total requests across the window, capped at n entries.
+// Aggregate error rate is usually dominated by one noisy provider; the
+// per-provider split exposes which one without forcing operators to
+// pivot through the by-provider table.
+func errorRateByProviderTopN(samples []observability.Sample, n int) []adminc.DashboardSeries {
+	if len(samples) < 2 {
+		return []adminc.DashboardSeries{}
+	}
+	totals := totalsByProvider(samples)
+	providers := topProvidersByTotal(totals, n)
+	if len(providers) == 0 {
+		return []adminc.DashboardSeries{}
+	}
+	out := make([]adminc.DashboardSeries, 0, len(providers))
+	for _, provider := range providers {
+		series := adminc.DashboardSeries{
+			Name:   provider,
+			Unit:   "%",
+			Labels: map[string]string{"provider": provider},
+			Points: make([]adminc.DashboardPoint, 0, len(samples)),
+		}
+		for i := 1; i < len(samples); i++ {
+			prev, cur := samples[i-1], samples[i]
+			total, errored := providerClassifiedDelta(prev, cur, provider)
+			var pct float64
+			if total > 0 {
+				pct = (float64(errored) / float64(total)) * 100
+			}
+			series.Points = append(series.Points, adminc.DashboardPoint{
+				Timestamp: cur.At,
+				Value:     pct,
+			})
+		}
+		out = append(out, series)
+	}
+	return out
+}
+
+// totalsByProvider returns the total request count per provider across
+// the window. Used to rank providers for the top-N panels.
+func totalsByProvider(samples []observability.Sample) map[string]int64 {
+	totals := map[string]int64{}
+	if len(samples) < 2 {
+		return totals
+	}
+	first, last := samples[0], samples[len(samples)-1]
+	for key, v := range last.Counters[observability.MetricRequestsTotal] {
+		provider := key.Get("provider")
+		if provider == "" {
+			continue
+		}
+		totals[provider] += v - first.Counters[observability.MetricRequestsTotal][key]
+	}
+	return totals
+}
+
+// topProvidersByTotal returns at most n provider names ordered by
+// descending total. Stable secondary sort on name keeps the output
+// deterministic when two providers tie.
+func topProvidersByTotal(totals map[string]int64, n int) []string {
+	type entry struct {
+		name  string
+		total int64
+	}
+	entries := make([]entry, 0, len(totals))
+	for k, v := range totals {
+		if v <= 0 {
+			continue
+		}
+		entries = append(entries, entry{name: k, total: v})
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].total != entries[j].total {
+			return entries[i].total > entries[j].total
+		}
+		return entries[i].name < entries[j].name
+	})
+	if len(entries) > n {
+		entries = entries[:n]
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.name)
+	}
+	return out
+}
+
+func providerRequestsDelta(prev, cur observability.Sample, provider string) int64 {
+	var delta int64
+	for key, v := range cur.Counters[observability.MetricRequestsTotal] {
+		if key.Get("provider") != provider {
+			continue
+		}
+		delta += v - prev.Counters[observability.MetricRequestsTotal][key]
+	}
+	return delta
+}
+
+func providerClassifiedDelta(prev, cur observability.Sample, provider string) (total, errored int64) {
+	for key, v := range cur.Counters[observability.MetricRequestsTotal] {
+		if key.Get("provider") != provider {
+			continue
+		}
+		delta := v - prev.Counters[observability.MetricRequestsTotal][key]
+		total += delta
+		status := key.Get("status_code")
+		if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
+			errored += delta
+		}
+	}
+	return
 }
 
 func totalRequestsDelta(prev, cur observability.Sample) int64 {
