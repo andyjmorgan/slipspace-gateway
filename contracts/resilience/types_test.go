@@ -14,7 +14,8 @@ name: lb-with-failover
 mode: load_balance_with_failover
 timeout_seconds: 30
 targets:
-  - provider: openai
+  - name: openai-primary
+    provider: openai
     order: 1
     weight: 7
     timeout_seconds: 20
@@ -28,7 +29,8 @@ targets:
       cooldown_seconds: 15
       half_open_success_threshold: 2
       minimum_throughput: 10
-  - provider: anthropic
+  - name: anthropic-fallback
+    provider: anthropic
     order: 2
     weight: 3
 circuit_breaker:

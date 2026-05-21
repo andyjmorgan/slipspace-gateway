@@ -50,8 +50,9 @@ resilience_policies:
     mode: failover
     timeout_seconds: 30
     targets:
-      - provider: openai
-        order: 0
+      - name: openai-primary
+        provider: openai
+        order: 1
 `
 
 // TestReturnStatusCode_E2E proves the full synthetic-response path

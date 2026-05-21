@@ -84,8 +84,9 @@ resilience_policies:
     mode: failover
     timeout_seconds: 30
     targets:
-      - provider: openai
-        order: 0
+      - name: openai-primary
+        provider: openai
+        order: 1
 `
 
 // samplePolicy is the single-file policy bundle: configurations + api_keys +
@@ -866,10 +867,14 @@ func TestLoad_EmptyProvidersFile(t *testing.T) {
 }
 
 // libraryConfigurations references entries from the top-level rules library
-// and resilience_policies library by name.
+// and resilience_policies library by name. upstream_credentials must
+// cover every provider referenced by the bound resilience policy's
+// targets; that cross-check is enforced at config-load time.
 const libraryConfigurations = `
 configurations:
   dev:
+    upstream_credentials:
+      anthropic: sk-anthropic-dev
     rule_names:
       - redact-emails
       - block-pii
@@ -904,7 +909,9 @@ resilience_policies:
     mode: failover
     timeout_seconds: 30
     targets:
-      - provider: anthropic
+      - name: anthropic-only
+        provider: anthropic
+        order: 1
 `
 
 func TestLoad_LibraryHappyPath(t *testing.T) {

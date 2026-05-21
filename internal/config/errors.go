@@ -77,6 +77,13 @@ var ErrDuplicateResilienceName = errors.New("config: resilience policy name defi
 // ID are compared.
 var ErrDuplicateResilienceID = errors.New("config: resilience policy id defined more than once")
 
+// ErrTargetProviderMissingCredential is returned when a resilience policy's
+// target references a provider that the referencing Configuration does not
+// have an upstream credential mapping for. Caught at config-load time so
+// the orchestrator never runs into "no credential for this target" at
+// request time.
+var ErrTargetProviderMissingCredential = errors.New("config: resilience target provider has no upstream credential in referencing configuration")
+
 // ErrInvalidEnv is returned when a SLUICE_* env var fails to parse as the
 // expected type or violates a numeric range invariant.
 var ErrInvalidEnv = errors.New("config: invalid env var value")
