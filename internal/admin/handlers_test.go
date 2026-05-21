@@ -56,7 +56,7 @@ func TestDashboardSummaryHandler_EmptySnapshotter(t *testing.T) {
 	// A handler built with a snapshotter that has no samples yet must
 	// still return a well-shaped, decodable DashboardSummary so the SPA
 	// renders without errors on first paint.
-	h := admin.DashboardSummaryHandler(nil, []string{"openai", "anthropic"}, nil, 24*time.Hour, 5*time.Minute, time.Now())
+	h := admin.DashboardSummaryHandler(nil, []string{"openai", "anthropic"}, nil, nil, 24*time.Hour, 5*time.Minute, time.Now())
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/summary", nil)
 	h.ServeHTTP(rec, req)

@@ -23,6 +23,9 @@ configurations:
       gemini: dev-mock
 
     rule_names:
+      - tag-openai-chat
+      - tag-anthropic-messages
+      - tag-large-prompt
       - route-claude-models-to-anthropic
       - route-gemini-models-to-gemini
       - redact-emails
@@ -71,6 +74,51 @@ api_keys:
     enabled: true
 
 rules:
+  - name: tag-openai-chat
+    condition:
+      type: group
+      logicalOperator: And
+      children:
+        - type: provider
+          operator: Equals
+          expectedProvider: openai
+        - type: endpoint
+          operator: Equals
+          expectedEndpoint: chat_completions
+    actions:
+      - type: addTag
+        tag: surface:openai-chat
+    behavior: continue
+
+  - name: tag-anthropic-messages
+    condition:
+      type: group
+      logicalOperator: And
+      children:
+        - type: provider
+          operator: Equals
+          expectedProvider: anthropic
+        - type: endpoint
+          operator: Equals
+          expectedEndpoint: messages
+    actions:
+      - type: addTag
+        tag: surface:anthropic-messages
+    behavior: continue
+
+  - name: tag-large-prompt
+    condition:
+      type: header
+      keyOperator: Equals
+      keyPattern: x-sluice-tag-large
+      valueOperator: Equals
+      valuePattern: "true"
+      caseInsensitive: true
+    actions:
+      - type: addTag
+        tag: audit:large-prompt
+    behavior: continue
+
   - name: redact-emails
     condition:
       type: provider

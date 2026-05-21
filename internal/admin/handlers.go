@@ -44,10 +44,10 @@ func VersionHandler() http.Handler {
 // When the snapshotter ring has fewer than two samples (process just
 // started), the handler returns a valid but zero-valued summary —
 // every field is shaped correctly so the SPA renders without errors.
-func DashboardSummaryHandler(snap *observability.Snapshotter, providers []string, ruleAttachments map[string][]string, dashboardWindow, fiveMinWindow time.Duration, gatewayStartedAt time.Time) http.Handler {
+func DashboardSummaryHandler(snap *observability.Snapshotter, providers []string, ruleAttachments, tagAttachments map[string][]string, dashboardWindow, fiveMinWindow time.Duration, gatewayStartedAt time.Time) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		window := parseWindow(r.URL.Query().Get("window"), dashboardWindow)
-		summary := computeSummary(snap, providers, ruleAttachments, window, fiveMinWindow)
+		summary := computeSummary(snap, providers, ruleAttachments, tagAttachments, window, fiveMinWindow)
 		summary.GatewayStartedAt = gatewayStartedAt
 		writeJSON(w, summary)
 	})
@@ -75,7 +75,7 @@ func parseWindow(raw string, fallback time.Duration) time.Duration {
 // computeSummary is the snapshotter-aware path that backs the
 // dashboard handler. Split out from the handler so tests can drive it
 // directly without spinning up an http.Server.
-func computeSummary(snap *observability.Snapshotter, providers []string, ruleAttachments map[string][]string, dashboardWindow, fiveMinWindow time.Duration) adminc.DashboardSummary {
+func computeSummary(snap *observability.Snapshotter, providers []string, ruleAttachments, tagAttachments map[string][]string, dashboardWindow, fiveMinWindow time.Duration) adminc.DashboardSummary {
 	if snap == nil {
 		return emptySummary(providers, dashboardWindow)
 	}
@@ -88,7 +88,7 @@ func computeSummary(snap *observability.Snapshotter, providers []string, ruleAtt
 		fiveMinStart = &s
 		fiveMinEnd = &e
 	}
-	return BuildDashboardSummary(start, end, realised, providers, ruleAttachments, fiveMinStart, fiveMinEnd)
+	return BuildDashboardSummary(start, end, realised, providers, ruleAttachments, tagAttachments, fiveMinStart, fiveMinEnd)
 }
 
 // emptySummary returns the zero-valued shape so the SPA always decodes

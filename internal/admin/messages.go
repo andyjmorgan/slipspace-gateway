@@ -215,6 +215,9 @@ func toMessageEntry(e livefeed.Entry) adminc.MessageEntry {
 		TokensCached:        e.TokensCached,
 		TokensCacheCreation: e.TokensCacheCreation,
 	}
+	if len(e.Tags) > 0 {
+		out.Tags = append(out.Tags, e.Tags...)
+	}
 	if len(e.RulesMatched) > 0 {
 		out.RulesMatched = make([]adminc.RuleHit, 0, len(e.RulesMatched))
 		for _, h := range e.RulesMatched {

@@ -32,4 +32,6 @@ type RequestEvent struct {
 	TokensCached int `json:"tokens_cached,omitempty"`
 
 	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
+
+	Tags []string `json:"tags,omitempty"`
 }

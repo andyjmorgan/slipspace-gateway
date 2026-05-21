@@ -19,6 +19,7 @@ import {
   type DashboardConfigurationRow,
   type DashboardModelRow,
   type DashboardRuleFiredRow,
+  type DashboardTagFiredRow,
   type DashboardSeries,
   type DashboardWindow,
 } from "@/lib/dashboard"
@@ -179,7 +180,10 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
         <ByConfigurationStrip rows={d.by_configuration ?? []} window={d.window} />
       </div>
 
-      <RulesFired rows={d.rules_fired ?? []} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+        <RulesFired rows={d.rules_fired ?? []} />
+        <TagsFired rows={d.tags_fired ?? []} />
+      </div>
 
       <ModelsCard rows={d.by_model ?? []} />
     </>
@@ -440,6 +444,57 @@ function RulesFired({ rows }: { rows: DashboardRuleFiredRow[] }) {
         ))}
       </div>
     </PanelCard>
+  )
+}
+
+// TagsFired mirrors the RulesFired panel — same layout, same accent
+// colour, same "N configs" attribution. Operators get a parallel
+// surface for tag-applied counts so the two concerns read at-a-glance
+// without forcing them to mentally translate between rule names and
+// tag names.
+function TagsFired({ rows }: { rows: DashboardTagFiredRow[] }) {
+  if (!rows?.length) {
+    return <EmptyCard title="Tags fired" sub="apply counts · 24h" message="No tagging rules have fired yet." />
+  }
+  const max = Math.max(...rows.map((r) => r.apply_count))
+  return (
+    <PanelCard>
+      <PanelHead title="Tags fired" sub="apply counts · 24h" />
+      <div className="px-4 py-3 flex flex-col gap-2.5">
+        {rows.map((r) => (
+          <div key={r.tag} className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
+            <TagChip name={r.tag} />
+            <div className="flex items-center gap-2">
+              <div className="w-28 h-2 rounded-full bg-[color:var(--bg-2)] overflow-hidden">
+                <div
+                  className="h-full rounded-full"
+                  style={{ width: `${(r.apply_count / max) * 100}%`, background: "var(--accent)" }}
+                />
+              </div>
+              <div className="mono tnum text-[12px] w-12 text-right">{fmt.compact(r.apply_count)}</div>
+            </div>
+            <div className="text-[11px] text-[color:var(--text-3)] truncate">
+              {(r.used_by_configurations?.length ?? 0) === 1
+                ? r.used_by_configurations![0]
+                : `${r.used_by_configurations?.length ?? 0} configs`}
+            </div>
+          </div>
+        ))}
+      </div>
+    </PanelCard>
+  )
+}
+
+// TagChip renders a tag as a small monospace chip. Same visual
+// language as ProviderChip but a dimmer accent so a long list of tags
+// reads as a chip cluster rather than a column of provider chips.
+// Used both in the dashboard's Tags-fired panel and the live messages
+// row.
+function TagChip({ name }: { name: string }) {
+  return (
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[10.5px] mono uppercase tracking-[0.04em] border border-[color:var(--border)] text-[color:var(--text-2)] bg-[color:var(--bg-2)]">
+      {name}
+    </span>
   )
 }
 

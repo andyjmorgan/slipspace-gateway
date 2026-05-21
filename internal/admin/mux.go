@@ -35,6 +35,12 @@ type MuxOptions struct {
 	// where each rule is wired.
 	RuleAttachments map[string][]string
 
+	// TagAttachments maps tag string → configurations whose rule
+	// chain attaches that tag via AddTagAction. Joined into the
+	// "Tags fired" rows so operators see which configurations
+	// produce each tag, mirroring the Rules-fired panel.
+	TagAttachments map[string][]string
+
 	// FiveMinWindow is the duration the provider-health card reads
 	// over. Defaults to 5m when zero.
 	FiveMinWindow time.Duration
@@ -117,7 +123,7 @@ func NewMux(opts MuxOptions) http.Handler {
 	)
 	apiMux.Handle("/api/v1/dashboard/summary",
 		InstrumentRoute(opts.Meters, "/api/v1/dashboard/summary",
-			DashboardSummaryHandler(opts.Snapshotter, opts.Providers, opts.RuleAttachments, opts.DashboardWindow, opts.FiveMinWindow, opts.GatewayStartedAt),
+			DashboardSummaryHandler(opts.Snapshotter, opts.Providers, opts.RuleAttachments, opts.TagAttachments, opts.DashboardWindow, opts.FiveMinWindow, opts.GatewayStartedAt),
 		),
 	)
 	apiMux.Handle("/api/v1/dashboard/timeseries",

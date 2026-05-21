@@ -57,6 +57,12 @@ type DashboardSummary struct {
 	// against the configurations that reference each rule.
 	RulesFired []DashboardRuleFiredRow `json:"rules_fired"`
 
+	// TagsFired counts AddTagAction applications per tag over Window,
+	// joined against the configurations whose rule chain attaches each
+	// tag. Mirrors RulesFired so the SPA can render a near-identical
+	// panel.
+	TagsFired []DashboardTagFiredRow `json:"tags_fired"`
+
 	// ProviderHealth is the per-provider health snapshot. Today only
 	// ErrorRate5m is computed from real metrics; the remaining fields
 	// are populated when the provider-health probe lands. The shape
@@ -157,6 +163,15 @@ type DashboardModelRow struct {
 type DashboardRuleFiredRow struct {
 	RuleName             string   `json:"rule_name"`
 	FireCount            int64    `json:"fire_count"`
+	UsedByConfigurations []string `json:"used_by_configurations"`
+}
+
+// DashboardTagFiredRow counts AddTagAction applications for one tag
+// across the window and lists the configurations whose rule chain
+// attaches the tag.
+type DashboardTagFiredRow struct {
+	Tag                  string   `json:"tag"`
+	ApplyCount           int64    `json:"apply_count"`
 	UsedByConfigurations []string `json:"used_by_configurations"`
 }
 

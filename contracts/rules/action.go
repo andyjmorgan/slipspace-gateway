@@ -269,6 +269,45 @@ func (a *LlmImpersonationAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a LlmImpersonationAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
+// AddTagAction attaches a tag to the request as it flows through the
+// engine. Tags are set-membership values (sorted, deduplicated by the
+// evaluator) — multiple addTag actions across the rule chain accumulate
+// onto the same request. The reporter surfaces them on
+// gateway.request, the live-feed Entry, and a side-channel
+// gateway.tags.applied.total counter.
+//
+// Downstream rules can match on accumulated tags via TagCondition,
+// which makes addTag both a side-effect and an input to subsequent
+// rules. Rule order in Configuration.RuleNames is the producer/
+// consumer ordering — put the tag-producing rule before the
+// tag-consuming rule.
+type AddTagAction struct {
+	// Type is the polymorphic discriminator; always "addTag".
+	Type string `yaml:"type" json:"type"`
+
+	// Tag is the tag string to attach. Trimmed and required —
+	// empty values are rejected at evaluate time so misconfigured
+	// rules do not silently no-op. Convention: free-form strings;
+	// operators often use a `prefix:value` form (e.g. "tier:gold",
+	// "audit:pii") to namespace.
+	Tag string `yaml:"tag" json:"tag"`
+
+	models.DynamicProperties
+}
+
+// ActionType returns the "addTag" discriminator.
+func (AddTagAction) ActionType() string { return "addTag" }
+
+func (AddTagAction) isAction() {}
+
+// UnmarshalJSON routes unknown fields through DynamicProperties.
+func (a *AddTagAction) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, a)
+}
+
+// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+func (a AddTagAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
 // UnknownAction is the catch-all fallback for any action discriminator the
 // registry does not recognise. Type carries the unknown discriminator value
 // and every other JSON field lands in DynamicProperties.Extra so the action
@@ -305,6 +344,7 @@ var actionRegistry = models.PolymorphicRegistry[Action]{
 		"appendQueryString": func() Action { return &AppendQueryStringAction{} },
 		"returnStatusCode":  func() Action { return &ReturnStatusCodeAction{} },
 		"llmImpersonation":  func() Action { return &LlmImpersonationAction{} },
+		"addTag":            func() Action { return &AddTagAction{} },
 	},
 	Fallback: func(disc string) Action { return &UnknownAction{Type: disc} },
 }

@@ -60,7 +60,7 @@ func TestBuildDashboardSummary_TotalsAndRates(t *testing.T) {
 	setCounter(end, observability.MetricRequestsTotal, openai500, 200)   // +200
 	setCounter(end, observability.MetricRequestsTotal, anthropic404, 50) // +50
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 
 	if sum.Totals.Requests != 3850 {
 		t.Errorf("Totals.Requests = %d, want 3850", sum.Totals.Requests)
@@ -93,7 +93,7 @@ func TestBuildDashboardSummary_LatencyQuantiles(t *testing.T) {
 	endCounts := []uint64{10, 40, 30, 15, 4, 1}
 	setHistogram(end, nil, 100, 100, bounds, endCounts)
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 
 	// Total=100. p50 → rank 50, falls in (0.1, 0.5] (cum 10..50). frac = (50-10)/40 = 1.0 → 0.5.
 	// p95 → rank 95, falls in (1, 2] (cum 80..95). frac = (95-80)/15 = 1.0 → 2.0.
@@ -124,7 +124,7 @@ func TestBuildDashboardSummary_ByProviderSortedDescending(t *testing.T) {
 	setHistogram(end, []attribute.KeyValue{attribute.String("provider", "openai")}, 1, 1, bounds, one)
 	setHistogram(end, []attribute.KeyValue{attribute.String("provider", "anthropic")}, 1, 1, bounds, one)
 
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 
 	if len(sum.ByProvider) != 2 {
 		t.Fatalf("len(ByProvider) = %d, want 2", len(sum.ByProvider))
@@ -153,7 +153,7 @@ func TestBuildDashboardSummary_RulesFiredJoinedToConfigurations(t *testing.T) {
 		"redact-emails": {"production", "passthrough"},
 		"route-qwen":    {"internal-dev"},
 	}
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, attachments, nil, nil)
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, attachments, nil, nil, nil)
 
 	if len(sum.RulesFired) != 2 {
 		t.Fatalf("len(RulesFired) = %d, want 2", len(sum.RulesFired))
@@ -187,7 +187,7 @@ func TestBuildDashboardSummary_ProviderHealthHonoursFiveMinWindow(t *testing.T) 
 	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "anthropic"), attribute.String("status_code", "500")}, 10)
 
 	sum := BuildDashboardSummary(start, end, time.Hour,
-		[]string{"openai", "anthropic", "gemini"}, nil,
+		[]string{"openai", "anthropic", "gemini"}, nil, nil,
 		&fiveStart, &fiveEnd,
 	)
 
@@ -229,7 +229,7 @@ func TestBuildDashboardSummary_ProviderHealthMissingFiveMinFallsBack(t *testing.
 	end := makeSample(t1)
 
 	sum := BuildDashboardSummary(start, end, time.Hour,
-		[]string{"openai", "anthropic"}, nil,
+		[]string{"openai", "anthropic"}, nil, nil,
 		nil, nil,
 	)
 	if len(sum.ProviderHealth) != 2 {

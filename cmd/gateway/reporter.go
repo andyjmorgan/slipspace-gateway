@@ -210,6 +210,13 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		}
 	}
 
+	// Tags are drained from the post-rule MutableState before the bus
+	// publish so the gateway.request payload carries them. Per-tag
+	// counter bumps happen here too — keeps the side-channel counter
+	// in lockstep with the event field. Empty rules-disabled paths
+	// (no MutableState on ctx) leave ev.Tags nil.
+	r.populateTags(ctx, &ev)
+
 	// Tokens are extracted from the captured response and bumped onto
 	// gateway.tokens.* — must run before the bus publish so the
 	// gateway.request payload carries TokensIn/Out/Cached/CacheCreation.
@@ -317,6 +324,10 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		})
 	}
 	id := uuid.NewString()
+	var tags []string
+	if len(ev.Tags) > 0 {
+		tags = append(tags, ev.Tags...)
+	}
 	r.factory.liveFeed.Append(livefeed.Entry{
 		EventID:             id,
 		At:                  time.Now().UTC(),
@@ -333,6 +344,7 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		TokensOut:           ev.TokensOut,
 		TokensCached:        ev.TokensCached,
 		TokensCacheCreation: ev.TokensCacheCreation,
+		Tags:                tags,
 		RulesMatched:        hits,
 	})
 	return id
@@ -373,6 +385,28 @@ func (r *reporterRun) captureBody(ctx context.Context, entryID string, ev events
 	}
 
 	r.factory.bodyStore.Put(entryID, env)
+}
+
+// populateTags pulls the post-rule MutableState off the request
+// context, copies its Tags onto ev, and increments
+// gateway.tags.applied.total once per tag. No state on context (rules
+// middleware bypassed for this request) is a no-op leaving ev.Tags
+// nil. The counter is labelled by tag name only — provider /
+// endpoint / configuration intentionally omitted so cardinality stays
+// bounded by the operator-defined tag library, not by the cross-
+// product with everything else.
+func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
+	state := rules.MutableStateFromContext(ctx)
+	if state == nil || len(state.Tags) == 0 {
+		return
+	}
+	ev.Tags = append(ev.Tags, state.Tags...)
+	if r.factory.meters == nil || r.factory.meters.TagsAppliedTotal == nil {
+		return
+	}
+	for _, tag := range state.Tags {
+		r.factory.meters.TagsAppliedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("tag", tag)))
+	}
 }
 
 // populateTokens reads the captured response (when present) and writes

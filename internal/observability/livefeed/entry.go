@@ -55,6 +55,11 @@ type Entry struct {
 	TokensCached        int
 	TokensCacheCreation int
 
+	// Tags is the set of rule-attached tags (AddTagAction) in
+	// first-attach order. Empty when no tagging rule fired for the
+	// request.
+	Tags []string
+
 	// RulesMatched lists every rule that fired during evaluation, in
 	// the order they ran. Empty when the rule engine matched nothing
 	// or when the configuration has no rules attached.

@@ -48,6 +48,8 @@ func applyAction(
 		return applyReturnStatusCode(*a)
 	case *contractsrules.LlmImpersonationAction:
 		return applyLlmImpersonation(*a)
+	case *contractsrules.AddTagAction:
+		return applyAddTag(*a, state)
 	case *contractsrules.UnknownAction:
 		return contractsrules.Outcome{}, nil
 	default:
@@ -237,6 +239,20 @@ func applyLlmImpersonation(a contractsrules.LlmImpersonationAction) (contractsru
 			BodyType:   contractsrules.StatusBodyText,
 		},
 	}, nil
+}
+
+// applyAddTag attaches a.Tag to state's tag set. Idempotent — adding
+// a tag that's already present is a no-op (set semantics). Empty
+// Tag returns errEmptyValue so a misconfigured rule fails loudly
+// at evaluate time rather than silently doing nothing — the contract
+// package's Validate also enforces this at load.
+func applyAddTag(a contractsrules.AddTagAction, state *MutableState) (contractsrules.Outcome, error) {
+	t := strings.TrimSpace(a.Tag)
+	if t == "" {
+		return contractsrules.Outcome{}, fmt.Errorf("rules: addTag: %w", errEmptyValue)
+	}
+	state.AddTag(t)
+	return contractsrules.Outcome{}, nil
 }
 
 // applyReturnStatusCode is TERMINATING. It returns an Outcome with

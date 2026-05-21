@@ -52,7 +52,7 @@ func TestComputeSummary_WithLiveSnapshotter(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 	_ = snap.Snapshot(ctx)
 
-	got := computeSummary(snap, []string{"openai"}, nil, time.Hour, 5*time.Minute)
+	got := computeSummary(snap, []string{"openai"}, nil, nil, time.Hour, 5*time.Minute)
 	if got.Totals.Requests != 55 {
 		t.Errorf("Totals.Requests = %d, want 55", got.Totals.Requests)
 	}
@@ -66,7 +66,7 @@ func TestComputeSummary_WithLiveSnapshotter(t *testing.T) {
 
 func TestComputeSummary_RingTooSmallReturnsEmpty(t *testing.T) {
 	snap, _ := newLiveSnapshotter(t)
-	got := computeSummary(snap, []string{"openai"}, nil, time.Hour, 5*time.Minute)
+	got := computeSummary(snap, []string{"openai"}, nil, nil, time.Hour, 5*time.Minute)
 	if got.Totals.Requests != 0 {
 		t.Errorf("Totals.Requests = %d, want 0 (no samples yet)", got.Totals.Requests)
 	}

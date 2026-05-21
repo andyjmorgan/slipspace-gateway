@@ -39,14 +39,27 @@ func TestRules_MatchPublishesEvent(t *testing.T) {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
 	}
 
-	env := h.ExpectEvent("gateway.rule.matched", 5*time.Second)
-
+	// openai.chat_completions fires two rules in dev policy:
+	// tag-openai-chat (addTag) and redact-emails (setHeader). Both
+	// produce gateway.rule.matched events, and the NATS publisher's
+	// defaultWorkers=2 makes adjacent envelopes arrive in
+	// nondeterministic order (project invariant #8). Drain both and
+	// search by rule_name rather than relying on receive order.
 	var match events.RuleMatched
-	if err := json.Unmarshal(env.InlinePayload, &match); err != nil {
-		t.Fatalf("decode rule.matched payload: %v", err)
+	found := false
+	for i := 0; i < 2; i++ {
+		env := h.ExpectEvent("gateway.rule.matched", 5*time.Second)
+		var m events.RuleMatched
+		if err := json.Unmarshal(env.InlinePayload, &m); err != nil {
+			t.Fatalf("decode rule.matched payload: %v", err)
+		}
+		if m.RuleName == "redact-emails" {
+			match = m
+			found = true
+		}
 	}
-	if match.RuleName != "redact-emails" {
-		t.Errorf("RuleName = %q, want redact-emails", match.RuleName)
+	if !found {
+		t.Fatalf("redact-emails rule.matched envelope not seen")
 	}
 	if match.Configuration != "dev" {
 		t.Errorf("Configuration = %q, want dev", match.Configuration)
@@ -63,26 +76,26 @@ func TestRules_MatchPublishesEvent(t *testing.T) {
 }
 
 // TestRules_NoMatchEmitsNoEvent fires a request that none of the
-// config-dev library rules match: anthropic provider (so the openai-only
-// `redact-emails` skips), and a model name that starts with neither
-// `claude-` nor `gemini-` (so the v1.0.2 `route-*-models-to-*` rules
-// skip). Verifies the engine is selective — no gateway.rule.matched
-// envelope arrives within a short window.
+// config-dev library rules match: gpt-oss provider (no provider/
+// endpoint tag rule covers it under the dev configuration), model
+// name that starts with neither `claude-` nor `gemini-` (so the
+// route-* rules skip), and no x-sluice-tag-large header. Verifies
+// the engine is selective — no gateway.rule.matched envelope arrives
+// within a short window.
 func TestRules_NoMatchEmitsNoEvent(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
 
 	h.StageMockResponse(harness.CannedResponse{
 		Method: http.MethodPost,
-		Path:   "/v1/messages",
-		Body:   `{"id":"msg_x","type":"message","role":"assistant","model":"anthropic-internal","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":0}}`,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"chatcmpl-x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`,
 	})
 
-	resp := h.PostJSON("/anthropic/v1/messages",
+	resp := h.PostJSON("/gpt-oss/v1/chat/completions",
 		map[string]any{
-			"model":      "anthropic-internal",
-			"max_tokens": 64,
-			"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+			"model":    "gpt-oss-internal",
+			"messages": []map[string]string{{"role": "user", "content": "hi"}},
 		},
 		nil,
 	)

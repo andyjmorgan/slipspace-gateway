@@ -68,4 +68,10 @@ type Request struct {
 	// writes are implicit and not separately billed, so this field
 	// stays zero for them.
 	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
+
+	// Tags is the set of tags rules attached to the request via
+	// AddTagAction. Order reflects first-attach order. Empty when no
+	// addTag rule fired. Set semantics — the rules engine
+	// deduplicates, so a tag appears at most once.
+	Tags []string `json:"tags,omitempty"`
 }

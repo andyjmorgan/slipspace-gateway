@@ -24,7 +24,7 @@ const healthyErrorRate5mCeiling = 0.05
 // counts subtract before quantile interpolation. Returns a fully-shaped
 // response — empty slices when the metric is absent (a process that
 // has never seen a request still returns a valid summary).
-func BuildDashboardSummary(start, end observability.Sample, realised time.Duration, providers []string, ruleAttachments map[string][]string, fiveMinStart, fiveMinEnd *observability.Sample) adminc.DashboardSummary {
+func BuildDashboardSummary(start, end observability.Sample, realised time.Duration, providers []string, ruleAttachments, tagAttachments map[string][]string, fiveMinStart, fiveMinEnd *observability.Sample) adminc.DashboardSummary {
 	const requestsMetric = observability.MetricRequestsTotal
 
 	requestDeltas := counterDelta(start, end, requestsMetric)
@@ -47,6 +47,7 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 	byConfiguration := computeByConfiguration(requestDeltas, start, end)
 	byModel := computeByModel(requestDeltas, tokensInDeltas, tokensOutDeltas)
 	rulesFired := computeRulesFired(start, end, ruleAttachments)
+	tagsFired := computeTagsFired(start, end, tagAttachments)
 	providerHealth := computeProviderHealth(providers, fiveMinStart, fiveMinEnd)
 
 	return adminc.DashboardSummary{
@@ -79,6 +80,7 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 		ByConfiguration: byConfiguration,
 		ByModel:         byModel,
 		RulesFired:      rulesFired,
+		TagsFired:       tagsFired,
 		ProviderHealth:  providerHealth,
 	}
 }
@@ -512,6 +514,36 @@ func computeRulesFired(start, end observability.Sample, ruleAttachments map[stri
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].FireCount > out[j].FireCount })
+	return out
+}
+
+// computeTagsFired groups gateway.tags.applied.total deltas by tag and
+// joins against the configuration → tags map so each row knows which
+// configurations attach the tag. Mirrors computeRulesFired so the SPA
+// can render a near-identical panel.
+func computeTagsFired(start, end observability.Sample, tagAttachments map[string][]string) []adminc.DashboardTagFiredRow {
+	deltas := counterDelta(start, end, observability.MetricTagsAppliedTotal)
+	perTag := map[string]int64{}
+	for key, v := range deltas {
+		name := key.Get("tag")
+		if name == "" {
+			continue
+		}
+		perTag[name] += v
+	}
+	out := make([]adminc.DashboardTagFiredRow, 0, len(perTag))
+	for name, count := range perTag {
+		attached := tagAttachments[name]
+		if attached == nil {
+			attached = []string{}
+		}
+		out = append(out, adminc.DashboardTagFiredRow{
+			Tag:                  name,
+			ApplyCount:           count,
+			UsedByConfigurations: attached,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ApplyCount > out[j].ApplyCount })
 	return out
 }
 
