@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router"
-import { ChevronDown, ChevronUp, Pause, Play, Trash2, X } from "lucide-react"
+import { ChevronDown, ChevronRight, ChevronUp, Pause, Play, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PanelCard } from "@/components/atoms/card"
@@ -554,12 +554,15 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
         <TabsTrigger value="response">Response</TabsTrigger>
       </TabsList>
       <TabsContent value="request" className="mt-2">
-        <BodySection
-          label="Request body"
-          text={body.request}
-          totalBytes={body.request_total_bytes}
-          truncated={body.request_truncated}
-        />
+        <div className="flex flex-col gap-3">
+          <BodySection
+            label="Request body"
+            text={body.request}
+            totalBytes={body.request_total_bytes}
+            truncated={body.request_truncated}
+          />
+          <HeadersSection label="Request headers" headers={body.request_headers} />
+        </div>
       </TabsContent>
       <TabsContent value="response" className="mt-2">
         <div className="flex flex-col gap-3">
@@ -594,9 +597,52 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
               truncated={body.response_truncated}
             />
           )}
+          <HeadersSection label="Response headers" headers={body.response_headers} />
         </div>
       </TabsContent>
     </Tabs>
+  )
+}
+
+function HeadersSection({
+  label,
+  headers,
+}: {
+  label: string
+  headers?: Record<string, string[]>
+}) {
+  const [open, setOpen] = useState(false)
+  const entries = useMemo(() => {
+    if (!headers) return []
+    return Object.entries(headers)
+      .map(([k, vs]) => [k, vs.join(", ")] as const)
+      .sort(([a], [b]) => a.localeCompare(b))
+  }, [headers])
+  if (entries.length === 0) return null
+  return (
+    <div className="flex flex-col">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)] hover:text-[color:var(--text-2)]"
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <span>{label}</span>
+        <span className="mono normal-case tracking-normal text-[10.5px] text-[color:var(--text-4)]">
+          {entries.length}
+        </span>
+      </button>
+      {open && (
+        <div className="mono mt-1 max-h-48 overflow-auto rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11px] text-[color:var(--text-2)]">
+          {entries.map(([k, v]) => (
+            <div key={k} className="flex gap-2 whitespace-pre-wrap break-all leading-[1.6]">
+              <span className="shrink-0 text-[color:var(--text-3)]">{k}:</span>
+              <span>{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

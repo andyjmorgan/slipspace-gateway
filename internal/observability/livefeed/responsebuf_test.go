@@ -141,3 +141,72 @@ func TestResponseBuffer_ContextStashFetch(t *testing.T) {
 		t.Error("ResponseBufferFromContext returned ok for ctx without buffer")
 	}
 }
+
+func TestWrapResponseWriter_SnapshotsHeadersOnWriteHeader(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	buf := NewResponseBuffer(64)
+	w := WrapResponseWriter(rec, buf)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Authorization", "Bearer leaked-token")
+	w.WriteHeader(200)
+
+	snap := buf.Headers()
+	if got, want := snap["Content-Type"], []string{"application/json"}; len(got) != 1 || got[0] != want[0] {
+		t.Errorf("Content-Type = %v, want %v", got, want)
+	}
+	if got := snap["Authorization"]; len(got) != 1 || got[0] != "[REDACTED]" {
+		t.Errorf("Authorization not redacted: %v", got)
+	}
+}
+
+func TestWrapResponseWriter_SnapshotsHeadersOnImplicitWriteHeader(t *testing.T) {
+	t.Parallel()
+	// stdlib's net/http triggers WriteHeader(200) implicitly on first
+	// Write when the caller skipped it. Our teeWriter has to catch the
+	// snapshot via Write too, otherwise non-streaming responses would
+	// land with no headers in the body store.
+	rec := httptest.NewRecorder()
+	buf := NewResponseBuffer(64)
+	w := WrapResponseWriter(rec, buf)
+	w.Header().Set("X-Sluice-Correlation-Id", "abc-123")
+	if _, err := w.Write([]byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	snap := buf.Headers()
+	if got := snap["X-Sluice-Correlation-Id"]; len(got) != 1 || got[0] != "abc-123" {
+		t.Errorf("correlation header missing from snapshot: %v", snap)
+	}
+}
+
+func TestResponseBuffer_HeadersNilWhenNoSnapshot(t *testing.T) {
+	t.Parallel()
+	buf := NewResponseBuffer(8)
+	if got := buf.Headers(); got != nil {
+		t.Errorf("Headers() = %v, want nil pre-snapshot", got)
+	}
+}
+
+func TestResponseBuffer_HeadersNilSafe(t *testing.T) {
+	t.Parallel()
+	var b *ResponseBuffer
+	if got := b.Headers(); got != nil {
+		t.Errorf("nil buffer Headers() = %v, want nil", got)
+	}
+	b.setHeaders(map[string][]string{"X": {"y"}})
+	if got := b.Headers(); got != nil {
+		t.Errorf("nil buffer setHeaders+Headers() = %v, want nil", got)
+	}
+}
+
+func TestResponseBuffer_HeadersReturnsCopy(t *testing.T) {
+	t.Parallel()
+	buf := NewResponseBuffer(8)
+	buf.setHeaders(map[string][]string{"Content-Type": {"application/json"}})
+	first := buf.Headers()
+	first["Content-Type"][0] = "tampered"
+	second := buf.Headers()
+	if second["Content-Type"][0] != "application/json" {
+		t.Errorf("Headers() returned aliased slice; second read = %v", second)
+	}
+}

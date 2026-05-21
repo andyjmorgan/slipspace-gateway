@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
 	"github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
@@ -74,6 +75,14 @@ type Captured struct {
 	// re-marshalling Body (rather than Raw) is safe but not equivalent —
 	// key ordering and whitespace differ.
 	Body any
+
+	// Headers is the inbound request header map, with credential-bearing
+	// values replaced by "[REDACTED]" via internal/headers.RedactSensitive.
+	// Surfaced to operators through the live-feed body envelope so the
+	// admin console can show what the client sent without leaking the
+	// secret. Stored as the plain string→[]string shape rather than
+	// http.Header to keep the body-store free of net/http types.
+	Headers map[string][]string
 }
 
 // KindFromContextFunc returns the RequestKind the routing middleware stashed
@@ -100,8 +109,10 @@ func Capture(r *http.Request, kind RequestKind) (Captured, error) {
 		return Captured{}, err
 	}
 
+	hdrs := headers.RedactSensitive(r.Header)
+
 	if kind == KindPassthrough {
-		return Captured{Kind: kind, Raw: raw, Body: nil}, nil
+		return Captured{Kind: kind, Raw: raw, Body: nil, Headers: hdrs}, nil
 	}
 
 	target, err := allocate(kind)
@@ -113,7 +124,7 @@ func Capture(r *http.Request, kind RequestKind) (Captured, error) {
 		return Captured{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 
-	return Captured{Kind: kind, Raw: raw, Body: target}, nil
+	return Captured{Kind: kind, Raw: raw, Body: target, Headers: hdrs}, nil
 }
 
 // HTTPHandler wraps next with the body-capture step.

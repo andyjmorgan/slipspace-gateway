@@ -15,15 +15,19 @@ export const JsonViewer = memo(function JsonViewer({
   text,
   className,
   maxHeightClassName = "max-h-72",
-  initialDepth = 2,
+  initialDepth = Number.MAX_SAFE_INTEGER,
 }: {
   text: string
   className?: string
   // Tailwind class controlling the scroll container height. Defaults
-  // match the existing BodySection panel.
+  // match the existing BodySection panel. When the consumer gives the
+  // viewer a definite height via `className` (e.g. `flex-1 min-h-0`),
+  // pass `maxHeightClassName=""` so the parent controls the size.
   maxHeightClassName?: string
   // Object/array depths below this collapse on first render. The root
-  // is depth 0; default keeps the top two levels expanded.
+  // is depth 0; default expands everything. The container handles
+  // overflow via `overflow-auto`, so a fully expanded tree just gets
+  // a scrollbar instead of pushing the modal taller.
   initialDepth?: number
 }) {
   const parsed = useMemo(() => tryParse(text), [text])

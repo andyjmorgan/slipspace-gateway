@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router"
-import { LogOut, Moon, Sun } from "lucide-react"
+import { LogOut, Menu, Moon, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
@@ -13,7 +13,7 @@ const TITLES: Record<string, { t: string; s: string }> = {
   "/settings": { t: "Settings", s: "gateway config & telemetry destinations" },
 }
 
-export function Topbar() {
+export function Topbar({ onMenuToggle }: { onMenuToggle: () => void }) {
   const loc = useLocation()
   const nav = useNavigate()
   const [theme, , toggle] = useTheme()
@@ -27,6 +27,16 @@ export function Topbar() {
       className="flex items-center gap-3 border-b border-[color:var(--border)] bg-[color:var(--bg-1)] px-4"
       style={{ height: "var(--header-h)" }}
     >
+      <Button
+        variant="ghost"
+        size="icon"
+        className="md:hidden"
+        onClick={onMenuToggle}
+        aria-label="Open navigation"
+        title="Open navigation"
+      >
+        <Menu />
+      </Button>
       <div className="min-w-0">
         <div className="text-[14px] font-semibold tracking-tight">{cur.t}</div>
         <div className="mono text-[11.5px] text-[color:var(--text-3)]">{cur.s}</div>

@@ -366,15 +366,23 @@ func (r *reporterRun) captureBody(ctx context.Context, entryID string, ev events
 	}
 	env := livefeed.BodyEnvelope{}
 
-	if captured, ok := bodycapture.FromContext(ctx); ok && len(captured.Raw) > 0 {
-		env.Request = captured.Raw
-		env.RequestTotalBytes = int64(len(captured.Raw))
+	if captured, ok := bodycapture.FromContext(ctx); ok {
+		if len(captured.Raw) > 0 {
+			env.Request = captured.Raw
+			env.RequestTotalBytes = int64(len(captured.Raw))
+		}
+		if len(captured.Headers) > 0 {
+			env.RequestHeaders = captured.Headers
+		}
 	}
 
 	if buf, ok := livefeed.ResponseBufferFromContext(ctx); ok && buf != nil {
 		env.Response = buf.Bytes()
 		env.ResponseTotalBytes = buf.Total()
 		env.ResponseTruncated = buf.Truncated()
+		if h := buf.Headers(); len(h) > 0 {
+			env.ResponseHeaders = h
+		}
 		if ev.Streaming && len(env.Response) > 0 {
 			res := accumulator.Accumulate(ev.Provider, ev.Endpoint, env.Response)
 			if res.Recognised {

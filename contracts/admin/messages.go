@@ -155,4 +155,15 @@ type MessageBodyDetail struct {
 	// reassembly. ResponseAssembled holds whatever was parseable up
 	// to that point.
 	AssemblyPartial bool `json:"assembly_partial,omitempty"`
+
+	// RequestHeaders is the inbound HTTP header snapshot with
+	// credential-bearing values redacted server-side. Wire shape is
+	// {name: [value, ...]} to preserve multi-value headers without
+	// pulling http.Header into the SPA's typing.
+	RequestHeaders map[string][]string `json:"request_headers,omitempty"`
+
+	// ResponseHeaders is the outbound HTTP header snapshot, taken just
+	// before the gateway wrote the response status, redacted with the
+	// same rules as RequestHeaders.
+	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
 }

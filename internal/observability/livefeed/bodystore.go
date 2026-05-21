@@ -58,12 +58,42 @@ type BodyEnvelope struct {
 	// reassembly. ResponseAssembled holds whatever was parseable up
 	// to that point.
 	AssemblyPartial bool
+
+	// RequestHeaders is the inbound HTTP header snapshot, with
+	// credential-bearing values replaced by "[REDACTED]" via
+	// internal/headers.RedactSensitive before it lands here. Nil when
+	// header capture wasn't wired (older requests in the LRU, tests
+	// that skip the middleware).
+	RequestHeaders map[string][]string
+
+	// ResponseHeaders is the outbound HTTP header snapshot taken just
+	// before the gateway wrote the response status to the wire, with
+	// the same redaction treatment. Nil when the upstream returned no
+	// headers (transport failure) or capture wasn't wired.
+	ResponseHeaders map[string][]string
 }
 
 // Bytes returns the total bytes this envelope contributes to the
 // store's byte budget. Used by the LRU to track its capacity.
 func (e *BodyEnvelope) Bytes() int {
-	return len(e.Request) + len(e.Response) + len(e.ResponseAssembled)
+	n := len(e.Request) + len(e.Response) + len(e.ResponseAssembled)
+	n += headerMapBytes(e.RequestHeaders)
+	n += headerMapBytes(e.ResponseHeaders)
+	return n
+}
+
+// headerMapBytes accounts a header snapshot toward the byte budget so
+// large captures (cookies, long opaque tokens) can't sneak past the
+// LRU cap.
+func headerMapBytes(h map[string][]string) int {
+	n := 0
+	for k, vs := range h {
+		n += len(k)
+		for _, v := range vs {
+			n += len(v)
+		}
+	}
+	return n
 }
 
 // BodyStore is a byte-bounded LRU of BodyEnvelopes keyed by EventID.

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -319,46 +320,11 @@ func writeBadGateway(w http.ResponseWriter) {
 	_, _ = w.Write([]byte(`{"error":{"type":"upstream_unavailable","message":"upstream provider unreachable"}}`))
 }
 
-// redactSensitive returns a shallow copy of h with values replaced by
-// "[REDACTED]" for any header name that looks credential-bearing.
-//
-// Match is substring-based on the lowercased name so it catches every
-// variant in one rule: Authorization, Proxy-Authorization, X-Api-Key,
-// x-api-key, Anthropic-Api-Key, X-Goog-Api-Key, Cookie, Set-Cookie,
-// X-Auth-Token, X-CSRF-Token, X-API-Secret, etc. — without enumerating
-// each. Over-redacting in logs is the safer error.
-//
-// Used only by the debug-level header trace logs in Forward; production
-// log output at info level is unaffected.
+// redactSensitive is a thin shim over internal/headers.RedactSensitive
+// kept so the existing call sites in this file (debug-level header
+// traces) read locally. The shared helper is the implementation; the
+// live-feed body envelope and any future operator-facing surfaces use
+// the same one.
 func redactSensitive(h http.Header) map[string][]string {
-	if len(h) == 0 {
-		return nil
-	}
-	out := make(map[string][]string, len(h))
-	for k, vs := range h {
-		if isSensitiveHeaderName(k) {
-			masked := make([]string, len(vs))
-			for i := range vs {
-				masked[i] = "[REDACTED]"
-			}
-			out[k] = masked
-			continue
-		}
-		cloned := make([]string, len(vs))
-		copy(cloned, vs)
-		out[k] = cloned
-	}
-	return out
-}
-
-// isSensitiveHeaderName reports whether a header name looks credential-
-// bearing under a permissive lowercase-substring match.
-func isSensitiveHeaderName(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.Contains(lower, "auth") ||
-		strings.Contains(lower, "api-key") ||
-		strings.Contains(lower, "apikey") ||
-		strings.Contains(lower, "token") ||
-		strings.Contains(lower, "cookie") ||
-		strings.Contains(lower, "secret")
+	return headers.RedactSensitive(h)
 }

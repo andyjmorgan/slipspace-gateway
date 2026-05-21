@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { NavLink } from "react-router"
+import { NavLink, useLocation } from "react-router"
 import {
   LayoutDashboard,
   Settings as SettingsIcon,
@@ -29,13 +29,41 @@ const NAV: NavItem[] = [
   { to: "/settings", label: "Settings", icon: SettingsIcon, section: "System" },
 ]
 
-export function Sidebar() {
+// Sidebar is the primary nav rail. On desktop (md+) it renders as a
+// static column always docked to the left. On mobile it renders as a
+// fixed overlay drawer that slides in when isOpen is true and dims the
+// rest of the screen via the backdrop in AppLayout. Tapping a nav link
+// closes the drawer so a touch user lands on the new route in the main
+// pane instead of stranded behind the rail.
+export function Sidebar({
+  isOpen,
+  onClose,
+}: {
+  isOpen: boolean
+  onClose: () => void
+}) {
   const version = useGatewayVersion()
+  const loc = useLocation()
   let lastSection: string | undefined
+
+  // Close the drawer whenever the route changes (mobile interaction).
+  useEffect(() => {
+    onClose()
+    // Only react to path changes, not callback identity churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loc.pathname])
+
   return (
     <aside
-      className="hidden md:flex flex-col bg-[color:var(--bg-1)] border-r border-[color:var(--border)]"
+      className={cn(
+        "flex flex-col bg-[color:var(--bg-1)] border-r border-[color:var(--border)]",
+        // Mobile: fixed overlay that slides in. Desktop: static column.
+        "fixed inset-y-0 left-0 z-40 transform transition-transform duration-200",
+        "md:static md:translate-x-0 md:transition-none",
+        isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+      )}
       style={{ width: "var(--sidebar-w)" }}
+      aria-hidden={!isOpen}
     >
       <div className="flex items-center gap-2.5 px-3.5 py-3 border-b border-[color:var(--border)]">
         <img

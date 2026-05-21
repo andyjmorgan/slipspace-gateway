@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"sync"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 )
 
 // ResponseBuffer is a per-request, bounded byte sink that captures the
@@ -23,6 +25,7 @@ type ResponseBuffer struct {
 	buf       []byte
 	total     int64
 	truncated bool
+	headers   map[string][]string
 }
 
 // NewResponseBuffer constructs a buffer with the given per-body byte
@@ -93,6 +96,38 @@ func (b *ResponseBuffer) Truncated() bool {
 	return b.truncated
 }
 
+// Headers returns the snapshot of the outbound response headers taken
+// at WriteHeader time, with credential-bearing values already redacted.
+// Returns nil when the response wrote no headers (transport failure).
+func (b *ResponseBuffer) Headers() map[string][]string {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.headers == nil {
+		return nil
+	}
+	out := make(map[string][]string, len(b.headers))
+	for k, vs := range b.headers {
+		cloned := make([]string, len(vs))
+		copy(cloned, vs)
+		out[k] = cloned
+	}
+	return out
+}
+
+// setHeaders records the snapshot taken inside teeWriter.WriteHeader.
+// The map is stored as-is — callers must hand over a deep copy.
+func (b *ResponseBuffer) setHeaders(h map[string][]string) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.headers = h
+}
+
 // teeWriter is an http.ResponseWriter wrapper that copies every Write
 // into a ResponseBuffer in addition to the underlying writer.
 //
@@ -102,15 +137,38 @@ func (b *ResponseBuffer) Truncated() bool {
 // down.
 type teeWriter struct {
 	http.ResponseWriter
-	buf *ResponseBuffer
+	buf          *ResponseBuffer
+	headersTaken bool
 }
 
 func (t *teeWriter) Write(p []byte) (int, error) {
+	t.snapshotHeadersOnce()
 	n, err := t.ResponseWriter.Write(p)
 	if n > 0 {
 		t.buf.Append(p[:n])
 	}
 	return n, err
+}
+
+// WriteHeader snapshots the outbound header map (with credentials
+// redacted) just before they get serialised on the wire, so the
+// live-feed body envelope can carry them. The proxy / ResponseWriter
+// will deduplicate the underlying call — WriteHeader is idempotent in
+// httputil.ReverseProxy's chain.
+func (t *teeWriter) WriteHeader(status int) {
+	t.snapshotHeadersOnce()
+	t.ResponseWriter.WriteHeader(status)
+}
+
+// snapshotHeadersOnce captures the header map exactly once per response.
+// We can't rely on WriteHeader being called explicitly (the stdlib's
+// implicit 200 happens via Write), so Write also calls this.
+func (t *teeWriter) snapshotHeadersOnce() {
+	if t.headersTaken {
+		return
+	}
+	t.headersTaken = true
+	t.buf.setHeaders(headers.RedactSensitive(t.Header()))
 }
 
 func (t *teeWriter) Flush() {
