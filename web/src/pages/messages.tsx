@@ -549,11 +549,16 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
     )
   }
   const body = state.body
+  // For streaming responses, the assembled JSON is the "Response" tab
+  // and the unprocessed SSE bytes live on a third tab so operators can
+  // eyeball both independently. For non-streaming, there's no raw
+  // distinction — Response is the only response tab.
   return (
     <Tabs defaultValue="request" className="mt-3 flex min-h-0 flex-1 flex-col">
       <TabsList variant="line" className="flex-none">
         <TabsTrigger value="request">Request</TabsTrigger>
         <TabsTrigger value="response">Response</TabsTrigger>
+        {streaming && <TabsTrigger value="raw">Raw stream</TabsTrigger>}
       </TabsList>
       <TabsContent value="request" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
         <BodySection
@@ -565,7 +570,7 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
         <HeadersSection label="Request headers" headers={body.request_headers} />
       </TabsContent>
       <TabsContent value="response" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
-        {streaming && body.response_assembled !== undefined && (
+        {streaming && body.response_assembled !== undefined ? (
           <BodySection
             label="Response (assembled)"
             text={body.response_assembled}
@@ -579,16 +584,7 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
               )
             }
           />
-        )}
-        {streaming && (
-          <BodySection
-            label="Response (raw SSE)"
-            text={body.response}
-            totalBytes={body.response_total_bytes}
-            truncated={body.response_truncated}
-          />
-        )}
-        {!streaming && (
+        ) : (
           <BodySection
             label="Response body"
             text={body.response}
@@ -598,6 +594,16 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
         )}
         <HeadersSection label="Response headers" headers={body.response_headers} />
       </TabsContent>
+      {streaming && (
+        <TabsContent value="raw" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
+          <BodySection
+            label="Raw SSE bytes"
+            text={body.response}
+            totalBytes={body.response_total_bytes}
+            truncated={body.response_truncated}
+          />
+        </TabsContent>
+      )}
     </Tabs>
   )
 }
