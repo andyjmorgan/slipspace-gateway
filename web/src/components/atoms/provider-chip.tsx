@@ -6,6 +6,8 @@ const PROVIDER_BG: Record<string, string> = {
   gemini: "var(--p-gemini-bg)",
   "qwen-vllm": "var(--p-qwen-vllm-bg)",
   "qwen-ollama": "var(--p-qwen-ollama-bg)",
+  "gpt-oss": "var(--p-gpt-oss-bg)",
+  qwen36: "var(--p-qwen36-bg)",
 }
 const PROVIDER_FG: Record<string, string> = {
   openai: "var(--p-openai)",
@@ -13,6 +15,8 @@ const PROVIDER_FG: Record<string, string> = {
   gemini: "var(--p-gemini)",
   "qwen-vllm": "var(--p-qwen-vllm)",
   "qwen-ollama": "var(--p-qwen-ollama)",
+  "gpt-oss": "var(--p-gpt-oss)",
+  qwen36: "var(--p-qwen36)",
 }
 
 export function ProviderChip({
