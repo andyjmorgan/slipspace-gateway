@@ -457,6 +457,29 @@ func (r *ResolvedConfig) validateLibraries() error {
 			}
 		}
 	}
+
+	// Cross-validate every useResiliencePolicy rule action against the
+	// resilience_policies library so unknown policy names are a
+	// startup error, not a silent runtime miss.
+	for i := range r.Rules {
+		rule := &r.Rules[i]
+		for ai, act := range rule.Actions {
+			use, ok := act.(*rulescontract.UseResiliencePolicyAction)
+			if !ok {
+				continue
+			}
+			name := strings.TrimSpace(use.PolicyName)
+			if name == "" {
+				// Empty PolicyName explicitly clears state.PolicyRef
+				// at runtime; nothing to validate against the library.
+				continue
+			}
+			if _, ok := policyNames[name]; !ok {
+				return fmt.Errorf("config: rules[%d] %q actions[%d] useResiliencePolicy %q: %w",
+					i, rule.Name, ai, name, ErrUnknownResilienceName)
+			}
+		}
+	}
 	return nil
 }
 
