@@ -19,8 +19,9 @@ This page is the operator's reference. It covers the full YAML schema, every mod
 9. [Circuit breaker](#circuit-breaker)
 10. [Observability](#observability)
 11. [Worked examples](#worked-examples)
-12. [Known limitations](#known-limitations)
-13. [Troubleshooting](#troubleshooting)
+12. [Forward-compat / legacy schema fields](#forward-compat--legacy-schema-fields)
+13. [Known limitations](#known-limitations)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -67,8 +68,8 @@ For each attempt the orchestrator wraps the response writer in a `BufferingRespo
 configurations:
   production:
     upstream_credentials:
-      openai: ${OPENAI_KEY}
-      anthropic: ${ANTHROPIC_KEY}
+      openai: sk-openai-mock
+      anthropic: sk-ant-mock
     rule_names:
       - openai-with-anthropic-fallback
 
@@ -99,6 +100,8 @@ resilience_policies:
           - type: changeModelName
             newModelName: claude-3-5-sonnet
 ```
+
+The literal credential values shown here are what the YAML loader sees; substitute via your secret manager before mount (see [`configuration-model.md`](configuration-model.md#why-no-var-substitution)).
 
 Every OpenAI-bound request now tries OpenAI first; on a 502/503/504 it falls over to Anthropic with a model rewrite. The client sees one response — either the OpenAI success or the Anthropic recovery.
 
@@ -434,8 +437,8 @@ Goal: OpenAI primary, Anthropic backup with a model rewrite.
 configurations:
   production:
     upstream_credentials:
-      openai: ${OPENAI_KEY}
-      anthropic: ${ANTHROPIC_KEY}
+      openai: sk-openai-mock
+      anthropic: sk-ant-mock
     rule_names:
       - openai-with-anthropic-fallback
 
@@ -546,6 +549,39 @@ resilience_policies:
 ```
 
 The per-(policy, target) CB applies to both targets independently. If `backend-a` trips, the pool shrinks to just `b` until cooldown elapses; if `b` is also blocked, every request gets a 503 with `outcome=all_open`. After 30s the breaker probes HalfOpen — the next 2 consecutive successes close it; any failure reopens.
+
+---
+
+## Forward-compat / legacy schema fields
+
+`contracts/resilience/types.go` carries a handful of fields the YAML loader will happily accept but the v1.2 orchestrator does not yet act on. They are parsed for forward compatibility — so YAML authored against a future control-plane build round-trips through this gateway without rejection — and to preserve the v1.0 schema shape that landed before per-target `Actions` did. Treat them as inert today; do not assume they take effect until a release note says otherwise.
+
+### `ResilienceConfig.TimeoutSeconds`
+
+Top-level policy-wide timeout, parsed from `timeout_seconds`. Was originally intended as a per-attempt wall-clock cap. The orchestrator does not currently honour it — per-attempt timeouts are governed by the global `Transport.ResponseHeaderTimeout` only. The field is preserved on the wire so a future per-target transport swap can read it without a schema migration.
+
+### `ResilienceTarget.TimeoutSeconds`
+
+Per-target override of the policy-wide `TimeoutSeconds`, parsed from `timeout_seconds` on the target. Same forward-compat story — parsed and validated, not enforced.
+
+### `ResilienceTarget.ModelRewrite`
+
+Legacy scalar form of "rewrite the body's model field when this target is selected", parsed from `model_rewrite`. Predates the polymorphic `Actions` block — operators authoring new policies should use `actions: [- type: changeModelName, newModelName: ...]` instead. The scalar remains on the contract so v1.0-era YAML keeps loading; when both `ModelRewrite` and a `changeModelName` action are present on the same target, `Actions` wins for the model field.
+
+### `RetryConfig` (`retry:` block)
+
+Parsed but inert in v1.2. Lives on `ResilienceConfig.Retry` and configures retry-with-backoff inside a single target rather than failover across targets. The v1.2 orchestrator's retry path is the failover walk — one attempt per target, no in-target retry. `RetryConfig` will activate once the resilience engine grows per-target retry budgets (post-v1.3).
+
+| Field | YAML | Default | Notes |
+|---|---|---|---|
+| `Enabled` | `enabled` | `false` | Master switch. The orchestrator currently treats this as always-false regardless of the YAML value. |
+| `MaxAttempts` | `max_attempts` | 0 | Total attempt budget including the initial call. Must be `> 0` when `Enabled` is true; validator enforces this even though the engine doesn't yet consume it. |
+| `BackoffType` | `backoff_type` | _(empty)_ | Inter-attempt delay curve. One of `constant`, `linear`, `exponential` (the `BackoffX` constants in `contracts/resilience/types.go`). |
+| `DelayMilliseconds` | `delay_ms` | 0 | Base delay between attempts. `BackoffType` scales subsequent delays. |
+| `MaxDelayMs` | `max_delay_ms` | 0 | Caps the per-attempt delay so exponential backoff cannot stretch beyond a bound. Zero means uncapped. |
+| `UseJitter` | `use_jitter` | `false` | Adds random jitter to each delay so synchronised clients don't retry in lockstep ("thundering herd"). |
+
+If you've authored YAML with any of the above set today, the gateway will load it, the validator will pass it, and the runtime will quietly ignore it. Don't rely on the behaviour they describe until the corresponding milestone ships.
 
 ---
 

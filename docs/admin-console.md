@@ -1,0 +1,443 @@
+# Admin Console
+
+Sluice's admin console is a read-only management surface bolted onto the gateway binary. It runs as a **second `http.Server` on its own port** (default `:8081`), separate from the data plane (`:8585`), so admin traffic and proxy traffic never share a listener — no shared connection pool, no shared middleware stack, no risk of a stuck admin handler back-pressuring the request path.
+
+The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `gateway.admin.enabled: true` *and* a password is configured. With either condition false, the listener never opens.
+
+This page is the operator's reference: enabling the console, configuring the password, every env var the live-feed honours, every route the API exposes, every SPA page that consumes them.
+
+---
+
+## Table of contents
+
+1. [Topology](#topology)
+2. [Enabling the console](#enabling-the-console)
+3. [Setting the password](#setting-the-password)
+4. [Bind address](#bind-address)
+5. [Environment variables](#environment-variables)
+6. [HTTP Basic auth](#http-basic-auth)
+7. [API routes](#api-routes)
+8. [Per-route admin metric labels](#per-route-admin-metric-labels)
+9. [SPA pages](#spa-pages)
+10. [Live messages ring](#live-messages-ring)
+11. [Body capture](#body-capture)
+12. [Graceful shutdown](#graceful-shutdown)
+13. [Operational notes](#operational-notes)
+14. [Cross-references](#cross-references)
+
+---
+
+## Topology
+
+The admin listener and the data plane share a process but nothing else. They are wired in `cmd/gateway/main.go` as two distinct `http.Server`s, started under their own goroutines, drained independently.
+
+```mermaid
+flowchart LR
+    subgraph gateway[gateway process]
+        DP[":8585<br/>data plane<br/>proxy + bodycapture<br/>+ rules + resilience<br/>+ forwarder"]
+        ADM[":8081<br/>admin listener<br/>SPA + /admin/api/v1/*"]
+        Snap[Snapshotter<br/>metric ring]
+        Ring[livefeed.Ring<br/>completed-request entries]
+        Body[livefeed.BodyStore<br/>byte-bounded LRU]
+        BRK[BreakerStore<br/>per-pod CB state]
+    end
+    Client[client SDK] --> DP
+    DP -- OnComplete --> Ring
+    DP -- OnComplete --> Body
+    DP -- Collect --> Snap
+    DP -- updates --> BRK
+    Operator[operator browser] --> ADM
+    ADM -- reads --> Snap
+    ADM -- reads --> Ring
+    ADM -- reads --> Body
+    ADM -- reads --> BRK
+```
+
+Both listeners share the observability provider (meters, snapshotter), the live-feed ring, the body store, and the breaker store — those are constructed once at startup and passed into both wirings. Nothing else crosses the boundary. The admin handler never calls into the proxy chain; the proxy chain never writes to admin state apart from the four side-channels above.
+
+Mount `/admin/` behind the same ingress as the data plane if you like — the SPA owns the `/admin/` URL prefix so the routing rule on the ingress side stays dumb (`Host: sluice.example.com; PathPrefix: /admin → :8081`). Or expose the admin port through a sidecar / `kubectl port-forward` for loopback-only access. Both work; the gateway doesn't care.
+
+---
+
+## Enabling the console
+
+The console is off by default. Two things must both be true for the listener to come up:
+
+1. `gateway.admin.enabled: true` in the merged YAML.
+2. A non-empty password resolved from either the env var or the yaml `password` field.
+
+When either is false `startAdmin` logs `"admin console disabled"` and returns without opening a port — the rest of the gateway boots normally.
+
+The minimum viable wiring:
+
+```yaml
+admin:
+  enabled: true
+  password: operator-secret
+```
+
+The literal value here is what the YAML loader sees; substitute via your secret manager before mount. In production you almost always leave the yaml `password` field blank and set `SLUICE_ADMIN_PASSWORD` instead (see [Setting the password](#setting-the-password)).
+
+`admin.Config.Validate` enforces the invariants:
+
+| Condition | Behaviour |
+|---|---|
+| `enabled: false` | Config passes regardless of bind/password — no listener starts. |
+| `enabled: true`, no password (yaml + env both empty) | Returns `ErrPasswordRequired`. Boot fails. |
+| `enabled: true`, password set, malformed `bind_addr` | Returns `ErrInvalidBindAddr`. Boot fails. |
+
+The fail-loud-at-boot rule exists so an operator who wanted the console on but mis-wired the password doesn't ship a silently disabled listener.
+
+---
+
+## Setting the password
+
+Two configuration paths feed `admin.Config.ResolvePassword()`:
+
+| Path | YAML key / env var | Used when |
+|---|---|---|
+| Environment variable | `SLUICE_ADMIN_PASSWORD` | Production. Mounted from a k8s `Secret` keyed as an env var. Wins when set. |
+| Literal yaml field | `admin.password` | Dev / local. Convenient for `docker-compose` flows; never used in production. |
+
+`ResolvePassword` consults the env var first; if it's set (non-empty after trim), that wins over the yaml field. If the env var is unset or empty, the yaml `password` field is used as-is. Both empty returns `""` — `Validate` then flags `ErrPasswordRequired`.
+
+```yaml
+# example: production wiring (env var dominates)
+admin:
+  enabled: true
+  bind_addr: "0.0.0.0:8081"
+  password: ""              # left blank; SLUICE_ADMIN_PASSWORD wins anyway
+```
+
+```yaml
+# example: local dev (yaml only — no env var set)
+admin:
+  enabled: true
+  password: dev-password
+```
+
+### Redaction in the export bundle
+
+The admin console exposes a redacted-config export at [`GET /admin/api/v1/config/export/files`](#api-routes) and [`/download`](#api-routes). The `admin.password` field is replaced by `***` before either endpoint emits a single byte — operators inspecting the bundle never see the literal value, and a snapshot accidentally committed to a ticket reveals nothing.
+
+`SLUICE_ADMIN_PASSWORD` is an env var, not a file artifact, so it is not in the export bundle at all. The MANIFEST.txt header lists gateway version, hostname, configDir, and timestamp — never credential material.
+
+---
+
+## Bind address
+
+`admin.bind_addr` controls the listener address. Empty falls back to `admin.DefaultBindAddr = "0.0.0.0:8081"`.
+
+| Setting | Effect |
+|---|---|
+| omitted / empty | Binds `0.0.0.0:8081`. Point a k8s `Service` or `NetworkPolicy` at the port for isolation. |
+| `127.0.0.1:8081` | Loopback only. Use when a sidecar (e.g. `kubectl port-forward`, oauth2-proxy) fronts the console. |
+| `:9090` | Binds all interfaces on a custom port. |
+| `192.0.2.10:8081` | Binds a specific interface. |
+
+The validator runs `net.SplitHostPort` + numeric-port check at load time, so `bind_addr: "garbage"` or `bind_addr: "host:notaport"` fails boot with `ErrInvalidBindAddr` rather than panicking at `net.Listen`.
+
+`bind_addr` must not collide with the data-plane `SLUICE_HTTP_BIND`. The OS will surface that as `EADDRINUSE` at `srv.ListenAndServe` time — the admin watcher logs it and the goroutine exits, but the gateway keeps serving traffic.
+
+---
+
+## Environment variables
+
+Every `SLUICE_ADMIN_*` env var feeding the console. Defaults live in `internal/config/env.go`; validators in the same file reject negative or malformed values at boot.
+
+### Core
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SLUICE_ADMIN_PASSWORD` | (unset) | Operator password for HTTP Basic auth. Wins over `admin.password` yaml field when both are populated. Required when `admin.enabled: true`. |
+| `SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS` | `300000` (5m) | How often the dashboard's metric snapshotter reads the in-process registry. 5m gives 288 sample points across a 24h window — matches the chart resolution the SPA renders at. E2E tests drop this to ~200ms so dashboards reflect traffic within test wall-clock. Must be positive. |
+
+### Live feed
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SLUICE_ADMIN_LIVE_FEED_CAPACITY` | `100` | Size of the in-process ring of completed-request entries that backs `/api/v1/messages/recent` and `/api/v1/messages/stream`. Set to `0` to disable the pane entirely — the ring is not constructed and the messages endpoints return 503. Negative values fail boot. |
+
+### Body capture
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SLUICE_ADMIN_LIVE_FEED_BODY_BYTES` | `209715200` (200 MiB) | Total byte budget of the body LRU that backs `/api/v1/messages/{event_id}/body`. The store evicts oldest-first on overflow. Set to `0` to disable body capture; the live-tail pane still renders metadata. Stored bytes are zstd-compressed, so a 200 MiB budget commonly holds several GiB of logical content. |
+| `SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES` | `8388608` (8 MiB) | Per-body capture cap. Bodies above this size are stored head-only with a `*_truncated: true` flag. Must be `> 0` when `_BODY_BYTES` is non-zero; the loader rejects the combination otherwise. |
+
+Body capture also requires the live feed itself to be enabled — without a ring there's no `event_id` to key bodies against. `ServerEnv.LiveFeedBodiesEnabled()` returns true iff both `_CAPACITY > 0` and `_BODY_BYTES > 0`.
+
+---
+
+## HTTP Basic auth
+
+`internal/admin/auth.go::BasicAuth` wraps every authenticated route. The expected username is hardcoded to `admin.Username = "admin"`; the password is whatever `admin.Config.ResolvePassword()` returned at startup. Both comparisons use `subtle.ConstantTimeCompare` to keep timing flat across the "wrong username" and "wrong password" branches.
+
+### Why no `WWW-Authenticate` header
+
+A bare 401 is returned — no `WWW-Authenticate: Basic …` challenge. This is deliberate.
+
+If the gateway emitted the challenge, browsers would intercept any 401 from `/admin/api/v1/*` and pop their **native** auth dialog over the SPA, then silently retry with whatever the user typed there. That bypass would let a stale `sessionStorage` password slip through whenever the user happened to type the right credential into the browser prompt — the SPA's login form would never see the value, and the user's actual cached credential would be quietly replaced. Suppressing the challenge keeps the credential UX entirely inside the SPA.
+
+`curl --basic` callers still work fine: RFC 7617 doesn't require the server to advertise `WWW-Authenticate` for basic auth to function, only for browser-driven challenge-response, which is exactly the flow being suppressed.
+
+### Login flow
+
+1. SPA's `apiFetch` issues a request to any `/admin/api/v1/*` path with the cached credential.
+2. On 401, the SPA's `useUnauthorizedRedirect` hook bounces the user to `/login`.
+3. The login form calls `validateSession()` (which hits `/api/v1/auth/me`) and stores the credential in `sessionStorage` on success.
+4. Subsequent SPA fetches reuse the cached credential via `apiFetch`'s `Authorization: Basic …` header.
+
+### What's authenticated vs. public
+
+| Path | Behind BasicAuth? |
+|---|---|
+| `/admin/` (SPA assets — HTML, JS, CSS, etc.) | no |
+| `/admin/api/v1/version` | no — login page renders the version pre-credential |
+| every other `/admin/api/v1/*` route | yes |
+
+The SPA assets are static and reveal nothing operational. The version endpoint exposes a string already visible in container image labels and startup logs — handing it to the login page is not a leak.
+
+---
+
+## API routes
+
+All routes are mounted under `Prefix = "/admin"`. Every route is wrapped in `InstrumentRoute` so `gateway.admin.requests.total` carries a stable `{route, status}` label set rather than picking the URL up at random cardinality.
+
+### Public (unauthenticated)
+
+| Method · Path | Response | Notes |
+|---|---|---|
+| `GET /admin/` | SPA `index.html` | ServeMux auto-redirects bare `/admin` → `/admin/`. |
+| `GET /admin/{static-asset}` | SPA bundle file | Hashed JS/CSS/font assets from the embedded `webdist`. |
+| `GET /admin/api/v1/version` | `{"version": "..."}` | The login page calls this before any credential is entered. |
+
+### Authentication probe
+
+| Method · Path | Response | Notes |
+|---|---|---|
+| `GET /admin/api/v1/auth/me` | `{"username":"admin"}` | Reaching this implies BasicAuth matched; the SPA polls it on load to validate cached credentials. |
+
+### Dashboard
+
+| Method · Path | Response shape | Notes |
+|---|---|---|
+| `GET /admin/api/v1/dashboard/summary?window=1h\|24h` | `DashboardSummary` (`contracts/admin/dashboard.go`) | Totals, rates, p50/p95/p99, by-provider, by-endpoint, by-configuration, by-model, rules-fired, tags-fired, provider-health. `window` defaults to `MuxOptions.DashboardWindow` (24h). Provider-health is read over a separate 5m window (`MuxOptions.FiveMinWindow`). |
+| `GET /admin/api/v1/dashboard/timeseries?series=...&window=...` | `DashboardTimeseries` (`contracts/admin/dashboard.go`) | One series per charted curve. Single-series queries (RPS, error rate) return one entry; multi-series queries (p95 by provider) return one entry per group key. |
+
+### Configuration inspector (read-only)
+
+| Method · Path | Response shape | Notes |
+|---|---|---|
+| `GET /admin/api/v1/config/configurations` | `[]ConfigurationSummary` | List of every configured `Configuration` with rule + API-key counts. |
+| `GET /admin/api/v1/config/configurations/{name}` | `ConfigurationDetail` | Full configuration including the resolved rule chain and the (redacted) upstream credential map. |
+| `GET /admin/api/v1/config/rules` | `[]RuleSummary` | Every rule defined in `rules.yaml`. |
+| `GET /admin/api/v1/config/rules/{name}` | `RuleDetail` | Full rule body — condition tree, action list, references. |
+| `GET /admin/api/v1/config/providers` | `[]ProviderSummary` | Every provider declared in `providers.yaml`. |
+| `GET /admin/api/v1/config/providers/{name}` | `ProviderDetail` | Provider detail including endpoint map with per-endpoint `auth_header`/`auth_format` overrides. |
+| `GET /admin/api/v1/config/routes` | `[]RouteRow` | Flattened path → (provider, endpoint, methods) table — the actual data the routing middleware reads on every request. |
+| `GET /admin/api/v1/config/api-keys/reveal?configuration=&name=` | `APIKeyReveal` | Returns the plaintext secret for a single API key keyed by the composite. Both query params required (400 if missing); 404 on no match; 503 on nil resolved config. List endpoints stay redacted by default; reveal is opt-in, per-row. |
+
+### Configuration export (Settings page)
+
+| Method · Path | Response shape | Notes |
+|---|---|---|
+| `GET /admin/api/v1/config/export/files` | `ConfigExportFilesResponse` | Per-file redacted YAML payloads — backs the Settings page's tabbed inspector. 503 when `ConfigDir` is empty (export disabled). |
+| `GET /admin/api/v1/config/export/download` | ZIP bundle | Streams a ZIP of every accepted YAML file under `SLUICE_CONFIG_DIR`, secrets redacted, with a `MANIFEST.txt` header carrying gateway version, hostname, configDir, generation timestamp. Filename is timestamped: `sluice-config-20260522T134712Z.zip`. Bumps `gateway.admin.config_exports.total{status="..."}`. |
+
+The redactor (`internal/admin/configexport/redact.go`) replaces every API-key secret, upstream credential, and `admin.password` scalar with `***` (the `RedactedPlaceholder` constant) before either endpoint emits a single byte.
+
+---
+
+## Per-route admin metric labels
+
+`gateway.admin.requests.total` carries a `{route, status}` label set. `route` is the literal string the `InstrumentRoute` call site passes — picked at mount time from [`internal/admin/mux.go::NewMux`](../internal/admin/mux.go) — not the inbound URL. The label vocabulary is therefore closed and operator-debuggable: dashboards group by `route` without worrying about cardinality from arbitrary SPA asset paths.
+
+| Route label | Backed by handler | Auth |
+|---|---|---|
+| `/api/v1/version` | `VersionHandler` | public |
+| `/api/v1/auth/me` | `AuthMeHandler` | yes |
+| `/api/v1/dashboard/summary` | `DashboardSummaryHandler` | yes |
+| `/api/v1/dashboard/timeseries` | `TimeseriesHandler` | yes |
+| `/api/v1/config/api-keys/reveal` | `APIKeysRevealHandler` | yes |
+| `/api/v1/config/configurations` | `ConfigurationsListHandler` | yes |
+| `/api/v1/config/configurations/{name}` | `ConfigurationDetailHandler` | yes |
+| `/api/v1/config/rules` | `RulesListHandler` | yes |
+| `/api/v1/config/rules/{name}` | `RuleDetailHandler` | yes |
+| `/api/v1/config/providers` | `ProvidersListHandler` | yes |
+| `/api/v1/config/providers/{name}` | `ProviderDetailHandler` | yes |
+| `/api/v1/config/routes` | `RoutesHandler` | yes |
+| `/api/v1/config/export/files` | `ConfigExportFilesHandler` | yes |
+| `/api/v1/config/export/download` | `ConfigExportDownloadHandler` | yes |
+| `/api/v1/messages/recent` | `MessagesRecentHandler` | yes |
+| `/api/v1/messages/stream` | `MessagesStreamHandler` | yes |
+| `/api/v1/messages/{event_id}/body` | `MessageBodyHandler` | yes |
+| `/api/v1/policies` | `PoliciesHandler` | yes |
+| `spa` | `SPAHandler` — static assets + SPA index fallback | public |
+
+The `spa` label covers every `/admin/` URL that doesn't match a `/api/v1/*` pattern — JS, CSS, font assets, and the index.html fallback for client-side routes like `/admin/dashboard` or `/admin/messages`. Keeping it as a single label is what keeps the cardinality bounded; if you need to distinguish asset traffic from index.html fallbacks, look at the SPA build's own asset-fingerprinting, not the gateway metric.
+
+`status` carries the response HTTP status code as a string. A 401 spike on `/api/v1/auth/me` is the canonical signal of an SPA tab whose cached credential has been revoked.
+
+### Live messages
+
+| Method · Path | Response shape | Notes |
+|---|---|---|
+| `GET /admin/api/v1/messages/recent?limit=N` | `MessagesRecentResponse` | Up-to-`limit` most recent entries, oldest first. `limit` clamps to `[1, ring capacity]`; defaults to capacity. 503 when the ring is disabled (`SLUICE_ADMIN_LIVE_FEED_CAPACITY=0`). |
+| `GET /admin/api/v1/messages/stream` | SSE | Server-Sent Events stream of appended entries. See [Live messages ring](#live-messages-ring) for frame shapes. 503 when the ring is disabled. |
+| `GET /admin/api/v1/messages/{event_id}/body` | `MessageBodyDetail` | Request + response bodies + per-provider reassembled stream for one event. 503 when body capture is disabled; 404 when the `event_id` has rolled out of the body LRU; 400 on empty `event_id`. |
+
+### Resilience policies
+
+| Method · Path | Response shape | Notes |
+|---|---|---|
+| `GET /admin/api/v1/policies` | `PoliciesResponse` | One row per configured resilience policy with per-target weight/order and per-(policy, target) circuit-breaker state from the in-process `BreakerStore`. Targets the breaker has never observed report `circuit_state: "unknown"`. See [`docs/resilience.md`](resilience.md) for the policy schema. |
+
+---
+
+## SPA pages
+
+The SPA's router (`web/src/App.tsx`) protects every page behind `<ProtectedRoute>` except `/login`. A 401 from any backing API call triggers `useUnauthorizedRedirect`, which bounces the user back to `/login`.
+
+| Page | Path | Backing endpoints | Purpose |
+|---|---|---|---|
+| Login | `/login` | `GET /api/v1/version`, `GET /api/v1/auth/me` | Credential capture. Stores the password in `sessionStorage` on success. |
+| Dashboard | `/dashboard` | `GET /api/v1/dashboard/summary`, `GET /api/v1/dashboard/timeseries` | Totals, p50/p95/p99, per-provider/endpoint/configuration/model tables, rules-fired, tags-fired, provider-health. Single-page summary + sparkline charts. |
+| Live messages | `/messages` | `GET /api/v1/messages/recent`, `GET /api/v1/messages/stream`, `GET /api/v1/messages/{event_id}/body` | Streaming list of completed requests with body modal. Up/down keyboard navigation through entries. Per-attempt expansion table when the entry is bound to a resilience policy. |
+| Configurations | `/configurations`, `/configurations/:name` | `GET /api/v1/config/configurations[/{name}]` | Read-only configuration inspector. Detail page shows the resolved rule chain, upstream-credential redaction, and the keyed API-keys table with per-row reveal. |
+| Rules | `/rules`, `/rules/:name` | `GET /api/v1/config/rules[/{name}]` | Read-only rule library. Detail page has a Visual + JSON tab for the condition tree and action list. |
+| Providers | `/providers`, `/providers/:name` | `GET /api/v1/config/providers[/{name}]` | Read-only provider inventory. Detail page shows the endpoint map with per-endpoint auth overrides. |
+| Routes | `/routes` | `GET /api/v1/config/routes` | Flattened path → (provider, endpoint, methods) table with a filter input. The single highest-value page during routing debugging. |
+| Policies | `/policies` | `GET /api/v1/policies` | One card per resilience policy with the per-target weight/order table and a live circuit-breaker state badge per (policy, target). See [`docs/resilience.md`](resilience.md). |
+| Settings | `/settings` | `GET /api/v1/config/export/files`, `GET /api/v1/config/export/download` | Tabbed inspector over the redacted YAML files plus a "Download ZIP" button. |
+
+---
+
+## Live messages ring
+
+`internal/observability/livefeed.Ring` is a bounded in-memory store of completed-request entries plus a fan-out broadcaster for SSE subscribers. Append is non-blocking — under load it takes the write lock briefly to insert and to copy the subscriber set, then sends to each subscriber off-lock with per-subscriber non-blocking sends. A slow consumer increments its own drop counter rather than back-pressuring the writer.
+
+```mermaid
+sequenceDiagram
+    participant Req as request path<br/>(OnComplete)
+    participant Ring as Ring
+    participant Sub1 as SSE subscriber<br/>(SPA tab A)
+    participant Sub2 as SSE subscriber<br/>(SPA tab B, slow)
+
+    Req->>Ring: Append(Entry)
+    Ring->>Ring: insert (evict oldest if full)
+    Ring-->>Sub1: deliver (chan send, non-blocking)
+    Ring-->>Sub2: deliver — buffer full
+    Ring->>Sub2: dropped++ (subscriber-local counter)
+    Note over Ring,Sub2: writer never blocks
+```
+
+### Entry fields
+
+Every `Entry` (`livefeed.Entry`) carries: `EventID` (UUID minted at append), `At` (UTC completion time), `CorrelationID`, `Provider` / `Endpoint` / `Model` (post-rule mutation), `Configuration`, `StatusCode`, `DurationMs`, `Streaming`, `UpstreamError`, `TokensIn` / `TokensOut` / `TokensCached` / `TokensCacheCreation`, `Tags` (rule-attached, in first-attach order), `RulesMatched` (per-rule action history), `PolicyRef` (resilience binding, empty for single-shot), `Attempts` (per-attempt orchestrator record, empty for single-shot). The wire DTO (`contracts/admin.MessageEntry`) is a 1:1 projection.
+
+### SSE stream details
+
+`MessagesStreamHandler` writes a `text/event-stream` response with three frame types:
+
+| Frame | Emitted when | Frame body |
+|---|---|---|
+| `event: message` | Every appended entry the subscriber receives | `data: {<JSON-encoded MessageEntry>}\n\n` |
+| `event: drop` | Subscriber's `Dropped()` counter advanced since last frame | `data: {"count": <delta>}\n\n` — the SPA renders "missed N entries" without polling a separate endpoint |
+| comment | Every 15 s | `: heartbeat\n\n` — keeps proxies (nginx, etc.) from idle-closing the connection |
+
+The response sets `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`. The first byte written is `retry: 1000\n\n` so `EventSource` reconnects after one second on disconnect.
+
+### Drop semantics
+
+Per-subscriber delivery channels default to a 32-slot buffer (configurable via `Subscribe(bufSize int)`). When `Append` finds a subscriber's buffer full, it drops the entry on the floor and bumps the subscriber's `dropped` counter — the writer never blocks, and other subscribers receive the entry normally.
+
+---
+
+## Body capture
+
+`internal/observability/livefeed.BodyStore` is a byte-bounded LRU of per-event `BodyEnvelope`s keyed by `EventID`. Eviction is oldest-first when a new `Put` would exceed the total byte budget (`SLUICE_ADMIN_LIVE_FEED_BODY_BYTES`).
+
+Each envelope holds:
+
+| Field | Content |
+|---|---|
+| `Request` | Inbound request body bytes, head-capped at `SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES`. |
+| `RequestTotalBytes` | Original size as the client sent it; equal to `len(Request)` when not truncated. |
+| `RequestTruncated` | `true` when the request exceeded the per-body cap. |
+| `Response` | Outbound response bytes — for streamed responses, the raw SSE event bytes pre-accumulator. |
+| `ResponseTotalBytes`, `ResponseTruncated` | Same semantics as request side. |
+| `ResponseAssembled` | JSON-encoded reconstruction of the response the provider would have returned non-streaming, built by the per-provider accumulator from the streamed chunks. Empty for non-streaming responses and for streams the accumulator could not parse. |
+| `AssemblyPartial` | `true` when the accumulator hit a malformed chunk or unknown delta type mid-stream and could not complete reassembly. `ResponseAssembled` then holds whatever was parseable up to that point. |
+| `RequestHeaders`, `ResponseHeaders` | HTTP header snapshots, with credential-bearing values replaced by `[REDACTED]` via `internal/headers.RedactSensitive` server-side before storage. |
+
+The byte-heavy fields are **zstd-compressed** before storage; the `Bytes()` accounting tracks compressed memory, so a 200 MiB budget commonly holds several GiB of logical content. Envelopes whose compressed size exceeds the entire budget are silently dropped — operators need a bigger budget. `Get` decompresses on the way out and bumps recency.
+
+### What's never captured
+
+- Body capture is **off** when `SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0`. The live-tail pane still renders metadata; `/messages/{event_id}/body` returns 503.
+- Bodies whose request never reached the bodycapture middleware (transport failure before headers, request cancelled mid-read) leave a zero-byte `Request` field.
+- Header capture is per-(policy, target) opt-in via the middleware wiring — older entries in the LRU may have `nil` header maps.
+
+### Redaction in transit
+
+`/admin/api/v1/messages/{event_id}/body` returns the raw stored UTF-8 string for each body. Operators inspecting binary payloads (rare on JSON-shaped providers) see UTF-8 replacement characters — not worth a separate base64 encoding for the live-tail use case.
+
+The redactor on headers runs **server-side at capture time**, not on read. A captured envelope cannot leak a credential even if the body store were later exfiltrated, because the credential never landed in the envelope to begin with.
+
+---
+
+## Graceful shutdown
+
+`startAdmin` registers a watcher goroutine that waits for the gateway's root context to cancel (SIGTERM/SIGINT), then calls `srv.Shutdown` on the admin server with a **detached context** bounded by the same drain budget as the data plane (`SLUICE_SHUTDOWN_DRAIN_SECONDS`, default 300 s).
+
+```mermaid
+sequenceDiagram
+    participant OS as SIGTERM
+    participant Root as root context
+    participant DP as data plane :8585
+    participant ADM as admin :8081
+
+    OS->>Root: cancel
+    par data plane drain
+        Root->>DP: shutdown(drain)
+        DP-->>DP: finish in-flight proxy requests
+    and admin drain
+        Root->>ADM: shutdown(drain, detached ctx)
+        ADM-->>ADM: finish in-flight admin requests
+    end
+```
+
+The detached shutdown context is deliberate: if the budget were derived from `ctx`, it would already be cancelled when shutdown began, and `Shutdown` would close in-flight connections immediately. The `//nolint:contextcheck` annotation on `shutdownAdminServer` documents this — shutdown ctx must outlive the request ctx.
+
+In-flight SSE streams to the messages pane exit cleanly: each subscriber goroutine selects on `r.Context().Done()` and closes its subscription on cancel.
+
+---
+
+## Operational notes
+
+### Why basic-auth alone
+
+The console is internal infrastructure. There's one operator credential, rotated out-of-band, scoped to a single environment. Multi-operator identity, RBAC, and OIDC/SAML SSO are all v1.3+ work — the v1.1 console assumes the operator holds the password, and that's the same operator who would hold the API-key reveal anyway.
+
+### No TLS termination at this layer
+
+The admin listener serves plain HTTP. TLS termination is an ingress / load-balancer concern: in production the admin port sits behind the same ingress (with the same certificates) as the data plane, behind a sidecar like oauth2-proxy, or behind `kubectl port-forward` for loopback-only access. Pushing TLS configuration into the gateway binary would duplicate the ingress's role and force operators to manage certificates in two places.
+
+The same logic applies to authentication beyond Basic — if you want SSO in front of the console, put oauth2-proxy in front of the listener and let it validate the OIDC token before the request reaches port 8081.
+
+### Cross-pod consistency
+
+Multi-pod deployments have independent admin listeners, each reading from its own snapshotter ring, ring of completed requests, body store, and breaker store. The dashboard you see depends on which pod the ingress routed your `GET /admin/api/v1/dashboard/summary` to. For an aggregated cluster view, scrape Prometheus instead — `gateway.requests.total` and friends roll up across pods naturally.
+
+The `PoliciesResponse.Pod` field carries `os.Hostname()` so an operator hitting `/policies` knows which pod's CB state they're looking at.
+
+---
+
+## Cross-references
+
+- [`docs/resilience.md`](resilience.md) — resilience policy schema, what `/admin/api/v1/policies` projects, and how per-target circuit-breaker state is computed.
+- [`docs/environment-variables.md`](environment-variables.md) — the canonical `SLUICE_*` env-var reference (incl. data-plane vars not covered here).
+- [`docs/observability.md`](observability.md) — OTel meters, Prometheus scrape, NATS reporting; the data-plane signals the admin dashboard reads.
+- [`docs/deployment.md`](deployment.md) — Helm chart shape, ingress wiring, secret mounting; how `admin.password` reaches the pod in production.
+- [`CLAUDE.md`](../CLAUDE.md) — project-level invariants, including the "no unbacked UI" rule the admin pages follow.
