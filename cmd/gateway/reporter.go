@@ -15,6 +15,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
+	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/tokens"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
@@ -224,6 +225,36 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 	// disabled (env.LiveFeedBodiesEnabled=false) tokens stay zero.
 	r.populateTokens(ctx, &ev)
 
+	// Multi-attempt orchestration suppresses the per-attempt terminal
+	// publish: the resilience orchestrator installs an AttemptBuffer on
+	// ctx, drives FireTerminal at the end of the run, and the closure
+	// we register here is what produces the single consolidated
+	// gateway.request event. Each per-attempt OnComplete overwrites
+	// the closure so the last attempt's bound ev (final status, final
+	// streaming flag, final tokens) is what publishes; the orchestrator
+	// supplies the end-to-end duration and the client-observable status
+	// at FireTerminal time.
+	if abuf := resiliencemw.AttemptBufferFromContext(ctx); abuf != nil {
+		abuf.SetTerminalPublish(func(overallDurationMs int64, finalStatus int) {
+			ev.DurationMs = overallDurationMs
+			ev.StatusCode = finalStatus
+			ev.PolicyRef = abuf.PolicyRef()
+			ev.Attempts = abuf.Drain()
+			r.publishTerminalEvent(ctx, ev, ttfbMs)
+		})
+		return
+	}
+
+	r.publishTerminalEvent(ctx, ev, ttfbMs)
+}
+
+// publishTerminalEvent is the terminal half of OnComplete: emit the
+// gateway.request envelope, fan out rule.matched envelopes, tee into
+// the live-feed ring, capture the body envelope, and write the
+// "request completed" log line. Single-shot OnComplete calls this
+// inline; multi-attempt orchestration calls it once from the
+// AttemptBuffer's terminalPublish closure.
+func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Request, ttfbMs int64) {
 	if r.factory.publisher != nil {
 		payload, err := json.Marshal(ev)
 		if err != nil {
@@ -254,6 +285,8 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		"streaming", ev.Streaming,
 		"ttfb_ms", ttfbMs,
 		"upstream_error", ev.UpstreamError,
+		"policy_ref", ev.PolicyRef,
+		"attempts", len(ev.Attempts),
 	)
 }
 
