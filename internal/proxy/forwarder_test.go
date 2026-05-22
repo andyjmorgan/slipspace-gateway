@@ -52,7 +52,7 @@ func TestForward_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/models", nil)
 	dest := newDestination(t, upstream.URL+"/v1/models")
 
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
@@ -99,7 +99,7 @@ func TestForward_SuccessLog(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
 	dest := newDestination(t, upstream.URL+"/v1/x")
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestForward_SuccessLog_StreamingFlag(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/stream", nil)
 	dest := newDestination(t, upstream.URL+"/v1/stream")
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 	if !strings.Contains(logs.String(), `"streaming":true`) {
@@ -155,7 +155,7 @@ func TestForward_NoSuccessLogOnDialFailure(t *testing.T) {
 	base, _ := url.Parse("http://127.0.0.1:1")
 	dest := Destination{BaseURL: base, UpstreamURL: upstreamURL}
 
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 	if strings.Contains(logs.String(), `"msg":"proxy: upstream completed"`) {
@@ -193,7 +193,7 @@ func TestForward_HeaderRewrite(t *testing.T) {
 		"X-Provider-Header": []string{"abc"},
 	}
 
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
@@ -266,7 +266,7 @@ func TestForward_GzippedUpstream_DecodedToClient(t *testing.T) {
 	req.Header.Set("Accept-Encoding", "br, gzip")
 
 	dest := newDestination(t, upstream.URL+"/v1/x")
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
@@ -311,7 +311,7 @@ func TestForward_Streaming(t *testing.T) {
 
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		dest := newDestination(t, upstream.URL+"/v1/stream")
-		if err := f.Forward(r.Context(), w, r, dest); err != nil {
+		if _, err := f.Forward(r.Context(), w, r, dest); err != nil {
 			t.Errorf("Forward: %v", err)
 		}
 	}))
@@ -390,7 +390,7 @@ func TestForward_Upstream5xxPassesThrough(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
 	dest := newDestination(t, upstream.URL+"/v1/x")
 
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
@@ -416,7 +416,7 @@ func TestForward_DialFailure(t *testing.T) {
 	base, _ := url.Parse("http://127.0.0.1:1")
 	dest := Destination{BaseURL: base, UpstreamURL: upstreamURL}
 
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
@@ -445,6 +445,46 @@ func TestForward_DialFailure(t *testing.T) {
 	}
 }
 
+func TestForward_DialFailure_BufferingWriter_RecordsTransportError(t *testing.T) {
+	// When the caller wraps the writer in a BufferingResponseWriter
+	// (the v1.2 orchestrator's pattern), ErrorHandler must record the
+	// transport error on the buffer and leave the response decision
+	// to the orchestrator — no 502 written to the client.
+	obs := newRecordingObserver()
+	f := New(Options{ObserverFactory: staticObserver(obs)})
+
+	rec := httptest.NewRecorder()
+	buf := NewBufferingResponseWriter(rec, []int{503})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
+
+	upstreamURL, _ := url.Parse("http://127.0.0.1:1/v1/x")
+	base, _ := url.Parse("http://127.0.0.1:1")
+	dest := Destination{BaseURL: base, UpstreamURL: upstreamURL}
+
+	result, err := f.Forward(context.Background(), buf, req, dest)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	if result.Err == nil {
+		t.Error("Result.Err nil; want transport error captured")
+	}
+	if result.Committed {
+		t.Error("Result.Committed true; want false on transport error")
+	}
+	if !buf.ShouldRetry() {
+		t.Error("buf.ShouldRetry false on transport error")
+	}
+	if buf.TransportError() == nil {
+		t.Error("buf.TransportError nil; should be set from ErrorHandler")
+	}
+	// No 502 should reach the underlying writer — the orchestrator
+	// will decide what to write after inspecting the buffer.
+	if rec.Code == http.StatusBadGateway {
+		t.Error("inner ResponseWriter received 502; orchestrator path must skip writeBadGateway")
+	}
+}
+
 func TestForward_PreservesUpstreamQuery(t *testing.T) {
 	var capturedQuery string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -459,7 +499,7 @@ func TestForward_PreservesUpstreamQuery(t *testing.T) {
 	u, _ := url.Parse(upstream.URL + "/v1/x?api-version=2024-01")
 	base := &url.URL{Scheme: u.Scheme, Host: u.Host}
 	dest := Destination{BaseURL: base, UpstreamURL: u}
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 	if capturedQuery != "api-version=2024-01" {
@@ -471,7 +511,7 @@ func TestForward_NilUpstreamURL(t *testing.T) {
 	f := New(Options{})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
-	err := f.Forward(context.Background(), rec, req, Destination{})
+	_, err := f.Forward(context.Background(), rec, req, Destination{})
 	if err == nil || !strings.Contains(err.Error(), "UpstreamURL") {
 		t.Fatalf("expected UpstreamURL error, got %v", err)
 	}
@@ -489,7 +529,7 @@ func TestForward_NoBaseURLFallsBackToUpstreamHost(t *testing.T) {
 	u, _ := url.Parse(upstream.URL + "/v1/x")
 	dest := Destination{UpstreamURL: u}
 
-	if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 	if rec.Code != http.StatusOK {
@@ -503,7 +543,7 @@ func TestForward_NilBaseAndUpstreamReturnsError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
 
 	upstreamURL := &url.URL{Path: "/no-host"}
-	err := f.Forward(context.Background(), rec, req, Destination{UpstreamURL: upstreamURL})
+	_, err := f.Forward(context.Background(), rec, req, Destination{UpstreamURL: upstreamURL})
 	if err == nil {
 		t.Fatalf("expected error when both BaseURL and UpstreamURL host are missing")
 	}
@@ -715,7 +755,7 @@ func TestForward_DebugLoggingEmitsHeaderTrace(t *testing.T) {
 	dest := newDestination(t, upstream.URL+"/v1/messages")
 	dest.OutgoingHeaders = http.Header{"X-Goog-Api-Key": []string{"AIza-upstream"}}
 
-	if err := f.Forward(ctx, rec, req, dest); err != nil {
+	if _, err := f.Forward(ctx, rec, req, dest); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
@@ -771,7 +811,7 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
 			dest := newDestination(t, upstream.URL+"/v1/x")
-			if err := f.Forward(context.Background(), rec, req, dest); err != nil {
+			if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
 				t.Errorf("Forward: %v", err)
 			}
 			if rec.Code != http.StatusOK {

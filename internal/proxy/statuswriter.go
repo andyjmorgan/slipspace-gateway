@@ -72,6 +72,15 @@ func (w *statusWriter) Status() int {
 	return w.status
 }
 
+// Committed reports whether WriteHeader (or implicit-WriteHeader via
+// Write) was observed. Independent of Status because the default 200
+// is returned even when nothing happened — Committed disambiguates
+// "upstream sent 200" from "upstream sent nothing, default fell
+// through."
+func (w *statusWriter) Committed() bool {
+	return w.wroteHeader
+}
+
 // Streaming reports whether the upstream response was flagged as SSE.
 func (w *statusWriter) Streaming() bool {
 	return w.streaming
