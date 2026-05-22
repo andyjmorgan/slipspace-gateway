@@ -65,6 +65,43 @@ type MessageEntry struct {
 
 	// RulesMatched lists every rule that fired, in evaluation order.
 	RulesMatched []RuleHit `json:"rules_matched,omitempty"`
+
+	// PolicyRef is the resilience policy this request was orchestrated
+	// against. Empty for single-shot requests.
+	PolicyRef string `json:"policy_ref,omitempty"`
+
+	// Attempts is the per-attempt orchestrator record. Populated only
+	// for requests bound to a resilience policy; the SPA renders an
+	// expansion table in the modal when len > 1.
+	Attempts []AttemptHit `json:"attempts,omitempty"`
+}
+
+// AttemptHit is the wire shape of one orchestrator attempt within a
+// resilience policy run. Mirrors livefeed.AttemptHit so the SPA can
+// render the per-attempt breakdown without dragging the full NATS
+// event shape into the admin contract.
+type AttemptHit struct {
+	// Target is the resilience target name attempted.
+	Target string `json:"target"`
+
+	// StartedAt is the orchestrator's wall-clock start time (UTC).
+	StartedAt time.Time `json:"started_at"`
+
+	// DurationMs is the per-attempt duration in milliseconds. Zero
+	// for cb_blocked attempts.
+	DurationMs int64 `json:"duration_ms,omitempty"`
+
+	// StatusCode is the upstream-reported status. Zero for transport
+	// errors and cb_blocked.
+	StatusCode int `json:"status_code,omitempty"`
+
+	// Error is the transport-level error string when the attempt
+	// failed before headers. Empty on success and cb_blocked.
+	Error string `json:"error,omitempty"`
+
+	// Outcome categorises the attempt: "success", "failure_status",
+	// "transport_error", or "cb_blocked".
+	Outcome string `json:"outcome"`
 }
 
 // RuleHit is the compact per-rule record carried inside MessageEntry.

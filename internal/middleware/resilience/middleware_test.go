@@ -35,7 +35,7 @@ func (c *stateCapture) handler() http.HandlerFunc {
 func TestHTTPHandler_NilLookup_IsPassthrough(t *testing.T) {
 	t.Parallel()
 	cap := &stateCapture{}
-	h := resiliencemw.HTTPHandler(nil, nil, cap.handler())
+	h := resiliencemw.HTTPHandler(nil, nil, nil, cap.handler())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "ha", Provider: "openai"})
@@ -52,7 +52,7 @@ func TestHTTPHandler_EmptyPolicyRef_IsPassthrough(t *testing.T) {
 		"ha": {Name: "ha"},
 	})
 	cap := &stateCapture{}
-	h := resiliencemw.HTTPHandler(lookup, nil, cap.handler())
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, cap.handler())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{Provider: "openai"})
@@ -69,7 +69,7 @@ func TestHTTPHandler_UnknownPolicyRef_IsPassthrough(t *testing.T) {
 		"ha": {Name: "ha"},
 	})
 	cap := &stateCapture{}
-	h := resiliencemw.HTTPHandler(lookup, nil, cap.handler())
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, cap.handler())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "never-declared", Provider: "openai"})
@@ -86,7 +86,7 @@ func TestHTTPHandler_ZeroTargets_IsPassthrough(t *testing.T) {
 		"ha": {Name: "ha"},
 	})
 	cap := &stateCapture{}
-	h := resiliencemw.HTTPHandler(lookup, nil, cap.handler())
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, cap.handler())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "ha", Provider: "openai"})
@@ -108,7 +108,7 @@ func TestHTTPHandler_TargetWithoutActions_IsPassthrough(t *testing.T) {
 		},
 	})
 	cap := &stateCapture{}
-	h := resiliencemw.HTTPHandler(lookup, nil, cap.handler())
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, cap.handler())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "ha", Provider: "openai"})
@@ -140,7 +140,7 @@ func TestHTTPHandler_AppliesTargetActions(t *testing.T) {
 		},
 	})
 	cap := &stateCapture{}
-	h := resiliencemw.HTTPHandler(lookup, nil, cap.handler())
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, cap.handler())
 
 	original := &rules.MutableState{PolicyRef: "ha", Provider: "openai"}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -178,7 +178,7 @@ func TestHTTPHandler_StateCloneIsIndependent(t *testing.T) {
 		},
 	})
 	cap := &stateCapture{}
-	h := resiliencemw.HTTPHandler(lookup, nil, cap.handler())
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, cap.handler())
 
 	original := &rules.MutableState{PolicyRef: "ha", OutgoingHeaders: http.Header{"X-From-Rules": []string{"prior"}}}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -216,7 +216,7 @@ func TestHTTPHandler_ApplyActionError_Returns500(t *testing.T) {
 		},
 	})
 	cap := &stateCapture{}
-	h := resiliencemw.HTTPHandler(lookup, nil, cap.handler())
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, cap.handler())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "ha"})
@@ -238,5 +238,5 @@ func TestHTTPHandler_PanicsOnNilNext(t *testing.T) {
 			t.Error("expected panic for nil next handler")
 		}
 	}()
-	_ = resiliencemw.HTTPHandler(stubLookup(nil), nil, nil)
+	_ = resiliencemw.HTTPHandler(stubLookup(nil), nil, nil, nil)
 }

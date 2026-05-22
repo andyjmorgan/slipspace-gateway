@@ -198,17 +198,8 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		ttfbMs = r.firstByte.Sub(r.started).Milliseconds()
 	}
 
-	if r.factory.meters != nil {
-		attrs := withCompletionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration, status)
-		if r.factory.meters.RequestsTotal != nil {
-			r.factory.meters.RequestsTotal.Add(ctx, 1, attrs)
-		}
-		if r.factory.meters.RequestDuration != nil {
-			r.factory.meters.RequestDuration.Record(ctx, float64(durationMs)/1000.0, attrs)
-		}
-		if r.factory.meters.ActiveRequests != nil {
-			r.factory.meters.ActiveRequests.Add(ctx, -1)
-		}
+	if r.factory.meters != nil && r.factory.meters.ActiveRequests != nil {
+		r.factory.meters.ActiveRequests.Add(ctx, -1)
 	}
 
 	// Tags are drained from the post-rule MutableState before the bus
@@ -240,12 +231,34 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 			ev.StatusCode = finalStatus
 			ev.PolicyRef = abuf.PolicyRef()
 			ev.Attempts = abuf.Drain()
+			r.recordPerRequestMetrics(ctx, ev)
 			r.publishTerminalEvent(ctx, ev, ttfbMs)
 		})
 		return
 	}
 
+	r.recordPerRequestMetrics(ctx, ev)
 	r.publishTerminalEvent(ctx, ev, ttfbMs)
+}
+
+// recordPerRequestMetrics fires the per-request counters and histograms
+// — gateway.requests.total and gateway.request.duration — exactly once
+// per inbound request. Single-shot OnComplete calls it inline before
+// publishTerminalEvent; multi-attempt orchestration calls it once from
+// the terminalPublish closure with the end-to-end duration and the
+// client-observable status set by the orchestrator. Pre-PR-10b these
+// meters fired per-attempt, double-counting multi-attempt requests.
+func (r *reporterRun) recordPerRequestMetrics(ctx context.Context, ev events.Request) {
+	if r.factory.meters == nil {
+		return
+	}
+	attrs := withCompletionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration, ev.StatusCode)
+	if r.factory.meters.RequestsTotal != nil {
+		r.factory.meters.RequestsTotal.Add(ctx, 1, attrs)
+	}
+	if r.factory.meters.RequestDuration != nil {
+		r.factory.meters.RequestDuration.Record(ctx, float64(ev.DurationMs)/1000.0, attrs)
+	}
 }
 
 // publishTerminalEvent is the terminal half of OnComplete: emit the
@@ -361,6 +374,20 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 	if len(ev.Tags) > 0 {
 		tags = append(tags, ev.Tags...)
 	}
+	var attempts []livefeed.AttemptHit
+	if len(ev.Attempts) > 0 {
+		attempts = make([]livefeed.AttemptHit, 0, len(ev.Attempts))
+		for _, a := range ev.Attempts {
+			attempts = append(attempts, livefeed.AttemptHit{
+				Target:     a.Target,
+				StartedAt:  a.StartedAt,
+				DurationMs: a.DurationMs,
+				StatusCode: a.StatusCode,
+				Error:      a.Error,
+				Outcome:    a.Outcome,
+			})
+		}
+	}
 	r.factory.liveFeed.Append(livefeed.Entry{
 		EventID:             id,
 		At:                  time.Now().UTC(),
@@ -379,6 +406,8 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		TokensCacheCreation: ev.TokensCacheCreation,
 		Tags:                tags,
 		RulesMatched:        hits,
+		PolicyRef:           ev.PolicyRef,
+		Attempts:            attempts,
 	})
 	return id
 }

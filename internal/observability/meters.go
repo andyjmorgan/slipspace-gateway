@@ -1,10 +1,30 @@
 package observability
 
 import (
+	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
+
+// circuitBreakerStateCallback closes over source + podID and returns
+// the gauge's collection callback. Extracted so it stays readable next
+// to the meter's option list and so the closure has a name in stack
+// traces if a panic ever escapes the gauge reader.
+func circuitBreakerStateCallback(source CircuitBreakerStateSource, podID string) metric.Int64Callback {
+	return func(_ context.Context, o metric.Int64Observer) error {
+		for _, snap := range source.Snapshot() {
+			o.Observe(snap.State, metric.WithAttributes(
+				attribute.String("policy", snap.Policy),
+				attribute.String("target", snap.Target),
+				attribute.String("pod", podID),
+				attribute.String("state_name", snap.StateName),
+			))
+		}
+		return nil
+	}
+}
 
 // MeterName is the OpenTelemetry meter scope under which all gateway
 // instruments are registered.
@@ -58,6 +78,26 @@ const (
 	// dashboards and SLOs for the data plane stay disjoint from
 	// operator UI traffic.
 	MetricAdminRequestsTotal = "gateway.admin.requests.total"
+
+	// Resilience-orchestrator instruments. Labels are bounded by the
+	// configured policy library (policy name + target name come from
+	// the operator-authored YAML, never client-derived). Outcome is
+	// a fixed-vocabulary string mirroring events.AttemptRecord.Outcome
+	// so the metric label set and the wire event field stay aligned.
+	MetricResilienceAttemptsTotal      = "gateway.resilience.attempts.total"
+	MetricResilienceAttemptDuration    = "gateway.resilience.attempt.duration"
+	MetricResilienceAttemptsPerRequest = "gateway.resilience.attempts_per_request"
+	MetricResilienceOutcomeTotal       = "gateway.resilience.outcome.total"
+
+	// Circuit-breaker instruments. The state gauge is an
+	// ObservableGauge — the registered callback iterates the
+	// BreakerStore at collection time and reports the current
+	// numeric state (0=closed, 1=open, 2=half_open) per
+	// (policy, target, pod). The transitions counter is bumped
+	// synchronously from the breaker's StateListener on every state
+	// change.
+	MetricCircuitBreakerState           = "gateway.cb.state"
+	MetricCircuitBreakerTransitionTotal = "gateway.cb.transitions.total"
 )
 
 // Histogram bucket boundaries. Defined as package-level vars (not consts)
@@ -75,6 +115,13 @@ var (
 	// long tail captures pathological policies (deep groups, regex
 	// catastrophes) without polluting the common case.
 	RuleEvaluationDurationBuckets = []float64{0, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1}
+
+	// AttemptsPerRequestBuckets is tuned for the realistic spread of
+	// resilience attempts: most requests are single-shot, multi-target
+	// failover rarely exceeds 3 attempts, and the long-tail anchor at
+	// 10 covers pathological policy fan-out without polluting the
+	// common case.
+	AttemptsPerRequestBuckets = []float64{1, 2, 3, 5, 10}
 )
 
 // Meters bundles every gateway instrument so that callers can pass a
@@ -144,6 +191,39 @@ type Meters struct {
 	// "/api/v1/auth/me", "static" for SPA assets, "fallback" for
 	// index.html SPA fallbacks), status (HTTP status code).
 	AdminRequestsTotal metric.Int64Counter
+
+	// ResilienceAttemptsTotal counts every per-attempt outcome the
+	// resilience orchestrator records. Labels: policy, target,
+	// outcome (success|failure_status|transport_error|cb_blocked).
+	// One increment per AttemptRecord; cb_blocked entries fire
+	// without any per-attempt forwarder call.
+	ResilienceAttemptsTotal metric.Int64Counter
+
+	// ResilienceAttemptDuration is the per-attempt wall-clock
+	// duration histogram. Labels: policy, target. cb_blocked attempts
+	// are not observed (no attempt actually ran). Buckets share the
+	// RequestDuration shape so dashboards can correlate.
+	ResilienceAttemptDuration metric.Float64Histogram
+
+	// ResilienceAttemptsPerRequest records the count of attempts each
+	// inbound request consumed. Labels: policy. Recorded once per
+	// request at FireTerminal time. Buckets are integer-tuned (1, 2,
+	// 3, 5, 10) since attempt counts in practice are very small.
+	ResilienceAttemptsPerRequest metric.Int64Histogram
+
+	// ResilienceOutcomeTotal counts the orchestrator-level outcome of
+	// each request: success when one attempt committed, all_failed
+	// when every attempt errored or returned a retryable status,
+	// all_open when every target was filtered by the circuit
+	// breaker before any attempt ran. Labels: policy, outcome.
+	ResilienceOutcomeTotal metric.Int64Counter
+
+	// CircuitBreakerTransitionTotal counts state transitions on each
+	// breaker. Labels: policy, target, to_state (closed|open|half_open).
+	// Bumped synchronously from the breaker's StateListener — one
+	// increment per closed→open, open→half_open, half_open→closed,
+	// half_open→open edge.
+	CircuitBreakerTransitionTotal metric.Int64Counter
 }
 
 // NewMeters constructs the Meters bundle from the supplied meter. The
@@ -191,6 +271,9 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricGoroutinePanicsTotal, "Panics caught by safego.Go in background goroutines (process kept alive).", "1", &m.GoroutinePanicsTotal},
 		{MetricRequestPanicsTotal, "Panics caught by the request-path recovery middleware (client got 500, process kept alive).", "1", &m.RequestPanicsTotal},
 		{MetricAdminRequestsTotal, "Requests handled by the management-console listener (separate from data-plane requests).", "1", &m.AdminRequestsTotal},
+		{MetricResilienceAttemptsTotal, "Per-attempt outcomes recorded by the resilience orchestrator (success, failure_status, transport_error, cb_blocked).", "1", &m.ResilienceAttemptsTotal},
+		{MetricResilienceOutcomeTotal, "Per-request orchestrator outcome (success, all_failed, all_open). Bumped once per inbound request that ran through a resilience policy.", "1", &m.ResilienceOutcomeTotal},
+		{MetricCircuitBreakerTransitionTotal, "Circuit-breaker state transitions per (policy, target, to_state). One increment per state change.", "1", &m.CircuitBreakerTransitionTotal},
 	} {
 		if err := int64Counter(c.name, c.desc, c.unit, c.dst); err != nil {
 			return nil, err
@@ -246,5 +329,76 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 	}
 	m.RuleEvaluationDuration = ruleEval
 
+	resAttemptDuration, err := meter.Float64Histogram(MetricResilienceAttemptDuration,
+		metric.WithDescription("Per-attempt wall-clock duration recorded by the resilience orchestrator."),
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(RequestDurationBuckets...),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricResilienceAttemptDuration, err)
+	}
+	m.ResilienceAttemptDuration = resAttemptDuration
+
+	resAttemptsPerRequest, err := meter.Int64Histogram(MetricResilienceAttemptsPerRequest,
+		metric.WithDescription("Distribution of attempts consumed per request running through a resilience policy."),
+		metric.WithUnit("1"),
+		metric.WithExplicitBucketBoundaries(AttemptsPerRequestBuckets...),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricResilienceAttemptsPerRequest, err)
+	}
+	m.ResilienceAttemptsPerRequest = resAttemptsPerRequest
+
 	return m, nil
+}
+
+// CircuitBreakerStateSource is the read interface NewCircuitBreakerStateGauge
+// needs to populate the cb.state ObservableGauge at collection time. The
+// resilience BreakerStore implements this; the indirection keeps this
+// package free of the resilience import cycle.
+type CircuitBreakerStateSource interface {
+	// Snapshot returns the current breaker state of every observed
+	// (policy, target). Implementations must be safe to call from
+	// the snapshot collection goroutine.
+	Snapshot() []CircuitBreakerSnapshot
+}
+
+// CircuitBreakerSnapshot mirrors resilience.BreakerSnapshot at the
+// observability boundary so the gauge callback can encode the state
+// label without importing the resilience package.
+type CircuitBreakerSnapshot struct {
+	// Policy is the resilience policy name.
+	Policy string
+	// Target is the resilience target name.
+	Target string
+	// State is the numeric breaker state (0=closed, 1=open,
+	// 2=half_open).
+	State int64
+	// StateName is the human-readable form for the to_state metric
+	// label / dashboard tooltip.
+	StateName string
+}
+
+// RegisterCircuitBreakerStateGauge wires the gateway.cb.state
+// ObservableGauge against source. Returns no error when source is nil
+// — the gauge is silently omitted, useful in test contexts that don't
+// run the orchestrator. The pod label uses the supplied hostname so
+// multi-pod deployments can disambiguate which replica's view a series
+// reflects.
+func RegisterCircuitBreakerStateGauge(meter metric.Meter, source CircuitBreakerStateSource, podID string) error {
+	if source == nil {
+		return nil
+	}
+	if meter == nil {
+		return fmt.Errorf("observability: meter is required for cb.state gauge")
+	}
+	_, err := meter.Int64ObservableGauge(MetricCircuitBreakerState,
+		metric.WithDescription("Per-(policy, target, pod) circuit-breaker state: 0=closed, 1=open, 2=half_open. Reported via callback so the gauge always reflects current state at scrape time."),
+		metric.WithUnit("1"),
+		metric.WithInt64Callback(circuitBreakerStateCallback(source, podID)),
+	)
+	if err != nil {
+		return fmt.Errorf("observability: register %s: %w", MetricCircuitBreakerState, err)
+	}
+	return nil
 }

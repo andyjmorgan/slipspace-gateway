@@ -21,6 +21,15 @@ export type RuleHit = {
   error_message?: string
 }
 
+export type AttemptHit = {
+  target: string
+  started_at: string
+  duration_ms?: number
+  status_code?: number
+  error?: string
+  outcome: string
+}
+
 export type MessageEntry = {
   event_id: string
   at: string
@@ -39,6 +48,8 @@ export type MessageEntry = {
   tokens_cache_creation?: number
   tags?: string[]
   rules_matched?: RuleHit[]
+  policy_ref?: string
+  attempts?: AttemptHit[]
 }
 
 export type MessagesRecentResponse = {

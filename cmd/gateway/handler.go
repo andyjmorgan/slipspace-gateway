@@ -100,7 +100,7 @@ func buildDataPlaneHandler(
 
 	var h http.Handler = final
 	h = rules.BodyRemarshalHandler(meters, h)
-	h = resiliencemw.HTTPHandler(policyLookup, breakers, h)
+	h = resiliencemw.HTTPHandler(policyLookup, breakers, meters, h)
 	h = rules.HTTPHandler(evaluator, ruleMatchFromContext, observerFactory, h)
 	h = bodycapture.HTTPHandler(kindFrom, h)
 	h = auth.HTTPHandler(resolver, routeFromContext, h)

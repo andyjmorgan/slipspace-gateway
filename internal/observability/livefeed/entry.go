@@ -64,6 +64,45 @@ type Entry struct {
 	// the order they ran. Empty when the rule engine matched nothing
 	// or when the configuration has no rules attached.
 	RulesMatched []RuleHit
+
+	// PolicyRef is the resilience policy the request was orchestrated
+	// against, mirroring contracts/events.Request.PolicyRef. Empty for
+	// single-shot requests.
+	PolicyRef string
+
+	// Attempts is the per-attempt orchestrator record, in attempt
+	// order. Always populated for requests bound to a policy; the
+	// terminal entry is the attempt that committed (or the last one
+	// before exhaustion). Empty for single-shot.
+	Attempts []AttemptHit
+}
+
+// AttemptHit is the live-feed projection of one resilience attempt —
+// mirrors a subset of events.AttemptRecord so the SPA modal can render
+// the per-attempt breakdown without round-tripping the full NATS event.
+type AttemptHit struct {
+	// Target is the resilience target name attempted.
+	Target string
+
+	// StartedAt is the orchestrator's wall-clock start time for this
+	// attempt.
+	StartedAt time.Time
+
+	// DurationMs is the orchestrator-measured attempt duration. Zero
+	// for cb_blocked attempts where nothing ran.
+	DurationMs int64
+
+	// StatusCode is the upstream-reported status, when received. Zero
+	// for transport errors and cb_blocked.
+	StatusCode int
+
+	// Error is the transport-level error string, empty on success and
+	// cb_blocked.
+	Error string
+
+	// Outcome categorises the attempt: "success", "failure_status",
+	// "transport_error", or "cb_blocked".
+	Outcome string
 }
 
 // RuleHit is the compact per-rule record the live-feed surfaces to the

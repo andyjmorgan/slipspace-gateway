@@ -78,7 +78,7 @@ func TestFailover_PrimaryReturns503_BackupServes200(t *testing.T) {
 		{status: http.StatusServiceUnavailable, body: "down"},
 		{status: http.StatusOK, body: `{"ok":true}`},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -110,7 +110,7 @@ func TestFailover_AllTargetsReturn503_ClientSeesLastStatus(t *testing.T) {
 		{status: http.StatusServiceUnavailable},
 		{status: http.StatusBadGateway},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -135,7 +135,7 @@ func TestFailover_4xxNotInRetrySet_NotRetried(t *testing.T) {
 	next := &mockNext{outcomes: []attemptOutcome{
 		{status: http.StatusForbidden, body: "denied"},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -161,7 +161,7 @@ func TestFailover_TransportErrorOnPrimary_BackupSucceeds(t *testing.T) {
 		{status: 0, err: errors.New("dial tcp: connection refused")},
 		{status: http.StatusOK, body: `{"ok":true}`},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -187,7 +187,7 @@ func TestFailover_AllTransportErrors_ClientSees502(t *testing.T) {
 		{status: 0, err: errors.New("connection refused")},
 		{status: 0, err: errors.New("connection refused")},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -215,7 +215,7 @@ func TestFailover_SortsByOrderAscending(t *testing.T) {
 		{status: 503},
 		{status: 200},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -263,7 +263,7 @@ func TestFailover_PerTargetFailureStatusCodes_OverridesPolicy(t *testing.T) {
 		{status: 429, body: "rate limited"},
 		{status: 200, body: `{"ok":true}`},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -291,7 +291,7 @@ func TestFailover_StateIsolationBetweenAttempts(t *testing.T) {
 		{status: 503},
 		{status: 200},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	baseline := &rules.MutableState{PolicyRef: "ha", Provider: "rules-set-this"}
 	rec := httptest.NewRecorder()
@@ -324,7 +324,7 @@ func TestFailover_ApplyActionErrorOnAttempt_Returns500(t *testing.T) {
 	)
 	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
 	next := &mockNext{outcomes: []attemptOutcome{{status: 200}}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -350,7 +350,7 @@ func TestFailover_NoBodyOnContext_DoesNotRestore(t *testing.T) {
 	)
 	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
 	next := &mockNext{outcomes: []attemptOutcome{{status: 200, body: "ok"}}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -389,7 +389,7 @@ func TestFailover_CBOpenTarget_SkippedSilently(t *testing.T) {
 	}
 	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
 	next := &mockNext{outcomes: []attemptOutcome{{status: http.StatusOK, body: "ok"}}}
-	h := resiliencemw.HTTPHandler(lookup, store, next)
+	h := resiliencemw.HTTPHandler(lookup, store, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -428,7 +428,7 @@ func TestFailover_AllCBOpen_ReturnsServiceUnavailable(t *testing.T) {
 	}
 	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
 	next := &mockNext{}
-	h := resiliencemw.HTTPHandler(lookup, store, next)
+	h := resiliencemw.HTTPHandler(lookup, store, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -463,7 +463,7 @@ func TestFailover_RecordsCBSuccessOnCommit(t *testing.T) {
 	}
 	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
 	next := &mockNext{outcomes: []attemptOutcome{{status: http.StatusOK, body: "ok"}}}
-	h := resiliencemw.HTTPHandler(lookup, store, next)
+	h := resiliencemw.HTTPHandler(lookup, store, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -493,7 +493,7 @@ func TestFailover_PolicyDefaultRetrySet_500_502_503_504(t *testing.T) {
 	next := &mockNext{outcomes: []attemptOutcome{
 		{status: http.StatusNotImplemented, body: "501"},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, nil, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)

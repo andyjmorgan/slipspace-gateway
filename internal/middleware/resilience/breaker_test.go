@@ -543,4 +543,63 @@ func TestNoopBreakerStore(t *testing.T) {
 	if s.State("p", "t") != StateClosed {
 		t.Error("noop store should report Closed")
 	}
+	if snap := s.Snapshot(); snap != nil {
+		t.Errorf("noop store Snapshot = %v; want nil", snap)
+	}
+}
+
+func TestInMemoryStore_Snapshot_EmptyWhenUntouched(t *testing.T) {
+	store := NewInMemoryBreakerStore(nil)
+	if snap := store.Snapshot(); len(snap) != 0 {
+		t.Errorf("fresh store Snapshot len = %d; want 0", len(snap))
+	}
+}
+
+func TestInMemoryStore_Snapshot_ReportsPerKeyState(t *testing.T) {
+	store := NewInMemoryBreakerStore(nil)
+	cfg := standardCBConfig()
+
+	// Touch two distinct (policy, target) pairs; both start Closed.
+	store.RecordSuccess("polA", "targetA", cfg)
+	store.RecordSuccess("polB", "targetB", cfg)
+	// Trip polA/targetA so its Snapshot row reads StateOpen.
+	for i := 0; i < cfg.FailureThreshold+cfg.MinimumThroughput; i++ {
+		store.RecordFailure("polA", "targetA", cfg)
+	}
+
+	snap := store.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("Snapshot len = %d; want 2", len(snap))
+	}
+
+	got := map[string]State{}
+	for _, s := range snap {
+		got[s.Policy+"|"+s.Target] = s.State
+	}
+	if got["polA|targetA"] != StateOpen {
+		t.Errorf("polA/targetA state = %v; want StateOpen", got["polA|targetA"])
+	}
+	if got["polB|targetB"] != StateClosed {
+		t.Errorf("polB/targetB state = %v; want StateClosed", got["polB|targetB"])
+	}
+}
+
+func TestSplitBreakerKey(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in     string
+		policy string
+		target string
+	}{
+		{"polA|targetA", "polA", "targetA"},
+		{"a|b|c", "a", "b|c"}, // only the first | is the separator
+		{"bare", "bare", ""},  // no separator collapses safely
+		{"|trailing", "", "trailing"},
+	}
+	for _, tc := range cases {
+		p, t1 := splitBreakerKey(tc.in)
+		if p != tc.policy || t1 != tc.target {
+			t.Errorf("splitBreakerKey(%q) = (%q, %q); want (%q, %q)", tc.in, p, t1, tc.policy, tc.target)
+		}
+	}
 }

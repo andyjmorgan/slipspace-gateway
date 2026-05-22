@@ -73,7 +73,7 @@ func runOrchestrator(t *testing.T, pol *contractsres.ResilienceConfig, next *att
 		return nil
 	}
 
-	handler := HTTPHandler(lookup, nil, next)
+	handler := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)

@@ -16,6 +16,7 @@ import {
   openMessageStream,
   type MessageBodyDetail,
   type MessageEntry,
+  type AttemptHit,
   type RuleHit,
 } from "@/lib/messages"
 import { UnauthorizedError } from "@/lib/api"
@@ -486,6 +487,11 @@ function MessageModal({
             <RulesList rules={entry.rules_matched} />
           </div>
         )}
+        {entry.attempts && entry.attempts.length > 0 && (
+          <div className="flex-none">
+            <AttemptsList policy={entry.policy_ref} attempts={entry.attempts} />
+          </div>
+        )}
         <BodyDetail eventId={entry.event_id} streaming={!!entry.streaming} />
       </div>
     </div>,
@@ -745,6 +751,68 @@ function Field({ label, value }: { label: string; value: string }) {
       </dt>
       <dd className="mono text-[color:var(--text-2)]">{value}</dd>
     </div>
+  )
+}
+
+function AttemptsList({ policy, attempts }: { policy?: string; attempts: AttemptHit[] }) {
+  return (
+    <div className="mt-3">
+      <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)] mb-1 flex items-center gap-1.5">
+        <span>Resilience attempts</span>
+        {policy && (
+          <span className="mono text-[color:var(--text-3)] normal-case tracking-normal">
+            · {policy}
+          </span>
+        )}
+      </div>
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-[0.07em] text-[color:var(--text-4)]">
+            <th className="text-left font-medium pr-3 pb-1">#</th>
+            <th className="text-left font-medium pr-3 pb-1">Target</th>
+            <th className="text-right font-medium pr-3 pb-1">Status</th>
+            <th className="text-right font-medium pr-3 pb-1">Duration</th>
+            <th className="text-left font-medium pb-1">Outcome</th>
+          </tr>
+        </thead>
+        <tbody>
+          {attempts.map((a, i) => (
+            <tr key={i} className="border-t border-[color:var(--border)]">
+              <td className="mono tnum pr-3 py-1.5 text-[color:var(--text-3)]">{i + 1}</td>
+              <td className="mono py-1.5 pr-3">{a.target}</td>
+              <td className="mono tnum text-right pr-3 py-1.5">
+                {a.status_code ? a.status_code : <span className="text-[color:var(--text-4)]">—</span>}
+              </td>
+              <td className="mono tnum text-right pr-3 py-1.5">
+                {a.duration_ms !== undefined ? `${a.duration_ms} ms` : <span className="text-[color:var(--text-4)]">—</span>}
+              </td>
+              <td className="py-1.5">
+                <AttemptOutcomeChip outcome={a.outcome} />
+                {a.error && (
+                  <span className="ml-2 mono text-[10.5px]" style={{ color: "var(--err)" }}>
+                    {a.error}
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function AttemptOutcomeChip({ outcome }: { outcome: string }) {
+  const colour =
+    outcome === "success"
+      ? "var(--ok)"
+      : outcome === "cb_blocked"
+        ? "var(--text-3)"
+        : "var(--err)"
+  return (
+    <span className="mono text-[10.5px]" style={{ color: colour }}>
+      {outcome}
+    </span>
   )
 }
 
