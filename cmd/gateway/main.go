@@ -122,7 +122,8 @@ func run(ctx context.Context) error {
 	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, env.RulesMaxGroupDepth, obs.Meters)
 
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, obs.Meters, errs, logger)
+	policyLookup := makePolicyLookup(resolved)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, policyLookup, obs.Meters, errs, logger)
 
 	// responseCaptureMiddleware sits between recover and the data
 	// plane so every panic is still logged, but the per-request

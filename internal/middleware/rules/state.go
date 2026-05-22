@@ -132,6 +132,56 @@ func (s *MutableState) HasTag(t string) bool {
 	return false
 }
 
+// Clone returns a deep copy of s suitable for per-attempt mutation
+// in the v1.2 resilience orchestrator. The clone is fully independent
+// from the original — mutating one does not affect the other for any
+// field exposed on MutableState.
+//
+// The typed request body pointer (carried on bodycapture.Captured.
+// Body, not on MutableState directly) is NOT cloned here. For the
+// single-target degenerate path (PR-6) this is irrelevant; for
+// multi-target failover (PR-7+) the orchestrator is responsible for
+// body restoration if per-target body mutations need to be isolated.
+//
+// nil receiver returns nil so the call site does not need a guard.
+func (s *MutableState) Clone() *MutableState {
+	if s == nil {
+		return nil
+	}
+	out := &MutableState{
+		Provider:    s.Provider,
+		Endpoint:    s.Endpoint,
+		BodyMutated: s.BodyMutated,
+		PolicyRef:   s.PolicyRef,
+	}
+	if s.UpstreamURL != nil {
+		u := *s.UpstreamURL
+		out.UpstreamURL = &u
+	}
+	if s.OutgoingHeaders != nil {
+		out.OutgoingHeaders = s.OutgoingHeaders.Clone()
+	} else {
+		out.OutgoingHeaders = make(http.Header)
+	}
+	if s.UpstreamCredentialOverride != nil {
+		v := *s.UpstreamCredentialOverride
+		out.UpstreamCredentialOverride = &v
+	}
+	if s.PathParams != nil {
+		out.PathParams = make(map[string]string, len(s.PathParams))
+		for k, v := range s.PathParams {
+			out.PathParams[k] = v
+		}
+	}
+	if len(s.QueryAdditions) > 0 {
+		out.QueryAdditions = append([]QueryAddition(nil), s.QueryAdditions...)
+	}
+	if len(s.Tags) > 0 {
+		out.Tags = append([]string(nil), s.Tags...)
+	}
+	return out
+}
+
 // NewMutableState builds a MutableState seeded with the routing
 // resolution (provider, endpoint, path params). OutgoingHeaders
 // starts EMPTY — the destination builder layers provider-required

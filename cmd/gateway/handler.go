@@ -8,9 +8,12 @@ import (
 	"strings"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
+	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
@@ -28,6 +31,7 @@ func buildDataPlaneHandler(
 	evaluator *rules.Evaluator,
 	observerFactory proxy.ObserverFactory,
 	providers contractsconfig.ProvidersConfig,
+	policyLookup resiliencemw.PolicyLookup,
 	meters *observability.Meters,
 	errs *httperr.Writer,
 	_ *slog.Logger,
@@ -95,11 +99,25 @@ func buildDataPlaneHandler(
 
 	var h http.Handler = final
 	h = rules.BodyRemarshalHandler(meters, h)
+	h = resiliencemw.HTTPHandler(policyLookup, h)
 	h = rules.HTTPHandler(evaluator, ruleMatchFromContext, observerFactory, h)
 	h = bodycapture.HTTPHandler(kindFrom, h)
 	h = auth.HTTPHandler(resolver, routeFromContext, h)
 	h = routingMiddleware(router, errs, h)
 	return h
+}
+
+// makePolicyLookup binds resolved.ResilienceIndex into a closure that
+// the resilience middleware can call to fetch a policy by name. Pure
+// indirection; returns nil for unknown names so the middleware
+// degrades to passthrough rather than failing the request.
+func makePolicyLookup(resolved *config.ResolvedConfig) resiliencemw.PolicyLookup {
+	if resolved == nil || resolved.ResilienceIndex == nil {
+		return func(string) *contractsres.ResilienceConfig { return nil }
+	}
+	return func(name string) *contractsres.ResilienceConfig {
+		return resolved.ResilienceIndex[name]
+	}
 }
 
 // ruleMatchFromContext adapts matchFromContext to the rules
