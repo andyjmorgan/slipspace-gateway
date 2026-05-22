@@ -99,6 +99,18 @@ function ActionFields({ action }: { action: RawAction }) {
           ) : null}
         </div>
       )
+    case "useResiliencePolicy":
+      return (
+        <div className="flex items-center gap-2 flex-wrap">
+          <FieldPill label="policy"><span className="mono">{String(action.policyName ?? "")}</span></FieldPill>
+        </div>
+      )
+    case "addTag":
+      return (
+        <div className="flex items-center gap-2 flex-wrap">
+          <FieldPill label="tag"><span className="mono">{String(action.tag ?? "")}</span></FieldPill>
+        </div>
+      )
     default:
       return (
         <div className="flex items-center gap-2 flex-wrap">
@@ -120,5 +132,7 @@ function ActionKindBadge({ type }: { type: string }) {
   if (type.startsWith("change")) return <Tag variant="violet">rewrite</Tag>
   if (type === "returnStatusCode" || type === "llmImpersonation") return <Tag variant="warn">terminating</Tag>
   if (type === "setHeader" || type === "appendQueryString") return <Tag variant="default">augment</Tag>
+  if (type === "useResiliencePolicy") return <Tag variant="violet">resilience</Tag>
+  if (type === "addTag") return <Tag variant="default">tag</Tag>
   return null
 }
