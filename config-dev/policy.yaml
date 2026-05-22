@@ -192,3 +192,9 @@ resilience_policies:
       - name: anthropic-fallback
         provider: anthropic
         order: 2
+        # actions: form is accepted alongside the legacy scalar fields.
+        # The orchestrator (v1.2 PR-6+) reads Actions when present and
+        # falls back to the scalar fields otherwise.
+        actions:
+          - type: changeModelName
+            newModelName: claude-3-5-sonnet

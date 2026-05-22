@@ -1,9 +1,13 @@
 // Package resilience defines the public schema for the gateway's resilience
 // policy. The schema is parsed and validated in v1.0 but evaluation is deferred
-// to v1.1; see the "Resilience Schema + Engine" design note for the long-form.
+// to v1.2; see the "Resilience Schema + Engine" design note for the long-form.
 package resilience
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+
+	"github.com/andyjmorgan/sluice-gateway/contracts/rules"
+)
 
 // ResilienceMode selects which orchestration strategy applies to a Configuration.
 type ResilienceMode string
@@ -122,6 +126,18 @@ type ResilienceTarget struct {
 	// CircuitBreaker is an optional per-target circuit breaker; when set it
 	// overrides ResilienceConfig.CircuitBreaker for this target.
 	CircuitBreaker *CircuitBreakerConfig `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
+
+	// Actions is the polymorphic destination-mutation bundle the
+	// orchestrator (v1.2) applies on each attempt against this target.
+	// Reuses the rules engine's Action vocabulary — a target's actions
+	// are exactly the same shape a rule may carry, so the orchestrator
+	// dispatches through the existing applyAction machinery.
+	//
+	// Coexists with the legacy scalar fields (Provider, ModelRewrite,
+	// FailureStatusCodes). When both are present, Actions wins for the
+	// fields it covers; the v1.0 schema is preserved so existing YAML
+	// keeps working untouched.
+	Actions []rules.Action `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
 // CircuitBreakerConfig configures the per-target circuit breaker state machine.

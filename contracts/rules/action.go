@@ -393,6 +393,15 @@ func UnmarshalAction(data []byte) (Action, error) {
 	return actionRegistry.UnmarshalOne(data)
 }
 
+// DecodeActionYAMLNode dispatches a YAML node to the concrete action
+// type by inspecting its "type" key, with UnknownAction fallback.
+// Exported so contracts/resilience can decode Target.Actions through
+// the same polymorphic registry the rules engine uses, without
+// duplicating the dispatch logic.
+func DecodeActionYAMLNode(node *yaml.Node) (Action, error) {
+	return decodeActionNode(node)
+}
+
 // decodeActionNode dispatches a YAML node to the concrete action type by
 // inspecting its "type" key. Unknown discriminators fall back to
 // UnknownAction for parity with the JSON path.
