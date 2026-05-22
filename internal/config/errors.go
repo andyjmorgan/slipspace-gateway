@@ -99,3 +99,14 @@ var ErrUnknownLogFormat = errors.New("config: SLUICE_LOG_FORMAT must be json|tex
 // ErrUnknownOTLPProtocol is returned when SLUICE_OTLP_PROTOCOL is set to a
 // value outside the accepted set.
 var ErrUnknownOTLPProtocol = errors.New("config: SLUICE_OTLP_PROTOCOL must be grpc|http/protobuf")
+
+// ErrDuplicateConnectorName is returned when two entries in the top-level
+// connectors block share the same Name. Names are the reference target for
+// ConnectorBinding.Connector so duplicates would make resolution ambiguous.
+var ErrDuplicateConnectorName = errors.New("config: connector name defined more than once")
+
+// ErrUnknownConnectorReference is returned when a Configuration's
+// connector_bindings entry references a connector name that is not in the
+// top-level connectors block. Caught at config-load so a misconfigured
+// binding never reaches the spool.
+var ErrUnknownConnectorReference = errors.New("config: configuration references unknown connector")

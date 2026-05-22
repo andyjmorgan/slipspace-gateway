@@ -42,6 +42,12 @@ type ResolvedConfig struct {
 	// every named resilience policy available for Configurations to reference.
 	ResiliencePolicies []resilience.ResilienceConfig
 
+	// Connectors is the top-level `connectors:` block — destinations the
+	// spool ships sealed segments to. Configurations attach connectors
+	// via ConnectorBindings. An empty ConnectorBindings list on a
+	// configuration means no body capture for that configuration.
+	Connectors contractsconfig.ConnectorsConfig
+
 	// SecretIndex maps an API-key secret string to the owning APIKey entry
 	// in APIKeys. Pointers reference the entries in place — the slice's
 	// backing array must not be reordered after buildIndexes runs.
@@ -76,6 +82,11 @@ type ResolvedConfig struct {
 	// ResilienceIndex maps resilience policy name to a pointer into
 	// ResiliencePolicies.
 	ResilienceIndex map[string]*resilience.ResilienceConfig
+
+	// ConnectorIndex maps connector name to a pointer into Connectors.
+	// Downstream code resolves a ConnectorBinding.Connector to its
+	// definition with a single map read.
+	ConnectorIndex map[string]*contractsconfig.Connector
 
 	// Admin is the `admin:` block from admin.yaml. Nil when the file
 	// is absent — the management console is off by default and never
