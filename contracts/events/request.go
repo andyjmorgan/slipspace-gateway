@@ -1,5 +1,7 @@
 package events
 
+import "time"
+
 // Request is the payload carried inside a `gateway.request` envelope —
 // one event per completed request, emitted by the per-request reporter
 // observer at OnComplete. The dashboards and the v1.1 subscriber both
@@ -74,4 +76,60 @@ type Request struct {
 	// addTag rule fired. Set semantics — the rules engine
 	// deduplicates, so a tag appears at most once.
 	Tags []string `json:"tags,omitempty"`
+
+	// PolicyRef is the name of the resilience policy this request
+	// was orchestrated against, when the rules engine bound one via
+	// the useResiliencePolicy action. Empty for single-shot requests
+	// — i.e. requests where no resilience policy was selected, which
+	// is the path most v1.1 traffic still takes.
+	PolicyRef string `json:"policy_ref,omitempty"`
+
+	// Attempts is the orchestrator's per-attempt outcome record,
+	// populated when PolicyRef is set and the request ran through
+	// runFailover / runLoadBalance. Order is attempt order; the
+	// final entry is the attempt that committed (success path) or
+	// the last attempt before exhaustion (all-failed path).
+	// cb_blocked entries appear inline for targets the breaker
+	// filtered before the attempt ran.
+	//
+	// Single-shot requests omit Attempts so the existing v1.1
+	// event shape is preserved byte-equivalent.
+	Attempts []AttemptRecord `json:"attempts,omitempty"`
+}
+
+// AttemptRecord captures one resilience-orchestrator attempt outcome.
+// The terminal gateway.request event aggregates these into Attempts[]
+// so operators can see the per-attempt journey of a multi-target
+// policy (failover walk-down, load_balance pool shrink, cb_blocked
+// skips).
+type AttemptRecord struct {
+	// Target is the resilience target name attempted, drawn from
+	// the target's Name field in the policy YAML.
+	Target string `json:"target"`
+
+	// StartedAt is the wall-clock UTC time the orchestrator began
+	// this attempt. For cb_blocked entries this is the time the
+	// orchestrator decided to skip the target — useful as a coarse
+	// time anchor when the attempt itself never ran.
+	StartedAt time.Time `json:"started_at"`
+
+	// DurationMs is the orchestrator-measured wall-clock duration
+	// of the attempt in milliseconds. Zero for cb_blocked entries
+	// (no attempt was made).
+	DurationMs int64 `json:"duration_ms,omitempty"`
+
+	// StatusCode is the upstream-reported HTTP status. Zero when
+	// the attempt produced a transport error (no headers received)
+	// or when the breaker blocked the attempt.
+	StatusCode int `json:"status_code,omitempty"`
+
+	// Error is the transport-level error string when the attempt
+	// failed before headers. Empty on success and cb_blocked.
+	Error string `json:"error,omitempty"`
+
+	// Outcome categorises the attempt: "success", "failure_status",
+	// "transport_error", or "cb_blocked". The same string the
+	// PR-10b gateway.resilience.attempts.total counter will emit
+	// as its outcome label.
+	Outcome string `json:"outcome"`
 }

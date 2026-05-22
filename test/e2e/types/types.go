@@ -4,6 +4,8 @@
 // Kept separate from harness/ so the harness import surface stays narrow.
 package types
 
+import "time"
+
 // RequestEvent mirrors cmd/gateway.requestEvent (the JSON payload inside
 // gateway.request envelopes). The real type is unexported in package main;
 // rather than promote it for the test, we redeclare the shape here. Any
@@ -34,4 +36,24 @@ type RequestEvent struct {
 	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
 
 	Tags []string `json:"tags,omitempty"`
+
+	PolicyRef string `json:"policy_ref,omitempty"`
+
+	Attempts []AttemptRecord `json:"attempts,omitempty"`
+}
+
+// AttemptRecord mirrors contracts/events.AttemptRecord — one per-attempt
+// row inside the consolidated gateway.request event.
+type AttemptRecord struct {
+	Target string `json:"target"`
+
+	StartedAt time.Time `json:"started_at"`
+
+	DurationMs int64 `json:"duration_ms,omitempty"`
+
+	StatusCode int `json:"status_code,omitempty"`
+
+	Error string `json:"error,omitempty"`
+
+	Outcome string `json:"outcome"`
 }

@@ -6,12 +6,24 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"sort"
+	"time"
 
+	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+)
+
+// Attempt-outcome strings carried in events.AttemptRecord.Outcome.
+// Mirrored by the PR-10b gateway.resilience.attempts.total counter's
+// outcome label so the wire field and the metric label stay aligned.
+const (
+	attemptOutcomeSuccess        = "success"
+	attemptOutcomeFailureStatus  = "failure_status"
+	attemptOutcomeTransportError = "transport_error"
+	attemptOutcomeCBBlocked      = "cb_blocked"
 )
 
 // randomIntN is the package-level RNG hook the weighted load-balance
@@ -77,9 +89,10 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 //     attempts may leak state between attempts because the typed
 //     body is shared. The fix is body restoration via re-parse from
 //     Captured.Raw before each attempt; deferred to a follow-up.
-//   - Each attempt fires its own Observer lifecycle, so multi-attempt
-//     requests generate N gateway.request events. PR-10 collapses
-//     these to one event with embedded Attempts[].
+//   - Per-attempt OTel meters (RequestsTotal, RequestDuration, TTFB,
+//     UpstreamErrors) still fire from the per-attempt reporter
+//     observer. PR-10b refines the meter semantics to per-request and
+//     adds the dedicated gateway.resilience.* counters.
 //   - Policy.ResponseHeaderTimeoutSeconds is parsed but not yet
 //     applied per-attempt — the global Transport.ResponseHeaderTimeout
 //     applies to every attempt. Per-target Transports deferred.
@@ -186,6 +199,23 @@ func runFailover(
 	ctx := r.Context()
 	logger := observability.FromContext(ctx)
 
+	orchStart := time.Now()
+	abuf := NewAttemptBuffer(pol.Name)
+	ctx = WithAttemptBuffer(ctx, abuf)
+	r = r.WithContext(ctx)
+
+	// finalStatus is the status the orchestrator surfaces to the
+	// client at the end of the run — either the committed attempt's
+	// status (commit path) or the orchestrator's fallback (exhausted
+	// path). Captured by the deferred FireTerminal so the
+	// consolidated gateway.request event carries the
+	// client-observable status, not whatever the last per-attempt
+	// observer happened to record.
+	var finalStatus int
+	defer func() {
+		abuf.FireTerminal(time.Since(orchStart).Milliseconds(), finalStatus)
+	}()
+
 	targets := sortedFailoverTargets(pol.Targets)
 
 	var lastStatus int
@@ -207,6 +237,11 @@ func runFailover(
 				slog.String("target", target.Name),
 				slog.Int("position", i+1),
 			)
+			abuf.Record(events.AttemptRecord{
+				Target:    target.Name,
+				StartedAt: time.Now().UTC(),
+				Outcome:   attemptOutcomeCBBlocked,
+			})
 			continue
 		}
 
@@ -218,7 +253,8 @@ func runFailover(
 				slog.Int("attempt", attempts+1),
 				slog.Any("error", err),
 			)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			finalStatus = http.StatusInternalServerError
+			http.Error(w, "internal error", finalStatus)
 			return
 		}
 
@@ -231,6 +267,7 @@ func runFailover(
 
 		attemptCtx := rules.WithMutableState(ctx, clone)
 		attempts++
+		attemptStart := time.Now()
 		logger.DebugContext(ctx, "resilience: failover attempt",
 			slog.String("policy", pol.Name),
 			slog.String("target", target.Name),
@@ -240,12 +277,24 @@ func runFailover(
 
 		next.ServeHTTP(buf, r.WithContext(attemptCtx))
 
+		record := newAttemptRecord(target.Name, attemptStart, buf)
+
 		if !buf.ShouldRetry() {
 			breakers.RecordSuccess(pol.Name, target.Name, cb)
+			record.Outcome = attemptOutcomeSuccess
+			abuf.Record(record)
+			finalStatus = buf.StatusCode()
 			return
 		}
 
 		breakers.RecordFailure(pol.Name, target.Name, cb)
+		if record.Error != "" {
+			record.Outcome = attemptOutcomeTransportError
+		} else {
+			record.Outcome = attemptOutcomeFailureStatus
+		}
+		abuf.Record(record)
+
 		lastStatus = buf.StatusCode()
 		lastErr = buf.TransportError()
 		logger.InfoContext(ctx, "resilience: failover attempt failed",
@@ -267,6 +316,7 @@ func runFailover(
 		// "no healthy backend" more honestly than 502.
 		status = http.StatusServiceUnavailable
 	}
+	finalStatus = status
 	logger.ErrorContext(ctx, "resilience: failover exhausted",
 		slog.String("policy", pol.Name),
 		slog.Int("attempts", attempts),
@@ -301,15 +351,32 @@ func runLoadBalance(
 	ctx := r.Context()
 	logger := observability.FromContext(ctx)
 
+	orchStart := time.Now()
+	abuf := NewAttemptBuffer(pol.Name)
+	ctx = WithAttemptBuffer(ctx, abuf)
+	r = r.WithContext(ctx)
+
+	var finalStatus int
+	defer func() {
+		abuf.FireTerminal(time.Since(orchStart).Milliseconds(), finalStatus)
+	}()
+
 	// Pre-filter the pool by CB.Allow. CB-blocked targets shrink
 	// the pool silently — they never count as an attempt and don't
-	// trigger strict_weights' no-re-roll path.
+	// trigger strict_weights' no-re-roll path. They DO emit a
+	// cb_blocked AttemptRecord so the consolidated event surfaces
+	// the breaker decision the same way failover does.
 	pool := make([]contractsres.ResilienceTarget, 0, len(pol.Targets))
 	cbBlocked := 0
 	for _, t := range pol.Targets {
 		cb := effectiveCircuitBreaker(pol, t)
 		if !breakers.Allow(pol.Name, t.Name, cb) {
 			cbBlocked++
+			abuf.Record(events.AttemptRecord{
+				Target:    t.Name,
+				StartedAt: time.Now().UTC(),
+				Outcome:   attemptOutcomeCBBlocked,
+			})
 			continue
 		}
 		pool = append(pool, t)
@@ -341,7 +408,8 @@ func runLoadBalance(
 				slog.Int("attempt", attempt),
 				slog.Any("error", err),
 			)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			finalStatus = http.StatusInternalServerError
+			http.Error(w, "internal error", finalStatus)
 			return
 		}
 
@@ -353,6 +421,7 @@ func runLoadBalance(
 		buf := proxy.NewBufferingResponseWriter(w, retrySet)
 
 		attemptCtx := rules.WithMutableState(ctx, clone)
+		attemptStart := time.Now()
 		logger.DebugContext(ctx, "resilience: load_balance attempt",
 			slog.String("policy", pol.Name),
 			slog.String("target", target.Name),
@@ -364,12 +433,24 @@ func runLoadBalance(
 
 		next.ServeHTTP(buf, r.WithContext(attemptCtx))
 
+		record := newAttemptRecord(target.Name, attemptStart, buf)
+
 		if !buf.ShouldRetry() {
 			breakers.RecordSuccess(pol.Name, target.Name, cb)
+			record.Outcome = attemptOutcomeSuccess
+			abuf.Record(record)
+			finalStatus = buf.StatusCode()
 			return
 		}
 
 		breakers.RecordFailure(pol.Name, target.Name, cb)
+		if record.Error != "" {
+			record.Outcome = attemptOutcomeTransportError
+		} else {
+			record.Outcome = attemptOutcomeFailureStatus
+		}
+		abuf.Record(record)
+
 		lastStatus = buf.StatusCode()
 		lastErr = buf.TransportError()
 		logger.InfoContext(ctx, "resilience: load_balance attempt failed",
@@ -396,6 +477,7 @@ func runLoadBalance(
 		// backend), the same signal failover uses for the same case.
 		status = http.StatusServiceUnavailable
 	}
+	finalStatus = status
 	logger.ErrorContext(ctx, "resilience: load_balance exhausted",
 		slog.String("policy", pol.Name),
 		slog.Int("attempts", attempt),
@@ -403,6 +485,25 @@ func runLoadBalance(
 		slog.Int("final_status", status),
 	)
 	http.Error(w, http.StatusText(status), status)
+}
+
+// newAttemptRecord captures the orchestrator's view of one attempt
+// after next.ServeHTTP returns. The Outcome field is left blank —
+// the caller fills it once it has decided whether the attempt
+// committed, failed-status, or transport-errored, because the
+// outcome string is part of the resilience contract and bigger
+// than what this helper should encode.
+func newAttemptRecord(target string, started time.Time, buf *proxy.BufferingResponseWriter) events.AttemptRecord {
+	rec := events.AttemptRecord{
+		Target:     target,
+		StartedAt:  started.UTC(),
+		DurationMs: time.Since(started).Milliseconds(),
+		StatusCode: buf.StatusCode(),
+	}
+	if err := buf.TransportError(); err != nil {
+		rec.Error = err.Error()
+	}
+	return rec
 }
 
 // effectiveCircuitBreaker resolves the breaker config for one target.
