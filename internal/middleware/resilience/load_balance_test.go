@@ -168,7 +168,7 @@ func TestLoadBalance_StrictWeights_NoReRoll(t *testing.T) {
 	)
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
 	next := &lbMockNext{outcomes: []lbAttemptOutcome{{status: 503}}}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -198,7 +198,7 @@ func TestLoadBalance_LBWF_RerollsOnRetryableFailure(t *testing.T) {
 		{status: 503, body: "down"},
 		{status: 200, body: "ok"},
 	}}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -228,7 +228,7 @@ func TestLoadBalance_AllFail_SurfacesLastStatus(t *testing.T) {
 		{status: 503},
 		{status: 502},
 	}}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -255,7 +255,7 @@ func TestLoadBalance_TransportError_AllAttemptsFail_502(t *testing.T) {
 		{status: 0, err: errors.New("connection refused")},
 		{status: 0, err: errors.New("connection refused")},
 	}}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -283,7 +283,7 @@ func TestLoadBalance_ModeLoadBalanceWithFailover_DispatchesSame(t *testing.T) {
 		{status: 503},
 		{status: 200, body: "ok"},
 	}}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -310,7 +310,7 @@ func TestLoadBalance_NoPositiveWeights_Writes502(t *testing.T) {
 	}
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"broken": pol})
 	next := &lbMockNext{}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -334,7 +334,7 @@ func TestLoadBalance_NonRetryable4xx_CommitsImmediately(t *testing.T) {
 	)
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
 	next := &lbMockNext{outcomes: []lbAttemptOutcome{{status: 403, body: "denied"}}}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -362,7 +362,7 @@ func TestLoadBalance_ApplyActionError_Returns500(t *testing.T) {
 	)
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
 	next := &lbMockNext{}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -371,6 +371,81 @@ func TestLoadBalance_ApplyActionError_Returns500(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("client status = %d; want 500", rec.Code)
+	}
+}
+
+func TestLoadBalance_AllCBOpen_ReturnsServiceUnavailable(t *testing.T) {
+	withStubRand(t, 0)
+	cb := &contractsres.CircuitBreakerConfig{
+		Enabled:           true,
+		FailureThreshold:  1,
+		MinimumThroughput: 1,
+		CooldownSeconds:   60,
+	}
+	store := NewInMemoryBreakerStore(nil)
+	store.RecordFailure("lb", "a", cb)
+	store.RecordFailure("lb", "b", cb)
+
+	pol := &contractsres.ResilienceConfig{
+		Name:           "lb",
+		Mode:           contractsres.ModeLoadBalance,
+		CircuitBreaker: cb,
+		Targets: []contractsres.ResilienceTarget{
+			{Name: "a", Provider: "openai", Weight: 50, Actions: lbChangeTo("openai")},
+			{Name: "b", Provider: "anthropic", Weight: 50, Actions: lbChangeTo("anthropic")},
+		},
+	}
+	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
+	next := &lbMockNext{}
+	h := HTTPHandler(lookup, store, next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "lb"})
+	h.ServeHTTP(rec, req.WithContext(ctx))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d; want 503 (every target CB-blocked)", rec.Code)
+	}
+	if len(next.seen) != 0 {
+		t.Errorf("attempts seen = %v; want none", next.seen)
+	}
+}
+
+func TestLoadBalance_CBOpen_OneTargetSkipped(t *testing.T) {
+	withStubRand(t, 0)
+	cb := &contractsres.CircuitBreakerConfig{
+		Enabled:           true,
+		FailureThreshold:  1,
+		MinimumThroughput: 1,
+		CooldownSeconds:   60,
+	}
+	store := NewInMemoryBreakerStore(nil)
+	store.RecordFailure("lb", "a", cb)
+
+	pol := &contractsres.ResilienceConfig{
+		Name:           "lb",
+		Mode:           contractsres.ModeLoadBalance,
+		CircuitBreaker: cb,
+		Targets: []contractsres.ResilienceTarget{
+			{Name: "a", Provider: "openai", Weight: 50, Actions: lbChangeTo("openai")},
+			{Name: "b", Provider: "anthropic", Weight: 50, Actions: lbChangeTo("anthropic")},
+		},
+	}
+	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
+	next := &lbMockNext{outcomes: []lbAttemptOutcome{{status: 200, body: "ok"}}}
+	h := HTTPHandler(lookup, store, next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "lb"})
+	h.ServeHTTP(rec, req.WithContext(ctx))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d; want 200 (b serves after a CB-blocked)", rec.Code)
+	}
+	if len(next.seen) != 1 || next.seen[0] != "anthropic" {
+		t.Errorf("attempts = %v; want [anthropic]", next.seen)
 	}
 }
 
@@ -388,7 +463,7 @@ func TestLoadBalance_RerollExhaustsPool(t *testing.T) {
 		{status: 503},
 		{status: 503},
 	}}
-	h := HTTPHandler(lookup, next)
+	h := HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)

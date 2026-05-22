@@ -21,6 +21,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
+	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
@@ -123,7 +124,8 @@ func run(ctx context.Context) error {
 
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
 	policyLookup := makePolicyLookup(resolved)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, policyLookup, obs.Meters, errs, logger)
+	breakers := resiliencemw.NewInMemoryBreakerStore(nil)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, policyLookup, breakers, obs.Meters, errs, logger)
 
 	// responseCaptureMiddleware sits between recover and the data
 	// plane so every panic is still logged, but the per-request

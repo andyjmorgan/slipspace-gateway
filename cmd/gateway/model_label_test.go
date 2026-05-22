@@ -18,6 +18,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
+	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
@@ -243,7 +244,7 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, 8, meters)
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, reporter.Factory(), resolved.Providers, makePolicyLookup(resolved), meters, errs, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, reporter.Factory(), resolved.Providers, makePolicyLookup(resolved), resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, logger)
 	root := correlationMiddleware(logger, dataPlane)
 
 	gateway := httptest.NewServer(root)

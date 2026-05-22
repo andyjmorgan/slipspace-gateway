@@ -78,7 +78,7 @@ func TestFailover_PrimaryReturns503_BackupServes200(t *testing.T) {
 		{status: http.StatusServiceUnavailable, body: "down"},
 		{status: http.StatusOK, body: `{"ok":true}`},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -110,7 +110,7 @@ func TestFailover_AllTargetsReturn503_ClientSeesLastStatus(t *testing.T) {
 		{status: http.StatusServiceUnavailable},
 		{status: http.StatusBadGateway},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -135,7 +135,7 @@ func TestFailover_4xxNotInRetrySet_NotRetried(t *testing.T) {
 	next := &mockNext{outcomes: []attemptOutcome{
 		{status: http.StatusForbidden, body: "denied"},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -161,7 +161,7 @@ func TestFailover_TransportErrorOnPrimary_BackupSucceeds(t *testing.T) {
 		{status: 0, err: errors.New("dial tcp: connection refused")},
 		{status: http.StatusOK, body: `{"ok":true}`},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -187,7 +187,7 @@ func TestFailover_AllTransportErrors_ClientSees502(t *testing.T) {
 		{status: 0, err: errors.New("connection refused")},
 		{status: 0, err: errors.New("connection refused")},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -215,7 +215,7 @@ func TestFailover_SortsByOrderAscending(t *testing.T) {
 		{status: 503},
 		{status: 200},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -263,7 +263,7 @@ func TestFailover_PerTargetFailureStatusCodes_OverridesPolicy(t *testing.T) {
 		{status: 429, body: "rate limited"},
 		{status: 200, body: `{"ok":true}`},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -291,7 +291,7 @@ func TestFailover_StateIsolationBetweenAttempts(t *testing.T) {
 		{status: 503},
 		{status: 200},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	baseline := &rules.MutableState{PolicyRef: "ha", Provider: "rules-set-this"}
 	rec := httptest.NewRecorder()
@@ -324,7 +324,7 @@ func TestFailover_ApplyActionErrorOnAttempt_Returns500(t *testing.T) {
 	)
 	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
 	next := &mockNext{outcomes: []attemptOutcome{{status: 200}}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -350,7 +350,7 @@ func TestFailover_NoBodyOnContext_DoesNotRestore(t *testing.T) {
 	)
 	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
 	next := &mockNext{outcomes: []attemptOutcome{{status: 200, body: "ok"}}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -359,6 +359,119 @@ func TestFailover_NoBodyOnContext_DoesNotRestore(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d; want 200 (no body to restore is not an error)", rec.Code)
+	}
+}
+
+func TestFailover_CBOpenTarget_SkippedSilently(t *testing.T) {
+	t.Parallel()
+	// Pre-tripped store: t1 is Open, t2 is Closed. The orchestrator
+	// must skip t1 without an attempt and serve from t2.
+	store := resiliencemw.NewInMemoryBreakerStore(nil)
+	cb := &contractsres.CircuitBreakerConfig{
+		Enabled:                  true,
+		FailureThreshold:         1,
+		SamplingDurationSeconds:  60,
+		CooldownSeconds:          60,
+		MinimumThroughput:        1,
+		HalfOpenSuccessThreshold: 1,
+	}
+	store.RecordFailure("ha", "t1", cb)
+
+	pol := &contractsres.ResilienceConfig{
+		Name:               "ha",
+		Mode:               contractsres.ModeFailover,
+		FailureStatusCodes: []int{503},
+		CircuitBreaker:     cb,
+		Targets: []contractsres.ResilienceTarget{
+			{Name: "t1", Provider: "openai", Order: 1, Actions: changeTo("openai")},
+			{Name: "t2", Provider: "anthropic", Order: 2, Actions: changeTo("anthropic")},
+		},
+	}
+	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
+	next := &mockNext{outcomes: []attemptOutcome{{status: http.StatusOK, body: "ok"}}}
+	h := resiliencemw.HTTPHandler(lookup, store, next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "ha"})
+	h.ServeHTTP(rec, req.WithContext(ctx))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d; want 200 (CB-blocked t1, serve from t2)", rec.Code)
+	}
+	if len(next.seen) != 1 || next.seen[0] != "anthropic" {
+		t.Errorf("attempts seen = %v; want [anthropic] (t1 skipped)", next.seen)
+	}
+}
+
+func TestFailover_AllCBOpen_ReturnsServiceUnavailable(t *testing.T) {
+	t.Parallel()
+	// Every target's breaker is Open → orchestrator writes 503.
+	store := resiliencemw.NewInMemoryBreakerStore(nil)
+	cb := &contractsres.CircuitBreakerConfig{
+		Enabled:           true,
+		FailureThreshold:  1,
+		MinimumThroughput: 1,
+		CooldownSeconds:   60,
+	}
+	store.RecordFailure("ha", "t1", cb)
+	store.RecordFailure("ha", "t2", cb)
+
+	pol := &contractsres.ResilienceConfig{
+		Name:           "ha",
+		Mode:           contractsres.ModeFailover,
+		CircuitBreaker: cb,
+		Targets: []contractsres.ResilienceTarget{
+			{Name: "t1", Provider: "openai", Order: 1, Actions: changeTo("openai")},
+			{Name: "t2", Provider: "anthropic", Order: 2, Actions: changeTo("anthropic")},
+		},
+	}
+	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
+	next := &mockNext{}
+	h := resiliencemw.HTTPHandler(lookup, store, next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "ha"})
+	h.ServeHTTP(rec, req.WithContext(ctx))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d; want 503 (every target CB-blocked)", rec.Code)
+	}
+	if len(next.seen) != 0 {
+		t.Errorf("attempts seen = %v; want none (all CB-blocked)", next.seen)
+	}
+}
+
+func TestFailover_RecordsCBSuccessOnCommit(t *testing.T) {
+	t.Parallel()
+	// A committed 200 records a success, keeping the breaker Closed.
+	store := resiliencemw.NewInMemoryBreakerStore(nil)
+	cb := &contractsres.CircuitBreakerConfig{
+		Enabled:                 true,
+		FailureThreshold:        3,
+		SamplingDurationSeconds: 60,
+		MinimumThroughput:       3,
+	}
+	pol := &contractsres.ResilienceConfig{
+		Name:           "ha",
+		Mode:           contractsres.ModeFailover,
+		CircuitBreaker: cb,
+		Targets: []contractsres.ResilienceTarget{
+			{Name: "t1", Provider: "openai", Order: 1, Actions: changeTo("openai")},
+		},
+	}
+	lookup := stubLookup(map[string]*contractsres.ResilienceConfig{"ha": pol})
+	next := &mockNext{outcomes: []attemptOutcome{{status: http.StatusOK, body: "ok"}}}
+	h := resiliencemw.HTTPHandler(lookup, store, next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "ha"})
+	h.ServeHTTP(rec, req.WithContext(ctx))
+
+	if store.State("ha", "t1") != resiliencemw.StateClosed {
+		t.Errorf("state after success = %v; want Closed", store.State("ha", "t1"))
 	}
 }
 
@@ -380,7 +493,7 @@ func TestFailover_PolicyDefaultRetrySet_500_502_503_504(t *testing.T) {
 	next := &mockNext{outcomes: []attemptOutcome{
 		{status: http.StatusNotImplemented, body: "501"},
 	}}
-	h := resiliencemw.HTTPHandler(lookup, next)
+	h := resiliencemw.HTTPHandler(lookup, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
