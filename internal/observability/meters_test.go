@@ -3,6 +3,7 @@ package observability_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -190,6 +191,29 @@ func TestRegisterCircuitBreakerStateGauge_NilMeterErrors(t *testing.T) {
 	src := stubCBSource{rows: nil}
 	if err := observability.RegisterCircuitBreakerStateGauge(nil, src, "pod"); err == nil {
 		t.Errorf("expected error for nil meter")
+	}
+}
+
+// failingMeter is a metric.Meter implementation that returns an error
+// from Int64ObservableGauge so the wrap branch in
+// RegisterCircuitBreakerStateGauge is exercised in tests.
+type failingMeter struct {
+	noop.Meter
+}
+
+func (failingMeter) Int64ObservableGauge(_ string, _ ...metric.Int64ObservableGaugeOption) (metric.Int64ObservableGauge, error) {
+	return nil, errors.New("synthetic register failure")
+}
+
+func TestRegisterCircuitBreakerStateGauge_RegisterErrorIsWrapped(t *testing.T) {
+	t.Parallel()
+	src := stubCBSource{rows: nil}
+	err := observability.RegisterCircuitBreakerStateGauge(failingMeter{}, src, "pod")
+	if err == nil {
+		t.Fatalf("expected error from failing meter")
+	}
+	if got := err.Error(); got == "" || !strings.Contains(got, observability.MetricCircuitBreakerState) {
+		t.Errorf("error %q should mention %q", got, observability.MetricCircuitBreakerState)
 	}
 }
 
