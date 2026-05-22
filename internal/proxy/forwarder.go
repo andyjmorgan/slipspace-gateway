@@ -140,10 +140,22 @@ var alwaysDropHeaders = []string{
 }
 
 // Forward sends req upstream as described by dest and writes the response
-// to w. It returns an error only when the Destination is unusable;
-// transport failures flow through the configured ErrorHandler and are
-// surfaced via Observer.OnUpstreamError, with a 502 Bad Gateway written to
-// the client.
+// to w. It returns a Result describing what the upstream produced and an
+// error only when the Destination itself is unusable (missing URLs).
+//
+// Transport failures (connection refused, header timeout, etc.) flow
+// through the configured ErrorHandler, are surfaced via Observer.
+// OnUpstreamError, and land in Result.Err. The behaviour of writing a
+// 502 to the client depends on w:
+//
+//   - When w is (or wraps) a *BufferingResponseWriter, the orchestrator
+//     owns the response decision — ErrorHandler records the transport
+//     error on the buffer via SetTransportError and does NOT write 502.
+//     The orchestrator inspects ShouldRetry post-Forward to decide
+//     whether to retry the next target.
+//   - When w is a bare ResponseWriter (today's single-shot path),
+//     ErrorHandler writes 502 Bad Gateway as before — back-compat for
+//     callers that have no orchestrator wrapping the writer.
 //
 // A fresh Observer is minted at the top of Forward via the configured
 // ObserverFactory. All four lifecycle hooks fire from this goroutine, so
@@ -168,13 +180,13 @@ var alwaysDropHeaders = []string{
 //     does not expose it on the response we hand back through
 //     ModifyResponse alone, because ErrorHandler may have written a
 //     different code.
-func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *http.Request, dest Destination) error {
+func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *http.Request, dest Destination) (*Result, error) {
 	if dest.UpstreamURL == nil {
-		return errors.New("proxy: forward: destination missing UpstreamURL")
+		return nil, errors.New("proxy: forward: destination missing UpstreamURL")
 	}
 	baseKey := destBaseKey(dest)
 	if baseKey == "" {
-		return errors.New("proxy: forward: destination missing BaseURL")
+		return nil, errors.New("proxy: forward: destination missing BaseURL")
 	}
 
 	observer := f.observerFactory(ctx, dest)
@@ -258,6 +270,17 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 				slog.String("destination", baseKey),
 				slog.Any("error", err),
 			)
+			// If the writer chain has a BufferingResponseWriter (the
+			// v1.2 orchestrator's wrapper), record the error there
+			// and leave the response decision to the orchestrator —
+			// it will inspect ShouldRetry and either retry the next
+			// target or write the final 502 itself. Without the
+			// buffer (today's single-shot path), preserve the
+			// existing behaviour and write 502 directly.
+			if buf := unwrapBufferingResponseWriter(rw); buf != nil {
+				buf.SetTransportError(err)
+				return
+			}
 			writeBadGateway(rw)
 		},
 		Transport:     transport,
@@ -279,7 +302,11 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 			slog.Bool("streaming", cw.Streaming()),
 		)
 	}
-	return nil
+	return &Result{
+		StatusCode: cw.Status(),
+		Committed:  cw.Committed(),
+		Err:        upstreamErr,
+	}, nil
 }
 
 func destBaseKey(dest Destination) string {

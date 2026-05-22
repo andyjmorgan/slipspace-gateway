@@ -84,7 +84,7 @@ func buildDataPlaneHandler(
 			return
 		}
 
-		if err := forwarder.Forward(ctx, w, r, dest); err != nil {
+		if _, err := forwarder.Forward(ctx, w, r, dest); err != nil {
 			log.ErrorContext(ctx, "forwarder: forward", "err", err.Error())
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "forward_failed", "internal error")
 			return
