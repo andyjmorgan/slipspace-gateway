@@ -1,0 +1,401 @@
+# Deployment
+
+Sluice ships as a single multi-arch container image with the SPA baked in. The image runs as a data-plane process plus an optional admin listener inside the same pod; configuration is mounted as a directory of YAML files; reporting and telemetry are wired through env vars. This page is the operator's reference for the production deployment shape — container image, Kubernetes topology, mount conventions, multi-pod considerations, rolling updates — and the local-dev shortcut that mirrors it.
+
+---
+
+## Table of contents
+
+1. [Deployment topology](#deployment-topology)
+2. [Container image](#container-image)
+3. [Release pipeline](#release-pipeline)
+4. [Kubernetes deployment shape](#kubernetes-deployment-shape)
+5. [Helm chart status](#helm-chart-status)
+6. [Configuration mount](#configuration-mount)
+7. [Admin password mount](#admin-password-mount)
+8. [docker-compose local dev](#docker-compose-local-dev)
+9. [Listeners and ports reference](#listeners-and-ports-reference)
+10. [Multi-pod considerations](#multi-pod-considerations)
+11. [Rolling updates and graceful drain](#rolling-updates-and-graceful-drain)
+12. [Smoke tests against a live deploy](#smoke-tests-against-a-live-deploy)
+13. [Cross-references](#cross-references)
+
+---
+
+## Deployment topology
+
+A Sluice pod runs one container that opens three listeners and reads one config directory. The data-plane listener is the only port that proxies provider traffic; the admin and Prometheus listeners are management surfaces and must not be exposed to clients.
+
+### Single-pod
+
+```mermaid
+flowchart LR
+    subgraph Pod[sluice-gateway pod]
+        DP[":8585<br/>data plane"]
+        AD[":8081<br/>admin SPA + /api/v1"]
+        PR[":9090<br/>prometheus scrape"]
+    end
+
+    CFG[("ConfigMap<br/>providers.yaml,<br/>policy.yaml,<br/>admin.yaml")] -. mount as<br/>/etc/sluice .-> Pod
+    SEC[("Secret<br/>SLUICE_ADMIN_PASSWORD,<br/>upstream provider keys")] -. mount as env .-> Pod
+
+    Client[Provider SDK<br/>OpenAI / Anthropic / Gemini] --> DP
+    Operator[Operator browser] --> AD
+    Scrape[Prometheus] --> PR
+
+    DP --> NATS[(NATS<br/>reporting bus)]
+    AD --> NATS
+
+    DP --> Upstream[OpenAI / Anthropic /<br/>Gemini / qwen-ollama]
+```
+
+### Multi-pod
+
+```mermaid
+flowchart LR
+    Client[Provider SDKs] --> SVC[Service<br/>:8585]
+    Operator[Operator] --> ADSVC[Service<br/>:8081]
+    Scrape[Prometheus] --> PRSVC[Service<br/>:9090]
+
+    SVC --> P1[Pod A<br/>:8585]
+    SVC --> P2[Pod B<br/>:8585]
+    SVC --> P3[Pod C<br/>:8585]
+
+    ADSVC --> P1
+    ADSVC --> P2
+    ADSVC --> P3
+
+    PRSVC -. scrape each replica .-> P1
+    PRSVC -. scrape each replica .-> P2
+    PRSVC -. scrape each replica .-> P3
+
+    P1 --> NATS[(NATS)]
+    P2 --> NATS
+    P3 --> NATS
+
+    CFG[("ConfigMap")] -. mount /etc/sluice .-> P1
+    CFG -. .-> P2
+    CFG -. .-> P3
+    SEC[("Secret")] -. env .-> P1
+    SEC -. .-> P2
+    SEC -. .-> P3
+
+    NATS --> Subscriber[Audit /<br/>billing consumers]
+```
+
+Every pod in a replica set reads the same ConfigMap and Secret. Per-pod state (circuit-breaker counters, admin snapshotter buffer, in-process live-feed ring) is **not** synchronised between replicas — see [Multi-pod considerations](#multi-pod-considerations).
+
+---
+
+## Container image
+
+Published at `ghcr.io/andyjmorgan/sluice-gateway`. Multi-stage build defined in [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile).
+
+### Stages
+
+| Stage | Base | Purpose |
+|---|---|---|
+| `certs` | `alpine:3` | Pulls `ca-certificates` so the scratch image can speak TLS to upstream providers. |
+| `spa-builder` | `node:22-alpine` | `npm ci` + `npm run build` in `web/`. Vite emits to `internal/admin/webdist/`; the stage moves the result to `/out/webdist` for an unambiguous COPY. |
+| `builder` | `golang:1.25-alpine` | Overlays the SPA bundle on top of the committed `placeholder.html` so `go:embed` picks up the real assets, then builds `cmd/gateway` static with `CGO_ENABLED=0`. |
+| final | `scratch` | Carries `/gateway` binary + CA bundle. ~5.5 MB total. |
+
+The version string baked into `/gateway` via `-ldflags "-X .../version.Version=${VERSION}"` is whatever the build pipeline passes — `git describe --tags --always`, so tagged builds report `v1.1.4` and main builds report `v1.1.4-3-gabc1234`. The admin console exposes it at `GET /admin/api/v1/version`.
+
+### What's in the image
+
+- `/gateway` — statically linked, stripped, the only executable.
+- `/etc/ssl/certs/ca-certificates.crt` — system CA bundle, mandatory for TLS to upstream providers.
+- The embedded SPA bundle (compiled into `/gateway` via `//go:embed`).
+- Two exposed ports as image metadata: `8585` (data plane) and `8081` (admin).
+
+### What's NOT in the image
+
+- A shell. There is no `/bin/sh` — `kubectl exec` against the pod will fail unless you also override the entrypoint or run an ephemeral debug container.
+- The config directory. The image does not ship `providers.yaml` or `policy.yaml`; the operator mounts those at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`).
+- A writable root filesystem. The image runs as UID `65532:65532` (nonroot); pair it with `readOnlyRootFilesystem: true` in the pod's `securityContext`.
+- The mock LLM. `sluice-mockllm` is a separate image (`ghcr.io/andyjmorgan/sluice-mockllm`) used in local-dev and CI only; never deploy it.
+
+---
+
+## Release pipeline
+
+[`.github/workflows/release.yaml`](../.github/workflows/release.yaml) drives image publication and GitHub Release creation. It runs on the `office-cluster` self-hosted runner.
+
+### Trigger matrix
+
+| Trigger | What gets published |
+|---|---|
+| Push to `main` | `ghcr.io/andyjmorgan/sluice-gateway:main`, `:sha-<short>`. Same tags for `sluice-mockllm`. No GitHub Release. |
+| Tag push `v*.*.*` | All of the above **plus** `:<version>`, `:<major>.<minor>`, and `:latest`. The release job then creates (or edits, on tag re-push) a GitHub Release with rendered notes pointing at the freshly-pushed image tags. |
+
+Both stages of the matrix (`sluice-gateway` and `sluice-mockllm`) build for `linux/amd64,linux/arm64` simultaneously via QEMU + buildx; the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
+
+### Image visibility
+
+Tagged releases run a `Mark package public` step on GHCR per image. Untagged `main` builds inherit the package's current visibility (private by default until the first tagged release flips it public).
+
+### Idempotence on tag re-push
+
+`gh release create` returns HTTP 422 if the release already exists, which is common when a tag is force-moved during an in-progress release cycle. The release job pre-checks with `gh release view` and swaps to `gh release edit` if present, so the workflow stays green and the release notes get refreshed.
+
+---
+
+## Kubernetes deployment shape
+
+Sluice has no opinion on whether you ship it via Helm, kustomize, raw manifests, or a higher-level platform abstraction — the image is a vanilla container with file + env-var configuration. What follows is the minimum shape any deployment must produce; treat it as a checklist regardless of the tool that emits the YAML.
+
+### Required objects
+
+| Object | Purpose |
+|---|---|
+| `Deployment` | Runs `ghcr.io/andyjmorgan/sluice-gateway:<tag>` with the config volume, env vars, and probes. |
+| `Service` (data plane) | ClusterIP on `:8585` → pod `:8585`. The one externally-reachable surface. |
+| `Service` (admin) | Optional. ClusterIP on `:8081` → pod `:8081`. Front with an ingress + auth proxy or expose loopback-only inside the cluster. |
+| `Service` (prometheus) | Optional. ClusterIP on `:9090` → pod `:9090`. Or use a `Service`-less `ServiceMonitor` pointing at pod IPs. |
+| `ConfigMap` | Mounts `providers.yaml` + `policy.yaml` (+ `admin.yaml`) at `/etc/sluice/`. |
+| `Secret` | Provides `SLUICE_ADMIN_PASSWORD` and any upstream provider keys referenced by `policy.yaml`. |
+
+The data plane and admin listeners run in the **same pod**, in the same container. There is no separate admin sidecar — they share the binary, the in-process metric registry, and the live-feed ring.
+
+### Minimum pod spec
+
+```yaml
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: gateway
+      image: ghcr.io/andyjmorgan/sluice-gateway:v1.1.4
+      ports:
+        - { name: data,    containerPort: 8585 }
+        - { name: admin,   containerPort: 8081 }
+        - { name: metrics, containerPort: 9090 }
+      env:
+        - { name: SLUICE_CONFIG_DIR,    value: /etc/sluice }
+        - { name: SLUICE_HTTP_BIND,     value: 0.0.0.0:8585 }
+        - { name: SLUICE_PROMETHEUS_BIND, value: 0.0.0.0:9090 }
+        - { name: SLUICE_NATS_URL,      value: nats://nats:4222 }
+        - name: SLUICE_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef: { name: sluice-admin, key: password }
+      volumeMounts:
+        - { name: config, mountPath: /etc/sluice, readOnly: true }
+      readinessProbe:
+        httpGet: { path: /healthz, port: data }
+      livenessProbe:
+        httpGet: { path: /healthz, port: data }
+  volumes:
+    - name: config
+      configMap: { name: sluice-config }
+```
+
+Every field above is load-bearing. `runAsNonRoot` + `readOnlyRootFilesystem` are compatible with the scratch image (UID `65532:65532`, no writes outside `/tmp`); the listeners must bind `0.0.0.0` inside the container so the kube proxy reaches them.
+
+---
+
+## Helm chart status
+
+The `deploy/helm/sluice-gateway/` chart is on the v0.1 milestone but **has not landed in the repo yet**. Operators provisioning Sluice today author their own manifests (or kustomize/Helm bases) against the shape in [Kubernetes deployment shape](#kubernetes-deployment-shape).
+
+When the chart lands, it will be a standalone (no parent) chart producing the objects in the table above, with values for:
+
+- `image.repository`, `image.tag`, `image.pullPolicy` — image coordinates.
+- `replicaCount` — pod count.
+- `resources.requests` / `resources.limits` — CPU + memory.
+- `service.dataPlane.type` / `service.dataPlane.port` — typically `ClusterIP` / `8585`.
+- `service.admin.enabled` / `service.admin.bindAddr` / `service.admin.type` — admin exposure.
+- `service.prometheus.enabled` — Prometheus scrape listener.
+- `ingress.dataPlane.*` — optional ingress overlay for the data plane.
+- `config.providers` / `config.policy` / `config.admin` — inline YAML written into a ConfigMap, or `config.existingConfigMap` to bring your own.
+- `adminPassword.existingSecret` / `adminPassword.secretKey` — `SLUICE_ADMIN_PASSWORD` source.
+- `env` — pass-through additional `SLUICE_*` env vars (see [`docs/environment-variables.md`](environment-variables.md)).
+- `nodeSelector`, `tolerations`, `affinity` — standard scheduling controls.
+- `podAnnotations`, `serviceAccount.*` — telemetry/IAM hooks.
+
+This page will grow a comprehensive values table the moment the chart ships. Until then, the canonical shape is what the [docker-compose local dev](#docker-compose-local-dev) compose stack produces, scaled up by hand.
+
+---
+
+## Configuration mount
+
+Sluice reads a directory at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The loader scans every `*.yaml`, merges by top-level key, and errors on duplicate keys across files. See [`docs/configuration-model.md`](configuration-model.md) for the schema.
+
+### ConfigMap vs Secret
+
+| Concern | ConfigMap | Secret |
+|---|---|---|
+| `providers.yaml` route table | yes | acceptable, no benefit |
+| `policy.yaml` configurations + rules + resilience | acceptable when no `upstream_credentials` are inlined | **yes** when any provider credential is inlined into the YAML |
+| `admin.yaml` enable flag + bind | yes | n/a |
+| `admin.password` field | no — use `SLUICE_ADMIN_PASSWORD` env from Secret instead | yes (rarely needed; env path is simpler) |
+
+**File contents are trusted.** The loader does not perform `${VAR}` substitution; what's on disk is what reaches the resolver. This is deliberate — file mounts from k8s Secrets are already access-controlled and SOPS-encrypted at rest, and one less templating layer means fewer ways for a `$` in a real credential to break things. The full rationale is in [`docs/configuration-model.md`](configuration-model.md#why-no-var-substitution).
+
+### File permissions
+
+The container runs as UID `65532:65532`. ConfigMap and Secret projected files default to mode `0644`, owned by root; both are world-readable, so the gateway can read them as the nonroot user with no further tuning. If you set `defaultMode: 0400` on a Secret projection, also set `fsGroup: 65532` on the pod's `securityContext` so the gateway can still read.
+
+### Restart-to-apply
+
+There is no in-binary file watcher. Edit the ConfigMap or Secret, then roll the Deployment (`kubectl rollout restart deployment/sluice-gateway`). Hot reload is a v1.2+ task.
+
+---
+
+## Admin password mount
+
+Three paths, same precedence as documented in [`docs/admin-console.md`](admin-console.md). Pick the one that matches your secret-management surface; do **not** combine them.
+
+| Path | How | When to use |
+|---|---|---|
+| **Env var from Secret** | `SLUICE_ADMIN_PASSWORD` via `secretKeyRef` in the pod spec | Default. Keeps the secret out of `admin.yaml`. |
+| **File-backed env via projected Secret** | `SLUICE_ADMIN_PASSWORD` set from a sidecar that reads a projected file (e.g. CSI-mounted from an external vault) | Vault / SOPS / cloud-secret-manager integrations that publish files. |
+| **Literal in `admin.yaml`** | `admin.password: "..."` in a YAML file inside `SLUICE_CONFIG_DIR` | Dev only. The CLAUDE.md placeholder is `sluice-gateway`; never use this shape in production. |
+
+`SLUICE_ADMIN_PASSWORD` wins over `admin.password` when both are set — the env var is checked first by `Config.ResolvePassword()` ([`contracts/admin/admin.go`](../contracts/admin/admin.go)). If the admin block is `enabled: true` and neither source resolves to a non-empty password, the gateway fails validation at startup with `ErrPasswordRequired`.
+
+The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts/admin/admin.go`](../contracts/admin/admin.go)); multi-operator identity is a v1.2+ task. See [`docs/admin-console.md`](admin-console.md) for the full auth surface.
+
+---
+
+## docker-compose local dev
+
+The committed [`docker-compose.yaml`](../docker-compose.yaml) brings up the gateway image + the published `sluice-mockllm` + NATS, mounted against `config-dev/` for the policy bundle. This is the path that mirrors production layout most closely — the same image, the same mount conventions, the same env vars.
+
+```sh
+make dev-compose          # builds + starts gateway, mockllm, nats
+# open http://localhost:8081/admin
+make dev-compose-down     # tear it down
+```
+
+Host ports exposed by the committed compose:
+
+| Host port | Container port | Surface |
+|---|---|---|
+| `8585` | `8585` | Data plane |
+| `8081` | `8081` | Admin console (SPA + `/api/v1`) |
+| `9090` | `9090` | Prometheus scrape |
+| `4222` / `8222` | `4222` / `8222` | NATS / monitoring |
+
+The compose mounts `./config-dev` at `/etc/sluice` read-only, and overlays `./deploy/compose/admin.yaml` on top so the admin listener binds `0.0.0.0` (the host-side `config-dev/admin.yaml` binds loopback because the pure-Go `make dev` loop runs natively and doesn't need port forwarding). `SLUICE_ADMIN_PASSWORD` defaults to `sluice-gateway` if unset — override via `.env` or `export` before invoking compose.
+
+### Overlay conventions
+
+Two overlays sit alongside the committed compose. Both are stacked with `-f docker-compose.yaml -f <overlay>` rather than replacing the base:
+
+| Overlay | Tracked? | Purpose |
+|---|---|---|
+| `docker-compose.dev.yaml` | gitignored | Local mock-LLM override. Sample at [`docker-compose.dev.yaml.example`](../docker-compose.dev.yaml.example) — copy + edit. Two common shapes: build the in-repo Go `cmd/mockllm` locally, or point at the legacy C# mock from a sibling workspace. The committed compose always references the published `ghcr.io/andyjmorgan/sluice-mockllm` image so CI and onboarding work out of the box. |
+| [`docker-compose.real.yaml`](../docker-compose.real.yaml) | committed | Swaps the mock-pointed `config-dev` mount for `config-dev.real`, which `scripts/dev-real-config.sh` materialises from `.env`. Reaches `api.openai.com` / `api.anthropic.com` / `generativelanguage.googleapis.com` plus a host-port-forwarded ollama. Driven by `make dev-real`. |
+
+### Pure-Go dev loop
+
+For Go iteration without an image rebuild, `make dev` brings up only `mockllm` + `nats` via compose and runs `go run ./cmd/gateway` natively on the host. The native gateway reads `./config-dev/admin.yaml` (binds `127.0.0.1:8081`) rather than the compose overlay. Faster than `make dev-compose` because the SPA isn't rebuilt; useful when you're iterating on the data-plane Go code and the SPA bundle is already built into `internal/admin/webdist/`.
+
+For SPA-only iteration, leave `make dev-compose` running and start `make web-dev` in a second terminal — Vite serves on `:5180/admin` and proxies `/admin/api/v1` to the running gateway on `:8081`.
+
+---
+
+## Listeners and ports reference
+
+| Listener | Default bind | Env var (server) / yaml | Trusted? | Notes |
+|---|---|---|---|---|
+| Data plane | `:8585` | `SLUICE_HTTP_BIND` | yes — the public surface | Only port that proxies provider traffic. |
+| Admin (SPA + `/api/v1`) | `0.0.0.0:8081` | `admin.bind_addr` in `admin.yaml` | no — front with ingress + auth or restrict to loopback | Off by default; opt-in via `admin.enabled: true`. |
+| Prometheus scrape | unset (disabled) | `SLUICE_PROMETHEUS_BIND` | no — restrict to scrape source | Empty value disables the listener; OTLP push is a separate path. |
+
+Full env-var inventory in [`docs/environment-variables.md`](environment-variables.md). The data-plane listener is the **only** port that should ever appear in an external `Service` of type `LoadBalancer` or behind a public ingress.
+
+---
+
+## Multi-pod considerations
+
+Several pieces of Sluice state are per-pod, in-memory, and not synchronised across replicas. None of them break correctness, but each shows up in observability and a few shape capacity planning.
+
+### Circuit-breaker state is per-pod
+
+The breaker counters live in-process per (policy, target) pair. Two replicas observing the same backend will trip independently — three failures on Pod A do not contribute to Pod B's window. Restart wipes the state. The `gateway.cb.state` gauge labels by `pod` so dashboards can disambiguate.
+
+This is documented intentionally in [`docs/resilience.md`](resilience.md#known-limitations) (item 4). The Redis-backed `BreakerStore` swap behind the existing interface is a v1.3+ task. Until then, size your trip thresholds with the per-pod sample rate in mind, not the cluster-aggregate rate.
+
+### The snapshotter is per-pod
+
+The admin console's dashboard reads from an in-process snapshotter that polls the OTel registry every `SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS` (default 5 minutes — production-tuned to give the 24h dashboard 288 sample points). Each pod has its own snapshotter, so the admin console's dashboard reflects **only the replica that handled the request hitting `/admin/api/v1/*`** — not the cluster aggregate.
+
+For cluster-aggregate views, scrape `:9090` with Prometheus and build the dashboard in Grafana against the registry's labelled counters and histograms. The snapshotter is a single-pod operator's-eyes pane, not a fleet dashboard. See [`docs/observability.md`](observability.md).
+
+### NATS reporting drops on full queue per-pod
+
+The publisher's queue is sized by `SLUICE_NATS_PUBLISH_QUEUE_SIZE` (default `10000`) per pod. When the queue fills — bus down, broker partitioned, downstream consumer slow — the publisher drops on the floor and increments `gateway.events_dropped.total` (see [`internal/observability/meters.go`](../internal/observability/meters.go), `MetricEventsDroppedTotal`). The request path **never** waits on reporting backpressure; this is load-bearing invariant 2 in CLAUDE.md.
+
+If `gateway.events_dropped.total` is consistently non-zero, the right response is to scale the bus or the consumer, not the gateway — drops are a symptom of the downstream not keeping up with offered load. The counter is labelled by `pod` so you can see which replicas are dropping.
+
+### Live-feed ring is per-pod
+
+The admin console's live-messages pane reads an in-process ring (default capacity 100, sized via `SLUICE_ADMIN_LIVE_FEED_CAPACITY`). It is **a few-minute live tail of the pod that served the request**, not an audit log or a fleet view. The pane is honest about this — see the design rationale in [`internal/config/env.go`](../internal/config/env.go) on `DefaultAdminLiveFeedCapacity`.
+
+For durable audit, subscribe to the `gateway.request` NATS subject; for cross-pod correlation, use `X-Sluice-Correlation-Id` to join NATS events to gateway logs.
+
+---
+
+## Rolling updates and graceful drain
+
+Sluice handles SIGTERM by entering a drain phase: `http.Server.Shutdown` stops accepting new connections, waits for in-flight requests to complete, then exits. The drain budget is `SLUICE_SHUTDOWN_DRAIN_SECONDS` (default `300`, parsed in [`internal/config/env.go`](../internal/config/env.go)). The admin listener drains on the same budget via a separate detached context so its shutdown outlives the SIGTERM that triggered it.
+
+```mermaid
+sequenceDiagram
+    participant K as kubelet
+    participant G as gateway pod
+    participant C as in-flight client
+
+    K->>G: SIGTERM (preStop hook elapsed)
+    G->>G: srv.Shutdown(ctx with drain budget)
+    G->>G: stop accepting new connections
+    Note over G,C: in-flight requests continue<br/>up to drain budget
+    C-->>G: streaming response finishes
+    G->>G: all requests drained
+    G->>K: process exits 0
+    K->>K: TerminationGracePeriodSeconds elapses<br/>(only on overrun)
+```
+
+In a Deployment with `strategy: RollingUpdate` and `maxUnavailable: 0`, this gives you a clean rollover — Kubernetes waits for the old pod's readiness probe to fail before culling, the old pod drains in-flight, the new pod becomes ready before the next eviction. Set `terminationGracePeriodSeconds` on the pod spec to **at least `SLUICE_SHUTDOWN_DRAIN_SECONDS + 30`** so the kubelet doesn't SIGKILL mid-stream. For streaming chat completions on the 1M-token context tier, leave the default `300` (five minutes); the longest legitimate stream comfortably fits.
+
+In-flight requests **complete normally** during the drain — clients see no error. New requests arriving after SIGTERM see a connection refused at the kube-proxy layer once the readiness probe fails; the Service's iptables rules cull the draining pod from the endpoint set within milliseconds.
+
+See [`docs/environment-variables.md`](environment-variables.md) for `SLUICE_SHUTDOWN_DRAIN_SECONDS` and the related shutdown-timer env vars.
+
+---
+
+## Smoke tests against a live deploy
+
+`make smoke` runs the post-deploy smoke harness in `test/smoke/` — pytest with the official OpenAI / Anthropic / Gemini SDKs pointed at a live gateway. Use it after every cluster roll.
+
+```sh
+SLUICE_API_KEY=$SLUICE_API_KEY make smoke
+```
+
+Optional env:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `SLUICE_BASE_URL` | `https://sluice.donkeywork.dev` | Override to point at a non-default deploy. |
+| `SLUICE_SMOKE_QWEN` | unset | Set to `true` to enable the cluster-side qwen redirect tests. |
+
+The harness uses real provider SDKs to confirm wire compatibility through whatever you deployed; failures are tagged as wire-compat regressions, the same release-blocker class as `make py-compat`. Never echo the `SLUICE_API_KEY` value in scripts, PR text, or chat — reference it as `$SLUICE_API_KEY` per the project standing rules.
+
+---
+
+## Cross-references
+
+| For | See |
+|---|---|
+| YAML schema, file-trusting model, no-`${VAR}` rationale | [`docs/configuration-model.md`](configuration-model.md) |
+| Admin listener, password resolution, auth shape | [`docs/admin-console.md`](admin-console.md) |
+| Every `SLUICE_*` env var, parsing rules, validation | [`docs/environment-variables.md`](environment-variables.md) |
+| OTel metrics, NATS subjects, scrape vs push | [`docs/observability.md`](observability.md) |
+| Resilience policies, per-pod CB state, known limitations | [`docs/resilience.md`](resilience.md) |
