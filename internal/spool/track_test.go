@@ -208,3 +208,35 @@ func TestSpool_StopBeforeStartReturnsTrue(t *testing.T) {
 		t.Error("Stop on never-started Spool should be true")
 	}
 }
+
+func TestTrack_DrainQueueProcessesAllPendingRecords(t *testing.T) {
+	// Drives drainQueue directly so the success path is covered without
+	// depending on runDrain's timer scheduling — coverage on this branch
+	// is flaky in the integration tests that landed with PR #83.
+	tr := newTestTrack(t, trackOptions{conn: &namedFake{name: "x"}})
+	for i := 0; i < 3; i++ {
+		tr.queue <- makeTestRecord("rec", uint64(i+1))
+	}
+	tr.drainQueue()
+	if got := tr.written.Load(); got != 3 {
+		t.Errorf("written = %d, want 3", got)
+	}
+}
+
+func TestTrack_SealCurrentBestEffortLogsAndSwallows(t *testing.T) {
+	// Force sealCurrent to error by manually closing the segment's
+	// underlying file mid-flight. sealCurrentBestEffort should log the
+	// error and return without panicking — covers the error-logging
+	// branch.
+	tr := newTestTrack(t, trackOptions{conn: &namedFake{name: "x"}})
+	if err := tr.writeRecord(makeTestRecord("a", 1)); err != nil {
+		t.Fatalf("writeRecord: %v", err)
+	}
+	tr.segMu.Lock()
+	closed := tr.segment.file.Close()
+	tr.segMu.Unlock()
+	if closed != nil {
+		t.Fatalf("manual close: %v", closed)
+	}
+	tr.sealCurrentBestEffort() // must not panic
+}
