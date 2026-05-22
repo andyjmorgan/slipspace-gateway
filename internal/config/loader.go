@@ -25,6 +25,7 @@ const (
 	keyAPIKeys            = "api_keys"
 	keyRules              = "rules"
 	keyResiliencePolicies = "resilience_policies"
+	keyConnectors         = "connectors"
 	keyAdmin              = "admin"
 )
 
@@ -46,6 +47,7 @@ var allowedKeysByFile = map[string]map[string]struct{}{
 		keyAPIKeys:            {},
 		keyRules:              {},
 		keyResiliencePolicies: {},
+		keyConnectors:         {},
 	},
 	filenameAdmin: {
 		keyAdmin: {},
@@ -222,6 +224,11 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 			return nil, fmt.Errorf("config: decode resilience_policies: %w: %w", ErrParse, err)
 		}
 	}
+	if node, ok := merged.nodes[keyConnectors]; ok {
+		if err := node.Decode(&out.Connectors); err != nil {
+			return nil, fmt.Errorf("config: decode connectors: %w: %w", ErrParse, err)
+		}
+	}
 	if node, ok := merged.nodes[keyAdmin]; ok {
 		out.Admin = &admin.Config{}
 		if err := node.Decode(out.Admin); err != nil {
@@ -247,6 +254,10 @@ func (r *ResolvedConfig) Validate() error {
 	}
 
 	if err := r.validateLibraries(); err != nil {
+		return err
+	}
+
+	if err := r.validateConnectors(); err != nil {
 		return err
 	}
 
@@ -389,6 +400,12 @@ func (r *ResolvedConfig) buildIndexes() {
 		pol := &r.ResiliencePolicies[i]
 		r.ResilienceIndex[pol.Name] = pol
 	}
+
+	r.ConnectorIndex = make(map[string]*contractsconfig.Connector, len(r.Connectors))
+	for i := range r.Connectors {
+		c := &r.Connectors[i]
+		r.ConnectorIndex[c.Name] = c
+	}
 }
 
 // validateLibraries enforces uniqueness within the top-level rules and
@@ -480,6 +497,46 @@ func (r *ResolvedConfig) validateLibraries() error {
 			if _, ok := policyNames[name]; !ok {
 				return fmt.Errorf("config: rules[%d] %q actions[%d] useResiliencePolicy %q: %w",
 					i, rule.Name, ai, name, ErrUnknownResilienceName)
+			}
+		}
+	}
+	return nil
+}
+
+// validateConnectors enforces uniqueness within the top-level connectors
+// block, runs each connector's own Validate, and confirms every
+// Configuration's ConnectorBinding.Connector resolves to a defined
+// connector.
+func (r *ResolvedConfig) validateConnectors() error {
+	names := make(map[string]int, len(r.Connectors))
+	for i := range r.Connectors {
+		c := &r.Connectors[i]
+		if prev, dup := names[c.Name]; dup {
+			return fmt.Errorf("config: connectors[%d] and connectors[%d] name=%q: %w",
+				prev, i, c.Name, ErrDuplicateConnectorName)
+		}
+		names[c.Name] = i
+		if err := c.Validate(); err != nil {
+			return fmt.Errorf("config: connectors[%d]: %w", i, err)
+		}
+	}
+
+	configNames := make([]string, 0, len(r.Configurations))
+	for name := range r.Configurations {
+		configNames = append(configNames, name)
+	}
+	sort.Strings(configNames)
+	for _, configName := range configNames {
+		cfg := r.Configurations[configName]
+		for bi := range cfg.ConnectorBindings {
+			b := &cfg.ConnectorBindings[bi]
+			if err := b.Validate(); err != nil {
+				return fmt.Errorf("config: configurations[%q].connector_bindings[%d]: %w",
+					configName, bi, err)
+			}
+			if _, ok := names[b.Connector]; !ok {
+				return fmt.Errorf("config: configurations[%q].connector_bindings[%d] connector=%q: %w",
+					configName, bi, b.Connector, ErrUnknownConnectorReference)
 			}
 		}
 	}

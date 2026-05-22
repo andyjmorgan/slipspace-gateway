@@ -32,4 +32,10 @@ type Configuration struct {
 	// Tags are arbitrary key/value labels propagated to telemetry and
 	// reporting events for this Configuration.
 	Tags map[string]string `yaml:"tags,omitempty" json:"tags,omitempty"`
+
+	// ConnectorBindings attaches one or more connectors to this
+	// configuration with per-binding sampling / filter / size-cap
+	// overrides. An empty slice means "no capture" — the body-capture
+	// middleware short-circuits when no bindings are present.
+	ConnectorBindings []ConnectorBinding `yaml:"connector_bindings,omitempty" json:"connector_bindings,omitempty"`
 }
