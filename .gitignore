@@ -25,3 +25,6 @@ airia-llmock/
 # Claude Code per-project state (agent worktrees, transient logs, hooks)
 .claude/
 config-dev.real/
+
+# Load test harness — local-only, not committed
+test/loadtest/

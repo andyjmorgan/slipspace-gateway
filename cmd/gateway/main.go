@@ -12,13 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
-
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/bus"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/connector/factory"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
@@ -29,13 +26,17 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/routing"
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/server"
+	"github.com/andyjmorgan/sluice-gateway/internal/spool"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
 
 const (
 	binaryName = "gateway"
 
-	publisherStopTimeout = 5 * time.Second
+	// spoolStopTimeout bounds graceful drain of the spool's compress +
+	// upload workers on SIGTERM. Slightly larger than the request drain
+	// so segments in flight when the listener stops still finish.
+	spoolStopTimeout = 30 * time.Second
 )
 
 func main() {
@@ -93,11 +94,11 @@ func run(ctx context.Context) error {
 
 	logger := obs.Logger
 
-	publisher, busCleanup, err := setupBus(ctx, env, logger, obs.Meters)
+	spoolInst, spoolCleanup, err := setupSpool(ctx, env, resolved, logger)
 	if err != nil {
-		return fmt.Errorf("gateway: bus setup: %w", err)
+		return fmt.Errorf("gateway: spool setup: %w", err)
 	}
-	defer busCleanup()
+	defer spoolCleanup()
 
 	router, err := routing.New(resolved)
 	if err != nil {
@@ -116,7 +117,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("gateway: body store: %w", err)
 	}
 
-	reporter := newReporterFactory(publisher, logger, obs.Meters, liveFeed, bodyStore)
+	reporter := newReporterFactory(spoolInst, resolved, logger, obs.Meters, liveFeed, bodyStore)
 	observerFactory := reporter.Factory()
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: observerFactory})
 
@@ -180,56 +181,74 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-// setupBus wires the NATS publisher when reporting is enabled. A nil publisher
-// is returned (with a no-op cleanup) when reporting is off or NATS is
-// unreachable — the request path must never block on reporting, so a missing
-// bus degrades gracefully into "events dropped" rather than aborting startup.
-func setupBus(ctx context.Context, env *config.ServerEnv, logger *slog.Logger, meters *observability.Meters) (*bus.Publisher, func(), error) {
+// setupSpool wires the connector spool. Builds concrete connectors via
+// factory.BuildAll, constructs the Spool at env.SpoolRoot, registers
+// one track per connector, and starts the workers. Returns
+// (nil, noop, nil) when ResolvedConfig.Connectors is empty — the
+// reporter then short-circuits at OnComplete and the request path
+// pays nothing.
+//
+// Per design note "Connector + Spool Architecture": startup recovery
+// (uploading/ → sealed/, torn active/ → quarantine/) runs at New /
+// RegisterTrack time inside each track's manager. A failed startup
+// recovery aborts gateway boot; an operator-visible error is the
+// right escalation since silently dropping records on a misconfigured
+// spool root is worse than refusing to start.
+func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.ResolvedConfig, logger *slog.Logger) (*spool.Spool, func(), error) {
 	noop := func() {}
-	if !env.ReportingEnabled() {
+	if len(resolved.Connectors) == 0 {
+		logger.InfoContext(ctx, "no connectors configured; spool disabled")
 		return nil, noop, nil
 	}
 
-	nc, err := nats.Connect(env.NATSURL)
-	if err != nil {
-		logger.WarnContext(ctx, "reporting enabled but nats connect failed; disabling publisher",
-			"err", err.Error(),
-			"url", env.NATSURL,
-		)
-		return nil, noop, nil
-	}
-	js, err := jetstream.New(nc)
-	if err != nil {
-		nc.Close()
-		return nil, noop, fmt.Errorf("jetstream: %w", err)
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "local"
 	}
 
-	if err := bus.EnsureStream(ctx, js, env.NATSStream, []string{"gateway.>"}); err != nil {
-		nc.Close()
-		return nil, noop, fmt.Errorf("ensure stream: %w", err)
-	}
-	store, err := bus.EnsureObjectStore(ctx, js, env.NATSBucket)
-	if err != nil {
-		nc.Close()
-		return nil, noop, fmt.Errorf("ensure object store: %w", err)
-	}
-
-	pub := bus.New(bus.Options{
-		JS:             js,
-		ObjectStore:    store,
-		StashBucket:    env.NATSBucket,
-		QueueSize:      env.NATSPublishQueueSize,
-		StashThreshold: env.NATSStashThresholdBytes,
-		Logger:         logger,
-		Meters:         meters,
+	conns, err := factory.BuildAll(ctx, resolved.Connectors, factory.Options{
+		InstanceID: hostname,
 	})
-	pub.Start(ctx)
-
-	cleanup := func() { //nolint:contextcheck // pub.Stop's internal join goroutine uses context.Background intentionally — shutdown must not race the parent ctx cancel
-		pub.Stop(publisherStopTimeout)
-		nc.Close()
+	if err != nil {
+		return nil, noop, fmt.Errorf("build connectors: %w", err)
 	}
-	return pub, cleanup, nil
+
+	s, err := spool.New(spool.Options{
+		Root:   env.SpoolRoot,
+		Logger: logger,
+	})
+	if err != nil {
+		return nil, noop, fmt.Errorf("spool: %w", err)
+	}
+
+	for i, c := range conns {
+		cfg := resolved.Connectors[i]
+		opts := spool.RegisterTrackOptions{Connector: c}
+		if cfg.Rotation != nil {
+			opts.Rotation = spool.RotationOpts{
+				MaxBytes: cfg.Rotation.MaxBytes,
+				MaxAge:   time.Duration(cfg.Rotation.MaxAgeSeconds) * time.Second,
+			}
+		}
+		if err := s.RegisterTrack(opts); err != nil {
+			return nil, noop, fmt.Errorf("register track %q: %w", c.Name(), err)
+		}
+	}
+
+	if err := s.Start(ctx); err != nil {
+		return nil, noop, fmt.Errorf("spool start: %w", err)
+	}
+	logger.InfoContext(ctx, "spool started",
+		"root", env.SpoolRoot,
+		"tracks", len(conns),
+	)
+
+	cleanup := func() { //nolint:contextcheck // spool.Stop's join goroutine uses context.Background intentionally — shutdown must not race the parent ctx cancel
+		if ok := s.Stop(spoolStopTimeout); !ok {
+			logger.Warn("spool stop timed out", "timeout", spoolStopTimeout)
+		}
+	}
+	return s, cleanup, nil
 }
 
 // buildLiveFeed constructs the in-process ring that backs the admin
@@ -458,7 +477,7 @@ func buildTagAttachments(resolved *config.ResolvedConfig) map[string][]string {
 // context so the OTLP exporter is not killed by the same signal that triggered
 // shutdown.
 func shutdownObservability(p *observability.Provider) {
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), publisherStopTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = p.Shutdown(shutdownCtx)
 }

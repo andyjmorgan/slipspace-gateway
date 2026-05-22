@@ -4,17 +4,13 @@ package harness
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/nats-io/nats.go/jetstream"
 )
 
 // SessionHeader is the inbound header the mockllm reads to scope a
@@ -302,28 +298,4 @@ func cloneOrEmpty(h http.Header) http.Header {
 		return http.Header{}
 	}
 	return h.Clone()
-}
-
-// FetchStashObject reads a payload from the NATS Object Store. Used by tests
-// asserting the large-payload stash code path published a fetchable object.
-func (h *Harness) FetchStashObject(bucket, key string) ([]byte, error) {
-	if h.NATS == nil {
-		return nil, fmt.Errorf("harness: nats connection not initialized")
-	}
-	js, err := jetstream.New(h.NATS)
-	if err != nil {
-		return nil, fmt.Errorf("harness: jetstream: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	store, err := js.ObjectStore(ctx, bucket)
-	if err != nil {
-		return nil, fmt.Errorf("harness: object store %s: %w", bucket, err)
-	}
-	data, err := store.GetBytes(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("harness: object %s/%s: %w", bucket, key, err)
-	}
-	return data, nil
 }

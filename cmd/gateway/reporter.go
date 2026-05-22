@@ -2,18 +2,24 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	"github.com/andyjmorgan/sluice-gateway/internal/bus"
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
@@ -22,13 +28,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed/accumulator"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
-)
-
-// Bus subject suffixes; the publisher emits the full subject as
-// `gateway.<type>`.
-const (
-	eventTypeRequest     = "request"
-	eventTypeRuleMatched = "rule.matched"
+	"github.com/andyjmorgan/sluice-gateway/internal/spool"
 )
 
 // modelLabelMaxLen caps the length of the `model` metric label value to
@@ -61,29 +61,46 @@ func sanitiseModelLabel(raw string) string {
 }
 
 // reporterFactory captures the dependencies needed by every per-request
-// reporter observer — the publisher, logger, and meter handles are
-// process-lifetime values. Factory() satisfies proxy.ObserverFactory so the
-// forwarder can mint one fresh reporterRun per Forward call.
+// reporter observer. Spool is the destination side-channel; resolved
+// drives per-configuration ConnectorBindings lookups; the meters /
+// liveFeed / bodyStore handles are process-lifetime values.
+//
+// instanceID + seq stamp every Record so consumers can sort by
+// (TsNs, instance_id, seq) per the design note's sort key.
 type reporterFactory struct {
-	publisher *bus.Publisher
+	spool     *spool.Spool
+	resolved  *config.ResolvedConfig
 	logger    *slog.Logger
 	meters    *observability.Meters
 	liveFeed  *livefeed.Ring
 	bodyStore *livefeed.BodyStore
+
+	instanceID string
+	seq        atomic.Uint64
 }
 
-func newReporterFactory(publisher *bus.Publisher, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore) *reporterFactory {
+func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "local"
+	}
 	return &reporterFactory{
-		publisher: publisher,
-		logger:    logger,
-		meters:    meters,
-		liveFeed:  liveFeed,
-		bodyStore: bodyStore,
+		spool:      s,
+		resolved:   resolved,
+		logger:     logger,
+		meters:     meters,
+		liveFeed:   liveFeed,
+		bodyStore:  bodyStore,
+		instanceID: hostname,
 	}
 }
+
+// nextSeq returns the next per-instance monotonic counter. Stamped on
+// every Record as the (TsNs, instance_id, seq) tiebreaker.
+func (f *reporterFactory) nextSeq() uint64 { return f.seq.Add(1) }
 
 // Factory returns a proxy.ObserverFactory bound to this factory's
 // dependencies. The closure form makes the wiring in cmd/gateway main.go
@@ -91,12 +108,17 @@ func newReporterFactory(publisher *bus.Publisher, logger *slog.Logger, meters *o
 func (f *reporterFactory) Factory() proxy.ObserverFactory {
 	return func(ctx context.Context, _ proxy.Destination) proxy.Observer {
 		labels := observability.RequestLabelsFromContext(ctx)
+		apiKeyName := ""
+		if ar, ok := auth.FromContext(ctx); ok && ar.APIKey != nil {
+			apiKeyName = ar.APIKey.Name
+		}
 		return &reporterRun{
 			factory:       f,
 			provider:      labels.Provider,
 			endpoint:      labels.Endpoint,
 			model:         labels.Model,
 			configuration: labels.Configuration,
+			apiKeyName:    apiKeyName,
 		}
 	}
 }
@@ -113,19 +135,19 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 type reporterRun struct {
 	factory *reporterFactory
 
-	// provider, endpoint, model, configuration are the routed labels
-	// captured at construction time from the request context. They are
-	// emitted on every metric this observer fires and on the bus event at
-	// completion. Configuration carries the named-policy bundle the
-	// request resolved against and has bounded cardinality (handful of
-	// operator-defined names, never client-derived).
+	// provider, endpoint, model, configuration, apiKeyName are the
+	// routed labels captured at construction time from the request
+	// context. Emitted on every metric this observer fires and on the
+	// Record at completion.
 	provider      string
 	endpoint      string
 	model         string
 	configuration string
+	apiKeyName    string
 
-	// started is set in OnRequestStart and used both as the base for the
-	// overall duration log and as the reference for the TTFB measurement.
+	// started is set in OnRequestStart and used both as the base for
+	// the overall duration log and as the reference for the TTFB
+	// measurement and Record.TsNs.
 	started time.Time
 
 	// firstByte is set in OnResponseHeaders. Zero when the upstream
@@ -140,14 +162,13 @@ type reporterRun struct {
 
 	streaming bool
 
-	// upstream captures the transport error from OnUpstreamError; nil on
-	// the success path.
+	// upstream captures the transport error from OnUpstreamError; nil
+	// on the success path.
 	upstream error
 
-	// ruleMatches buffers events.RuleMatched records driven by the rules
-	// middleware via OnRuleMatched. Merged with the context MatchBuffer
-	// at OnComplete and fanned out to the bus publisher and the
-	// in-process live-feed ring.
+	// ruleMatches buffers events.RuleMatched records driven by the
+	// rules middleware via OnRuleMatched. Merged with the context
+	// MatchBuffer at OnComplete and folded into Record.RulesFired.
 	ruleMatches []events.RuleMatched
 }
 
@@ -176,6 +197,12 @@ func (r *reporterRun) OnUpstreamError(ctx context.Context, err error) {
 	}
 }
 
+// OnRuleMatched buffers a per-rule match record for batched emission at
+// OnComplete.
+func (r *reporterRun) OnRuleMatched(_ context.Context, match events.RuleMatched) {
+	r.ruleMatches = append(r.ruleMatches, match)
+}
+
 func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int64) {
 	ev := events.Request{
 		CorrelationID: observability.CorrelationIDFromContext(ctx),
@@ -202,29 +229,13 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		r.factory.meters.ActiveRequests.Add(ctx, -1)
 	}
 
-	// Tags are drained from the post-rule MutableState before the bus
-	// publish so the gateway.request payload carries them. Per-tag
-	// counter bumps happen here too — keeps the side-channel counter
-	// in lockstep with the event field. Empty rules-disabled paths
-	// (no MutableState on ctx) leave ev.Tags nil.
 	r.populateTags(ctx, &ev)
-
-	// Tokens are extracted from the captured response and bumped onto
-	// gateway.tokens.* — must run before the bus publish so the
-	// gateway.request payload carries TokensIn/Out/Cached/CacheCreation.
-	// Gated on the response buffer being present; when bodies are
-	// disabled (env.LiveFeedBodiesEnabled=false) tokens stay zero.
 	r.populateTokens(ctx, &ev)
 
 	// Multi-attempt orchestration suppresses the per-attempt terminal
-	// publish: the resilience orchestrator installs an AttemptBuffer on
+	// emit: the resilience orchestrator installs an AttemptBuffer on
 	// ctx, drives FireTerminal at the end of the run, and the closure
-	// we register here is what produces the single consolidated
-	// gateway.request event. Each per-attempt OnComplete overwrites
-	// the closure so the last attempt's bound ev (final status, final
-	// streaming flag, final tokens) is what publishes; the orchestrator
-	// supplies the end-to-end duration and the client-observable status
-	// at FireTerminal time.
+	// we register here produces the single consolidated emit.
 	if abuf := resiliencemw.AttemptBufferFromContext(ctx); abuf != nil {
 		abuf.SetTerminalPublish(func(overallDurationMs int64, finalStatus int) {
 			ev.DurationMs = overallDurationMs
@@ -241,13 +252,6 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 	r.publishTerminalEvent(ctx, ev, ttfbMs)
 }
 
-// recordPerRequestMetrics fires the per-request counters and histograms
-// — gateway.requests.total and gateway.request.duration — exactly once
-// per inbound request. Single-shot OnComplete calls it inline before
-// publishTerminalEvent; multi-attempt orchestration calls it once from
-// the terminalPublish closure with the end-to-end duration and the
-// client-observable status set by the orchestrator. Pre-PR-10b these
-// meters fired per-attempt, double-counting multi-attempt requests.
 func (r *reporterRun) recordPerRequestMetrics(ctx context.Context, ev events.Request) {
 	if r.factory.meters == nil {
 		return
@@ -261,32 +265,19 @@ func (r *reporterRun) recordPerRequestMetrics(ctx context.Context, ev events.Req
 	}
 }
 
-// publishTerminalEvent is the terminal half of OnComplete: emit the
-// gateway.request envelope, fan out rule.matched envelopes, tee into
-// the live-feed ring, capture the body envelope, and write the
-// "request completed" log line. Single-shot OnComplete calls this
-// inline; multi-attempt orchestration calls it once from the
-// AttemptBuffer's terminalPublish closure.
+// publishTerminalEvent is the terminal half of OnComplete:
+//  1. Drain the per-request rule-match buffer + ctx MatchBuffer.
+//  2. Tee the completed request + matches into the in-process
+//     live-feed ring that backs the admin console's messages pane.
+//  3. Capture the request + response bodies for the admin body endpoint.
+//  4. Enqueue a Record to the spool for every connector binding the
+//     resolved configuration declares.
+//  5. Emit the structured request-completed log line.
 func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Request, ttfbMs int64) {
-	if r.factory.publisher != nil {
-		payload, err := json.Marshal(ev)
-		if err != nil {
-			r.factory.logger.WarnContext(ctx, "reporter: marshal event", "err", err.Error())
-		} else {
-			r.factory.publisher.Publish(bus.Envelope{
-				EventID:       uuid.NewString(),
-				EventType:     eventTypeRequest,
-				Timestamp:     time.Now().UTC(),
-				Mode:          bus.PayloadInline,
-				InlinePayload: payload,
-			})
-		}
-	}
-
 	matches := r.drainRuleMatches(ctx, ev.CorrelationID)
-	r.publishRuleMatches(ctx, matches)
 	entryID := r.appendLiveFeed(ev, matches)
 	r.captureBody(ctx, entryID, ev)
+	r.enqueueRecord(ctx, ev, matches)
 
 	logger := observability.FromContext(ctx)
 	logger.InfoContext(ctx, "request completed",
@@ -303,18 +294,157 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 	)
 }
 
-// OnRuleMatched buffers a per-rule match record for batched emission
-// at OnComplete. The rules middleware writes through this hook in
-// addition to the context-stashed rules.MatchBuffer; both paths
-// converge at flushRuleMatches.
-func (r *reporterRun) OnRuleMatched(_ context.Context, match events.RuleMatched) {
-	r.ruleMatches = append(r.ruleMatches, match)
+// enqueueRecord builds a contracts/connector.Record from the
+// captured request/response + the rule + token snapshots, and
+// enqueues it to the spool for every connector binding the resolved
+// configuration declares. No-ops when the spool is nil (no connectors
+// configured) or the configuration is unknown.
+//
+// Sampling and per-binding filters are deliberately out of scope
+// here — every binding receives every record. The follow-up PR adding
+// those knobs hooks here.
+func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matches []events.RuleMatched) {
+	if r.factory.spool == nil {
+		return
+	}
+	cfg := r.factory.resolved.ConfigurationIndex[r.configuration]
+	if cfg == nil || len(cfg.ConnectorBindings) == 0 {
+		return
+	}
+	rec := r.buildRecord(ctx, ev, matches)
+	names := make([]string, 0, len(cfg.ConnectorBindings))
+	for _, b := range cfg.ConnectorBindings {
+		names = append(names, b.Connector)
+	}
+	r.factory.spool.Enqueue(rec, names...)
+}
+
+// buildRecord maps the in-flight reporter state into the connector
+// wire format. Body bytes are pulled from the live-feed capture so a
+// configuration with bindings + no live-feed capture would lose body
+// payloads — Validate at config-load could enforce this if the
+// follow-up shows it matters; today the gateway always wires the
+// live-feed bodyStore unless explicitly disabled.
+func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matches []events.RuleMatched) cc.Record {
+	tsNs := r.started.UnixNano()
+	if r.started.IsZero() {
+		tsNs = time.Now().UnixNano()
+	}
+
+	rec := cc.Record{
+		V:             1,
+		ID:            uuid.NewString(),
+		TsNs:          tsNs,
+		Seq:           r.factory.nextSeq(),
+		InstanceID:    r.factory.instanceID,
+		CorrelationID: ev.CorrelationID,
+		Configuration: r.configuration,
+		APIKeyName:    r.apiKeyName,
+		Provider:      ev.Provider,
+		Endpoint:      ev.Endpoint,
+		Model:         ev.Model,
+		Tags:          ev.Tags,
+		Request: cc.RequestPart{
+			Method: "POST",
+		},
+		Response: cc.ResponsePart{
+			Status: ev.StatusCode,
+		},
+		UpstreamStatus: ev.StatusCode,
+		UpstreamError:  ev.UpstreamError,
+		PolicyRef:      ev.PolicyRef,
+		SchemaVersion:  cc.SchemaVersion,
+	}
+	if len(ev.Attempts) > 0 {
+		rec.Attempts = make([]cc.Attempt, 0, len(ev.Attempts))
+		for _, a := range ev.Attempts {
+			rec.Attempts = append(rec.Attempts, cc.Attempt{
+				Target:      a.Target,
+				StartedAtNs: a.StartedAt.UnixNano(),
+				DurationMs:  a.DurationMs,
+				StatusCode:  a.StatusCode,
+				Error:       a.Error,
+				Outcome:     a.Outcome,
+			})
+		}
+	}
+
+	if ev.TokensIn > 0 || ev.TokensOut > 0 || ev.TokensCached > 0 || ev.TokensCacheCreation > 0 {
+		rec.Tokens = &cc.Tokens{
+			Input:         ev.TokensIn,
+			Output:        ev.TokensOut,
+			Cached:        ev.TokensCached,
+			CacheCreation: ev.TokensCacheCreation,
+		}
+	}
+
+	if len(matches) > 0 {
+		rec.RulesFired = make([]cc.RuleFired, 0, len(matches))
+		for _, m := range matches {
+			rec.RulesFired = append(rec.RulesFired, cc.RuleFired{
+				Name:           m.RuleName,
+				ActionsApplied: append([]string(nil), m.ActionsApplied...),
+				Terminated:     m.Terminated,
+				ErrorMessage:   m.ErrorMessage,
+			})
+		}
+	}
+
+	if captured, ok := bodycapture.FromContext(ctx); ok {
+		if len(captured.Raw) > 0 {
+			rec.Request.Body = jsonBodyOrEscaped(captured.Raw)
+			rec.Request.BodyBytes = len(captured.Raw)
+			sum := sha256.Sum256(captured.Raw)
+			rec.Request.BodySha256 = hex.EncodeToString(sum[:])
+		}
+		if len(captured.Headers) > 0 {
+			rec.Request.Headers = map[string]string{}
+			for k, vs := range captured.Headers {
+				if len(vs) > 0 {
+					rec.Request.Headers[k] = vs[0]
+				}
+			}
+		}
+	}
+
+	if buf, ok := livefeed.ResponseBufferFromContext(ctx); ok && buf != nil {
+		body := buf.Bytes()
+		if len(body) > 0 {
+			rec.Response.Body = jsonBodyOrEscaped(body)
+			rec.Response.BodyBytes = int(buf.Total())
+			sum := sha256.Sum256(body)
+			rec.Response.BodySha256 = hex.EncodeToString(sum[:])
+		}
+		if h := buf.Headers(); len(h) > 0 {
+			rec.Response.Headers = map[string]string{}
+			for k, vs := range h {
+				if len(vs) > 0 {
+					rec.Response.Headers[k] = vs[0]
+				}
+			}
+		}
+		if !r.firstByte.IsZero() {
+			rec.Response.FirstByteNs = r.firstByte.UnixNano()
+		}
+	}
+	if r.streaming {
+		// We don't track per-chunk count yet; setting to 1 is enough
+		// for downstream consumers (and the e2e harness) to recognise
+		// the response as streaming. A follow-up can plumb the actual
+		// count out of the proxy's stream writer wrapper.
+		rec.Response.StreamChunks = 1
+	}
+	if !r.started.IsZero() {
+		rec.Response.LastByteNs = r.started.Add(time.Duration(ev.DurationMs) * time.Millisecond).UnixNano()
+	}
+
+	return rec
 }
 
 // drainRuleMatches merges the observer's OnRuleMatched buffer with the
 // per-request MatchBuffer the rules middleware writes through, stamps
-// the correlation ID onto any record that was authored without one,
-// and returns the consolidated slice. The MatchBuffer is consumed.
+// the correlation ID onto any record authored without one, and
+// returns the consolidated slice. The MatchBuffer is consumed.
 func (r *reporterRun) drainRuleMatches(ctx context.Context, correlationID string) []events.RuleMatched {
 	matches := r.ruleMatches
 	if buf := rules.MatchBufferFromContext(ctx); buf != nil {
@@ -328,34 +458,11 @@ func (r *reporterRun) drainRuleMatches(ctx context.Context, correlationID string
 	return matches
 }
 
-// publishRuleMatches emits one gateway.rule.matched envelope per
-// record. A nil publisher is a no-op; this keeps the bus fan-out
-// optional without forcing every caller to gate the call site.
-func (r *reporterRun) publishRuleMatches(ctx context.Context, matches []events.RuleMatched) {
-	if r.factory.publisher == nil || len(matches) == 0 {
-		return
-	}
-	for _, m := range matches {
-		payload, err := json.Marshal(m)
-		if err != nil {
-			r.factory.logger.WarnContext(ctx, "reporter: marshal rule match", "err", err.Error())
-			continue
-		}
-		r.factory.publisher.Publish(bus.Envelope{
-			EventID:       uuid.NewString(),
-			EventType:     eventTypeRuleMatched,
-			Timestamp:     time.Now().UTC(),
-			Mode:          bus.PayloadInline,
-			InlinePayload: payload,
-		})
-	}
-}
-
-// appendLiveFeed tees the completed request + its rule matches into the
-// in-process ring that backs the admin console's live-messages pane.
-// A nil ring is a no-op (live feed disabled via env var). Returns the
-// minted event ID so subsequent steps (body capture, etc.) can key
-// against the same identifier.
+// appendLiveFeed tees the completed request + its rule matches into
+// the in-process ring that backs the admin console's live-messages
+// pane. A nil ring is a no-op (live feed disabled via env var).
+// Returns the minted event ID so subsequent steps (body capture)
+// can key against the same identifier.
 func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMatched) string {
 	if r.factory.liveFeed == nil {
 		return ""
@@ -461,10 +568,7 @@ func (r *reporterRun) captureBody(ctx context.Context, entryID string, ev events
 // context, copies its Tags onto ev, and increments
 // gateway.tags.applied.total once per tag. No state on context (rules
 // middleware bypassed for this request) is a no-op leaving ev.Tags
-// nil. The counter is labelled by tag name only — provider /
-// endpoint / configuration intentionally omitted so cardinality stays
-// bounded by the operator-defined tag library, not by the cross-
-// product with everything else.
+// nil.
 func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 	state := rules.MutableStateFromContext(ctx)
 	if state == nil || len(state.Tags) == 0 {
@@ -481,16 +585,7 @@ func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 
 // populateTokens reads the captured response (when present) and writes
 // the extracted token snapshot onto ev plus the four gateway.tokens.*
-// counters. Token capture is gated on the live-feed response buffer
-// being on the context — when bodies are disabled there is nothing to
-// parse and tokens stay zero.
-//
-// Counters are bumped only for non-zero buckets so a streaming response
-// that omits include_usage (Recognised=false) and a response that
-// reports e.g. cached=0 produce the same null observation on the
-// gateway.tokens.cached.total series. The status_code attribute mirrors
-// the requests/duration meter labelset so dashboards can join token
-// rate with traffic rate by the same dimensions.
+// counters.
 func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	buf, ok := livefeed.ResponseBufferFromContext(ctx)
 	if !ok || buf == nil {
@@ -529,9 +624,7 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 
 // providerEndpointModelAttrs builds the (provider, endpoint, model)
 // attribute set used by per-request meters that fire mid-request
-// (TimeToFirstByte, UpstreamErrors). Values are owned by the observer
-// struct itself; see the OnComplete helper for the post-completion variant
-// that also carries the final status code.
+// (TimeToFirstByte, UpstreamErrors).
 func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
 	return metric.WithAttributes(
 		attribute.String("provider", r.provider),
@@ -540,12 +633,29 @@ func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
 	)
 }
 
+// jsonBodyOrEscaped marshals body bytes onto a Record's inline
+// `body` field. JSON content passes through as-is (the consumer sees
+// a native JSON object/array); non-JSON content (SSE streams, plain
+// text) is wrapped as a JSON string so json.RawMessage's
+// MarshalJSON validator accepts it. The shape mirrors what a CDN
+// audit pipeline would expect: `body` is "the request body, decoded
+// as JSON if possible, otherwise the raw bytes as a JSON string".
+func jsonBodyOrEscaped(b []byte) json.RawMessage {
+	if json.Valid(b) {
+		return json.RawMessage(b)
+	}
+	encoded, err := json.Marshal(string(b))
+	if err != nil {
+		// json.Marshal of a string never fails for valid UTF-8; for
+		// non-UTF-8 it fails gracefully and we fall back to the
+		// empty-body case.
+		return nil
+	}
+	return json.RawMessage(encoded)
+}
+
 // withCompletionAttrs extends the per-request attribute set with the
-// resolved configuration and the final response status code. Used at
-// OnComplete where status is authoritative (post-ErrorHandler) and the
-// configuration name has already been resolved by auth, so the dashboard
-// aggregator can slice traffic by both endpoint and configuration without
-// going to logs.
+// resolved configuration and the final response status code.
 func withCompletionAttrs(provider, endpoint, model, configuration string, status int) metric.MeasurementOption {
 	return metric.WithAttributes(
 		attribute.String("provider", provider),

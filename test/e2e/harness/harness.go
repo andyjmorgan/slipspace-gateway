@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,10 +20,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/nats-io/nats.go"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
@@ -36,31 +33,34 @@ const (
 	stopTimeout    = 10 * time.Second
 )
 
-// Harness owns a NATS container, a mockllm process, and a gateway process for
-// the lifetime of a single test. All processes and containers are torn down
-// via t.Cleanup.
+// Harness owns the in-process webhook capture server, the mockllm
+// process, and the gateway process for the lifetime of a single test.
+// All processes are torn down via t.Cleanup.
+//
+// Architecture: the gateway is configured (via materializeConfig) with
+// a webhook connector pointing at this harness's in-process
+// httptest.Server. Every sealed-segment POST is decompressed,
+// each cc.Record is translated into the legacy Envelope shape, and
+// pushed to eventBuf — ExpectEvent reads from there. SLUICE_WEBHOOK_
+// ALLOW_PRIVATE is set on the gateway process so the loopback target
+// passes the runtime SSRF guard.
 type Harness struct {
 	T *testing.T
 
 	GatewayURL string
 	MockLLMURL string
-	NATSURL    string
 
 	// AdminURL is the http://127.0.0.1:<port>/admin base of the
-	// management console when Options.AdminEnabled is true — includes
-	// the /admin path prefix so tests can append "/api/v1/..." or
-	// "/dashboard" without hardcoding the prefix. Empty otherwise.
+	// management console when Options.AdminEnabled is true.
 	AdminURL string
 
 	// AdminPassword is the credential the harness wrote into admin.yaml
-	// for this run. Tests use it via http.Request.SetBasicAuth(Username,
-	// AdminPassword).
+	// for this run.
 	AdminPassword string
 
 	APIKey string
 
 	HTTP *http.Client
-	NATS *nats.Conn
 
 	opts Options
 
@@ -69,14 +69,17 @@ type Harness struct {
 	adminBindPort   int
 
 	configDir string
+	spoolRoot string
 
-	natsContainer testcontainers.Container
+	// captureServer is the in-process httptest.Server that the
+	// gateway's webhook connector POSTs sealed segments to.
+	captureServer *httptest.Server
+	captureURL    string
+	captureSecret string
 
-	eventBuf chan *nats.Msg
-	eventSub *nats.Subscription
-
-	pendingMu     sync.Mutex
-	pendingEvents []*nats.Msg
+	eventBuf         chan Envelope
+	pendingMu        sync.Mutex
+	pendingEnvelopes []Envelope
 
 	mockllmCmd  *exec.Cmd
 	mockllmDone chan struct{}
@@ -90,7 +93,7 @@ type Harness struct {
 	stopped bool
 }
 
-// New brings up NATS (testcontainers, JetStream enabled), the mockllm binary,
+// New brings up the in-process webhook capture server, the mockllm binary,
 // and the gateway binary, waits for each to be reachable, and registers
 // cleanups. It calls t.Fatalf on any startup failure.
 func New(t *testing.T) *Harness {
@@ -115,9 +118,9 @@ func NewWithOptions(t *testing.T, opts Options) *Harness {
 		opts:   opts,
 	}
 
-	h.startNATS(t)
-	if err := h.startEventTap(); err != nil {
-		t.Fatalf("harness: event tap: %v", err)
+	h.captureSecret = randomID()
+	if err := h.startCaptureServer(); err != nil {
+		t.Fatalf("harness: start capture server: %v", err)
 	}
 	h.startMockLLM(t, repoRoot)
 	h.startGateway(t, repoRoot)
@@ -169,75 +172,17 @@ func (h *Harness) Stop() {
 	}
 	h.stopped = true
 
-	if h.eventSub != nil {
-		_ = h.eventSub.Unsubscribe()
-	}
-	if h.NATS != nil {
-		h.NATS.Close()
-	}
-
 	stopProcess(h.gatewayCmd, h.gatewayDone)
 	stopProcess(h.mockllmCmd, h.mockllmDone)
 
-	if h.natsContainer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
-		defer cancel()
-		if err := h.natsContainer.Terminate(ctx); err != nil && h.T != nil {
-			h.T.Logf("harness: terminate nats container: %v", err)
-		}
-	}
+	h.shutdownCaptureServer()
 
 	if h.configDir != "" {
 		_ = os.RemoveAll(h.configDir)
 	}
-}
-
-func (h *Harness) startNATS(t *testing.T) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), startupTimeout)
-	defer cancel()
-
-	req := testcontainers.ContainerRequest{
-		Image:        "nats:2.10",
-		Cmd:          []string{"-js"},
-		ExposedPorts: []string{"4222/tcp"},
-		// ForLog says NATS is accepting connections; ForListeningPort
-		// guarantees testcontainers has populated the host-port mapping
-		// before we ask for it. Without the latter, MappedPort races the
-		// container-inspect refresh and intermittently fails with
-		// `port "4222/tcp" not found`.
-		WaitingFor: wait.ForAll(
-			wait.ForLog("Server is ready"),
-			wait.ForListeningPort("4222/tcp"),
-		).WithStartupTimeout(startupTimeout),
+	if h.spoolRoot != "" {
+		_ = os.RemoveAll(h.spoolRoot)
 	}
-
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
-	if err != nil {
-		t.Fatalf("harness: start nats: %v", err)
-	}
-
-	host, err := container.Host(ctx)
-	if err != nil {
-		t.Fatalf("harness: nats host: %v", err)
-	}
-	port, err := container.MappedPort(ctx, "4222/tcp")
-	if err != nil {
-		t.Fatalf("harness: nats port: %v", err)
-	}
-
-	h.natsContainer = container
-	h.NATSURL = fmt.Sprintf("nats://%s:%s", host, port.Port())
-
-	conn, err := nats.Connect(h.NATSURL, nats.Timeout(5*time.Second), nats.MaxReconnects(3))
-	if err != nil {
-		t.Fatalf("harness: nats connect %s: %v", h.NATSURL, err)
-	}
-	h.NATS = conn
 }
 
 func (h *Harness) startMockLLM(t *testing.T, repoRoot string) {
@@ -323,6 +268,12 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 		h.AdminPassword = password
 		h.AdminURL = fmt.Sprintf("http://127.0.0.1:%d/admin", adminPort)
 	}
+
+	spoolRoot, err := os.MkdirTemp("", "sluice-e2e-spool-*")
+	if err != nil {
+		t.Fatalf("harness: tmp spool: %v", err)
+	}
+	h.spoolRoot = spoolRoot
 
 	configDir, err := h.materializeConfig(repoRoot)
 	if err != nil {
@@ -422,7 +373,62 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 	if err := h.writeAdminYAML(dst); err != nil {
 		return "", err
 	}
+	if err := h.injectWebhookConnector(dst); err != nil {
+		return "", err
+	}
 	return dst, nil
+}
+
+// injectWebhookConnector rewrites policy.yaml in dst to attach the
+// harness's in-process webhook capture server to the `dev`
+// configuration the e2e harness drives. Appends a `connectors:` block
+// at EOF.
+//
+// We do this as a textual edit because the load path is strict about
+// top-level keys but tolerates extra subkeys under each configuration;
+// adding the binding via a string match keeps the harness independent
+// of how config-dev/policy.yaml evolves field-by-field.
+//
+// The match target is the literal `tags:\n      tier: dev` block —
+// the last meaningful line of the dev configuration in config-dev/.
+// If that pattern changes in config-dev/, the inject silently
+// no-ops and tests will time out on ExpectEvent; the failure is
+// visible enough that "harness inject fell through" is the obvious
+// next-thing-to-check.
+func (h *Harness) injectWebhookConnector(dst string) error {
+	// When the test explicitly disables reporting, skip the inject so
+	// no connector binding fires and tests can assert "silence".
+	if h.opts.ReportingEnabled != nil && !*h.opts.ReportingEnabled {
+		return nil
+	}
+
+	policyPath := filepath.Join(dst, "policy.yaml")
+	raw, err := os.ReadFile(policyPath) //nolint:gosec // dst is os.MkdirTemp output
+	if err != nil {
+		return fmt.Errorf("read policy.yaml: %w", err)
+	}
+	content := string(raw)
+
+	// Inject the binding as the FIRST subkey under `  dev:\n` so the
+	// match works against both config-dev/policy.yaml and any
+	// test-supplied PolicyYAML that defines the same configuration.
+	const devKey = "  dev:\n"
+	const devBindingInsert = devKey + "    connector_bindings:\n      - connector: harness-webhook\n"
+	content = strings.Replace(content, devKey, devBindingInsert, 1)
+
+	content += fmt.Sprintf(`
+connectors:
+  - name: harness-webhook
+    type: webhook
+    url: %s
+    secret_ref: env:HARNESS_WEBHOOK_SECRET
+    timeout_ms: 5000
+    rotation:
+      max_bytes: 1
+      max_age_seconds: 1
+`, h.captureURL)
+
+	return os.WriteFile(policyPath, []byte(content), 0o600) //nolint:gosec // dst is os.MkdirTemp output
 }
 
 // writeAdminYAML emits a per-test admin.yaml in dst. Disabled blocks
@@ -451,19 +457,16 @@ func (h *Harness) gatewayEnv(configDir string) []string {
 		fmt.Sprintf("SLUICE_HTTP_BIND=127.0.0.1:%d", h.gatewayBindPort),
 		fmt.Sprintf("SLUICE_PROMETHEUS_BIND=127.0.0.1:%d", h.promBindPort),
 		"SLUICE_LOG_LEVEL=debug",
+		"SLUICE_SPOOL_ROOT=" + h.spoolRoot,
+		// The harness's capture httptest.Server binds to loopback;
+		// flip the webhook connector's runtime SSRF guard so the
+		// connector accepts a 127.0.0.1 destination.
+		"SLUICE_WEBHOOK_ALLOW_PRIVATE=1",
+		// HMAC key the gateway signs payloads with. Generated per
+		// harness so concurrent test packages don't share state.
+		"HARNESS_WEBHOOK_SECRET=" + h.captureSecret,
 	}
 
-	reportingOn := true
-	if h.opts.ReportingEnabled != nil {
-		reportingOn = *h.opts.ReportingEnabled
-	}
-	if reportingOn {
-		env = append(env, "SLUICE_NATS_URL="+h.NATSURL)
-	}
-
-	if h.opts.StashThresholdBytes > 0 {
-		env = append(env, fmt.Sprintf("SLUICE_NATS_STASH_THRESHOLD_BYTES=%d", h.opts.StashThresholdBytes))
-	}
 	if h.opts.DrainTimeoutSeconds > 0 {
 		env = append(env, fmt.Sprintf("SLUICE_SHUTDOWN_DRAIN_SECONDS=%d", h.opts.DrainTimeoutSeconds))
 	}

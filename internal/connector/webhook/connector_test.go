@@ -596,6 +596,30 @@ func TestDefaultResolver_ResolvesLocalhost(t *testing.T) {
 	}
 }
 
+func TestNew_EnvAllowPrivateFlipsRuntimeGuard(t *testing.T) {
+	// SLUICE_WEBHOOK_ALLOW_PRIVATE=1 must flip allowPrivate even when
+	// the caller leaves Options.AllowPrivateNetworks false. The e2e
+	// harness relies on this so its loopback httptest.Server passes
+	// the runtime SSRF re-resolve.
+	t.Setenv("SLUICE_WEBHOOK_ALLOW_PRIVATE", "true")
+	t.Setenv("S", "k")
+	c, err := New(context.Background(), Options{
+		Config: contractsconfig.Connector{ //nolint:gosec // G101: env: indirection
+			Type: "webhook", Name: "x", URL: "https://api.example/sluice",
+			SecretRef: "env:S", TimeoutMS: 1000,
+		},
+		Resolver: func(_ context.Context, _ string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.allowPrivate {
+		t.Error("env override should flip allowPrivate on")
+	}
+}
+
 func TestDefaultResolver_BadHost(t *testing.T) {
 	_, err := defaultResolver(context.Background(), "invalid..host..with..dots")
 	if err == nil {

@@ -11,16 +11,17 @@ import (
 // Default values for ServerEnv fields. Each constant pairs with the
 // SLUICE_* env var that overrides it; see LoadEnv for the mapping.
 const (
-	DefaultHTTPBind                = ":8585"
-	DefaultShutdownDrainSeconds    = 300
-	DefaultLogFormat               = "json"
-	DefaultLogLevel                = "info"
-	DefaultOTLPProtocol            = "grpc"
-	DefaultNATSStream              = "GATEWAY_EVENTS"
-	DefaultNATSBucket              = "GATEWAY_EVENT_STASH"
-	DefaultNATSStashThresholdBytes = 786432
-	DefaultNATSPublishQueueSize    = 10000
-	DefaultConfigDir               = "/etc/sluice/"
+	DefaultHTTPBind             = ":8585"
+	DefaultShutdownDrainSeconds = 300
+	DefaultLogFormat            = "json"
+	DefaultLogLevel             = "info"
+	DefaultOTLPProtocol         = "grpc"
+	DefaultConfigDir            = "/etc/sluice/"
+
+	// DefaultSpoolRoot is the on-disk root for the connector spool.
+	// Operators point this at a PVC mount in production so the spool
+	// survives process restarts; tests / dev override.
+	DefaultSpoolRoot = "/var/lib/sluice/spool"
 
 	// DefaultRulesMaxGroupDepth caps recursion through nested RuleGroup
 	// children during evaluation. The cap is a guardrail against
@@ -72,12 +73,8 @@ const (
 	EnvPrometheusBind            = "SLUICE_PROMETHEUS_BIND"
 	EnvOTLPEndpoint              = "SLUICE_OTLP_ENDPOINT"
 	EnvOTLPProtocol              = "SLUICE_OTLP_PROTOCOL"
-	EnvNATSURL                   = "SLUICE_NATS_URL"
-	EnvNATSStream                = "SLUICE_NATS_STREAM"
-	EnvNATSBucket                = "SLUICE_NATS_BUCKET"
-	EnvNATSStashThresholdBytes   = "SLUICE_NATS_STASH_THRESHOLD_BYTES"
-	EnvNATSPublishQueueSize      = "SLUICE_NATS_PUBLISH_QUEUE_SIZE"
 	EnvConfigDir                 = "SLUICE_CONFIG_DIR"
+	EnvSpoolRoot                 = "SLUICE_SPOOL_ROOT"
 	EnvRulesMaxGroupDepth        = "SLUICE_RULES_MAX_GROUP_DEPTH"
 	EnvAdminSnapshotIntervalMs   = "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS"
 	EnvAdminLiveFeedCapacity     = "SLUICE_ADMIN_LIVE_FEED_CAPACITY"
@@ -96,12 +93,8 @@ var envVarNames = []string{
 	EnvPrometheusBind,
 	EnvOTLPEndpoint,
 	EnvOTLPProtocol,
-	EnvNATSURL,
-	EnvNATSStream,
-	EnvNATSBucket,
-	EnvNATSStashThresholdBytes,
-	EnvNATSPublishQueueSize,
 	EnvConfigDir,
+	EnvSpoolRoot,
 	EnvRulesMaxGroupDepth,
 	EnvAdminSnapshotIntervalMs,
 	EnvAdminLiveFeedCapacity,
@@ -145,30 +138,15 @@ type ServerEnv struct {
 	// OTLPProtocol is the OTLP transport: "grpc" or "http/protobuf".
 	OTLPProtocol string
 
-	// NATSURL is the NATS server connection string. Empty disables
-	// reporting — the publisher is not wired and events drop on the
-	// floor with the dropped counter incremented.
-	NATSURL string
-
-	// NATSStream is the JetStream stream name reporting events publish to.
-	NATSStream string
-
-	// NATSBucket is the Object Store bucket used to stash payloads that
-	// exceed NATSStashThresholdBytes.
-	NATSBucket string
-
-	// NATSStashThresholdBytes is the inline-vs-stashed cutoff. Envelopes
-	// above this byte length are uploaded to the Object Store and the
-	// publish carries a reference instead.
-	NATSStashThresholdBytes int
-
-	// NATSPublishQueueSize bounds the publisher's in-process queue.
-	// When full, Publish drops on the floor — never blocks.
-	NATSPublishQueueSize int
-
 	// ConfigDir holds the policy + providers YAML directory loaded by
 	// Load. The CLI's --dir flag overrides this for the file load only.
 	ConfigDir string
+
+	// SpoolRoot is the on-disk root for the connector spool. The Spool
+	// constructs records/<connector>/{active,sealed,uploading,
+	// deadletter,quarantine}/ under this path. Operators point at a
+	// PVC mount in production so segments survive process restart.
+	SpoolRoot string
 
 	// RulesMaxGroupDepth caps recursive descent through nested
 	// RuleGroup children during evaluation. Operator-authored policies
@@ -197,10 +175,6 @@ type ServerEnv struct {
 	// truncated flag. Ignored when AdminLiveFeedBodyBytes is zero.
 	AdminLiveFeedBodyMaxBytes int
 }
-
-// ReportingEnabled reports whether NATS reporting is configured. False
-// when NATSURL is empty.
-func (e *ServerEnv) ReportingEnabled() bool { return e.NATSURL != "" }
 
 // PrometheusEnabled reports whether the Prometheus scrape listener is
 // configured. False when PrometheusBind is empty.
@@ -233,14 +207,6 @@ func LoadEnv() (*ServerEnv, error) {
 	if err != nil {
 		return nil, err
 	}
-	stash, err := envInt(EnvNATSStashThresholdBytes, DefaultNATSStashThresholdBytes)
-	if err != nil {
-		return nil, err
-	}
-	queue, err := envInt(EnvNATSPublishQueueSize, DefaultNATSPublishQueueSize)
-	if err != nil {
-		return nil, err
-	}
 	groupDepth, err := envInt(EnvRulesMaxGroupDepth, DefaultRulesMaxGroupDepth)
 	if err != nil {
 		return nil, err
@@ -270,12 +236,8 @@ func LoadEnv() (*ServerEnv, error) {
 		PrometheusBind:            envString(EnvPrometheusBind, ""),
 		OTLPEndpoint:              envString(EnvOTLPEndpoint, ""),
 		OTLPProtocol:              envString(EnvOTLPProtocol, DefaultOTLPProtocol),
-		NATSURL:                   envString(EnvNATSURL, ""),
-		NATSStream:                envString(EnvNATSStream, DefaultNATSStream),
-		NATSBucket:                envString(EnvNATSBucket, DefaultNATSBucket),
-		NATSStashThresholdBytes:   stash,
-		NATSPublishQueueSize:      queue,
 		ConfigDir:                 envString(EnvConfigDir, DefaultConfigDir),
+		SpoolRoot:                 envString(EnvSpoolRoot, DefaultSpoolRoot),
 		RulesMaxGroupDepth:        groupDepth,
 		AdminSnapshotIntervalMs:   snapInterval,
 		AdminLiveFeedCapacity:     liveFeedCap,
@@ -298,11 +260,8 @@ func (e *ServerEnv) Validate() error {
 	if e.ShutdownDrainSeconds <= 0 {
 		return fmt.Errorf("%s=%d: %w: must be positive", EnvShutdownDrainSeconds, e.ShutdownDrainSeconds, ErrInvalidEnv)
 	}
-	if e.NATSStashThresholdBytes <= 0 {
-		return fmt.Errorf("%s=%d: %w: must be positive", EnvNATSStashThresholdBytes, e.NATSStashThresholdBytes, ErrInvalidEnv)
-	}
-	if e.NATSPublishQueueSize <= 0 {
-		return fmt.Errorf("%s=%d: %w: must be positive", EnvNATSPublishQueueSize, e.NATSPublishQueueSize, ErrInvalidEnv)
+	if e.SpoolRoot == "" {
+		return fmt.Errorf("%s: %w: must be non-empty", EnvSpoolRoot, ErrInvalidEnv)
 	}
 	if e.RulesMaxGroupDepth < 1 || e.RulesMaxGroupDepth > MaxRulesMaxGroupDepth {
 		return fmt.Errorf("%s=%d: %w: must be in [1, %d]", EnvRulesMaxGroupDepth, e.RulesMaxGroupDepth, ErrInvalidEnv, MaxRulesMaxGroupDepth)
