@@ -32,6 +32,15 @@ func newLog() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})), buf
 }
 
+// waitForCounter polls reader until the named counter has a non-zero data
+// point tagged site=siteLabel, then returns that value.
+//
+// Non-zero is the exit criterion (not "attribute set present") because the
+// OTel SDK creates the per-attribute aggregator cell before incrementing
+// it: sumValueMap.measure does LoadOrStoreAttr (cell exists with n=0)
+// followed by sv.n.add(value). A Collect racing inside that window would
+// otherwise hand us a transient 0 and we'd report a phantom counter=0
+// when the caller is about to assert counter=1.
 func waitForCounter(t *testing.T, reader *sdkmetric.ManualReader, name, siteLabel string) int64 { //nolint:unparam // name kept as a parameter so the helper generalises to RequestPanicsTotal etc. without a signature change
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -50,6 +59,9 @@ func waitForCounter(t *testing.T, reader *sdkmetric.ManualReader, name, siteLabe
 					continue
 				}
 				for _, dp := range sum.DataPoints {
+					if dp.Value == 0 {
+						continue
+					}
 					iter := dp.Attributes.Iter()
 					for iter.Next() {
 						attr := iter.Attribute()
@@ -61,7 +73,7 @@ func waitForCounter(t *testing.T, reader *sdkmetric.ManualReader, name, siteLabe
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("counter %q with site=%q never recorded", name, siteLabel)
+			t.Fatalf("counter %q with site=%q never recorded a non-zero value", name, siteLabel)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -25,7 +25,13 @@ func startNATS(t *testing.T) (string, func()) {
 		Image:        "nats:2.10-alpine",
 		ExposedPorts: []string{"4222/tcp"},
 		Cmd:          []string{"-js"},
-		WaitingFor:   wait.ForLog("Server is ready").WithStartupTimeout(60 * time.Second),
+		// ForLog alone races MappedPort under load — the log fires
+		// before testcontainers has populated the host-port mapping.
+		// ForListeningPort closes that window.
+		WaitingFor: wait.ForAll(
+			wait.ForLog("Server is ready"),
+			wait.ForListeningPort("4222/tcp"),
+		).WithStartupTimeout(60 * time.Second),
 	}
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,

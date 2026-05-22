@@ -202,8 +202,15 @@ func (h *Harness) startNATS(t *testing.T) {
 		Image:        "nats:2.10",
 		Cmd:          []string{"-js"},
 		ExposedPorts: []string{"4222/tcp"},
-		WaitingFor: wait.ForLog("Server is ready").
-			WithStartupTimeout(startupTimeout),
+		// ForLog says NATS is accepting connections; ForListeningPort
+		// guarantees testcontainers has populated the host-port mapping
+		// before we ask for it. Without the latter, MappedPort races the
+		// container-inspect refresh and intermittently fails with
+		// `port "4222/tcp" not found`.
+		WaitingFor: wait.ForAll(
+			wait.ForLog("Server is ready"),
+			wait.ForListeningPort("4222/tcp"),
+		).WithStartupTimeout(startupTimeout),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -236,9 +243,30 @@ func (h *Harness) startNATS(t *testing.T) {
 func (h *Harness) startMockLLM(t *testing.T, repoRoot string) {
 	t.Helper()
 
+	// freePort uses listen-on-0 / close, which leaves a TOCTOU window
+	// between us closing the listener and `go run ./cmd/mockllm` binding
+	// it. Under parallel e2e packages that race fires often enough to be
+	// a real flake — retry the whole start sequence if mockllm dies before
+	// the readiness probe succeeds.
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := h.tryStartMockLLM(t, repoRoot); err == nil {
+			return
+		} else {
+			lastErr = err
+			t.Logf("harness: mockllm start attempt %d/%d failed: %v", attempt, maxAttempts, err)
+		}
+	}
+	t.Fatalf("harness: mockllm did not start after %d attempts: %v", maxAttempts, lastErr)
+}
+
+func (h *Harness) tryStartMockLLM(t *testing.T, repoRoot string) error {
+	t.Helper()
+
 	port, err := freePort()
 	if err != nil {
-		t.Fatalf("harness: free port for mockllm: %v", err)
+		return fmt.Errorf("free port for mockllm: %w", err)
 	}
 
 	cmd := exec.Command("go", "run", "./cmd/mockllm", "--port", strconv.Itoa(port)) //nolint:gosec // fixed argv, repo-controlled
@@ -248,7 +276,7 @@ func (h *Harness) startMockLLM(t *testing.T, repoRoot string) {
 	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("harness: start mockllm: %v", err)
+		return fmt.Errorf("start mockllm: %w", err)
 	}
 
 	done := make(chan struct{})
@@ -257,14 +285,16 @@ func (h *Harness) startMockLLM(t *testing.T, repoRoot string) {
 		close(done)
 	}()
 
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if err := waitForHTTP(h.HTTP, url+"/control/state", startupTimeout); err != nil {
+		stopProcess(cmd, done)
+		return fmt.Errorf("mockllm did not become ready on port %d: %w", port, err)
+	}
+
 	h.mockllmCmd = cmd
 	h.mockllmDone = done
-	h.MockLLMURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-
-	if err := waitForHTTP(h.HTTP, h.MockLLMURL+"/control/state", startupTimeout); err != nil {
-		stopProcess(cmd, done)
-		t.Fatalf("harness: mockllm did not become ready: %v", err)
-	}
+	h.MockLLMURL = url
+	return nil
 }
 
 func (h *Harness) startGateway(t *testing.T, repoRoot string) {
