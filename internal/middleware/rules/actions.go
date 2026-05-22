@@ -18,6 +18,25 @@ import (
 // mutate (or against a passthrough endpoint where Body is nil).
 var ErrUnknownModelField = errors.New("rules: cannot set model on this body type")
 
+// ApplyAction is the exported entry point for any caller that needs
+// to apply a rule action to a MutableState — currently the rules
+// middleware and the v1.2 resilience orchestrator. The dispatch logic
+// is the unexported applyAction; this wrapper exists so contracts/
+// rules.Action values can flow through the same machinery from
+// outside the package without re-implementing the type switch.
+//
+// body is the typed request body (bodycapture.Captured.Body) when
+// available; nil otherwise. Actions that need body mutation
+// (changeModelName) tolerate nil by skipping the body write and
+// only updating PathParams.
+func ApplyAction(
+	act contractsrules.Action,
+	state *MutableState,
+	body any,
+) (contractsrules.Outcome, error) {
+	return applyAction(act, state, body)
+}
+
 // applyAction dispatches a non-terminating action to its evaluator.
 // Terminating actions (returnStatusCode, llmImpersonation) ship in
 // later PRs; UnknownAction returns a passthrough Outcome for
