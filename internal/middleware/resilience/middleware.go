@@ -83,9 +83,12 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 //   - Policy.ResponseHeaderTimeoutSeconds is parsed but not yet
 //     applied per-attempt — the global Transport.ResponseHeaderTimeout
 //     applies to every attempt. Per-target Transports deferred.
-func HTTPHandler(lookup PolicyLookup, next http.Handler) http.Handler {
+func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, next http.Handler) http.Handler {
 	if next == nil {
 		panic("resilience: HTTPHandler called with nil next handler")
+	}
+	if breakers == nil {
+		breakers = noopBreakerStore{}
 	}
 	if lookup == nil {
 		return next
@@ -106,10 +109,10 @@ func HTTPHandler(lookup PolicyLookup, next http.Handler) http.Handler {
 
 		switch pol.Mode {
 		case contractsres.ModeFailover:
-			runFailover(w, r, pol, state, next)
+			runFailover(w, r, pol, state, breakers, next)
 			return
 		case contractsres.ModeLoadBalance, contractsres.ModeLoadBalanceWithFailover:
-			runLoadBalance(w, r, pol, state, next)
+			runLoadBalance(w, r, pol, state, breakers, next)
 			return
 		}
 
@@ -177,6 +180,7 @@ func runFailover(
 	r *http.Request,
 	pol *contractsres.ResilienceConfig,
 	state *rules.MutableState,
+	breakers BreakerStore,
 	next http.Handler,
 ) {
 	ctx := r.Context()
@@ -186,6 +190,7 @@ func runFailover(
 
 	var lastStatus int
 	var lastErr error
+	attempts := 0
 
 	// Snapshot the inbound raw body once so each attempt sees a
 	// fresh r.Body. ReverseProxy consumes r.Body during a single
@@ -195,12 +200,22 @@ func runFailover(
 	rawBody := capturedRawBody(ctx)
 
 	for i, target := range targets {
+		cb := effectiveCircuitBreaker(pol, target)
+		if !breakers.Allow(pol.Name, target.Name, cb) {
+			logger.InfoContext(ctx, "resilience: circuit breaker open, skipping target",
+				slog.String("policy", pol.Name),
+				slog.String("target", target.Name),
+				slog.Int("position", i+1),
+			)
+			continue
+		}
+
 		clone, err := buildAttemptState(ctx, state, target)
 		if err != nil {
 			logger.ErrorContext(ctx, "resilience: target action failed",
 				slog.String("policy", pol.Name),
 				slog.String("target", target.Name),
-				slog.Int("attempt", i+1),
+				slog.Int("attempt", attempts+1),
 				slog.Any("error", err),
 			)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -208,10 +223,6 @@ func runFailover(
 		}
 
 		if rawBody != nil {
-			// Restore r.Body before each attempt. BodyRemarshal
-			// downstream will re-encode from the typed body if
-			// state.BodyMutated is true; otherwise the raw bytes
-			// reach the forwarder verbatim.
 			bodycapture.ApplyBodyBytes(r, rawBody)
 		}
 
@@ -219,42 +230,47 @@ func runFailover(
 		buf := proxy.NewBufferingResponseWriter(w, retrySet)
 
 		attemptCtx := rules.WithMutableState(ctx, clone)
+		attempts++
 		logger.DebugContext(ctx, "resilience: failover attempt",
 			slog.String("policy", pol.Name),
 			slog.String("target", target.Name),
-			slog.Int("attempt", i+1),
+			slog.Int("attempt", attempts),
 			slog.Int("of", len(targets)),
 		)
 
 		next.ServeHTTP(buf, r.WithContext(attemptCtx))
 
 		if !buf.ShouldRetry() {
-			// Committed (or no retry hint) — the response is either
-			// already on the wire or there is nothing to retry with.
+			breakers.RecordSuccess(pol.Name, target.Name, cb)
 			return
 		}
 
+		breakers.RecordFailure(pol.Name, target.Name, cb)
 		lastStatus = buf.StatusCode()
 		lastErr = buf.TransportError()
 		logger.InfoContext(ctx, "resilience: failover attempt failed",
 			slog.String("policy", pol.Name),
 			slog.String("target", target.Name),
-			slog.Int("attempt", i+1),
+			slog.Int("attempt", attempts),
 			slog.Int("status", lastStatus),
 			slog.Any("transport_error", lastErr),
 		)
 	}
 
-	// All targets exhausted without a commit. Write the last
-	// attempt's status code, or 502 if every attempt was a transport
-	// error with no status ever observed.
+	// All targets exhausted (or every one was CB-blocked).
 	status := lastStatus
 	if status == 0 {
 		status = http.StatusBadGateway
 	}
+	if attempts == 0 {
+		// Every target was CB-blocked — service-unavailable signals
+		// "no healthy backend" more honestly than 502.
+		status = http.StatusServiceUnavailable
+	}
 	logger.ErrorContext(ctx, "resilience: failover exhausted",
 		slog.String("policy", pol.Name),
-		slog.Int("attempts", len(targets)),
+		slog.Int("attempts", attempts),
+		slog.Int("cb_blocked", len(targets)-attempts),
 		slog.Int("final_status", status),
 	)
 	http.Error(w, http.StatusText(status), status)
@@ -279,16 +295,25 @@ func runLoadBalance(
 	r *http.Request,
 	pol *contractsres.ResilienceConfig,
 	state *rules.MutableState,
+	breakers BreakerStore,
 	next http.Handler,
 ) {
 	ctx := r.Context()
 	logger := observability.FromContext(ctx)
 
-	// Working pool starts as the full target list. Each retryable
-	// failure removes one entry until either we commit or the pool
-	// empties. Copy so we never mutate the policy's list.
-	pool := make([]contractsres.ResilienceTarget, len(pol.Targets))
-	copy(pool, pol.Targets)
+	// Pre-filter the pool by CB.Allow. CB-blocked targets shrink
+	// the pool silently — they never count as an attempt and don't
+	// trigger strict_weights' no-re-roll path.
+	pool := make([]contractsres.ResilienceTarget, 0, len(pol.Targets))
+	cbBlocked := 0
+	for _, t := range pol.Targets {
+		cb := effectiveCircuitBreaker(pol, t)
+		if !breakers.Allow(pol.Name, t.Name, cb) {
+			cbBlocked++
+			continue
+		}
+		pool = append(pool, t)
+	}
 
 	rawBody := capturedRawBody(ctx)
 
@@ -306,6 +331,7 @@ func runLoadBalance(
 			break
 		}
 		target := pool[idx]
+		cb := effectiveCircuitBreaker(pol, target)
 
 		clone, err := buildAttemptState(ctx, state, target)
 		if err != nil {
@@ -339,9 +365,11 @@ func runLoadBalance(
 		next.ServeHTTP(buf, r.WithContext(attemptCtx))
 
 		if !buf.ShouldRetry() {
+			breakers.RecordSuccess(pol.Name, target.Name, cb)
 			return
 		}
 
+		breakers.RecordFailure(pol.Name, target.Name, cb)
 		lastStatus = buf.StatusCode()
 		lastErr = buf.TransportError()
 		logger.InfoContext(ctx, "resilience: load_balance attempt failed",
@@ -353,13 +381,9 @@ func runLoadBalance(
 		)
 
 		if pol.StrictWeights {
-			// No re-roll under strict_weights — the under-weighted
-			// target's failure must surface to the client.
 			break
 		}
 
-		// Shrink the pool and try again with weighted random on
-		// the survivors. Standard slice-remove pattern.
 		pool = append(pool[:idx], pool[idx+1:]...)
 	}
 
@@ -367,12 +391,30 @@ func runLoadBalance(
 	if status == 0 {
 		status = http.StatusBadGateway
 	}
+	if attempt == 0 && cbBlocked > 0 {
+		// Every target was CB-blocked — fail with 503 (no healthy
+		// backend), the same signal failover uses for the same case.
+		status = http.StatusServiceUnavailable
+	}
 	logger.ErrorContext(ctx, "resilience: load_balance exhausted",
 		slog.String("policy", pol.Name),
 		slog.Int("attempts", attempt),
+		slog.Int("cb_blocked", cbBlocked),
 		slog.Int("final_status", status),
 	)
 	http.Error(w, http.StatusText(status), status)
+}
+
+// effectiveCircuitBreaker resolves the breaker config for one target.
+// Per-target CircuitBreaker (when set) overrides policy-level. nil
+// from both levels means "no circuit breaker" — the in-memory store
+// short-circuits Allow to true and Record* to no-ops, so the
+// orchestrator doesn't have to branch on nil at every call site.
+func effectiveCircuitBreaker(pol *contractsres.ResilienceConfig, target contractsres.ResilienceTarget) *contractsres.CircuitBreakerConfig {
+	if target.CircuitBreaker != nil {
+		return target.CircuitBreaker
+	}
+	return pol.CircuitBreaker
 }
 
 // weightedSelect returns the index of a target chosen by weighted-
