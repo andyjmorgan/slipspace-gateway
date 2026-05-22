@@ -3,6 +3,7 @@ package observability_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -59,6 +60,11 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 	meters.RuleErrorsTotal.Add(ctx, 1)
 	meters.RuleEvaluationDuration.Record(ctx, 0.0007)
 	meters.AdminRequestsTotal.Add(ctx, 1)
+	meters.ResilienceAttemptsTotal.Add(ctx, 1)
+	meters.ResilienceAttemptDuration.Record(ctx, 0.05)
+	meters.ResilienceAttemptsPerRequest.Record(ctx, 2)
+	meters.ResilienceOutcomeTotal.Add(ctx, 1)
+	meters.CircuitBreakerTransitionTotal.Add(ctx, 1)
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(ctx, &rm); err != nil {
@@ -94,11 +100,120 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 		observability.MetricRuleErrorsTotal,
 		observability.MetricRuleEvaluationDuration,
 		observability.MetricAdminRequestsTotal,
+		observability.MetricResilienceAttemptsTotal,
+		observability.MetricResilienceAttemptDuration,
+		observability.MetricResilienceAttemptsPerRequest,
+		observability.MetricResilienceOutcomeTotal,
+		observability.MetricCircuitBreakerTransitionTotal,
 	}
 	for _, name := range want {
 		if !got[name] {
 			t.Errorf("missing metric %q in collected output", name)
 		}
+	}
+}
+
+// stubCBSource satisfies CircuitBreakerStateSource so the gauge
+// callback has something to read at collection time.
+type stubCBSource struct {
+	rows []observability.CircuitBreakerSnapshot
+}
+
+func (s stubCBSource) Snapshot() []observability.CircuitBreakerSnapshot { return s.rows }
+
+func TestRegisterCircuitBreakerStateGauge_ReportsRows(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+
+	src := stubCBSource{rows: []observability.CircuitBreakerSnapshot{
+		{Policy: "p1", Target: "t1", State: 0, StateName: "closed"},
+		{Policy: "p1", Target: "t2", State: 1, StateName: "open"},
+	}}
+
+	meter := mp.Meter(observability.MeterName)
+	if err := observability.RegisterCircuitBreakerStateGauge(meter, src, "test-pod"); err != nil {
+		t.Fatalf("RegisterCircuitBreakerStateGauge: %v", err)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+
+	var seen []observability.CircuitBreakerSnapshot
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != observability.MetricCircuitBreakerState {
+				continue
+			}
+			gauge, ok := m.Data.(metricdata.Gauge[int64])
+			if !ok {
+				t.Fatalf("%s: expected gauge[int64], got %T", m.Name, m.Data)
+			}
+			for _, dp := range gauge.DataPoints {
+				row := observability.CircuitBreakerSnapshot{State: dp.Value}
+				if v, ok := dp.Attributes.Value("policy"); ok {
+					row.Policy = v.AsString()
+				}
+				if v, ok := dp.Attributes.Value("target"); ok {
+					row.Target = v.AsString()
+				}
+				if v, ok := dp.Attributes.Value("state_name"); ok {
+					row.StateName = v.AsString()
+				}
+				if v, ok := dp.Attributes.Value("pod"); ok && v.AsString() != "test-pod" {
+					t.Errorf("pod label = %q; want test-pod", v.AsString())
+				}
+				seen = append(seen, row)
+			}
+		}
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("collected gauge rows = %d; want 2", len(seen))
+	}
+}
+
+func TestRegisterCircuitBreakerStateGauge_NilSourceNoOp(t *testing.T) {
+	t.Parallel()
+	mp := sdkmetric.NewMeterProvider()
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	if err := observability.RegisterCircuitBreakerStateGauge(mp.Meter(observability.MeterName), nil, "pod"); err != nil {
+		t.Errorf("nil source should be a no-op, got error: %v", err)
+	}
+}
+
+func TestRegisterCircuitBreakerStateGauge_NilMeterErrors(t *testing.T) {
+	t.Parallel()
+	src := stubCBSource{rows: nil}
+	if err := observability.RegisterCircuitBreakerStateGauge(nil, src, "pod"); err == nil {
+		t.Errorf("expected error for nil meter")
+	}
+}
+
+// failingMeter is a metric.Meter implementation that returns an error
+// from Int64ObservableGauge so the wrap branch in
+// RegisterCircuitBreakerStateGauge is exercised in tests.
+type failingMeter struct {
+	noop.Meter
+}
+
+func (failingMeter) Int64ObservableGauge(_ string, _ ...metric.Int64ObservableGaugeOption) (metric.Int64ObservableGauge, error) {
+	return nil, errors.New("synthetic register failure")
+}
+
+func TestRegisterCircuitBreakerStateGauge_RegisterErrorIsWrapped(t *testing.T) {
+	t.Parallel()
+	src := stubCBSource{rows: nil}
+	err := observability.RegisterCircuitBreakerStateGauge(failingMeter{}, src, "pod")
+	if err == nil {
+		t.Fatalf("expected error from failing meter")
+	}
+	if got := err.Error(); got == "" || !strings.Contains(got, observability.MetricCircuitBreakerState) {
+		t.Errorf("error %q should mention %q", got, observability.MetricCircuitBreakerState)
 	}
 }
 

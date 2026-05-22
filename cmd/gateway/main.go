@@ -124,7 +124,13 @@ func run(ctx context.Context) error {
 
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
 	policyLookup := makePolicyLookup(resolved)
-	breakers := resiliencemw.NewInMemoryBreakerStore(nil)
+	// The CB StateListener fires from inside breaker.mu without a
+	// request ctx — see circuitBreakerTransitionListener for the
+	// context.Background() rationale.
+	breakers := resiliencemw.NewInMemoryBreakerStore(circuitBreakerTransitionListener(obs.Meters)) //nolint:contextcheck // listener has no ctx by design
+	if err := registerBreakerStateGauge(obs, breakers); err != nil {
+		return fmt.Errorf("gateway: register cb.state gauge: %w", err)
+	}
 	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, policyLookup, breakers, obs.Meters, errs, logger)
 
 	// responseCaptureMiddleware sits between recover and the data
@@ -157,7 +163,7 @@ func run(ctx context.Context) error {
 	// is bound to ctx; the loop exits on cancellation.
 	obs.Snapshotter.Start(ctx)
 
-	startAdmin(ctx, resolved, obs, logger, drain, startedAt, liveFeed, bodyStore)
+	startAdmin(ctx, resolved, obs, logger, drain, startedAt, liveFeed, bodyStore, breakerStoreAdapter{store: breakers})
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -323,7 +329,7 @@ func shutdownPromServer(srv *http.Server) {
 //
 // The drain budget mirrors the data plane's so a SIGTERM gives in-flight
 // admin requests the same shutdown headroom as proxy requests.
-func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore) {
+func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, breakerStates admin.CircuitBreakerStateSource) {
 	if resolved.Admin == nil || !resolved.Admin.Enabled {
 		logger.InfoContext(ctx, "admin console disabled")
 		return
@@ -348,6 +354,7 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 		Resolved:         resolved,
 		LiveFeed:         liveFeed,
 		BodyStore:        bodyStore,
+		BreakerStates:    breakerStates,
 	})
 	bind := resolved.Admin.EffectiveBindAddr()
 	srv := &http.Server{

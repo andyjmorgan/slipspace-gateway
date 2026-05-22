@@ -82,6 +82,26 @@ type BreakerStore interface {
 	// Returns StateClosed for unknown keys so a never-observed
 	// (policy, target) pair reads as healthy.
 	State(policy, target string) State
+
+	// Snapshot returns the current breaker state of every observed
+	// (policy, target). Used by the gateway.cb.state ObservableGauge
+	// callback to report the full per-target state surface at every
+	// metric collection. Implementations must be goroutine-safe.
+	Snapshot() []BreakerSnapshot
+}
+
+// BreakerSnapshot is one (policy, target) → State observation drawn
+// from BreakerStore.Snapshot(). Returned as a flat slice so the
+// gauge callback can iterate without locking the store further.
+type BreakerSnapshot struct {
+	// Policy is the resilience policy name.
+	Policy string
+
+	// Target is the resilience target name.
+	Target string
+
+	// State is the current breaker lifecycle position.
+	State State
 }
 
 // clock is the package-level time source the breaker reads. Tests
@@ -208,6 +228,44 @@ func (s *inMemoryStore) State(policy, target string) State {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.state
+}
+
+// Snapshot collects a copy of every (policy, target) → State row.
+// The outer store mutex protects the map read; per-breaker mu
+// protects each state load. The breakerKey is split on '|' (the
+// canonical encoding from breakerKey) — operators cannot construct
+// keys that legitimately contain '|' because policy/target names are
+// validated as identifiers at config-load time.
+func (s *inMemoryStore) Snapshot() []BreakerSnapshot {
+	s.mu.Lock()
+	keys := make([]string, 0, len(s.breakers))
+	for k := range s.breakers {
+		keys = append(keys, k)
+	}
+	s.mu.Unlock()
+
+	out := make([]BreakerSnapshot, 0, len(keys))
+	for _, k := range keys {
+		policy, target := splitBreakerKey(k)
+		out = append(out, BreakerSnapshot{
+			Policy: policy,
+			Target: target,
+			State:  s.State(policy, target),
+		})
+	}
+	return out
+}
+
+// splitBreakerKey reverses breakerKey's "policy|target" encoding.
+// A missing separator collapses to (k, "") so the gauge always
+// emits something rather than dropping the row.
+func splitBreakerKey(k string) (policy, target string) {
+	for i := 0; i < len(k); i++ {
+		if k[i] == '|' {
+			return k[:i], k[i+1:]
+		}
+	}
+	return k, ""
 }
 
 // breaker is the per-(policy, target) state. Its own mu protects
@@ -359,3 +417,5 @@ func (noopBreakerStore) RecordFailure(string, string, *contractsres.CircuitBreak
 }
 
 func (noopBreakerStore) State(string, string) State { return StateClosed }
+
+func (noopBreakerStore) Snapshot() []BreakerSnapshot { return nil }

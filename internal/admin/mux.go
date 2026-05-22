@@ -9,6 +9,11 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 )
 
+// CircuitBreakerStateSource is re-exported from the policies handler
+// so callers can pass any in-process BreakerStore (or a stub for tests)
+// through MuxOptions without importing the resilience middleware here.
+// See policies.go for the interface contract.
+
 // MuxOptions carries the inputs NewMux needs beyond the auth credential.
 // Everything below feeds the live dashboard handler; pass zero values
 // when admin features are disabled and the dashboard handler will return
@@ -75,6 +80,12 @@ type MuxOptions struct {
 	// endpoint (returns 503) — the live-tail pane still works on
 	// metadata alone.
 	BodyStore *livefeed.BodyStore
+
+	// BreakerStates is the read interface used by the policies
+	// endpoint to project per-target circuit-breaker state. Nil is
+	// safe — every target will report state="unknown" and the SPA
+	// renders that as an inert badge.
+	BreakerStates CircuitBreakerStateSource
 }
 
 // Prefix is the URL path prefix the console mounts under. Both the
@@ -182,6 +193,11 @@ func NewMux(opts MuxOptions) http.Handler {
 	// /stream routes above winning over this pattern.
 	apiMux.Handle("/api/v1/messages/{event_id}/body",
 		InstrumentRoute(opts.Meters, "/api/v1/messages/{event_id}/body", MessageBodyHandler(opts.BodyStore)),
+	)
+	// Read-only resilience policies surface. Powers the SPA's
+	// /policies page and the per-target circuit-state badges.
+	apiMux.Handle("/api/v1/policies",
+		InstrumentRoute(opts.Meters, "/api/v1/policies", PoliciesHandler(opts.Resolved, opts.BreakerStates)),
 	)
 
 	// adminTree exposes the same routes the listener used to expose at

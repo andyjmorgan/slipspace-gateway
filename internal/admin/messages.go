@@ -231,5 +231,21 @@ func toMessageEntry(e livefeed.Entry) adminc.MessageEntry {
 			})
 		}
 	}
+	if e.PolicyRef != "" {
+		out.PolicyRef = e.PolicyRef
+	}
+	if len(e.Attempts) > 0 {
+		out.Attempts = make([]adminc.AttemptHit, 0, len(e.Attempts))
+		for _, a := range e.Attempts {
+			out.Attempts = append(out.Attempts, adminc.AttemptHit{
+				Target:     a.Target,
+				StartedAt:  a.StartedAt,
+				DurationMs: a.DurationMs,
+				StatusCode: a.StatusCode,
+				Error:      a.Error,
+				Outcome:    a.Outcome,
+			})
+		}
+	}
 	return out
 }

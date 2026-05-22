@@ -10,6 +10,7 @@ import { ProvidersPage } from "@/pages/providers"
 import { ProviderDetailPage } from "@/pages/provider-detail"
 import { RoutesPage } from "@/pages/routes"
 import { MessagesPage } from "@/pages/messages"
+import { PoliciesPage } from "@/pages/policies"
 import { AppLayout } from "@/components/app-layout"
 import { ProtectedRoute } from "@/components/protected-route"
 
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/providers" element={<ProvidersPage />} />
         <Route path="/providers/:name" element={<ProviderDetailPage />} />
         <Route path="/routes" element={<RoutesPage />} />
+        <Route path="/policies" element={<PoliciesPage />} />
         <Route path="/settings" element={<PlaceholderPage title="Settings" />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

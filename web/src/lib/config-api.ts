@@ -200,3 +200,29 @@ export async function revealAPIKey(configuration: string, name: string): Promise
 export function useRoutes(): ConfigFetchHandle<RouteRow[]> {
   return useConfigFetch<RouteRow[]>("/api/v1/config/routes")
 }
+
+export type PolicyTarget = {
+  name: string
+  provider?: string
+  order?: number
+  weight?: number
+  circuit_state: string
+}
+
+export type PolicySummary = {
+  name: string
+  mode: string
+  strict_weights?: boolean
+  failure_status_codes?: number[]
+  circuit_breaker_enabled?: boolean
+  targets: PolicyTarget[]
+}
+
+export type PoliciesResponse = {
+  pod: string
+  policies: PolicySummary[]
+}
+
+export function usePolicies(): ConfigFetchHandle<PoliciesResponse> {
+  return useConfigFetch<PoliciesResponse>("/api/v1/policies")
+}

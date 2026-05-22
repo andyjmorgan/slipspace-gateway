@@ -8,6 +8,9 @@ import (
 	"sort"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
@@ -16,14 +19,23 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 )
 
-// Attempt-outcome strings carried in events.AttemptRecord.Outcome.
-// Mirrored by the PR-10b gateway.resilience.attempts.total counter's
-// outcome label so the wire field and the metric label stay aligned.
+// Attempt-outcome strings carried in events.AttemptRecord.Outcome and
+// mirrored by the gateway.resilience.attempts.total counter's outcome
+// label — the wire field and the metric label share one vocabulary.
 const (
 	attemptOutcomeSuccess        = "success"
 	attemptOutcomeFailureStatus  = "failure_status"
 	attemptOutcomeTransportError = "transport_error"
 	attemptOutcomeCBBlocked      = "cb_blocked"
+)
+
+// Per-request orchestrator outcome strings emitted on
+// gateway.resilience.outcome.total. One value per inbound request that
+// runs through a policy.
+const (
+	orchestratorOutcomeSuccess   = "success"
+	orchestratorOutcomeAllFailed = "all_failed"
+	orchestratorOutcomeAllOpen   = "all_open"
 )
 
 // randomIntN is the package-level RNG hook the weighted load-balance
@@ -96,7 +108,7 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 //   - Policy.ResponseHeaderTimeoutSeconds is parsed but not yet
 //     applied per-attempt — the global Transport.ResponseHeaderTimeout
 //     applies to every attempt. Per-target Transports deferred.
-func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, next http.Handler) http.Handler {
+func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, meters *observability.Meters, next http.Handler) http.Handler {
 	if next == nil {
 		panic("resilience: HTTPHandler called with nil next handler")
 	}
@@ -122,10 +134,10 @@ func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, next http.Handler) 
 
 		switch pol.Mode {
 		case contractsres.ModeFailover:
-			runFailover(w, r, pol, state, breakers, next)
+			runFailover(w, r, pol, state, breakers, meters, next)
 			return
 		case contractsres.ModeLoadBalance, contractsres.ModeLoadBalanceWithFailover:
-			runLoadBalance(w, r, pol, state, breakers, next)
+			runLoadBalance(w, r, pol, state, breakers, meters, next)
 			return
 		}
 
@@ -194,6 +206,7 @@ func runFailover(
 	pol *contractsres.ResilienceConfig,
 	state *rules.MutableState,
 	breakers BreakerStore,
+	meters *observability.Meters,
 	next http.Handler,
 ) {
 	ctx := r.Context()
@@ -212,8 +225,12 @@ func runFailover(
 	// client-observable status, not whatever the last per-attempt
 	// observer happened to record.
 	var finalStatus int
+	var orchestratorOutcome string
+	totalTargets := len(pol.Targets)
+	var realAttempts int
 	defer func() {
 		abuf.FireTerminal(time.Since(orchStart).Milliseconds(), finalStatus)
+		emitOrchestratorOutcome(ctx, meters, pol.Name, orchestratorOutcome, realAttempts)
 	}()
 
 	targets := sortedFailoverTargets(pol.Targets)
@@ -242,6 +259,7 @@ func runFailover(
 				StartedAt: time.Now().UTC(),
 				Outcome:   attemptOutcomeCBBlocked,
 			})
+			emitAttemptCounter(ctx, meters, pol.Name, target.Name, attemptOutcomeCBBlocked)
 			continue
 		}
 
@@ -254,6 +272,7 @@ func runFailover(
 				slog.Any("error", err),
 			)
 			finalStatus = http.StatusInternalServerError
+			orchestratorOutcome = orchestratorOutcomeAllFailed
 			http.Error(w, "internal error", finalStatus)
 			return
 		}
@@ -267,6 +286,7 @@ func runFailover(
 
 		attemptCtx := rules.WithMutableState(ctx, clone)
 		attempts++
+		realAttempts = attempts
 		attemptStart := time.Now()
 		logger.DebugContext(ctx, "resilience: failover attempt",
 			slog.String("policy", pol.Name),
@@ -278,12 +298,15 @@ func runFailover(
 		next.ServeHTTP(buf, r.WithContext(attemptCtx))
 
 		record := newAttemptRecord(target.Name, attemptStart, buf)
+		emitAttemptDuration(ctx, meters, pol.Name, target.Name, record.DurationMs)
 
 		if !buf.ShouldRetry() {
 			breakers.RecordSuccess(pol.Name, target.Name, cb)
 			record.Outcome = attemptOutcomeSuccess
 			abuf.Record(record)
+			emitAttemptCounter(ctx, meters, pol.Name, target.Name, attemptOutcomeSuccess)
 			finalStatus = buf.StatusCode()
+			orchestratorOutcome = orchestratorOutcomeSuccess
 			return
 		}
 
@@ -294,6 +317,7 @@ func runFailover(
 			record.Outcome = attemptOutcomeFailureStatus
 		}
 		abuf.Record(record)
+		emitAttemptCounter(ctx, meters, pol.Name, target.Name, record.Outcome)
 
 		lastStatus = buf.StatusCode()
 		lastErr = buf.TransportError()
@@ -315,12 +339,15 @@ func runFailover(
 		// Every target was CB-blocked — service-unavailable signals
 		// "no healthy backend" more honestly than 502.
 		status = http.StatusServiceUnavailable
+		orchestratorOutcome = orchestratorOutcomeAllOpen
+	} else {
+		orchestratorOutcome = orchestratorOutcomeAllFailed
 	}
 	finalStatus = status
 	logger.ErrorContext(ctx, "resilience: failover exhausted",
 		slog.String("policy", pol.Name),
 		slog.Int("attempts", attempts),
-		slog.Int("cb_blocked", len(targets)-attempts),
+		slog.Int("cb_blocked", totalTargets-attempts),
 		slog.Int("final_status", status),
 	)
 	http.Error(w, http.StatusText(status), status)
@@ -346,6 +373,7 @@ func runLoadBalance(
 	pol *contractsres.ResilienceConfig,
 	state *rules.MutableState,
 	breakers BreakerStore,
+	meters *observability.Meters,
 	next http.Handler,
 ) {
 	ctx := r.Context()
@@ -357,8 +385,11 @@ func runLoadBalance(
 	r = r.WithContext(ctx)
 
 	var finalStatus int
+	var orchestratorOutcome string
+	var realAttempts int
 	defer func() {
 		abuf.FireTerminal(time.Since(orchStart).Milliseconds(), finalStatus)
+		emitOrchestratorOutcome(ctx, meters, pol.Name, orchestratorOutcome, realAttempts)
 	}()
 
 	// Pre-filter the pool by CB.Allow. CB-blocked targets shrink
@@ -377,6 +408,7 @@ func runLoadBalance(
 				StartedAt: time.Now().UTC(),
 				Outcome:   attemptOutcomeCBBlocked,
 			})
+			emitAttemptCounter(ctx, meters, pol.Name, t.Name, attemptOutcomeCBBlocked)
 			continue
 		}
 		pool = append(pool, t)
@@ -409,6 +441,7 @@ func runLoadBalance(
 				slog.Any("error", err),
 			)
 			finalStatus = http.StatusInternalServerError
+			orchestratorOutcome = orchestratorOutcomeAllFailed
 			http.Error(w, "internal error", finalStatus)
 			return
 		}
@@ -434,12 +467,16 @@ func runLoadBalance(
 		next.ServeHTTP(buf, r.WithContext(attemptCtx))
 
 		record := newAttemptRecord(target.Name, attemptStart, buf)
+		emitAttemptDuration(ctx, meters, pol.Name, target.Name, record.DurationMs)
+		realAttempts = attempt
 
 		if !buf.ShouldRetry() {
 			breakers.RecordSuccess(pol.Name, target.Name, cb)
 			record.Outcome = attemptOutcomeSuccess
 			abuf.Record(record)
+			emitAttemptCounter(ctx, meters, pol.Name, target.Name, attemptOutcomeSuccess)
 			finalStatus = buf.StatusCode()
+			orchestratorOutcome = orchestratorOutcomeSuccess
 			return
 		}
 
@@ -450,6 +487,7 @@ func runLoadBalance(
 			record.Outcome = attemptOutcomeFailureStatus
 		}
 		abuf.Record(record)
+		emitAttemptCounter(ctx, meters, pol.Name, target.Name, record.Outcome)
 
 		lastStatus = buf.StatusCode()
 		lastErr = buf.TransportError()
@@ -476,6 +514,9 @@ func runLoadBalance(
 		// Every target was CB-blocked — fail with 503 (no healthy
 		// backend), the same signal failover uses for the same case.
 		status = http.StatusServiceUnavailable
+		orchestratorOutcome = orchestratorOutcomeAllOpen
+	} else {
+		orchestratorOutcome = orchestratorOutcomeAllFailed
 	}
 	finalStatus = status
 	logger.ErrorContext(ctx, "resilience: load_balance exhausted",
@@ -485,6 +526,58 @@ func runLoadBalance(
 		slog.Int("final_status", status),
 	)
 	http.Error(w, http.StatusText(status), status)
+}
+
+// emitAttemptCounter bumps gateway.resilience.attempts.total with the
+// resolved per-attempt outcome. Nil meters is a no-op so middleware
+// constructed without telemetry (tests) doesn't have to short-circuit
+// at every call site.
+func emitAttemptCounter(ctx context.Context, meters *observability.Meters, policy, target, outcome string) {
+	if meters == nil || meters.ResilienceAttemptsTotal == nil {
+		return
+	}
+	meters.ResilienceAttemptsTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("policy", policy),
+		attribute.String("target", target),
+		attribute.String("outcome", outcome),
+	))
+}
+
+// emitAttemptDuration observes the per-attempt duration on
+// gateway.resilience.attempt.duration. The histogram receives seconds
+// (OTel histogram convention) computed from the AttemptRecord's
+// millisecond DurationMs.
+func emitAttemptDuration(ctx context.Context, meters *observability.Meters, policy, target string, durationMs int64) {
+	if meters == nil || meters.ResilienceAttemptDuration == nil {
+		return
+	}
+	meters.ResilienceAttemptDuration.Record(ctx, float64(durationMs)/1000.0, metric.WithAttributes(
+		attribute.String("policy", policy),
+		attribute.String("target", target),
+	))
+}
+
+// emitOrchestratorOutcome fires both gateway.resilience.outcome.total
+// (counter, one per request) and gateway.resilience.attempts_per_request
+// (histogram, one observation per request). Called from runFailover /
+// runLoadBalance's deferred terminal cleanup so it sees the final
+// outcome string and realised attempt count regardless of which code
+// path returned.
+func emitOrchestratorOutcome(ctx context.Context, meters *observability.Meters, policy, outcome string, attempts int) {
+	if meters == nil || policy == "" {
+		return
+	}
+	if outcome != "" && meters.ResilienceOutcomeTotal != nil {
+		meters.ResilienceOutcomeTotal.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("policy", policy),
+			attribute.String("outcome", outcome),
+		))
+	}
+	if meters.ResilienceAttemptsPerRequest != nil {
+		meters.ResilienceAttemptsPerRequest.Record(ctx, int64(attempts), metric.WithAttributes(
+			attribute.String("policy", policy),
+		))
+	}
 }
 
 // newAttemptRecord captures the orchestrator's view of one attempt

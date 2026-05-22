@@ -168,7 +168,7 @@ func TestLoadBalance_StrictWeights_NoReRoll(t *testing.T) {
 	)
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
 	next := &lbMockNext{outcomes: []lbAttemptOutcome{{status: 503}}}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -198,7 +198,7 @@ func TestLoadBalance_LBWF_RerollsOnRetryableFailure(t *testing.T) {
 		{status: 503, body: "down"},
 		{status: 200, body: "ok"},
 	}}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -228,7 +228,7 @@ func TestLoadBalance_AllFail_SurfacesLastStatus(t *testing.T) {
 		{status: 503},
 		{status: 502},
 	}}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -255,7 +255,7 @@ func TestLoadBalance_TransportError_AllAttemptsFail_502(t *testing.T) {
 		{status: 0, err: errors.New("connection refused")},
 		{status: 0, err: errors.New("connection refused")},
 	}}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -283,7 +283,7 @@ func TestLoadBalance_ModeLoadBalanceWithFailover_DispatchesSame(t *testing.T) {
 		{status: 503},
 		{status: 200, body: "ok"},
 	}}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -310,7 +310,7 @@ func TestLoadBalance_NoPositiveWeights_Writes502(t *testing.T) {
 	}
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"broken": pol})
 	next := &lbMockNext{}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -334,7 +334,7 @@ func TestLoadBalance_NonRetryable4xx_CommitsImmediately(t *testing.T) {
 	)
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
 	next := &lbMockNext{outcomes: []lbAttemptOutcome{{status: 403, body: "denied"}}}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -362,7 +362,7 @@ func TestLoadBalance_ApplyActionError_Returns500(t *testing.T) {
 	)
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
 	next := &lbMockNext{}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -397,7 +397,7 @@ func TestLoadBalance_AllCBOpen_ReturnsServiceUnavailable(t *testing.T) {
 	}
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
 	next := &lbMockNext{}
-	h := HTTPHandler(lookup, store, next)
+	h := HTTPHandler(lookup, store, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -434,7 +434,7 @@ func TestLoadBalance_CBOpen_OneTargetSkipped(t *testing.T) {
 	}
 	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
 	next := &lbMockNext{outcomes: []lbAttemptOutcome{{status: 200, body: "ok"}}}
-	h := HTTPHandler(lookup, store, next)
+	h := HTTPHandler(lookup, store, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -463,7 +463,7 @@ func TestLoadBalance_RerollExhaustsPool(t *testing.T) {
 		{status: 503},
 		{status: 503},
 	}}
-	h := HTTPHandler(lookup, nil, next)
+	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
