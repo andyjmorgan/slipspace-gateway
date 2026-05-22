@@ -3,6 +3,7 @@ package resilience
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"sort"
 
@@ -12,6 +13,20 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 )
+
+// randomIntN is the package-level RNG hook the weighted load-balance
+// selector calls. Stubbed at test time so deterministic distribution
+// assertions are possible without seeding the global RNG; defaults to
+// math/rand/v2 which is concurrent-safe and seeded automatically per
+// program.
+var randomIntN = func(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	// math/rand/v2 is fine here — load-balance selection is not a
+	// security boundary; crypto/rand would be overkill and slower.
+	return rand.IntN(n) //nolint:gosec // weighted selection, not a secret
+}
 
 // PolicyLookup resolves a policy by name. Returns nil when the name
 // is unknown — the middleware treats unknown as "no policy" and
@@ -46,10 +61,15 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 //     outcome commits to the client. All-failed writes the last
 //     attempt's status to the client (or 502 if every attempt was a
 //     transport error).
-//   - ModeNone / ModeLoadBalance / ModeLoadBalanceWithFailover →
-//     single-target degenerate path (apply the first target's
-//     Actions, forward once). load_balance modes get their proper
-//     selector in PR-8.
+//   - ModeLoadBalance / ModeLoadBalanceWithFailover → weighted-random
+//     target selection per request via the cumulative-weight
+//     algorithm. By default re-rolls on retryable failure from the
+//     remaining-healthy pool (LBWF semantics); when the policy sets
+//     StrictWeights=true the first selection wins or fails without
+//     re-roll, used for canary mirroring where the under-weighted
+//     target's failure rate should surface to the client.
+//   - ModeNone → single-target degenerate path (apply the first
+//     target's Actions, forward once).
 //
 // Known limitations (documented for v1.2):
 //
@@ -84,15 +104,18 @@ func HTTPHandler(lookup PolicyLookup, next http.Handler) http.Handler {
 			return
 		}
 
-		if pol.Mode == contractsres.ModeFailover {
+		switch pol.Mode {
+		case contractsres.ModeFailover:
 			runFailover(w, r, pol, state, next)
+			return
+		case contractsres.ModeLoadBalance, contractsres.ModeLoadBalanceWithFailover:
+			runLoadBalance(w, r, pol, state, next)
 			return
 		}
 
-		// Default path (ModeNone, ModeLoadBalance pending PR-8,
-		// ModeLoadBalanceWithFailover pending PR-8): single-target
-		// degenerate. Apply the first target's Actions if any, then
-		// forward once.
+		// Default path (ModeNone, "", unknown future modes):
+		// single-target degenerate. Apply the first target's Actions
+		// if any, then forward once.
 		runSingleTarget(w, r, pol, pol.Targets[0], state, next)
 	})
 }
@@ -235,6 +258,158 @@ func runFailover(
 		slog.Int("final_status", status),
 	)
 	http.Error(w, http.StatusText(status), status)
+}
+
+// runLoadBalance picks a target via weighted-random selection from
+// the policy's targets. On each iteration the selector reads from
+// the remaining pool (initially every target; one less per failed
+// attempt). The first non-retryable outcome commits; a retryable
+// outcome shrinks the pool and re-rolls — LBWF semantics by default.
+//
+// When pol.StrictWeights is true the loop runs at most once: the
+// first weighted-random pick wins or fails, no re-roll. Used for
+// canary mirroring where suppressing the under-weighted target's
+// failures would defeat the purpose.
+//
+// All-targets-exhausted writes the last attempt's status to the
+// client (or 502 if every attempt was a transport error). Identical
+// terminal handling to runFailover.
+func runLoadBalance(
+	w http.ResponseWriter,
+	r *http.Request,
+	pol *contractsres.ResilienceConfig,
+	state *rules.MutableState,
+	next http.Handler,
+) {
+	ctx := r.Context()
+	logger := observability.FromContext(ctx)
+
+	// Working pool starts as the full target list. Each retryable
+	// failure removes one entry until either we commit or the pool
+	// empties. Copy so we never mutate the policy's list.
+	pool := make([]contractsres.ResilienceTarget, len(pol.Targets))
+	copy(pool, pol.Targets)
+
+	rawBody := capturedRawBody(ctx)
+
+	var lastStatus int
+	var lastErr error
+	attempt := 0
+
+	for len(pool) > 0 {
+		attempt++
+		idx := weightedSelect(pool)
+		if idx < 0 {
+			logger.ErrorContext(ctx, "resilience: load_balance no positive-weight targets",
+				slog.String("policy", pol.Name),
+			)
+			break
+		}
+		target := pool[idx]
+
+		clone, err := buildAttemptState(ctx, state, target)
+		if err != nil {
+			logger.ErrorContext(ctx, "resilience: target action failed",
+				slog.String("policy", pol.Name),
+				slog.String("target", target.Name),
+				slog.Int("attempt", attempt),
+				slog.Any("error", err),
+			)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		if rawBody != nil {
+			bodycapture.ApplyBodyBytes(r, rawBody)
+		}
+
+		retrySet := effectiveFailureStatusCodes(pol, target)
+		buf := proxy.NewBufferingResponseWriter(w, retrySet)
+
+		attemptCtx := rules.WithMutableState(ctx, clone)
+		logger.DebugContext(ctx, "resilience: load_balance attempt",
+			slog.String("policy", pol.Name),
+			slog.String("target", target.Name),
+			slog.Int("weight", target.Weight),
+			slog.Int("attempt", attempt),
+			slog.Int("pool_size", len(pool)),
+			slog.Bool("strict_weights", pol.StrictWeights),
+		)
+
+		next.ServeHTTP(buf, r.WithContext(attemptCtx))
+
+		if !buf.ShouldRetry() {
+			return
+		}
+
+		lastStatus = buf.StatusCode()
+		lastErr = buf.TransportError()
+		logger.InfoContext(ctx, "resilience: load_balance attempt failed",
+			slog.String("policy", pol.Name),
+			slog.String("target", target.Name),
+			slog.Int("attempt", attempt),
+			slog.Int("status", lastStatus),
+			slog.Any("transport_error", lastErr),
+		)
+
+		if pol.StrictWeights {
+			// No re-roll under strict_weights — the under-weighted
+			// target's failure must surface to the client.
+			break
+		}
+
+		// Shrink the pool and try again with weighted random on
+		// the survivors. Standard slice-remove pattern.
+		pool = append(pool[:idx], pool[idx+1:]...)
+	}
+
+	status := lastStatus
+	if status == 0 {
+		status = http.StatusBadGateway
+	}
+	logger.ErrorContext(ctx, "resilience: load_balance exhausted",
+		slog.String("policy", pol.Name),
+		slog.Int("attempts", attempt),
+		slog.Int("final_status", status),
+	)
+	http.Error(w, http.StatusText(status), status)
+}
+
+// weightedSelect returns the index of a target chosen by weighted-
+// random selection from pool. Each target's Weight contributes to a
+// cumulative-sum distribution; rand(0, total) picks the slot.
+//
+// Returns -1 when every target's Weight is non-positive (no positive
+// weights to roll against). The validator rejects all-zero weight
+// sets at config load, so this only fires when the orchestrator is
+// invoked via a programmatic path that bypasses validation.
+//
+// Five lines of selection plus the safety check — see the v1.2
+// design note for why this is the algorithm we want over
+// round-robin (no shared counter across pods, same long-run
+// distribution).
+func weightedSelect(pool []contractsres.ResilienceTarget) int {
+	total := 0
+	for _, t := range pool {
+		if t.Weight > 0 {
+			total += t.Weight
+		}
+	}
+	if total == 0 {
+		return -1
+	}
+	roll := randomIntN(total)
+	cumulative := 0
+	for i, t := range pool {
+		if t.Weight <= 0 {
+			continue
+		}
+		cumulative += t.Weight
+		if cumulative > roll {
+			return i
+		}
+	}
+	return -1
 }
 
 // buildAttemptState clones the baseline state and applies the
