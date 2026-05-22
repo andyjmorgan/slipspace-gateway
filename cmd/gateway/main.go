@@ -163,7 +163,7 @@ func run(ctx context.Context) error {
 	// is bound to ctx; the loop exits on cancellation.
 	obs.Snapshotter.Start(ctx)
 
-	startAdmin(ctx, resolved, obs, logger, drain, startedAt, liveFeed, bodyStore, breakerStoreAdapter{store: breakers})
+	startAdmin(ctx, resolved, obs, logger, drain, startedAt, liveFeed, bodyStore, breakerStoreAdapter{store: breakers}, env.ConfigDir)
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -329,7 +329,7 @@ func shutdownPromServer(srv *http.Server) {
 //
 // The drain budget mirrors the data plane's so a SIGTERM gives in-flight
 // admin requests the same shutdown headroom as proxy requests.
-func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, breakerStates admin.CircuitBreakerStateSource) {
+func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, breakerStates admin.CircuitBreakerStateSource, configDir string) {
 	if resolved.Admin == nil || !resolved.Admin.Enabled {
 		logger.InfoContext(ctx, "admin console disabled")
 		return
@@ -343,6 +343,14 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 	ruleAttachments := buildRuleAttachments(resolved)
 	tagAttachments := buildTagAttachments(resolved)
 
+	hostname, err := os.Hostname()
+	if err != nil {
+		// Hostname is informational metadata on the export manifest;
+		// a lookup failure should not block the admin listener.
+		hostname = "unknown"
+		logger.WarnContext(ctx, "admin: hostname lookup failed", "err", err.Error())
+	}
+
 	handler := admin.NewMux(admin.MuxOptions{
 		Password:         resolved.Admin.ResolvePassword(),
 		Meters:           obs.Meters,
@@ -355,6 +363,8 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 		LiveFeed:         liveFeed,
 		BodyStore:        bodyStore,
 		BreakerStates:    breakerStates,
+		ConfigDir:        configDir,
+		Hostname:         hostname,
 	})
 	bind := resolved.Admin.EffectiveBindAddr()
 	srv := &http.Server{

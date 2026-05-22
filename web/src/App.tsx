@@ -1,7 +1,6 @@
 import { Navigate, Route, Routes } from "react-router"
 import { LoginPage } from "@/pages/login"
 import { DashboardPage } from "@/pages/dashboard"
-import { PlaceholderPage } from "@/pages/placeholder"
 import { ConfigurationsPage } from "@/pages/configurations"
 import { ConfigurationDetailPage } from "@/pages/configuration-detail"
 import { RulesPage } from "@/pages/rules"
@@ -11,6 +10,7 @@ import { ProviderDetailPage } from "@/pages/provider-detail"
 import { RoutesPage } from "@/pages/routes"
 import { MessagesPage } from "@/pages/messages"
 import { PoliciesPage } from "@/pages/policies"
+import { SettingsPage } from "@/pages/settings"
 import { AppLayout } from "@/components/app-layout"
 import { ProtectedRoute } from "@/components/protected-route"
 
@@ -36,7 +36,7 @@ export default function App() {
         <Route path="/providers/:name" element={<ProviderDetailPage />} />
         <Route path="/routes" element={<RoutesPage />} />
         <Route path="/policies" element={<PoliciesPage />} />
-        <Route path="/settings" element={<PlaceholderPage title="Settings" />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

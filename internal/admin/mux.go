@@ -86,6 +86,18 @@ type MuxOptions struct {
 	// safe — every target will report state="unknown" and the SPA
 	// renders that as an inert badge.
 	BreakerStates CircuitBreakerStateSource
+
+	// ConfigDir is the SLUICE_CONFIG_DIR path the gateway loaded its
+	// YAML from. Used by the redacted-config-export endpoints to
+	// enumerate and read the same files via config.ListConfigFiles.
+	// Empty disables the export endpoints (503).
+	ConfigDir string
+
+	// Hostname is os.Hostname() captured at startup. Embedded in the
+	// MANIFEST.txt entry of every export bundle so an operator can
+	// attribute a snapshot back to its pod. Empty renders as an empty
+	// "Hostname:" line in the manifest — informational, not load-bearing.
+	Hostname string
 }
 
 // Prefix is the URL path prefix the console mounts under. Both the
@@ -177,6 +189,19 @@ func NewMux(opts MuxOptions) http.Handler {
 	)
 	apiMux.Handle("/api/v1/config/routes",
 		InstrumentRoute(opts.Meters, "/api/v1/config/routes", routesAll),
+	)
+	// Settings page — redacted config export. Both endpoints share the
+	// same redactor; the files endpoint backs the tabbed inspector view,
+	// the download endpoint streams the ZIP bundle.
+	apiMux.Handle("/api/v1/config/export/files",
+		InstrumentRoute(opts.Meters, "/api/v1/config/export/files",
+			ConfigExportFilesHandler(opts.ConfigDir),
+		),
+	)
+	apiMux.Handle("/api/v1/config/export/download",
+		InstrumentRoute(opts.Meters, "/api/v1/config/export/download",
+			ConfigExportDownloadHandler(opts.ConfigDir, opts.Hostname, opts.Meters),
+		),
 	)
 	// Live-messages pane endpoints. Both handlers degrade to 503 when
 	// LiveFeed is nil — the SPA reads that as "feature disabled" and

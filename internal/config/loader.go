@@ -65,7 +65,7 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 		return nil, fmt.Errorf("config: load %q: %w", dir, err)
 	}
 
-	files, err := listConfigFiles(dir)
+	files, err := ListConfigFiles(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -91,11 +91,14 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 	return resolved, nil
 }
 
-// listConfigFiles enumerates dir and returns a map of accepted filename to its
+// ListConfigFiles enumerates dir and returns a map of accepted filename to its
 // absolute path. Any non-directory entry whose name is not one of the two
 // accepted filenames produces ErrUnexpectedConfigFile; subdirectories are
 // skipped silently.
-func listConfigFiles(dir string) (map[string]string, error) {
+//
+// Exported so the admin config-export bundler can iterate the same files the
+// loader saw without duplicating the allowedKeysByFile list.
+func ListConfigFiles(dir string) (map[string]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("config: read dir %q: %w", dir, err)
