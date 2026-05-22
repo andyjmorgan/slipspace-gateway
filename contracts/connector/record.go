@@ -82,6 +82,16 @@ type Record struct {
 	// provider, regardless of provider-side errors.
 	UpstreamError string `json:"upstream_error,omitempty"`
 
+	// PolicyRef is the name of the resilience policy that orchestrated
+	// this request, when one was attached. Empty for single-shot
+	// requests that bypassed the orchestrator.
+	PolicyRef string `json:"policy_ref,omitempty"`
+
+	// Attempts is the per-attempt outcome record for multi-target
+	// resilience runs (failover walk-down, load-balance pool, cb-block
+	// skips). Empty for single-shot.
+	Attempts []Attempt `json:"attempts,omitempty"`
+
 	// SchemaVersion is the per-record version. Always equals [SchemaVersion].
 	SchemaVersion int `json:"schema_version"`
 }
@@ -156,6 +166,46 @@ type Tokens struct {
 	Input int `json:"input"`
 
 	Output int `json:"output"`
+
+	// Cached counts input tokens served from a provider-side prompt
+	// cache. Anthropic surfaces this via `cache_read_input_tokens`;
+	// OpenAI returns it under `prompt_tokens_details.cached_tokens`.
+	// Zero when the response doesn't carry cache info.
+	Cached int `json:"cached,omitempty"`
+
+	// CacheCreation counts input tokens written to the prompt cache
+	// by this request. Anthropic-only field
+	// (cache_creation_input_tokens); zero otherwise.
+	CacheCreation int `json:"cache_creation,omitempty"`
+}
+
+// Attempt is one entry in [Record.Attempts] when the request ran
+// under a resilience policy. Mirrors the events.AttemptRecord shape
+// the legacy NATS reporter emitted.
+type Attempt struct {
+	// Target is the resilience policy target name attempted.
+	Target string `json:"target"`
+
+	// StartedAtNs is the wall-clock UTC start of the attempt in
+	// nanoseconds since the Unix epoch. Same encoding as
+	// [Record.TsNs].
+	StartedAtNs int64 `json:"started_at_ns"`
+
+	// DurationMs is the orchestrator-measured wall-clock duration of
+	// the attempt in milliseconds. Zero for cb_blocked entries.
+	DurationMs int64 `json:"duration_ms,omitempty"`
+
+	// StatusCode is the upstream-reported HTTP status. Zero on
+	// transport-error / cb-blocked.
+	StatusCode int `json:"status_code,omitempty"`
+
+	// Error is the transport-level error message when the attempt
+	// failed before headers.
+	Error string `json:"error,omitempty"`
+
+	// Outcome is one of "success", "failure_status",
+	// "transport_error", "cb_blocked".
+	Outcome string `json:"outcome"`
 }
 
 // RuleFired records one rule that matched during evaluation. The ordered
@@ -166,4 +216,18 @@ type RuleFired struct {
 	// TookUs is the rule's condition-evaluation cost in microseconds.
 	// Useful for spotting hot rules; not required by consumers.
 	TookUs int64 `json:"took_us,omitempty"`
+
+	// ActionsApplied lists the action types that fired for this match
+	// (e.g. ["setHeader", "changeProvider"]). Useful for downstream
+	// audit pipelines that group by intent rather than rule name.
+	ActionsApplied []string `json:"actions_applied,omitempty"`
+
+	// Terminated is true when this rule's action chain stopped further
+	// rule evaluation (terminating actions like returnStatusCode or
+	// llmImpersonation).
+	Terminated bool `json:"terminated,omitempty"`
+
+	// ErrorMessage carries the failure detail when a rule's action
+	// errored at apply time. Empty on the success path.
+	ErrorMessage string `json:"error_message,omitempty"`
 }

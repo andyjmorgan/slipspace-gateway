@@ -100,6 +100,14 @@ type Connector struct {
 
 var _ connector.Connector = (*Connector)(nil)
 
+// envAllowPrivate is the test-only env var that flips
+// Options.AllowPrivateNetworks on for every webhook connector
+// constructed via New. The e2e harness sets this on the spawned
+// gateway process so its httptest.Server webhook receiver (which
+// binds to loopback) doesn't trip the runtime SSRF guard. Production
+// never sets it.
+const envAllowPrivate = "SLUICE_WEBHOOK_ALLOW_PRIVATE"
+
 // New constructs a Connector. Validates Type==webhook and the per-type
 // required fields the contracts validator would have already enforced.
 func New(_ context.Context, opts Options) (*Connector, error) {
@@ -148,13 +156,20 @@ func New(_ context.Context, opts Options) (*Connector, error) {
 		nowUnix = func() int64 { return time.Now().Unix() }
 	}
 
+	allowPrivate := opts.AllowPrivateNetworks
+	if !allowPrivate {
+		if v := strings.ToLower(strings.TrimSpace(os.Getenv(envAllowPrivate))); v == "1" || v == "true" {
+			allowPrivate = true
+		}
+	}
+
 	return &Connector{
 		name:         opts.Config.Name,
 		url:          opts.Config.URL,
 		secret:       []byte(secret),
 		client:       client,
 		resolver:     resolver,
-		allowPrivate: opts.AllowPrivateNetworks,
+		allowPrivate: allowPrivate,
 		timeout:      timeout,
 		nowUnix:      nowUnix,
 	}, nil

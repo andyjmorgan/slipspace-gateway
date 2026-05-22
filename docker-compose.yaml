@@ -15,7 +15,7 @@ services:
       SLUICE_LOG_FORMAT: json
       SLUICE_LOG_LEVEL: debug
       SLUICE_PROMETHEUS_BIND: 0.0.0.0:9090
-      SLUICE_NATS_URL: nats://nats:4222
+      SLUICE_SPOOL_ROOT: /var/lib/sluice/spool
       # Operator credential for the admin console. Wins over any
       # `password:` field in admin.yaml. Override per developer.
       SLUICE_ADMIN_PASSWORD: ${SLUICE_ADMIN_PASSWORD:-sluice-gateway}
@@ -28,9 +28,11 @@ services:
       # go-run) with one that binds 0.0.0.0 so the host port mapping
       # reaches the listener.
       - ./deploy/compose/admin.yaml:/etc/sluice/admin.yaml:ro
+      # Spool root. Survives container restarts; for production deploy
+      # this maps to a PVC.
+      - sluice-spool:/var/lib/sluice/spool
     depends_on:
       - mockllm
-      - nats
 
   mockllm:
     build:
@@ -43,9 +45,5 @@ services:
     # ports:
     #   - "5555:5555"
 
-  nats:
-    image: nats:2.10
-    command: ["-js"]
-    ports:
-      - "4222:4222"
-      - "8222:8222"
+volumes:
+  sluice-spool:

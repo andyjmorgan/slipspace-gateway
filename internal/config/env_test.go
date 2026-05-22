@@ -29,12 +29,8 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 		{"PrometheusBind", env.PrometheusBind, ""},
 		{"OTLPEndpoint", env.OTLPEndpoint, ""},
 		{"OTLPProtocol", env.OTLPProtocol, config.DefaultOTLPProtocol},
-		{"NATSURL", env.NATSURL, ""},
-		{"NATSStream", env.NATSStream, config.DefaultNATSStream},
-		{"NATSBucket", env.NATSBucket, config.DefaultNATSBucket},
-		{"NATSStashThresholdBytes", env.NATSStashThresholdBytes, config.DefaultNATSStashThresholdBytes},
-		{"NATSPublishQueueSize", env.NATSPublishQueueSize, config.DefaultNATSPublishQueueSize},
 		{"ConfigDir", env.ConfigDir, config.DefaultConfigDir},
+		{"SpoolRoot", env.SpoolRoot, config.DefaultSpoolRoot},
 		{"RulesMaxGroupDepth", env.RulesMaxGroupDepth, config.DefaultRulesMaxGroupDepth},
 		{"AdminLiveFeedCapacity", env.AdminLiveFeedCapacity, config.DefaultAdminLiveFeedCapacity},
 		{"AdminLiveFeedBodyBytes", env.AdminLiveFeedBodyBytes, config.DefaultAdminLiveFeedBodyBytes},
@@ -46,9 +42,6 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 		}
 	}
 
-	if env.ReportingEnabled() {
-		t.Error("ReportingEnabled() = true with empty NATSURL")
-	}
 	if env.PrometheusEnabled() {
 		t.Error("PrometheusEnabled() = true with empty PrometheusBind")
 	}
@@ -65,12 +58,8 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	t.Setenv(config.EnvPrometheusBind, "127.0.0.1:0")
 	t.Setenv(config.EnvOTLPEndpoint, "http://otel:4317")
 	t.Setenv(config.EnvOTLPProtocol, "http/protobuf")
-	t.Setenv(config.EnvNATSURL, "nats://nats:4222")
-	t.Setenv(config.EnvNATSStream, "MY_STREAM")
-	t.Setenv(config.EnvNATSBucket, "MY_BUCKET")
-	t.Setenv(config.EnvNATSStashThresholdBytes, "12345")
-	t.Setenv(config.EnvNATSPublishQueueSize, "999")
 	t.Setenv(config.EnvConfigDir, "/somewhere/else")
+	t.Setenv(config.EnvSpoolRoot, "/var/spool/sluice-test")
 	t.Setenv(config.EnvRulesMaxGroupDepth, "16")
 
 	env, err := config.LoadEnv()
@@ -90,15 +79,14 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	if env.LogFormat != "text" {
 		t.Errorf("LogFormat = %q", env.LogFormat)
 	}
-	if env.NATSStashThresholdBytes != 12345 {
-		t.Errorf("StashThresholdBytes = %d", env.NATSStashThresholdBytes)
+	if env.SpoolRoot != "/var/spool/sluice-test" {
+		t.Errorf("SpoolRoot = %q", env.SpoolRoot)
 	}
 	if env.RulesMaxGroupDepth != 16 {
 		t.Errorf("RulesMaxGroupDepth = %d", env.RulesMaxGroupDepth)
 	}
-	if !env.ReportingEnabled() || !env.PrometheusEnabled() || !env.OTLPEnabled() {
-		t.Errorf("toggles wrong: rep=%v prom=%v otlp=%v",
-			env.ReportingEnabled(), env.PrometheusEnabled(), env.OTLPEnabled())
+	if !env.PrometheusEnabled() || !env.OTLPEnabled() {
+		t.Errorf("toggles wrong: prom=%v otlp=%v", env.PrometheusEnabled(), env.OTLPEnabled())
 	}
 	if !env.LiveFeedEnabled() {
 		t.Errorf("LiveFeedEnabled() = false with default capacity")
@@ -172,8 +160,6 @@ func TestLoadEnv_BadIntWrapsErrInvalidEnv(t *testing.T) {
 		key  string
 	}{
 		{"drain", config.EnvShutdownDrainSeconds},
-		{"stash", config.EnvNATSStashThresholdBytes},
-		{"queue", config.EnvNATSPublishQueueSize},
 		{"group_depth", config.EnvRulesMaxGroupDepth},
 		{"live_feed_capacity", config.EnvAdminLiveFeedCapacity},
 		{"live_feed_body_bytes", config.EnvAdminLiveFeedBodyBytes},
@@ -246,8 +232,7 @@ func TestServerEnv_Validate_NonPositiveInts(t *testing.T) {
 		set  func(*config.ServerEnv)
 	}{
 		{"drain", func(e *config.ServerEnv) { e.ShutdownDrainSeconds = 0 }},
-		{"stash", func(e *config.ServerEnv) { e.NATSStashThresholdBytes = -1 }},
-		{"queue", func(e *config.ServerEnv) { e.NATSPublishQueueSize = 0 }},
+		{"spool_root_empty", func(e *config.ServerEnv) { e.SpoolRoot = "" }},
 		{"group_depth_low", func(e *config.ServerEnv) { e.RulesMaxGroupDepth = 0 }},
 		{"group_depth_high", func(e *config.ServerEnv) { e.RulesMaxGroupDepth = config.MaxRulesMaxGroupDepth + 1 }},
 	}

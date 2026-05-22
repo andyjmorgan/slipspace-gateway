@@ -2,7 +2,7 @@
 
 // Package admin_test exercises the management-console listener through
 // the spawned gateway binary. Each test brings up a full harness
-// (mockllm + NATS + gateway) and hits the admin port via real HTTP.
+// (mockllm + webhook capture + gateway) and hits the admin port via real HTTP.
 package admin_test
 
 import (

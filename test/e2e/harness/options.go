@@ -10,15 +10,13 @@ package harness
 // rather than as a YAML mutation, since server-level configuration moved
 // out of gateway.yaml in the three-plane refactor.
 type Options struct {
-	// ReportingEnabled controls whether SLUICE_NATS_URL is set on the
-	// spawned gateway. Nil = enabled (default). Pointer so the
-	// zero-value Options{} is "no overrides" rather than "force false".
+	// ReportingEnabled controls whether the harness injects a webhook
+	// connector binding into the dev configuration. Nil = enabled
+	// (default). Pointer so the zero-value Options{} is "no overrides"
+	// rather than "force false". When false the gateway runs with no
+	// connector binding and ExpectEvent reliably times out — exercises
+	// the no-capture path.
 	ReportingEnabled *bool
-
-	// StashThresholdBytes sets SLUICE_NATS_STASH_THRESHOLD_BYTES. 0 = leave
-	// default (786432). Useful for the stash test which would otherwise
-	// need to ship a >768 KiB payload.
-	StashThresholdBytes int
 
 	// DrainTimeoutSeconds sets SLUICE_SHUTDOWN_DRAIN_SECONDS. 0 = leave
 	// default. Short values exercise drain-timeout escalation.

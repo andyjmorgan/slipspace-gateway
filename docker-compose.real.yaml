@@ -5,18 +5,15 @@
 # Usage (via `make dev-real`):
 #   bash scripts/dev-real-config.sh
 #   kubectl --context=office port-forward -n ollama-qwen36 svc/ollama 11434:11434 &
-#   docker compose -f docker-compose.yaml -f docker-compose.real.yaml up -d --no-deps gateway nats
-#
-# Only nats is brought up alongside the gateway. The base compose's
-# mockllm service is unused in this mode; --no-deps prevents the
-# gateway service from pulling it into the up set via depends_on.
+#   docker compose -f docker-compose.yaml -f docker-compose.real.yaml up -d --no-deps gateway
 
 services:
   gateway:
-    # Drop the mock LLM from depends_on — real mode reaches OpenAI /
-    # Anthropic / Gemini directly. nats stays so reporting still flows.
-    depends_on:
-      - nats
+    # The base compose's mockllm service is unused in this mode;
+    # --no-deps prevents it from being pulled into the up set via
+    # depends_on. No additional service dependencies are needed —
+    # the gateway reaches OpenAI / Anthropic / Gemini directly.
+    depends_on: []
     # Reach the host's port-forwarded ollama on macOS / Windows Docker
     # Desktop. extra_hosts with host-gateway resolves on Linux too.
     extra_hosts:

@@ -32,10 +32,4 @@ func TestHarness_Smoke(t *testing.T) {
 	if !strings.HasPrefix(h.MockLLMURL, "http://127.0.0.1:") {
 		t.Errorf("MockLLMURL=%q, want http://127.0.0.1: prefix", h.MockLLMURL)
 	}
-	if !strings.HasPrefix(h.NATSURL, "nats://") {
-		t.Errorf("NATSURL=%q, want nats:// prefix", h.NATSURL)
-	}
-	if h.NATS == nil || !h.NATS.IsConnected() {
-		t.Errorf("nats connection not established")
-	}
 }
