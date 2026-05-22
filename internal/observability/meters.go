@@ -98,6 +98,12 @@ const (
 	// change.
 	MetricCircuitBreakerState           = "gateway.cb.state"
 	MetricCircuitBreakerTransitionTotal = "gateway.cb.transitions.total"
+
+	// MetricAdminConfigExportsTotal counts redacted-config bundle
+	// downloads served by the admin console's export endpoint.
+	// Labelled by status (HTTP status code) so a spike in failures
+	// is visible without scanning logs.
+	MetricAdminConfigExportsTotal = "gateway.admin.config_exports.total"
 )
 
 // Histogram bucket boundaries. Defined as package-level vars (not consts)
@@ -224,6 +230,12 @@ type Meters struct {
 	// increment per closed→open, open→half_open, half_open→closed,
 	// half_open→open edge.
 	CircuitBreakerTransitionTotal metric.Int64Counter
+
+	// AdminConfigExportsTotal counts redacted-config bundle downloads
+	// served by the admin console's export endpoint. Labels: status
+	// (HTTP status code) — a spike on non-200 surfaces export failures
+	// (e.g. malformed YAML on disk) without scanning logs.
+	AdminConfigExportsTotal metric.Int64Counter
 }
 
 // NewMeters constructs the Meters bundle from the supplied meter. The
@@ -274,6 +286,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricResilienceAttemptsTotal, "Per-attempt outcomes recorded by the resilience orchestrator (success, failure_status, transport_error, cb_blocked).", "1", &m.ResilienceAttemptsTotal},
 		{MetricResilienceOutcomeTotal, "Per-request orchestrator outcome (success, all_failed, all_open). Bumped once per inbound request that ran through a resilience policy.", "1", &m.ResilienceOutcomeTotal},
 		{MetricCircuitBreakerTransitionTotal, "Circuit-breaker state transitions per (policy, target, to_state). One increment per state change.", "1", &m.CircuitBreakerTransitionTotal},
+		{MetricAdminConfigExportsTotal, "Redacted-config bundle downloads served by the admin export endpoint.", "1", &m.AdminConfigExportsTotal},
 	} {
 		if err := int64Counter(c.name, c.desc, c.unit, c.dst); err != nil {
 			return nil, err
