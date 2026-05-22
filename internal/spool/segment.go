@@ -188,9 +188,9 @@ func (s *Segment) ShouldRotate(maxBytes int64, maxAge time.Duration, now time.Ti
 	return false
 }
 
-// Stats returns the segment's accumulated counters. Safe to call
-// concurrently with Write.
-type Stats struct {
+// SegmentStats is one segment's accumulated counters. Snapshotted via
+// Segment.Stats.
+type SegmentStats struct {
 	Records           int
 	BytesUncompressed int64
 	TsMinNs           int64
@@ -198,11 +198,12 @@ type Stats struct {
 	OpenedAt          time.Time
 }
 
-// Stats returns a snapshot of the segment's counters.
-func (s *Segment) Stats() Stats {
+// Stats returns a snapshot of the segment's counters. Safe to call
+// concurrently with Write.
+func (s *Segment) Stats() SegmentStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Stats{
+	return SegmentStats{
 		Records:           s.records,
 		BytesUncompressed: s.bytesUncompressed,
 		TsMinNs:           s.tsMinNs,
