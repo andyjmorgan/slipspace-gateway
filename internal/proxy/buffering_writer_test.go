@@ -175,17 +175,62 @@ func TestBufferingResponseWriter_FlushNonFlusherInnerNoOp(t *testing.T) {
 	b.Flush()
 }
 
-func TestBufferingResponseWriter_HeaderAccess(t *testing.T) {
+func TestBufferingResponseWriter_HeaderStagingBeforeCommit(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()
 	b := NewBufferingResponseWriter(rec, []int{503})
 
 	b.Header().Set("X-Stage", "pre-commit")
 	if got := b.Header().Get("X-Stage"); got != "pre-commit" {
-		t.Errorf("Header round-trip failed: %q", got)
+		t.Errorf("staging Header round-trip failed: %q", got)
 	}
-	if got := rec.Header().Get("X-Stage"); got != "pre-commit" {
-		t.Errorf("inner Header did not see the staged value: %q", got)
+	// Pre-commit, the inner writer must NOT see staged headers — this
+	// is what isolates a discarded attempt's headers from a later
+	// committed attempt sharing the same outer writer.
+	if got := rec.Header().Get("X-Stage"); got != "" {
+		t.Errorf("inner Header saw the staged value pre-commit: %q", got)
+	}
+}
+
+func TestBufferingResponseWriter_HeaderFlushesOnCommit(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	b := NewBufferingResponseWriter(rec, []int{503})
+
+	b.Header().Set("X-Custom", "yes")
+	b.WriteHeader(http.StatusOK)
+	// On commit the staged header reaches the inner writer.
+	if got := rec.Header().Get("X-Custom"); got != "yes" {
+		t.Errorf("inner Header missing committed value: %q", got)
+	}
+}
+
+func TestBufferingResponseWriter_StagedHeadersDroppedOnDiscard(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	b := NewBufferingResponseWriter(rec, []int{503})
+
+	b.Header().Set("Content-Length", "25")
+	b.WriteHeader(http.StatusServiceUnavailable)
+
+	if got := rec.Header().Get("Content-Length"); got != "" {
+		t.Errorf("discarded attempt's Content-Length leaked: %q", got)
+	}
+	if rec.Code == http.StatusServiceUnavailable {
+		t.Errorf("inner saw discarded status")
+	}
+}
+
+func TestBufferingResponseWriter_HeaderAfterCommitTargetsInner(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	b := NewBufferingResponseWriter(rec, []int{503})
+
+	b.WriteHeader(http.StatusOK)
+	b.Header().Set("X-Streaming-Late", "ok")
+
+	if got := rec.Header().Get("X-Streaming-Late"); got != "ok" {
+		t.Errorf("post-commit Header().Set did not reach inner: %q", got)
 	}
 }
 

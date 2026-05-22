@@ -11,6 +11,14 @@ import (
 // discard (signal the orchestrator that the attempt should be retried)
 // is made the moment the upstream emits an HTTP status line.
 //
+// Headers are STAGED to an isolated map pre-commit so a discarded
+// attempt's response headers never reach the underlying writer. On
+// commit the staged map is copied into the underlying writer's
+// Header() and WriteHeader is called once. This isolation is what
+// lets the orchestrator wrap the SAME outer ResponseWriter across
+// multiple failover attempts without leaking the failed attempt's
+// Content-Length / Content-Type to the next one.
+//
 // State transitions:
 //
 //   - Initial: no WriteHeader observed. The orchestrator gets nothing
@@ -39,6 +47,11 @@ type BufferingResponseWriter struct {
 
 	retry map[int]struct{}
 
+	// staging holds headers written via Header() pre-commit. On
+	// commit it is copied into inner.Header(); on discard it is
+	// dropped so the next attempt starts with a clean header map.
+	staging http.Header
+
 	statusCode int
 
 	committed bool
@@ -59,15 +72,20 @@ func NewBufferingResponseWriter(w http.ResponseWriter, retryStatusCodes []int) *
 	for _, s := range retryStatusCodes {
 		set[s] = struct{}{}
 	}
-	return &BufferingResponseWriter{inner: w, retry: set}
+	return &BufferingResponseWriter{inner: w, retry: set, staging: make(http.Header)}
 }
 
-// Header returns the underlying ResponseWriter's header map. Headers
-// staged before commit are still visible to the caller (so
-// ReverseProxy can set them as upstream headers arrive), but they
-// only reach the client if commit happens.
+// Header returns the staging header map pre-commit, the underlying
+// writer's header map post-commit. Headers set during a discarded
+// attempt are dropped with the writer — they never reach the client.
+// Once committed, every subsequent Header() call routes to the
+// underlying writer so streaming responses can keep mutating headers
+// the way the standard http.ResponseWriter contract allows.
 func (b *BufferingResponseWriter) Header() http.Header {
-	return b.inner.Header()
+	if b.committed {
+		return b.inner.Header()
+	}
+	return b.staging
 }
 
 // WriteHeader is the commit-or-discard decision point. The first
@@ -84,6 +102,14 @@ func (b *BufferingResponseWriter) WriteHeader(status int) {
 		return
 	}
 	b.committed = true
+	// Flush staged headers into the underlying writer in one shot
+	// so the commit looks atomic to net/http's serialization layer.
+	innerHdr := b.inner.Header()
+	for k, vs := range b.staging {
+		cp := make([]string, len(vs))
+		copy(cp, vs)
+		innerHdr[k] = cp
+	}
 	b.inner.WriteHeader(status)
 }
 
