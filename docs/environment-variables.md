@@ -12,7 +12,7 @@ Ground truth lives in [`internal/config/env.go`](../internal/config/env.go) (the
 
 1. [Complete reference (alphabetical)](#complete-reference-alphabetical)
 2. [Core listener and config](#core-listener-and-config)
-3. [Bus and NATS reporting](#bus-and-nats-reporting)
+3. [Connector spool](#connector-spool)
 4. [Observability — OTLP, Prometheus, logging](#observability--otlp-prometheus-logging)
 5. [Admin console](#admin-console)
 6. [Live feed and body capture](#live-feed-and-body-capture)
@@ -39,23 +39,19 @@ Every `SLUICE_*` variable the gateway reads, in one table. Defaults are what `Lo
 | `SLUICE_HTTP_BIND` | `:8585` | string (host:port) | Data-plane listener address. `:8585` binds all interfaces; pin a host (`127.0.0.1:8585`) for loopback-only deployments. | Must parse as `host:port` with a numeric port. Empty host is allowed. | [Core listener and config](#core-listener-and-config) |
 | `SLUICE_LOG_FORMAT` | `json` | enum string | Selects the slog handler: `json` (default, structured, production) or `text` (human-readable, dev). | Case-insensitive enum: `json` \| `text`. Anything else returns `ErrUnknownLogFormat`. | [Observability](#observability--otlp-prometheus-logging) |
 | `SLUICE_LOG_LEVEL` | `info` | enum string | Minimum slog level. Below the threshold is dropped. | Case-insensitive enum: `debug` \| `info` \| `warn` \| `error`. Anything else returns `ErrUnknownLogLevel`. | [Observability](#observability--otlp-prometheus-logging) |
-| `SLUICE_NATS_BUCKET` | `GATEWAY_EVENT_STASH` | string | JetStream Object Store bucket used to stash envelopes that exceed `SLUICE_NATS_STASH_THRESHOLD_BYTES`. The bucket is auto-created on startup. | Non-empty (the default is used when unset). | [Bus and NATS reporting](#bus-and-nats-reporting) |
-| `SLUICE_NATS_PUBLISH_QUEUE_SIZE` | `10000` | int | Bounds the publisher's in-process queue between caller goroutines and worker goroutines. When full, `Publish` drops the envelope and increments the drop counter — never blocks. | `> 0`. | [Bus and NATS reporting](#bus-and-nats-reporting) |
-| `SLUICE_NATS_STASH_THRESHOLD_BYTES` | `786432` (768 KiB) | int (bytes) | Inline-vs-stashed cutoff. Envelopes whose serialized payload exceeds this length are uploaded to the Object Store and the publish carries an object reference instead. | `> 0`. | [Bus and NATS reporting](#bus-and-nats-reporting) |
-| `SLUICE_NATS_STREAM` | `GATEWAY_EVENTS` | string | JetStream stream name reporting events publish to. Created on startup against subject `gateway.>`. | Non-empty (the default is used when unset). | [Bus and NATS reporting](#bus-and-nats-reporting) |
-| `SLUICE_NATS_URL` | _(empty)_ | string (URL) | NATS server connection string (e.g. `nats://nats:4222`). Empty disables reporting entirely — the publisher is not wired and events are dropped silently. | Empty disables. No URL parsing at LoadEnv; connection errors surface at startup. | [Bus and NATS reporting](#bus-and-nats-reporting) |
 | `SLUICE_OTLP_ENDPOINT` | _(empty)_ | string (host:port or URL) | OTLP metrics exporter target. Empty disables OTLP push entirely (the Prometheus scrape side is unaffected). | Empty disables. No format validation at LoadEnv; exporter dial failures surface at startup. | [Observability](#observability--otlp-prometheus-logging) |
 | `SLUICE_OTLP_PROTOCOL` | `grpc` | enum string | OTLP transport. `grpc` is the default; `http/protobuf` for fronts that don't speak gRPC. Only consulted when `SLUICE_OTLP_ENDPOINT` is non-empty. | Case-insensitive enum: `grpc` \| `http/protobuf`. Anything else returns `ErrUnknownOTLPProtocol`. | [Observability](#observability--otlp-prometheus-logging) |
 | `SLUICE_PROMETHEUS_BIND` | _(empty)_ | string (host:port) | Listener address for the `/metrics` scrape endpoint. Empty disables the scrape listener; OTLP push is unaffected. | When non-empty, must parse as `host:port` with a numeric port. | [Observability](#observability--otlp-prometheus-logging) |
 | `SLUICE_RULES_MAX_GROUP_DEPTH` | `8` | int | Caps recursive descent through nested `RuleGroup` children during evaluation. Guardrail against pathological YAML triggering stack overflow in the evaluator. | Must be in `[1, 64]`. | [Rules engine](#rules-engine) |
 | `SLUICE_SHUTDOWN_DRAIN_SECONDS` | `300` (5 min) | int (seconds) | Bounds graceful drain on `SIGTERM` / `SIGINT`. The server stops accepting new requests, then waits up to this many seconds for in-flight requests to complete before hard-killing them. | `> 0`. | [Shutdown and drain](#shutdown-and-drain) |
+| `SLUICE_SPOOL_ROOT` | `/var/lib/sluice/spool` | string (path) | On-disk root for the connector spool. The spool constructs `records/<connector>/{active,sealed,uploading,deadletter,quarantine}/` beneath this. Mount a PVC in production so segments survive process restart. | Non-empty. The path is created lazily on first use; the process must have write permissions. | [Connector spool](#connector-spool) |
+| `SLUICE_WEBHOOK_ALLOW_PRIVATE` | _(unset)_ | bool (string `1` / `true`) | **Test-only.** Disables the per-call SSRF DNS guard on every webhook connector. The e2e harness sets this so its `httptest.Server` (bound to loopback) is reachable. **Never set this in production.** | `1` / `true` enables; anything else (including unset) leaves the guard on. | [Connectors → webhook → SSRF guard](connectors.md#ssrf-guard) |
 
-That's 20 variables total — the 18 names returned by `config.EnvVarNames()` plus two read from other packages.
-
-The CLI validator at `cmd/cli/validate.go` prints "N vars resolved" using `config.EnvVarNames()`; the count reflects exactly the 18 entries in `envVarNames` ([`internal/config/env.go`](../internal/config/env.go)) — every `SLUICE_*` var `LoadEnv` consults itself. The two extras that round the total up to 20 are read elsewhere:
+The CLI validator at `cmd/cli/validate.go` prints "N vars resolved" using `config.EnvVarNames()`; the count reflects exactly the entries in `envVarNames` ([`internal/config/env.go`](../internal/config/env.go)) — every `SLUICE_*` var `LoadEnv` consults itself. Three extras are read elsewhere:
 
 - `SLUICE_ADMIN_PASSWORD` is resolved by [`contracts/admin/admin.go::Config.ResolvePassword`](../contracts/admin/admin.go) at admin-block validation time, not by `LoadEnv`.
 - `SLUICE_ENV` is read by [`internal/observability/setup.go`](../internal/observability/setup.go) to populate the OTel `deployment.environment` resource attribute.
+- `SLUICE_WEBHOOK_ALLOW_PRIVATE` is read by [`internal/connector/webhook/connector.go`](../internal/connector/webhook/connector.go) at webhook-connector construction time. Test-only.
 
 Keeping the `LoadEnv` set and the per-package extras separate is what lets the validator print a stable count without claiming ownership of vars it doesn't parse.
 
@@ -76,21 +72,18 @@ The data plane (`SLUICE_HTTP_BIND`) is the listener clients hit with `POST /open
 
 ---
 
-## Bus and NATS reporting
+## Connector spool
 
-Reporting is the side channel that carries end-of-pipeline event envelopes (audit, billing, UI live feed) to NATS JetStream. It is independent of the OTel metric pipeline — see [load-bearing invariant #4](../CLAUDE.md#load-bearing-invariants-never-violate). Reporting is optional; leave `SLUICE_NATS_URL` empty in dev and the publisher is never wired.
+The connector spool is the disk-backed buffer between OnComplete and the connector destinations (s3, azure_blob, webhook). It is independent of the OTel metric pipeline — see [load-bearing invariant #4](../CLAUDE.md). The spool is constructed lazily; deployments with no `connectors:` block leave the spool unwired.
 
 | Variable | Default | Type | Effect |
 |---|---|---|---|
-| `SLUICE_NATS_URL` | _(empty)_ | string | NATS connection string. Empty disables reporting entirely. |
-| `SLUICE_NATS_STREAM` | `GATEWAY_EVENTS` | string | JetStream stream name. |
-| `SLUICE_NATS_BUCKET` | `GATEWAY_EVENT_STASH` | string | Object Store bucket for large-payload stash. |
-| `SLUICE_NATS_STASH_THRESHOLD_BYTES` | `786432` (768 KiB) | int | Inline-vs-stashed cutoff. |
-| `SLUICE_NATS_PUBLISH_QUEUE_SIZE` | `10000` | int | In-process queue depth between caller and worker goroutines. |
+| `SLUICE_SPOOL_ROOT` | `/var/lib/sluice/spool` | string (path) | On-disk root for the spool. Per-connector subdirectories (`records/<connector>/{active,sealed,uploading,deadletter,quarantine}/`) live under this. |
+| `SLUICE_WEBHOOK_ALLOW_PRIVATE` | _(unset)_ | bool (`1` / `true`) | **Test-only.** Disables the per-call SSRF DNS guard on every webhook connector in the process. Never set in production. |
 
-`SLUICE_NATS_URL` is the master switch — empty = no reporting. The publisher's queue (`SLUICE_NATS_PUBLISH_QUEUE_SIZE`) is the backpressure boundary: when full, `Publish` drops the envelope and increments `gateway.events_dropped.total` rather than blocking the request path. **The client must never wait on the bus** — see load-bearing invariant #2.
+`SLUICE_SPOOL_ROOT` should point at a Kubernetes PVC in production so sealed segments survive process restarts. Pointing it at a tmpfs is supported for ephemeral-by-design deployments but accepts the loss-on-restart semantics. `Validate` rejects an empty value.
 
-`SLUICE_NATS_STASH_THRESHOLD_BYTES` controls the envelope pattern: payloads at or below the threshold publish inline; above it, the publisher uploads the raw bytes to the Object Store bucket and publishes a small reference envelope instead. The default 768 KiB sits below NATS's default 1 MiB max-payload limit with headroom for envelope metadata; bump only if your NATS cluster is configured with a larger `max_payload`.
+Per-track tuning (ring depth, rotation, retry, breaker) is not env-driven — those knobs live on the per-connector YAML entry. See [spool.md](spool.md) for the runtime model and [connectors.md](connectors.md) for the per-connector rotation override.
 
 ---
 
@@ -204,9 +197,9 @@ On signal receipt the server stops accepting new requests and waits up to `SLUIC
 A handful of conventions the parser applies consistently:
 
 - **Trim before non-empty check.** `envString` and `envInt` both trim whitespace and treat a whitespace-only value as unset. `SLUICE_LOG_LEVEL=" "` falls back to the default `info`, not an empty-string error.
-- **Integer parsing is base-10 strict.** No hex, no octal, no SI suffixes. `SLUICE_NATS_STASH_THRESHOLD_BYTES=1M` is rejected; write `1048576`.
+- **Integer parsing is base-10 strict.** No hex, no octal, no SI suffixes. `SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=1M` is rejected; write `1048576`.
 - **Enum case-insensitive.** `SLUICE_LOG_LEVEL=DEBUG` works the same as `debug`. The validator lowercases before comparison.
-- **Empty disables only where documented.** `SLUICE_NATS_URL`, `SLUICE_OTLP_ENDPOINT`, `SLUICE_PROMETHEUS_BIND`, and the `SLUICE_ADMIN_LIVE_FEED_*` byte/capacity knobs honour an empty/zero value as "off". Other knobs treat empty as "use the default" — there is no way to disable the rules-engine depth cap, the shutdown drain, or the publish queue.
+- **Empty disables only where documented.** `SLUICE_OTLP_ENDPOINT`, `SLUICE_PROMETHEUS_BIND`, and the `SLUICE_ADMIN_LIVE_FEED_*` byte/capacity knobs honour an empty/zero value as "off". Other knobs treat empty as "use the default" — there is no way to disable the rules-engine depth cap or the shutdown drain. Connector capture is enabled by the presence of a `connectors:` block in YAML, not via an env var.
 - **No live reload.** Changing any env var at runtime has no effect until the process restarts. This is intentional — the gateway is built around restart-to-change config semantics, and a hot-reload path is explicitly out of scope before v1.2.
 
 ---
@@ -214,7 +207,9 @@ A handful of conventions the parser applies consistently:
 ## Cross-references
 
 - [Resilience policies](./resilience.md) — uses `SLUICE_CONFIG_DIR` for policy definitions; no resilience-specific env vars.
-- [`CLAUDE.md`](../CLAUDE.md) — load-bearing invariants for the bus (#2), reporting/telemetry separation (#4), and admin console architecture (memory note).
+- [Connector spool](./spool.md) — runtime semantics behind `SLUICE_SPOOL_ROOT`.
+- [Connectors](./connectors.md) — destination types, including the webhook SSRF guard.
+- [`CLAUDE.md`](../CLAUDE.md) — load-bearing invariants for the spool (#2), reporting/telemetry separation (#4), and admin console architecture (memory note).
 - [`README.md`](../README.md) — quick-start configuration including `SLUICE_ADMIN_PASSWORD` for the bundled docker-compose.
 - [`internal/config/env.go`](../internal/config/env.go) — the canonical struct + parser + validator. Read it if this doc looks suspect.
 - [`contracts/admin/admin.go`](../contracts/admin/admin.go) — the admin block, including `SLUICE_ADMIN_PASSWORD` resolution.

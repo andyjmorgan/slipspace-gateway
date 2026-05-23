@@ -52,7 +52,7 @@ flowchart LR
     F1 --> G[forwarder]
     F2 --> G
     G --> H[upstream provider]
-    H --> I[reporter:<br/>OTel + NATS + live feed]
+    H --> I[reporter:<br/>OTel + spool + live feed]
     F -. retry on failure_status_codes<br/>or transport error .-> F
 ```
 
@@ -383,9 +383,9 @@ Every layer of the orchestrator emits signal. Three independent channels:
 
 Per-request meters (`gateway.requests.total`, `gateway.request.duration`) fire **once per inbound request**, not once per attempt. Per-attempt meters (`gateway.request.time_to_first_byte`, `gateway.upstream_errors.total`) stay attempt-shaped because those are attempt-shaped phenomena.
 
-### NATS `gateway.request` events
+### Multi-attempt record shape
 
-Each request emits one envelope on the `gateway.request` subject. For requests bound to a policy, the payload carries:
+Each request emits one [`Record`](../contracts/connector/record.go) per matched connector binding (see [connector-bindings.md](connector-bindings.md)). For requests bound to a resilience policy, the record carries:
 
 ```jsonc
 {
@@ -393,20 +393,19 @@ Each request emits one envelope on the `gateway.request` subject. For requests b
   "provider": "openai",
   "endpoint": "chat_completions",
   "model": "qwen2.5-coder:7b",
-  "status_code": 200,
-  "duration_ms": 1240,
+  "upstream_status": 200,
   "policy_ref": "qwen-load-balance",
   "attempts": [
     {
       "target": "qwen-spark-incluster",
-      "started_at": "2026-05-22T13:47:12Z",
+      "started_at_ns": 1747921632000000000,
       "duration_ms": 480,
       "status_code": 503,
       "outcome": "failure_status"
     },
     {
       "target": "qwen-standalone-69",
-      "started_at": "2026-05-22T13:47:12Z",
+      "started_at_ns": 1747921632480000000,
       "duration_ms": 760,
       "status_code": 200,
       "outcome": "success"
@@ -415,7 +414,7 @@ Each request emits one envelope on the `gateway.request` subject. For requests b
 }
 ```
 
-`PolicyRef` and `Attempts` are omitted for single-shot requests, so the wire shape for non-resilience traffic is byte-equivalent to v1.1.
+`PolicyRef` and `Attempts` are omitted for single-shot requests, so the wire shape for non-resilience traffic remains stable.
 
 ### Admin console
 

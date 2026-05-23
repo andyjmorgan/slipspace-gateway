@@ -411,5 +411,5 @@ The `And` short-circuits: if the request isn't on `openai`, the header lookup is
 
 - [`docs/actions.md`](actions.md) — every action type (`changeProvider`, `changeModelName`, `changeUrl`, `changeApiKey`, `setHeader`, `appendQueryString`, `addTag`, `useResiliencePolicy`, `returnStatusCode`, `llmImpersonation`) with semantics and worked examples.
 - [`docs/resilience.md`](resilience.md) — the `useResiliencePolicy` action's destination, including the pipeline diagram showing where rules sit relative to the orchestrator.
-- [`docs/observability.md`](observability.md) — the rule-engine meters (`gateway.rule.matches.total`, `gateway.rule.errors.total`, `gateway.rule.evaluation.duration`) and the per-request `events.RuleMatched` payload exposed via NATS and the admin console.
+- [`docs/observability.md`](observability.md) — the rule-engine meters (`gateway.rule.matches.total`, `gateway.rule.errors.total`, `gateway.rule.evaluation.duration`) and the per-request `RulesFired` shape captured on connector `Record`s and the admin console live-feed.
 - [`docs/environment-variables.md`](environment-variables.md) — `SLUICE_RULES_MAX_GROUP_DEPTH` and all other server-tunable env vars.

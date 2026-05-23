@@ -220,7 +220,7 @@ Sluice owns three `X-Sluice-*` HTTP headers on the request/response surface. Two
 
 ### `X-Sluice-Correlation-Id`
 
-Per-request correlation token. Used to join NATS audit events, structured logs, and admin-console message rows for the same request. Lives on [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) — the `correlationMiddleware` runs ahead of routing so every other middleware sees the same value.
+Per-request correlation token. Used to join captured connector records, structured logs, and admin-console message rows for the same request. Lives on [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) — the `correlationMiddleware` runs ahead of routing so every other middleware sees the same value.
 
 | Direction | Behaviour |
 |---|---|
@@ -239,7 +239,7 @@ Optional pass-through session marker. Sluice does not interpret the value — it
 | Inbound | If present, the value is recorded on the per-request observer state and forwarded upstream verbatim. Absent inbound means no session id; the gateway does not synthesise one. |
 | Outbound (gateway → client) | When an inbound `X-Sluice-Session-Id` was present, the value is echoed back on the response. Absent inbound means absent outbound. |
 
-The intent is that an SDK or a UI tier above the gateway can stamp a session id and join its own logs against the same key Sluice surfaces in NATS audit events and the admin console.
+The intent is that an SDK or a UI tier above the gateway can stamp a session id and join its own logs against the same key Sluice surfaces in captured connector records and the admin console.
 
 ### `X-Sluice-Configuration`
 

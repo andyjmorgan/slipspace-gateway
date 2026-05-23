@@ -438,6 +438,6 @@ The `PoliciesResponse.Pod` field carries `os.Hostname()` so an operator hitting 
 
 - [`docs/resilience.md`](resilience.md) — resilience policy schema, what `/admin/api/v1/policies` projects, and how per-target circuit-breaker state is computed.
 - [`docs/environment-variables.md`](environment-variables.md) — the canonical `SLUICE_*` env-var reference (incl. data-plane vars not covered here).
-- [`docs/observability.md`](observability.md) — OTel meters, Prometheus scrape, NATS reporting; the data-plane signals the admin dashboard reads.
+- [`docs/observability.md`](observability.md) — OTel meters, Prometheus scrape, runtime collectors, connector-captured records; the data-plane signals the admin dashboard reads.
 - [`docs/deployment.md`](deployment.md) — Helm chart shape, ingress wiring, secret mounting; how `admin.password` reaches the pod in production.
 - [`CLAUDE.md`](../CLAUDE.md) — project-level invariants, including the "no unbacked UI" rule the admin pages follow.

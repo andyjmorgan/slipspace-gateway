@@ -16,7 +16,7 @@ The shape of production is documented in [`deployment.md`](./deployment.md); thi
 6. [Make target reference](#make-target-reference)
 7. [Testing layers](#testing-layers)
 8. [Developer workflow: before every commit](#developer-workflow-before-every-commit)
-9. [NATS subject debugging](#nats-subject-debugging)
+9. [Inspecting captured connector segments](#inspecting-captured-connector-segments)
 10. [Common pitfalls](#common-pitfalls)
 11. [Cross-references](#cross-references)
 
@@ -26,7 +26,7 @@ The shape of production is documented in [`deployment.md`](./deployment.md); thi
 
 Three concerns:
 
-1. **How to run sluice-gateway locally** — a native `go run` against a containerised mock LLM and NATS, or the full production-shaped image via docker-compose.
+1. **How to run sluice-gateway locally** — a native `go run` against a containerised mock LLM, or the full production-shaped image via docker-compose.
 2. **What the test layers are and when to invoke each** — unit, integration, e2e, wire-compat, smoke. They are not interchangeable; each catches a different class of regression.
 3. **The `make` target surface** — one canonical command per workflow, all the env wiring baked into the Makefile so nobody has to remember which `SLUICE_*` vars need to be set.
 
@@ -42,18 +42,17 @@ From a fresh clone:
 make dev
 ```
 
-That single target brings up the mock LLM and NATS as containers, then runs the gateway natively via `go run ./cmd/gateway` so edits hot-reload on the next request through ctrl-C / re-run. The data plane binds on `:8585`, Prometheus scrape on `:9090`, admin console (off by default in native mode, enabled in compose mode) on `:8081`.
+That single target brings up the mock LLM as a container, then runs the gateway natively via `go run ./cmd/gateway` so edits hot-reload on the next request through ctrl-C / re-run. The data plane binds on `:8585`, Prometheus scrape on `:9090`, admin console (off by default in native mode, enabled in compose mode) on `:8081`. The connector spool defaults to `/var/lib/sluice/spool/` in containers and to a local `./tmp/spool/` path when running natively.
 
 ```mermaid
 flowchart LR
-    Dev[make dev] --> Compose[docker compose up -d<br/>mockllm + nats]
+    Dev[make dev] --> Compose[docker compose up -d<br/>mockllm]
     Dev --> GoRun[go run ./cmd/gateway<br/>SLUICE_CONFIG_DIR=./config-dev]
     Compose --> Mock[mockllm:5555<br/>compose network]
-    Compose --> Nats[nats:4222<br/>host-mapped]
     GoRun --> Data[":8585<br/>data plane"]
     GoRun --> Prom[":9090<br/>prometheus"]
     GoRun --> Mock
-    GoRun --> Nats
+    GoRun --> Spool[./tmp/spool/<br/>connector segments]
 ```
 
 Send your first request:
@@ -83,12 +82,11 @@ flowchart TB
     subgraph compose[docker compose network]
         GW[gateway<br/>image: sluice-gateway:dev<br/>:8585 :8081 :9090]
         Mock[mockllm<br/>image: sluice-mockllm:dev<br/>:5555 - internal]
-        Nats[nats:2.10 -js<br/>:4222 :8222]
+        Spool[(sluice-spool<br/>named volume)]
     end
     Curl -- "8585 / 8081 / 9090" --> GW
-    Curl -- "4222 / 8222" --> Nats
     GW -- "http://mockllm:5555" --> Mock
-    GW -- "nats://nats:4222" --> Nats
+    GW -- "/var/lib/sluice/spool" --> Spool
 ```
 
 Two overlay files extend the baseline:
@@ -180,7 +178,7 @@ Five providers in dev: `openai`, `anthropic`, `gemini`, `gpt-oss`, `qwen36`, `qw
 
 ### What's *not* in `config-dev/`
 
-No `gateway.yaml`. Server-level configuration (HTTP bind, NATS URL, log level, drain timeout) flows in through `SLUICE_*` env vars — the Makefile's `DEV_ENV` block is the canonical set for native runs. The compose service inlines the same set in its `environment:` block. See [`environment-variables.md`](./environment-variables.md) for the full list.
+No `gateway.yaml`. Server-level configuration (HTTP bind, spool root, log level, drain timeout) flows in through `SLUICE_*` env vars — the Makefile's `DEV_ENV` block is the canonical set for native runs. The compose service inlines the same set in its `environment:` block. See [`environment-variables.md`](./environment-variables.md) for the full list.
 
 ---
 
@@ -262,13 +260,13 @@ Every target in the `Makefile`, in the order they appear there:
 | `lint` | `golangci-lint run ./...` | — | unit | Non-negotiable before commit. Install with `brew install golangci-lint` if missing. |
 | `test` | `go test -race -coverprofile=coverage.out -covermode=atomic` | — | unit | Skips `web/node_modules`. Race detector on. |
 | `coverage` | `test` + `scripts/coverage-gate.sh coverage.out 95` | — | unit + gate | Same as `test`, then fails if total coverage is under 95%. |
-| `dev` | `docker compose up -d mockllm nats` + `go run ./cmd/gateway` | `SLUICE_CONFIG_DIR=./config-dev`, `SLUICE_HTTP_BIND=0.0.0.0:8585`, `SLUICE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLUICE_NATS_URL=nats://localhost:4222`, `SLUICE_LOG_LEVEL=debug` | — | The fast inner loop. Container infra + native gateway. |
+| `dev` | `docker compose up -d mockllm` + `go run ./cmd/gateway` | `SLUICE_CONFIG_DIR=./config-dev`, `SLUICE_HTTP_BIND=0.0.0.0:8585`, `SLUICE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLUICE_SPOOL_ROOT=./tmp/spool`, `SLUICE_LOG_LEVEL=debug` | — | The fast inner loop. Container infra + native gateway. |
 | `dev-with-overlay` | `docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d` + `go run ./cmd/gateway` | same as `dev` | — | Requires `docker-compose.dev.yaml` (copy from `.example`). |
 | `dev-compose` | `docker compose up -d --build` | — | — | Builds the gateway image with the SPA embedded and brings up all three services. Slow iteration; matches production shape. Pair with `make web-dev` for SPA-only hot reload. |
 | `dev-compose-down` | `docker compose down` | — | — | Tears down the compose stack. |
-| `dev-real` | `scripts/dev-real-config.sh` + `docker compose -f docker-compose.yaml -f docker-compose.real.yaml --env-file .env up -d --no-deps --build gateway nats` | `.env` with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | — | Real-upstream stack. Generates `config-dev.real/` from `.env` and reaches OpenAI / Anthropic / Gemini directly. For the qwen path you also need a `kubectl port-forward` on host port `11434`. |
+| `dev-real` | `scripts/dev-real-config.sh` + `docker compose -f docker-compose.yaml -f docker-compose.real.yaml --env-file .env up -d --no-deps --build gateway` | `.env` with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | — | Real-upstream stack. Generates `config-dev.real/` from `.env` and reaches OpenAI / Anthropic / Gemini directly. For the qwen path you also need a `kubectl port-forward` on host port `11434`. |
 | `dev-real-down` | `docker compose -f docker-compose.yaml -f docker-compose.real.yaml down` | — | — | Tears down the real-upstream stack. |
-| `e2e` | `go test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...` | `TESTCONTAINERS_RYUK_DISABLED=true` | e2e | Spawns the gateway + mockllm binaries plus a NATS testcontainer per test. Requires Docker. |
+| `e2e` | `go test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...` | `TESTCONTAINERS_RYUK_DISABLED=true` | e2e | Spawns the gateway + mockllm binaries per test, plus a tmp spool dir per test. Webhook subsuites use a local `httptest.Server` as the receiver. Requires Docker. |
 | `py-compat` | builds `/tmp/sluice-gateway` + `/tmp/sluice-mockllm`, then `uv run pytest -v` in `test/python/` | — | wire-compat | Runs the official OpenAI / Anthropic / Gemini SDKs against a spawned stack. Release-blocking. |
 | `smoke` | `uv run pytest -v` in `test/smoke/` | `SLUICE_API_KEY=$KEY` (required), `SLUICE_BASE_URL` (optional, defaults to `https://sluice.donkeywork.dev`), `SLUICE_SMOKE_QWEN=true` (optional) | smoke | Post-deploy harness against a live gateway. Without `SLUICE_API_KEY` everything skips. |
 | `clean` | `rm -f coverage.out coverage.html` | — | — | Drops coverage artefacts. |
@@ -289,7 +287,7 @@ flowchart TB
         Integ[Integration<br/>//go:build integration<br/>testcontainers-bound]
     end
     subgraph slow[Pre-commit, slower]
-        E2E[E2E<br/>tag: e2e<br/>spawned binary + mockllm + nats<br/>make e2e]
+        E2E[E2E<br/>tag: e2e<br/>spawned binary + mockllm<br/>make e2e]
         PyCompat[Wire-compat<br/>official OpenAI/Anthropic/Gemini SDKs<br/>make py-compat]
     end
     subgraph post[Post-deploy]
@@ -316,21 +314,21 @@ Race detector is always on (`-race`). Goroutine leak detection via `goleak` runs
 
 ### Integration — verify with real dependencies
 
-`*_test.go` with the `//go:build integration` build tag. testcontainers-bound — these tests bring up a real NATS broker, run the code under test against it, and assert against the real broker's state. Slower than unit (container startup overhead) but cheap relative to e2e (no spawned binaries).
+`*_test.go` with the `//go:build integration` build tag. testcontainers-bound — these tests bring up the dependencies the code under test needs (e.g. a MinIO container for the S3 connector), run the code against them, and assert against the dependency's state. Slower than unit (container startup overhead) but cheap relative to e2e (no spawned binaries).
 
-Integration tests live alongside the package they test; they're separated from unit by the build tag, not by directory. The `bus/` publisher's round-trip tests are the canonical example.
+Integration tests live alongside the package they test; they're separated from unit by the build tag, not by directory. The `internal/connector/s3/` MinIO-backed round-trip tests are a canonical example.
 
 ### E2E — verify the wire contract end-to-end
 
 `test/e2e/`, build tag `e2e`. Each test:
 
-1. Brings up a fresh NATS testcontainer
+1. Materialises a per-test spool directory in tmp
 2. Spawns `cmd/mockllm` as a subprocess on a random port
-3. Materialises a tmp copy of `config-dev/` with the mockllm port substituted in
-4. Spawns `cmd/gateway` as a subprocess pointing at the tmp config and the NATS container
-5. Drives real HTTP against the gateway, asserts on the response + NATS events + Prometheus scrape
+3. Materialises a tmp copy of `config-dev/` with the mockllm port substituted in (and per-test `connectors:` overlays where the suite needs them)
+4. Spawns `cmd/gateway` as a subprocess pointing at the tmp config and the per-test spool root
+5. Drives real HTTP against the gateway, asserts on the response, captured spool records, and Prometheus scrape
 
-The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), reporting (`reporting/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`).
+The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), connectors (`connectors/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`). Webhook receivers spin up a local `httptest.Server` per test; the `SLUICE_WEBHOOK_ALLOW_PRIVATE=true` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
 
 `make e2e` runs the whole suite with the race detector and a 5-minute timeout. `TESTCONTAINERS_RYUK_DISABLED=true` keeps the reaper container from interfering on developer machines. Docker is required.
 
@@ -378,18 +376,21 @@ If `golangci-lint` isn't installed (`command -v golangci-lint` returns nothing),
 
 ---
 
-## NATS subject debugging
+## Inspecting captured connector segments
 
-NATS carries every reporting envelope: `gateway.request`, `gateway.rule.matched`, `gateway.unmapped`, etc. The fastest way to see what's flowing is the `nats` CLI:
+Connector segments are ndjson.zst files under the spool root (`./tmp/spool/` for `make dev`, the `sluice-spool` named volume for `make dev-compose`). Each line is one [`Record`](../contracts/connector/record.go); zstd-decompress and pipe through `jq` to inspect:
 
 ```sh
-brew install nats-io/nats-tools/nats
-nats sub "gateway.>"
+# native make dev
+zstd -dc ./tmp/spool/records/<connector>/sealed/*.ndjson.zst | jq .
+
+# from inside the compose container's volume
+docker compose exec gateway sh -c 'zstd -dc /var/lib/sluice/spool/records/*/sealed/*.ndjson.zst' | jq .
 ```
 
-Wildcard subscribes to every gateway subject; envelopes deserialise to MessagePack so the raw output is binary, but the subject and size are useful on their own. Pair it with `nats stream ls` if you want to see JetStream's persisted view.
+If sealed segments aren't accumulating, the uploader is shipping them faster than rotation creates them — look at `deadletter/` instead. If `active/` has a file but `sealed/` is empty, the rotation thresholds haven't fired yet (default 64 MiB / 60 s; lower the connector's `rotation` block for tighter feedback). See [spool.md](spool.md) for the full lifecycle reference.
 
-The `dev` and `dev-compose` topologies expose NATS on `localhost:4222` (host-mapped). For the `e2e` and `py-compat` harnesses NATS is on a random testcontainer port — read it from the spawned harness's logs.
+For the live tail of requests in real time, use the admin console's live-messages pane (`http://localhost:8081/admin`). That pane is in-process and lossy on restart, but renders without unzipping anything.
 
 ---
 
@@ -413,7 +414,7 @@ golangci-lint cache clean
 
 **Hardcoding `claude-haiku-4-5` or `gemini-2.0-flash-001` as no-match probes.** Tests that pick a real model name to assert "no rule matches" break when the policy library grows a rule that matches that prefix (happened twice during v1.0.2). Use synthetic names like `nomatch-internal` or `unmapped-model` instead.
 
-**Forgetting to sort NATS events by `MatchedAt`.** Tests that consume `gateway.rule.matched` or `gateway.request` events and assert ordering must sort by the timestamp field, not by receive order. The bus publisher's `defaultWorkers = 2` setting means adjacent envelopes can arrive at the subscriber inverted. See load-bearing invariant #8 in `CLAUDE.md`.
+**Forgetting to sort captured records.** Tests that read records from a connector's spool segments or destination must sort by `(ts_ns, instance_id, seq)` before asserting order — segments enqueue in arrival order per-track but record-level ordering across spool tracks is not stable. See [observability.md → Connector-captured records](observability.md#connector-captured-records) and load-bearing invariant #8 in `CLAUDE.md`.
 
 ---
 
