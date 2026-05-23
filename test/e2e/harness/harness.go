@@ -231,7 +231,9 @@ func (h *Harness) tryStartMockLLM(t *testing.T, repoRoot string) error {
 	}()
 
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
-	if err := waitForHTTP(h.HTTP, url+"/control/state", startupTimeout); err != nil {
+	// /control/state returns 200 with a JSON body; require == 200 so a
+	// stray colliding server can't fool us into thinking mockllm is up.
+	if err := waitForHTTP(h.HTTP, url+"/control/state", startupTimeout, done, exactly(200)); err != nil {
 		stopProcess(cmd, done)
 		return fmt.Errorf("mockllm did not become ready on port %d: %w", port, err)
 	}
@@ -305,13 +307,18 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 	h.gatewayDone = done
 	h.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", gwPort)
 
-	if err := waitForHTTP(h.HTTP, h.GatewayURL+"/healthz", startupTimeout); err != nil {
+	// /healthz returns exactly 200 OK when ready; tighter than the
+	// default <500 so a colliding capture server (202) can't fool us.
+	if err := waitForHTTP(h.HTTP, h.GatewayURL+"/healthz", startupTimeout, done, exactly(200)); err != nil {
 		stopProcess(cmd, done)
 		t.Fatalf("harness: gateway did not become ready: %v", err)
 	}
 
 	if h.opts.AdminEnabled {
-		if err := waitForHTTP(h.HTTP, h.AdminURL+"/api/v1/auth/me", startupTimeout); err != nil {
+		// /api/v1/auth/me requires Basic auth — accept 200 (authenticated
+		// somehow) or 401 (the live admin demanding credentials), but
+		// reject anything else; a 202 would mean a port collision.
+		if err := waitForHTTP(h.HTTP, h.AdminURL+"/api/v1/auth/me", startupTimeout, done, oneOf(200, 401)); err != nil {
 			stopProcess(cmd, done)
 			t.Fatalf("harness: admin listener did not become ready: %v", err)
 		}
@@ -499,6 +506,26 @@ func findRepoRoot() (string, error) {
 	return "", errors.New("go.mod not found walking up from harness package")
 }
 
+// exactly returns a waitForHTTP accept predicate that matches a single
+// status code; use it when the endpoint has a known good response and
+// any other status implies we're talking to the wrong process.
+func exactly(want int) func(int) bool {
+	return func(s int) bool { return s == want }
+}
+
+// oneOf returns a waitForHTTP accept predicate that matches any of the
+// supplied status codes.
+func oneOf(want ...int) func(int) bool {
+	return func(s int) bool {
+		for _, w := range want {
+			if s == w {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 func freePort() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -511,10 +538,41 @@ func freePort() (int, error) {
 	return port, nil
 }
 
-func waitForHTTP(client *http.Client, url string, timeout time.Duration) error {
+// waitForHTTP polls url until the server responds with a status the
+// caller is willing to accept, the subprocess we're probing exits, or
+// timeout elapses.
+//
+// `procDone`, when non-nil, is the close-on-exit channel of the
+// subprocess we're waiting on. If it closes before the probe succeeds
+// we abort — the URL we're hitting is no longer "our" process. This
+// matters because freePort() has a TOCTOU window: a concurrent
+// e2e harness's httptest.Server can grab the port between our
+// listen-on-0/close and the subprocess's bind(), at which point the
+// subprocess exits but the colliding listener (e.g. the capture
+// server's catch-all that returns 202) happily answers our probe and
+// fools us into thinking the gateway is ready.
+//
+// `accept` predicates the status code; pass nil to accept any status
+// strictly under 500 (the old loose behaviour, kept for callers
+// where the response shape is genuinely tolerant — e.g. mockllm's
+// /control/state pre-startup may transiently 4xx).
+func waitForHTTP(client *http.Client, url string, timeout time.Duration, procDone <-chan struct{}, accept func(int) bool) error {
+	if accept == nil {
+		accept = func(s int) bool { return s < 500 }
+	}
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
+		select {
+		case <-procDone:
+			if lastErr == nil {
+				lastErr = errors.New("subprocess exited before becoming ready")
+			} else {
+				lastErr = fmt.Errorf("subprocess exited before becoming ready (last probe err: %w)", lastErr)
+			}
+			return fmt.Errorf("probe %s: %w", url, lastErr)
+		default:
+		}
 		req, err := http.NewRequest(http.MethodGet, url, http.NoBody)
 		if err != nil {
 			return fmt.Errorf("build probe request: %w", err)
@@ -523,7 +581,7 @@ func waitForHTTP(client *http.Client, url string, timeout time.Duration) error {
 		if err == nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
-			if resp.StatusCode < 500 {
+			if accept(resp.StatusCode) {
 				return nil
 			}
 			lastErr = fmt.Errorf("status %d", resp.StatusCode)

@@ -126,17 +126,32 @@ func (r *Ring) Subscribe(bufSize int) *Subscription {
 }
 
 // subscriber is the per-Subscription state owned by the Ring.
+//
+// mu serialises deliver and detach so the channel send in deliver cannot
+// race with the close in detach. Without it, an atomic `closed` flag
+// only narrows the TOCTOU window — the load can return false, detach can
+// then close the channel, and the subsequent send panics with "send on
+// closed channel". The race detector flagged this between concurrent
+// Append and HTTP-handler teardown; under production load the panic
+// would crash the gateway process.
 type subscriber struct {
 	ring    *Ring
 	ch      chan Entry
 	dropped atomic.Uint64
-	closed  atomic.Bool
+
+	mu     sync.Mutex
+	closed bool
 }
 
 // deliver does a non-blocking send onto the subscriber's channel,
 // incrementing the per-subscriber drop counter if the buffer is full.
+// mu is held only for the duration of the non-blocking select, so
+// contention against a concurrent detach is bounded by the select
+// itself — no I/O happens under the lock.
 func (s *subscriber) deliver(e Entry) {
-	if s.closed.Load() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
 		return
 	}
 	select {
@@ -146,15 +161,23 @@ func (s *subscriber) deliver(e Entry) {
 	}
 }
 
-// detach is called by Subscription.Close. Idempotent.
+// detach is called by Subscription.Close. Idempotent. Takes the
+// subscriber mutex around close(s.ch) so any concurrent deliver
+// observes s.closed=true (under the same mutex) and returns without
+// touching the channel.
 func (r *Ring) detach(s *subscriber) {
-	if !s.closed.CompareAndSwap(false, true) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
 		return
 	}
+	s.closed = true
+	close(s.ch)
+	s.mu.Unlock()
+
 	r.mu.Lock()
 	delete(r.subs, s)
 	r.mu.Unlock()
-	close(s.ch)
 }
 
 // SubscriberCount returns the number of active subscribers. Useful for
