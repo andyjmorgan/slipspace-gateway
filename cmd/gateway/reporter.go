@@ -296,13 +296,10 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 
 // enqueueRecord builds a contracts/connector.Record from the
 // captured request/response + the rule + token snapshots, and
-// enqueues it to the spool for every connector binding the resolved
-// configuration declares. No-ops when the spool is nil (no connectors
-// configured) or the configuration is unknown.
-//
-// Sampling and per-binding filters are deliberately out of scope
-// here — every binding receives every record. The follow-up PR adding
-// those knobs hooks here.
+// evaluates each binding the resolved configuration declares:
+// sampling, filter, oversize. Records that survive land on the
+// connector's spool track. No-ops when the spool is nil (no
+// connectors configured) or the configuration is unknown.
 func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matches []events.RuleMatched) {
 	if r.factory.spool == nil {
 		return
@@ -312,11 +309,13 @@ func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matc
 		return
 	}
 	rec := r.buildRecord(ctx, ev, matches)
-	names := make([]string, 0, len(cfg.ConnectorBindings))
 	for _, b := range cfg.ConnectorBindings {
-		names = append(names, b.Connector)
+		modified, ship := evaluateBinding(rec, b)
+		if !ship {
+			continue
+		}
+		r.factory.spool.Enqueue(modified, b.Connector)
 	}
-	r.factory.spool.Enqueue(rec, names...)
 }
 
 // buildRecord maps the in-flight reporter state into the connector
