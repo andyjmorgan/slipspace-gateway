@@ -555,6 +555,19 @@ If `golangci-lint` isn't installed (`command -v golangci-lint` returns nothing),
 - Always paste the PR URL when you create one (draft or otherwise)
 - No emojis anywhere in code or docs unless explicitly requested
 
+### Flake handling
+
+A flake is a test that fails on one run and passes on another with no code change — typically timing, concurrency, port-collision, or shared-fixture contention. Catch them in CI, in local `make test` / `make e2e` / `make py-compat`, anywhere.
+
+**When you spot one, immediately:**
+
+1. `gh issue list --state open --search 'flake: <test-name>' --json number,title` to check whether an issue already exists for that test name. The title convention is `flake: <fully-qualified test name or package>: <one-line cause>` (see #88, #89 for examples).
+2. **If an issue exists:** add a comment with the new failed-run link and a one-line snippet of the failure (the assert, panic, timeout, or status line). Bump the existing reproducer count or "last seen" date if the issue tracks one. Do not duplicate.
+3. **If no issue exists:** open one with `gh issue create --title "flake: <test>: <cause>" --label flake --body ...`. The body should carry: package + test name (or `<package>/...` if the subtest is unknown), the captured failure excerpt, link to the failed CI run (or "local `make e2e` run" with the relevant context), and any hypothesis on root cause.
+4. Re-run the test in isolation (`go test -count=10 -race -run <Name> ./<pkg>`) to confirm it's a flake, not a deterministic regression. If it reproduces every time, it's a bug, not a flake — file a `bug:` issue, not `flake:`.
+
+Closing the flake — fixing the underlying race, replacing the timing assumption with a deterministic synchronisation, isolating the shared fixture — is a follow-up PR. The issue stays open until that PR merges. Rerunning CI to make red go green is acceptable to unblock a merge, but not a substitute for filing the issue.
+
 ### Stacked PRs
 
 When shipping a series of dependent PRs (foundation → wiring → tests → docs), branch each PR off the parent's branch, not main. When the parent merges, rebase each dependent onto the new main and `git push --force-with-lease`. **Each dependent PR may already include a fix for a test that the parent also fixed** — the rebase will conflict; resolve to the on-main version. v1.0.2 saw three PRs independently patching `TestActions_ChangeProvider_RetargetsUpstream`; the rebase merge surfaced clean conflicts in each case.
