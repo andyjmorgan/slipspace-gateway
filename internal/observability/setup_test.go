@@ -106,6 +106,20 @@ func TestSetup_PrometheusOnly(t *testing.T) {
 	if !strings.Contains(body, "gateway_requests_total") {
 		t.Errorf("metrics body missing gateway_requests_total:\n%s", body)
 	}
+	// Go runtime + process collectors must be present on the same
+	// registry the OTel exporter writes to — closes the gap surfaced
+	// by the load-test report where heap_inuse / RSS / open_fds were
+	// unscrapable.
+	for _, want := range []string{
+		"go_memstats_heap_inuse_bytes",
+		"go_goroutines",
+		"process_resident_memory_bytes",
+		"process_cpu_seconds_total",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %s:\n%s", want, body)
+		}
+	}
 }
 
 func TestSetup_OTLPOnlyGRPC(t *testing.T) {

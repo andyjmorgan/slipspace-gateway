@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -142,6 +143,17 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 
 	if promEnabled {
 		reg := prometheus.NewRegistry()
+		// Register the Go runtime + process collectors alongside the
+		// OTel-bridged meters so /metrics carries go_memstats_*,
+		// go_goroutines, process_resident_memory_bytes,
+		// process_cpu_seconds_total, process_open_fds, and friends.
+		// These are the diagnostics the load-test reports lean on; the
+		// gateway's own gateway_* counters never replace runtime
+		// telemetry.
+		reg.MustRegister(
+			collectors.NewGoCollector(),
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		)
 		exp, perr := otelprom.New(otelprom.WithRegisterer(reg))
 		if perr != nil {
 			return nil, fmt.Errorf("observability: prometheus exporter: %w", perr)
