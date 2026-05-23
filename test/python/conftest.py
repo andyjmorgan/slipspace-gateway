@@ -1,20 +1,14 @@
-"""Stack fixtures: spawn nats (docker), mockllm, and gateway as subprocesses.
+"""Stack fixtures: spawn mockllm and gateway as subprocesses.
 
-Why subprocess for mockllm and gateway: the ghcr.io/andyjmorgan/sluice-mockllm
-image is not published yet (v0.1 task), so we build the binaries from source.
-NATS comes from the official 2.10 image because there's no need to compile it.
-
-If docker is unreachable, the gateway is started with reporting disabled — the
-non-NATS path still exercises wire compat end-to-end, which is what this suite
-verifies.
+Why subprocess: the ghcr.io/andyjmorgan/sluice-mockllm image is not published
+yet (v0.1 task), so we build the binaries from source. The Python suite
+exercises wire compat against vanilla provider SDKs — connector reporting
+is exercised separately in the Go e2e harness via the testfs connector.
 """
 
 from __future__ import annotations
 
-import contextlib
-import json
 import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -70,52 +64,6 @@ def _ensure_binary(bin_path: Path, source_pkg: str) -> Path:
     return bin_path
 
 
-@contextlib.contextmanager
-def _docker_nats() -> Iterator[str | None]:
-    """Best-effort NATS via docker. Yields URL or None if docker is unavailable."""
-    if not shutil.which("docker"):
-        yield None
-        return
-
-    name = f"sluice-pycompat-nats-{os.getpid()}"
-    host_port = _free_port()
-    try:
-        subprocess.run(
-            [
-                "docker", "run", "-d", "--rm",
-                "--name", name,
-                "-p", f"{host_port}:4222",
-                "nats:2.10",
-                "-js",
-            ],
-            check=True,
-            capture_output=True,
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"[stack] docker run nats failed: {e.stderr.decode()}", file=sys.stderr)
-        yield None
-        return
-
-    url = f"nats://127.0.0.1:{host_port}"
-    try:
-        deadline = time.time() + STARTUP_TIMEOUT
-        ready = False
-        while time.time() < deadline:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(0.5)
-                try:
-                    s.connect(("127.0.0.1", host_port))
-                    ready = True
-                    break
-                except OSError:
-                    time.sleep(HEALTH_INTERVAL)
-        if not ready:
-            raise RuntimeError(f"nats {url} never became reachable")
-        yield url
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
-
-
 def _materialize_config(target_dir: Path, mockllm_host: str) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
     for entry in CONFIG_DEV.iterdir():
@@ -149,53 +97,49 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
         mock_proc.terminate()
         raise
 
-    with _docker_nats() as nats_url:
-        config_dir = tmp_path_factory.mktemp("sluice-config")
-        mockllm_host = f"127.0.0.1:{mockllm_port}"
-        _materialize_config(config_dir, mockllm_host)
+    config_dir = tmp_path_factory.mktemp("sluice-config")
+    mockllm_host = f"127.0.0.1:{mockllm_port}"
+    _materialize_config(config_dir, mockllm_host)
 
-        prom_port = _free_port()
-        gateway_env = {
-            **os.environ,
-            "SLUICE_CONFIG_DIR": str(config_dir),
-            "SLUICE_HTTP_BIND": f"127.0.0.1:{gateway_port}",
-            "SLUICE_PROMETHEUS_BIND": f"127.0.0.1:{prom_port}",
-            "SLUICE_LOG_LEVEL": "warn",
+    prom_port = _free_port()
+    gateway_env = {
+        **os.environ,
+        "SLUICE_CONFIG_DIR": str(config_dir),
+        "SLUICE_HTTP_BIND": f"127.0.0.1:{gateway_port}",
+        "SLUICE_PROMETHEUS_BIND": f"127.0.0.1:{prom_port}",
+        "SLUICE_LOG_LEVEL": "warn",
+    }
+
+    gateway_proc = subprocess.Popen(
+        [str(GATEWAY_BIN)],
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=gateway_env,
+    )
+
+    gateway_url = f"http://127.0.0.1:{gateway_port}"
+    try:
+        _wait_for_http(f"{gateway_url}/healthz")
+    except Exception:
+        _dump_proc("gateway", gateway_proc)
+        gateway_proc.terminate()
+        mock_proc.terminate()
+        raise
+
+    try:
+        yield {
+            "gateway_url": gateway_url,
+            "mockllm_url": mockllm_url,
+            "api_key": API_KEY,
         }
-        if nats_url:
-            gateway_env["SLUICE_NATS_URL"] = nats_url
-
-        gateway_proc = subprocess.Popen(
-            [str(GATEWAY_BIN)],
-            cwd=REPO_ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=gateway_env,
-        )
-
-        gateway_url = f"http://127.0.0.1:{gateway_port}"
-        try:
-            _wait_for_http(f"{gateway_url}/healthz")
-        except Exception:
-            _dump_proc("gateway", gateway_proc)
-            gateway_proc.terminate()
-            mock_proc.terminate()
-            raise
-
-        try:
-            yield {
-                "gateway_url": gateway_url,
-                "mockllm_url": mockllm_url,
-                "nats_url": nats_url or "",
-                "api_key": API_KEY,
-            }
-        finally:
-            for proc in (gateway_proc, mock_proc):
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+    finally:
+        for proc in (gateway_proc, mock_proc):
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 def _dump_proc(name: str, proc: subprocess.Popen) -> None:

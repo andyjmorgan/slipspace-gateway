@@ -22,7 +22,8 @@ type Entry struct {
 	CorrelationID string
 
 	// Provider, Endpoint, Model are the routed labels after rule
-	// mutation — same values that hit the request envelope on NATS.
+	// mutation — same values that hit the connector pipeline's
+	// Record.
 	Provider string
 	Endpoint string
 	Model    string
@@ -79,7 +80,8 @@ type Entry struct {
 
 // AttemptHit is the live-feed projection of one resilience attempt —
 // mirrors a subset of events.AttemptRecord so the SPA modal can render
-// the per-attempt breakdown without round-tripping the full NATS event.
+// the per-attempt breakdown without round-tripping the full connector
+// Record.
 type AttemptHit struct {
 	// Target is the resilience target name attempted.
 	Target string

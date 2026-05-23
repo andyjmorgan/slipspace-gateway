@@ -40,9 +40,6 @@ const (
 	MetricTokensCachedTotal        = "gateway.tokens.cached.total"
 	MetricTokensCacheCreationTotal = "gateway.tokens.cache_creation.total"
 	MetricTagsAppliedTotal         = "gateway.tags.applied.total"
-	MetricEventsPublishedTotal     = "gateway.events_published.total"
-	MetricEventsDroppedTotal       = "gateway.events_dropped.total"
-	MetricEventsStashedTotal       = "gateway.events_stashed.total"
 	MetricUnmappedFieldsTotal      = "gateway.unmapped_fields.total"
 	MetricConfigReloadTotal        = "gateway.config_reload.total"
 	MetricUpstreamErrorsTotal      = "gateway.upstream_errors.total"
@@ -50,7 +47,6 @@ const (
 
 	MetricRequestDuration        = "gateway.request.duration"
 	MetricRequestTimeToFirstByte = "gateway.request.time_to_first_byte"
-	MetricEventsInlineBytes      = "gateway.events.inline_bytes"
 
 	MetricActiveRequests = "gateway.active_requests"
 
@@ -68,7 +64,8 @@ const (
 	// either is an operator-attention signal: the request-side
 	// counter implies a buggy code path on the data plane; the
 	// goroutine-side counter implies an unhandled edge in a
-	// background worker (NATS dispatch, drain handler, etc.).
+	// background worker (spool drain, segment writer, upload
+	// worker, etc.).
 	MetricGoroutinePanicsTotal = "gateway.goroutine.panics.total"
 	MetricRequestPanicsTotal   = "gateway.request.panics.total"
 
@@ -114,8 +111,6 @@ var (
 
 	TimeToFirstByteBuckets = []float64{0, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}
 
-	InlineBytesBuckets = []float64{1024, 4096, 16384, 65536, 262144, 786432}
-
 	// RuleEvaluationDurationBuckets gives sub-millisecond resolution
 	// since the engine runs synchronously on the request path; the
 	// long tail captures pathological policies (deep groups, regex
@@ -149,10 +144,6 @@ type Meters struct {
 	// follow from joining tags onto the request series.
 	TagsAppliedTotal metric.Int64Counter
 
-	EventsPublishedTotal metric.Int64Counter
-	EventsDroppedTotal   metric.Int64Counter
-	EventsStashedTotal   metric.Int64Counter
-
 	UnmappedFieldsTotal metric.Int64Counter
 	ConfigReloadTotal   metric.Int64Counter
 	UpstreamErrorsTotal metric.Int64Counter
@@ -164,7 +155,6 @@ type Meters struct {
 
 	RequestDuration        metric.Float64Histogram
 	RequestTimeToFirstByte metric.Float64Histogram
-	EventsInlineBytes      metric.Int64Histogram
 
 	ActiveRequests metric.Int64UpDownCounter
 
@@ -271,9 +261,6 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricTokensCachedTotal, "Sum of provider-reported cached input tokens (cache reads, billed at the discounted rate).", "1", &m.TokensCachedTotal},
 		{MetricTokensCacheCreationTotal, "Sum of provider-reported cache-write tokens (Anthropic's chargeable cache-creation premium).", "1", &m.TokensCacheCreationTotal},
 		{MetricTagsAppliedTotal, "Count of AddTagAction applications labelled by tag name. Cardinality bounded by configured policy.", "1", &m.TagsAppliedTotal},
-		{MetricEventsPublishedTotal, "NATS bus publishes accepted.", "1", &m.EventsPublishedTotal},
-		{MetricEventsDroppedTotal, "NATS bus events dropped because the queue was full or the bus was down.", "1", &m.EventsDroppedTotal},
-		{MetricEventsStashedTotal, "Envelopes whose payload exceeded the inline threshold and was stashed in object storage.", "1", &m.EventsStashedTotal},
 		{MetricUnmappedFieldsTotal, "Unknown fields detected on inbound provider payloads.", "1", &m.UnmappedFieldsTotal},
 		{MetricConfigReloadTotal, "Configuration reload attempts.", "1", &m.ConfigReloadTotal},
 		{MetricUpstreamErrorsTotal, "Errors returned by upstream providers.", "1", &m.UpstreamErrorsTotal},
@@ -312,16 +299,6 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricRequestTimeToFirstByte, err)
 	}
 	m.RequestTimeToFirstByte = ttfb
-
-	inlineBytes, err := meter.Int64Histogram(MetricEventsInlineBytes,
-		metric.WithDescription("Size of inline event payloads on the NATS bus."),
-		metric.WithUnit("By"),
-		metric.WithExplicitBucketBoundaries(InlineBytesBuckets...),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricEventsInlineBytes, err)
-	}
-	m.EventsInlineBytes = inlineBytes
 
 	active, err := meter.Int64UpDownCounter(MetricActiveRequests,
 		metric.WithDescription("Requests currently in flight."),

@@ -134,13 +134,14 @@ jobs:
           \`\`\`
           docker run --rm \\
             -e SLUICE_CONFIG_DIR=/etc/sluice \\
-            -e SLUICE_NATS_URL=nats://nats:4222 \\
+            -e SLUICE_SPOOL_ROOT=/var/lib/sluice/spool \\
             -v ./config-dev:/etc/sluice:ro \\
+            -v sluice-spool:/var/lib/sluice/spool \\
             -p 8585:8585 \\
             ghcr.io/${{ github.repository_owner }}/sluice-gateway:${stripped}
           \`\`\`
 
-          Minimal production env: \`SLUICE_CONFIG_DIR\` plus optionally \`SLUICE_NATS_URL\` (enables reporting) and \`SLUICE_OTLP_ENDPOINT\` (enables OTLP push). See \`CLAUDE.md\` for the full deployment shape.
+          Minimal production env: \`SLUICE_CONFIG_DIR\` plus optionally \`SLUICE_SPOOL_ROOT\` (where the connector spool lives — defaults to \`/var/lib/sluice/spool\`) and \`SLUICE_OTLP_ENDPOINT\` (enables OTLP push). See \`CLAUDE.md\` for the full deployment shape.
 
           See \`CLAUDE.md\` and the project's DonkeyWork design notes for load-bearing invariants, the per-release task ledger, and the v1.1 roadmap.
           EOF

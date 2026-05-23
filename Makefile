@@ -9,7 +9,6 @@ DEV_ENV := \
 	SLUICE_CONFIG_DIR=./config-dev \
 	SLUICE_HTTP_BIND=0.0.0.0:8585 \
 	SLUICE_PROMETHEUS_BIND=0.0.0.0:9090 \
-	SLUICE_NATS_URL=nats://localhost:4222 \
 	SLUICE_LOG_LEVEL=debug
 
 # When the SPA is built, Vite emits to internal/admin/webdist/. The
@@ -64,15 +63,15 @@ coverage: test
 	@$(GATE) $(COVER_OUT) $(COVER_MIN)
 
 dev:
-	docker compose -f docker-compose.yaml up -d mockllm nats
+	docker compose -f docker-compose.yaml up -d mockllm
 	$(DEV_ENV) $(GO) run ./cmd/gateway
 
 dev-with-overlay:
 	@test -f docker-compose.dev.yaml || { echo "docker-compose.dev.yaml not found; copy docker-compose.dev.yaml.example"; exit 1; }
-	docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d mockllm nats
+	docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d mockllm
 	$(DEV_ENV) $(GO) run ./cmd/gateway
 
-# Full-stack compose: gateway image (SPA embedded) + mockllm + nats. Use this
+# Full-stack compose: gateway image (SPA embedded) + mockllm. Use this
 # to exercise the production-shaped flow end-to-end — admin console on :8081,
 # data plane on :8585. Slower iteration than `make dev` (image rebuild on Go
 # or SPA changes); for SPA-only hot reload, leave this running and start
@@ -84,14 +83,14 @@ dev-compose-down:
 	docker compose down
 
 # Real-upstream compose: generates config-dev.real/ from .env, then
-# brings up gateway+nats pointed at api.openai.com / api.anthropic.com
+# brings up the gateway pointed at api.openai.com / api.anthropic.com
 # / generativelanguage.googleapis.com + a host-port-forwarded ollama.
 # Requires .env to contain OPENAI_API_KEY, ANTHROPIC_API_KEY,
 # GEMINI_API_KEY. For the qwen-ollama path you need a kubectl
 # port-forward to host port 11434 running separately.
 dev-real:
 	bash scripts/dev-real-config.sh
-	docker compose -f docker-compose.yaml -f docker-compose.real.yaml --env-file .env up -d --no-deps --build gateway nats
+	docker compose -f docker-compose.yaml -f docker-compose.real.yaml --env-file .env up -d --no-deps --build gateway
 
 dev-real-down:
 	docker compose -f docker-compose.yaml -f docker-compose.real.yaml down

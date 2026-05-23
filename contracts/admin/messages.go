@@ -78,8 +78,8 @@ type MessageEntry struct {
 
 // AttemptHit is the wire shape of one orchestrator attempt within a
 // resilience policy run. Mirrors livefeed.AttemptHit so the SPA can
-// render the per-attempt breakdown without dragging the full NATS
-// event shape into the admin contract.
+// render the per-attempt breakdown without dragging the full connector
+// Record shape into the admin contract.
 type AttemptHit struct {
 	// Target is the resilience target name attempted.
 	Target string `json:"target"`

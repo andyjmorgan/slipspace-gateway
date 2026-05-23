@@ -181,7 +181,7 @@ type Tokens struct {
 
 // Attempt is one entry in [Record.Attempts] when the request ran
 // under a resilience policy. Mirrors the events.AttemptRecord shape
-// the legacy NATS reporter emitted.
+// the in-process resilience orchestrator builds.
 type Attempt struct {
 	// Target is the resilience policy target name attempted.
 	Target string `json:"target"`
