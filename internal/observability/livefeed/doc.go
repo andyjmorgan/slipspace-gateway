@@ -8,11 +8,12 @@
 // as they happen.
 //
 // The ring lives entirely in process memory. Restart wipes it; this is
-// not the audit trail (NATS reporting carries that). The capacity is
-// deliberately small — single-deployment scope, single-pod operator
-// view, sized for a few minutes of tail rather than long history.
+// not the audit trail (the connector spool under internal/spool carries
+// that). The capacity is deliberately small — single-deployment scope,
+// single-pod operator view, sized for a few minutes of tail rather than
+// long history.
 //
-// The publisher path mirrors internal/bus/Publisher: Append never blocks
-// the request goroutine. Per-subscriber channels are buffered and drop
-// on full so a slow SSE client cannot stall the ring writer.
+// Append never blocks the request goroutine. Per-subscriber channels
+// are buffered and drop on full so a slow SSE client cannot stall the
+// ring writer.
 package livefeed

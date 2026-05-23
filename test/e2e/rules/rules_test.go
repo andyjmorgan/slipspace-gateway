@@ -14,10 +14,11 @@ import (
 
 // TestRules_MatchPublishesEvent fires a request that the config-dev
 // `redact-emails` rule matches (provider=openai). It asserts the
-// gateway publishes a gateway.rule.matched envelope carrying the
-// expected rule_name + configuration, proving the engine wired
-// end-to-end through the binary: routing → bodycapture → rules
-// evaluator → MatchBuffer → reporter.OnComplete → NATS.
+// gateway emits a gateway.rule.matched envelope carrying the expected
+// rule_name + configuration, proving the engine wired end-to-end
+// through the binary: routing → bodycapture → rules evaluator →
+// MatchBuffer → reporter.OnComplete → connector spool → harness
+// envelope translation.
 func TestRules_MatchPublishesEvent(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
@@ -41,10 +42,10 @@ func TestRules_MatchPublishesEvent(t *testing.T) {
 
 	// openai.chat_completions fires two rules in dev policy:
 	// tag-openai-chat (addTag) and redact-emails (setHeader). Both
-	// produce gateway.rule.matched events, and the NATS publisher's
-	// defaultWorkers=2 makes adjacent envelopes arrive in
-	// nondeterministic order (project invariant #8). Drain both and
-	// search by rule_name rather than relying on receive order.
+	// produce gateway.rule.matched envelopes; the harness fans them
+	// out from a single Record so adjacent envelopes can arrive in
+	// any order relative to wall-clock receive. Drain both and search
+	// by rule_name rather than relying on receive order.
 	var match events.RuleMatched
 	found := false
 	for i := 0; i < 2; i++ {

@@ -44,16 +44,12 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 	meters.TokensCachedTotal.Add(ctx, 7)
 	meters.TokensCacheCreationTotal.Add(ctx, 5)
 	meters.TagsAppliedTotal.Add(ctx, 2)
-	meters.EventsPublishedTotal.Add(ctx, 1)
-	meters.EventsDroppedTotal.Add(ctx, 1)
-	meters.EventsStashedTotal.Add(ctx, 1)
 	meters.UnmappedFieldsTotal.Add(ctx, 3)
 	meters.ConfigReloadTotal.Add(ctx, 1)
 	meters.UpstreamErrorsTotal.Add(ctx, 2)
 	meters.ErrorResponsesTotal.Add(ctx, 1)
 	meters.RequestDuration.Record(ctx, 0.42)
 	meters.RequestTimeToFirstByte.Record(ctx, 0.075)
-	meters.EventsInlineBytes.Record(ctx, 4096)
 	meters.ActiveRequests.Add(ctx, 1)
 	meters.ActiveRequests.Add(ctx, -1)
 	meters.RuleMatchesTotal.Add(ctx, 1)
@@ -85,16 +81,12 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 		observability.MetricTokensCachedTotal,
 		observability.MetricTokensCacheCreationTotal,
 		observability.MetricTagsAppliedTotal,
-		observability.MetricEventsPublishedTotal,
-		observability.MetricEventsDroppedTotal,
-		observability.MetricEventsStashedTotal,
 		observability.MetricUnmappedFieldsTotal,
 		observability.MetricConfigReloadTotal,
 		observability.MetricUpstreamErrorsTotal,
 		observability.MetricErrorResponsesTotal,
 		observability.MetricRequestDuration,
 		observability.MetricRequestTimeToFirstByte,
-		observability.MetricEventsInlineBytes,
 		observability.MetricActiveRequests,
 		observability.MetricRuleMatchesTotal,
 		observability.MetricRuleErrorsTotal,
@@ -287,7 +279,6 @@ func TestNewMeters_HistogramBoundariesMatchSpec(t *testing.T) {
 	ctx := context.Background()
 	meters.RequestDuration.Record(ctx, 0.5)
 	meters.RequestTimeToFirstByte.Record(ctx, 0.05)
-	meters.EventsInlineBytes.Record(ctx, 16384)
 	meters.RuleEvaluationDuration.Record(ctx, 0.002)
 
 	var rm metricdata.ResourceMetrics
@@ -301,28 +292,12 @@ func TestNewMeters_HistogramBoundariesMatchSpec(t *testing.T) {
 		observability.MetricRuleEvaluationDuration: observability.RuleEvaluationDurationBuckets,
 	}
 
-	intChecks := map[string][]float64{
-		observability.MetricEventsInlineBytes: observability.InlineBytesBuckets,
-	}
-
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			if want, ok := checks[m.Name]; ok {
 				h, ok := m.Data.(metricdata.Histogram[float64])
 				if !ok {
 					t.Fatalf("%s: expected float64 histogram, got %T", m.Name, m.Data)
-				}
-				if len(h.DataPoints) == 0 {
-					t.Fatalf("%s: no data points", m.Name)
-				}
-				if !floatSlicesEqual(h.DataPoints[0].Bounds, want) {
-					t.Errorf("%s: bounds = %v, want %v", m.Name, h.DataPoints[0].Bounds, want)
-				}
-			}
-			if want, ok := intChecks[m.Name]; ok {
-				h, ok := m.Data.(metricdata.Histogram[int64])
-				if !ok {
-					t.Fatalf("%s: expected int64 histogram, got %T", m.Name, m.Data)
 				}
 				if len(h.DataPoints) == 0 {
 					t.Fatalf("%s: no data points", m.Name)
@@ -348,8 +323,6 @@ type failMeter struct {
 	failFloat64HistAt int
 	float64HistCalls  int
 
-	failInt64Histogram bool
-
 	failInt64UpDown bool
 }
 
@@ -371,13 +344,6 @@ func (f *failMeter) Float64Histogram(name string, opts ...metric.Float64Histogra
 	return f.Meter.Float64Histogram(name, opts...)
 }
 
-func (f *failMeter) Int64Histogram(name string, opts ...metric.Int64HistogramOption) (metric.Int64Histogram, error) {
-	if f.failInt64Histogram {
-		return nil, errInjected
-	}
-	return f.Meter.Int64Histogram(name, opts...)
-}
-
 func (f *failMeter) Int64UpDownCounter(name string, opts ...metric.Int64UpDownCounterOption) (metric.Int64UpDownCounter, error) {
 	if f.failInt64UpDown {
 		return nil, errInjected
@@ -395,7 +361,6 @@ func TestNewMeters_PropagatesConstructionErrors(t *testing.T) {
 		{"counter", &failMeter{failInt64CounterAt: 1}},
 		{"request_duration", &failMeter{failFloat64HistAt: 1}},
 		{"ttfb", &failMeter{failFloat64HistAt: 2}},
-		{"inline_bytes", &failMeter{failInt64Histogram: true}},
 		{"active_requests", &failMeter{failInt64UpDown: true}},
 		{"rule_eval_duration", &failMeter{failFloat64HistAt: 3}},
 	}

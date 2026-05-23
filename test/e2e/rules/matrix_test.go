@@ -453,9 +453,9 @@ func TestRules_ListOrderEvaluation(t *testing.T) {
 
 	// Drain all three rule.matched events, then sort by MatchedAt
 	// (set inside Evaluate, which runs sequentially per request) to
-	// recover evaluation order. The publisher dispatches envelopes via
-	// multiple worker goroutines, so the receive order at the NATS
-	// subscriber is not the publish order; MatchedAt is the
+	// recover evaluation order. The harness fans each Record.RulesFired
+	// entry out as a separate envelope, and receive order is not
+	// guaranteed to match evaluation order; MatchedAt is the
 	// authoritative per-event timestamp.
 	want := []string{"rule-a", "rule-b", "rule-c"}
 	matches := make([]events.RuleMatched, 0, len(want))

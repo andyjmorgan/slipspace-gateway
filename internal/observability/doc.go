@@ -12,6 +12,8 @@
 // Telemetry Strategy note and stashed on context.Context via
 // WithLogger / FromContext.
 //
-// This package owns telemetry only. NATS-backed event reporting lives in
-// internal/bus and is intentionally a separate channel.
+// This package owns telemetry only. End-of-pipeline event reporting
+// (request / response capture) lives in internal/spool and the
+// per-destination connectors under internal/connector — intentionally
+// a separate channel.
 package observability

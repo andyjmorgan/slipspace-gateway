@@ -9,8 +9,6 @@ SDKs against a running sluice-gateway. Failures here are tagged
 - Go toolchain (to build `gateway` + `mockllm` from source on demand)
 - Python 3.10+
 - Either `uv` (preferred) or stdlib `venv` + `pip`
-- Docker (only for the NATS sidecar; tests still run without it — reporting is
-  disabled when docker is unreachable)
 
 ## How the stack is wired
 
@@ -20,7 +18,6 @@ SDKs against a running sluice-gateway. Failures here are tagged
 |---|---|
 | `mockllm` | `subprocess.Popen` of `/tmp/sluice-mockllm` (built from `cmd/mockllm` if missing) on a random port |
 | `gateway` | `subprocess.Popen` of `/tmp/sluice-gateway` (built from `cmd/gateway` if missing) with a materialized `config-dev/` snapshot |
-| `nats` | Docker container `nats:2.10 -js` (optional — disabled if docker is unreachable) |
 
 The pre-built binary paths can be overridden via `SLUICE_GATEWAY_BIN` and
 `SLUICE_MOCKLLM_BIN` env vars.
@@ -59,7 +56,7 @@ pytest -v
 ```
 test/python/
 ├── pyproject.toml          ruff + pytest + SDK floor versions
-├── conftest.py             stack lifecycle (mockllm + gateway + nats subprocesses)
+├── conftest.py             stack lifecycle (mockllm + gateway subprocesses)
 ├── helpers.py              canned-response staging + API key constant
 ├── test_openai_sdk.py
 ├── test_anthropic_sdk.py

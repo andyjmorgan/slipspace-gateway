@@ -16,8 +16,8 @@ import (
 // The leading fields mirror the top-level YAML blocks under policy.yaml +
 // providers.yaml; the trailing *Index fields are the lookup tables Validate
 // built so request-path code can hit them with a single map read instead of
-// scanning slices. Server-level configuration (bind, drain, NATS, OTel,
-// logging, Prometheus) lives on ServerEnv, not here.
+// scanning slices. Server-level configuration (bind, drain, spool root,
+// OTel, logging, Prometheus) lives on ServerEnv, not here.
 type ResolvedConfig struct {
 	// Providers is the `providers` block keyed by provider name (openai,
 	// anthropic, gemini, ...). Holds endpoint definitions, prefixes, and
