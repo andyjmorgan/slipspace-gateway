@@ -9,6 +9,19 @@ permissions:
   contents: write
   packages: write
 
+# Serialize releases on the same ref so concurrent merges to main can't
+# race the floating `:main` tag. Without this, if two PRs land within
+# the same release-job window, both push `:main` and whichever finishes
+# last wins — even if it built an older commit (which can happen when
+# the later commit's CI flakes and retries). cancel-in-progress is
+# deliberately false: we want every sha-pinned tag to survive, and
+# last-writer-wins is correct when runs execute sequentially in merge
+# order. Each ref gets its own group, so branch and tag releases don't
+# block each other.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-push:
     runs-on: [self-hosted, office-cluster]
