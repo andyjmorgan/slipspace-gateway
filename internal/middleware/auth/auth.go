@@ -56,6 +56,15 @@ func HTTPHandler(resolver *Resolver, routeFrom RouteFromContextFunc, next http.H
 		}
 
 		ar, err := resolver.Resolve(req.Header, provider, endpoint)
+		if ar.LegacyConfigurationHeader {
+			logger.WarnContext(ctx, "deprecated header in use",
+				"header", HeaderConfiguration,
+				"replacement", HeaderIdentity,
+				"configuration", ar.ConfigurationName,
+				"provider", provider,
+				"endpoint", endpoint,
+			)
+		}
 		if err != nil {
 			result := classifyResult(err, ar)
 			logger.WarnContext(ctx, "auth failed",

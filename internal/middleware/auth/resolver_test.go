@@ -224,11 +224,14 @@ func TestResolver_Passthrough_Happy(t *testing.T) {
 	if ar.APIKey != nil {
 		t.Fatalf("APIKey must be nil in passthrough")
 	}
-	if len(ar.DropHeaders) != 1 || ar.DropHeaders[0] != HeaderConfiguration {
-		t.Fatalf("passthrough DropHeaders must be [%s] (policy header), got %v", HeaderConfiguration, ar.DropHeaders)
+	if !sliceContains(ar.DropHeaders, HeaderConfiguration) || !sliceContains(ar.DropHeaders, HeaderIdentity) {
+		t.Fatalf("passthrough DropHeaders must include both selector headers, got %v", ar.DropHeaders)
 	}
 	if ar.ConfigurationName != "prod" {
 		t.Fatalf("ConfigurationName = %q want prod", ar.ConfigurationName)
+	}
+	if !ar.LegacyConfigurationHeader {
+		t.Fatalf("legacy X-Sluice-Configuration path must set LegacyConfigurationHeader=true")
 	}
 }
 
@@ -481,6 +484,156 @@ func TestResolver_Passthrough_NativeHeaderIgnored(t *testing.T) {
 	for _, h := range ar.DropHeaders {
 		if h == headerAnthropicAPIKey {
 			t.Fatalf("x-api-key MUST NOT be dropped in passthrough — it carries the upstream key")
+		}
+	}
+}
+
+// X-Sluice-Identity tests. The identity header is the unguessable
+// replacement for X-Sluice-Configuration: api-key lookup picks the
+// configuration, the client's Authorization is forwarded verbatim.
+
+func TestResolver_IdentityPassthrough_Success(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderIdentity, "sk_live_enabled")
+	headers.Set(HeaderAuthorization, "Bearer client-byok-anthropic-token")
+
+	ar, err := r.Resolve(headers, "anthropic", "messages")
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if ar.Mode != ModePassthrough {
+		t.Fatalf("mode = %q want passthrough", ar.Mode)
+	}
+	if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
+		t.Fatalf("APIKey should be populated from the identity lookup, got %+v", ar.APIKey)
+	}
+	if ar.Configuration == nil || ar.ConfigurationName != "prod" {
+		t.Fatalf("Configuration not resolved, got name=%q ptr=%v", ar.ConfigurationName, ar.Configuration)
+	}
+	if ar.LegacyConfigurationHeader {
+		t.Fatalf("identity path must not flag legacy header when X-Sluice-Configuration absent")
+	}
+	if !sliceContains(ar.DropHeaders, HeaderIdentity) || !sliceContains(ar.DropHeaders, HeaderConfiguration) {
+		t.Fatalf("both selector headers must be dropped, got %v", ar.DropHeaders)
+	}
+	if sliceContains(ar.DropHeaders, HeaderAuthorization) {
+		t.Fatalf("Authorization must NOT be dropped in identity passthrough — it carries the upstream credential")
+	}
+}
+
+func TestResolver_IdentityPassthrough_UnknownKey(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderIdentity, "sk_live_does_not_exist")
+
+	_, err := r.Resolve(headers, "openai", "chat_completions")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("unknown identity must 401, got %v", err)
+	}
+}
+
+func TestResolver_IdentityPassthrough_DisabledKey(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderIdentity, "sk_live_disabled")
+
+	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("disabled key must 401, got %v", err)
+	}
+	if ar.APIKey == nil || ar.APIKey.Enabled {
+		t.Fatalf("APIKey must be populated and disabled so handler can classify result=disabled_key, got %+v", ar.APIKey)
+	}
+}
+
+func TestResolver_IdentityPassthrough_OrphanConfiguration(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderIdentity, "sk_live_orphan")
+
+	_, err := r.Resolve(headers, "openai", "chat_completions")
+	if !errors.Is(err, ErrUnknownConfiguration) {
+		t.Fatalf("orphan key must surface ErrUnknownConfiguration, got %v", err)
+	}
+}
+
+func TestResolver_IdentityPassthrough_HeaderTrimmed(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderIdentity, "  sk_live_enabled  ")
+
+	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	if err != nil {
+		t.Fatalf("whitespace-padded identity must trim and succeed, got %v", err)
+	}
+	if ar.Mode != ModePassthrough {
+		t.Fatalf("mode = %q want passthrough", ar.Mode)
+	}
+}
+
+func TestResolver_IdentityPassthrough_EmptyHeaderFallsThroughToManaged(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderIdentity, "   ")
+	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
+
+	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	if err != nil {
+		t.Fatalf("blank identity must fall through to managed, got %v", err)
+	}
+	if ar.Mode != ModeManaged {
+		t.Fatalf("blank X-Sluice-Identity must not trigger passthrough; got mode=%q", ar.Mode)
+	}
+}
+
+// TestResolver_IdentityWinsOverLegacyConfiguration locks the migration
+// priority: when both selector headers are present X-Sluice-Identity
+// drives resolution, the legacy flag is still set so the handler can
+// emit a deprecation warning, and the configuration the identity key
+// belongs to is used (not the legacy header's named configuration).
+func TestResolver_IdentityWinsOverLegacyConfiguration(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderIdentity, "sk_live_enabled")
+	headers.Set(HeaderConfiguration, "restricted")
+
+	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	if err != nil {
+		t.Fatalf("want success via identity, got %v", err)
+	}
+	if ar.ConfigurationName != "prod" {
+		t.Fatalf("identity-resolved configuration must win; got %q want prod", ar.ConfigurationName)
+	}
+	if !ar.LegacyConfigurationHeader {
+		t.Fatalf("legacy flag must still fire so the handler logs the deprecation warning")
+	}
+	if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
+		t.Fatalf("APIKey must come from the identity lookup, got %+v", ar.APIKey)
+	}
+}
+
+// TestResolver_IdentityPassthrough_NativeHeaderIgnored is the analogue
+// of TestResolver_Passthrough_NativeHeaderIgnored for the identity path:
+// when X-Sluice-Identity carries the Sluice secret, x-api-key /
+// x-goog-api-key are treated as upstream credentials and forwarded
+// verbatim — never re-interpreted as Sluice secrets.
+func TestResolver_IdentityPassthrough_NativeHeaderIgnored(t *testing.T) {
+	r := NewResolver(fixtureConfig())
+	headers := http.Header{}
+	headers.Set(HeaderIdentity, "sk_live_enabled")
+	headers.Set(headerAnthropicAPIKey, "sk_live_disabled") // would 401 if it were re-interpreted
+
+	ar, err := r.Resolve(headers, "anthropic", "messages")
+	if err != nil {
+		t.Fatalf("identity must short-circuit before native-header discovery, got %v", err)
+	}
+	if ar.Mode != ModePassthrough {
+		t.Fatalf("mode = %q want passthrough", ar.Mode)
+	}
+	for _, h := range ar.DropHeaders {
+		if h == headerAnthropicAPIKey {
+			t.Fatalf("x-api-key MUST NOT be dropped in identity passthrough — it carries the client's upstream key")
 		}
 	}
 }

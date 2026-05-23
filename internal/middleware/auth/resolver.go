@@ -19,14 +19,28 @@ const (
 	ModePassthrough Mode = "passthrough"
 )
 
-// Inbound header names. X-Sluice-Configuration is the mode discriminator: its
-// presence forces passthrough resolution regardless of any credential header
-// on the same request. In managed mode (header absent), the Sluice secret is
-// discovered from Authorization, x-api-key, or x-goog-api-key in that order —
-// the latter two let vanilla provider SDKs work zero-config without forcing
-// callers to inject an Authorization header.
+// Inbound header names. Passthrough mode is selected by either of two headers,
+// checked in this order:
+//
+//  1. X-Sluice-Identity carries a Sluice api-key secret; the matching key's
+//     Configuration is used. The api-key is unguessable, which is the whole
+//     reason this header exists. Preferred form for all new integrations.
+//
+//  2. X-Sluice-Configuration carries the configuration name directly. The
+//     name is human-readable and guessable — kept only as a deprecated
+//     compatibility path. The resolver flags every use via
+//     AuthResult.LegacyConfigurationHeader so the HTTP handler can emit a
+//     deprecation warning. Slated for removal once callers migrate.
+//
+// When both passthrough headers are present X-Sluice-Identity wins and the
+// legacy header is flagged. With neither present, resolution falls through to
+// managed mode and the Sluice secret is discovered from Authorization,
+// x-api-key, or x-goog-api-key in that order — the latter two let vanilla
+// provider SDKs work zero-config without forcing callers to inject an
+// Authorization header.
 const (
-	HeaderConfiguration = "X-Sluice-Configuration"
+	HeaderIdentity      = "X-Sluice-Identity"      //nolint:gosec // header name, not a credential
+	HeaderConfiguration = "X-Sluice-Configuration" // deprecated; see HeaderIdentity
 	HeaderAuthorization = "Authorization"
 
 	bearerPrefix = "Bearer "
@@ -52,13 +66,16 @@ const (
 // (bodycapture, forwarder).
 type AuthResult struct {
 	// Mode is which auth scheme matched: ModeManaged when a Sluice-issued
-	// bearer was presented, ModePassthrough when the X-Sluice-Configuration
-	// header selected the policy.
+	// bearer was presented in a credential header, ModePassthrough when
+	// either passthrough selector header (X-Sluice-Identity or
+	// X-Sluice-Configuration) routed the request.
 	Mode Mode
 
-	// APIKey is the matched managed-mode API key, or nil in passthrough
-	// mode (which has no API key — the client uses its own upstream
-	// credential). Downstream code must nil-check before dereferencing.
+	// APIKey is the matched Sluice api-key. Populated in managed mode and
+	// in X-Sluice-Identity passthrough — both rely on a key in
+	// SecretIndex. Nil only on the legacy X-Sluice-Configuration
+	// passthrough path (which selects policy by configuration name and
+	// has no key to attribute). Downstream code must nil-check.
 	APIKey *contractsconfig.APIKey
 
 	// Configuration is the resolved policy bundle. Nil only when
@@ -66,9 +83,9 @@ type AuthResult struct {
 	Configuration *contractsconfig.Configuration
 
 	// ConfigurationName is the name the policy was looked up by — the
-	// X-Sluice-Configuration value (passthrough) or APIKey.Configuration
-	// (managed). Retained for structured logging even when Configuration
-	// is nil.
+	// X-Sluice-Configuration value (legacy passthrough) or
+	// APIKey.Configuration (managed and identity-passthrough). Retained
+	// for structured logging even when Configuration is nil.
 	ConfigurationName string
 
 	// Provider is the upstream provider name routed to (openai, anthropic,
@@ -81,13 +98,19 @@ type AuthResult struct {
 	Endpoint string
 
 	// DropHeaders names inbound headers the forwarder must strip before
-	// sending upstream. Auth always emits X-Sluice-Configuration here —
-	// it is policy-routing metadata, not a credential. The destination
-	// builder layers additional drops on top based on the post-rule
-	// provider + credential decision (e.g. dropping the inbound
+	// sending upstream. Auth always emits both passthrough selector
+	// headers here — they are policy-routing metadata, not credentials.
+	// The destination builder layers additional drops on top based on the
+	// post-rule provider + credential decision (e.g. dropping the inbound
 	// Authorization when managed mode is forwarding to a provider that
 	// uses a non-Bearer credential header).
 	DropHeaders []string
+
+	// LegacyConfigurationHeader is true when X-Sluice-Configuration drove
+	// resolution. The HTTP handler emits a structured deprecation warning
+	// every time this fires so operators can spot un-migrated callers.
+	// Cleared on managed and on X-Sluice-Identity paths.
+	LegacyConfigurationHeader bool
 }
 
 // Resolver decides the auth outcome for a request: given inbound headers and
@@ -110,35 +133,98 @@ func NewResolver(cfg *config.ResolvedConfig) *Resolver {
 }
 
 // Resolve decides the auth mode and returns the resulting AuthResult plus
-// the header swap to apply when forwarding upstream. The X-Sluice-
-// Configuration header takes precedence over any bearer token on the same
-// request — if present, resolution is always passthrough.
+// the header swap to apply when forwarding upstream. Either passthrough
+// selector header takes precedence over any bearer token on the same
+// request — when present, resolution is always passthrough. Between the
+// two, X-Sluice-Identity wins over the deprecated X-Sluice-Configuration.
 func (r *Resolver) Resolve(headers http.Header, provider, endpoint string) (AuthResult, error) {
 	if r == nil || r.cfg == nil {
 		return AuthResult{}, ErrUnknownConfiguration
 	}
 
-	if configName := strings.TrimSpace(headers.Get(HeaderConfiguration)); configName != "" {
-		return r.resolvePassthrough(configName, provider, endpoint)
+	identityToken := strings.TrimSpace(headers.Get(HeaderIdentity))
+	legacyConfigName := strings.TrimSpace(headers.Get(HeaderConfiguration))
+	legacyPresent := legacyConfigName != ""
+
+	if identityToken != "" {
+		return r.resolveIdentityPassthrough(identityToken, provider, endpoint, legacyPresent)
+	}
+
+	if legacyPresent {
+		return r.resolveLegacyPassthrough(legacyConfigName, provider, endpoint)
 	}
 
 	return r.resolveManaged(headers, provider, endpoint)
 }
 
-func (r *Resolver) resolvePassthrough(configName, provider, endpoint string) (AuthResult, error) {
+// resolveIdentityPassthrough looks the supplied api-key secret up in
+// SecretIndex and routes through the key's Configuration without
+// substituting upstream credentials. Unknown or disabled keys fail with
+// ErrUnauthorized so attackers cannot probe configuration names by
+// presenting random identity values.
+func (r *Resolver) resolveIdentityPassthrough(token, provider, endpoint string, legacyAlsoPresent bool) (AuthResult, error) {
+	key, ok := r.cfg.SecretIndex[token]
+	if !ok || key == nil {
+		return AuthResult{Mode: ModePassthrough, Provider: provider, Endpoint: endpoint, DropHeaders: passthroughDropHeaders()}, ErrUnauthorized
+	}
+	if !key.Enabled {
+		return AuthResult{
+			Mode:        ModePassthrough,
+			APIKey:      key,
+			Provider:    provider,
+			Endpoint:    endpoint,
+			DropHeaders: passthroughDropHeaders(),
+		}, ErrUnauthorized
+	}
+	cfg, ok := r.cfg.ConfigurationIndex[key.Configuration]
+	if !ok {
+		return AuthResult{
+			Mode:              ModePassthrough,
+			APIKey:            key,
+			ConfigurationName: key.Configuration,
+			Provider:          provider,
+			Endpoint:          endpoint,
+			DropHeaders:       passthroughDropHeaders(),
+		}, ErrUnknownConfiguration
+	}
+	return AuthResult{
+		Mode:                      ModePassthrough,
+		APIKey:                    key,
+		Configuration:             cfg,
+		ConfigurationName:         key.Configuration,
+		Provider:                  provider,
+		Endpoint:                  endpoint,
+		DropHeaders:               passthroughDropHeaders(),
+		LegacyConfigurationHeader: legacyAlsoPresent,
+	}, nil
+}
+
+// resolveLegacyPassthrough is the original X-Sluice-Configuration path.
+// Marked legacy because the configuration name is human-readable and
+// guessable; X-Sluice-Identity supersedes it.
+func (r *Resolver) resolveLegacyPassthrough(configName, provider, endpoint string) (AuthResult, error) {
 	cfg, ok := r.cfg.ConfigurationIndex[configName]
 	if !ok {
-		return AuthResult{}, ErrUnknownConfiguration
+		return AuthResult{LegacyConfigurationHeader: true}, ErrUnknownConfiguration
 	}
 
 	return AuthResult{
-		Mode:              ModePassthrough,
-		Configuration:     cfg,
-		ConfigurationName: configName,
-		Provider:          provider,
-		Endpoint:          endpoint,
-		DropHeaders:       []string{HeaderConfiguration},
+		Mode:                      ModePassthrough,
+		Configuration:             cfg,
+		ConfigurationName:         configName,
+		Provider:                  provider,
+		Endpoint:                  endpoint,
+		DropHeaders:               passthroughDropHeaders(),
+		LegacyConfigurationHeader: true,
 	}, nil
+}
+
+// passthroughDropHeaders returns the constant drop list for any
+// passthrough resolution. Both selector headers go upstream-blacklisted
+// regardless of which one was actually present — they are gateway
+// metadata, never anything the provider should see.
+func passthroughDropHeaders() []string {
+	return []string{HeaderIdentity, HeaderConfiguration}
 }
 
 // managedKeySource names the inbound header a Sluice key was discovered on.
@@ -206,14 +292,14 @@ func (r *Resolver) resolveManaged(headers http.Header, provider, endpoint string
 		}, ErrUnknownConfiguration
 	}
 
-	drops := []string{HeaderConfiguration}
+	drops := passthroughDropHeaders()
 	// Always drop whichever native header carried the Sluice secret. The
 	// destination builder will mint the correct upstream credential header
 	// for the resolved (provider, endpoint) pair — leaving the inbound
 	// header in place would either leak the Sluice secret upstream
 	// (Authorization to OpenAI) or collide with the freshly-injected
 	// upstream credential header (x-api-key to Anthropic).
-	if src.header != HeaderConfiguration {
+	if src.header != HeaderConfiguration && src.header != HeaderIdentity {
 		drops = append(drops, src.header)
 	}
 

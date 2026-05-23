@@ -340,6 +340,54 @@ func TestGateway_PassthroughMode(t *testing.T) {
 	}
 }
 
+// TestGateway_IdentityPassthroughMode covers the unguessable replacement
+// for X-Sluice-Configuration: the client supplies a Sluice api-key in
+// X-Sluice-Identity to pick a policy, and an arbitrary upstream credential
+// in Authorization that the gateway forwards verbatim. Both selector
+// headers are stripped before the request reaches upstream.
+func TestGateway_IdentityPassthroughMode(t *testing.T) {
+	env := newTestEnv(t)
+
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{}`)
+	req.Header.Set("Authorization", "Bearer customer-supplied-token")
+	req.Header.Set("X-Sluice-Identity", "sk_dev_local")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := doReq(t, req)
+	defer closeBody(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	_, _, headers, _, _ := env.upstream.snapshot()
+	if got := headers.Get("Authorization"); got != "Bearer customer-supplied-token" {
+		t.Errorf("upstream Authorization = %q, want untouched", got)
+	}
+	if got := headers.Get("X-Sluice-Identity"); got != "" {
+		t.Errorf("upstream X-Sluice-Identity = %q, want stripped", got)
+	}
+	if got := headers.Get("X-Sluice-Configuration"); got != "" {
+		t.Errorf("upstream X-Sluice-Configuration = %q, want stripped (always)", got)
+	}
+}
+
+func TestGateway_IdentityPassthroughMode_UnknownKey(t *testing.T) {
+	env := newTestEnv(t)
+
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{}`)
+	req.Header.Set("Authorization", "Bearer customer-supplied-token")
+	req.Header.Set("X-Sluice-Identity", "sk_dev_does_not_exist")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := doReq(t, req)
+	defer closeBody(resp)
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unknown identity must 401, got %d", resp.StatusCode)
+	}
+}
+
 // TestGateway_AnthropicChatCompletions_OpenAICompatSurface exercises the
 // new v1.0.2 surface: the gateway routes /anthropic/v1/chat/completions
 // to Anthropic's OpenAI-compatible chat completions endpoint, swapping
