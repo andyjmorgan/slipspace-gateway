@@ -316,7 +316,7 @@ The mockllm-side ordering is deterministic: the first two matching primary calls
 
 ### Cross-link
 
-For the dev compose layout and how mockllm fits in alongside NATS and the gateway, see [local development](local-development.md).
+For the dev compose layout and how mockllm fits in alongside the gateway, see [local development](local-development.md).
 
 ---
 
@@ -371,7 +371,7 @@ If you find yourself reaching for `cmd/api` today, you almost certainly want the
 
 ## Cross-references
 
-- [Local development](local-development.md) — how `mockllm`, NATS, and the gateway compose together for dev iteration.
+- [Local development](local-development.md) — how `mockllm` and the gateway compose together for dev iteration.
 - [Deployment](deployment.md) — how the published `gateway` image is rolled out and what auxiliary infrastructure is required.
 - [Configuration model](configuration-model.md) — the YAML schema that `sluice-cli config validate` enforces, including every error category the validator can return.
 - [Routing](routing.md) — the rules behind `path_collision` and `prefix_required_empty` errors from `config validate`.

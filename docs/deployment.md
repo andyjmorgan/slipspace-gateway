@@ -1,6 +1,6 @@
 # Deployment
 
-Sluice ships as a single multi-arch container image with the SPA baked in. The image runs as a data-plane process plus an optional admin listener inside the same pod; configuration is mounted as a directory of YAML files; reporting and telemetry are wired through env vars. This page is the operator's reference for the production deployment shape — container image, Kubernetes topology, mount conventions, multi-pod considerations, rolling updates — and the local-dev shortcut that mirrors it.
+Sluice ships as a single multi-arch container image with the SPA baked in. The image runs as a data-plane process plus an optional admin listener inside the same pod; configuration is mounted as a directory of YAML files; the connector spool persists on a PVC; telemetry is wired through env vars. This page is the operator's reference for the production deployment shape — container image, Kubernetes topology, mount conventions, multi-pod considerations, rolling updates — and the local-dev shortcut that mirrors it.
 
 ---
 
@@ -34,17 +34,18 @@ flowchart LR
         DP[":8585<br/>data plane"]
         AD[":8081<br/>admin SPA + /api/v1"]
         PR[":9090<br/>prometheus scrape"]
+        SP[("spool PVC<br/>/var/lib/sluice/spool")]
     end
 
     CFG[("ConfigMap<br/>providers.yaml,<br/>policy.yaml,<br/>admin.yaml")] -. mount as<br/>/etc/sluice .-> Pod
-    SEC[("Secret<br/>SLUICE_ADMIN_PASSWORD,<br/>upstream provider keys")] -. mount as env .-> Pod
+    SEC[("Secret<br/>SLUICE_ADMIN_PASSWORD,<br/>upstream provider keys,<br/>connector secrets")] -. mount as env .-> Pod
 
     Client[Provider SDK<br/>OpenAI / Anthropic / Gemini] --> DP
     Operator[Operator browser] --> AD
     Scrape[Prometheus] --> PR
 
-    DP --> NATS[(NATS<br/>reporting bus)]
-    AD --> NATS
+    DP -- captured records --> SP
+    SP -- upload --> Dest[S3 / Azure Blob /<br/>webhook receivers]
 
     DP --> Upstream[OpenAI / Anthropic /<br/>Gemini / qwen-ollama]
 ```
@@ -57,9 +58,9 @@ flowchart LR
     Operator[Operator] --> ADSVC[Service<br/>:8081]
     Scrape[Prometheus] --> PRSVC[Service<br/>:9090]
 
-    SVC --> P1[Pod A<br/>:8585]
-    SVC --> P2[Pod B<br/>:8585]
-    SVC --> P3[Pod C<br/>:8585]
+    SVC --> P1[Pod A<br/>:8585<br/>+ spool PVC]
+    SVC --> P2[Pod B<br/>:8585<br/>+ spool PVC]
+    SVC --> P3[Pod C<br/>:8585<br/>+ spool PVC]
 
     ADSVC --> P1
     ADSVC --> P2
@@ -69,9 +70,9 @@ flowchart LR
     PRSVC -. scrape each replica .-> P2
     PRSVC -. scrape each replica .-> P3
 
-    P1 --> NATS[(NATS)]
-    P2 --> NATS
-    P3 --> NATS
+    P1 -- upload --> Dest[(S3 / Azure Blob /<br/>webhook receivers)]
+    P2 -- upload --> Dest
+    P3 -- upload --> Dest
 
     CFG[("ConfigMap")] -. mount /etc/sluice .-> P1
     CFG -. .-> P2
@@ -79,11 +80,9 @@ flowchart LR
     SEC[("Secret")] -. env .-> P1
     SEC -. .-> P2
     SEC -. .-> P3
-
-    NATS --> Subscriber[Audit /<br/>billing consumers]
 ```
 
-Every pod in a replica set reads the same ConfigMap and Secret. Per-pod state (circuit-breaker counters, admin snapshotter buffer, in-process live-feed ring) is **not** synchronised between replicas — see [Multi-pod considerations](#multi-pod-considerations).
+Every pod in a replica set reads the same ConfigMap and Secret. Per-pod state (circuit-breaker counters, admin snapshotter buffer, in-process live-feed ring, **spool segments**) is **not** synchronised between replicas — each pod needs its own spool PVC, and consumers downstream of S3 / Azure Blob / webhook see records from every replica interleaved. See [Multi-pod considerations](#multi-pod-considerations).
 
 ---
 
@@ -154,7 +153,8 @@ Sluice has no opinion on whether you ship it via Helm, kustomize, raw manifests,
 | `Service` (admin) | Optional. ClusterIP on `:8081` → pod `:8081`. Front with an ingress + auth proxy or expose loopback-only inside the cluster. |
 | `Service` (prometheus) | Optional. ClusterIP on `:9090` → pod `:9090`. Or use a `Service`-less `ServiceMonitor` pointing at pod IPs. |
 | `ConfigMap` | Mounts `providers.yaml` + `policy.yaml` (+ `admin.yaml`) at `/etc/sluice/`. |
-| `Secret` | Provides `SLUICE_ADMIN_PASSWORD` and any upstream provider keys referenced by `policy.yaml`. |
+| `Secret` | Provides `SLUICE_ADMIN_PASSWORD`, upstream provider keys referenced by `policy.yaml`, and connector secrets referenced by `connectors:` (s3 keys, azure SAS / account keys, webhook signing secrets). |
+| `PersistentVolumeClaim` | Optional — required when `policy.yaml` declares any `connectors:` entries. Mounted at `SLUICE_SPOOL_ROOT` (default `/var/lib/sluice/spool`) so sealed segments survive process restarts. |
 
 The data plane and admin listeners run in the **same pod**, in the same container. There is no separate admin sidecar — they share the binary, the in-process metric registry, and the live-feed ring.
 
@@ -180,12 +180,13 @@ spec:
         - { name: SLUICE_CONFIG_DIR,    value: /etc/sluice }
         - { name: SLUICE_HTTP_BIND,     value: 0.0.0.0:8585 }
         - { name: SLUICE_PROMETHEUS_BIND, value: 0.0.0.0:9090 }
-        - { name: SLUICE_NATS_URL,      value: nats://nats:4222 }
+        - { name: SLUICE_SPOOL_ROOT,    value: /var/lib/sluice/spool }
         - name: SLUICE_ADMIN_PASSWORD
           valueFrom:
             secretKeyRef: { name: sluice-admin, key: password }
       volumeMounts:
         - { name: config, mountPath: /etc/sluice, readOnly: true }
+        - { name: spool,  mountPath: /var/lib/sluice/spool }
       readinessProbe:
         httpGet: { path: /healthz, port: data }
       livenessProbe:
@@ -193,9 +194,11 @@ spec:
   volumes:
     - name: config
       configMap: { name: sluice-config }
+    - name: spool
+      persistentVolumeClaim: { claimName: sluice-spool }
 ```
 
-Every field above is load-bearing. `runAsNonRoot` + `readOnlyRootFilesystem` are compatible with the scratch image (UID `65532:65532`, no writes outside `/tmp`); the listeners must bind `0.0.0.0` inside the container so the kube proxy reaches them.
+Every field above is load-bearing. `runAsNonRoot` + `readOnlyRootFilesystem` are compatible with the scratch image (UID `65532:65532`, no writes outside `/tmp` and the spool mount); the listeners must bind `0.0.0.0` inside the container so the kube proxy reaches them. The `spool` PVC mount is read-write and must be writable by UID `65532` (set `fsGroup: 65532` on the pod's `securityContext`, or rely on the storage class's default ownership rules). Drop the volume + mount + `SLUICE_SPOOL_ROOT` when `policy.yaml` has no `connectors:` block — the spool is constructed lazily and idle deployments do not need storage.
 
 ---
 
@@ -265,10 +268,10 @@ The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts
 
 ## docker-compose local dev
 
-The committed [`docker-compose.yaml`](../docker-compose.yaml) brings up the gateway image + the published `sluice-mockllm` + NATS, mounted against `config-dev/` for the policy bundle. This is the path that mirrors production layout most closely — the same image, the same mount conventions, the same env vars.
+The committed [`docker-compose.yaml`](../docker-compose.yaml) brings up the gateway image + the published `sluice-mockllm`, mounted against `config-dev/` for the policy bundle. This is the path that mirrors production layout most closely — the same image, the same mount conventions, the same env vars.
 
 ```sh
-make dev-compose          # builds + starts gateway, mockllm, nats
+make dev-compose          # builds + starts gateway, mockllm
 # open http://localhost:8081/admin
 make dev-compose-down     # tear it down
 ```
@@ -280,9 +283,8 @@ Host ports exposed by the committed compose:
 | `8585` | `8585` | Data plane |
 | `8081` | `8081` | Admin console (SPA + `/api/v1`) |
 | `9090` | `9090` | Prometheus scrape |
-| `4222` / `8222` | `4222` / `8222` | NATS / monitoring |
 
-The compose mounts `./config-dev` at `/etc/sluice` read-only, and overlays `./deploy/compose/admin.yaml` on top so the admin listener binds `0.0.0.0` (the host-side `config-dev/admin.yaml` binds loopback because the pure-Go `make dev` loop runs natively and doesn't need port forwarding). `SLUICE_ADMIN_PASSWORD` defaults to `sluice-gateway` if unset — override via `.env` or `export` before invoking compose.
+The compose mounts `./config-dev` at `/etc/sluice` read-only, overlays `./deploy/compose/admin.yaml` on top so the admin listener binds `0.0.0.0` (the host-side `config-dev/admin.yaml` binds loopback because the pure-Go `make dev` loop runs natively and doesn't need port forwarding), and provisions a named volume `sluice-spool` at `/var/lib/sluice/spool` for the connector spool. `SLUICE_ADMIN_PASSWORD` defaults to `sluice-gateway` if unset — override via `.env` or `export` before invoking compose.
 
 ### Overlay conventions
 
@@ -295,7 +297,7 @@ Two overlays sit alongside the committed compose. Both are stacked with `-f dock
 
 ### Pure-Go dev loop
 
-For Go iteration without an image rebuild, `make dev` brings up only `mockllm` + `nats` via compose and runs `go run ./cmd/gateway` natively on the host. The native gateway reads `./config-dev/admin.yaml` (binds `127.0.0.1:8081`) rather than the compose overlay. Faster than `make dev-compose` because the SPA isn't rebuilt; useful when you're iterating on the data-plane Go code and the SPA bundle is already built into `internal/admin/webdist/`.
+For Go iteration without an image rebuild, `make dev` brings up only `mockllm` via compose and runs `go run ./cmd/gateway` natively on the host. The native gateway reads `./config-dev/admin.yaml` (binds `127.0.0.1:8081`) rather than the compose overlay, and writes the spool under `./tmp/spool/` so the host filesystem stays tidy. Faster than `make dev-compose` because the SPA isn't rebuilt; useful when you're iterating on the data-plane Go code and the SPA bundle is already built into `internal/admin/webdist/`.
 
 For SPA-only iteration, leave `make dev-compose` running and start `make web-dev` in a second terminal — Vite serves on `:5180/admin` and proxies `/admin/api/v1` to the running gateway on `:8081`.
 
@@ -329,17 +331,21 @@ The admin console's dashboard reads from an in-process snapshotter that polls th
 
 For cluster-aggregate views, scrape `:9090` with Prometheus and build the dashboard in Grafana against the registry's labelled counters and histograms. The snapshotter is a single-pod operator's-eyes pane, not a fleet dashboard. See [`docs/observability.md`](observability.md).
 
-### NATS reporting drops on full queue per-pod
+### Connector spool is per-pod
 
-The publisher's queue is sized by `SLUICE_NATS_PUBLISH_QUEUE_SIZE` (default `10000`) per pod. When the queue fills — bus down, broker partitioned, downstream consumer slow — the publisher drops on the floor and increments `gateway.events_dropped.total` (see [`internal/observability/meters.go`](../internal/observability/meters.go), `MetricEventsDroppedTotal`). The request path **never** waits on reporting backpressure; this is load-bearing invariant 2 in CLAUDE.md.
+Each pod has its own spool tree under `SLUICE_SPOOL_ROOT`. Sealed segments on Pod A are not visible to Pod B; the upload workers ship from each pod's own disk independently. Three operational consequences:
 
-If `gateway.events_dropped.total` is consistently non-zero, the right response is to scale the bus or the consumer, not the gateway — drops are a symptom of the downstream not keeping up with offered load. The counter is labelled by `pod` so you can see which replicas are dropping.
+1. **PVC per pod.** When using `StatefulSet` or per-pod PVC templating, every replica gets its own volume — segments stay co-located with the pod that wrote them.
+2. **Records interleave at the destination.** S3, Azure Blob, and webhook receivers see records from every replica in arrival order. Consumers must sort by `(ts_ns, instance_id, seq)` to recover global ordering; receive order from the destination is not stable. See [observability.md → Connector-captured records](observability.md#connector-captured-records).
+3. **A pod that exits cleanly drains its spool.** During SIGTERM, the spool's `Stop` runs with a 30-second timeout. Sealed segments still in `uploading/` or `sealed/` are left on the PVC and the next pod replacing this one's storage (or the same pod after a restart) picks up where it left off via recovery.
+
+If `Spool.Stats()` shows a non-zero `DroppedRing` rate per track, the right response is to investigate the connector destination — drops at the hot path mean drain can't keep up with ingest, usually because the destination is slow or broken. See [spool.md → Loss policy](spool.md#loss-policy).
 
 ### Live-feed ring is per-pod
 
 The admin console's live-messages pane reads an in-process ring (default capacity 100, sized via `SLUICE_ADMIN_LIVE_FEED_CAPACITY`). It is **a few-minute live tail of the pod that served the request**, not an audit log or a fleet view. The pane is honest about this — see the design rationale in [`internal/config/env.go`](../internal/config/env.go) on `DefaultAdminLiveFeedCapacity`.
 
-For durable audit, subscribe to the `gateway.request` NATS subject; for cross-pod correlation, use `X-Sluice-Correlation-Id` to join NATS events to gateway logs.
+For durable audit, configure a `connectors:` entry on the relevant configuration; for cross-pod correlation, use `X-Sluice-Correlation-Id` to join captured records to gateway logs.
 
 ---
 
@@ -397,5 +403,8 @@ The harness uses real provider SDKs to confirm wire compatibility through whatev
 | YAML schema, file-trusting model, no-`${VAR}` rationale | [`docs/configuration-model.md`](configuration-model.md) |
 | Admin listener, password resolution, auth shape | [`docs/admin-console.md`](admin-console.md) |
 | Every `SLUICE_*` env var, parsing rules, validation | [`docs/environment-variables.md`](environment-variables.md) |
-| OTel metrics, NATS subjects, scrape vs push | [`docs/observability.md`](observability.md) |
+| OTel metrics, runtime/process collectors, scrape vs push | [`docs/observability.md`](observability.md) |
 | Resilience policies, per-pod CB state, known limitations | [`docs/resilience.md`](resilience.md) |
+| Connector types, per-type auth, key layout | [`docs/connectors.md`](connectors.md) |
+| Per-binding sampling / filter / size-cap | [`docs/connector-bindings.md`](connector-bindings.md) |
+| Spool disk layout, lifecycle, loss policy, sizing | [`docs/spool.md`](spool.md) |

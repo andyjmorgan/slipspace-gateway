@@ -16,7 +16,8 @@ This page is the operator's reference for that on-disk schema — what files exi
 6. [`api_keys` block](#api_keys-block)
 7. [`rules` block](#rules-block)
 8. [`resilience_policies` block](#resilience_policies-block)
-9. [`admin` block](#admin-block)
+9. [`connectors` block](#connectors-block)
+10. [`admin` block](#admin-block)
 10. [The binding triangle](#the-binding-triangle)
 11. [Worked examples](#worked-examples)
 12. [Why no `${VAR}` substitution](#why-no-var-substitution)
@@ -34,7 +35,7 @@ This page is the operator's reference for that on-disk schema — what files exi
 - `api_keys` (inside `policy.yaml`) is the **bearer reference** — flat list of gateway-issued secrets, each naming the `configuration` it resolves to. Many keys may share one configuration.
 - `admin.yaml` is the **management console gate** — off by default; flipping `enabled: true` brings up the second http.Server on its own port.
 
-Server-level configuration (bind address, drain timeout, NATS URL, OTel exporter, Prometheus scrape, log format/level) is **not** in YAML — it lives on the `SLUICE_*` env vars consumed by `LoadEnv`. See [environment-variables.md](environment-variables.md).
+Server-level configuration (bind address, drain timeout, spool root, OTel exporter, Prometheus scrape, log format/level) is **not** in YAML — it lives on the `SLUICE_*` env vars consumed by `LoadEnv`. See [environment-variables.md](environment-variables.md).
 
 ---
 
@@ -73,15 +74,16 @@ flowchart LR
 
 ## Top-level keys
 
-The loader recognises six top-level keys, distributed across three files:
+The loader recognises seven top-level keys, distributed across three files:
 
 | Key | File | Carries |
 |---|---|---|
 | `providers` | `providers.yaml` | Provider catalogue: base URLs, prefixes, endpoint definitions, required headers, auth-header overrides. |
-| `configurations` | `policy.yaml` | Named policy bundles. Each pins upstream credentials, a rule-name list, an optional resilience-policy reference, and tags. |
+| `configurations` | `policy.yaml` | Named policy bundles. Each pins upstream credentials, a rule-name list, an optional resilience-policy reference, optional connector bindings, and tags. |
 | `api_keys` | `policy.yaml` | Flat list of gateway-issued bearers; each points at a configuration by name. |
 | `rules` | `policy.yaml` | Top-level rule library. Definitions are unique by name; configurations reference them through `rule_names`. |
 | `resilience_policies` | `policy.yaml` | Top-level resilience policy library. Definitions are unique by name; configurations reference one through `resilience_name`. |
+| `connectors` | `policy.yaml` | Top-level connector destinations (s3, azure_blob, webhook). Definitions are unique by name; configurations attach them through `connector_bindings`. |
 | `admin` | `admin.yaml` | Management console gate. Optional file; absent means the console never starts. |
 
 Any other top-level key in any file aborts the load.
@@ -185,7 +187,8 @@ configurations:
 | `upstream_credentials` | map[string]string | no | Provider name → upstream API key the gateway substitutes on the way out. Populated for managed mode; passthrough mode leaves the client's `Authorization` header intact. A provider key with an empty-string value is legal and means "this provider is in the configuration's reach but passthrough-only" — useful for ollama-style upstreams that don't need a key. |
 | `rule_names` | []string | no | Names of rules from the top-level `rules:` library this configuration applies. Unknown names abort load with `ErrUnknownRuleName`. Evaluation order = list order (no priority field). |
 | `resilience_name` | *string | no | Names the resilience policy from the top-level `resilience_policies:` library this configuration uses. `nil` (unset) means no resilience policy — single-attempt, no breaker. Unknown name aborts load with `ErrUnknownResilienceName`. Every target in the named policy must have a corresponding entry in `upstream_credentials`, else `ErrTargetProviderMissingCredential`. |
-| `tags` | map[string]string | no | Static configuration-level labels carried as request context (logged on the per-request structured-log envelope, surfaced on the admin console's configuration detail page). **Not** the same channel as rule-attached request tags: `configurations[].tags` does **not** propagate to `gateway.request.Tags` on the NATS audit event and does **not** bump `gateway.tags.applied.total`. Those signals are driven by [`addTag` rule actions](actions.md#addtag) only. Use this field for static metadata (`tier: production`, `team: ingestion`); use `addTag` for per-request labels that need to surface in audit and dashboards. |
+| `tags` | map[string]string | no | Static configuration-level labels carried as request context (logged on the per-request structured-log envelope, surfaced on the admin console's configuration detail page). **Not** the same channel as rule-attached request tags: `configurations[].tags` does **not** propagate to `Record.Tags` on captured records and does **not** bump `gateway.tags.applied.total`. Those signals are driven by [`addTag` rule actions](actions.md#addtag) only. Use this field for static metadata (`tier: production`, `team: ingestion`); use `addTag` for per-request labels that need to surface in audit and dashboards. |
+| `connector_bindings` | []ConnectorBinding | no | Attaches one or more top-level connectors to this configuration with per-binding sampling / filter / size-cap overrides. Empty (or absent) means no records are captured to disk — the body-capture middleware short-circuits when no bindings exist. See [connector-bindings.md](connector-bindings.md) for the full schema. |
 
 There must be **at least one** entry in `configurations:`. An empty map aborts with `ErrNoConfigurations`.
 
@@ -245,6 +248,20 @@ Each policy must:
 - Pass `ResilienceConfig.Validate()` — the per-policy semantic checks (mode/target consistency, weight validity, etc.).
 
 A configuration that references a resilience policy must carry credentials for every provider that policy's targets name; the loader cross-checks this and aborts with `ErrTargetProviderMissingCredential` if not.
+
+---
+
+## `connectors` block
+
+`policy.yaml` carries `connectors:` — the top-level destination library, a flat slice of [`Connector`](../contracts/config/connectors.go) entries. Each entry declares one reusable destination; configurations attach destinations via `Configuration.ConnectorBindings`. See [connectors.md](connectors.md) for the per-type field reference and [spool.md](spool.md) for the disk-backed runtime.
+
+Each connector entry must:
+
+- Have a unique `name` across the slice (the loader rejects duplicates).
+- Pass `Connector.Validate()` — the per-type required-field check (s3 needs `bucket` + `region`, azure_blob needs `account` + `container`, webhook needs `url` + `secret_ref` + `timeout_ms`).
+- Cross-validate against `connector_bindings` on every configuration — a binding's `connector:` name must resolve to a defined connector or the load aborts.
+
+`connectors:` may be empty or absent — when there are no connectors, the spool is not constructed and the body-capture middleware short-circuits. This is the default for any deployment that does not want persistent capture.
 
 ---
 
@@ -515,4 +532,7 @@ These are documented intentionally — don't fix them without checking the miles
 - [providers.md](providers.md) — per-provider deep dive (OpenAI / Anthropic / Gemini, OpenAI-compat surfaces, model-keyed redirect patterns).
 - [rules.md](rules.md) — rule grammar (conditions, actions, evaluator algorithm).
 - [resilience.md](resilience.md) — resilience policy schema (modes, targets, circuit breaker, observability).
-- [environment-variables.md](environment-variables.md) — every `SLUICE_*` env var (server bind, NATS, OTel, admin runtime knobs).
+- [connectors.md](connectors.md) — destination types (s3, azure_blob, webhook) and per-type auth modes.
+- [connector-bindings.md](connector-bindings.md) — per-configuration sampling / filter / size-cap knobs.
+- [spool.md](spool.md) — disk layout, lifecycle, and loss policy for buffered connector deliveries.
+- [environment-variables.md](environment-variables.md) — every `SLUICE_*` env var (server bind, spool root, OTel, admin runtime knobs).

@@ -1,8 +1,8 @@
 # Observability
 
-Sluice ships three independent observability channels: OTel metrics for operational counters and quantiles, structured `log/slog` JSON for debugging and audit, and NATS audit events for billing and downstream consumers. They share a correlation ID and resolved per-request labels but never overlap responsibilities — meters never carry bodies, events never replace metrics, logs never become the wire-of-record for billing.
+Sluice ships three independent observability channels: OTel metrics for operational counters and quantiles, structured `log/slog` JSON for debugging and audit, and the connector spool for billing and downstream consumers. They share a correlation ID and resolved per-request labels but never overlap responsibilities — meters never carry bodies, captured records never replace metrics, logs never become the wire-of-record for billing.
 
-This page is the operator reference for everything the gateway emits: every meter, every NATS subject, every per-request log field, and the in-process snapshotter that backs the admin dashboard. The resilience.* and cb.* meters are covered alongside the orchestrator in [docs/resilience.md](resilience.md); this page links out rather than duplicating them.
+This page is the operator reference for everything the gateway emits: every meter, the Go runtime and process collectors exposed on `/metrics`, every per-request log field, and the in-process snapshotter that backs the admin dashboard. The resilience.* and cb.* meters are covered alongside the orchestrator in [docs/resilience.md](resilience.md); this page links out rather than duplicating them. For the connector spool's wire shape (the captured-record format) see [spool.md](spool.md) and [connectors.md](connectors.md).
 
 ---
 
@@ -16,32 +16,31 @@ This page is the operator reference for everything the gateway emits: every mete
    - [Rules](#rules)
    - [Tags](#tags)
    - [Resilience and circuit breaker](#resilience-and-circuit-breaker)
-   - [Bus](#bus)
    - [Admin](#admin)
    - [Errors](#errors)
    - [Crash safety](#crash-safety)
    - [Reserved](#reserved)
-4. [Histogram bucket boundaries](#histogram-bucket-boundaries)
-5. [Snapshotter](#snapshotter)
-6. [Health endpoint](#health-endpoint)
-7. [Structured logs](#structured-logs)
-8. [NATS audit events](#nats-audit-events)
-9. [Envelope shape](#envelope-shape)
+4. [Runtime and process collectors](#runtime-and-process-collectors)
+5. [Histogram bucket boundaries](#histogram-bucket-boundaries)
+6. [Snapshotter](#snapshotter)
+7. [Health endpoint](#health-endpoint)
+8. [Structured logs](#structured-logs)
+9. [Connector-captured records](#connector-captured-records)
 10. [Cross-references](#cross-references)
 
 ---
 
 ## Three channels
 
-> **Metrics count. Logs explain. Events bill.**
+> **Metrics count. Logs explain. Connectors bill.**
 
-The three channels are intentionally disjoint. Every signal the gateway emits belongs to exactly one of them, and the consumers — Prometheus / Grafana, log aggregator, NATS subscriber — should never have to reach across to compose a view.
+The three channels are intentionally disjoint. Every signal the gateway emits belongs to exactly one of them, and the consumers — Prometheus / Grafana, log aggregator, connector destination — should never have to reach across to compose a view.
 
 **OTel metrics** are counters, histograms, and gauges scraped by Prometheus and/or pushed via OTLP. They answer *how many*, *how fast*, and *how often*. They are bounded-cardinality — labels come from operator-authored configuration (provider names, endpoint names, configuration names, rule names, policy/target names) and never from client input. They are **not** the audit log: provider response bodies, prompt contents, and per-request payloads never appear in a metric label.
 
-**Structured logs** are JSON records emitted via `log/slog` to stdout. They carry a service header (`service`, `version`), a per-request envelope (`correlation_id`, `provider`, `endpoint`, `model`, …) and the human-readable narrative the operator needs to debug a failing request. They are **not** billable: log shipping is best-effort, the storage tier is operator-chosen, and provider response bodies are deliberately excluded — bodies go to NATS reporting.
+**Structured logs** are JSON records emitted via `log/slog` to stdout. They carry a service header (`service`, `version`), a per-request envelope (`correlation_id`, `provider`, `endpoint`, `model`, …) and the human-readable narrative the operator needs to debug a failing request. They are **not** billable: log shipping is best-effort, the storage tier is operator-chosen, and provider response bodies are deliberately excluded — bodies go to the connector spool.
 
-**NATS audit events** are end-of-pipeline payloads decoded against typed schemas in [`contracts/events/`](../contracts/events/). They are the wire-of-record for billing, downstream replay, and the v1.1 admin console's live-messages pane. Publication is non-blocking — see [load-bearing invariant 2](../CLAUDE.md) — and oversized payloads stash to an Object Store rather than blocking the request path. They are **not** operational telemetry: a Grafana panel must never read NATS directly; the equivalent OTel meter exists for every dimension a dashboard cares about.
+**Connector-captured records** are end-of-pipeline payloads encoded as ndjson.zst segments written to a per-connector spool and shipped to operator-configured destinations (S3, Azure Blob, webhook). They are the wire-of-record for billing, audit, and downstream replay. The spool is non-blocking — see [load-bearing invariant 2](../CLAUDE.md) — drops occur at the hot path (ring full) or on the disk path (filesystem full) rather than blocking the request. They are **not** operational telemetry: a Grafana panel must never read records from S3; the equivalent OTel meter exists for every dimension a dashboard cares about.
 
 ---
 
@@ -129,7 +128,7 @@ The rules engine instruments. Labels are bounded by the configured policy librar
 |---|---|---|---|---|
 | `gateway.tags.applied.total` | counter | `tag` | 1 | Applications of the `addTag` rule action. One increment per (request, tag) pair after the rules middleware drained tags from the post-rule `MutableState`. The label is bounded by the operator-defined tag library — `provider` / `endpoint` / `configuration` are deliberately omitted to keep cardinality from blowing up in the cross-product with everything else. |
 
-The tag side-channel runs in lockstep with `events.Request.Tags` on the audit envelope; both come from the same drain at OnComplete.
+The tag side-channel runs in lockstep with `Record.Tags` on captured connector records; both come from the same drain at OnComplete.
 
 ### Resilience and circuit breaker
 
@@ -143,19 +142,6 @@ Covered alongside the orchestrator in [docs/resilience.md → Observability](res
 - `gateway.cb.transitions.total` (counter, labels: `policy, target, to_state`)
 
 `gateway.cb.state` is the one ObservableGauge in the registry — it does not push, it pulls. Each collection invokes the callback registered by `RegisterCircuitBreakerStateGauge`, which iterates `BreakerStore.Snapshot()` and emits one observation per known `(policy, target)` pair. The `pod` label disambiguates multi-pod deployments since CB state is per-pod and in-memory.
-
-### Bus
-
-The non-blocking NATS publisher's counters live alongside the rest of the gateway instruments. They are the operator's view of whether the audit channel is healthy.
-
-| Metric | Type | Labels | Unit | What it counts |
-|---|---|---|---|---|
-| `gateway.events_published.total` | counter | (none) | 1 | Envelopes successfully shipped to JetStream. |
-| `gateway.events_dropped.total` | counter | (none) | 1 | Envelopes dropped because the publisher's internal queue was full at `Publish` time, or because dispatch failed after enqueue (NATS unreachable, marshal error). The two cases share a counter because either way the customer observes a missing event. A non-zero rate means either the queue is too small for the traffic shape or the broker is in trouble. |
-| `gateway.events_stashed.total` | counter | (none) | 1 | Envelopes whose payload exceeded the inline threshold (default 768 KiB) and was uploaded to the Object Store rather than carried inline on the subject. |
-| `gateway.events.inline_bytes` | histogram | (none) | By | Size distribution of inline event payloads (the ones that fit under the stash threshold). Useful for sizing the threshold and the JetStream stream's `max_msg_size`. |
-
-These counters have no labels. The bus publishes against a fixed-vocabulary subject set (currently two production subjects); slicing by subject would invite cardinality bloat for no real diagnostic value. If you need a per-subject breakdown, the NATS server already reports it on its own monitoring port.
 
 ### Admin
 
@@ -187,8 +173,33 @@ Two counters exist in the registry but have no production call sites yet. They a
 
 | Metric | Type | Labels | Unit | Intent |
 |---|---|---|---|---|
-| `gateway.unmapped_fields.total` | counter | (none, reserved) | 1 | Unknown fields detected on inbound provider payloads. The DynamicProperties safety net catches these at unmarshal time; once the bodycapture middleware wires up the side-channel report, this counter will fire and a `gateway.unmapped` NATS subject will join the audit stream. |
+| `gateway.unmapped_fields.total` | counter | (none, reserved) | 1 | Unknown fields detected on inbound provider payloads. The DynamicProperties safety net catches these at unmarshal time; once the bodycapture middleware wires up the side-channel report, this counter will fire and unmapped-field metadata will join captured connector records. |
 | `gateway.config_reload.total` | counter | (none, reserved) | 1 | Configuration reload attempts. Hot reload is a v1.2+ task; the counter is reserved against the eventual `fsnotify`-based reloader. |
+
+---
+
+## Runtime and process collectors
+
+In addition to the OTel-bridged `gateway.*` meters, the Prometheus `/metrics` endpoint exposes the Go runtime and process collectors registered against the same `prometheus.Registry`. These cover the runtime telemetry that `gateway.*` deliberately doesn't model — memory pressure, goroutine counts, fd usage, CPU time. They never replace the gateway's own counters; they sit alongside them.
+
+The registration happens in [`internal/observability/setup.go`](../internal/observability/setup.go) (~line 153):
+
+```go
+reg.MustRegister(
+    collectors.NewGoCollector(),
+    collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+)
+```
+
+| Metric | What it surfaces | Why operators care |
+|---|---|---|
+| `go_memstats_*` | Heap, stack, GC pause, allocation counters. | Memory pressure visibility. The body store and live-feed ring are bounded but request-handler allocations are not; a sustained heap climb usually means a handler is leaking. |
+| `go_goroutines` | Live goroutine count. | A monotonic climb is the canonical "goroutine leak" signal. Steady-state on a healthy gateway is roughly `(active_requests × 2) + (workers × tracks) + (small fixed overhead)`. |
+| `process_resident_memory_bytes` | OS-reported RSS. | The dispositive answer to "how much memory is this pod using". `go_memstats_alloc_bytes` is heap-only; RSS includes goroutine stacks, runtime metadata, mmap'd files. |
+| `process_cpu_seconds_total` | OS-reported user + system CPU. | Pair with `gateway.requests.total` to compute CPU-per-request. The natural diagnostic for "the gateway feels slower today". |
+| `process_open_fds` | Currently-open file descriptors. | The spool keeps one fd open per active segment; webhook connectors open a transient fd per upload. A monotonic climb means an fd leak — usually a missed `Close()` on an error path. |
+
+The collectors are registered **only when** `SLUICE_PROMETHEUS_BIND` is non-empty — same gate as the rest of the `/metrics` surface. OTLP push does not carry these collectors (OTel's SDK has its own runtime instrumentation; we don't bridge the Prometheus ones across).
 
 ---
 
@@ -300,71 +311,37 @@ INFO request completed
 
 Notable rules of the road:
 
-- **Provider response bodies are never logged in full.** They go to NATS reporting; only metadata + correlation IDs hit logs. See CLAUDE.md's logging standards section.
+- **Provider response bodies are never logged in full.** They flow into the connector spool when a configuration's `connector_bindings` allows; only metadata + correlation IDs hit logs. See CLAUDE.md's logging standards section.
 - The recovery middleware logs `request handler panic recovered` with `path`, `method`, `panic`, `stack` before writing the 500. `safego.Go` logs goroutine panics with `site`, `panic`, `stack`.
-- The bus publisher logs `bus dispatch failed` (warn) on a dispatch failure and `bus oversized payload published inline (no object store configured)` (warn) when an oversized envelope falls back to inline because no Object Store was wired.
+- The spool's per-track goroutines log `spool: write record failed` (error) on a segment write failure and `spool: seal failed` (error) when a rotation can't complete. The uploader logs at error on `Complete` / `Deadletter` failures.
 
 ---
 
-## NATS audit events
+## Connector-captured records
 
-The publisher emits envelopes on the subject prefix `gateway.`. The subject suffix comes from the envelope's `EventType` field; only two suffixes are published in production today, both wired from the per-request reporter at OnComplete.
+When a configuration declares `connector_bindings`, the reporter at OnComplete builds one [`Record`](../contracts/connector/record.go) per inbound request and enqueues a value-copy onto every binding's spool track that the binding's sampling / filter / size-cap allows. See [connector-bindings.md](connector-bindings.md) for the evaluation order and [spool.md](spool.md) for the on-disk runtime.
 
-| Subject | Payload type | When emitted | Cardinality on the bus |
-|---|---|---|---|
-| `gateway.request` | [`events.Request`](../contracts/events/request.go) | Exactly once per inbound request, at OnComplete. Multi-attempt orchestration suppresses the per-attempt publish and fires a single consolidated event with `PolicyRef` set and `Attempts[]` populated. | 1 per inbound request. |
-| `gateway.rule.matched` | [`events.RuleMatched`](../contracts/events/rule_matched.go) | One envelope per rule that matched on the request. Fanned out at OnComplete after the reporter drains the rules middleware's `MatchBuffer`. | 0–N per request, bounded by the configured policy library. |
+The `Record` shape is the wire format every connector destination sees. Key fields:
 
-**Payload shape — `events.Request`** (the field set above; see [`contracts/events/request.go`](../contracts/events/request.go) for the JSON tags). Key fields:
-
-- `correlation_id`, `provider`, `endpoint`, `model`, `status_code`, `duration_ms`, `streaming`, `upstream_error` — the request envelope.
-- `tokens_in`, `tokens_out`, `tokens_cached`, `tokens_cache_creation` — provider-reported usage. Zero when the upstream omitted `usage`.
+- `correlation_id`, `provider`, `endpoint`, `model`, `configuration`, `api_key_name` — the post-rule resolved labels.
+- `request`, `response` — method, path, headers, sha256, byte length, and either inline `body` or `body_omitted: true` (set when oversize behaviour stripped the body).
+- `tokens` — provider-reported usage when the upstream returned one.
 - `tags` — the set of tags `addTag` actions attached, in first-attach order, deduplicated.
-- `policy_ref`, `attempts` — set only when the rules engine bound the request to a resilience policy via `useResiliencePolicy`. Single-shot requests omit both fields so the v1.1 wire shape is byte-equivalent. See [docs/resilience.md → Observability](resilience.md#nats-gatewayrequest-events) for the multi-attempt shape.
+- `rules_fired` — ordered list of rules that matched, including action types and termination flag.
+- `policy_ref`, `attempts` — set only when the rules engine bound the request to a resilience policy via `useResiliencePolicy`. Single-shot requests omit both fields. See [docs/resilience.md → Observability](resilience.md#multi-attempt-record-shape) for the multi-attempt shape.
 
-**Payload shape — `events.RuleMatched`** (see [`contracts/events/rule_matched.go`](../contracts/events/rule_matched.go)):
+The `id`, `ts_ns`, `seq`, `instance_id` quartet stamps each record so consumers can sort by `(ts_ns, instance_id, seq)` and group by `correlation_id`. Across-instance ordering is by wall-clock; within one instance, `seq` is the per-process monotonic tiebreaker.
 
-- `correlation_id` — joinable back to the parent `gateway.request` event.
-- `rule_name` (always populated), `rule_id` (optional UUID from the control plane), `configuration`, `matched_at`.
-- `actions_applied` — action type discriminators in the order they ran.
-- `terminated` — true iff a terminating action short-circuited the pipeline. `Behavior=Exit` alone does **not** set this — that's an iteration boundary, not a terminating outcome.
-- `error_message` — populated when an action returned an error during apply.
-
-**Tests that read these events must sort by `MatchedAt` (rule events) or `Started` (request events).** The publisher uses `defaultWorkers = 2`, so adjacent envelopes can arrive at the subscriber inverted; receive order is not stable. See [load-bearing invariant 8 in CLAUDE.md](../CLAUDE.md).
-
----
-
-## Envelope shape
-
-The on-the-wire shape is [`bus.Envelope`](../internal/bus/envelope.go), serialised as msgpack with terse two-character field tags. Fields are stable; the `SchemaVersion` constant (currently `1`) is bumped on incompatible changes.
-
-| Field | Tag | Purpose |
-|---|---|---|
-| `SchemaVersion` | `v` | Wire schema version. Publisher stamps `SchemaVersion = 1` when callers leave it zero so producers can't accidentally publish version-less events. |
-| `EventID` | `id` | Unique identifier for this envelope. Reused as the Object Store key when the payload is stashed. |
-| `EventType` | `t` | Subject suffix — `request`, `rule.matched`, … The publisher concatenates it with `gateway.` to form the full subject. |
-| `Timestamp` | `ts` | Wall-clock UTC time the envelope was minted. |
-| `Mode` | `m` | `PayloadInline` (0) or `PayloadStashed` (1). |
-| `InlinePayload` | `p` | JSON-encoded body when `Mode == PayloadInline`. An inline-mode envelope with an empty body is legal — consumers should branch on `Mode`, not test this field for nil. |
-| `ObjectRef` | `o` | `{bucket, key, size}` pointer when `Mode == PayloadStashed`. |
-
-### Inline vs stashed
-
-Every envelope starts inline. At dispatch time the publisher checks `len(InlinePayload)` against the stash threshold (default 786432 bytes — **768 KiB**); above that, the payload is uploaded to the configured Object Store and the envelope is rewritten with `Mode = PayloadStashed`, `ObjectRef` set, and `InlinePayload = nil`.
-
-**Why 768 KiB.** NATS Core's default `max_payload` is 1 MiB and JetStream inherits it unless raised. Keeping the inline threshold a comfortable margin below that ceiling means a borderline envelope plus the msgpack overhead never trips the broker's hard limit and the publisher never has to handle a "too big" rejection on the hot path. The threshold is configurable via `Options.StashThreshold`; operators tuning this should keep `(threshold + msgpack overhead) < max_payload`.
-
-**Stash bucket.** The Object Store bucket name defaults to `DefaultObjectStoreBucket` (`GATEWAY_EVENT_STASH`); operators override via `Options.StashBucket`. The bucket is recorded on every `ObjectRef` so a subscriber can find the payload without re-deriving the convention. The Object Store key is always the envelope's `EventID`.
-
-**Misconfigured environments.** If the Object Store is nil at construction time (operator forgot to wire it), the publisher logs `bus oversized payload published inline (no object store configured)` at warn level and publishes inline anyway — a deliberate degradation that keeps the request path unaffected. The customer sees the event; the broker rejects it if it's larger than `max_payload` but the gateway itself never blocks.
-
-**Drop semantics.** `Publish` is non-blocking. If the worker queue is full at enqueue time, the envelope is dropped and `gateway.events_dropped.total` bumps. There is no retry, no in-memory replay buffer, no backoff. This is load-bearing — see [invariant 2 in CLAUDE.md](../CLAUDE.md). The next event is always more valuable than this one.
+**Consumer sort key.** A consumer reading sealed segments must sort by `(ts_ns, instance_id, seq)` before assuming order; segments arrive from the spool's per-track drain in the same order their records enqueued, but **across** connectors there is no global ordering guarantee. The `seq` field is the per-instance disambiguator when `ts_ns` collides.
 
 ---
 
 ## Cross-references
 
-- [docs/resilience.md](resilience.md) — resilience.* and cb.* meters in their orchestrator context; multi-attempt `events.Request` shape.
+- [docs/resilience.md](resilience.md) — resilience.* and cb.* meters in their orchestrator context; multi-attempt record shape.
+- [docs/connectors.md](connectors.md) — destination types (s3, azure_blob, webhook) and per-type auth.
+- [docs/connector-bindings.md](connector-bindings.md) — per-configuration sampling, filter, oversize behaviour.
+- [docs/spool.md](spool.md) — disk-backed runtime between OnComplete and the destinations.
 - [docs/admin-console.md](admin-console.md) — admin listener, dashboard handlers backed by the snapshotter, live-messages pane backed by the in-process ring.
 - [docs/environment-variables.md](environment-variables.md) — full env reference, including `SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS`, `SLUICE_ENV`, Prometheus / OTLP / log knobs.
-- [docs/deployment.md](deployment.md) — Helm values that drive the OTel and bus wiring, NATS topology, Object Store bucket bootstrap.
+- [docs/deployment.md](deployment.md) — K8s topology including the spool PVC mount and destination wiring.

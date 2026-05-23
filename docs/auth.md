@@ -326,7 +326,7 @@ It is also the **fallback** when a request needs the gateway's pipeline applied 
 
 ### Credential redaction in logs
 
-The gateway never logs the literal `Authorization` value, nor any `x-api-key` or `x-goog-api-key`. The auth middleware logs `mode`, `api_key_id` (the key's `name` field, not its secret), `configuration`, `provider`, `endpoint`, `result`. The forwarder logs upstream URL and status but never request or response bodies — bodies flow to NATS reporting under a separate retention policy, and admin console body-capture is gated by `gateway.admin.enabled` and Basic auth.
+The gateway never logs the literal `Authorization` value, nor any `x-api-key` or `x-goog-api-key`. The auth middleware logs `mode`, `api_key_id` (the key's `name` field, not its secret), `configuration`, `provider`, `endpoint`, `result`. The forwarder logs upstream URL and status but never request or response bodies — bodies flow to configured `connector_bindings` under each destination's own retention policy, and admin console body-capture is gated by `gateway.admin.enabled` and Basic auth.
 
 Upstream credentials minted by the destination builder also never reach logs — they live on `Configuration.UpstreamCredentials` in memory, are read once per request, and are injected into the outbound header without ever crossing the slog channel.
 

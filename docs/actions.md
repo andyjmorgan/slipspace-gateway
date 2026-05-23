@@ -541,9 +541,9 @@ flowchart LR
 
 This pattern lets a single classifier rule fan out into multiple downstream behaviours without re-deriving the classification.
 
-The reporter drains `state.Tags` at request completion onto `events.Request.Tags` (the `gateway.request` NATS envelope) and the live-feed `Entry`, and bumps `gateway.tags.applied.total` once per tag.
+The reporter drains `state.Tags` at request completion onto `Record.Tags` (the captured connector record) and the live-feed `Entry`, and bumps `gateway.tags.applied.total` once per tag.
 
-This channel is rule-action-driven and request-scoped. It is **separate from** the static `configurations[].tags` map (see [`configuration-model.md`](configuration-model.md#configurations-block)): configuration-level tags carry as request context for logs and the admin configuration detail page, but they do NOT propagate to `events.Request.Tags` and do NOT bump `gateway.tags.applied.total`. If you want a tag to surface in audit and dashboards, fire an `addTag` action.
+This channel is rule-action-driven and request-scoped. It is **separate from** the static `configurations[].tags` map (see [`configuration-model.md`](configuration-model.md#configurations-block)): configuration-level tags carry as request context for logs and the admin configuration detail page, but they do NOT propagate to `Record.Tags` and do NOT bump `gateway.tags.applied.total`. If you want a tag to surface in audit and dashboards, fire an `addTag` action.
 
 ### Worked example — classify then route
 

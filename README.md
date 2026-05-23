@@ -28,7 +28,7 @@ The gateway exposes a per-provider URL surface. Every endpoint can be reached vi
 ## Quickstart
 
 ```sh
-# Bring up the gateway + mockllm + nats.
+# Bring up the gateway + mockllm.
 make dev
 
 # Run the wire-compat suite (spawns its own stack against the mock).
@@ -46,10 +46,12 @@ SLUICE_API_KEY=sk_live_... uv run --project test/smoke pytest -v
 Three YAML files live in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`):
 
 - **`providers.yaml`** — operator-owned route table. One entry per provider; one entry per endpoint under each provider. Per-endpoint `auth_header` / `auth_format` overrides let a single provider expose multiple credential conventions.
-- **`policy.yaml`** — configurations, API keys, rule library, resilience library. The control plane (v1.1) will write this exclusively.
+- **`policy.yaml`** — configurations, API keys, rule library, resilience library, connectors. The control plane (v1.1) will write this exclusively.
 - **`admin.yaml`** *(optional, v1.1)* — gates the management console. Off by default. When enabled, the gateway starts a second listener on `bind_addr` serving the embedded SPA at `/` and the control-plane API under `/api/v1/*`. Username is hardcoded to `admin`; the password is read from `SLUICE_ADMIN_PASSWORD` if set, otherwise from the yaml `password` field.
 
-See [config-dev/](config-dev/) for working examples. Server-level configuration (`SLUICE_*` env vars) is documented in [CLAUDE.md](CLAUDE.md).
+End-of-request records can be shipped to external destinations (S3, Azure Blob, webhook) via the `connectors:` block in `policy.yaml`. Records are buffered on a disk spool (default `/var/lib/sluice/spool`) and uploaded out of band; see [docs/connectors.md](docs/connectors.md), [docs/connector-bindings.md](docs/connector-bindings.md), and [docs/spool.md](docs/spool.md).
+
+See [config-dev/](config-dev/) for working examples and [docs/](docs/) for the operator + developer reference suite. Server-level configuration (`SLUICE_*` env vars) is documented in [docs/environment-variables.md](docs/environment-variables.md).
 
 ## Management console (v1.1)
 
@@ -68,7 +70,7 @@ make build
 The fastest way to exercise the SPA + gateway together end-to-end:
 
 ```sh
-make dev-compose          # builds + starts gateway, mockllm, nats
+make dev-compose          # builds + starts gateway, mockllm
 # open http://localhost:8081/admin and sign in:
 #   username: admin
 #   password: sluice-gateway   (override via SLUICE_ADMIN_PASSWORD env)
@@ -82,7 +84,6 @@ The gateway image bakes the SPA in at build time. Override the operator password
 | `8585` | `8585` | Data plane (provider proxy) |
 | `8081` | `8081` | Admin console (SPA + `/api/v1`) |
 | `9090` | `9090` | Prometheus scrape |
-| `4222` / `8222` | `4222` / `8222` | NATS / monitoring |
 
 ### SPA hot-reload against a running gateway
 
@@ -97,14 +98,14 @@ Open `http://localhost:5180`. Changes to `web/src/**` reload instantly; the comp
 ### Pure-Go dev loop (no compose for the gateway)
 
 ```sh
-make dev   # docker compose up -d mockllm nats; go run ./cmd/gateway
+make dev   # docker compose up -d mockllm; go run ./cmd/gateway
 ```
 
 `config-dev/admin.yaml` has the console enabled on `127.0.0.1:8081` with the placeholder password. To iterate on Go code without rebuilding an image, this is the fastest path.
 
 ## Where the canonical design lives
 
-The full design — module layout, configuration schema, rule schema, resilience schema, telemetry, NATS reporting envelope, .NET → Go translation, testing strategy — lives in a DonkeyWork project. The 14 design notes are the long-form; [CLAUDE.md](CLAUDE.md) is the standing brief for any agent or human working in this repo.
+The full design — module layout, configuration schema, rule schema, resilience schema, telemetry, connector + spool architecture, .NET → Go translation, testing strategy — lives in a DonkeyWork project. The design notes are the long-form; [CLAUDE.md](CLAUDE.md) is the standing brief for any agent or human working in this repo.
 
 ## Repo layout
 
@@ -116,7 +117,7 @@ cmd/
   mockllm/      Go mock LLM for tests + local dev
 internal/       compiler-enforced private
 providers/      public — request/response/streaming models per provider
-contracts/      public — control-plane schemas (rules, resilience, config, events)
+contracts/      public — control-plane schemas (rules, resilience, config, connector)
 deploy/         dockerfile, helm chart
 test/
   e2e/          black-box matrix against the real binary
