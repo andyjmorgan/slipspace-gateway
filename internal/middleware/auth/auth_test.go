@@ -79,10 +79,11 @@ func TestHTTPHandler_HappyPathPassthrough(t *testing.T) {
 		if ar.Mode != ModePassthrough {
 			t.Fatalf("mode = %q want passthrough", ar.Mode)
 		}
-		// Passthrough still drops the policy header (X-Sluice-Configuration);
-		// it must NOT inject any credential-bearing header.
-		if len(ar.DropHeaders) != 1 || ar.DropHeaders[0] != HeaderConfiguration {
-			t.Fatalf("passthrough DropHeaders should be [%s], got %v", HeaderConfiguration, ar.DropHeaders)
+		// Passthrough drops both selector headers (X-Sluice-Identity +
+		// X-Sluice-Configuration); it must NOT inject any
+		// credential-bearing header.
+		if !containsAll(ar.DropHeaders, HeaderIdentity, HeaderConfiguration) {
+			t.Fatalf("passthrough DropHeaders must include both selectors, got %v", ar.DropHeaders)
 		}
 		w.WriteHeader(http.StatusOK)
 	})
@@ -232,6 +233,89 @@ func TestWithAuthRoundTrip(t *testing.T) {
 	if !ok || ar.ConfigurationName != "prod" {
 		t.Fatalf("withAuth/FromContext round-trip failed: %+v ok=%v", ar, ok)
 	}
+}
+
+func TestHTTPHandler_IdentityPassthroughHappyPath(t *testing.T) {
+	resolver := NewResolver(fixtureConfig())
+	route := routeStub{provider: "anthropic", endpoint: "messages", ok: true}
+
+	var captured AuthResult
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ar, _ := FromContext(r.Context())
+		captured = ar
+		w.WriteHeader(http.StatusOK)
+	})
+
+	h := HTTPHandler(resolver, route.From, next)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set(HeaderIdentity, "sk_live_enabled")
+	req.Header.Set(HeaderAuthorization, "Bearer client-byok-anthropic-token")
+	logger, logs := captureLogger()
+	req = req.WithContext(observability.WithLogger(req.Context(), logger))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d want 200", rec.Code)
+	}
+	if captured.Mode != ModePassthrough {
+		t.Fatalf("mode = %q want passthrough", captured.Mode)
+	}
+	if captured.APIKey == nil || captured.APIKey.Name != "enabled-key" {
+		t.Fatalf("APIKey not propagated from identity lookup, got %+v", captured.APIKey)
+	}
+	if !strings.Contains(logs.String(), `"mode":"passthrough"`) {
+		t.Fatalf("passthrough mode not logged: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), "deprecated header in use") {
+		t.Fatalf("identity-only resolution must not emit the deprecation warning: %s", logs.String())
+	}
+}
+
+func TestHTTPHandler_LegacyConfigurationHeaderLogsDeprecation(t *testing.T) {
+	resolver := NewResolver(fixtureConfig())
+	route := routeStub{provider: "anthropic", endpoint: "messages", ok: true}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	h := HTTPHandler(resolver, route.From, next)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set(HeaderConfiguration, "prod")
+	req.Header.Set(HeaderAuthorization, "Bearer byok-token")
+	logger, logs := captureLogger()
+	req = req.WithContext(observability.WithLogger(req.Context(), logger))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d want 200", rec.Code)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "deprecated header in use") {
+		t.Fatalf("legacy passthrough must emit deprecation warning, logs:\n%s", out)
+	}
+	if !strings.Contains(out, `"replacement":"X-Sluice-Identity"`) {
+		t.Fatalf("deprecation log must name the replacement header, logs:\n%s", out)
+	}
+}
+
+func containsAll(haystack []string, needles ...string) bool {
+	set := make(map[string]struct{}, len(haystack))
+	for _, h := range haystack {
+		set[h] = struct{}{}
+	}
+	for _, n := range needles {
+		if _, ok := set[n]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func assertErrorBody(t *testing.T, body io.ReadCloser, want string) {
