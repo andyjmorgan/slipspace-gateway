@@ -320,7 +320,15 @@ func TestSnapshotter_LoopTakesPeriodicSnapshots(t *testing.T) {
 	defer cancel()
 	ctr.Add(ctx, 1)
 	s.Start(ctx)
-	time.Sleep(60 * time.Millisecond)
+	// A fixed Sleep here is flaky: Start spawns runLoop with `go`, and
+	// under load the scheduler can defer the goroutine long enough that
+	// the 10 ms ticker fires zero times before cancel(). Poll instead —
+	// 2 s is generous given the configured 10 ms interval but tolerant
+	// of stalled CI runners under `-race -count=N`.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(s.Samples()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	cancel()
 	if len(s.Samples()) < 2 {
 		t.Errorf("len(Samples) = %d, want >= 2 after the loop ran", len(s.Samples()))
