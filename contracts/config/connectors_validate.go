@@ -3,9 +3,19 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"os"
 	"strings"
 )
+
+// envWebhookAllowPrivate is the test-only escape hatch shared with
+// the runtime SSRF guard in internal/connector/webhook. When set
+// ("1"/"true"), validateWebhook accepts loopback / RFC1918 /
+// link-local URLs so the e2e harness's httptest.Server (bound to
+// 127.0.0.1) can be wired as a webhook receiver. Production never
+// sets it.
+const envWebhookAllowPrivate = "SLUICE_WEBHOOK_ALLOW_PRIVATE" //nolint:gosec // env var name, not a credential
 
 // ErrConnectorValidation is the sentinel returned (via fmt.Errorf wrap) by
 // Connector.Validate / ConnectorBinding.Validate. Callers can use
@@ -90,6 +100,11 @@ func (c *Connector) validateWebhook() error {
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
 		return c.errf("url scheme must be http or https, got %q", parsed.Scheme)
 	}
+	if !webhookAllowPrivateNetworks() {
+		if err := rejectLocalOrPrivateHost(parsed.Hostname()); err != nil {
+			return c.errf("%v", err)
+		}
+	}
 	if c.SecretRef == "" {
 		return c.errf("secret_ref is required (HMAC signing key)")
 	}
@@ -105,6 +120,40 @@ func (c *Connector) validateWebhook() error {
 	}
 	if c.Auth != nil {
 		return c.errf("auth block does not apply to webhook (use secret_ref)")
+	}
+	return nil
+}
+
+// webhookAllowPrivateNetworks reports whether the test-only env
+// var is set to flip both the config-load and runtime SSRF checks
+// off. Centralised here so validateWebhook and the runtime guard
+// agree on the spelling.
+func webhookAllowPrivateNetworks() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(envWebhookAllowPrivate)))
+	return v == "1" || v == "true"
+}
+
+// rejectLocalOrPrivateHost catches the common SSRF footguns at
+// config-load: literal localhost / 127.x / RFC1918 / link-local / 0/8 /
+// multicast hosts that no production webhook receiver should use. This
+// is the static check the runtime SSRF guard's docstring claims; it
+// cannot defend against a DNS name that resolves to a private IP —
+// the runtime dial-time check covers that.
+func rejectLocalOrPrivateHost(host string) error {
+	if host == "" {
+		return errors.New("url has no host")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return errors.New("url host must not be localhost")
+	}
+	// Trim IPv6 brackets that url.Hostname() already strips, but defend
+	// in depth if upstream changes.
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+			ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("url host %s is a denied address (loopback/RFC1918/link-local/unspecified/multicast)", host)
+		}
 	}
 	return nil
 }

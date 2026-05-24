@@ -172,7 +172,7 @@ type Meters struct {
 
 	// GoroutinePanicsTotal counts panics caught by safego.Go in
 	// background goroutines. Label: site (the identifier the caller
-	// passed to safego.Go — e.g. "bus.publisher.worker").
+	// passed to safego.Go — e.g. "spool.uploader", "spool.drain").
 	GoroutinePanicsTotal metric.Int64Counter
 
 	// RequestPanicsTotal counts panics caught by the request-path

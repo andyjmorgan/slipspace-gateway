@@ -167,10 +167,15 @@ type ConnectorBinding struct {
 	// `connectors:` slice. Required.
 	Connector string `yaml:"connector" json:"connector"`
 
-	// Sampling is the fraction (0..1) of records routed to this
-	// binding. Zero is treated as "use default" (1.0); explicit 0
-	// is currently indistinguishable, but binding with explicit-zero
-	// makes no operational sense, so the convention costs nothing.
+	// Sampling is the fraction (0..1] of records routed to this
+	// binding. The validator accepts the full [0, 1] range but the
+	// runtime treats `sampling: 0` and an omitted field identically
+	// (default → 1.0 / include everything). Go's zero-value semantics
+	// make these indistinguishable here and a custom UnmarshalYAML
+	// shim would cost more than the footgun is worth. To disable a
+	// binding, remove it from `connector_bindings` (or use a
+	// vanishingly small value like 0.0001 if you want to keep the
+	// destination warm but drop nearly all traffic).
 	Sampling float64 `yaml:"sampling,omitempty" json:"sampling,omitempty"`
 
 	// SamplingKey is "correlation_id" (default — deterministic, all

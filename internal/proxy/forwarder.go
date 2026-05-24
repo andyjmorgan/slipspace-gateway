@@ -132,6 +132,7 @@ func New(opts Options) *Forwarder {
 // Accept-Encoding for the same reason.
 var alwaysDropHeaders = []string{
 	"X-Sluice-Configuration",
+	"X-Sluice-Identity",
 	"Authorization",
 	"Origin",
 	"Referer",

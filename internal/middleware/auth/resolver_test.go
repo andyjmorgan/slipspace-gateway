@@ -527,9 +527,20 @@ func TestResolver_IdentityPassthrough_UnknownKey(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_does_not_exist")
 
-	_, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers, "openai", "chat_completions")
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("unknown identity must 401, got %v", err)
+	}
+	// Downstream code (auth.go::apiKeyID, reporter.go::buildRecord)
+	// nil-checks APIKey before dereferencing. Verify the unknown-
+	// identity branch leaves APIKey nil so the contract holds — a
+	// regression that started populating it with a stub would risk
+	// classifying the failure as disabled_key in audit logs.
+	if ar.APIKey != nil {
+		t.Errorf("unknown identity must leave APIKey nil, got %+v", ar.APIKey)
+	}
+	if !sliceContains(ar.DropHeaders, HeaderIdentity) {
+		t.Errorf("unknown identity must still drop the selector header, got %v", ar.DropHeaders)
 	}
 }
 

@@ -40,6 +40,11 @@ func RedactSensitive(h http.Header) map[string][]string {
 
 // IsSensitiveHeaderName reports whether a header name looks credential-
 // bearing under a permissive lowercase-substring match.
+//
+// "sluice-identity" catches X-Sluice-Identity, which carries a raw
+// sk_live_ Sluice secret in passthrough mode. Without this match the
+// secret would round-trip into livefeed entries and every connector
+// destination's captured Record.Request.Headers.
 func IsSensitiveHeaderName(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.Contains(lower, "auth") ||
@@ -47,5 +52,6 @@ func IsSensitiveHeaderName(name string) bool {
 		strings.Contains(lower, "apikey") ||
 		strings.Contains(lower, "token") ||
 		strings.Contains(lower, "cookie") ||
-		strings.Contains(lower, "secret")
+		strings.Contains(lower, "secret") ||
+		strings.Contains(lower, "sluice-identity")
 }

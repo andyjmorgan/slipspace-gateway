@@ -399,12 +399,18 @@ func TestSSRF_AllowsPublicAddresses(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("S", "k")
+	// The httptest server binds to 127.0.0.1, which the new
+	// transport-level Control hook refuses. AllowPrivateNetworks is
+	// the supported test bypass — the fake resolver only spoofs the
+	// application-level pre-flight guard, not the kernel-side
+	// dial control. Production paths set neither.
 	c, err := New(context.Background(), Options{
 		Config: contractsconfig.Connector{ //nolint:gosec // G101: env: indirection
 			Type: "webhook", Name: "x", URL: srv.URL,
 			SecretRef: "env:S", TimeoutMS: 5000,
 		},
-		Resolver: allowAllResolver,
+		Resolver:             allowAllResolver,
+		AllowPrivateNetworks: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -624,5 +630,93 @@ func TestDefaultResolver_BadHost(t *testing.T) {
 	_, err := defaultResolver(context.Background(), "invalid..host..with..dots")
 	if err == nil {
 		t.Error("expected resolution failure")
+	}
+}
+
+// TestSSRFDialControl exercises the post-resolve, pre-connect hook
+// directly. The hook is the TOCTOU-safe layer of the SSRF guard:
+// it sees the actual IP the kernel is about to connect to (after
+// the dialer's own DNS resolve), so a rebinding DNS server that
+// fooled the application-level ssrfGuard cannot fool this layer.
+func TestSSRFDialControl(t *testing.T) {
+	cases := []struct {
+		name    string
+		address string
+		wantErr bool
+	}{
+		{"public ipv4 ok", "198.51.100.1:443", false},
+		{"public ipv6 ok", "[2606:4700:4700::1111]:443", false},
+		{"loopback rejected", "127.0.0.1:80", true},
+		{"loopback ipv6 rejected", "[::1]:80", true},
+		{"rfc1918 10/8 rejected", "10.0.0.1:443", true},
+		{"rfc1918 192.168/16 rejected", "192.168.1.1:443", true},
+		{"link-local 169.254 rejected", "169.254.169.254:80", true},
+		{"unspecified 0.0.0.0 rejected", "0.0.0.0:80", true},
+		{"multicast rejected", "224.0.0.1:80", true},
+		{"non-IP host rejected", "example.com:443", true},
+		{"malformed address rejected", "no-port", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ssrfDialControl("tcp", tc.address, nil)
+			if tc.wantErr && err == nil {
+				t.Errorf("ssrfDialControl(%q) = nil, want error", tc.address)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("ssrfDialControl(%q) = %v, want nil", tc.address, err)
+			}
+		})
+	}
+}
+
+// TestNewSSRFTransport_AllowPrivateSkipsHook covers the
+// allowPrivate=true branch: the dialer must not carry a Control
+// hook (so test/dev httptest.Server bound to loopback works).
+func TestNewSSRFTransport_AllowPrivateSkipsHook(t *testing.T) {
+	tr, ok := newSSRFTransport(true).(*http.Transport)
+	if !ok {
+		t.Fatalf("newSSRFTransport returned %T, want *http.Transport", tr)
+	}
+	// We can't reach the inner dialer via http.Transport's public
+	// surface, so the behavioural check is: hitting a loopback
+	// httptest.Server through the transport succeeds. If Control was
+	// installed, the dial would error before the request fired.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &http.Client{Transport: tr, Timeout: 2 * time.Second}
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("allowPrivate transport must reach loopback; got %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d want 200", resp.StatusCode)
+	}
+}
+
+// TestNewSSRFTransport_DenyPrivateBlocksLoopback proves the
+// production-side transport refuses connect to loopback even when
+// the URL host parses as the IP directly (no DNS rebinding needed
+// to demonstrate — IP-literal URL is enough).
+func TestNewSSRFTransport_DenyPrivateBlocksLoopback(t *testing.T) {
+	tr := newSSRFTransport(false)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &http.Client{Transport: tr, Timeout: 2 * time.Second}
+	resp, err := client.Get(srv.URL)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if err == nil {
+		t.Fatalf("denyPrivate transport must refuse loopback dial; got nil error")
+	}
+	if !strings.Contains(err.Error(), "refused denied address") {
+		t.Errorf("error %v should mention refused denied address", err)
 	}
 }

@@ -41,12 +41,24 @@ func TestEvaluateBinding_PassThrough_NoOverrides(t *testing.T) {
 }
 
 func TestEvaluateBinding_SamplingOutSkips(t *testing.T) {
-	rec := makeRec()
-	rec.CorrelationID = "this-particular-correlation-id-buckets-high"
+	// Find a correlation_id that lands above sampling=0.0001 under
+	// the current FNV-1a 64 hash. Computed at runtime so a change to
+	// the hash mixing doesn't silently flip the test from "sampling
+	// reliably drops" to "sampling reliably includes".
 	b := contractsconfig.ConnectorBinding{Connector: "x", Sampling: 0.0001}
+	rec := makeRec()
+	for i := 0; i < 10_000; i++ {
+		rec.CorrelationID = "outbucket-" + intToString(i)
+		if !samplingIncludes(rec, b) {
+			break
+		}
+	}
+	if samplingIncludes(rec, b) {
+		t.Fatalf("could not find a correlation_id that buckets above 0.0001 in 10k tries; FNV distribution broken?")
+	}
 	_, ship := evaluateBinding(rec, b)
 	if ship {
-		t.Error("0.0001 sampling should drop almost everything; this id should land out")
+		t.Error("0.0001 sampling with an out-bucket id should drop the record")
 	}
 }
 
