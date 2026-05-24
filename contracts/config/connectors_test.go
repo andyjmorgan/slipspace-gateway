@@ -84,6 +84,11 @@ func TestConnector_Validate_WebhookHappy(t *testing.T) {
 }
 
 func TestConnector_Validate_Rejections(t *testing.T) {
+	// The webhook SSRF-rejection cases below rely on the
+	// allow-private escape hatch being off. If a developer set it
+	// in their shell for the e2e harness it would leak here, so
+	// pin it for the scope of this test.
+	t.Setenv(envWebhookAllowPrivate, "")
 	cases := []struct {
 		name   string
 		c      Connector
@@ -133,6 +138,18 @@ func TestConnector_Validate_Rejections(t *testing.T) {
 		{"webhook has bucket", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://x", SecretRef: "env:s", TimeoutMS: 1000, Bucket: "b"}, "cloud-storage fields"},
 		{"webhook with auth block", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://x", SecretRef: "env:s", TimeoutMS: 1000,
 			Auth: &ConnectorAuth{Mode: AuthModeWorkloadIdentity}}, "auth block"},
+
+		// SSRF rejection at config-load. The runtime guard is the
+		// second line of defence; these stop typo'd / explicit
+		// localhost / RFC1918 / link-local URLs before the binary
+		// boots.
+		{"webhook localhost url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "http://localhost:9000/hook", SecretRef: "env:s", TimeoutMS: 1000}, "localhost"},
+		{"webhook 127.0.0.1 url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "http://127.0.0.1:9000/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
+		{"webhook RFC1918 10.x url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://10.0.0.1/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
+		{"webhook RFC1918 192.168.x url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://192.168.1.1/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
+		{"webhook link-local 169.254 url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://169.254.169.254/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
+		{"webhook 0.0.0.0 url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://0.0.0.0/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
+		{"webhook IPv6 loopback url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://[::1]/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -359,6 +376,44 @@ func TestConnectorAuth_AzureUnknownMode(t *testing.T) {
 	}
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "invalid for azure_blob") {
 		t.Errorf("expected invalid mode, got %v", err)
+	}
+}
+
+func TestWebhookAllowPrivateNetworks_EnvFlip(t *testing.T) {
+	// Negative case: empty env → reject.
+	t.Setenv(envWebhookAllowPrivate, "")
+	if webhookAllowPrivateNetworks() {
+		t.Error("empty env should not enable allow-private")
+	}
+	c := Connector{
+		Name: "x", Type: ConnectorTypeWebhook, URL: "http://127.0.0.1:9000/hook",
+		SecretRef: "env:s", TimeoutMS: 1000,
+	}
+	if err := c.Validate(); err == nil {
+		t.Error("loopback URL should reject by default")
+	}
+
+	// Positive case: env set → accept.
+	t.Setenv(envWebhookAllowPrivate, "1")
+	if !webhookAllowPrivateNetworks() {
+		t.Error("env=1 should enable allow-private")
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("loopback URL should pass when env set, got %v", err)
+	}
+}
+
+func TestRejectLocalOrPrivateHost_NonIPHostPasses(t *testing.T) {
+	// Public DNS names should pass — only IP literals get parsed
+	// and inspected; DNS names rely on the runtime guard.
+	for _, h := range []string{
+		"hooks.example.com",
+		"webhook.acme.io",
+		"example.test", // reserved TLD, not parsed as IP
+	} {
+		if err := rejectLocalOrPrivateHost(h); err != nil {
+			t.Errorf("rejectLocalOrPrivateHost(%q) = %v, want nil (DNS names pass at config-time)", h, err)
+		}
 	}
 }
 

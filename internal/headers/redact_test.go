@@ -16,6 +16,8 @@ func TestIsSensitiveHeaderName(t *testing.T) {
 		"Anthropic-Api-Key":       true,
 		"X-Goog-Api-Key":          true,
 		"X-Apikey":                true,
+		"X-Sluice-Identity":       true,
+		"x-sluice-identity":       true,
 		"Cookie":                  true,
 		"Set-Cookie":              true,
 		"X-Auth-Token":            true,
@@ -48,11 +50,12 @@ func TestRedactSensitive_NilAndEmpty(t *testing.T) {
 func TestRedactSensitive_MasksCredentials(t *testing.T) {
 	t.Parallel()
 	in := http.Header{
-		"Authorization": []string{"Bearer sk-abc123"},
-		"X-Api-Key":     []string{"sk-secret"},
-		"Cookie":        []string{"session=xyz; other=qux"},
-		"Content-Type":  []string{"application/json"},
-		"User-Agent":    []string{"sluice/1.0"},
+		"Authorization":     []string{"Bearer sk-abc123"},
+		"X-Api-Key":         []string{"sk-secret"},
+		"X-Sluice-Identity": []string{"sk_live_supersecret_must_not_leak"},
+		"Cookie":            []string{"session=xyz; other=qux"},
+		"Content-Type":      []string{"application/json"},
+		"User-Agent":        []string{"sluice/1.0"},
 	}
 	got := RedactSensitive(in)
 	if v := got["Authorization"]; len(v) != 1 || v[0] != "[REDACTED]" {
@@ -60,6 +63,9 @@ func TestRedactSensitive_MasksCredentials(t *testing.T) {
 	}
 	if v := got["X-Api-Key"]; len(v) != 1 || v[0] != "[REDACTED]" {
 		t.Errorf("X-Api-Key = %v, want [REDACTED]", v)
+	}
+	if v := got["X-Sluice-Identity"]; len(v) != 1 || v[0] != "[REDACTED]" {
+		t.Errorf("X-Sluice-Identity leaked or unmasked: %v", v)
 	}
 	if v := got["Cookie"]; len(v) != 1 || v[0] != "[REDACTED]" {
 		t.Errorf("Cookie = %v, want [REDACTED]", v)

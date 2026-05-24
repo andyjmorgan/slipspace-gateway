@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
@@ -74,10 +75,14 @@ type Options struct {
 	// net.DefaultResolver.LookupIPAddr.
 	Resolver HostResolver
 
-	// AllowPrivateNetworks disables the call-time SSRF DNS guard.
-	// TEST-ONLY — production code must leave false. The contracts
-	// validator already rejects literal localhost/RFC1918/link-local
-	// URLs at config-load; this flag bypasses the runtime re-resolve.
+	// AllowPrivateNetworks disables both layers of the SSRF guard: the
+	// pre-request resolver check (ssrfGuard) AND the dial-time Control
+	// hook on the default transport that re-checks the actual connect
+	// IP. TEST-ONLY — production code must leave false. The contracts
+	// validator (rejectLocalOrPrivateHost in connectors_validate.go)
+	// already refuses literal localhost / RFC1918 / link-local URLs at
+	// config-load; this flag bypasses the runtime layers that defend
+	// against DNS that resolves to a private IP at request time.
 	AllowPrivateNetworks bool
 
 	// NowUnix supplies the signing timestamp. Defaults to time.Now.
@@ -141,9 +146,19 @@ func New(_ context.Context, opts Options) (*Connector, error) {
 
 	timeout := time.Duration(opts.Config.TimeoutMS) * time.Millisecond
 
+	allowPrivate := opts.AllowPrivateNetworks
+	if !allowPrivate {
+		if v := strings.ToLower(strings.TrimSpace(os.Getenv(envAllowPrivate))); v == "1" || v == "true" {
+			allowPrivate = true
+		}
+	}
+
 	client := opts.Client
 	if client == nil {
-		client = &http.Client{Timeout: timeout}
+		client = &http.Client{
+			Timeout:   timeout,
+			Transport: newSSRFTransport(allowPrivate),
+		}
 	}
 
 	resolver := opts.Resolver
@@ -154,13 +169,6 @@ func New(_ context.Context, opts Options) (*Connector, error) {
 	nowUnix := opts.NowUnix
 	if nowUnix == nil {
 		nowUnix = func() int64 { return time.Now().Unix() }
-	}
-
-	allowPrivate := opts.AllowPrivateNetworks
-	if !allowPrivate {
-		if v := strings.ToLower(strings.TrimSpace(os.Getenv(envAllowPrivate))); v == "1" || v == "true" {
-			allowPrivate = true
-		}
 	}
 
 	return &Connector{
@@ -303,6 +311,52 @@ func classifyTransportError(err error) error {
 	// Anything else (connection refused, TLS handshake fail, EOF, etc.)
 	// is retryable too. The spool's MaxAttempts caps the blast radius.
 	return &cc.Retryable{Err: err}
+}
+
+// newSSRFTransport builds an http.RoundTripper whose Dialer rejects
+// any connect attempt against a denied IP — closing the DNS-rebinding
+// TOCTOU window between ssrfGuard (which resolves and inspects IPs in
+// the application) and the transport's own resolve+connect. With this
+// Control hook, even a DNS server that returns a public IP to the
+// guard and a private IP to the dialer cannot reach the latter — the
+// kernel-side connect is refused by the hook before the syscall fires.
+//
+// When allowPrivate is true (test/dev opt-out), the hook is omitted
+// and the dialer behaves like a standard net.Dialer.
+func newSSRFTransport(allowPrivate bool) http.RoundTripper {
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	if !allowPrivate {
+		dialer.Control = ssrfDialControl
+	}
+	// Clone the stdlib default and swap in our dialer so we keep TLS
+	// defaults, proxy-from-env, idle-connection management, etc.
+	tr := http.DefaultTransport.(*http.Transport).Clone() //nolint:errcheck,forcetypeassert // stdlib invariant
+	tr.DialContext = dialer.DialContext
+	return tr
+}
+
+// ssrfDialControl is the post-resolve, pre-connect hook called by
+// net.Dialer with the actual destination address. It parses the IP
+// out of the address string and refuses denied ranges.
+func ssrfDialControl(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("webhook ssrf-dial: split address %q: %w", address, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// At this stage the dialer has resolved the hostname and is
+		// connecting to an IP — a non-IP host here would indicate a
+		// stdlib bug. Refuse rather than guess.
+		return fmt.Errorf("webhook ssrf-dial: address %q has non-IP host", address)
+	}
+	if isDenied(ip) {
+		return fmt.Errorf("webhook ssrf-dial: refused denied address %s (network=%s)", ip, network)
+	}
+	return nil
 }
 
 // defaultResolver wraps net.DefaultResolver into the HostResolver
