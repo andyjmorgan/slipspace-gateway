@@ -271,6 +271,44 @@ func TestServerEnv_Validate_UnknownOTLPProtocol(t *testing.T) {
 	}
 }
 
+func TestLoadEnv_RedactExtraHeaders(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"unset", "", nil},
+		{"empty after trim", "   ", nil},
+		{"single entry", "x-acme-trace-id", []string{"x-acme-trace-id"}},
+		{"multi with whitespace", " x-acme-trace-id , X-Tenant-Key ", []string{"x-acme-trace-id", "X-Tenant-Key"}},
+		{"empty entries dropped", "a,,b, ,c", []string{"a", "b", "c"}},
+		{"all empty yields nil", ", , ,", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Pin every other env var to default to avoid leakage from
+			// the surrounding shell (matches defaultEnv's pattern).
+			for _, name := range config.EnvVarNames() {
+				t.Setenv(name, "")
+			}
+			t.Setenv(config.EnvRedactExtraHeaders, tc.raw)
+			env, err := config.LoadEnv()
+			if err != nil {
+				t.Fatalf("LoadEnv: %v", err)
+			}
+			got := env.RedactExtraHeaders
+			if len(got) != len(tc.want) {
+				t.Fatalf("RedactExtraHeaders = %v (len %d), want %v (len %d)", got, len(got), tc.want, len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("RedactExtraHeaders[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestEnvVarNames_ReturnsFreshCopy(t *testing.T) {
 	a := config.EnvVarNames()
 	a[0] = "MUTATED"

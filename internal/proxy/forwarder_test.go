@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -649,86 +648,6 @@ func TestNew_DefaultsApplied(t *testing.T) {
 	if obs := f.observerFactory(context.Background(), Destination{}); obs == nil {
 		t.Fatalf("default observer factory should return a non-nil observer")
 	}
-}
-
-func TestIsSensitiveHeaderName(t *testing.T) {
-	cases := map[string]bool{
-		"Authorization":          true,
-		"authorization":          true,
-		"Proxy-Authorization":    true,
-		"X-Sluice-Authorization": true,
-		"X-Api-Key":              true,
-		"x-api-key":              true,
-		"X-API-KEY":              true,
-		"Anthropic-Api-Key":      true,
-		"X-Goog-Api-Key":         true,
-		"X-APIKey":               true,
-		"Cookie":                 true,
-		"Set-Cookie":             true,
-		"X-CSRF-Token":           true,
-		"X-Auth-Token":           true,
-		"Authorization-Bearer":   true,
-		"X-API-Secret":           true,
-
-		"Content-Type":            false,
-		"X-Custom-Header":         false,
-		"User-Agent":              false,
-		"X-Sluice-Correlation-Id": false,
-		"X-Provider-Header":       false,
-	}
-	for name, want := range cases {
-		if got := headers.IsSensitiveHeaderName(name); got != want {
-			t.Errorf("headers.IsSensitiveHeaderName(%q) = %v, want %v", name, got, want)
-		}
-	}
-}
-
-func TestRedactSensitive(t *testing.T) {
-	t.Run("nil and empty", func(t *testing.T) {
-		if got := redactSensitive(nil); got != nil {
-			t.Errorf("redactSensitive(nil) = %v, want nil", got)
-		}
-		if got := redactSensitive(http.Header{}); got != nil {
-			t.Errorf("redactSensitive(empty) = %v, want nil", got)
-		}
-	})
-	t.Run("redacts only sensitive names", func(t *testing.T) {
-		in := http.Header{}
-		in.Set("Authorization", "Bearer sk_live_secret")
-		in.Set("X-Api-Key", "sk-real-anthropic-key")
-		in.Set("X-Goog-Api-Key", "AIza...")
-		in.Set("Cookie", "session=abc")
-		in.Set("Content-Type", "application/json")
-		in.Set("X-Provider-Header", "leave-me-alone")
-		in.Add("Set-Cookie", "first=1")
-		in.Add("Set-Cookie", "second=2")
-
-		out := redactSensitive(in)
-
-		for _, k := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key", "Cookie"} {
-			vals := out[http.CanonicalHeaderKey(k)]
-			if len(vals) == 0 || vals[0] != "[REDACTED]" {
-				t.Errorf("%s not redacted: %v", k, vals)
-			}
-		}
-		if vals := out["Set-Cookie"]; len(vals) != 2 || vals[0] != "[REDACTED]" || vals[1] != "[REDACTED]" {
-			t.Errorf("Set-Cookie multi-value not fully redacted: %v", vals)
-		}
-		if vals := out["Content-Type"]; len(vals) != 1 || vals[0] != "application/json" {
-			t.Errorf("Content-Type should pass through, got %v", vals)
-		}
-		if vals := out["X-Provider-Header"]; len(vals) != 1 || vals[0] != "leave-me-alone" {
-			t.Errorf("X-Provider-Header should pass through, got %v", vals)
-		}
-	})
-	t.Run("returns independent slice copies", func(t *testing.T) {
-		in := http.Header{"X-Keep": []string{"original"}}
-		out := redactSensitive(in)
-		out["X-Keep"][0] = "mutated"
-		if got := in.Get("X-Keep"); got != "original" {
-			t.Errorf("input mutated through redactSensitive copy: %q", got)
-		}
-	})
 }
 
 func TestForward_DebugLoggingEmitsHeaderTrace(t *testing.T) {

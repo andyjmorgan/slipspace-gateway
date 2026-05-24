@@ -77,7 +77,7 @@ type Captured struct {
 	Body any
 
 	// Headers is the inbound request header map, with credential-bearing
-	// values replaced by "[REDACTED]" via internal/headers.RedactSensitive.
+	// values replaced by "[REDACTED]" via internal/headers.Redactor.
 	// Surfaced to operators through the live-feed body envelope so the
 	// admin console can show what the client sent without leaking the
 	// secret. Stored as the plain string→[]string shape rather than
@@ -98,18 +98,20 @@ type KindFromContextFunc func(ctx context.Context) (RequestKind, bool)
 // Capture reads r.Body up to MaxBodyBytes and, when kind is a typed shape,
 // deserialises it into the matching provider struct via the package's
 // DynamicProperties-aware UnmarshalJSON. The returned Captured carries the
-// verbatim raw bytes so callers can resend them downstream.
+// verbatim raw bytes so callers can resend them downstream. headers.Redact
+// is applied to r.Header to populate Captured.Headers; pass nil for the
+// default built-in substring list.
 //
 // Errors: ErrBodyTooLarge if the body exceeds MaxBodyBytes; ErrParse wrapped
 // around the json error on malformed input; ErrUnknownKind on an unmodelled
 // RequestKind.
-func Capture(r *http.Request, kind RequestKind) (Captured, error) {
+func Capture(r *http.Request, kind RequestKind, redactor *headers.Redactor) (Captured, error) {
 	raw, err := readBody(r)
 	if err != nil {
 		return Captured{}, err
 	}
 
-	hdrs := headers.RedactSensitive(r.Header)
+	hdrs := redactor.Redact(r.Header)
 
 	if kind == KindPassthrough {
 		return Captured{Kind: kind, Raw: raw, Body: nil, Headers: hdrs}, nil
@@ -139,7 +141,7 @@ func Capture(r *http.Request, kind RequestKind) (Captured, error) {
 // On ErrBodyTooLarge the handler writes 413; on ErrParse it writes 400 and
 // logs at warn level; on missing route or unknown kind it writes 500 —
 // those are wiring bugs that should not reach clients silently.
-func HTTPHandler(kindFrom KindFromContextFunc, next http.Handler) http.Handler {
+func HTTPHandler(kindFrom KindFromContextFunc, redactor *headers.Redactor, next http.Handler) http.Handler {
 	if kindFrom == nil {
 		panic("bodycapture: HTTPHandler called with nil kindFrom")
 	}
@@ -158,7 +160,7 @@ func HTTPHandler(kindFrom KindFromContextFunc, next http.Handler) http.Handler {
 			return
 		}
 
-		captured, err := Capture(r, kind)
+		captured, err := Capture(r, kind, redactor)
 		if err != nil {
 			switch {
 			case errors.Is(err, ErrBodyTooLarge):

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 )
 
 // statusWriter is a minimal http.ResponseWriter wrapper that captures the
@@ -18,8 +20,9 @@ type statusWriter struct {
 	// headers at debug level — the value the client actually sees after
 	// httputil.ReverseProxy's hop-by-hop strip and any prior middleware
 	// additions (correlation_id, session_id).
-	ctx    context.Context
-	logger *slog.Logger
+	ctx      context.Context
+	logger   *slog.Logger
+	redactor *headers.Redactor
 
 	status      int
 	wroteHeader bool
@@ -41,7 +44,7 @@ func (w *statusWriter) WriteHeader(code int) {
 	if w.logger != nil && w.logger.Enabled(w.ctx, slog.LevelDebug) {
 		w.logger.DebugContext(w.ctx, "proxy: final response headers",
 			slog.Int("status_code", code),
-			slog.Any("headers", redactSensitive(w.Header())),
+			slog.Any("headers", w.redactor.Redact(w.Header())),
 		)
 	}
 
