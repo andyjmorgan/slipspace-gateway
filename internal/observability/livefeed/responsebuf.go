@@ -138,6 +138,7 @@ func (b *ResponseBuffer) setHeaders(h map[string][]string) {
 type teeWriter struct {
 	http.ResponseWriter
 	buf          *ResponseBuffer
+	redactor     *headers.Redactor
 	headersTaken bool
 }
 
@@ -168,7 +169,7 @@ func (t *teeWriter) snapshotHeadersOnce() {
 		return
 	}
 	t.headersTaken = true
-	t.buf.setHeaders(headers.RedactSensitive(t.Header()))
+	t.buf.setHeaders(t.redactor.Redact(t.Header()))
 }
 
 func (t *teeWriter) Flush() {
@@ -181,12 +182,14 @@ func (t *teeWriter) Unwrap() http.ResponseWriter { return t.ResponseWriter }
 
 // WrapResponseWriter wraps w so every Write tees into buf. buf may be
 // nil — in which case the original writer is returned unchanged. This
-// lets callers omit a feature-flag check at every wrap site.
-func WrapResponseWriter(w http.ResponseWriter, buf *ResponseBuffer) http.ResponseWriter {
+// lets callers omit a feature-flag check at every wrap site. redactor
+// may be nil; the nil-receiver path on Redactor falls back to the
+// built-in substring list.
+func WrapResponseWriter(w http.ResponseWriter, buf *ResponseBuffer, redactor *headers.Redactor) http.ResponseWriter {
 	if buf == nil {
 		return w
 	}
-	return &teeWriter{ResponseWriter: w, buf: buf}
+	return &teeWriter{ResponseWriter: w, buf: buf, redactor: redactor}
 }
 
 // responseBufKey is the unexported context-key type for ResponseBuffer

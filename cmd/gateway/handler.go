@@ -10,6 +10,7 @@ import (
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
@@ -35,6 +36,7 @@ func buildDataPlaneHandler(
 	breakers resiliencemw.BreakerStore,
 	meters *observability.Meters,
 	errs *httperr.Writer,
+	redactor *headers.Redactor,
 	_ *slog.Logger,
 ) http.Handler {
 	final := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +104,7 @@ func buildDataPlaneHandler(
 	h = rules.BodyRemarshalHandler(meters, h)
 	h = resiliencemw.HTTPHandler(policyLookup, breakers, meters, h)
 	h = rules.HTTPHandler(evaluator, ruleMatchFromContext, observerFactory, h)
-	h = bodycapture.HTTPHandler(kindFrom, h)
+	h = bodycapture.HTTPHandler(kindFrom, redactor, h)
 	h = auth.HTTPHandler(resolver, routeFromContext, h)
 	h = routingMiddleware(router, errs, h)
 	return h

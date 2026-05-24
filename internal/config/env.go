@@ -80,6 +80,7 @@ const (
 	EnvAdminLiveFeedCapacity     = "SLUICE_ADMIN_LIVE_FEED_CAPACITY"
 	EnvAdminLiveFeedBodyBytes    = "SLUICE_ADMIN_LIVE_FEED_BODY_BYTES"
 	EnvAdminLiveFeedBodyMaxBytes = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
+	EnvRedactExtraHeaders        = "SLUICE_REDACT_EXTRA_HEADERS"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -100,6 +101,7 @@ var envVarNames = []string{
 	EnvAdminLiveFeedCapacity,
 	EnvAdminLiveFeedBodyBytes,
 	EnvAdminLiveFeedBodyMaxBytes,
+	EnvRedactExtraHeaders,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -174,6 +176,18 @@ type ServerEnv struct {
 	// truncation. Bodies above the cap are stored head-only with a
 	// truncated flag. Ignored when AdminLiveFeedBodyBytes is zero.
 	AdminLiveFeedBodyMaxBytes int
+
+	// RedactExtraHeaders is the operator-supplied addendum to the
+	// built-in sensitive-header substring matcher used by
+	// internal/headers.Redactor. Each entry is a lowercased substring
+	// matched against inbound header names; any header containing one
+	// of these has its value replaced by "[REDACTED]" before it lands
+	// in the live-messages ring, connector Records, or proxy log
+	// envelopes. The built-in list (auth / api-key / token / cookie /
+	// secret / sluice-identity) is always active; this slice extends
+	// it for environment-specific headers (internal tracing IDs that
+	// carry tenant identifiers, custom auth schemes, etc.).
+	RedactExtraHeaders []string
 }
 
 // PrometheusEnabled reports whether the Prometheus scrape listener is
@@ -243,7 +257,31 @@ func LoadEnv() (*ServerEnv, error) {
 		AdminLiveFeedCapacity:     liveFeedCap,
 		AdminLiveFeedBodyBytes:    bodyBytes,
 		AdminLiveFeedBodyMaxBytes: bodyMaxBytes,
+		RedactExtraHeaders:        envCSVList(EnvRedactExtraHeaders),
 	}, nil
+}
+
+// envCSVList parses a comma-separated env var into a normalized slice.
+// Whitespace is trimmed from each entry, empty entries are dropped,
+// and the slice preserves operator-supplied order so callers can rely
+// on first-match semantics if they ever need them. Returns nil when
+// the env var is unset or contains no non-empty entries.
+func envCSVList(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Validate enforces invariants on a ServerEnv. Returns the first

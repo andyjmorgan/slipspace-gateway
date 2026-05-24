@@ -47,10 +47,15 @@ type Forwarder struct {
 	// instead of stashing it on context under a mutex. Never nil — New
 	// substitutes a no-op factory when callers pass nil.
 	observerFactory ObserverFactory
+
+	// redactor masks credential-bearing headers in the proxy's debug
+	// log envelopes. Never nil — New substitutes a default
+	// (built-ins-only) Redactor when callers pass nil.
+	redactor *headers.Redactor
 }
 
-// Options configures a new Forwarder. Both fields are optional; New
-// substitutes slog.Default and a no-op ObserverFactory for nil values.
+// Options configures a new Forwarder. Every field is optional; New
+// substitutes safe defaults for any nil/zero values.
 type Options struct {
 	Logger *slog.Logger
 
@@ -58,6 +63,13 @@ type Options struct {
 	// Observer that receives lifecycle signals for that single request.
 	// A nil factory falls back to one that returns a no-op observer.
 	ObserverFactory ObserverFactory
+
+	// Redactor masks credential-bearing headers in the proxy's
+	// debug-level header-trace logs. Nil falls back to a default
+	// Redactor with the built-in substring list (auth / api-key /
+	// token / cookie / secret / sluice-identity). Operator-supplied
+	// extras flow through here from cmd/gateway at startup.
+	Redactor *headers.Redactor
 }
 
 // Destination describes the resolved upstream target for a single Forward
@@ -101,10 +113,15 @@ func New(opts Options) *Forwarder {
 	if factory == nil {
 		factory = nopObserverFactory
 	}
+	redactor := opts.Redactor
+	if redactor == nil {
+		redactor = headers.NewRedactor(nil)
+	}
 	return &Forwarder{
 		transports:      make(map[string]*http.Transport),
 		logger:          logger,
 		observerFactory: factory,
+		redactor:        redactor,
 	}
 }
 
@@ -206,6 +223,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 		status:         http.StatusOK,
 		ctx:            ctx,
 		logger:         reqLogger,
+		redactor:       f.redactor,
 	}
 
 	// upstreamErr is set by ErrorHandler so the success-log path can skip
@@ -217,7 +235,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			if reqLogger.Enabled(ctx, slog.LevelDebug) {
 				reqLogger.DebugContext(ctx, "proxy: inbound headers",
-					slog.Any("headers", redactSensitive(pr.In.Header)),
+					slog.Any("headers", f.redactor.Redact(pr.In.Header)),
 				)
 			}
 
@@ -245,7 +263,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 			if reqLogger.Enabled(ctx, slog.LevelDebug) {
 				reqLogger.DebugContext(ctx, "proxy: outbound headers",
 					slog.String("destination", dest.UpstreamURL.String()),
-					slog.Any("headers", redactSensitive(pr.Out.Header)),
+					slog.Any("headers", f.redactor.Redact(pr.Out.Header)),
 				)
 			}
 		},
@@ -257,7 +275,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 				reqLogger.DebugContext(ctx, "proxy: upstream response headers",
 					slog.Int("status_code", resp.StatusCode),
 					slog.Bool("streaming", streaming),
-					slog.Any("headers", redactSensitive(resp.Header)),
+					slog.Any("headers", f.redactor.Redact(resp.Header)),
 				)
 			}
 
@@ -346,13 +364,4 @@ func writeBadGateway(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadGateway)
 	_, _ = w.Write([]byte(`{"error":{"type":"upstream_unavailable","message":"upstream provider unreachable"}}`))
-}
-
-// redactSensitive is a thin shim over internal/headers.RedactSensitive
-// kept so the existing call sites in this file (debug-level header
-// traces) read locally. The shared helper is the implementation; the
-// live-feed body envelope and any future operator-facing surfaces use
-// the same one.
-func redactSensitive(h http.Header) map[string][]string {
-	return headers.RedactSensitive(h)
 }

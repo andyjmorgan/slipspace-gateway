@@ -154,7 +154,7 @@ func TestCapture_HappyPaths(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))
-			got, err := Capture(req, tc.kind)
+			got, err := Capture(req, tc.kind, nil)
 			if err != nil {
 				t.Fatalf("Capture: %v", err)
 			}
@@ -172,7 +172,7 @@ func TestCapture_HappyPaths(t *testing.T) {
 func TestCapture_NilBodyTreatedAsEmpty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Body = nil
-	_, err := Capture(req, KindPassthrough)
+	_, err := Capture(req, KindPassthrough, nil)
 	if err != nil {
 		t.Fatalf("nil-body passthrough should not error: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestCapture_NilBodyTreatedAsEmpty(t *testing.T) {
 func TestCapture_BodyTooLarge(t *testing.T) {
 	big := bytes.Repeat([]byte("a"), int(MaxBodyBytes)+1)
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(big))
-	_, err := Capture(req, KindPassthrough)
+	_, err := Capture(req, KindPassthrough, nil)
 	if !errors.Is(err, ErrBodyTooLarge) {
 		t.Fatalf("err = %v want ErrBodyTooLarge", err)
 	}
@@ -189,7 +189,7 @@ func TestCapture_BodyTooLarge(t *testing.T) {
 
 func TestCapture_MalformedJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"model": "gpt-4",`))
-	_, err := Capture(req, KindChat)
+	_, err := Capture(req, KindChat, nil)
 	if !errors.Is(err, ErrParse) {
 		t.Fatalf("err = %v want ErrParse", err)
 	}
@@ -197,7 +197,7 @@ func TestCapture_MalformedJSON(t *testing.T) {
 
 func TestCapture_UnknownKind(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	_, err := Capture(req, RequestKind("totally-new"))
+	_, err := Capture(req, RequestKind("totally-new"), nil)
 	if !errors.Is(err, ErrUnknownKind) {
 		t.Fatalf("err = %v want ErrUnknownKind", err)
 	}
@@ -205,7 +205,7 @@ func TestCapture_UnknownKind(t *testing.T) {
 
 func TestCapture_ReadError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", &errReader{})
-	_, err := Capture(req, KindChat)
+	_, err := Capture(req, KindChat, nil)
 	if err == nil {
 		t.Fatalf("expected read error")
 	}
@@ -216,7 +216,7 @@ func TestCapture_ReadError(t *testing.T) {
 
 func TestCapture_DynamicPropertiesRoundTrip(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(chatBody))
-	got, err := Capture(req, KindChat)
+	got, err := Capture(req, KindChat, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestHTTPHandler_HappyPath(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := HTTPHandler(kindFromValue(KindChat, true), next)
+	h := HTTPHandler(kindFromValue(KindChat, true), nil, next)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(chatBody))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -272,7 +272,7 @@ func TestHTTPHandler_PassthroughReplacesBody(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := HTTPHandler(kindFromValue(KindPassthrough, true), next)
+	h := HTTPHandler(kindFromValue(KindPassthrough, true), nil, next)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(opaqueRaw))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -287,7 +287,7 @@ func TestHTTPHandler_TooLarge(t *testing.T) {
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true })
 
 	big := bytes.Repeat([]byte("a"), int(MaxBodyBytes)+1)
-	h := HTTPHandler(kindFromValue(KindChat, true), next)
+	h := HTTPHandler(kindFromValue(KindChat, true), nil, next)
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(big))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -308,7 +308,7 @@ func TestHTTPHandler_MalformedBody(t *testing.T) {
 		t.Fatalf("next must not be invoked on malformed body")
 	})
 
-	h := HTTPHandler(kindFromValue(KindChat, true), next)
+	h := HTTPHandler(kindFromValue(KindChat, true), nil, next)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{not json`))
 	req = req.WithContext(observability.WithLogger(req.Context(), logger))
 	rec := httptest.NewRecorder()
@@ -330,7 +330,7 @@ func TestHTTPHandler_MissingKindOnContext(t *testing.T) {
 		t.Fatalf("next must not be invoked without a kind")
 	})
 
-	h := HTTPHandler(kindFromValue("", false), next)
+	h := HTTPHandler(kindFromValue("", false), nil, next)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(chatBody))
 	req = req.WithContext(observability.WithLogger(req.Context(), logger))
 	rec := httptest.NewRecorder()
@@ -350,7 +350,7 @@ func TestHTTPHandler_UnknownKind(t *testing.T) {
 		t.Fatalf("next must not be invoked on unknown kind")
 	})
 
-	h := HTTPHandler(kindFromValue("ghost-shape", true), next)
+	h := HTTPHandler(kindFromValue("ghost-shape", true), nil, next)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -368,7 +368,7 @@ func TestHTTPHandler_ReadError(t *testing.T) {
 		t.Fatalf("next must not be invoked on read failure")
 	})
 
-	h := HTTPHandler(kindFromValue(KindChat, true), next)
+	h := HTTPHandler(kindFromValue(KindChat, true), nil, next)
 	req := httptest.NewRequest(http.MethodPost, "/", &errReader{})
 	req = req.WithContext(observability.WithLogger(req.Context(), logger))
 	rec := httptest.NewRecorder()
@@ -400,7 +400,7 @@ func TestHTTPHandler_PanicsOnNilDeps(t *testing.T) {
 					t.Fatalf("expected panic for %s", tc.name)
 				}
 			}()
-			HTTPHandler(tc.kindFrom, tc.next)
+			HTTPHandler(tc.kindFrom, nil, tc.next)
 		})
 	}
 }

@@ -78,7 +78,7 @@ func TestResponseBuffer_BytesReturnsCopy(t *testing.T) {
 func TestWrapResponseWriter_NilBuf_Passthrough(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()
-	got := WrapResponseWriter(rec, nil)
+	got := WrapResponseWriter(rec, nil, nil)
 	if got != http.ResponseWriter(rec) {
 		t.Error("nil buf should return the original writer")
 	}
@@ -88,7 +88,7 @@ func TestWrapResponseWriter_TeesWritesToBuf(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()
 	buf := NewResponseBuffer(32)
-	w := WrapResponseWriter(rec, buf)
+	w := WrapResponseWriter(rec, buf, nil)
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("hello ")); err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestWrapResponseWriter_ForwardsFlush(t *testing.T) {
 	t.Parallel()
 	rec := &flushingRecorder{ResponseRecorder: httptest.NewRecorder()}
 	buf := NewResponseBuffer(32)
-	w := WrapResponseWriter(rec, buf)
+	w := WrapResponseWriter(rec, buf, nil)
 	f, ok := w.(http.Flusher)
 	if !ok {
 		t.Fatal("teeWriter does not implement http.Flusher")
@@ -146,7 +146,7 @@ func TestWrapResponseWriter_SnapshotsHeadersOnWriteHeader(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()
 	buf := NewResponseBuffer(64)
-	w := WrapResponseWriter(rec, buf)
+	w := WrapResponseWriter(rec, buf, nil)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Authorization", "Bearer leaked-token")
 	w.WriteHeader(200)
@@ -168,7 +168,7 @@ func TestWrapResponseWriter_SnapshotsHeadersOnImplicitWriteHeader(t *testing.T) 
 	// land with no headers in the body store.
 	rec := httptest.NewRecorder()
 	buf := NewResponseBuffer(64)
-	w := WrapResponseWriter(rec, buf)
+	w := WrapResponseWriter(rec, buf, nil)
 	w.Header().Set("X-Sluice-Correlation-Id", "abc-123")
 	if _, err := w.Write([]byte(`{"ok":true}`)); err != nil {
 		t.Fatalf("Write: %v", err)

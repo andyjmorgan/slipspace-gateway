@@ -16,6 +16,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/factory"
+	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
@@ -119,7 +120,16 @@ func run(ctx context.Context) error {
 
 	reporter := newReporterFactory(spoolInst, resolved, logger, obs.Meters, liveFeed, bodyStore)
 	observerFactory := reporter.Factory()
-	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: observerFactory})
+	// One Redactor for the whole process — the built-in substring
+	// list plus any operator-supplied extras from
+	// SLUICE_REDACT_EXTRA_HEADERS. Threaded into the proxy (for
+	// debug header traces), bodycapture (for the Captured.Headers
+	// surface), and livefeed (for the tee-writer response headers).
+	redactor := headers.NewRedactor(env.RedactExtraHeaders)
+	if extras := redactor.Extras(); len(extras) > 0 {
+		logger.Info("redactor configured", "extra_substrings", extras)
+	}
+	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: observerFactory, Redactor: redactor})
 
 	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, env.RulesMaxGroupDepth, obs.Meters)
 
@@ -132,13 +142,13 @@ func run(ctx context.Context) error {
 	if err := registerBreakerStateGauge(obs, breakers); err != nil {
 		return fmt.Errorf("gateway: register cb.state gauge: %w", err)
 	}
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, policyLookup, breakers, obs.Meters, errs, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, policyLookup, breakers, obs.Meters, errs, redactor, logger)
 
 	// responseCaptureMiddleware sits between recover and the data
 	// plane so every panic is still logged, but the per-request
 	// response buffer is allocated before any handler runs. Nil-safe
 	// when bodies are disabled — the wrapper degrades to passthrough.
-	captured := responseCaptureMiddleware(env.AdminLiveFeedBodyMaxBytes, bodyStore != nil, dataPlane)
+	captured := responseCaptureMiddleware(env.AdminLiveFeedBodyMaxBytes, bodyStore != nil, redactor, dataPlane)
 
 	// recoverMiddleware sits between correlation (so the captured
 	// log carries the correlation_id) and the data-plane chain, so
@@ -295,14 +305,14 @@ func buildBodyStore(env *config.ServerEnv, logger *slog.Logger) (*livefeed.BodyS
 // returns next unchanged — the rest of the chain is identical either
 // way, and the reporter degrades to "no body captured" without a
 // branch at every read site.
-func responseCaptureMiddleware(maxBytes int, enabled bool, next http.Handler) http.Handler {
+func responseCaptureMiddleware(maxBytes int, enabled bool, redactor *headers.Redactor, next http.Handler) http.Handler {
 	if !enabled {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := livefeed.NewResponseBuffer(maxBytes)
 		ctx := livefeed.WithResponseBuffer(r.Context(), buf)
-		wrapped := livefeed.WrapResponseWriter(w, buf)
+		wrapped := livefeed.WrapResponseWriter(w, buf, redactor)
 		next.ServeHTTP(wrapped, r.WithContext(ctx))
 	})
 }
