@@ -312,7 +312,15 @@ func (r *ResolvedConfig) Validate() error {
 // emittedRoute is one fully-resolved RouteIndex entry for a
 // (provider, endpoint, accepted_path) triple.
 type emittedRoute struct {
-	Path     string
+	// Path is the prefixed gateway-side path the router matches against.
+	Path string
+
+	// AcceptedPath is the un-prefixed accepted_paths value the route was
+	// emitted from. Carried through to Route so the destination builder
+	// can mirror it as the upstream path template for endpoints that
+	// declare no explicit Path.
+	AcceptedPath string
+
 	Provider string
 	Endpoint string
 }
@@ -332,16 +340,18 @@ func emitRoutes(providerName, endpointName string, p contractsconfig.Provider, e
 	for _, ap := range e.AcceptedPaths {
 		if p.Prefix != "" {
 			out = append(out, emittedRoute{
-				Path:     "/" + p.Prefix + ap,
-				Provider: providerName,
-				Endpoint: endpointName,
+				Path:         "/" + p.Prefix + ap,
+				AcceptedPath: ap,
+				Provider:     providerName,
+				Endpoint:     endpointName,
 			})
 		}
 		if bareEmits {
 			out = append(out, emittedRoute{
-				Path:     ap,
-				Provider: providerName,
-				Endpoint: endpointName,
+				Path:         ap,
+				AcceptedPath: ap,
+				Provider:     providerName,
+				Endpoint:     endpointName,
 			})
 		}
 	}
@@ -365,7 +375,11 @@ func (r *ResolvedConfig) buildIndexes() {
 	for providerName, p := range r.Providers {
 		for endpointName, e := range p.Endpoints {
 			for _, route := range emitRoutes(providerName, endpointName, p, e) {
-				r.RouteIndex[route.Path] = Route{Provider: route.Provider, Endpoint: route.Endpoint}
+				r.RouteIndex[route.Path] = Route{
+					Provider:     route.Provider,
+					Endpoint:     route.Endpoint,
+					AcceptedPath: route.AcceptedPath,
+				}
 			}
 		}
 	}

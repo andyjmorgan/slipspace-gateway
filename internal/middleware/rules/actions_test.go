@@ -14,7 +14,7 @@ import (
 
 func freshState(t *testing.T) *MutableState {
 	t.Helper()
-	return NewMutableState("openai", "chat_completions", nil, http.Header{})
+	return NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 }
 
 func TestApplyChangeProvider(t *testing.T) {

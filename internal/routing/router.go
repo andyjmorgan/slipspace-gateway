@@ -34,6 +34,12 @@ type bound struct {
 
 	Endpoint string
 
+	// AcceptedPath is the un-prefixed accepted_paths value this route
+	// was emitted from. Surfaced on Match so the destination builder
+	// can mirror it as the upstream path when the endpoint declares no
+	// explicit Path.
+	AcceptedPath string
+
 	// Methods is the set of uppercase HTTP verbs allowed at this route,
 	// pre-normalized at build time so Resolve only does a map probe.
 	Methods map[string]struct{}
@@ -43,10 +49,16 @@ type bound struct {
 // regex. ParamNames carries the names of the `{...}` segments in left-to-
 // right order; the i-th regex capture group corresponds to ParamNames[i].
 type patternedRoute struct {
-	// Path is the original accepted_paths string. Retained for diagnostics
-	// and for the lexicographic sort that gives Resolve a stable iteration
-	// order.
+	// Path is the prefixed gateway-side route key. Retained for
+	// diagnostics and for the lexicographic sort that gives Resolve a
+	// stable iteration order.
 	Path string
+
+	// AcceptedPath is the un-prefixed accepted_paths value this pattern
+	// was emitted from. Surfaced on Match so the destination builder
+	// can mirror it as the upstream path when the endpoint declares no
+	// explicit Path.
+	AcceptedPath string
 
 	// Regex is the anchored compiled pattern built by compilePattern.
 	Regex *regexp.Regexp
@@ -68,6 +80,14 @@ type Match struct {
 	Provider string
 
 	Endpoint string
+
+	// MatchedPath is the un-prefixed accepted_paths value that owned
+	// the route (e.g. "/v1beta/models/{model}:generateContent"). The
+	// destination builder uses this as the upstream path template when
+	// the endpoint declares no explicit Path — supports folding
+	// streaming and non-streaming variants of the same wire shape into
+	// one endpoint entry.
+	MatchedPath string
 
 	// Params carries the captured `{name}` values for patterned matches,
 	// keyed by placeholder name. Nil for exact-path matches and for
@@ -104,9 +124,10 @@ func New(resolved *config.ResolvedConfig) (*Router, error) {
 
 		if !strings.ContainsRune(path, '{') {
 			r.exact[path] = bound{
-				Provider: route.Provider,
-				Endpoint: route.Endpoint,
-				Methods:  methods,
+				Provider:     route.Provider,
+				Endpoint:     route.Endpoint,
+				AcceptedPath: route.AcceptedPath,
+				Methods:      methods,
 			}
 			continue
 		}
@@ -116,12 +137,13 @@ func New(resolved *config.ResolvedConfig) (*Router, error) {
 			return nil, err
 		}
 		r.patterns = append(r.patterns, patternedRoute{
-			Path:       path,
-			Regex:      re,
-			ParamNames: params,
-			Methods:    methods,
-			Provider:   route.Provider,
-			Endpoint:   route.Endpoint,
+			Path:         path,
+			AcceptedPath: route.AcceptedPath,
+			Regex:        re,
+			ParamNames:   params,
+			Methods:      methods,
+			Provider:     route.Provider,
+			Endpoint:     route.Endpoint,
 		})
 	}
 
@@ -147,7 +169,11 @@ func (r *Router) Resolve(method, path string) (Match, error) {
 		if _, allowed := b.Methods[m]; !allowed {
 			return Match{}, ErrMethodNotAllowed
 		}
-		return Match{Provider: b.Provider, Endpoint: b.Endpoint}, nil
+		return Match{
+			Provider:    b.Provider,
+			Endpoint:    b.Endpoint,
+			MatchedPath: b.AcceptedPath,
+		}, nil
 	}
 
 	for i := range r.patterns {
@@ -166,7 +192,12 @@ func (r *Router) Resolve(method, path string) (Match, error) {
 				params[name] = sub[idx+1]
 			}
 		}
-		return Match{Provider: p.Provider, Endpoint: p.Endpoint, Params: params}, nil
+		return Match{
+			Provider:    p.Provider,
+			Endpoint:    p.Endpoint,
+			MatchedPath: p.AcceptedPath,
+			Params:      params,
+		}, nil
 	}
 
 	return Match{}, ErrNoRoute

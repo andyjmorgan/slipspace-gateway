@@ -44,7 +44,7 @@ func providerCondition(p string) contractsrules.Condition {
 func TestEvaluator_EmptyRules_NoOp(t *testing.T) {
 	t.Parallel()
 	e := rules.NewEvaluator(nil, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	out, err := e.Evaluate(context.Background(), newGC(), state, nil)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -65,7 +65,7 @@ func TestEvaluator_SingleRule_AppliesAction(t *testing.T) {
 		"dev": {r1},
 	}, 8, nil)
 
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
 	out, err := e.Evaluate(ctx, newGC(), state, nil)
@@ -107,7 +107,7 @@ func TestEvaluator_RuleIDPropagates(t *testing.T) {
 		Actions:   []contractsrules.Action{setHeaderAction("X-Test", "v")},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -126,7 +126,7 @@ func TestEvaluator_NoMatch_NoRecord(t *testing.T) {
 		Actions:   []contractsrules.Action{setHeaderAction("X-Test", "v")},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -153,7 +153,7 @@ func TestEvaluator_BehaviorExit_HaltsIteration(t *testing.T) {
 		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -183,7 +183,7 @@ func TestEvaluator_BehaviorContinue_IsDefault(t *testing.T) {
 		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -206,7 +206,7 @@ func TestEvaluator_TypedBody_ChangeModelName(t *testing.T) {
 		},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	body := &openaichat.ChatCompletionRequest{Model: "gpt-3.5"}
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 
@@ -232,7 +232,7 @@ func TestEvaluator_ActionError_RecordedOnEvent(t *testing.T) {
 		},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -257,7 +257,7 @@ func TestEvaluator_UnknownConfigName_NoOp(t *testing.T) {
 		Actions:   []contractsrules.Action{setHeaderAction("X", "v")},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"prod": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
 		t.Fatalf("Evaluate: %v", err)

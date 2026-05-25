@@ -104,4 +104,11 @@ type Route struct {
 	// Endpoint is the endpoints-map key under that provider (e.g.
 	// "chat_completions").
 	Endpoint string
+
+	// AcceptedPath is the un-prefixed accepted_paths value the route was
+	// emitted from (e.g. "/v1beta/models/{model}:generateContent"). The
+	// gateway prefix is stripped so the same path is usable as the
+	// upstream destination template when the endpoint declares no
+	// explicit Path — see buildDestination's mirror branch.
+	AcceptedPath string
 }

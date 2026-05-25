@@ -58,9 +58,10 @@ providers:
     base_url: http://mockllm:5555
     endpoints:
       generate_content:
-        path: /v1beta/models/{model}:generateContent
         method: [POST]
-        accepted_paths: ["/v1beta/models/{model}:generateContent"]
+        accepted_paths:
+          - /v1beta/models/{model}:generateContent
+          - /v1beta/models/{model}:streamGenerateContent
         accepts_streaming: true
         request_kind: generate_content
         prefix_optional: true

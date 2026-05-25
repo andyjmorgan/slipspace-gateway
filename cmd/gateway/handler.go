@@ -126,12 +126,12 @@ func makePolicyLookup(resolved *config.ResolvedConfig) resiliencemw.PolicyLookup
 // ruleMatchFromContext adapts matchFromContext to the rules
 // middleware's MatchFromContextFunc signature, so the rules package
 // does not need to import internal/routing.
-func ruleMatchFromContext(ctx context.Context) (string, string, map[string]string, bool) {
+func ruleMatchFromContext(ctx context.Context) (string, string, string, map[string]string, bool) {
 	m, ok := matchFromContext(ctx)
 	if !ok {
-		return "", "", nil, false
+		return "", "", "", nil, false
 	}
-	return m.Provider, m.Endpoint, m.Params, true
+	return m.Provider, m.Endpoint, m.MatchedPath, m.Params, true
 }
 
 // routeFromContext adapts matchFromContext to the auth middleware's expected
@@ -217,7 +217,16 @@ func buildDestination(
 		upstream = *state.UpstreamURL
 	} else {
 		upstream = *baseURL
-		upstreamPath := substitutePlaceholders(endpoint.Path, state.PathParams)
+		// When the endpoint declares no explicit Path, mirror the
+		// inbound matched accepted_paths value. This lets one endpoint
+		// entry cover multiple upstream paths (e.g. Gemini's
+		// :generateContent + :streamGenerateContent split) without a
+		// second endpoint key.
+		tmpl := endpoint.Path
+		if tmpl == "" {
+			tmpl = state.MatchedPath
+		}
+		upstreamPath := substitutePlaceholders(tmpl, state.PathParams)
 		upstream.Path = joinPaths(baseURL.Path, upstreamPath)
 		upstream.RawPath = ""
 	}

@@ -18,7 +18,7 @@ import (
 // Injected via the constructor so this package does not import
 // internal/routing (avoids a potential cycle and lets tests stub
 // without a real router).
-type MatchFromContextFunc func(ctx context.Context) (provider string, endpoint string, pathParams map[string]string, ok bool)
+type MatchFromContextFunc func(ctx context.Context) (provider string, endpoint string, matchedPath string, pathParams map[string]string, ok bool)
 
 // HTTPHandler runs the rule engine between bodycapture and the
 // downstream final handler.
@@ -53,7 +53,7 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 		ctx := r.Context()
 		logger := observability.FromContext(ctx)
 
-		provider, endpoint, params, ok := matchFrom(ctx)
+		provider, endpoint, matchedPath, params, ok := matchFrom(ctx)
 		if !ok {
 			logger.ErrorContext(ctx, "rules: no route on context")
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -65,7 +65,7 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 
 		ctx, _ = WithMatchBuffer(ctx)
 
-		state := NewMutableState(provider, endpoint, params, r.Header)
+		state := NewMutableState(provider, endpoint, matchedPath, params, r.Header)
 		gc := GatewayContext{
 			Provider:          provider,
 			Endpoint:          endpoint,

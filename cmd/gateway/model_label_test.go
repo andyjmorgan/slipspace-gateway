@@ -32,7 +32,7 @@ func TestOutboundModel(t *testing.T) {
 	t.Parallel()
 
 	stateWith := func(provider, endpoint string, params map[string]string) *rules.MutableState {
-		return rules.NewMutableState(provider, endpoint, params, nil)
+		return rules.NewMutableState(provider, endpoint, "", params, nil)
 	}
 
 	cases := []struct {
