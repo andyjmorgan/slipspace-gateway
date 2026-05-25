@@ -30,7 +30,7 @@ func TestEvaluator_ReturnStatusCode_TerminatesWithResponse(t *testing.T) {
 	t.Parallel()
 	r := returnStatusRule("block-pii", `{"error":"blocked"}`, 403, contractsrules.StatusBodyJSON)
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
 	result, err := e.Evaluate(ctx, newGC(), state, nil)
@@ -71,7 +71,7 @@ func TestEvaluator_ReturnStatusCode_StopsActionLoop(t *testing.T) {
 		},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -96,7 +96,7 @@ func TestEvaluator_ReturnStatusCode_StopsRuleLoop(t *testing.T) {
 		Actions:   []contractsrules.Action{setHeaderAction("X-Should-Not-Set", "v")},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -110,7 +110,7 @@ func TestEvaluator_ReturnStatusCode_ClampsBadStatus(t *testing.T) {
 	t.Parallel()
 	r := returnStatusRule("oops", "x", 99, contractsrules.StatusBodyText)
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	result, _ := e.Evaluate(ctx, newGC(), state, nil)
 	if result.Outcome.Response.StatusCode != 500 {
@@ -248,7 +248,7 @@ func TestApplyLlmImpersonation_TerminatesWithPlainText(t *testing.T) {
 		},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
 	result, err := e.Evaluate(ctx, newGC(), state, nil)
@@ -285,7 +285,7 @@ func TestApplyLlmImpersonation_EmptyMessageErrors(t *testing.T) {
 		},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
 	result, _ := e.Evaluate(ctx, newGC(), state, nil)

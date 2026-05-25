@@ -11,8 +11,8 @@ import (
 )
 
 func stubMatch(provider, endpoint string) rules.MatchFromContextFunc {
-	return func(context.Context) (string, string, map[string]string, bool) {
-		return provider, endpoint, nil, true
+	return func(context.Context) (string, string, string, map[string]string, bool) {
+		return provider, endpoint, "", nil, true
 	}
 }
 
@@ -73,8 +73,8 @@ func TestHTTPHandler_RuleAppliesStashesState(t *testing.T) {
 func TestHTTPHandler_NoMatchOnContext_500(t *testing.T) {
 	t.Parallel()
 	e := rules.NewEvaluator(nil, 8, nil)
-	noMatch := func(context.Context) (string, string, map[string]string, bool) {
-		return "", "", nil, false
+	noMatch := func(context.Context) (string, string, string, map[string]string, bool) {
+		return "", "", "", nil, false
 	}
 	h := rules.HTTPHandler(e, noMatch, nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("next should not be called when matchFrom fails")
@@ -119,8 +119,8 @@ func TestHTTPHandler_ExtractInboundModel_PathParamsBranch(t *testing.T) {
 		Actions:   []contractsrules.Action{setHeaderAction("X-Match", "yes")},
 	}
 	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"": {tagOnGemini}}, 8, nil)
-	matchWithParams := func(context.Context) (string, string, map[string]string, bool) {
-		return "gemini", "generate_content", map[string]string{"model": "gemini-2.0-flash-001"}, true
+	matchWithParams := func(context.Context) (string, string, string, map[string]string, bool) {
+		return "gemini", "generate_content", "/v1beta/models/{model}:generateContent", map[string]string{"model": "gemini-2.0-flash-001"}, true
 	}
 
 	var stateSeen *rules.MutableState

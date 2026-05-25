@@ -17,18 +17,18 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/azureblob"
 )
 
 const (
-	azuriteImage     = "mcr.microsoft.com/azure-storage/azurite:latest"
-	azuriteBlobPort  = "10000/tcp"
-	azuriteAccount   = "devstoreaccount1"
+	azuriteImage    = "mcr.microsoft.com/azure-storage/azurite:latest"
+	azuriteBlobPort = "10000/tcp"
+	azuriteAccount  = "devstoreaccount1"
 	// Azurite ships this key with its README; not a real credential.
-	azuriteAccKey    = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" //nolint:gosec // G101: Azurite's documented public default key
-	startupTimeout   = 60 * time.Second
+	azuriteAccKey  = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" //nolint:gosec // G101: Azurite's documented public default key
+	startupTimeout = 60 * time.Second
 )
 
 // startAzurite spins up the Azurite emulator with the blob service

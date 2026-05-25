@@ -193,6 +193,60 @@ func TestBuildDestination_CascadeOverrides(t *testing.T) {
 	cfg := &contractsconfig.Configuration{UpstreamCredentials: map[string]string{"openai": "sk-config"}}
 	authResult := auth.AuthResult{Mode: auth.ModeManaged, Configuration: cfg, Provider: "openai", Endpoint: "chat_completions"}
 
+	t.Run("endpoint.Path empty mirrors state.MatchedPath", func(t *testing.T) {
+		// Gemini folds :generateContent and :streamGenerateContent into
+		// one endpoint by listing both in accepted_paths and omitting
+		// path. The destination builder must mirror whichever inbound
+		// accepted_path matched to upstream so the routing variant is
+		// preserved end-to-end.
+		mirrorProvider := contractsconfig.Provider{
+			BaseURL: "http://upstream",
+			Endpoints: map[string]contractsconfig.Endpoint{
+				"generate_content": {Method: []string{http.MethodPost}}, // Path intentionally empty
+			},
+		}
+		mirrorEndpoint := mirrorProvider.Endpoints["generate_content"]
+		mirrorAuth := auth.AuthResult{Mode: auth.ModeManaged, Configuration: &contractsconfig.Configuration{}, Provider: "gemini", Endpoint: "generate_content"}
+
+		state := &rules.MutableState{
+			Provider:        "gemini",
+			Endpoint:        "generate_content",
+			MatchedPath:     "/v1beta/models/{model}:streamGenerateContent",
+			PathParams:      map[string]string{"model": "gemini-1.5-flash"},
+			OutgoingHeaders: http.Header{},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-1.5-flash:streamGenerateContent", nil)
+
+		dest, err := buildDestination(mirrorProvider, mirrorEndpoint, state, mirrorAuth, req)
+		if err != nil {
+			t.Fatalf("buildDestination: %v", err)
+		}
+		if got, want := dest.UpstreamURL.Path, "/v1beta/models/gemini-1.5-flash:streamGenerateContent"; got != want {
+			t.Errorf("UpstreamURL.Path = %q, want %q (mirrored from MatchedPath)", got, want)
+		}
+	})
+
+	t.Run("endpoint.Path set wins over state.MatchedPath", func(t *testing.T) {
+		// When the operator declares an explicit Path, the matched
+		// accepted_path must NOT bleed into the upstream destination —
+		// the template is the source of truth.
+		state := &rules.MutableState{
+			Provider:        "openai",
+			Endpoint:        "chat_completions",
+			MatchedPath:     "/some/other/path", // should be ignored
+			OutgoingHeaders: http.Header{},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+		dest, err := buildDestination(provider, endpoint, state, authResult, req)
+		if err != nil {
+			t.Fatalf("buildDestination: %v", err)
+		}
+		if got, want := dest.UpstreamURL.Path, "/v1/chat/completions"; got != want {
+			t.Errorf("UpstreamURL.Path = %q, want %q (endpoint.Path wins)", got, want)
+		}
+	})
+
 	t.Run("ChangeUrl wins over endpoint template", func(t *testing.T) {
 		overrideURL, _ := url.Parse("http://other-upstream.local/redirect/path")
 		state := &rules.MutableState{

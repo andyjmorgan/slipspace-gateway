@@ -20,8 +20,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	sluices3 "github.com/andyjmorgan/sluice-gateway/internal/connector/s3"
 )
 

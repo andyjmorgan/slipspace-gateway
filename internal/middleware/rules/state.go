@@ -39,6 +39,15 @@ type MutableState struct {
 	// ChangeUrlAction the rule author writes explicitly.
 	Endpoint string
 
+	// MatchedPath is the un-prefixed accepted_paths value the router
+	// matched the inbound request to. Used by the destination builder
+	// as the upstream path template when the endpoint declares no
+	// explicit Path — supports folding streaming and non-streaming
+	// variants of the same wire shape into one endpoint. Untouched by
+	// any action; a rule that retargets via ChangeUrlAction bypasses
+	// this field entirely.
+	MatchedPath string
+
 	// UpstreamURL is the post-rule destination URL the forwarder will
 	// dial. nil means "let the destination builder resolve from
 	// (Provider, Endpoint, PathParams)". ChangeUrlAction sets this to
@@ -151,6 +160,7 @@ func (s *MutableState) Clone() *MutableState {
 	out := &MutableState{
 		Provider:    s.Provider,
 		Endpoint:    s.Endpoint,
+		MatchedPath: s.MatchedPath,
 		BodyMutated: s.BodyMutated,
 		PolicyRef:   s.PolicyRef,
 	}
@@ -193,7 +203,7 @@ func (s *MutableState) Clone() *MutableState {
 // caller's intent; the parameter is retained on the public API so
 // future evolutions (header echoing, audit) can opt in without a
 // signature break.
-func NewMutableState(provider, endpoint string, pathParams map[string]string, _ http.Header) *MutableState {
+func NewMutableState(provider, endpoint, matchedPath string, pathParams map[string]string, _ http.Header) *MutableState {
 	params := make(map[string]string, len(pathParams))
 	for k, v := range pathParams {
 		params[k] = v
@@ -202,6 +212,7 @@ func NewMutableState(provider, endpoint string, pathParams map[string]string, _ 
 	return &MutableState{
 		Provider:        provider,
 		Endpoint:        endpoint,
+		MatchedPath:     matchedPath,
 		PathParams:      params,
 		OutgoingHeaders: make(http.Header),
 	}

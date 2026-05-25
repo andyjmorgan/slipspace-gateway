@@ -9,8 +9,7 @@ import (
 func TestNewMutableState_SeedsFromRouting(t *testing.T) {
 	t.Parallel()
 
-	s := NewMutableState("openai", "chat_completions",
-		map[string]string{"model": "gpt-4o-mini"},
+	s := NewMutableState("openai", "chat_completions", "", map[string]string{"model": "gpt-4o-mini"},
 		http.Header{"X-Test": []string{"v1"}}, // intentionally ignored
 	)
 
@@ -45,7 +44,7 @@ func TestNewMutableState_IsolatesFromCaller(t *testing.T) {
 	// retains. (Outgoing headers do not seed from the inbound set, so
 	// no leak check needed there.)
 	srcParams := map[string]string{"model": "gpt-4o"}
-	s := NewMutableState("openai", "chat_completions", srcParams, nil)
+	s := NewMutableState("openai", "chat_completions", "", srcParams, nil)
 	srcParams["model"] = "claude-3"
 
 	if got := s.PathParams["model"]; got != "gpt-4o" {
@@ -56,7 +55,7 @@ func TestNewMutableState_IsolatesFromCaller(t *testing.T) {
 func TestNewMutableState_NilInputs(t *testing.T) {
 	t.Parallel()
 
-	s := NewMutableState("openai", "chat_completions", nil, nil)
+	s := NewMutableState("openai", "chat_completions", "", nil, nil)
 	if s.PathParams == nil {
 		t.Errorf("PathParams should be initialised to empty map, got nil")
 	}
@@ -74,7 +73,7 @@ func TestNewMutableState_NilInputs(t *testing.T) {
 func TestMutableState_OverrideAssignments(t *testing.T) {
 	t.Parallel()
 
-	s := NewMutableState("openai", "chat_completions", nil, nil)
+	s := NewMutableState("openai", "chat_completions", "", nil, nil)
 
 	u, _ := url.Parse("https://example.com/v1/chat/completions")
 	s.UpstreamURL = u

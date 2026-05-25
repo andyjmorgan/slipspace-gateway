@@ -72,19 +72,19 @@ func buildConfig(t *testing.T) *config.ResolvedConfig {
 			},
 		},
 		RouteIndex: map[string]config.Route{
-			"/v1/chat/completions":                          {Provider: "openai", Endpoint: "chat_completions"},
-			"/chat/completions":                             {Provider: "openai", Endpoint: "chat_completions"},
-			"/openai/v1/chat/completions":                   {Provider: "openai", Endpoint: "chat_completions"},
-			"/openai/chat/completions":                      {Provider: "openai", Endpoint: "chat_completions"},
-			"/v1/models":                                    {Provider: "openai", Endpoint: "models"},
-			"/models":                                       {Provider: "openai", Endpoint: "models"},
-			"/openai/v1/models":                             {Provider: "openai", Endpoint: "models"},
-			"/openai/models":                                {Provider: "openai", Endpoint: "models"},
-			"/anthropic/v1/messages":                        {Provider: "anthropic", Endpoint: "messages"},
-			"/anthropic/messages":                           {Provider: "anthropic", Endpoint: "messages"},
-			"/anthropic/v1/models":                          {Provider: "anthropic", Endpoint: "models"},
-			"/gemini/v1beta/models":                         {Provider: "gemini", Endpoint: "models"},
-			"/gemini/v1beta/models/{model}:generateContent": {Provider: "gemini", Endpoint: "generate_content"},
+			"/v1/chat/completions":                          {Provider: "openai", Endpoint: "chat_completions", AcceptedPath: "/v1/chat/completions"},
+			"/chat/completions":                             {Provider: "openai", Endpoint: "chat_completions", AcceptedPath: "/chat/completions"},
+			"/openai/v1/chat/completions":                   {Provider: "openai", Endpoint: "chat_completions", AcceptedPath: "/v1/chat/completions"},
+			"/openai/chat/completions":                      {Provider: "openai", Endpoint: "chat_completions", AcceptedPath: "/chat/completions"},
+			"/v1/models":                                    {Provider: "openai", Endpoint: "models", AcceptedPath: "/v1/models"},
+			"/models":                                       {Provider: "openai", Endpoint: "models", AcceptedPath: "/models"},
+			"/openai/v1/models":                             {Provider: "openai", Endpoint: "models", AcceptedPath: "/v1/models"},
+			"/openai/models":                                {Provider: "openai", Endpoint: "models", AcceptedPath: "/models"},
+			"/anthropic/v1/messages":                        {Provider: "anthropic", Endpoint: "messages", AcceptedPath: "/v1/messages"},
+			"/anthropic/messages":                           {Provider: "anthropic", Endpoint: "messages", AcceptedPath: "/messages"},
+			"/anthropic/v1/models":                          {Provider: "anthropic", Endpoint: "models", AcceptedPath: "/v1/models"},
+			"/gemini/v1beta/models":                         {Provider: "gemini", Endpoint: "models", AcceptedPath: "/v1beta/models"},
+			"/gemini/v1beta/models/{model}:generateContent": {Provider: "gemini", Endpoint: "generate_content", AcceptedPath: "/v1beta/models/{model}:generateContent"},
 		},
 	}
 	return rc
@@ -287,6 +287,55 @@ func TestResolve(t *testing.T) {
 				if got.Params[k] != v {
 					t.Fatalf("Params[%q] = %q, want %q", k, got.Params[k], v)
 				}
+			}
+		})
+	}
+}
+
+// TestResolve_PopulatesMatchedPath asserts every Match carries the
+// un-prefixed accepted_paths value the route was emitted from, so the
+// destination builder can mirror it as the upstream path when the
+// endpoint declares no explicit Path.
+func TestResolve_PopulatesMatchedPath(t *testing.T) {
+	rc := buildConfig(t)
+	r, err := routing.New(rc)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		want   string
+	}{
+		{
+			name:   "exact bare",
+			method: "POST",
+			path:   "/v1/chat/completions",
+			want:   "/v1/chat/completions",
+		},
+		{
+			name:   "exact prefixed strips prefix",
+			method: "POST",
+			path:   "/openai/v1/chat/completions",
+			want:   "/v1/chat/completions",
+		},
+		{
+			name:   "patterned prefixed",
+			method: "POST",
+			path:   "/gemini/v1beta/models/gemini-pro:generateContent",
+			want:   "/v1beta/models/{model}:generateContent",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := r.Resolve(tc.method, tc.path)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if got.MatchedPath != tc.want {
+				t.Errorf("MatchedPath = %q, want %q", got.MatchedPath, tc.want)
 			}
 		})
 	}

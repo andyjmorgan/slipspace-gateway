@@ -144,6 +144,48 @@ func TestGemini_GenerateContent_Streaming(t *testing.T) {
 	}
 }
 
+// TestGemini_StreamGenerateContent_FoldedEndpoint exercises the
+// path-mirror fold: config-dev's gemini.generate_content lists both
+// :generateContent and :streamGenerateContent in accepted_paths and
+// omits the explicit Path so each matched URL forwards verbatim.
+// Verifies (a) the streaming variant routes through the same endpoint
+// key (so the accumulator dispatches) and (b) the upstream sees
+// :streamGenerateContent (not :generateContent).
+func TestGemini_StreamGenerateContent_FoldedEndpoint(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	upstreamPath := "/v1beta/models/gemini-1.5-flash:streamGenerateContent"
+	h.StageMockResponse(harness.CannedResponse{
+		Method:    http.MethodPost,
+		Path:      upstreamPath,
+		Streaming: true,
+		Headers:   map[string]string{"Content-Type": "text/event-stream"},
+		StreamChunks: []harness.CannedStreamChunk{
+			{Data: `{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}]}`},
+			{Data: `{"candidates":[{"content":{"parts":[{"text":"!"}],"role":"model"},"finishReason":"STOP"}]}`},
+		},
+	})
+
+	body := map[string]any{
+		"contents": []map[string]any{
+			{"role": "user", "parts": []map[string]string{{"text": "hi"}}},
+		},
+	}
+	stream := h.PostStream("/gemini/v1beta/models/gemini-1.5-flash:streamGenerateContent", body, nil)
+	if got := len(stream.CollectAll(5 * time.Second)); got != 2 {
+		t.Fatalf("chunks=%d want 2", got)
+	}
+
+	captured := h.LastCapturedRequest()
+	if captured == nil {
+		t.Fatal("no upstream request captured")
+	}
+	if captured.Path != upstreamPath {
+		t.Errorf("upstream path = %q, want %q (path-mirror must forward verbatim)", captured.Path, upstreamPath)
+	}
+}
+
 func TestGemini_Models_PrefixRouting(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)

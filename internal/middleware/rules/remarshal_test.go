@@ -71,7 +71,7 @@ func TestBodyRemarshal_MutationReencodesBody(t *testing.T) {
 	t.Parallel()
 
 	body := &openaichat.ChatCompletionRequest{Model: "gpt-4o"}
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	state.BodyMutated = true
 
 	captured := bodycapture.Captured{Kind: bodycapture.KindChat, Body: body}
@@ -113,7 +113,7 @@ func TestBodyRemarshal_NilBodyPassthrough(t *testing.T) {
 	// BodyMutated=true but Captured.Body=nil — the action's PathParams
 	// update did the work; nothing to re-marshal. Middleware should
 	// fall through without erroring.
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	state.BodyMutated = true
 	captured := bodycapture.Captured{Kind: bodycapture.KindPassthrough, Body: nil}
 
@@ -142,7 +142,7 @@ func TestBodyRemarshal_MarshalErrorReturns500(t *testing.T) {
 		t.Fatalf("NewMeters: %v", err)
 	}
 
-	state := rules.NewMutableState("openai", "chat_completions", nil, http.Header{})
+	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	state.BodyMutated = true
 	captured := bodycapture.Captured{Kind: bodycapture.KindChat, Body: failMarshalBody{}}
 
