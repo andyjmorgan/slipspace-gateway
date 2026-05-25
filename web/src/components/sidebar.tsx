@@ -75,8 +75,15 @@ export function Sidebar({
           height={28}
           className="size-7 rounded-md"
         />
-        <span className="font-semibold tracking-tight text-[15px]">sluice</span>
-        <span className="mono ml-auto text-[10.5px] text-[color:var(--text-4)]">{version ?? "…"}</span>
+        <div className="flex flex-col min-w-0">
+          <span className="font-semibold tracking-tight text-[15px] leading-tight">sluice</span>
+          <span
+            className="mono text-[10.5px] text-[color:var(--text-4)] truncate"
+            title={version ?? ""}
+          >
+            {version ?? "…"}
+          </span>
+        </div>
       </div>
 
       <nav className="flex-1 py-2 overflow-y-auto">
