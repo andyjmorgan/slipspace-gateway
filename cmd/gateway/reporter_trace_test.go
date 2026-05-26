@@ -165,6 +165,33 @@ func TestEmitTrace_AttemptsBecomeChildSpans(t *testing.T) {
 	}
 }
 
+func TestEmitTrace_ConversationID(t *testing.T) {
+	r, sr := traceHarness(t)
+	r.sessionID = "bundle-1"
+	r.emitTrace(context.Background(), events.Request{
+		Provider:   "openai",
+		Endpoint:   "chat_completions",
+		Model:      "gpt-4o-mini",
+		StatusCode: 200,
+		DurationMs: 10,
+	})
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("len(spans) = %d, want 1", len(spans))
+	}
+	if v, ok := attrValue(spans[0].Attributes(), observability.AttrGenAIConversationID); !ok || v.AsString() != "bundle-1" {
+		t.Errorf("gen_ai.conversation.id = %q (ok=%v), want bundle-1", v.AsString(), ok)
+	}
+}
+
+func TestEmitTrace_NoConversationIDWhenNoSession(t *testing.T) {
+	r, sr := traceHarness(t)
+	r.emitTrace(context.Background(), events.Request{Endpoint: "chat_completions", StatusCode: 200, DurationMs: 1})
+	if _, ok := attrValue(sr.Ended()[0].Attributes(), observability.AttrGenAIConversationID); ok {
+		t.Errorf("gen_ai.conversation.id should be absent when no session resolved")
+	}
+}
+
 func TestEmitTrace_NoTracerOrNoStartNoOp(t *testing.T) {
 	// nil tracer.
 	r := &reporterRun{factory: &reporterFactory{}, started: time.Now()}

@@ -21,6 +21,14 @@ type MessageEntry struct {
 	// to the X-Sluice-Correlation-Id response header.
 	CorrelationID string `json:"correlation_id,omitempty"`
 
+	// SessionID is the resolved session/bundle id grouping this request
+	// with its conversation; SessionIDSource is the header it came from
+	// (the bundle's provenance label). Both omitted when no session
+	// header was present.
+	SessionID string `json:"session_id,omitempty"`
+
+	SessionIDSource string `json:"session_id_source,omitempty"`
+
 	// Provider, Endpoint, Model carry the routed labels (post rule
 	// mutation).
 	Provider string `json:"provider,omitempty"`

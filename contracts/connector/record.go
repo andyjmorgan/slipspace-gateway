@@ -4,7 +4,11 @@ import "encoding/json"
 
 // SchemaVersion is the wire-format version every Record emitted by this
 // build carries. Bumps are additive-only — see the package docs.
-const SchemaVersion = 1
+//
+// v2 added the additive SessionID + SessionIDSource fields (session
+// bundling). Older consumers reading a v2 record simply ignore the new
+// keys; the change requires no migration.
+const SchemaVersion = 2
 
 // Record is one captured request/response pair as it sits inside an
 // ndjson.zst batch. Consumers sort by (TsNs, InstanceID, Seq) and group by
@@ -38,6 +42,18 @@ type Record struct {
 	// (initial + retries + tool follow-ups). Stable across the request's
 	// lifetime.
 	CorrelationID string `json:"correlation_id"`
+
+	// SessionID is the resolved session/bundle id grouping every request
+	// of one agent conversation, one level above CorrelationID. Empty when
+	// no session header was present. Consumers bundle on the
+	// (Configuration, SessionID) tuple, never the bare SessionID, since
+	// client-controlled ids can collide across configurations.
+	SessionID string `json:"session_id,omitempty"`
+
+	// SessionIDSource is the header name SessionID was resolved from
+	// (e.g. "X-Sluice-Session-Id", "Thread_id") — the provenance the
+	// console uses to label a bundle. Empty when SessionID is empty.
+	SessionIDSource string `json:"session_id_source,omitempty"`
 
 	// Configuration is the resolved configuration name (e.g. "production").
 	Configuration string `json:"configuration"`
