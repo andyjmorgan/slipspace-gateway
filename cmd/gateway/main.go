@@ -118,7 +118,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("gateway: body store: %w", err)
 	}
 
-	reporter := newReporterFactory(spoolInst, resolved, logger, obs.Meters, liveFeed, bodyStore)
+	reporter := newReporterFactory(spoolInst, resolved, logger, obs.Meters, liveFeed, bodyStore, obs.Tracer())
 	observerFactory := reporter.Factory()
 	// One Redactor for the whole process — the built-in substring
 	// list plus any operator-supplied extras from
