@@ -23,10 +23,8 @@ const SluiceSessionHeader = "X-Sluice-Session-Id"
 // durable conversation id) with Session_id carrying the same UUID as a
 // fallback; Claude Code uses x-claude-code-session-id.
 //
-// The Claude Code header name was not captured first-hand in the source
-// investigation — confirm it against a live request before relying on it.
-// Underscore header names (Codex's Thread_id / Session_id) survive
-// Go's net/http and Traefik but are stripped by nginx-class proxies by
+// Underscore header names (Codex's Thread_id / Session_id) survive Go's
+// net/http and Traefik but are stripped by nginx-class proxies by
 // default; that is an infra requirement, not a gateway concern.
 var DefaultSessionIDHeaders = []string{
 	"Thread_id",

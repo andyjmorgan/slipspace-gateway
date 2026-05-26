@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router"
-import { ChevronDown, ChevronRight, ChevronUp, Pause, Play, Trash2, X } from "lucide-react"
+import { ChevronDown, ChevronRight, ChevronUp, Layers, Pause, Play, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PanelCard } from "@/components/atoms/card"
@@ -41,6 +41,8 @@ export function MessagesPage() {
   const [dropped, setDropped] = useState(0)
   const [streaming, setStreaming] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [grouped, setGrouped] = useState(false)
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const pausedRef = useRef(paused)
   pausedRef.current = paused
   const pendingRef = useRef<MessageEntry[]>([])
@@ -125,6 +127,15 @@ export function MessagesPage() {
     () => entries.find((e) => e.event_id === selectedId) ?? null,
     [entries, selectedId],
   )
+  const bundles = useMemo(() => (grouped ? bundleBySession(ordered) : []), [grouped, ordered])
+  const toggleBundle = useCallback((key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
 
   if (feed.status === "loading") return <LoadingPanel label="Loading messages…" />
   if (feed.status === "error") return <ErrorPanel message={feed.message} />
@@ -141,6 +152,16 @@ export function MessagesPage() {
         action={
           feed.status === "ok" && (
             <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setGrouped((g) => !g)}
+                aria-label="Group by session"
+                aria-pressed={grouped}
+              >
+                <Layers />
+                {grouped ? "Ungroup" : "Group by session"}
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -214,16 +235,29 @@ export function MessagesPage() {
                     </td>
                   </tr>
                 )}
-                {ordered.map((e) => (
-                  <Row
-                    key={e.event_id}
-                    entry={e}
-                    selected={e.event_id === selectedId}
-                    onClick={() =>
-                      setSelectedId((cur) => (cur === e.event_id ? null : e.event_id))
-                    }
-                  />
-                ))}
+                {grouped
+                  ? bundles.map((b) => (
+                      <BundleGroup
+                        key={b.key}
+                        bundle={b}
+                        collapsed={collapsed.has(b.key)}
+                        onToggle={() => toggleBundle(b.key)}
+                        selectedId={selectedId}
+                        onSelectRow={(eid) =>
+                          setSelectedId((cur) => (cur === eid ? null : eid))
+                        }
+                      />
+                    ))
+                  : ordered.map((e) => (
+                      <Row
+                        key={e.event_id}
+                        entry={e}
+                        selected={e.event_id === selectedId}
+                        onClick={() =>
+                          setSelectedId((cur) => (cur === e.event_id ? null : e.event_id))
+                        }
+                      />
+                    ))}
               </tbody>
             </table>
           </PanelCard>
@@ -364,6 +398,142 @@ function Row({
   )
 }
 
+type Bundle = {
+  key: string
+  sessionId: string
+  source?: string
+  configuration?: string
+  entries: MessageEntry[]
+  tokensIn: number
+  tokensOut: number
+  spanMs: number
+}
+
+// bundleBySession groups newest-first entries into (configuration,
+// session_id) bundles — the same tuple the connector records bundle on —
+// preserving newest-bundle-first order by first appearance. Entries with
+// no session id collect under one trailing "no session" bundle so the
+// pane stays exhaustive.
+function bundleBySession(ordered: MessageEntry[]): Bundle[] {
+  const byKey = new Map<string, Bundle>()
+  const order: string[] = []
+  for (const e of ordered) {
+    const sid = e.session_id ?? ""
+    const key = sid === "" ? " nosession" : `${e.configuration ?? ""} ${sid}`
+    let b = byKey.get(key)
+    if (!b) {
+      b = {
+        key,
+        sessionId: sid,
+        source: e.session_id_source,
+        configuration: e.configuration,
+        entries: [],
+        tokensIn: 0,
+        tokensOut: 0,
+        spanMs: 0,
+      }
+      byKey.set(key, b)
+      order.push(key)
+    }
+    b.entries.push(e)
+    b.tokensIn += e.tokens_in ?? 0
+    b.tokensOut += e.tokens_out ?? 0
+  }
+  for (const b of byKey.values()) {
+    const ts = b.entries
+      .map((e) => new Date(e.at).getTime())
+      .filter((n) => !Number.isNaN(n))
+    if (ts.length > 0) b.spanMs = Math.max(...ts) - Math.min(...ts)
+  }
+  return order.map((k) => byKey.get(k)!)
+}
+
+// BundleGroup renders a collapsible session header row spanning the table
+// plus its member request rows. The header carries the turn count, summed
+// tokens, and time span — the conversation-level rollup the flat pane
+// can't show.
+function BundleGroup({
+  bundle,
+  collapsed,
+  onToggle,
+  selectedId,
+  onSelectRow,
+}: {
+  bundle: Bundle
+  collapsed: boolean
+  onToggle: () => void
+  selectedId: string | null
+  onSelectRow: (eventId: string) => void
+}) {
+  const noSession = bundle.sessionId === ""
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        className="cursor-pointer border-t border-[color:var(--border)] bg-[color:var(--bg-2)] hover:bg-[color:var(--hover)]"
+      >
+        <td colSpan={11} className="px-3 py-1.5">
+          <div className="flex items-center gap-2 text-[12px]">
+            <span className="inline-flex items-center text-[color:var(--text-4)]">
+              {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+            </span>
+            {noSession ? (
+              <span className="italic text-[color:var(--text-4)]">no session</span>
+            ) : (
+              <>
+                <span
+                  className="mono max-w-[22rem] truncate text-[color:var(--text-2)]"
+                  title={bundle.sessionId}
+                >
+                  {bundle.sessionId}
+                </span>
+                {bundle.source && (
+                  <span className="mono rounded-[3px] border border-[color:var(--border)] bg-[color:var(--bg-1)] px-1 py-px text-[10px] text-[color:var(--text-3)]">
+                    {bundle.source}
+                  </span>
+                )}
+                {bundle.configuration && (
+                  <span className="mono text-[10.5px] text-[color:var(--text-4)]">
+                    {bundle.configuration}
+                  </span>
+                )}
+              </>
+            )}
+            <span className="ml-auto flex items-center gap-3 text-[11px] text-[color:var(--text-3)]">
+              <span className="mono">
+                {bundle.entries.length} turn{bundle.entries.length === 1 ? "" : "s"}
+              </span>
+              {(bundle.tokensIn > 0 || bundle.tokensOut > 0) && (
+                <span className="mono tnum">
+                  {fmt.compact(bundle.tokensIn)}↑ / {fmt.compact(bundle.tokensOut)}↓ tok
+                </span>
+              )}
+              {bundle.spanMs > 0 && <span className="mono tnum">{formatSpan(bundle.spanMs)}</span>}
+            </span>
+          </div>
+        </td>
+      </tr>
+      {!collapsed &&
+        bundle.entries.map((e) => (
+          <Row
+            key={e.event_id}
+            entry={e}
+            selected={e.event_id === selectedId}
+            onClick={() => onSelectRow(e.event_id)}
+          />
+        ))}
+    </>
+  )
+}
+
+function formatSpan(ms: number): string {
+  if (ms < 1000) return `${ms} ms`
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(1)} s`
+  const m = Math.floor(s / 60)
+  return `${m}m ${Math.round(s % 60)}s`
+}
+
 // MessageModal renders the per-request detail in a centered overlay
 // instead of pushed below the table — keeps the detail visible while
 // new rows stream in. Up / Down buttons (and ArrowUp / ArrowDown keys)
@@ -480,6 +650,8 @@ function MessageModal({
           <Field label="Endpoint" value={entry.endpoint ?? "—"} />
           <Field label="Model" value={entry.model ?? "—"} />
           <Field label="Configuration" value={entry.configuration ?? "—"} />
+          <Field label="Session" value={entry.session_id ?? "—"} />
+          <Field label="Session source" value={entry.session_id_source ?? "—"} />
           <Field label="At" value={entry.at} />
         </dl>
         {entry.upstream_error && (
