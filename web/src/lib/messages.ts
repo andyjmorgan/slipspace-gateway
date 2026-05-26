@@ -34,6 +34,8 @@ export type MessageEntry = {
   event_id: string
   at: string
   correlation_id?: string
+  session_id?: string
+  session_id_source?: string
   provider?: string
   endpoint?: string
   model?: string
