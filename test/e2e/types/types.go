@@ -19,6 +19,8 @@ type RequestEvent struct {
 
 	Model string `json:"model,omitempty"`
 
+	Method string `json:"method,omitempty"`
+
 	StatusCode int `json:"status_code"`
 
 	DurationMs int64 `json:"duration_ms"`

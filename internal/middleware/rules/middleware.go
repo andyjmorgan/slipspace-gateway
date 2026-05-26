@@ -93,6 +93,7 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 				Provider:      state.Provider,
 				Endpoint:      state.Endpoint,
 				Model:         extractInboundModel(captured, state.PathParams),
+				Method:        r.Method,
 				Configuration: ar.ConfigurationName,
 			})
 			driveSyntheticLifecycle(ctx, w, result, observerFactory)

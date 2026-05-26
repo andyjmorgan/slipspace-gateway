@@ -117,6 +117,7 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 			provider:      labels.Provider,
 			endpoint:      labels.Endpoint,
 			model:         labels.Model,
+			method:        labels.Method,
 			configuration: labels.Configuration,
 			apiKeyName:    apiKeyName,
 		}
@@ -144,6 +145,11 @@ type reporterRun struct {
 	model         string
 	configuration string
 	apiKeyName    string
+
+	// method is the inbound HTTP verb captured at construction time.
+	// Stamped on the event / Record / live-feed Entry but never on a
+	// metric label.
+	method string
 
 	// started is set in OnRequestStart and used both as the base for
 	// the overall duration log and as the reference for the TTFB
@@ -209,6 +215,7 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 		Provider:      r.provider,
 		Endpoint:      r.endpoint,
 		Model:         r.model,
+		Method:        r.method,
 		StatusCode:    status,
 		DurationMs:    durationMs,
 		Streaming:     r.streaming,
@@ -344,7 +351,7 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 		Model:         ev.Model,
 		Tags:          ev.Tags,
 		Request: cc.RequestPart{
-			Method: "POST",
+			Method: ev.Method,
 		},
 		Response: cc.ResponsePart{
 			Status: ev.StatusCode,
@@ -501,6 +508,7 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		Provider:            ev.Provider,
 		Endpoint:            ev.Endpoint,
 		Model:               ev.Model,
+		Method:              ev.Method,
 		Configuration:       r.configuration,
 		StatusCode:          ev.StatusCode,
 		DurationMs:          ev.DurationMs,

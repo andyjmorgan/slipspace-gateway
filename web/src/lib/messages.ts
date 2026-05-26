@@ -37,6 +37,7 @@ export type MessageEntry = {
   provider?: string
   endpoint?: string
   model?: string
+  method?: string
   configuration?: string
   status_code: number
   duration_ms: number

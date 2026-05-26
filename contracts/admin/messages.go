@@ -29,6 +29,10 @@ type MessageEntry struct {
 
 	Model string `json:"model,omitempty"`
 
+	// Method is the inbound HTTP verb (GET, POST, …). Lets the live pane
+	// distinguish a model list from a completion at a glance.
+	Method string `json:"method,omitempty"`
+
 	// Configuration is the resolved configuration name. Empty for
 	// passthrough requests against an unknown configuration.
 	Configuration string `json:"configuration,omitempty"`
