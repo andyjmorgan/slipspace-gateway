@@ -15,10 +15,10 @@ import (
 
 // TestMetrics_RequestsTotalCarriesModelLabel scrapes the gateway's
 // Prometheus endpoint after a chat-completions request and asserts the
-// emitted `gateway_requests_total` series carries the outbound model in
-// the `model` label. This is the end-to-end half of issue #4 — the
-// instrument is wired correctly inside the running binary, not just in
-// the cmd/gateway test ring.
+// emitted `sluice_requests_total` series carries the outbound model in
+// the `gen_ai_request_model` label. This is the end-to-end half of
+// issue #4 — the instrument is wired correctly inside the running
+// binary, not just in the cmd/gateway test ring.
 func TestMetrics_RequestsTotalCarriesModelLabel(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
@@ -38,9 +38,9 @@ func TestMetrics_RequestsTotalCarriesModelLabel(t *testing.T) {
 	}
 
 	// The OTel Prometheus exporter publishes counters under their normalized
-	// name; gateway.requests.total → gateway_requests_total.
-	const metric = "gateway_requests_total"
-	want := `model="` + model + `"`
+	// name; sluice.requests.total → sluice_requests_total.
+	const metric = "sluice_requests_total"
+	want := `gen_ai_request_model="` + model + `"`
 
 	deadline := time.Now().Add(5 * time.Second)
 	var lastBody string
@@ -74,11 +74,11 @@ func scrapeMetrics(promURL string) (string, error) {
 }
 
 // matchesSeries returns true if body contains a sample line for the given
-// metric name carrying model="<model>" in its label set. Matches across
-// arbitrary label-set orderings so the test is not sensitive to label
-// emission order in the exporter.
+// metric name carrying gen_ai_request_model="<model>" in its label set.
+// Matches across arbitrary label-set orderings so the test is not
+// sensitive to label emission order in the exporter.
 func matchesSeries(body, metricName, model string) bool {
-	pattern := `(?m)^` + regexp.QuoteMeta(metricName) + `\{[^}]*model="` + regexp.QuoteMeta(model) + `"[^}]*\}`
+	pattern := `(?m)^` + regexp.QuoteMeta(metricName) + `\{[^}]*gen_ai_request_model="` + regexp.QuoteMeta(model) + `"[^}]*\}`
 	return regexp.MustCompile(pattern).MatchString(body)
 }
 
