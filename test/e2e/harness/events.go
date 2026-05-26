@@ -155,6 +155,7 @@ func (h *Harness) emitRecord(rec cc.Record) {
 		Provider:      rec.Provider,
 		Endpoint:      rec.Endpoint,
 		Model:         rec.Model,
+		Method:        rec.Request.Method,
 		StatusCode:    rec.UpstreamStatus,
 		DurationMs:    durationMsFromTimestamps(rec),
 		Streaming:     rec.Response.StreamChunks > 0,

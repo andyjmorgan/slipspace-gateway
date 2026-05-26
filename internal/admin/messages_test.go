@@ -48,8 +48,8 @@ func TestMessagesRecentHandler_503WhenRingNil(t *testing.T) {
 func TestMessagesRecentHandler_ReturnsEntries(t *testing.T) {
 	t.Parallel()
 	ring, _ := livefeed.NewRing(4)
-	ring.Append(livefeed.Entry{EventID: "a", At: time.Now().UTC(), Provider: "openai", StatusCode: 200})
-	ring.Append(livefeed.Entry{EventID: "b", At: time.Now().UTC(), Provider: "anthropic", StatusCode: 503})
+	ring.Append(livefeed.Entry{EventID: "a", At: time.Now().UTC(), Provider: "openai", Endpoint: "chat_completions", Method: "POST", StatusCode: 200})
+	ring.Append(livefeed.Entry{EventID: "b", At: time.Now().UTC(), Provider: "anthropic", Endpoint: "models", Method: "GET", StatusCode: 503})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/messages/recent", nil)
@@ -69,6 +69,9 @@ func TestMessagesRecentHandler_ReturnsEntries(t *testing.T) {
 	}
 	if got.Entries[0].EventID != "a" || got.Entries[1].EventID != "b" {
 		t.Errorf("wrong order: %+v", got.Entries)
+	}
+	if got.Entries[0].Method != "POST" || got.Entries[1].Method != "GET" {
+		t.Errorf("Method not mapped onto wire: [0]=%q [1]=%q", got.Entries[0].Method, got.Entries[1].Method)
 	}
 }
 

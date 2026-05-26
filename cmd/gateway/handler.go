@@ -81,6 +81,7 @@ func buildDataPlaneHandler(
 			Provider:      state.Provider,
 			Endpoint:      state.Endpoint,
 			Model:         outboundModel(captured, state),
+			Method:        r.Method,
 			Configuration: authResult.ConfigurationName,
 		})
 

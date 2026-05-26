@@ -52,6 +52,9 @@ func TestReporting_RequestEvent_Inline(t *testing.T) {
 	if ev.Endpoint != "chat_completions" {
 		t.Errorf("Endpoint=%q want chat_completions", ev.Endpoint)
 	}
+	if ev.Method != http.MethodPost {
+		t.Errorf("Method=%q want POST", ev.Method)
+	}
 	if ev.Model != "gpt" {
 		t.Errorf("Model=%q want gpt", ev.Model)
 	}
@@ -60,6 +63,47 @@ func TestReporting_RequestEvent_Inline(t *testing.T) {
 	}
 	if ev.DurationMs < 0 {
 		t.Errorf("DurationMs negative: %d", ev.DurationMs)
+	}
+}
+
+// TestReporting_RequestEvent_CapturesGetMethod drives a GET /v1/models
+// and asserts the captured record carries the real verb. Guards against
+// the old hardcoded Method: "POST" — a model list must not masquerade as
+// a completion in audit feeds.
+func TestReporting_RequestEvent_CapturesGetMethod(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodGet,
+		Path:   "/v1/models",
+		Body:   `{"object":"list","data":[{"id":"gpt-4o-mini","object":"model"}]}`,
+	})
+
+	req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/v1/models", http.NoBody)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+h.APIKey)
+	resp, err := h.HTTP.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("gateway status=%d", resp.StatusCode)
+	}
+
+	env := h.ExpectEvent("gateway.request", 5*time.Second)
+	var ev types.RequestEvent
+	if err := json.Unmarshal(env.InlinePayload, &ev); err != nil {
+		t.Fatalf("decode payload: %v raw=%s", err, env.InlinePayload)
+	}
+	if ev.Endpoint != "models" {
+		t.Errorf("Endpoint=%q want models", ev.Endpoint)
+	}
+	if ev.Method != http.MethodGet {
+		t.Errorf("Method=%q want GET", ev.Method)
 	}
 }
 

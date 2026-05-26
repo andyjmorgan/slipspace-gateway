@@ -11,6 +11,13 @@ type Request struct {
 	// on the response as X-Sluice-Correlation-Id.
 	CorrelationID string `json:"correlation_id,omitempty"`
 
+	// Method is the HTTP verb of the inbound client request (GET, POST,
+	// DELETE, …). Captured pre-rule from the wire — rules never rewrite
+	// the method — so a model-list (GET /models) is distinguishable from
+	// a completion (POST /chat/completions) in audit feeds and the live
+	// console.
+	Method string `json:"method,omitempty"`
+
 	// Provider is the routed upstream provider name (e.g. "openai") —
 	// after rule mutation in v1.0.1+.
 	Provider string `json:"provider,omitempty"`

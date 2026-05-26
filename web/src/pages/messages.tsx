@@ -311,6 +311,11 @@ function Row({
       </td>
       <td className="px-3 py-1.5">
         <div className="flex items-center gap-1.5">
+          {entry.method && (
+            <span className="mono rounded-[3px] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-1 py-px text-[10px] font-medium uppercase text-[color:var(--text-3)]">
+              {entry.method}
+            </span>
+          )}
           <span className="mono text-[color:var(--text-3)]">{entry.endpoint ?? "—"}</span>
           {entry.streaming && (
             <span className="mono text-[10px] uppercase text-[color:var(--text-4)]">
@@ -471,6 +476,7 @@ function MessageModal({
           <Field label="Duration" value={`${entry.duration_ms} ms`} />
           <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
           <Field label="Provider" value={entry.provider ?? "—"} />
+          <Field label="Method" value={entry.method ?? "—"} />
           <Field label="Endpoint" value={entry.endpoint ?? "—"} />
           <Field label="Model" value={entry.model ?? "—"} />
           <Field label="Configuration" value={entry.configuration ?? "—"} />

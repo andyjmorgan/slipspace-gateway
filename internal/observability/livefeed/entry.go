@@ -28,6 +28,11 @@ type Entry struct {
 	Endpoint string
 	Model    string
 
+	// Method is the inbound HTTP verb (GET, POST, …) of the client
+	// request. Lets the console distinguish a model list from a
+	// completion at a glance.
+	Method string
+
 	// Configuration is the resolved configuration name the request
 	// ran under. Cardinality is bounded by operator policy.
 	Configuration string

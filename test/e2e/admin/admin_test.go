@@ -172,6 +172,70 @@ func TestAdmin_DashboardSummary_ReflectsRealTraffic(t *testing.T) {
 	}
 }
 
+// TestAdmin_MessagesRecent_CarriesMethod drives a single data-plane POST
+// and asserts the resulting live-feed entry surfaces the HTTP verb on the
+// messages/recent wire shape — the data the SPA renders in the live pane.
+func TestAdmin_MessagesRecent_CarriesMethod(t *testing.T) {
+	t.Parallel()
+	h := harness.NewWithOptions(t, harness.Options{AdminEnabled: true})
+
+	canned := `{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Status: http.StatusOK,
+		Body:   canned,
+	})
+
+	body := []byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}`)
+	dataReq, _ := http.NewRequest(http.MethodPost, h.GatewayURL+"/v1/chat/completions", bytes.NewReader(body))
+	dataReq.Header.Set("Authorization", "Bearer "+h.APIKey)
+	dataReq.Header.Set("Content-Type", "application/json")
+	dataResp, err := h.HTTP.Do(dataReq)
+	if err != nil {
+		t.Fatalf("POST /v1/chat/completions: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, dataResp.Body)
+	_ = dataResp.Body.Close()
+	if dataResp.StatusCode != http.StatusOK {
+		t.Fatalf("data plane request: status = %d, want 200", dataResp.StatusCode)
+	}
+
+	var entry adminc.MessageEntry
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		req, _ := http.NewRequest(http.MethodGet, h.AdminURL+"/api/v1/messages/recent", nil)
+		req.SetBasicAuth(adminc.Username, h.AdminPassword)
+		resp, err := h.HTTP.Do(req)
+		if err != nil {
+			t.Fatalf("GET /api/v1/messages/recent: %v", err)
+		}
+		var got adminc.MessagesRecentResponse
+		if derr := json.NewDecoder(resp.Body).Decode(&got); derr != nil {
+			_ = resp.Body.Close()
+			t.Fatalf("decode: %v", derr)
+		}
+		_ = resp.Body.Close()
+		for i := len(got.Entries) - 1; i >= 0; i-- {
+			if got.Entries[i].Endpoint == "chat_completions" {
+				entry = got.Entries[i]
+				break
+			}
+		}
+		if entry.EventID != "" {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if entry.EventID == "" {
+		t.Fatal("no chat_completions entry appeared in messages/recent")
+	}
+	if entry.Method != http.MethodPost {
+		t.Errorf("Method = %q; want POST", entry.Method)
+	}
+}
+
 func TestAdmin_DashboardSummary_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	h := harness.NewWithOptions(t, harness.Options{AdminEnabled: true})

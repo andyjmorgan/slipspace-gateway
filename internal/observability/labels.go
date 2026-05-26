@@ -23,6 +23,13 @@ type RequestLabels struct {
 
 	Model string
 
+	// Method is the inbound HTTP verb, carried so the reporter can stamp
+	// it on the gateway.request event, the connector Record, and the
+	// live-feed Entry. Deliberately NOT emitted as a metric label — it
+	// carries no dashboard dimension today and would multiply the
+	// request-count series cardinality.
+	Method string
+
 	// Configuration is the name of the resolved configuration the
 	// request resolved against. Bounded cardinality — operators
 	// define a handful of named configurations (production,
