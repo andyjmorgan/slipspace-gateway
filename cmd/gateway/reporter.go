@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -591,8 +592,9 @@ func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 }
 
 // populateTokens reads the captured response (when present) and writes
-// the extracted token snapshot onto ev plus the four gateway.tokens.*
-// counters.
+// the extracted token snapshot onto ev, the gen_ai.client.token.usage
+// histogram (input/output, keyed by gen_ai.token.type), and the two
+// sluice.tokens.* cache counters.
 func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	buf, ok := livefeed.ResponseBufferFromContext(ctx)
 	if !ok || buf == nil {
@@ -614,29 +616,36 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	if r.factory.meters == nil {
 		return
 	}
-	attrs := withCompletionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration, ev.StatusCode)
-	if snap.Input > 0 && r.factory.meters.TokensInputTotal != nil {
-		r.factory.meters.TokensInputTotal.Add(ctx, int64(snap.Input), attrs)
+	// base carries the request dimensions without status. The full-slice
+	// expression caps base's capacity so each token.type append below
+	// allocates a fresh backing array rather than aliasing base.
+	base := requestDimensionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration)
+	base = base[:len(base):len(base)]
+	if snap.Input > 0 && r.factory.meters.TokenUsage != nil {
+		r.factory.meters.TokenUsage.Record(ctx, int64(snap.Input),
+			metric.WithAttributes(append(base, attribute.String(observability.AttrGenAITokenType, observability.TokenTypeInput))...))
 	}
-	if snap.Output > 0 && r.factory.meters.TokensOutputTotal != nil {
-		r.factory.meters.TokensOutputTotal.Add(ctx, int64(snap.Output), attrs)
+	if snap.Output > 0 && r.factory.meters.TokenUsage != nil {
+		r.factory.meters.TokenUsage.Record(ctx, int64(snap.Output),
+			metric.WithAttributes(append(base, attribute.String(observability.AttrGenAITokenType, observability.TokenTypeOutput))...))
 	}
 	if snap.Cached > 0 && r.factory.meters.TokensCachedTotal != nil {
-		r.factory.meters.TokensCachedTotal.Add(ctx, int64(snap.Cached), attrs)
+		r.factory.meters.TokensCachedTotal.Add(ctx, int64(snap.Cached), metric.WithAttributes(base...))
 	}
 	if snap.CacheCreation > 0 && r.factory.meters.TokensCacheCreationTotal != nil {
-		r.factory.meters.TokensCacheCreationTotal.Add(ctx, int64(snap.CacheCreation), attrs)
+		r.factory.meters.TokensCacheCreationTotal.Add(ctx, int64(snap.CacheCreation), metric.WithAttributes(base...))
 	}
 }
 
-// providerEndpointModelAttrs builds the (provider, endpoint, model)
-// attribute set used by per-request meters that fire mid-request
-// (TimeToFirstByte, UpstreamErrors).
+// providerEndpointModelAttrs builds the gen_ai dimension attributes used
+// by per-request meters that fire mid-request (TimeToFirstByte). Status
+// is unknown at this point, so it carries only the request dimensions.
 func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
 	return metric.WithAttributes(
-		attribute.String("provider", r.provider),
-		attribute.String("endpoint", r.endpoint),
-		attribute.String("model", sanitiseModelLabel(r.model)),
+		attribute.String(observability.AttrGenAIProviderName, r.provider),
+		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(r.model)),
+		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(r.endpoint)),
+		attribute.String(observability.AttrSluiceEndpoint, r.endpoint),
 	)
 }
 
@@ -661,14 +670,30 @@ func jsonBodyOrEscaped(b []byte) json.RawMessage {
 	return json.RawMessage(encoded)
 }
 
-// withCompletionAttrs extends the per-request attribute set with the
-// resolved configuration and the final response status code.
+// requestDimensionAttrs builds the gen_ai + sluice dimension attributes
+// shared by every per-request instrument: provider, request model, the
+// coarse gen_ai.operation.name, the precise sluice.endpoint route, and
+// the resolved configuration. Status is layered on separately because
+// token instruments don't carry it.
+func requestDimensionAttrs(provider, endpoint, model, configuration string) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.String(observability.AttrGenAIProviderName, provider),
+		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(model)),
+		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(endpoint)),
+		attribute.String(observability.AttrSluiceEndpoint, endpoint),
+		attribute.String(observability.AttrSluiceConfiguration, configuration),
+	}
+}
+
+// withCompletionAttrs extends the request dimensions with the HTTP status
+// code, and on the failure path the spec error.type. error.type is an
+// open enum, so the status code string is a spec-legal value; it is set
+// only for 4xx/5xx so the attribute's presence itself marks a failure.
 func withCompletionAttrs(provider, endpoint, model, configuration string, status int) metric.MeasurementOption {
-	return metric.WithAttributes(
-		attribute.String("provider", provider),
-		attribute.String("endpoint", endpoint),
-		attribute.String("model", sanitiseModelLabel(model)),
-		attribute.String("configuration", configuration),
-		attribute.Int("status_code", status),
-	)
+	attrs := requestDimensionAttrs(provider, endpoint, model, configuration)
+	attrs = append(attrs, attribute.Int(observability.AttrHTTPResponseStatusCode, status))
+	if status >= 400 {
+		attrs = append(attrs, attribute.String(observability.AttrErrorType, strconv.Itoa(status)))
+	}
+	return metric.WithAttributes(attrs...)
 }

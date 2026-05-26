@@ -34,8 +34,8 @@ func TestTimeseriesHandler_RPSWithLiveSnapshotter(t *testing.T) {
 
 	_ = snap.Snapshot(ctx)
 	ctr.Add(ctx, 100, metric.WithAttributes(
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	))
 	time.Sleep(2 * time.Millisecond)
 	_ = snap.Snapshot(ctx)

@@ -42,12 +42,12 @@ func TestComputeSummary_WithLiveSnapshotter(t *testing.T) {
 
 	// Add traffic.
 	ctr.Add(ctx, 50, metric.WithAttributes(
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	))
 	ctr.Add(ctx, 5, metric.WithAttributes(
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "500"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 	))
 	time.Sleep(2 * time.Millisecond)
 	_ = snap.Snapshot(ctx)

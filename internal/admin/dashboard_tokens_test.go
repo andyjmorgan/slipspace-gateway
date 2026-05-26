@@ -19,21 +19,21 @@ func TestComputeByModel_PopulatesTokenColumns(t *testing.T) {
 	start := makeSample(t0)
 	end := makeSample(t1)
 	openaiAttrs := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("model", "gpt-4o-mini"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrGenAIRequestModel, "gpt-4o-mini"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	anthropicAttrs := []attribute.KeyValue{
-		attribute.String("provider", "anthropic"),
-		attribute.String("model", "claude-haiku-4-5"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "anthropic"),
+		attribute.String(observability.AttrGenAIRequestModel, "claude-haiku-4-5"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	setCounter(end, observability.MetricRequestsTotal, openaiAttrs, 4)
 	setCounter(end, observability.MetricRequestsTotal, anthropicAttrs, 6)
-	setCounter(end, observability.MetricTokensInputTotal, openaiAttrs, 4_000)
-	setCounter(end, observability.MetricTokensOutputTotal, openaiAttrs, 200)
-	setCounter(end, observability.MetricTokensInputTotal, anthropicAttrs, 9_000)
-	setCounter(end, observability.MetricTokensOutputTotal, anthropicAttrs, 850)
+	setTokenUsage(end, openaiAttrs, observability.TokenTypeInput, 4_000)
+	setTokenUsage(end, openaiAttrs, observability.TokenTypeOutput, 200)
+	setTokenUsage(end, anthropicAttrs, observability.TokenTypeInput, 9_000)
+	setTokenUsage(end, anthropicAttrs, observability.TokenTypeOutput, 850)
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 
@@ -67,12 +67,12 @@ func TestComputeByModel_TokensWithoutMatchingRequest(t *testing.T) {
 	start := makeSample(t0)
 	end := makeSample(t1)
 	attrs := []attribute.KeyValue{
-		attribute.String("provider", "gemini"),
-		attribute.String("model", "gemini-2.5-flash"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "gemini"),
+		attribute.String(observability.AttrGenAIRequestModel, "gemini-2.5-flash"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
-	setCounter(end, observability.MetricTokensInputTotal, attrs, 500)
-	setCounter(end, observability.MetricTokensOutputTotal, attrs, 12)
+	setTokenUsage(end, attrs, observability.TokenTypeInput, 500)
+	setTokenUsage(end, attrs, observability.TokenTypeOutput, 12)
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByModel) != 1 {
@@ -107,14 +107,14 @@ func TestTokensPerSecondSeries_TwoCurvesPerSnapshotInterval(t *testing.T) {
 	s1 := makeSample(t1)
 	s2 := makeSample(t2)
 	attrs := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("model", "gpt"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrGenAIRequestModel, "gpt"),
 	}
 	// s0: zero. s1: +600 in, +60 out. s2: +1200 in, +120 out (cumulative).
-	setCounter(s1, observability.MetricTokensInputTotal, attrs, 600)
-	setCounter(s1, observability.MetricTokensOutputTotal, attrs, 60)
-	setCounter(s2, observability.MetricTokensInputTotal, attrs, 1800)
-	setCounter(s2, observability.MetricTokensOutputTotal, attrs, 180)
+	setTokenUsage(s1, attrs, observability.TokenTypeInput, 600)
+	setTokenUsage(s1, attrs, observability.TokenTypeOutput, 60)
+	setTokenUsage(s2, attrs, observability.TokenTypeInput, 1800)
+	setTokenUsage(s2, attrs, observability.TokenTypeOutput, 180)
 
 	got := buildTimeseries(SeriesTokensPerSecond, []observability.Sample{s0, s1, s2})
 	if len(got) != 2 {

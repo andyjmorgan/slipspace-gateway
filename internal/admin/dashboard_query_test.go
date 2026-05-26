@@ -35,6 +35,21 @@ func setHistogram(s observability.Sample, attrs []attribute.KeyValue, sum float6
 	}
 }
 
+// setTokenUsage seeds the gen_ai.client.token.usage histogram on a Sample
+// for one direction (gen_ai.token.type=input|output). The dashboard reads
+// the histogram SUM as the token count, so sum carries the token total;
+// count is a single observation, which is all the sum-based reads need.
+func setTokenUsage(s observability.Sample, attrs []attribute.KeyValue, tokenType string, sum float64) {
+	const metric = observability.MetricTokenUsage
+	if s.Histograms[metric] == nil {
+		s.Histograms[metric] = map[observability.LabelKey]observability.HistogramSnapshot{}
+	}
+	full := append(append([]attribute.KeyValue(nil), attrs...), attribute.String(observability.AttrGenAITokenType, tokenType))
+	s.Histograms[metric][observability.EncodeLabels(full)] = observability.HistogramSnapshot{
+		Sum: sum, Count: 1,
+	}
+}
+
 func TestBuildDashboardSummary_TotalsAndRates(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Hour)
@@ -43,16 +58,16 @@ func TestBuildDashboardSummary_TotalsAndRates(t *testing.T) {
 	end := makeSample(t1)
 
 	openai200 := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	openai500 := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "500"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 	}
 	anthropic404 := []attribute.KeyValue{
-		attribute.String("provider", "anthropic"),
-		attribute.String("status_code", "404"),
+		attribute.String(observability.AttrGenAIProviderName, "anthropic"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "404"),
 	}
 
 	setCounter(start, observability.MetricRequestsTotal, openai200, 10)
@@ -117,12 +132,12 @@ func TestBuildDashboardSummary_ByProviderSortedDescending(t *testing.T) {
 	bounds := []float64{0.5, 1, 2}
 	one := []uint64{0, 1, 0, 0}
 
-	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "anthropic"), attribute.String("status_code", "200")}, 50)
-	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "200")}, 200)
-	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "500")}, 10)
+	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "anthropic"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 50)
+	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 200)
+	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "500")}, 10)
 
-	setHistogram(end, []attribute.KeyValue{attribute.String("provider", "openai")}, 1, 1, bounds, one)
-	setHistogram(end, []attribute.KeyValue{attribute.String("provider", "anthropic")}, 1, 1, bounds, one)
+	setHistogram(end, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai")}, 1, 1, bounds, one)
+	setHistogram(end, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "anthropic")}, 1, 1, bounds, one)
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 
@@ -178,13 +193,13 @@ func TestBuildDashboardSummary_ProviderHealthHonoursFiveMinWindow(t *testing.T) 
 
 	// In the last 5 minutes, openai saw 100 requests, 1 errored — healthy.
 	// anthropic saw 50 requests, 10 errored — unhealthy (>5%).
-	setCounter(fiveStart, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "200")}, 0)
-	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "200")}, 99)
-	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "500")}, 1)
+	setCounter(fiveStart, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 0)
+	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 99)
+	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "500")}, 1)
 
-	setCounter(fiveStart, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "anthropic"), attribute.String("status_code", "200")}, 0)
-	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "anthropic"), attribute.String("status_code", "200")}, 40)
-	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String("provider", "anthropic"), attribute.String("status_code", "500")}, 10)
+	setCounter(fiveStart, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "anthropic"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 0)
+	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "anthropic"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 40)
+	setCounter(fiveEnd, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "anthropic"), attribute.String(observability.AttrHTTPResponseStatusCode, "500")}, 10)
 
 	sum := BuildDashboardSummary(start, end, time.Hour,
 		[]string{"openai", "anthropic", "gemini"}, nil, nil,
