@@ -239,7 +239,7 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 		t.Fatalf("NewMeters: %v", err)
 	}
 
-	reporter := newReporterFactory(nil, nil, logger, meters, nil, nil)
+	reporter := newReporterFactory(nil, nil, logger, meters, nil, nil, nil)
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
 	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, 8, meters)
 

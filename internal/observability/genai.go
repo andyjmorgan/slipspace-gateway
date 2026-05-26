@@ -42,6 +42,12 @@ const (
 	// identifier. Populated by the session-bundling work; declared here so
 	// the span builder has a single key reference once that lands.
 	AttrGenAIConversationID = "gen_ai.conversation.id"
+
+	// AttrGenAIUsageInputTokens and AttrGenAIUsageOutputTokens are the
+	// spec gen_ai.usage.* span attributes carrying per-request token
+	// counts. Span-only — the metric form is the token-usage histogram.
+	AttrGenAIUsageInputTokens  = "gen_ai.usage.input_tokens"  //nolint:gosec // G101 false positive: attribute key, not a credential
+	AttrGenAIUsageOutputTokens = "gen_ai.usage.output_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
 )
 
 // Reused stable OTel conventions from namespaces other than gen_ai.*.
@@ -70,6 +76,18 @@ const (
 
 	// AttrSluiceConfiguration is the resolved Sluice configuration name.
 	AttrSluiceConfiguration = "sluice.configuration"
+
+	// AttrSluiceCorrelationID carries the request correlation id on the
+	// span so a trace can be cross-referenced to logs and captured
+	// records (which key on the same id).
+	AttrSluiceCorrelationID = "sluice.correlation_id"
+
+	// AttrSluiceResilienceTarget and AttrSluiceResilienceOutcome label a
+	// per-attempt child span with the resilience target name and the
+	// attempt outcome (success, failure_status, transport_error,
+	// cb_blocked).
+	AttrSluiceResilienceTarget  = "sluice.resilience.target"
+	AttrSluiceResilienceOutcome = "sluice.resilience.outcome"
 )
 
 // gen_ai.operation.name values (spec-defined).

@@ -15,7 +15,9 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
@@ -76,11 +78,15 @@ type reporterFactory struct {
 	liveFeed  *livefeed.Ring
 	bodyStore *livefeed.BodyStore
 
+	// tracer emits the per-request span at completion. May be nil (no
+	// OTLP endpoint configured, or test contexts); emitTrace no-ops then.
+	tracer trace.Tracer
+
 	instanceID string
 	seq        atomic.Uint64
 }
 
-func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore) *reporterFactory {
+func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -95,6 +101,7 @@ func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger 
 		meters:     meters,
 		liveFeed:   liveFeed,
 		bodyStore:  bodyStore,
+		tracer:     tracer,
 		instanceID: hostname,
 	}
 }
@@ -286,6 +293,7 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 	entryID := r.appendLiveFeed(ev, matches)
 	r.captureBody(ctx, entryID, ev)
 	r.enqueueRecord(ctx, ev, matches)
+	r.emitTrace(ctx, ev)
 
 	logger := observability.FromContext(ctx)
 	logger.InfoContext(ctx, "request completed",
@@ -647,6 +655,96 @@ func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
 		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(r.endpoint)),
 		attribute.String(observability.AttrSluiceEndpoint, r.endpoint),
 	)
+}
+
+// emitTrace synthesises the request's OTel span at completion. The span
+// is built post-flight with a backdated start (OnRequestStart time) and
+// ended immediately, so nothing on the request path waits on the tracer;
+// the batch span processor exports out of band. A resilience run that
+// made multiple upstream attempts becomes a parent request span with one
+// gen_ai child span per attempt, reconstructed from each attempt's
+// StartedAt + DurationMs. No-ops when no tracer is configured or the
+// request start time was never recorded.
+func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) {
+	if r.factory.tracer == nil || r.started.IsZero() {
+		return
+	}
+	op := observability.OperationNameForEndpoint(ev.Endpoint)
+	model := sanitiseModelLabel(ev.Model)
+
+	attrs := []attribute.KeyValue{
+		attribute.String(observability.AttrGenAIOperationName, op),
+		attribute.String(observability.AttrGenAIProviderName, ev.Provider),
+		attribute.String(observability.AttrGenAIRequestModel, model),
+		attribute.String(observability.AttrSluiceEndpoint, ev.Endpoint),
+		attribute.String(observability.AttrSluiceConfiguration, r.configuration),
+		attribute.Int(observability.AttrHTTPResponseStatusCode, ev.StatusCode),
+	}
+	if ev.CorrelationID != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
+	}
+	if ev.TokensIn > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageInputTokens, ev.TokensIn))
+	}
+	if ev.TokensOut > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageOutputTokens, ev.TokensOut))
+	}
+	if ev.StatusCode >= 400 {
+		attrs = append(attrs, attribute.String(observability.AttrErrorType, strconv.Itoa(ev.StatusCode)))
+	}
+
+	parentCtx, span := r.factory.tracer.Start(ctx, op+" "+model,
+		trace.WithTimestamp(r.started),
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attrs...),
+	)
+	if ev.StatusCode >= 400 {
+		span.SetStatus(codes.Error, http.StatusText(ev.StatusCode))
+	}
+
+	for _, a := range ev.Attempts {
+		r.emitAttemptSpan(parentCtx, op, model, a)
+	}
+
+	span.End(trace.WithTimestamp(r.started.Add(time.Duration(ev.DurationMs) * time.Millisecond)))
+}
+
+// emitAttemptSpan synthesises one child span for a resilience attempt,
+// backdated from the attempt's StartedAt + DurationMs so a failover walk
+// renders as a waterfall under the request span. cb_blocked entries
+// (zero duration, never ran) still appear as a zero-width marker.
+func (r *reporterRun) emitAttemptSpan(ctx context.Context, op, model string, a events.AttemptRecord) {
+	if a.StartedAt.IsZero() {
+		return
+	}
+	attrs := []attribute.KeyValue{
+		attribute.String(observability.AttrGenAIOperationName, op),
+		attribute.String(observability.AttrGenAIProviderName, r.provider),
+		attribute.String(observability.AttrGenAIRequestModel, model),
+		attribute.String(observability.AttrSluiceResilienceTarget, a.Target),
+		attribute.String(observability.AttrSluiceResilienceOutcome, a.Outcome),
+	}
+	if a.StatusCode != 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrHTTPResponseStatusCode, a.StatusCode))
+	}
+	failed := a.StatusCode >= 400 || a.Error != ""
+	if failed {
+		errType := a.Error
+		if errType == "" {
+			errType = strconv.Itoa(a.StatusCode)
+		}
+		attrs = append(attrs, attribute.String(observability.AttrErrorType, errType))
+	}
+
+	_, span := r.factory.tracer.Start(ctx, op+" "+model+" ["+a.Target+"]",
+		trace.WithTimestamp(a.StartedAt),
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attrs...),
+	)
+	if failed {
+		span.SetStatus(codes.Error, a.Error)
+	}
+	span.End(trace.WithTimestamp(a.StartedAt.Add(time.Duration(a.DurationMs) * time.Millisecond)))
 }
 
 // jsonBodyOrEscaped marshals body bytes onto a Record's inline

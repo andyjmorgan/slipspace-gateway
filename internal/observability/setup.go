@@ -22,7 +22,10 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
+	oteltrace "go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Supported OTLP transport identifiers.
@@ -89,6 +92,13 @@ type Provider struct {
 	// reaches for the global meter still routes here.
 	MeterProvider metric.MeterProvider
 
+	// TracerProvider is the span pipeline. Always non-nil: when OTLP is
+	// disabled it is a no-op provider so callers can start spans
+	// unconditionally without nil-checking. When OTLP is enabled it is
+	// an SDK provider registered globally via otel.SetTracerProvider and
+	// drained on Shutdown.
+	TracerProvider oteltrace.TracerProvider
+
 	// Logger is the service-enriched root logger. Per-request loggers
 	// are derived from this and stashed on context.Context.
 	Logger *slog.Logger
@@ -109,6 +119,14 @@ type Provider struct {
 	// makes subsequent invocations no-ops that return the same joined
 	// error as the first call.
 	Shutdown func(ctx context.Context) error
+}
+
+// Tracer returns the gateway-scoped tracer from the provider's
+// TracerProvider. TracerProvider is always non-nil, so this is safe to
+// call whether or not OTLP tracing is enabled — when disabled the
+// returned tracer is a no-op that never records spans.
+func (p *Provider) Tracer() oteltrace.Tracer {
+	return p.TracerProvider.Tracer(TracerName)
 }
 
 // Setup constructs the telemetry stack from the supplied configuration.
@@ -201,13 +219,36 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 		return nil, fmt.Errorf("observability: snapshotter: %w", err)
 	}
 
+	// TracerProvider is always non-nil. With OTLP disabled it is a no-op
+	// so callers start spans unconditionally; with OTLP enabled it is an
+	// SDK provider registered globally and drained on Shutdown.
+	var tp oteltrace.TracerProvider = tracenoop.NewTracerProvider()
+	if otlpEnabled {
+		spanExp, terr := newOTLPSpanExporter(ctx, cfg.OTLPEndpoint, cfg.OTLPProtocol)
+		if terr != nil {
+			_ = mp.Shutdown(ctx)
+			return nil, terr
+		}
+		// TODO(v1.5+): per-configuration sampling. AlwaysSample for now —
+		// the request path attaches no sampler-influencing attributes yet.
+		sdkTP := sdktrace.NewTracerProvider(
+			sdktrace.WithResource(res),
+			sdktrace.WithBatcher(spanExp),
+			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
+		)
+		otel.SetTracerProvider(sdkTP)
+		shutdownFns = append(shutdownFns, sdkTP.Shutdown)
+		tp = sdkTP
+	}
+
 	return &Provider{
-		Meters:        meters,
-		MeterProvider: mp,
-		Logger:        logger,
-		PromHandler:   promHandler,
-		Snapshotter:   snap,
-		Shutdown:      idempotentShutdown(shutdownFns),
+		Meters:         meters,
+		MeterProvider:  mp,
+		TracerProvider: tp,
+		Logger:         logger,
+		PromHandler:    promHandler,
+		Snapshotter:    snap,
+		Shutdown:       idempotentShutdown(shutdownFns),
 	}, nil
 }
 
