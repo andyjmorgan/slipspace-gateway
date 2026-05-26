@@ -103,8 +103,8 @@ func TestSetup_PrometheusOnly(t *testing.T) {
 	buf := make([]byte, 65536)
 	n, _ := resp.Body.Read(buf)
 	body := string(buf[:n])
-	if !strings.Contains(body, "gateway_requests_total") {
-		t.Errorf("metrics body missing gateway_requests_total:\n%s", body)
+	if !strings.Contains(body, "sluice_requests_total") {
+		t.Errorf("metrics body missing sluice_requests_total:\n%s", body)
 	}
 	// Go runtime + process collectors must be present on the same
 	// registry the OTel exporter writes to — closes the gap surfaced

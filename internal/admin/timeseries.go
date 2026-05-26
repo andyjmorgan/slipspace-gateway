@@ -121,24 +121,27 @@ func tokensPerSecondSeries(samples []observability.Sample) []adminc.DashboardSer
 		if secs <= 0 {
 			continue
 		}
-		dIn := counterDeltaSum(prev, cur, observability.MetricTokensInputTotal)
-		dOut := counterDeltaSum(prev, cur, observability.MetricTokensOutputTotal)
+		dIn := tokenUsageDeltaSum(prev, cur, observability.TokenTypeInput)
+		dOut := tokenUsageDeltaSum(prev, cur, observability.TokenTypeOutput)
 		in.Points = append(in.Points, adminc.DashboardPoint{Timestamp: cur.At, Value: float64(dIn) / secs})
 		out.Points = append(out.Points, adminc.DashboardPoint{Timestamp: cur.At, Value: float64(dOut) / secs})
 	}
 	return []adminc.DashboardSeries{in, out}
 }
 
-// counterDeltaSum is the per-interval analog of dashboard_query.go's
-// sumCounter — sums (cur - prev) across every label-set under one
-// counter metric. Kept in the timeseries package because it walks the
-// Sample pair shape the timeseries handler already operates on, rather
-// than the (Counters, Histograms) maps the summary handler indexes
-// directly.
-func counterDeltaSum(prev, cur observability.Sample, metric string) int64 {
+// tokenUsageDeltaSum sums (cur - prev) of the gen_ai.client.token.usage
+// histogram SUM across every series whose gen_ai.token.type matches
+// tokenType. The histogram sum is the token count the former
+// input/output counters carried, so the per-second token curves read the
+// same magnitude off the new instrument.
+func tokenUsageDeltaSum(prev, cur observability.Sample, tokenType string) int64 {
 	var total int64
-	for key, v := range cur.Counters[metric] {
-		total += v - prev.Counters[metric][key]
+	for key, e := range cur.Histograms[observability.MetricTokenUsage] {
+		if key.Get(observability.AttrGenAITokenType) != tokenType {
+			continue
+		}
+		s := prev.HistogramValue(observability.MetricTokenUsage, key)
+		total += int64(e.Sum - s.Sum)
 	}
 	return total
 }
@@ -201,7 +204,7 @@ func p95ByProviderSeries(samples []observability.Sample) []adminc.DashboardSerie
 	providers := map[string]struct{}{}
 	last := samples[len(samples)-1]
 	for key := range last.Histograms[observability.MetricRequestDuration] {
-		if p := key.Get("provider"); p != "" {
+		if p := key.Get(observability.AttrGenAIProviderName); p != "" {
 			providers[p] = struct{}{}
 		}
 	}
@@ -316,7 +319,7 @@ func totalsByProvider(samples []observability.Sample) map[string]int64 {
 	}
 	first, last := samples[0], samples[len(samples)-1]
 	for key, v := range last.Counters[observability.MetricRequestsTotal] {
-		provider := key.Get("provider")
+		provider := key.Get(observability.AttrGenAIProviderName)
 		if provider == "" {
 			continue
 		}
@@ -359,7 +362,7 @@ func topProvidersByTotal(totals map[string]int64, n int) []string {
 func providerRequestsDelta(prev, cur observability.Sample, provider string) int64 {
 	var delta int64
 	for key, v := range cur.Counters[observability.MetricRequestsTotal] {
-		if key.Get("provider") != provider {
+		if key.Get(observability.AttrGenAIProviderName) != provider {
 			continue
 		}
 		delta += v - prev.Counters[observability.MetricRequestsTotal][key]
@@ -369,12 +372,12 @@ func providerRequestsDelta(prev, cur observability.Sample, provider string) int6
 
 func providerClassifiedDelta(prev, cur observability.Sample, provider string) (total, errored int64) {
 	for key, v := range cur.Counters[observability.MetricRequestsTotal] {
-		if key.Get("provider") != provider {
+		if key.Get(observability.AttrGenAIProviderName) != provider {
 			continue
 		}
 		delta := v - prev.Counters[observability.MetricRequestsTotal][key]
 		total += delta
-		status := key.Get("status_code")
+		status := key.Get(observability.AttrHTTPResponseStatusCode)
 		if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
 			errored += delta
 		}
@@ -394,7 +397,7 @@ func classifyDeltaTotals(prev, cur observability.Sample) (total, success, errore
 	for key, v := range cur.Counters[observability.MetricRequestsTotal] {
 		delta := v - prev.Counters[observability.MetricRequestsTotal][key]
 		total += delta
-		status := key.Get("status_code")
+		status := key.Get(observability.AttrHTTPResponseStatusCode)
 		if strings.HasPrefix(status, "2") {
 			success += delta
 		} else if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
@@ -410,7 +413,7 @@ func classifyDeltaTotals(prev, cur observability.Sample) (total, success, errore
 func providerHistogramDelta(prev, cur observability.Sample, provider string) observability.HistogramSnapshot {
 	var merged observability.HistogramSnapshot
 	for key, e := range cur.Histograms[observability.MetricRequestDuration] {
-		if key.Get("provider") != provider {
+		if key.Get(observability.AttrGenAIProviderName) != provider {
 			continue
 		}
 		s := prev.HistogramValue(observability.MetricRequestDuration, key)

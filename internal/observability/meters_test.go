@@ -39,8 +39,8 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 
 	ctx := context.Background()
 	meters.RequestsTotal.Add(ctx, 1)
-	meters.TokensInputTotal.Add(ctx, 42)
-	meters.TokensOutputTotal.Add(ctx, 21)
+	meters.TokenUsage.Record(ctx, 42, metric.WithAttributes(attribute.String(observability.AttrGenAITokenType, observability.TokenTypeInput)))
+	meters.TokenUsage.Record(ctx, 21, metric.WithAttributes(attribute.String(observability.AttrGenAITokenType, observability.TokenTypeOutput)))
 	meters.TokensCachedTotal.Add(ctx, 7)
 	meters.TokensCacheCreationTotal.Add(ctx, 5)
 	meters.TagsAppliedTotal.Add(ctx, 2)
@@ -76,8 +76,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 
 	want := []string{
 		observability.MetricRequestsTotal,
-		observability.MetricTokensInputTotal,
-		observability.MetricTokensOutputTotal,
+		observability.MetricTokenUsage,
 		observability.MetricTokensCachedTotal,
 		observability.MetricTokensCacheCreationTotal,
 		observability.MetricTagsAppliedTotal,
@@ -210,11 +209,11 @@ func TestRegisterCircuitBreakerStateGauge_RegisterErrorIsWrapped(t *testing.T) {
 }
 
 // TestMeters_RequestsTotalCarriesModelAttribute proves the
-// gateway.requests.total instrument accepts and surfaces a `model`
-// attribute. The attribute itself is applied by the cmd/gateway reporter;
-// this test exists per the issue-#4 acceptance check so a meter-level
-// regression (e.g. instrument swapped for one with attribute filtering)
-// fails here rather than at the dashboard.
+// sluice.requests.total instrument accepts and surfaces the
+// gen_ai.request.model attribute. The attribute itself is applied by the
+// cmd/gateway reporter; this test exists per the issue-#4 acceptance
+// check so a meter-level regression (e.g. instrument swapped for one with
+// attribute filtering) fails here rather than at the dashboard.
 func TestMeters_RequestsTotalCarriesModelAttribute(t *testing.T) {
 	t.Parallel()
 
@@ -229,10 +228,10 @@ func TestMeters_RequestsTotalCarriesModelAttribute(t *testing.T) {
 
 	ctx := context.Background()
 	meters.RequestsTotal.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("provider", "openai"),
-		attribute.String("endpoint", "chat_completions"),
-		attribute.String("model", "gpt-4o-mini"),
-		attribute.Int("status_code", 200),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+		attribute.String(observability.AttrGenAIRequestModel, "gpt-4o-mini"),
+		attribute.Int(observability.AttrHTTPResponseStatusCode, 200),
 	))
 
 	var rm metricdata.ResourceMetrics
@@ -252,9 +251,9 @@ func TestMeters_RequestsTotalCarriesModelAttribute(t *testing.T) {
 			if len(sum.DataPoints) == 0 {
 				t.Fatalf("%s: no data points", m.Name)
 			}
-			got, ok := sum.DataPoints[0].Attributes.Value("model")
+			got, ok := sum.DataPoints[0].Attributes.Value(observability.AttrGenAIRequestModel)
 			if !ok || got.AsString() != "gpt-4o-mini" {
-				t.Fatalf("%s: model attribute = %q, ok=%v; want %q", m.Name, got.AsString(), ok, "gpt-4o-mini")
+				t.Fatalf("%s: %s attribute = %q, ok=%v; want %q", m.Name, observability.AttrGenAIRequestModel, got.AsString(), ok, "gpt-4o-mini")
 			}
 			return
 		}
@@ -323,6 +322,9 @@ type failMeter struct {
 	failFloat64HistAt int
 	float64HistCalls  int
 
+	failInt64HistAt int
+	int64HistCalls  int
+
 	failInt64UpDown bool
 }
 
@@ -351,6 +353,14 @@ func (f *failMeter) Int64UpDownCounter(name string, opts ...metric.Int64UpDownCo
 	return f.Meter.Int64UpDownCounter(name, opts...)
 }
 
+func (f *failMeter) Int64Histogram(name string, opts ...metric.Int64HistogramOption) (metric.Int64Histogram, error) {
+	f.int64HistCalls++
+	if f.failInt64HistAt > 0 && f.int64HistCalls == f.failInt64HistAt {
+		return nil, errInjected
+	}
+	return f.Meter.Int64Histogram(name, opts...)
+}
+
 func TestNewMeters_PropagatesConstructionErrors(t *testing.T) {
 	t.Parallel()
 
@@ -361,8 +371,10 @@ func TestNewMeters_PropagatesConstructionErrors(t *testing.T) {
 		{"counter", &failMeter{failInt64CounterAt: 1}},
 		{"request_duration", &failMeter{failFloat64HistAt: 1}},
 		{"ttfb", &failMeter{failFloat64HistAt: 2}},
+		{"token_usage", &failMeter{failInt64HistAt: 1}},
 		{"active_requests", &failMeter{failInt64UpDown: true}},
 		{"rule_eval_duration", &failMeter{failFloat64HistAt: 3}},
+		{"attempts_per_request", &failMeter{failInt64HistAt: 2}},
 	}
 
 	for _, tc := range cases {

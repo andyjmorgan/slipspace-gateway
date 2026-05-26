@@ -30,23 +30,42 @@ func circuitBreakerStateCallback(source CircuitBreakerStateSource, podID string)
 // instruments are registered.
 const MeterName = "sluice-gateway"
 
-// Instrument names. All gateway metrics live under the gateway. prefix so
-// they sort together in Prometheus and remain disjoint from any future
-// sibling services (a2a., mcp., ...).
+// Instrument names. The per-request inference signals follow the
+// OpenTelemetry GenAI semantic conventions (gen_ai.*); Sluice-specific
+// dimensions and convenience aggregates live under sluice.*; gateway.*
+// is reserved for instruments the GenAI spec has no concept for (the
+// rule engine, resilience orchestrator, circuit breaker, admin console).
+// See the design note "OTel GenAI Conformance" for the naming discipline.
 const (
-	MetricRequestsTotal            = "gateway.requests.total"
-	MetricTokensInputTotal         = "gateway.tokens.input.total"
-	MetricTokensOutputTotal        = "gateway.tokens.output.total"
-	MetricTokensCachedTotal        = "gateway.tokens.cached.total"
-	MetricTokensCacheCreationTotal = "gateway.tokens.cache_creation.total"
-	MetricTagsAppliedTotal         = "gateway.tags.applied.total"
-	MetricUnmappedFieldsTotal      = "gateway.unmapped_fields.total"
-	MetricConfigReloadTotal        = "gateway.config_reload.total"
-	MetricUpstreamErrorsTotal      = "gateway.upstream_errors.total"
-	MetricErrorResponsesTotal      = "gateway.error_responses.total"
+	// MetricRequestsTotal is retained as a Sluice-namespaced convenience
+	// counter. The GenAI spec derives request count from the duration
+	// histogram's _count; we keep an explicit counter as a spec-legal
+	// additive extra because the admin console's per-dimension request
+	// counting is built on it (same emit-both rationale as cache tokens).
+	MetricRequestsTotal = "sluice.requests.total"
 
-	MetricRequestDuration        = "gateway.request.duration"
-	MetricRequestTimeToFirstByte = "gateway.request.time_to_first_byte"
+	// MetricTokenUsage is the spec gen_ai.client.token.usage histogram,
+	// keyed by gen_ai.token.type=input|output. There is no server-side
+	// token metric in the spec, so this client metric is emitted from the
+	// proxy by deliberate choice; it replaces the former input/output
+	// token counters.
+	MetricTokenUsage = "gen_ai.client.token.usage" //nolint:gosec // G101 false positive: metric name, not a credential
+
+	// Cache tokens have no gen_ai.token.type value (the spec enum is
+	// input|output only), so they ride Sluice-namespaced counters. Both
+	// are billing-load-bearing: cached is the discounted cache-read,
+	// cache_creation the chargeable cache-write premium.
+	MetricTokensCachedTotal        = "sluice.tokens.cached.total"         //nolint:gosec // G101 false positive: metric name, not a credential
+	MetricTokensCacheCreationTotal = "sluice.tokens.cache_creation.total" //nolint:gosec // G101 false positive: metric name, not a credential
+
+	MetricTagsAppliedTotal    = "gateway.tags.applied.total"
+	MetricUnmappedFieldsTotal = "gateway.unmapped_fields.total"
+	MetricConfigReloadTotal   = "gateway.config_reload.total"
+	MetricUpstreamErrorsTotal = "gateway.upstream_errors.total"
+	MetricErrorResponsesTotal = "gateway.error_responses.total"
+
+	MetricRequestDuration        = "gen_ai.server.request.duration"
+	MetricRequestTimeToFirstByte = "gen_ai.server.time_to_first_token"
 
 	MetricActiveRequests = "gateway.active_requests"
 
@@ -131,8 +150,12 @@ var (
 type Meters struct {
 	RequestsTotal metric.Int64Counter
 
-	TokensInputTotal         metric.Int64Counter
-	TokensOutputTotal        metric.Int64Counter
+	// TokenUsage is the gen_ai.client.token.usage histogram. One Record
+	// per direction, tagged gen_ai.token.type=input|output. Replaces the
+	// former input/output counters; per-window totals come from the
+	// histogram sum.
+	TokenUsage metric.Int64Histogram
+
 	TokensCachedTotal        metric.Int64Counter
 	TokensCacheCreationTotal metric.Int64Counter
 
@@ -256,8 +279,6 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		dst              *metric.Int64Counter
 	}{
 		{MetricRequestsTotal, "Total requests completed.", "1", &m.RequestsTotal},
-		{MetricTokensInputTotal, "Sum of prompt tokens reported by upstream providers.", "1", &m.TokensInputTotal},
-		{MetricTokensOutputTotal, "Sum of completion tokens reported by upstream providers.", "1", &m.TokensOutputTotal},
 		{MetricTokensCachedTotal, "Sum of provider-reported cached input tokens (cache reads, billed at the discounted rate).", "1", &m.TokensCachedTotal},
 		{MetricTokensCacheCreationTotal, "Sum of provider-reported cache-write tokens (Anthropic's chargeable cache-creation premium).", "1", &m.TokensCacheCreationTotal},
 		{MetricTagsAppliedTotal, "Count of AddTagAction applications labelled by tag name. Cardinality bounded by configured policy.", "1", &m.TagsAppliedTotal},
@@ -299,6 +320,16 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricRequestTimeToFirstByte, err)
 	}
 	m.RequestTimeToFirstByte = ttfb
+
+	tokenUsage, err := meter.Int64Histogram(MetricTokenUsage,
+		metric.WithDescription("Number of input/output tokens reported by upstream providers, keyed by gen_ai.token.type."),
+		metric.WithUnit("{token}"),
+		metric.WithExplicitBucketBoundaries(TokenUsageBuckets...),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricTokenUsage, err)
+	}
+	m.TokenUsage = tokenUsage
 
 	active, err := meter.Int64UpDownCounter(MetricActiveRequests,
 		metric.WithDescription("Requests currently in flight."),

@@ -25,13 +25,13 @@ func TestComputeByModel_RowsSkipMissingModelLabel(t *testing.T) {
 	end := makeSample(t1)
 	// Only one row carries the model label — the other should be skipped.
 	withModel := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("model", "gpt-4o-mini"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrGenAIRequestModel, "gpt-4o-mini"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	withoutModel := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	setCounter(end, observability.MetricRequestsTotal, withModel, 10)
 	setCounter(end, observability.MetricRequestsTotal, withoutModel, 5)
@@ -80,9 +80,9 @@ func TestComputeByProvider_StartHistogramShorterThanEnd(t *testing.T) {
 	bounds := []float64{0.5, 1, 2}
 	one := []uint64{0, 1, 0, 0}
 	setCounter(end, observability.MetricRequestsTotal,
-		[]attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "200")}, 1)
+		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 1)
 	setHistogram(end,
-		[]attribute.KeyValue{attribute.String("provider", "openai")}, 1, 1, bounds, one)
+		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai")}, 1, 1, bounds, one)
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByProvider) != 1 {
@@ -100,7 +100,7 @@ func TestBuildTimeseries_DispatchesAllNames(t *testing.T) {
 		makeSample(t0.Add(time.Minute)),
 	}
 	setCounter(samples[1], observability.MetricRequestsTotal,
-		[]attribute.KeyValue{attribute.String("provider", "openai"), attribute.String("status_code", "200")}, 60)
+		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 60)
 
 	if got := buildTimeseries(SeriesRequestsPerSecond, samples); len(got) != 1 {
 		t.Errorf("rps dispatch: got %d series, want 1", len(got))
@@ -121,24 +121,24 @@ func TestComputeByEndpoint_PartitionsByProviderEndpointPair(t *testing.T) {
 		v     int64
 	}{
 		{[]attribute.KeyValue{
-			attribute.String("provider", "openai"),
-			attribute.String("endpoint", "chat_completions"),
-			attribute.String("status_code", "200"),
+			attribute.String(observability.AttrGenAIProviderName, "openai"),
+			attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 		}, 30},
 		{[]attribute.KeyValue{
-			attribute.String("provider", "openai"),
-			attribute.String("endpoint", "chat_completions"),
-			attribute.String("status_code", "500"),
+			attribute.String(observability.AttrGenAIProviderName, "openai"),
+			attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+			attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 		}, 2},
 		{[]attribute.KeyValue{
-			attribute.String("provider", "anthropic"),
-			attribute.String("endpoint", "messages"),
-			attribute.String("status_code", "200"),
+			attribute.String(observability.AttrGenAIProviderName, "anthropic"),
+			attribute.String(observability.AttrSluiceEndpoint, "messages"),
+			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 		}, 10},
 		// missing endpoint label — must be skipped.
 		{[]attribute.KeyValue{
-			attribute.String("provider", "openai"),
-			attribute.String("status_code", "200"),
+			attribute.String(observability.AttrGenAIProviderName, "openai"),
+			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 		}, 99},
 	}
 	for _, r := range rows {
@@ -176,14 +176,14 @@ func TestComputeByEndpoint_HistogramFolding(t *testing.T) {
 	bounds := []float64{0.5, 1, 2}
 
 	attrs200 := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("endpoint", "chat_completions"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	attrs500 := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("endpoint", "chat_completions"),
-		attribute.String("status_code", "500"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 	}
 	setCounter(end, observability.MetricRequestsTotal, attrs200, 1)
 	setCounter(end, observability.MetricRequestsTotal, attrs500, 1)
@@ -209,9 +209,9 @@ func TestComputeByEndpoint_HistogramSkippedWhenNoCounter(t *testing.T) {
 	bounds := []float64{0.5, 1, 2}
 
 	histOnly := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("endpoint", "responses"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrSluiceEndpoint, "responses"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
 
@@ -232,9 +232,9 @@ func TestComputeByConfiguration_HistogramSkippedWhenNoCounter(t *testing.T) {
 	bounds := []float64{0.5, 1, 2}
 
 	histOnly := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("configuration", "production"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrSluiceConfiguration, "production"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
 
@@ -251,13 +251,13 @@ func TestComputeByConfiguration_SkipsMissingConfigurationLabel(t *testing.T) {
 	end := makeSample(t1)
 
 	withConfig := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("configuration", "production"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrSluiceConfiguration, "production"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	withoutConfig := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	setCounter(end, observability.MetricRequestsTotal, withConfig, 17)
 	setCounter(end, observability.MetricRequestsTotal, withoutConfig, 4)
@@ -282,9 +282,9 @@ func TestComputeByConfiguration_HistogramFolding(t *testing.T) {
 
 	bounds := []float64{0.5, 1, 2}
 	attrs := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("configuration", "production"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrSluiceConfiguration, "production"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	setCounter(end, observability.MetricRequestsTotal, attrs, 1)
 	setHistogram(end, attrs, 0.75, 1, bounds, []uint64{0, 1, 0, 0})
@@ -306,7 +306,7 @@ func TestRpsSeries_DropsZeroOrNegativeIntervals(t *testing.T) {
 		makeSample(t0),
 	}
 	setCounter(samples[1], observability.MetricRequestsTotal,
-		[]attribute.KeyValue{attribute.String("provider", "openai")}, 1)
+		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai")}, 1)
 	out := rpsSeries(samples)
 	if len(out.Points) != 0 {
 		t.Errorf("expected zero points for zero-interval samples, got %d", len(out.Points))

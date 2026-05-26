@@ -33,8 +33,8 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 	rps := perSecond(totalReqs, realised)
 	errRate := safeRatio(erroredReqs, totalReqs)
 
-	tokensInDeltas := counterDelta(start, end, observability.MetricTokensInputTotal)
-	tokensOutDeltas := counterDelta(start, end, observability.MetricTokensOutputTotal)
+	tokensInDeltas := tokenUsageDelta(start, end, observability.TokenTypeInput)
+	tokensOutDeltas := tokenUsageDelta(start, end, observability.TokenTypeOutput)
 	tokensInTotal := sumCounter(tokensInDeltas)
 	tokensOutTotal := sumCounter(tokensOutDeltas)
 	tokensCachedTotal := sumCounter(counterDelta(start, end, observability.MetricTokensCachedTotal))
@@ -97,6 +97,24 @@ func counterDelta(start, end observability.Sample, metric string) map[observabil
 	return out
 }
 
+// tokenUsageDelta returns end - start of the gen_ai.client.token.usage
+// histogram SUM per label key, restricted to series whose
+// gen_ai.token.type matches tokenType. Returns the same map shape as
+// counterDelta so the by-model join and grand-total fold consume it
+// unchanged — the histogram sum is the token count the former counter
+// carried.
+func tokenUsageDelta(start, end observability.Sample, tokenType string) map[observability.LabelKey]int64 {
+	out := map[observability.LabelKey]int64{}
+	for key, e := range end.Histograms[observability.MetricTokenUsage] {
+		if key.Get(observability.AttrGenAITokenType) != tokenType {
+			continue
+		}
+		s := start.HistogramValue(observability.MetricTokenUsage, key)
+		out[key] = int64(e.Sum - s.Sum)
+	}
+	return out
+}
+
 // sumCounter folds a counter-delta map into a single grand total.
 // Token totals on the dashboard are reported across every label-set
 // (provider, endpoint, configuration, model, status_code) without a
@@ -117,7 +135,7 @@ func sumCounter(deltas map[observability.LabelKey]int64) int64 {
 func classifyTotals(deltas map[observability.LabelKey]int64) (total, success, errored int64) {
 	for key, v := range deltas {
 		total += v
-		status := key.Get("status_code")
+		status := key.Get(observability.AttrHTTPResponseStatusCode)
 		if strings.HasPrefix(status, "2") {
 			success += v
 		} else if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
@@ -249,7 +267,7 @@ func computeByProvider(requestDeltas map[observability.LabelKey]int64, start, en
 	}
 	perProvider := map[string]*acc{}
 	for key, v := range requestDeltas {
-		p := key.Get("provider")
+		p := key.Get(observability.AttrGenAIProviderName)
 		if p == "" {
 			continue
 		}
@@ -259,7 +277,7 @@ func computeByProvider(requestDeltas map[observability.LabelKey]int64, start, en
 			perProvider[p] = a
 		}
 		a.requests += v
-		status := key.Get("status_code")
+		status := key.Get(observability.AttrHTTPResponseStatusCode)
 		if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
 			a.errored += v
 		}
@@ -267,7 +285,7 @@ func computeByProvider(requestDeltas map[observability.LabelKey]int64, start, en
 
 	// Latency histograms: group label-keys by provider, then sum.
 	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
-		p := key.Get("provider")
+		p := key.Get(observability.AttrGenAIProviderName)
 		if p == "" {
 			continue
 		}
@@ -320,7 +338,7 @@ func computeByEndpoint(requestDeltas map[observability.LabelKey]int64, start, en
 	}
 	perEndpoint := map[groupKey]*acc{}
 	for key, v := range requestDeltas {
-		gk := groupKey{provider: key.Get("provider"), endpoint: key.Get("endpoint")}
+		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), endpoint: key.Get(observability.AttrSluiceEndpoint)}
 		if gk.provider == "" || gk.endpoint == "" {
 			continue
 		}
@@ -330,13 +348,13 @@ func computeByEndpoint(requestDeltas map[observability.LabelKey]int64, start, en
 			perEndpoint[gk] = a
 		}
 		a.requests += v
-		status := key.Get("status_code")
+		status := key.Get(observability.AttrHTTPResponseStatusCode)
 		if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
 			a.errored += v
 		}
 	}
 	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
-		gk := groupKey{provider: key.Get("provider"), endpoint: key.Get("endpoint")}
+		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), endpoint: key.Get(observability.AttrSluiceEndpoint)}
 		a := perEndpoint[gk]
 		if a == nil {
 			continue
@@ -381,7 +399,7 @@ func computeByConfiguration(requestDeltas map[observability.LabelKey]int64, star
 	}
 	perConfig := map[string]*acc{}
 	for key, v := range requestDeltas {
-		c := key.Get("configuration")
+		c := key.Get(observability.AttrSluiceConfiguration)
 		if c == "" {
 			continue
 		}
@@ -391,13 +409,13 @@ func computeByConfiguration(requestDeltas map[observability.LabelKey]int64, star
 			perConfig[c] = a
 		}
 		a.requests += v
-		status := key.Get("status_code")
+		status := key.Get(observability.AttrHTTPResponseStatusCode)
 		if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
 			a.errored += v
 		}
 	}
 	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
-		c := key.Get("configuration")
+		c := key.Get(observability.AttrSluiceConfiguration)
 		if c == "" {
 			continue
 		}
@@ -454,25 +472,25 @@ func computeByModel(requestDeltas, tokensInDeltas, tokensOutDeltas map[observabi
 		return a
 	}
 	for key, v := range requestDeltas {
-		m := key.Get("model")
+		m := key.Get(observability.AttrGenAIRequestModel)
 		if m == "" {
 			continue
 		}
-		get(m, key.Get("provider")).requests += v
+		get(m, key.Get(observability.AttrGenAIProviderName)).requests += v
 	}
 	for key, v := range tokensInDeltas {
-		m := key.Get("model")
+		m := key.Get(observability.AttrGenAIRequestModel)
 		if m == "" {
 			continue
 		}
-		get(m, key.Get("provider")).tokensIn += v
+		get(m, key.Get(observability.AttrGenAIProviderName)).tokensIn += v
 	}
 	for key, v := range tokensOutDeltas {
-		m := key.Get("model")
+		m := key.Get(observability.AttrGenAIRequestModel)
 		if m == "" {
 			continue
 		}
-		get(m, key.Get("provider")).tokensOut += v
+		get(m, key.Get(observability.AttrGenAIProviderName)).tokensOut += v
 	}
 	out := make([]adminc.DashboardModelRow, 0, len(perModel))
 	for name, a := range perModel {
@@ -575,13 +593,13 @@ func computeProviderHealth(providers []string, start, end *observability.Sample)
 		perProvider[p] = &acc{}
 	}
 	for key, v := range deltas {
-		p := key.Get("provider")
+		p := key.Get(observability.AttrGenAIProviderName)
 		a := perProvider[p]
 		if a == nil {
 			continue
 		}
 		a.total += v
-		status := key.Get("status_code")
+		status := key.Get(observability.AttrHTTPResponseStatusCode)
 		if strings.HasPrefix(status, "4") || strings.HasPrefix(status, "5") {
 			a.errored += v
 		}

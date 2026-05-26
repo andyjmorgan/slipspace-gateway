@@ -17,8 +17,8 @@ func TestRpsSeries_DeltaBetweenSamples(t *testing.T) {
 		makeSample(t0.Add(120 * time.Second)),
 	}
 	openai200 := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	setCounter(samples[0], observability.MetricRequestsTotal, openai200, 0)
 	setCounter(samples[1], observability.MetricRequestsTotal, openai200, 60)  // 60 reqs in 60s = 1 rps
@@ -49,12 +49,12 @@ func TestErrorRateSeries_PercentageOfErrored(t *testing.T) {
 		makeSample(t0.Add(time.Minute)),
 	}
 	ok := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	bad := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "500"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 	}
 	setCounter(samples[1], observability.MetricRequestsTotal, ok, 90)
 	setCounter(samples[1], observability.MetricRequestsTotal, bad, 10)
@@ -80,9 +80,9 @@ func TestP95ByProviderSeries_OneSeriesPerProvider(t *testing.T) {
 	openaiCounts := []uint64{1, 0, 0, 0, 0, 0}
 	anthropicCounts := []uint64{0, 0, 0, 0, 0, 1} // in +Inf bucket → 5000ms (clamped)
 	setHistogram(samples[1],
-		[]attribute.KeyValue{attribute.String("provider", "openai")}, 0.1, 1, bounds, openaiCounts)
+		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai")}, 0.1, 1, bounds, openaiCounts)
 	setHistogram(samples[1],
-		[]attribute.KeyValue{attribute.String("provider", "anthropic")}, 10, 1, bounds, anthropicCounts)
+		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "anthropic")}, 10, 1, bounds, anthropicCounts)
 
 	series := p95ByProviderSeries(samples)
 	if len(series) != 2 {
@@ -145,8 +145,8 @@ func TestRPSByProviderTopN_RanksByVolumeAndCaps(t *testing.T) {
 	}
 	for name, total := range totals {
 		attrs := []attribute.KeyValue{
-			attribute.String("provider", name),
-			attribute.String("status_code", "200"),
+			attribute.String(observability.AttrGenAIProviderName, name),
+			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 		}
 		setCounter(samples[1], observability.MetricRequestsTotal, attrs, total)
 	}
@@ -182,20 +182,20 @@ func TestErrorRateByProviderTopN_PerProviderPercent(t *testing.T) {
 	// openai: 90 ok + 10 err = 10% error rate, top by volume
 	// anthropic: 4 ok + 1 err = 20% error rate, lower volume
 	openaiOK := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	openaiErr := []attribute.KeyValue{
-		attribute.String("provider", "openai"),
-		attribute.String("status_code", "500"),
+		attribute.String(observability.AttrGenAIProviderName, "openai"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 	}
 	anthrOK := []attribute.KeyValue{
-		attribute.String("provider", "anthropic"),
-		attribute.String("status_code", "200"),
+		attribute.String(observability.AttrGenAIProviderName, "anthropic"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	anthrErr := []attribute.KeyValue{
-		attribute.String("provider", "anthropic"),
-		attribute.String("status_code", "429"),
+		attribute.String(observability.AttrGenAIProviderName, "anthropic"),
+		attribute.String(observability.AttrHTTPResponseStatusCode, "429"),
 	}
 	setCounter(samples[1], observability.MetricRequestsTotal, openaiOK, 90)
 	setCounter(samples[1], observability.MetricRequestsTotal, openaiErr, 10)

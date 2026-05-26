@@ -158,8 +158,8 @@ func TestGateway_RequestsMetricCarriesModelLabel(t *testing.T) {
 	}
 
 	rm := collectUntilRecorded(t, env.reader, observability.MetricRequestsTotal, observability.MetricRequestDuration)
-	requireAttribute(t, &rm, observability.MetricRequestsTotal, "model", "gpt-4o-mini")
-	requireAttribute(t, &rm, observability.MetricRequestDuration, "model", "gpt-4o-mini")
+	requireAttribute(t, &rm, observability.MetricRequestsTotal, observability.AttrGenAIRequestModel, "gpt-4o-mini")
+	requireAttribute(t, &rm, observability.MetricRequestDuration, observability.AttrGenAIRequestModel, "gpt-4o-mini")
 }
 
 // TestGateway_RequestsMetricEmptyModelForPassthrough verifies that
@@ -178,7 +178,7 @@ func TestGateway_RequestsMetricEmptyModelForPassthrough(t *testing.T) {
 	}
 
 	rm := collectUntilRecorded(t, env.reader, observability.MetricRequestsTotal)
-	requireAttribute(t, &rm, observability.MetricRequestsTotal, "model", "")
+	requireAttribute(t, &rm, observability.MetricRequestsTotal, observability.AttrGenAIRequestModel, "")
 }
 
 type meterEnv struct {
