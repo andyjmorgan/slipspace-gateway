@@ -129,6 +129,11 @@ func run(ctx context.Context) error {
 	if extras := redactor.Extras(); len(extras) > 0 {
 		logger.Info("redactor configured", "extra_substrings", extras)
 	}
+
+	// sessionResolver promotes a client-supplied session/bundle id to a
+	// first-class field. X-Sluice-Session-Id is authoritative; the
+	// shipped client defaults plus SLUICE_SESSION_ID_HEADERS follow.
+	sessionResolver := observability.NewSessionResolver(env.SessionIDHeaders)
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: observerFactory, Redactor: redactor})
 
 	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, env.RulesMaxGroupDepth, obs.Meters)
@@ -154,7 +159,7 @@ func run(ctx context.Context) error {
 	// log carries the correlation_id) and the data-plane chain, so
 	// any panic in routing/auth/bodycapture/rules/forwarder is
 	// converted to a logged 500 instead of crashing the goroutine.
-	root := correlationMiddleware(logger, recoverMiddleware(obs.Meters, errs, captured))
+	root := correlationMiddleware(logger, sessionResolver, redactor, recoverMiddleware(obs.Meters, errs, captured))
 
 	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
 

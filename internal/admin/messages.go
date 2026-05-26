@@ -204,6 +204,8 @@ func toMessageEntry(e livefeed.Entry) adminc.MessageEntry {
 		EventID:             e.EventID,
 		At:                  e.At,
 		CorrelationID:       e.CorrelationID,
+		SessionID:           e.SessionID,
+		SessionIDSource:     e.SessionIDSource,
 		Provider:            e.Provider,
 		Endpoint:            e.Endpoint,
 		Model:               e.Model,

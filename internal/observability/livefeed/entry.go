@@ -21,6 +21,13 @@ type Entry struct {
 	// surfaced on the response as X-Sluice-Correlation-Id.
 	CorrelationID string
 
+	// SessionID is the resolved session/bundle id grouping this request
+	// with the rest of its conversation; SessionIDSource is the header it
+	// came from. Both empty when no session header was present. Lets the
+	// console group the live pane into per-conversation bundles.
+	SessionID       string
+	SessionIDSource string
+
 	// Provider, Endpoint, Model are the routed labels after rule
 	// mutation — same values that hit the connector pipeline's
 	// Record.

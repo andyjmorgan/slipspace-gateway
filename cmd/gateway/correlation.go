@@ -4,20 +4,22 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
-const (
-	headerCorrelationID = "X-Sluice-Correlation-Id"
-	headerSessionID     = "X-Sluice-Session-Id"
-)
+const headerCorrelationID = "X-Sluice-Correlation-Id"
 
-// correlationMiddleware assigns a correlation ID (honouring the inbound header
-// when present), enriches the per-request logger, and echoes the ID on the
-// response. Per-request observer state lives on the proxy.Observer minted by
-// the reporter factory; this middleware no longer allocates a shared state
-// struct on context.
-func correlationMiddleware(baseLogger *slog.Logger, next http.Handler) http.Handler {
+// correlationMiddleware assigns a correlation ID (honouring the inbound
+// header when present), resolves the session/bundle id from the request
+// headers, enriches the per-request logger with both, echoes the
+// correlation ID and the resolved session ID on the response, and stores
+// both on the request context for downstream surfaces.
+//
+// Session id is promoted to context (and onto records, spans, and the
+// live feed) but never becomes an OTel metric label — it has unbounded
+// cardinality and bundling is a records/live-feed concern, not telemetry.
+func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.SessionResolver, redactor *headers.Redactor, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(headerCorrelationID)
 		if id == "" {
@@ -25,11 +27,20 @@ func correlationMiddleware(baseLogger *slog.Logger, next http.Handler) http.Hand
 		}
 		ctx := observability.WithCorrelationID(r.Context(), id)
 		logger := baseLogger.With(observability.LogFieldCorrelationID, id)
+
+		sessionID, sessionSource := sessions.Resolve(r.Header, redactor.IsSensitive)
+		if sessionID != "" {
+			ctx = observability.WithSessionID(ctx, sessionID, sessionSource)
+			logger = logger.With(observability.LogFieldSessionID, sessionID)
+		}
 		ctx = observability.WithLogger(ctx, logger)
 
 		w.Header().Set(headerCorrelationID, id)
-		if sid := r.Header.Get(headerSessionID); sid != "" {
-			w.Header().Set(headerSessionID, sid)
+		// Echo the resolved bundle id under the Sluice header so a client
+		// or proxy sees the id Sluice settled on, even when it arrived via
+		// a client-specific header (Codex's Thread_id, etc.).
+		if sessionID != "" {
+			w.Header().Set(observability.SluiceSessionHeader, sessionID)
 		}
 
 		logger.InfoContext(ctx, "request received",

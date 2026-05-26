@@ -121,13 +121,15 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 			apiKeyName = ar.APIKey.Name
 		}
 		return &reporterRun{
-			factory:       f,
-			provider:      labels.Provider,
-			endpoint:      labels.Endpoint,
-			model:         labels.Model,
-			method:        labels.Method,
-			configuration: labels.Configuration,
-			apiKeyName:    apiKeyName,
+			factory:         f,
+			provider:        labels.Provider,
+			endpoint:        labels.Endpoint,
+			model:           labels.Model,
+			method:          labels.Method,
+			configuration:   labels.Configuration,
+			apiKeyName:      apiKeyName,
+			sessionID:       observability.SessionIDFromContext(ctx),
+			sessionIDSource: observability.SessionIDSourceFromContext(ctx),
 		}
 	}
 }
@@ -153,6 +155,13 @@ type reporterRun struct {
 	model         string
 	configuration string
 	apiKeyName    string
+
+	// sessionID + sessionIDSource are the resolved bundle id and its
+	// provenance header, captured from context at construction time.
+	// Stamped on the Record, the span (gen_ai.conversation.id), and the
+	// live-feed entry — never on a metric label (unbounded cardinality).
+	sessionID       string
+	sessionIDSource string
 
 	// method is the inbound HTTP verb captured at construction time.
 	// Stamped on the event / Record / live-feed Entry but never on a
@@ -347,18 +356,20 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 	}
 
 	rec := cc.Record{
-		V:             1,
-		ID:            uuid.NewString(),
-		TsNs:          tsNs,
-		Seq:           r.factory.nextSeq(),
-		InstanceID:    r.factory.instanceID,
-		CorrelationID: ev.CorrelationID,
-		Configuration: r.configuration,
-		APIKeyName:    r.apiKeyName,
-		Provider:      ev.Provider,
-		Endpoint:      ev.Endpoint,
-		Model:         ev.Model,
-		Tags:          ev.Tags,
+		V:               1,
+		ID:              uuid.NewString(),
+		TsNs:            tsNs,
+		Seq:             r.factory.nextSeq(),
+		InstanceID:      r.factory.instanceID,
+		CorrelationID:   ev.CorrelationID,
+		SessionID:       r.sessionID,
+		SessionIDSource: r.sessionIDSource,
+		Configuration:   r.configuration,
+		APIKeyName:      r.apiKeyName,
+		Provider:        ev.Provider,
+		Endpoint:        ev.Endpoint,
+		Model:           ev.Model,
+		Tags:            ev.Tags,
 		Request: cc.RequestPart{
 			Method: ev.Method,
 		},
@@ -514,6 +525,8 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		EventID:             id,
 		At:                  time.Now().UTC(),
 		CorrelationID:       ev.CorrelationID,
+		SessionID:           r.sessionID,
+		SessionIDSource:     r.sessionIDSource,
 		Provider:            ev.Provider,
 		Endpoint:            ev.Endpoint,
 		Model:               ev.Model,
@@ -682,6 +695,9 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) {
 	}
 	if ev.CorrelationID != "" {
 		attrs = append(attrs, attribute.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
+	}
+	if r.sessionID != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIConversationID, r.sessionID))
 	}
 	if ev.TokensIn > 0 {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageInputTokens, ev.TokensIn))

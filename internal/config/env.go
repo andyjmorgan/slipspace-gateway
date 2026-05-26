@@ -81,6 +81,7 @@ const (
 	EnvAdminLiveFeedBodyBytes    = "SLUICE_ADMIN_LIVE_FEED_BODY_BYTES"
 	EnvAdminLiveFeedBodyMaxBytes = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
 	EnvRedactExtraHeaders        = "SLUICE_REDACT_EXTRA_HEADERS"
+	EnvSessionIDHeaders          = "SLUICE_SESSION_ID_HEADERS"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -102,6 +103,7 @@ var envVarNames = []string{
 	EnvAdminLiveFeedBodyBytes,
 	EnvAdminLiveFeedBodyMaxBytes,
 	EnvRedactExtraHeaders,
+	EnvSessionIDHeaders,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -188,6 +190,16 @@ type ServerEnv struct {
 	// it for environment-specific headers (internal tracing IDs that
 	// carry tenant identifiers, custom auth schemes, etc.).
 	RedactExtraHeaders []string
+
+	// SessionIDHeaders is the operator-supplied addendum to the built-in
+	// session-id fallback chain (observability.DefaultSessionIDHeaders).
+	// Each entry is a header name appended, in order, after the shipped
+	// defaults; the authoritative X-Sluice-Session-Id is always tried
+	// first regardless. Lets an operator bundle a custom client's
+	// conversation header (e.g. X-Acme-Conversation-Id) without a code
+	// change. A header also present in RedactExtraHeaders is skipped
+	// during resolution so a promoted session id can't bypass redaction.
+	SessionIDHeaders []string
 }
 
 // PrometheusEnabled reports whether the Prometheus scrape listener is
@@ -258,6 +270,7 @@ func LoadEnv() (*ServerEnv, error) {
 		AdminLiveFeedBodyBytes:    bodyBytes,
 		AdminLiveFeedBodyMaxBytes: bodyMaxBytes,
 		RedactExtraHeaders:        envCSVList(EnvRedactExtraHeaders),
+		SessionIDHeaders:          envCSVList(EnvSessionIDHeaders),
 	}, nil
 }
 
