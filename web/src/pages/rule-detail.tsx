@@ -52,7 +52,7 @@ export function RuleDetailPage() {
       <PanelCard>
         <PanelHead
           title="Body"
-          sub="when this matches, do these actions"
+          sub="the condition to match and the actions that run when it does"
           action={<Tabs value={tab} onChange={setTab} />}
         />
         {tab === "visual" ? (
@@ -63,7 +63,7 @@ export function RuleDetailPage() {
       </PanelCard>
 
       <PanelCard>
-        <PanelHead title="Used by" sub="configurations that reference this rule" />
+        <PanelHead title="Used by" sub="configurations that attach this rule" />
         <div className="px-4 py-3">
           <UsedBy names={r.used_by} kind="configurations" linkPrefix="/configurations" />
         </div>
@@ -75,10 +75,10 @@ export function RuleDetailPage() {
 function VisualBody({ condition, actions }: { condition: RawCondition; actions: RawAction[] }) {
   return (
     <div className="px-4 py-4 flex flex-col gap-4">
-      <Section title="WHEN" sub="predicate that must match for the actions to fire">
+      <Section title="WHEN" sub="the condition that must hold for the actions to run">
         <ConditionView condition={condition} />
       </Section>
-      <Section title="THEN" sub={`${actions.length} action${actions.length === 1 ? "" : "s"} · executed in order on match`}>
+      <Section title="THEN" sub={`${actions.length} action${actions.length === 1 ? "" : "s"} · run in order when the condition matches`}>
         {actions.length === 0 ? (
           <div className="text-[12.5px] text-[color:var(--text-4)]">No actions.</div>
         ) : (
@@ -96,7 +96,7 @@ function VisualBody({ condition, actions }: { condition: RawCondition; actions: 
 function JsonBody({ condition, actions }: { condition: RawCondition; actions: RawAction[] }) {
   return (
     <div className="px-4 py-4 flex flex-col gap-3">
-      <Section title="condition" sub="raw condition body">
+      <Section title="condition" sub="the raw condition JSON">
         <JsonBlock value={condition} />
       </Section>
       <Section title="actions" sub={`${actions.length} ordered`}>

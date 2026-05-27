@@ -77,7 +77,7 @@ function UpstreamCredentialsCard({ creds }: { creds: Record<string, RedactedSecr
   const entries = Object.entries(creds)
   return (
     <PanelCard>
-      <PanelHead title="Upstream credentials" sub="redacted · managed mode injects these on the outgoing request" />
+      <PanelHead title="Upstream credentials" sub="redacted · managed mode swaps these onto the upstream request" />
       {entries.length === 0 && (
         <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">
           No managed-mode credentials. Passthrough-only configuration.
@@ -110,7 +110,7 @@ function UpstreamCredentialsCard({ creds }: { creds: Record<string, RedactedSecr
 function AttachedRulesCard({ rules }: { rules: RuleAttachment[] }) {
   return (
     <PanelCard>
-      <PanelHead title="Attached rules" sub={`evaluated top-to-bottom · ${rules.length}`} />
+      <PanelHead title="Attached rules" sub={`evaluated in order, top to bottom · ${rules.length}`} />
       {rules.length === 0 && (
         <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No rules attached.</div>
       )}
@@ -158,7 +158,7 @@ function APIKeysCard({ configuration, keys }: { configuration: string; keys: API
     <PanelCard>
       <PanelHead
         title="API keys"
-        sub={`${keys.length} key${keys.length === 1 ? "" : "s"} · click reveal to see the plaintext`}
+        sub={`${keys.length} key${keys.length === 1 ? "" : "s"} · reveal shows the plaintext`}
       />
       {keys.length === 0 && (
         <EmptyPanel message="No API keys attached to this configuration." />

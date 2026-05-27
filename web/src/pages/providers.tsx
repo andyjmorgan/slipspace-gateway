@@ -19,7 +19,7 @@ export function ProvidersPage() {
     <div>
       <PageHeader
         title="Providers"
-        sub="Global infrastructure. Defines upstream services, prefixes, and per-endpoint auth overrides."
+        sub="Upstream services the gateway forwards to, shared across every configuration — base URLs, route prefixes, and per-endpoint auth overrides."
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}

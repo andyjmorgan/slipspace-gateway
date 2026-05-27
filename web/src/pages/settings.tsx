@@ -96,7 +96,7 @@ export function SettingsPage() {
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Settings"
-        sub="Inspect and download the gateway's on-disk configuration. Secrets are redacted as ***."
+        sub="Inspect and export the gateway's merged on-disk configuration. Secrets are redacted to ***."
       />
 
       <PanelCard>

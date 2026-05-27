@@ -54,7 +54,7 @@ export function ProviderDetailPage() {
 
       {p.required_headers && Object.keys(p.required_headers).length > 0 && (
         <PanelCard>
-          <PanelHead title="Required headers" sub="injected on every forwarded request" />
+          <PanelHead title="Required headers" sub="added to every request forwarded to this provider" />
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
@@ -75,7 +75,7 @@ export function ProviderDetailPage() {
       )}
 
       <PanelCard>
-        <PanelHead title="Endpoints" sub={`${p.endpoints.length} · per-endpoint auth overrides shown inline`} />
+        <PanelHead title="Endpoints" sub={`${p.endpoints.length} · auth overrides shown inline where an endpoint sets one`} />
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
