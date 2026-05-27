@@ -310,16 +310,13 @@ func (a *AppendFieldAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a AppendFieldAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
-// validateWriteTarget parses target strictly and rejects the
-// response.body scope, which the request-side rewrite engine does not
-// yet handle.
+// validateWriteTarget parses target strictly. Both request.body and
+// response.body scopes are accepted for write actions — the rules
+// engine partitions them by phase. (The bodyField condition still
+// rejects response.body, since conditions evaluate at request time.)
 func validateWriteTarget(action, raw string) error {
-	t, err := ParseTarget(raw)
-	if err != nil {
+	if _, err := ParseTarget(raw); err != nil {
 		return fmt.Errorf("%s: %w", action, err)
-	}
-	if t.Scope == ScopeResponseBody {
-		return fmt.Errorf("%s: %w", action, ErrResponseScopeUnsupported)
 	}
 	return nil
 }

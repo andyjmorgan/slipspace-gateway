@@ -52,7 +52,20 @@ type Forwarder struct {
 	// log envelopes. Never nil — New substitutes a default
 	// (built-ins-only) Redactor when callers pass nil.
 	redactor *headers.Redactor
+
+	// responseBodyTransform, when set, is invoked from ModifyResponse
+	// for every upstream response. It lets a caller mutate the response
+	// body (e.g. the rules engine's response-phase rewrites) without
+	// this package importing the rules engine — the closure reads the
+	// per-request state off ctx. nil disables the hook.
+	responseBodyTransform ResponseBodyTransformer
 }
+
+// ResponseBodyTransformer mutates an upstream response before the client
+// sees it. streaming reports whether the response is server-sent events
+// (the implementation is expected to leave streaming bodies untouched).
+// A non-nil error aborts the response via the proxy's ErrorHandler.
+type ResponseBodyTransformer func(ctx context.Context, resp *http.Response, streaming bool) error
 
 // Options configures a new Forwarder. Every field is optional; New
 // substitutes safe defaults for any nil/zero values.
@@ -70,6 +83,10 @@ type Options struct {
 	// token / cookie / secret / sluice-identity). Operator-supplied
 	// extras flow through here from cmd/gateway at startup.
 	Redactor *headers.Redactor
+
+	// ResponseBodyTransform is invoked from ModifyResponse for every
+	// upstream response (see ResponseBodyTransformer). nil disables it.
+	ResponseBodyTransform ResponseBodyTransformer
 }
 
 // Destination describes the resolved upstream target for a single Forward
@@ -118,10 +135,11 @@ func New(opts Options) *Forwarder {
 		redactor = headers.NewRedactor(nil)
 	}
 	return &Forwarder{
-		transports:      make(map[string]*http.Transport),
-		logger:          logger,
-		observerFactory: factory,
-		redactor:        redactor,
+		transports:            make(map[string]*http.Transport),
+		logger:                logger,
+		observerFactory:       factory,
+		redactor:              redactor,
+		responseBodyTransform: opts.ResponseBodyTransform,
 	}
 }
 
@@ -280,6 +298,12 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 			}
 
 			observer.OnResponseHeaders(ctx, resp.StatusCode, resp.Header, streaming)
+
+			if f.responseBodyTransform != nil {
+				if err := f.responseBodyTransform(ctx, resp, streaming); err != nil {
+					return err
+				}
+			}
 			return nil
 		},
 		ErrorHandler: func(rw http.ResponseWriter, _ *http.Request, err error) {

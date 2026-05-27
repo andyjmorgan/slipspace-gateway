@@ -290,46 +290,35 @@ func applyAddTag(a contractsrules.AddTagAction, state *MutableState) (contractsr
 // itself does not touch the body — it queues the mutation so it lands
 // once, on the final bytes, after any typed re-marshal.
 func applyRewriteField(a contractsrules.RewriteFieldAction, state *MutableState) (contractsrules.Outcome, error) {
-	op, err := bodyOp(bodypatch.OpSet, a.ActionType(), a.Target, a.Value)
-	if err != nil {
-		return contractsrules.Outcome{}, err
-	}
-	state.BodyRewrites = append(state.BodyRewrites, op)
-	return contractsrules.Outcome{}, nil
+	return recordBodyOp(state, bodypatch.OpSet, a.ActionType(), a.Target, a.Value)
 }
 
 // applyRemoveField records a body delete operation on state.
 func applyRemoveField(a contractsrules.RemoveFieldAction, state *MutableState) (contractsrules.Outcome, error) {
-	op, err := bodyOp(bodypatch.OpRemove, a.ActionType(), a.Target, contractsrules.RewriteValue{})
-	if err != nil {
-		return contractsrules.Outcome{}, err
-	}
-	state.BodyRewrites = append(state.BodyRewrites, op)
-	return contractsrules.Outcome{}, nil
+	return recordBodyOp(state, bodypatch.OpRemove, a.ActionType(), a.Target, contractsrules.RewriteValue{})
 }
 
 // applyAppendField records a body array-append operation on state.
 func applyAppendField(a contractsrules.AppendFieldAction, state *MutableState) (contractsrules.Outcome, error) {
-	op, err := bodyOp(bodypatch.OpAppend, a.ActionType(), a.Target, a.Value)
-	if err != nil {
-		return contractsrules.Outcome{}, err
-	}
-	state.BodyRewrites = append(state.BodyRewrites, op)
-	return contractsrules.Outcome{}, nil
+	return recordBodyOp(state, bodypatch.OpAppend, a.ActionType(), a.Target, a.Value)
 }
 
-// bodyOp parses a write target and builds the bodypatch.Op. The
-// response.body scope is rejected here as a runtime backstop — the
-// contract's Validate already blocks it at config-load.
-func bodyOp(kind bodypatch.OpKind, actionType, target string, value contractsrules.RewriteValue) (bodypatch.Op, error) {
+// recordBodyOp parses a write target and queues the bodypatch.Op on the
+// phase-appropriate slot: request.body.* targets land on BodyRewrites
+// (applied on the request path), response.body.* targets on
+// ResponseRewrites (applied by the forwarder's ModifyResponse hook).
+func recordBodyOp(state *MutableState, kind bodypatch.OpKind, actionType, target string, value contractsrules.RewriteValue) (contractsrules.Outcome, error) {
 	t, err := contractsrules.ParseTarget(target)
 	if err != nil {
-		return bodypatch.Op{}, fmt.Errorf("rules: %s: %w", actionType, err)
+		return contractsrules.Outcome{}, fmt.Errorf("rules: %s: %w", actionType, err)
 	}
-	if t.Scope != contractsrules.ScopeRequestBody {
-		return bodypatch.Op{}, fmt.Errorf("rules: %s: %w", actionType, contractsrules.ErrResponseScopeUnsupported)
+	op := bodypatch.Op{Kind: kind, Path: t.Path, Value: value, ActionType: actionType}
+	if t.Scope == contractsrules.ScopeResponseBody {
+		state.ResponseRewrites = append(state.ResponseRewrites, op)
+	} else {
+		state.BodyRewrites = append(state.BodyRewrites, op)
 	}
-	return bodypatch.Op{Kind: kind, Path: t.Path, Value: value, ActionType: actionType}, nil
+	return contractsrules.Outcome{}, nil
 }
 
 // applyUseResiliencePolicy writes a.PolicyName into state.PolicyRef.

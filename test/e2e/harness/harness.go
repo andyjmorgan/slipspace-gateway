@@ -483,6 +483,9 @@ func (h *Harness) gatewayEnv(configDir string) []string {
 	if h.opts.AdminEnabled {
 		env = append(env, "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS=200")
 	}
+	if h.opts.ExternalURL != "" {
+		env = append(env, "SLUICE_EXTERNAL_URL="+h.opts.ExternalURL)
+	}
 	return env
 }
 

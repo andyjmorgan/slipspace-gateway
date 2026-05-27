@@ -629,7 +629,7 @@ The config-load cross-validator (in `internal/config`) proves every non-empty `P
 
 Operator-authored mutation of the request body. All three are non-terminating and operate at the **JSON-bytes** level: they record a body-patch op on `state.BodyRewrites`, and `BodyRewriteHandler` applies the batch with [`gjson`](https://github.com/tidwall/gjson)/[`sjson`](https://github.com/tidwall/sjson) after the typed re-marshal step — splicing the change into the serialized body so unknown provider fields and numeric precision survive byte-for-byte. The mutation engine lives in [`internal/bodypatch`](../internal/bodypatch/bodypatch.go).
 
-Scope is **request-side only** (`request.body.*`). `response.body.*` targets are rejected at config-load. Predicate *reads* (the `bodyField` condition) are unconstrained; predicate *writes* are not supported — see [rules.md — `bodyField`](rules.md#bodyfield).
+Both scopes are supported. **`request.body.*`** targets apply on the request path (after the typed re-marshal, before the forwarder). **`response.body.*`** targets are phase-partitioned and applied to the upstream response in the proxy's `ModifyResponse` hook — non-streaming responses only; queued response rewrites are dropped with a `streaming_response` warn on server-sent-events responses. Predicate *reads* (the `bodyField` condition) are unconstrained; predicate *writes* are not supported — see [rules.md — `bodyField`](rules.md#bodyfield).
 
 ### Target language
 
@@ -648,7 +648,9 @@ Identifier segments only — no array indices (`messages.0`), no brackets, no gj
 | string (`"hi"`, `"{request.body.model}"`) | template — resolved (see below) |
 | sequence / mapping | structured literal, emitted verbatim |
 
-Template strings resolve `{ref}` placeholders. A string that is **exactly** one `{ref}` passes the referenced value's JSON type through; any other template stringifies the substituted result. Supported references: `{request.body.<dotted>}`, `{path_params.X}`, `{state.provider}`, `{state.endpoint}`. A single-reference template whose ref cannot be resolved drops the op (`template_ref_miss`); a missing ref inside mixed content substitutes empty string. No silent coercion — declare `"1024"` for an int field and the wire gets the string `"1024"`; upstream rejection is the backstop.
+Template strings resolve `{ref}` placeholders. A string that is **exactly** one `{ref}` passes the referenced value's JSON type through; any other template stringifies the substituted result. Supported references: `{request.body.<dotted>}`, `{response.body.<dotted>}`, `{path_params.X}`, `{state.provider}`, `{state.endpoint}`, `{external_url}`. A single-reference template whose ref cannot be resolved drops the op (`template_ref_miss`); a missing ref inside mixed content substitutes empty string. No silent coercion — declare `"1024"` for an int field and the wire gets the string `"1024"`; upstream rejection is the backstop.
+
+Reference scoping follows the phase. On a **request.body** target, `{request.body.x}` reads the evolving request body and `{response.body.x}` is out of scope. On a **response.body** target, `{response.body.x}` reads the response body and `{request.body.x}` reads the original request snapshot. `{external_url}` is the gateway's externally reachable base URL from `SLUICE_EXTERNAL_URL`; unset, it misses (dropping any rewrite that depends on it).
 
 ### `removeField` vs `rewriteField value: null`
 
@@ -660,7 +662,7 @@ Pushes the value onto the array at the target, creating the array if absent. The
 
 ### What they mutate
 
-Each action appends a `bodypatch.Op` to `state.BodyRewrites` (parsed and validated; an invalid or `response.body` target errors at evaluate time and is recorded on the rule-matched event). `BodyRewriteHandler` reads the current outgoing body bytes (the typed re-marshal output when a typed action like `changeModelName` also ran, otherwise the verbatim inbound bytes), applies the batch, and replaces `r.Body` + `Content-Length`. Body patches run **post-routing**, so they cannot change the destination — routing-relevant model changes belong on `changeModelName`.
+Each action appends a `bodypatch.Op` to one of two slots on `state`, partitioned by target scope: `request.body.*` ops go to `BodyRewrites`, `response.body.*` ops to `ResponseRewrites`. Request ops are applied by `BodyRewriteHandler`, which reads the current outgoing body bytes (the typed re-marshal output when a typed action like `changeModelName` also ran, otherwise the verbatim inbound bytes), applies the batch, and replaces `r.Body` + `Content-Length`. Response ops are applied by `ApplyResponseRewrites` from the proxy's `ModifyResponse` hook against the buffered (non-streaming) response body. Both run **post-routing**, so they cannot change the destination — routing-relevant model changes belong on `changeModelName`.
 
 ### Telemetry
 
@@ -709,11 +711,26 @@ rules:
         value:
           role: developer
           content: "You are a governed assistant."
+
+  # Response-side: rebase a provider-returned URL through the gateway so
+  # the client follows it back through Sluice (requires SLUICE_EXTERNAL_URL).
+  - name: rebase-batches-results-url
+    condition:
+      type: group
+      logicalOperator: And
+      children:
+        - { type: provider, operator: Equals, expectedProvider: anthropic }
+        - { type: endpoint, operator: Equals, expectedEndpoint: messages_batches_create }
+    actions:
+      - type: rewriteField
+        target: response.body.results_url
+        value: "{external_url}/anthropic/v1/messages/batches/{response.body.id}/results"
 ```
 
 ### Gotchas
 
-- **Request-side only in this release.** `response.body.*` (e.g. the Anthropic batches `results_url` rebase) is rejected at config-load; it ships with the response-side follow-up.
+- **Response rewrites are non-streaming only.** On a server-sent-events response, queued `response.body.*` rewrites are dropped with a `streaming_response` warn — SSE chunks don't form one JSON document. They also run **post-routing**, so they cannot change the destination.
+- **The Anthropic batches `results_url` rebase** (`response.body.results_url` ← `{external_url}/anthropic/v1/messages/batches/{response.body.id}/results`) is the canonical response-side use, but needs the `messages_batches_create` endpoint modelled in routing first — a thin follow-up on top of this primitive.
 - **`appendField` puts the element last.** OpenAI conventionally wants the system message first; appending mid/late is usually tolerated, but prepend semantics are not yet available.
 - **Polymorphic fields.** Anthropic `system` is string-or-array. Gate with a `bodyField` `Is` check and branch: `appendField` for the array shape, `rewriteField` with a `"{request.body.system}\n\n…"` template for the string shape.
 

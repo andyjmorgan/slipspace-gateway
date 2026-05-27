@@ -10,8 +10,10 @@
 // (sjson would otherwise overwrite a scalar mid-path) and the
 // append-to-non-array guard.
 //
-// Only request.body targets are handled here; response-side mutation is
-// a separate follow-up.
+// The same engine serves both phases: request-body patches (applied on
+// the request path) and response-body patches (applied in the proxy's
+// ModifyResponse hook). Refs.Phase selects which document a template
+// body reference resolves against.
 package bodypatch
 
 import (
@@ -56,10 +58,30 @@ type Op struct {
 	ActionType string
 }
 
-// Refs is the resolution context for value templates. Body is supplied
-// by Apply itself (the evolving working document), so callers only
-// provide the request-scoped fields.
+// Phase is the pipeline phase a batch of ops applies in. It decides
+// which document a body reference resolves against — see Refs.
+type Phase int
+
+// Apply phases.
+const (
+	// PhaseRequest applies ops to the request body; {request.body.x}
+	// reads the evolving working body and {response.body.x} is
+	// unavailable.
+	PhaseRequest Phase = iota
+
+	// PhaseResponse applies ops to the response body; {response.body.x}
+	// reads the evolving working body and {request.body.x} reads the
+	// (immutable) RequestBody snapshot.
+	PhaseResponse
+)
+
+// Refs is the resolution context for value templates. The working
+// document being patched is passed to Apply; Refs carries the
+// surrounding context a template may reference.
 type Refs struct {
+	// Phase selects how body references resolve (see Phase).
+	Phase Phase
+
 	// PathParams resolves {path_params.X} references.
 	PathParams map[string]string
 
@@ -68,6 +90,15 @@ type Refs struct {
 
 	// Endpoint resolves {state.endpoint}.
 	Endpoint string
+
+	// ExternalURL resolves {external_url} — the gateway's externally
+	// reachable base URL. Empty means unset; the ref then misses.
+	ExternalURL string
+
+	// RequestBody is the request body snapshot used to resolve
+	// {request.body.x} in PhaseResponse. Ignored in PhaseRequest
+	// (where {request.body.x} reads the working body instead).
+	RequestBody []byte
 }
 
 // Drop reasons reported on Result.Reason.
@@ -75,7 +106,11 @@ const (
 	ReasonPathTraversesPrimitive = "path_traverses_primitive"
 	ReasonAppendNonArray         = "append_non_array"
 	ReasonTemplateRefMiss        = "template_ref_miss"
-	ReasonApplyError             = "apply_error"
+	// ReasonStreamingResponse is reported by the response-side applier
+	// when queued response rewrites are dropped because the upstream
+	// response is server-sent events (not a single JSON document).
+	ReasonStreamingResponse = "streaming_response"
+	ReasonApplyError        = "apply_error"
 )
 
 // Result reports the outcome of one Op for telemetry and the rule-
@@ -277,24 +312,50 @@ func tokenize(s string) []token {
 }
 
 const (
-	refRequestBody = "request.body."
-	refPathParams  = "path_params."
-	refStateProv   = "state.provider"
-	refStateEnd    = "state.endpoint"
+	refRequestBody  = "request.body."
+	refResponseBody = "response.body."
+	refPathParams   = "path_params."
+	refStateProv    = "state.provider"
+	refStateEnd     = "state.endpoint"
+	refExternalURL  = "external_url"
 )
+
+// bodyRefField returns the gjson Result for a request.body/response.body
+// reference, picking the source document by phase: in PhaseResponse the
+// working document is the response and request.body reads the request
+// snapshot; in PhaseRequest the working document is the request and
+// response.body is unavailable. isBody is false when ref is not a body
+// reference at all.
+func bodyRefField(working, ref string, refs Refs) (result gjson.Result, isBody bool) {
+	switch {
+	case strings.HasPrefix(ref, refRequestBody):
+		path := strings.TrimPrefix(ref, refRequestBody)
+		if refs.Phase == PhaseResponse {
+			return gjson.GetBytes(refs.RequestBody, path), true
+		}
+		return gjson.Get(working, path), true
+	case strings.HasPrefix(ref, refResponseBody):
+		if refs.Phase != PhaseResponse {
+			// response.body is not in scope on the request path.
+			return gjson.Result{}, true
+		}
+		return gjson.Get(working, strings.TrimPrefix(ref, refResponseBody)), true
+	default:
+		return gjson.Result{}, false
+	}
+}
 
 // resolveRefRaw resolves a single-reference template to the referenced
 // value's raw JSON, preserving its type. Returns ok=false when the
-// reference is absent or names a namespace not available on the request
-// path (external_url, response.body — deferred to response-side work).
+// reference is absent or names a namespace not available in this phase.
 func resolveRefRaw(working, ref string, refs Refs) (string, bool) {
-	switch {
-	case strings.HasPrefix(ref, refRequestBody):
-		r := gjson.Get(working, strings.TrimPrefix(ref, refRequestBody))
+	if r, isBody := bodyRefField(working, ref, refs); isBody {
 		if r.Exists() {
 			return r.Raw, true
 		}
 		return "", false
+	}
+	switch {
 	case strings.HasPrefix(ref, refPathParams):
 		if v := refs.PathParams[strings.TrimPrefix(ref, refPathParams)]; v != "" {
 			return marshalString(v), true
@@ -310,6 +371,11 @@ func resolveRefRaw(working, ref string, refs Refs) (string, bool) {
 			return marshalString(refs.Endpoint), true
 		}
 		return "", false
+	case ref == refExternalURL:
+		if refs.ExternalURL != "" {
+			return marshalString(refs.ExternalURL), true
+		}
+		return "", false
 	default:
 		return "", false
 	}
@@ -318,13 +384,13 @@ func resolveRefRaw(working, ref string, refs Refs) (string, bool) {
 // resolveRefString resolves a reference to its string form for mixed-
 // content templates.
 func resolveRefString(working, ref string, refs Refs) (string, bool) {
-	switch {
-	case strings.HasPrefix(ref, refRequestBody):
-		r := gjson.Get(working, strings.TrimPrefix(ref, refRequestBody))
+	if r, isBody := bodyRefField(working, ref, refs); isBody {
 		if r.Exists() {
 			return r.String(), true
 		}
 		return "", false
+	}
+	switch {
 	case strings.HasPrefix(ref, refPathParams):
 		if v := refs.PathParams[strings.TrimPrefix(ref, refPathParams)]; v != "" {
 			return v, true
@@ -334,6 +400,8 @@ func resolveRefString(working, ref string, refs Refs) (string, bool) {
 		return refs.Provider, refs.Provider != ""
 	case ref == refStateEnd:
 		return refs.Endpoint, refs.Endpoint != ""
+	case ref == refExternalURL:
+		return refs.ExternalURL, refs.ExternalURL != ""
 	default:
 		return "", false
 	}

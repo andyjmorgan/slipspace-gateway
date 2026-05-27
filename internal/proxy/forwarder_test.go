@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +82,69 @@ func TestForward_HappyPath(t *testing.T) {
 	}
 	if events[2].durationMs < 0 {
 		t.Fatalf("durationMs negative: %d", events[2].durationMs)
+	}
+}
+
+func TestForward_ResponseBodyTransform(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"orig"}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	called := false
+	gotStreaming := true
+	f := New(Options{
+		ResponseBodyTransform: func(_ context.Context, resp *http.Response, streaming bool) error {
+			called = true
+			gotStreaming = streaming
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			rewritten := bytes.Replace(body, []byte("orig"), []byte("rewritten"), 1)
+			resp.Body = io.NopCloser(bytes.NewReader(rewritten))
+			resp.ContentLength = int64(len(rewritten))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+			return nil
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
+	dest := newDestination(t, upstream.URL+"/v1/x")
+	if _, err := f.Forward(context.Background(), rec, req, dest); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if !called {
+		t.Fatal("transform was not invoked")
+	}
+	if gotStreaming {
+		t.Error("non-streaming response was flagged streaming")
+	}
+	if got := rec.Body.String(); got != `{"id":"rewritten"}` {
+		t.Errorf("body = %s, want rewritten", got)
+	}
+}
+
+func TestForward_ResponseBodyTransform_ErrorYields502(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	f := New(Options{
+		ResponseBodyTransform: func(context.Context, *http.Response, bool) error {
+			return errors.New("transform boom")
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/x", nil)
+	dest := newDestination(t, upstream.URL+"/v1/x")
+	_, _ = f.Forward(context.Background(), rec, req, dest)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502 (ModifyResponse error → ErrorHandler)", rec.Code)
 	}
 }
 

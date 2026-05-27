@@ -276,6 +276,71 @@ func TestResolveValue_UnknownKindDrops(t *testing.T) {
 	}
 }
 
+func TestResolveTemplate_ResponsePhase(t *testing.T) {
+	respBody := `{"id":"msg_batch_123","type":"message_batch"}`
+	reqBody := []byte(`{"model":"claude-3-5-sonnet","max_tokens":100}`)
+	refs := Refs{Phase: PhaseResponse, ExternalURL: "https://sluice.example.com", RequestBody: reqBody}
+	tests := []struct {
+		name string
+		tmpl string
+		want string
+		drop bool
+	}{
+		{name: "response.body single-ref passthrough", tmpl: "{response.body.id}", want: `"msg_batch_123"`},
+		{name: "external_url single-ref", tmpl: "{external_url}", want: `"https://sluice.example.com"`},
+		{name: "request.body reads request snapshot", tmpl: "{request.body.model}", want: `"claude-3-5-sonnet"`},
+		{name: "request.body number from snapshot", tmpl: "{request.body.max_tokens}", want: "100"},
+		{
+			name: "batches rebase mixed template",
+			tmpl: "{external_url}/anthropic/v1/messages/batches/{response.body.id}/results",
+			want: `"https://sluice.example.com/anthropic/v1/messages/batches/msg_batch_123/results"`,
+		},
+		{name: "response.body miss drops", tmpl: "{response.body.absent}", drop: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, drop := resolveTemplate(respBody, tt.tmpl, refs)
+			if drop != tt.drop {
+				t.Fatalf("drop = %v, want %v", drop, tt.drop)
+			}
+			if !drop && raw != tt.want {
+				t.Errorf("raw = %s, want %s", raw, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveTemplate_RequestPhase_ResponseRefUnavailable(t *testing.T) {
+	if _, drop := resolveTemplate(`{"id":"req"}`, "{response.body.id}", Refs{Phase: PhaseRequest}); !drop {
+		t.Error("response.body ref should miss in request phase")
+	}
+	if _, drop := resolveTemplate(`{}`, "{external_url}", Refs{Phase: PhaseRequest}); !drop {
+		t.Error("external_url should miss when unset")
+	}
+	raw, drop := resolveTemplate(`{}`, "x-{external_url}", Refs{Phase: PhaseRequest})
+	if drop || raw != `"x-"` {
+		t.Errorf("got %q drop=%v, want \"x-\"", raw, drop)
+	}
+}
+
+func TestApply_ResponsePhase_RebaseField(t *testing.T) {
+	resp := []byte(`{"id":"b1","results_url":"https://api.anthropic.com/v1/messages/batches/b1/results"}`)
+	op := Op{
+		Kind:       OpSet,
+		Path:       "results_url",
+		Value:      tmplValue("{external_url}/anthropic/v1/messages/batches/{response.body.id}/results"),
+		ActionType: "rewriteField",
+	}
+	got, results := Apply(resp, []Op{op}, Refs{Phase: PhaseResponse, ExternalURL: "https://sluice.example.com"})
+	if !results[0].Applied {
+		t.Fatalf("not applied: %+v", results[0])
+	}
+	want := "https://sluice.example.com/anthropic/v1/messages/batches/b1/results"
+	if got := gjson.GetBytes(got, "results_url").String(); got != want {
+		t.Errorf("results_url = %s, want %s", got, want)
+	}
+}
+
 func TestTokenize(t *testing.T) {
 	tests := []struct {
 		in   string

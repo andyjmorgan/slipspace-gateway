@@ -98,14 +98,20 @@ type MutableState struct {
 	// gateway.tags.applied.total counter once per tag.
 	Tags []string
 
-	// BodyRewrites accumulates body-patch operations recorded by the
-	// rewriteField / removeField / appendField actions, in rule order.
-	// BodyRewriteHandler applies them against the serialized request
-	// body after the typed re-marshal step. Empty means nothing to do —
-	// the common path costs nothing. Distinct from BodyMutated, which
-	// tracks typed-body field mutation (changeModelName); a request can
-	// have both, and the byte patches always apply last.
+	// BodyRewrites accumulates request-phase body-patch operations
+	// (request.body.* targets) recorded by rewriteField / removeField /
+	// appendField, in rule order. BodyRewriteHandler applies them
+	// against the serialized request body after the typed re-marshal
+	// step. Distinct from BodyMutated, which tracks typed-body field
+	// mutation (changeModelName); a request can have both, and the byte
+	// patches always apply last.
 	BodyRewrites []bodypatch.Op
+
+	// ResponseRewrites accumulates response-phase body-patch operations
+	// (response.body.* targets) from the same actions. They are not
+	// applied on the request path — the forwarder's ModifyResponse hook
+	// applies them to the upstream response body (non-streaming only).
+	ResponseRewrites []bodypatch.Op
 
 	// PolicyRef names the resilience policy the rules engine resolved
 	// for this request. Set by UseResiliencePolicyAction; consumed
@@ -202,6 +208,9 @@ func (s *MutableState) Clone() *MutableState {
 	}
 	if len(s.BodyRewrites) > 0 {
 		out.BodyRewrites = append([]bodypatch.Op(nil), s.BodyRewrites...)
+	}
+	if len(s.ResponseRewrites) > 0 {
+		out.ResponseRewrites = append([]bodypatch.Op(nil), s.ResponseRewrites...)
 	}
 	return out
 }
