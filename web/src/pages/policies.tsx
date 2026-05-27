@@ -17,7 +17,7 @@ export function PoliciesPage() {
     <div>
       <PageHeader
         title="Resilience policies"
-        sub="Per-target failover / load-balance configuration with live circuit-breaker state. Read-only — edits land in v1.3."
+        sub="Failover and load-balance targets with live per-pod circuit-breaker state. Read-only for now; editing lands in v1.3."
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}

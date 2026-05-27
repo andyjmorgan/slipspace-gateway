@@ -146,8 +146,8 @@ export function MessagesPage() {
         title="Live messages"
         sub={
           feed.status === "disabled"
-            ? "Live tail is disabled. Set SLUICE_ADMIN_LIVE_FEED_CAPACITY > 0 to enable it."
-            : `Live tail — single process, last ${feed.capacity}, restart clears it.`
+            ? "Live tail is off. Set SLUICE_ADMIN_LIVE_FEED_CAPACITY > 0 to enable it."
+            : `Live tail of requests as they complete — single process, last ${feed.capacity} held in memory, cleared on restart.`
         }
         action={
           feed.status === "ok" && (

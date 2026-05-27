@@ -18,7 +18,7 @@ export function ConfigurationsPage() {
     <div>
       <PageHeader
         title="Configurations"
-        sub="Reusable policy bundles. Click into one to see its credentials, attached rules, and API keys."
+        sub="Reusable policy bundles — upstream credentials, attached rules, and the API keys that resolve to each. Open one for the breakdown."
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}

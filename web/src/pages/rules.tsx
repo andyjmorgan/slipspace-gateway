@@ -18,7 +18,7 @@ export function RulesPage() {
     <div>
       <PageHeader
         title="Rules"
-        sub="Shared library. Each rule may be referenced by many configurations — the 'used by' column shows which ones."
+        sub="Shared library. A rule can attach to many configurations; the 'used by' column shows which ones do."
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}

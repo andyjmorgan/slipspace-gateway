@@ -33,7 +33,7 @@ export function RoutesPage() {
     <div>
       <PageHeader
         title="Routes"
-        sub="Flattened route table — the URL paths the gateway accepts and the (provider, endpoint) pair that owns each one. This is what the routing middleware reads on every request."
+        sub="The flattened path table the routing middleware matches on every request — each URL the gateway accepts and the (provider, endpoint) pair that owns it."
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}
@@ -44,7 +44,7 @@ export function RoutesPage() {
         <PanelCard>
           <PanelHead
             title={`${filtered.length} of ${state.data.length} routes`}
-            sub="filter matches path, provider, or endpoint"
+            sub="filters across path, provider, and endpoint"
             action={
               <Input
                 placeholder="filter…"
