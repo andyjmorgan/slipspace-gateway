@@ -69,7 +69,7 @@ export function Sidebar({
     >
       <div className="flex items-center gap-2.5 px-3.5 py-3 border-b border-[color:var(--border)]">
         <img
-          src={`${import.meta.env.BASE_URL}sluice.png`}
+          src={`${import.meta.env.BASE_URL}sluice.svg`}
           alt=""
           width={28}
           height={28}
