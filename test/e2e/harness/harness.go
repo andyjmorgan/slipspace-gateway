@@ -483,6 +483,9 @@ func (h *Harness) gatewayEnv(configDir string) []string {
 	if h.opts.AdminEnabled {
 		env = append(env, "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS=200")
 	}
+	if len(h.opts.SessionIDHeaders) > 0 {
+		env = append(env, "SLUICE_SESSION_ID_HEADERS="+strings.Join(h.opts.SessionIDHeaders, ","))
+	}
 	return env
 }
 

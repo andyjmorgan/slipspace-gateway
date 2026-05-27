@@ -40,6 +40,11 @@ type Options struct {
 	// to the gateway. Empty defaults to "test-password" when
 	// AdminEnabled. Ignored when AdminEnabled is false.
 	AdminPassword string
+
+	// SessionIDHeaders, when non-empty, sets SLUICE_SESSION_ID_HEADERS so
+	// the gateway treats the listed inbound headers as session-id aliases.
+	// Empty leaves the var unset (canonical X-Sluice-Session-Id only).
+	SessionIDHeaders []string
 }
 
 // BoolPtr returns a pointer to b. Convenience for the Options.ReportingEnabled

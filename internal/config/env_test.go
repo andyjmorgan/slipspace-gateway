@@ -309,6 +309,42 @@ func TestLoadEnv_RedactExtraHeaders(t *testing.T) {
 	}
 }
 
+func TestLoadEnv_SessionIDHeaders(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"unset", "", nil},
+		{"empty after trim", "   ", nil},
+		{"single entry", "X-Agentling-Task-Id", []string{"X-Agentling-Task-Id"}},
+		{"multi preserves order", " X-Agentling-Task-Id , X-Trace-Id ", []string{"X-Agentling-Task-Id", "X-Trace-Id"}},
+		{"empty entries dropped", "a,,b, ,c", []string{"a", "b", "c"}},
+		{"all empty yields nil", ", , ,", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range config.EnvVarNames() {
+				t.Setenv(name, "")
+			}
+			t.Setenv(config.EnvSessionIDHeaders, tc.raw)
+			env, err := config.LoadEnv()
+			if err != nil {
+				t.Fatalf("LoadEnv: %v", err)
+			}
+			got := env.SessionIDHeaders
+			if len(got) != len(tc.want) {
+				t.Fatalf("SessionIDHeaders = %v (len %d), want %v (len %d)", got, len(got), tc.want, len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("SessionIDHeaders[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestEnvVarNames_ReturnsFreshCopy(t *testing.T) {
 	a := config.EnvVarNames()
 	a[0] = "MUTATED"

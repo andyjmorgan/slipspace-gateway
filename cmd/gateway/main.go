@@ -154,7 +154,7 @@ func run(ctx context.Context) error {
 	// log carries the correlation_id) and the data-plane chain, so
 	// any panic in routing/auth/bodycapture/rules/forwarder is
 	// converted to a logged 500 instead of crashing the goroutine.
-	root := correlationMiddleware(logger, recoverMiddleware(obs.Meters, errs, captured))
+	root := correlationMiddleware(logger, env.SessionIDHeaders, recoverMiddleware(obs.Meters, errs, captured))
 
 	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
 

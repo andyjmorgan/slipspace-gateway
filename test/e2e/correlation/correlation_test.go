@@ -67,6 +67,28 @@ func TestCorrelation_SessionID_Echoed(t *testing.T) {
 	}
 }
 
+func TestCorrelation_SessionID_AliasHeader_Echoed(t *testing.T) {
+	t.Parallel()
+	h := harness.NewWithOptions(t, harness.Options{
+		SessionIDHeaders: []string{"X-Agentling-Task-Id"},
+	})
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"x"}`,
+	})
+
+	const taskID = "task-7f3a"
+	resp := h.PostJSON("/v1/chat/completions",
+		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}},
+		http.Header{"X-Agentling-Task-Id": []string{taskID}})
+
+	if got := resp.Header.Get("X-Sluice-Session-Id"); got != taskID {
+		t.Fatalf("X-Sluice-Session-Id=%q want %q (alias header should resolve to session id)", got, taskID)
+	}
+}
+
 func TestCorrelation_SessionID_NotEchoed_WhenAbsent(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)

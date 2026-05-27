@@ -81,6 +81,7 @@ const (
 	EnvAdminLiveFeedBodyBytes    = "SLUICE_ADMIN_LIVE_FEED_BODY_BYTES"
 	EnvAdminLiveFeedBodyMaxBytes = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
 	EnvRedactExtraHeaders        = "SLUICE_REDACT_EXTRA_HEADERS"
+	EnvSessionIDHeaders          = "SLUICE_SESSION_ID_HEADERS"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -102,6 +103,7 @@ var envVarNames = []string{
 	EnvAdminLiveFeedBodyBytes,
 	EnvAdminLiveFeedBodyMaxBytes,
 	EnvRedactExtraHeaders,
+	EnvSessionIDHeaders,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -188,6 +190,18 @@ type ServerEnv struct {
 	// it for environment-specific headers (internal tracing IDs that
 	// carry tenant identifiers, custom auth schemes, etc.).
 	RedactExtraHeaders []string
+
+	// SessionIDHeaders is an ordered list of inbound header names the
+	// correlation middleware treats as session-id aliases. The canonical
+	// X-Sluice-Session-Id is always honoured first; when it is absent the
+	// middleware falls back to these headers in order and uses the first
+	// non-empty value as the session id. The resolved value is echoed back
+	// on X-Sluice-Session-Id and attached to the per-request logger as
+	// session_id. Empty / unset keeps session resolution at the canonical
+	// header only. Lets clients that emit their own session header (e.g. an
+	// agent runner sending X-Agentling-Task-Id) participate in session
+	// correlation without rewriting their request code.
+	SessionIDHeaders []string
 }
 
 // PrometheusEnabled reports whether the Prometheus scrape listener is
@@ -258,6 +272,7 @@ func LoadEnv() (*ServerEnv, error) {
 		AdminLiveFeedBodyBytes:    bodyBytes,
 		AdminLiveFeedBodyMaxBytes: bodyMaxBytes,
 		RedactExtraHeaders:        envCSVList(EnvRedactExtraHeaders),
+		SessionIDHeaders:          envCSVList(EnvSessionIDHeaders),
 	}, nil
 }
 
