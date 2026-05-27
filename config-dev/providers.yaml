@@ -43,6 +43,14 @@ providers:
         method: [GET]
         accepted_paths: [/v1/models]
         request_kind: passthrough
+      messages_batches_retrieve:
+        path: "/v1/messages/batches/{batch_id}"
+        method: [GET]
+        accepted_paths:
+          - "/v1/messages/batches/{batch_id}"
+        request_kind: passthrough
+        auth_header: x-api-key
+        auth_format: "{key}"
       chat_completions:
         path: /v1/chat/completions
         method: [POST]
