@@ -27,12 +27,18 @@ import (
 
 // SeaweedFS exposes S3 on 8333 by default when started with `-s3`.
 const (
-	seaweedImage   = "chrislusf/seaweedfs:3.71"
-	seaweedS3Port  = "8333/tcp"
-	seaweedRegion  = "us-east-1"
-	seaweedAccess  = "any" //nolint:gosec // SeaweedFS default anonymous creds; not a real secret
-	seaweedSecret  = "any" //nolint:gosec // see above
-	startupTimeout = 60 * time.Second
+	seaweedImage  = "chrislusf/seaweedfs:3.71"
+	seaweedS3Port = "8333/tcp"
+	seaweedRegion = "us-east-1"
+	seaweedAccess = "any" //nolint:gosec // SeaweedFS default anonymous creds; not a real secret
+	seaweedSecret = "any" //nolint:gosec // see above
+
+	// startupTimeout gives the all-in-one `weed server -s3` (master + volume
+	// + filer + s3) room to answer HTTP on the S3 port. The HTTP readiness
+	// probe needs the full S3 layer up — slower than a bare port-listening
+	// wait — so on loaded CI runners 60s timed out deterministically (#129);
+	// 180s is comfortable headroom.
+	startupTimeout = 180 * time.Second
 )
 
 // startSeaweedFS spins up a SeaweedFS testcontainer with S3 enabled and
