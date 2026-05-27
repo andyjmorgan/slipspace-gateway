@@ -135,9 +135,10 @@ func run(ctx context.Context) error {
 	// shipped client defaults plus SLUICE_SESSION_ID_HEADERS follow.
 	sessionResolver := observability.NewSessionResolver(env.SessionIDHeaders)
 	forwarder := proxy.New(proxy.Options{
-		Logger:          logger,
-		ObserverFactory: observerFactory,
-		Redactor:        redactor,
+		Logger:                logger,
+		ObserverFactory:       observerFactory,
+		Redactor:              redactor,
+		ResponseHeaderTimeout: time.Duration(env.UpstreamResponseHeaderTimeoutSeconds) * time.Second,
 		// Response-phase body rewrites (response.body.* rule targets)
 		// apply here, in the proxy's ModifyResponse hook. The adapter
 		// keeps internal/proxy decoupled from the rules engine.

@@ -32,6 +32,7 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 		{"ConfigDir", env.ConfigDir, config.DefaultConfigDir},
 		{"SpoolRoot", env.SpoolRoot, config.DefaultSpoolRoot},
 		{"RulesMaxGroupDepth", env.RulesMaxGroupDepth, config.DefaultRulesMaxGroupDepth},
+		{"UpstreamResponseHeaderTimeoutSeconds", env.UpstreamResponseHeaderTimeoutSeconds, config.DefaultUpstreamResponseHeaderTimeoutSeconds},
 		{"AdminLiveFeedCapacity", env.AdminLiveFeedCapacity, config.DefaultAdminLiveFeedCapacity},
 		{"AdminLiveFeedBodyBytes", env.AdminLiveFeedBodyBytes, config.DefaultAdminLiveFeedBodyBytes},
 		{"AdminLiveFeedBodyMaxBytes", env.AdminLiveFeedBodyMaxBytes, config.DefaultAdminLiveFeedBodyMaxBytes},
@@ -61,6 +62,7 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	t.Setenv(config.EnvConfigDir, "/somewhere/else")
 	t.Setenv(config.EnvSpoolRoot, "/var/spool/sluice-test")
 	t.Setenv(config.EnvRulesMaxGroupDepth, "16")
+	t.Setenv(config.EnvUpstreamResponseHeaderTimeoutSeconds, "300")
 
 	env, err := config.LoadEnv()
 	if err != nil {
@@ -68,6 +70,10 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	}
 	if err := env.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
+	}
+
+	if env.UpstreamResponseHeaderTimeoutSeconds != 300 {
+		t.Errorf("UpstreamResponseHeaderTimeoutSeconds = %d", env.UpstreamResponseHeaderTimeoutSeconds)
 	}
 
 	if env.HTTPBind != "127.0.0.1:0" {
@@ -161,6 +167,7 @@ func TestLoadEnv_BadIntWrapsErrInvalidEnv(t *testing.T) {
 	}{
 		{"drain", config.EnvShutdownDrainSeconds},
 		{"group_depth", config.EnvRulesMaxGroupDepth},
+		{"upstream_header_timeout", config.EnvUpstreamResponseHeaderTimeoutSeconds},
 		{"live_feed_capacity", config.EnvAdminLiveFeedCapacity},
 		{"live_feed_body_bytes", config.EnvAdminLiveFeedBodyBytes},
 		{"live_feed_body_max_bytes", config.EnvAdminLiveFeedBodyMaxBytes},
@@ -235,6 +242,10 @@ func TestServerEnv_Validate_NonPositiveInts(t *testing.T) {
 		{"spool_root_empty", func(e *config.ServerEnv) { e.SpoolRoot = "" }},
 		{"group_depth_low", func(e *config.ServerEnv) { e.RulesMaxGroupDepth = 0 }},
 		{"group_depth_high", func(e *config.ServerEnv) { e.RulesMaxGroupDepth = config.MaxRulesMaxGroupDepth + 1 }},
+		{"upstream_header_timeout_below_floor", func(e *config.ServerEnv) {
+			e.UpstreamResponseHeaderTimeoutSeconds = config.MinUpstreamResponseHeaderTimeoutSeconds - 1
+		}},
+		{"upstream_header_timeout_zero", func(e *config.ServerEnv) { e.UpstreamResponseHeaderTimeoutSeconds = 0 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -29,6 +29,21 @@ const (
 	// every realistic operator-authored policy with headroom.
 	DefaultRulesMaxGroupDepth = 8
 
+	// DefaultUpstreamResponseHeaderTimeoutSeconds caps time-to-first-byte
+	// from the upstream provider — the wait for response headers after the
+	// request body is fully written. It is the floor as well as the default
+	// (see MinUpstreamResponseHeaderTimeoutSeconds): a provider under load
+	// routinely takes more than a minute to emit the first byte of a long
+	// completion, and the timeout only bounds the header wait — streaming
+	// bodies are not subject to it once headers arrive.
+	DefaultUpstreamResponseHeaderTimeoutSeconds = 120
+
+	// MinUpstreamResponseHeaderTimeoutSeconds is the lower bound Validate
+	// enforces on SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS. Anything
+	// below this risks cancelling slow-but-healthy upstreams mid-handshake,
+	// surfacing as spurious 502s on legitimate long-tail requests.
+	MinUpstreamResponseHeaderTimeoutSeconds = 120
+
 	// DefaultAdminSnapshotInterval is how often the admin console's
 	// metric snapshotter reads the in-process registry. 5 minutes
 	// gives the 24h dashboard 288 sample points, matching the design's
@@ -66,23 +81,25 @@ const (
 // SLUICE_* env var names. Exported so callers (CLI validator, tests,
 // integration harness) can read or set them by symbolic name.
 const (
-	EnvHTTPBind                  = "SLUICE_HTTP_BIND"
-	EnvShutdownDrainSeconds      = "SLUICE_SHUTDOWN_DRAIN_SECONDS"
-	EnvLogFormat                 = "SLUICE_LOG_FORMAT"
-	EnvLogLevel                  = "SLUICE_LOG_LEVEL"
-	EnvPrometheusBind            = "SLUICE_PROMETHEUS_BIND"
-	EnvOTLPEndpoint              = "SLUICE_OTLP_ENDPOINT"
-	EnvOTLPProtocol              = "SLUICE_OTLP_PROTOCOL"
-	EnvConfigDir                 = "SLUICE_CONFIG_DIR"
-	EnvSpoolRoot                 = "SLUICE_SPOOL_ROOT"
-	EnvRulesMaxGroupDepth        = "SLUICE_RULES_MAX_GROUP_DEPTH"
-	EnvAdminSnapshotIntervalMs   = "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS"
-	EnvAdminLiveFeedCapacity     = "SLUICE_ADMIN_LIVE_FEED_CAPACITY"
-	EnvAdminLiveFeedBodyBytes    = "SLUICE_ADMIN_LIVE_FEED_BODY_BYTES"
-	EnvAdminLiveFeedBodyMaxBytes = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
-	EnvRedactExtraHeaders        = "SLUICE_REDACT_EXTRA_HEADERS"
-	EnvSessionIDHeaders          = "SLUICE_SESSION_ID_HEADERS"
-	EnvExternalURL               = "SLUICE_EXTERNAL_URL"
+	EnvHTTPBind             = "SLUICE_HTTP_BIND"
+	EnvShutdownDrainSeconds = "SLUICE_SHUTDOWN_DRAIN_SECONDS"
+	EnvLogFormat            = "SLUICE_LOG_FORMAT"
+	EnvLogLevel             = "SLUICE_LOG_LEVEL"
+	EnvPrometheusBind       = "SLUICE_PROMETHEUS_BIND"
+	EnvOTLPEndpoint         = "SLUICE_OTLP_ENDPOINT"
+	EnvOTLPProtocol         = "SLUICE_OTLP_PROTOCOL"
+	EnvConfigDir            = "SLUICE_CONFIG_DIR"
+	EnvSpoolRoot            = "SLUICE_SPOOL_ROOT"
+	EnvRulesMaxGroupDepth   = "SLUICE_RULES_MAX_GROUP_DEPTH"
+
+	EnvUpstreamResponseHeaderTimeoutSeconds = "SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS"
+	EnvAdminSnapshotIntervalMs              = "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS"
+	EnvAdminLiveFeedCapacity                = "SLUICE_ADMIN_LIVE_FEED_CAPACITY"
+	EnvAdminLiveFeedBodyBytes               = "SLUICE_ADMIN_LIVE_FEED_BODY_BYTES"
+	EnvAdminLiveFeedBodyMaxBytes            = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
+	EnvRedactExtraHeaders                   = "SLUICE_REDACT_EXTRA_HEADERS"
+	EnvSessionIDHeaders                     = "SLUICE_SESSION_ID_HEADERS"
+	EnvExternalURL                          = "SLUICE_EXTERNAL_URL"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -99,6 +116,7 @@ var envVarNames = []string{
 	EnvConfigDir,
 	EnvSpoolRoot,
 	EnvRulesMaxGroupDepth,
+	EnvUpstreamResponseHeaderTimeoutSeconds,
 	EnvAdminSnapshotIntervalMs,
 	EnvAdminLiveFeedCapacity,
 	EnvAdminLiveFeedBodyBytes,
@@ -159,6 +177,14 @@ type ServerEnv struct {
 	// rarely need more than 3-4 levels; the cap is a guardrail against
 	// pathological YAML triggering stack overflow in the evaluator.
 	RulesMaxGroupDepth int
+
+	// UpstreamResponseHeaderTimeoutSeconds caps time-to-first-byte from the
+	// upstream provider (the wait for response headers after the request
+	// body is written), in seconds. Threaded into the proxy transport as
+	// ResponseHeaderTimeout. Validate enforces a floor of
+	// MinUpstreamResponseHeaderTimeoutSeconds so a too-aggressive value
+	// can't cancel slow-but-healthy upstreams mid-handshake.
+	UpstreamResponseHeaderTimeoutSeconds int
 
 	// AdminSnapshotIntervalMs is the interval the admin console's
 	// metric snapshotter uses between Collect calls, in milliseconds.
@@ -247,6 +273,10 @@ func LoadEnv() (*ServerEnv, error) {
 	if err != nil {
 		return nil, err
 	}
+	upstreamHeaderTimeout, err := envInt(EnvUpstreamResponseHeaderTimeoutSeconds, DefaultUpstreamResponseHeaderTimeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
 	snapInterval, err := envInt(EnvAdminSnapshotIntervalMs, DefaultAdminSnapshotIntervalMs)
 	if err != nil {
 		return nil, err
@@ -265,23 +295,24 @@ func LoadEnv() (*ServerEnv, error) {
 	}
 
 	return &ServerEnv{
-		HTTPBind:                  envString(EnvHTTPBind, DefaultHTTPBind),
-		ShutdownDrainSeconds:      drain,
-		LogFormat:                 envString(EnvLogFormat, DefaultLogFormat),
-		LogLevel:                  envString(EnvLogLevel, DefaultLogLevel),
-		PrometheusBind:            envString(EnvPrometheusBind, ""),
-		OTLPEndpoint:              envString(EnvOTLPEndpoint, ""),
-		OTLPProtocol:              envString(EnvOTLPProtocol, DefaultOTLPProtocol),
-		ConfigDir:                 envString(EnvConfigDir, DefaultConfigDir),
-		SpoolRoot:                 envString(EnvSpoolRoot, DefaultSpoolRoot),
-		RulesMaxGroupDepth:        groupDepth,
-		AdminSnapshotIntervalMs:   snapInterval,
-		AdminLiveFeedCapacity:     liveFeedCap,
-		AdminLiveFeedBodyBytes:    bodyBytes,
-		AdminLiveFeedBodyMaxBytes: bodyMaxBytes,
-		RedactExtraHeaders:        envCSVList(EnvRedactExtraHeaders),
-		SessionIDHeaders:          envCSVList(EnvSessionIDHeaders),
-		ExternalURL:               envString(EnvExternalURL, ""),
+		HTTPBind:                             envString(EnvHTTPBind, DefaultHTTPBind),
+		ShutdownDrainSeconds:                 drain,
+		LogFormat:                            envString(EnvLogFormat, DefaultLogFormat),
+		LogLevel:                             envString(EnvLogLevel, DefaultLogLevel),
+		PrometheusBind:                       envString(EnvPrometheusBind, ""),
+		OTLPEndpoint:                         envString(EnvOTLPEndpoint, ""),
+		OTLPProtocol:                         envString(EnvOTLPProtocol, DefaultOTLPProtocol),
+		ConfigDir:                            envString(EnvConfigDir, DefaultConfigDir),
+		SpoolRoot:                            envString(EnvSpoolRoot, DefaultSpoolRoot),
+		RulesMaxGroupDepth:                   groupDepth,
+		UpstreamResponseHeaderTimeoutSeconds: upstreamHeaderTimeout,
+		AdminSnapshotIntervalMs:              snapInterval,
+		AdminLiveFeedCapacity:                liveFeedCap,
+		AdminLiveFeedBodyBytes:               bodyBytes,
+		AdminLiveFeedBodyMaxBytes:            bodyMaxBytes,
+		RedactExtraHeaders:                   envCSVList(EnvRedactExtraHeaders),
+		SessionIDHeaders:                     envCSVList(EnvSessionIDHeaders),
+		ExternalURL:                          envString(EnvExternalURL, ""),
 	}, nil
 }
 
@@ -327,6 +358,9 @@ func (e *ServerEnv) Validate() error {
 	}
 	if e.RulesMaxGroupDepth < 1 || e.RulesMaxGroupDepth > MaxRulesMaxGroupDepth {
 		return fmt.Errorf("%s=%d: %w: must be in [1, %d]", EnvRulesMaxGroupDepth, e.RulesMaxGroupDepth, ErrInvalidEnv, MaxRulesMaxGroupDepth)
+	}
+	if e.UpstreamResponseHeaderTimeoutSeconds < MinUpstreamResponseHeaderTimeoutSeconds {
+		return fmt.Errorf("%s=%d: %w: must be >= %d", EnvUpstreamResponseHeaderTimeoutSeconds, e.UpstreamResponseHeaderTimeoutSeconds, ErrInvalidEnv, MinUpstreamResponseHeaderTimeoutSeconds)
 	}
 	if e.AdminSnapshotIntervalMs <= 0 {
 		return fmt.Errorf("%s=%d: %w: must be positive", EnvAdminSnapshotIntervalMs, e.AdminSnapshotIntervalMs, ErrInvalidEnv)

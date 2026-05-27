@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestTransportCacheReuse(t *testing.T) {
@@ -49,7 +50,7 @@ func TestTransportCacheConcurrent(t *testing.T) {
 }
 
 func TestTransportDefaults(t *testing.T) {
-	tr := newTransport()
+	tr := newTransport(DefaultResponseHeaderTimeout)
 	if tr.MaxIdleConns != 100 {
 		t.Fatalf("MaxIdleConns: want 100 got %d", tr.MaxIdleConns)
 	}
@@ -62,8 +63,8 @@ func TestTransportDefaults(t *testing.T) {
 	if tr.TLSHandshakeTimeout.Seconds() != 10 {
 		t.Fatalf("TLSHandshakeTimeout: want 10s got %s", tr.TLSHandshakeTimeout)
 	}
-	if tr.ResponseHeaderTimeout.Seconds() != 30 {
-		t.Fatalf("ResponseHeaderTimeout: want 30s got %s", tr.ResponseHeaderTimeout)
+	if tr.ResponseHeaderTimeout.Seconds() != 120 {
+		t.Fatalf("ResponseHeaderTimeout: want 120s got %s", tr.ResponseHeaderTimeout)
 	}
 	if tr.ExpectContinueTimeout.Seconds() != 1 {
 		t.Fatalf("ExpectContinueTimeout: want 1s got %s", tr.ExpectContinueTimeout)
@@ -73,5 +74,39 @@ func TestTransportDefaults(t *testing.T) {
 	}
 	if tr.DialContext == nil {
 		t.Fatalf("DialContext: want non-nil")
+	}
+}
+
+func TestNewTransport_ResponseHeaderTimeout(t *testing.T) {
+	cases := []struct {
+		name string
+		in   time.Duration
+		want time.Duration
+	}{
+		{"explicit", 200 * time.Second, 200 * time.Second},
+		{"zero falls back to default", 0, DefaultResponseHeaderTimeout},
+		{"negative falls back to default", -5 * time.Second, DefaultResponseHeaderTimeout},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := newTransport(tc.in)
+			if tr.ResponseHeaderTimeout != tc.want {
+				t.Fatalf("ResponseHeaderTimeout: want %s got %s", tc.want, tr.ResponseHeaderTimeout)
+			}
+		})
+	}
+}
+
+func TestNew_ResponseHeaderTimeoutThreadedToTransport(t *testing.T) {
+	f := New(Options{ResponseHeaderTimeout: 200 * time.Second})
+	tr := f.getOrCreateTransport("https://api.openai.com")
+	if tr.ResponseHeaderTimeout != 200*time.Second {
+		t.Fatalf("transport ResponseHeaderTimeout: want 200s got %s", tr.ResponseHeaderTimeout)
+	}
+
+	def := New(Options{})
+	trDef := def.getOrCreateTransport("https://api.openai.com")
+	if trDef.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("default transport ResponseHeaderTimeout: want %s got %s", DefaultResponseHeaderTimeout, trDef.ResponseHeaderTimeout)
 	}
 }
