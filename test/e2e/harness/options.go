@@ -40,6 +40,11 @@ type Options struct {
 	// to the gateway. Empty defaults to "test-password" when
 	// AdminEnabled. Ignored when AdminEnabled is false.
 	AdminPassword string
+
+	// ExternalURL sets SLUICE_EXTERNAL_URL on the spawned gateway,
+	// resolving the {external_url} template reference used by
+	// response-side body rewrites. Empty leaves it unset.
+	ExternalURL string
 }
 
 // BoolPtr returns a pointer to b. Convenience for the Options.ReportingEnabled

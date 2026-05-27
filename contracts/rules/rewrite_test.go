@@ -218,10 +218,10 @@ func TestRewriteActions_Validate(t *testing.T) {
 		wantErr error
 	}{
 		{name: "rewriteField valid", action: &RewriteFieldAction{Target: "request.body.temperature"}},
-		{name: "rewriteField response scope", action: &RewriteFieldAction{Target: "response.body.x"}, wantErr: ErrResponseScopeUnsupported},
+		{name: "rewriteField response scope now valid", action: &RewriteFieldAction{Target: "response.body.results_url"}},
 		{name: "rewriteField bad target", action: &RewriteFieldAction{Target: "nope"}, wantErr: ErrInvalidTarget},
 		{name: "removeField valid", action: &RemoveFieldAction{Target: "request.body.user"}},
-		{name: "removeField response scope", action: &RemoveFieldAction{Target: "response.body.x"}, wantErr: ErrResponseScopeUnsupported},
+		{name: "removeField response scope now valid", action: &RemoveFieldAction{Target: "response.body.x"}},
 		{name: "appendField valid", action: &AppendFieldAction{Target: "request.body.messages"}},
 		{name: "appendField bad target", action: &AppendFieldAction{Target: "request.body.a[0]"}, wantErr: ErrInvalidTarget},
 	}

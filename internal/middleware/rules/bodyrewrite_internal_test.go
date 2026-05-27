@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
+	"github.com/tidwall/gjson"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
@@ -30,13 +32,18 @@ func lit(raw string) contractsrules.RewriteValue {
 	return contractsrules.RewriteValue{Kind: contractsrules.RewriteValueLiteral, Literal: []byte(raw)}
 }
 
+func tmpl(s string) contractsrules.RewriteValue {
+	return contractsrules.RewriteValue{Kind: contractsrules.RewriteValueTemplate, Template: s}
+}
+
 func TestApplyRewriteActions_RecordOps(t *testing.T) {
 	tests := []struct {
-		name     string
-		action   contractsrules.Action
-		wantKind bodypatch.OpKind
-		wantPath string
-		wantErr  error
+		name         string
+		action       contractsrules.Action
+		wantKind     bodypatch.OpKind
+		wantPath     string
+		wantResponse bool
+		wantErr      error
 	}{
 		{
 			name:     "rewriteField records set",
@@ -57,9 +64,11 @@ func TestApplyRewriteActions_RecordOps(t *testing.T) {
 			wantPath: "messages",
 		},
 		{
-			name:    "rewriteField response scope errors",
-			action:  &contractsrules.RewriteFieldAction{Type: "rewriteField", Target: "response.body.x", Value: lit("1")},
-			wantErr: contractsrules.ErrResponseScopeUnsupported,
+			name:         "rewriteField response scope queues on ResponseRewrites",
+			action:       &contractsrules.RewriteFieldAction{Type: "rewriteField", Target: "response.body.results_url", Value: lit(`"x"`)},
+			wantKind:     bodypatch.OpSet,
+			wantPath:     "results_url",
+			wantResponse: true,
 		},
 		{
 			name:    "removeField bad target errors",
@@ -88,10 +97,19 @@ func TestApplyRewriteActions_RecordOps(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if len(state.BodyRewrites) != 1 {
-				t.Fatalf("want 1 op, got %d", len(state.BodyRewrites))
+			queue := state.BodyRewrites
+			if tt.wantResponse {
+				queue = state.ResponseRewrites
+				if len(state.BodyRewrites) != 0 {
+					t.Errorf("response-scope op leaked onto BodyRewrites: %+v", state.BodyRewrites)
+				}
+			} else if len(state.ResponseRewrites) != 0 {
+				t.Errorf("request-scope op leaked onto ResponseRewrites: %+v", state.ResponseRewrites)
 			}
-			op := state.BodyRewrites[0]
+			if len(queue) != 1 {
+				t.Fatalf("want 1 op, got %d", len(queue))
+			}
+			op := queue[0]
 			if op.Kind != tt.wantKind || op.Path != tt.wantPath {
 				t.Errorf("op = {%d %q}, want {%d %q}", op.Kind, op.Path, tt.wantKind, tt.wantPath)
 			}
@@ -290,6 +308,84 @@ func TestBodyRewriteHandler_ReadError(t *testing.T) {
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+func respWith(body string) *http.Response {
+	return &http.Response{Header: http.Header{}, Body: io.NopCloser(stringReader(body))}
+}
+
+func TestApplyResponseRewrites(t *testing.T) {
+	t.Run("no state is a no-op", func(t *testing.T) {
+		resp := respWith(`{"a":1}`)
+		defer func() { _ = resp.Body.Close() }()
+		if err := ApplyResponseRewrites(context.Background(), testMeters(t), "", resp, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("no response rewrites is a no-op", func(t *testing.T) {
+		ctx := WithMutableState(context.Background(), &MutableState{})
+		resp := respWith(`{"a":1}`)
+		defer func() { _ = resp.Body.Close() }()
+		if err := ApplyResponseRewrites(ctx, testMeters(t), "", resp, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("streaming drops rewrites and leaves body untouched", func(t *testing.T) {
+		state := &MutableState{ResponseRewrites: []bodypatch.Op{
+			{Kind: bodypatch.OpSet, Path: "results_url", Value: tmpl("{external_url}/x"), ActionType: "rewriteField"},
+		}}
+		ctx := WithMutableState(context.Background(), state)
+		resp := respWith(`data: chunk`)
+		if err := ApplyResponseRewrites(ctx, testMeters(t), "https://sluice.example.com", resp, true); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		if string(b) != `data: chunk` {
+			t.Errorf("streaming body mutated: %s", b)
+		}
+	})
+
+	t.Run("non-streaming applies and fixes content-length", func(t *testing.T) {
+		state := &MutableState{ResponseRewrites: []bodypatch.Op{
+			{Kind: bodypatch.OpSet, Path: "results_url", Value: tmpl("{external_url}/anthropic/v1/messages/batches/{response.body.id}/results"), ActionType: "rewriteField"},
+		}}
+		ctx := WithMutableState(context.Background(), state)
+		resp := respWith(`{"id":"b1","results_url":"https://api.anthropic.com/v1/messages/batches/b1/results"}`)
+		if err := ApplyResponseRewrites(ctx, testMeters(t), "https://sluice.example.com", resp, false); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		const want = `https://sluice.example.com/anthropic/v1/messages/batches/b1/results`
+		if got := gjson.GetBytes(b, "results_url").String(); got != want {
+			t.Errorf("results_url = %s, want %s", got, want)
+		}
+		if resp.Header.Get("Content-Length") != strconv.Itoa(len(b)) || resp.ContentLength != int64(len(b)) {
+			t.Errorf("content-length not fixed: header=%s field=%d len=%d", resp.Header.Get("Content-Length"), resp.ContentLength, len(b))
+		}
+	})
+
+	t.Run("body read error returns error", func(t *testing.T) {
+		state := &MutableState{ResponseRewrites: []bodypatch.Op{
+			{Kind: bodypatch.OpRemove, Path: "x", ActionType: "removeField"},
+		}}
+		ctx := WithMutableState(context.Background(), state)
+		resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(errReader{})}
+		if err := ApplyResponseRewrites(ctx, testMeters(t), "", resp, false); err == nil {
+			t.Error("expected error on body read failure")
+		}
+	})
+
+	t.Run("nil meters does not panic on streaming drop", func(t *testing.T) {
+		state := &MutableState{ResponseRewrites: []bodypatch.Op{
+			{Kind: bodypatch.OpRemove, Path: "x", ActionType: "removeField"},
+		}}
+		ctx := WithMutableState(context.Background(), state)
+		resp := respWith(`data: x`)
+		defer func() { _ = resp.Body.Close() }()
+		_ = ApplyResponseRewrites(ctx, nil, "", resp, true)
+	})
+}
 
 func TestReadRequestBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(stringReader(`{"a":1}`)))

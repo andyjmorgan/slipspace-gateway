@@ -134,7 +134,17 @@ func run(ctx context.Context) error {
 	// first-class field. X-Sluice-Session-Id is authoritative; the
 	// shipped client defaults plus SLUICE_SESSION_ID_HEADERS follow.
 	sessionResolver := observability.NewSessionResolver(env.SessionIDHeaders)
-	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: observerFactory, Redactor: redactor})
+	forwarder := proxy.New(proxy.Options{
+		Logger:          logger,
+		ObserverFactory: observerFactory,
+		Redactor:        redactor,
+		// Response-phase body rewrites (response.body.* rule targets)
+		// apply here, in the proxy's ModifyResponse hook. The adapter
+		// keeps internal/proxy decoupled from the rules engine.
+		ResponseBodyTransform: func(ctx context.Context, resp *http.Response, streaming bool) error {
+			return rules.ApplyResponseRewrites(ctx, obs.Meters, env.ExternalURL, resp, streaming)
+		},
+	})
 
 	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, env.RulesMaxGroupDepth, obs.Meters)
 

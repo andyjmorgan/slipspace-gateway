@@ -82,6 +82,7 @@ const (
 	EnvAdminLiveFeedBodyMaxBytes = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
 	EnvRedactExtraHeaders        = "SLUICE_REDACT_EXTRA_HEADERS"
 	EnvSessionIDHeaders          = "SLUICE_SESSION_ID_HEADERS"
+	EnvExternalURL               = "SLUICE_EXTERNAL_URL"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -104,6 +105,7 @@ var envVarNames = []string{
 	EnvAdminLiveFeedBodyMaxBytes,
 	EnvRedactExtraHeaders,
 	EnvSessionIDHeaders,
+	EnvExternalURL,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -200,6 +202,14 @@ type ServerEnv struct {
 	// change. A header also present in RedactExtraHeaders is skipped
 	// during resolution so a promoted session id can't bypass redaction.
 	SessionIDHeaders []string
+
+	// ExternalURL is the gateway's externally reachable base URL (e.g.
+	// https://sluice.example.com), used to resolve the {external_url}
+	// template reference in response-side body rewrites — chiefly
+	// rebasing provider-returned URLs (Anthropic batches results_url)
+	// back through the gateway. Empty leaves {external_url} unresolved,
+	// dropping any rewrite that depends on it.
+	ExternalURL string
 }
 
 // PrometheusEnabled reports whether the Prometheus scrape listener is
@@ -271,6 +281,7 @@ func LoadEnv() (*ServerEnv, error) {
 		AdminLiveFeedBodyMaxBytes: bodyMaxBytes,
 		RedactExtraHeaders:        envCSVList(EnvRedactExtraHeaders),
 		SessionIDHeaders:          envCSVList(EnvSessionIDHeaders),
+		ExternalURL:               envString(EnvExternalURL, ""),
 	}, nil
 }
 
