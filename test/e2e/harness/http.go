@@ -23,6 +23,14 @@ func (h *Harness) PostJSON(path string, body any, headers http.Header) *Response
 	return h.do(http.MethodPost, path, body, headers, false)
 }
 
+// Get issues a GET to the gateway with the default Authorization header
+// (the dev API key) unless the caller overrides it. The response body is
+// fully buffered into [Response.Body].
+func (h *Harness) Get(path string, headers http.Header) *Response {
+	h.T.Helper()
+	return h.do(http.MethodGet, path, nil, headers, false)
+}
+
 // PostStream issues a streaming POST. It defaults Accept: text/event-stream
 // and returns an [SSEReader] backed by the live HTTP body. The caller must
 // invoke [SSEReader.Close] when done (CollectAll closes on completion).

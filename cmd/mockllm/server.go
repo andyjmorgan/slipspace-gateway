@@ -121,6 +121,11 @@ func (s *server) routes() {
 	}
 
 	s.mux.HandleFunc("/v1beta/models/", provider)
+	// Anthropic Message Batches live under a subtree (retrieve is
+	// /v1/messages/batches/{id}); register the prefix so per-id paths
+	// reach the canned-response registry. The exact /v1/messages route
+	// above still claims the messages-create path.
+	s.mux.HandleFunc("/v1/messages/batches/", provider)
 }
 
 var providerPaths = []string{
