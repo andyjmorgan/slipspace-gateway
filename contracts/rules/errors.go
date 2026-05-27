@@ -35,3 +35,26 @@ var ErrUnknownActionType = errors.New("rules: unknown action type")
 // ErrUnknownBehavior is returned when a RuleContract.Behavior is not one of
 // the BehaviorX constants.
 var ErrUnknownBehavior = errors.New("rules: unknown behavior")
+
+// ErrInvalidTarget is returned when a rewrite/condition target is not a
+// valid scope-prefixed path — bad scope, empty path, or (for write
+// targets) a segment that is not a bare identifier.
+var ErrInvalidTarget = errors.New("rules: invalid body target")
+
+// ErrInvalidRewriteValue is returned when a rewriteField/appendField
+// value cannot be decoded from its wire form.
+var ErrInvalidRewriteValue = errors.New("rules: invalid rewrite value")
+
+// ErrResponseScopeUnsupported is returned when a rule targets
+// response.body — response-side rewrites are deferred to a follow-up;
+// only request.body is honoured today.
+var ErrResponseScopeUnsupported = errors.New("rules: response.body scope not yet supported")
+
+// ErrUnknownBodyFieldOperator is returned when a BodyFieldCondition
+// carries an operator outside the BodyFieldX set.
+var ErrUnknownBodyFieldOperator = errors.New("rules: unknown bodyField operator")
+
+// ErrInvalidBodyFieldRegex is returned when a BodyFieldCondition with
+// the Matches operator carries a value that does not compile as a
+// regular expression.
+var ErrInvalidBodyFieldRegex = errors.New("rules: invalid bodyField regex")

@@ -19,10 +19,11 @@ For the predicate side of the engine, see [`docs/rules.md`](rules.md). For the r
 9. [`appendQueryString`](#appendquerystring)
 10. [`addTag`](#addtag)
 11. [`useResiliencePolicy`](#useresiliencepolicy)
-12. [`returnStatusCode`](#returnstatuscode)
-13. [`llmImpersonation`](#llmimpersonation)
-14. [Unknown action discriminators](#unknown-action-discriminators)
-15. [Cross-references](#cross-references)
+12. [`rewriteField` / `removeField` / `appendField`](#rewritefield--removefield--appendfield)
+13. [`returnStatusCode`](#returnstatuscode)
+14. [`llmImpersonation`](#llmimpersonation)
+15. [Unknown action discriminators](#unknown-action-discriminators)
+16. [Cross-references](#cross-references)
 
 ---
 
@@ -93,6 +94,9 @@ type Outcome struct {
 | `appendQueryString` | no | `appendQueryString` |
 | `addTag` | no | `addTag` |
 | `useResiliencePolicy` | no | `useResiliencePolicy` |
+| `rewriteField` | no | `rewriteField` |
+| `removeField` | no | `removeField` |
+| `appendField` | no | `appendField` |
 | `returnStatusCode` | **yes** | `returnStatusCode` |
 | `llmImpersonation` | **yes** | `llmImpersonation` |
 
@@ -134,6 +138,7 @@ Actions write through a [`rules.MutableState`](../internal/middleware/rules/stat
 | `QueryAdditions` | `[]QueryAddition` | `appendQueryString` |
 | `Tags` | `[]string` | `addTag` |
 | `PolicyRef` | `string` | `useResiliencePolicy` |
+| `BodyRewrites` | `[]bodypatch.Op` | `rewriteField`, `removeField`, `appendField` (applied post-rule by `BodyRewriteHandler`) |
 
 Two complementary side channels exist:
 
@@ -617,6 +622,100 @@ The config-load cross-validator (in `internal/config`) proves every non-empty `P
 
 - The action is non-terminating, so it composes with other actions in the same rule. Common pattern: `changeProvider` + `useResiliencePolicy` together for "redirect AND wrap in resilience."
 - Per-target actions inside the policy are layered on top of the post-rule `MutableState` — they don't replace it. The rules engine's mutations are the baseline; each target's actions clone from there. See [resilience.md — Per-target Actions](resilience.md#per-target-actions).
+
+---
+
+## `rewriteField` / `removeField` / `appendField`
+
+Operator-authored mutation of the request body. All three are non-terminating and operate at the **JSON-bytes** level: they record a body-patch op on `state.BodyRewrites`, and `BodyRewriteHandler` applies the batch with [`gjson`](https://github.com/tidwall/gjson)/[`sjson`](https://github.com/tidwall/sjson) after the typed re-marshal step — splicing the change into the serialized body so unknown provider fields and numeric precision survive byte-for-byte. The mutation engine lives in [`internal/bodypatch`](../internal/bodypatch/bodypatch.go).
+
+Scope is **request-side only** (`request.body.*`). `response.body.*` targets are rejected at config-load. Predicate *reads* (the `bodyField` condition) are unconstrained; predicate *writes* are not supported — see [rules.md — `bodyField`](rules.md#bodyfield).
+
+### Target language
+
+```
+target  := "request.body." dotted_path
+segment := [A-Za-z_][A-Za-z0-9_]*
+```
+
+Identifier segments only — no array indices (`messages.0`), no brackets, no gjson query syntax. Missing intermediate objects are **created** at apply time (sjson native); a path that traverses an existing scalar (e.g. `request.body.model.foo` when `model` is a string) is a no-op with a `path_traverses_primitive` drop.
+
+### Value typing (`rewriteField` / `appendField`)
+
+| YAML form | Emitted JSON |
+|---|---|
+| bare scalar (`1024`, `true`, `0.7`, `null`) | that JSON type, verbatim |
+| string (`"hi"`, `"{request.body.model}"`) | template — resolved (see below) |
+| sequence / mapping | structured literal, emitted verbatim |
+
+Template strings resolve `{ref}` placeholders. A string that is **exactly** one `{ref}` passes the referenced value's JSON type through; any other template stringifies the substituted result. Supported references: `{request.body.<dotted>}`, `{path_params.X}`, `{state.provider}`, `{state.endpoint}`. A single-reference template whose ref cannot be resolved drops the op (`template_ref_miss`); a missing ref inside mixed content substitutes empty string. No silent coercion — declare `"1024"` for an int field and the wire gets the string `"1024"`; upstream rejection is the backstop.
+
+### `removeField` vs `rewriteField value: null`
+
+`removeField` deletes the key entirely (no key on the wire). `rewriteField` with `value: null` emits the key with a JSON `null`. These are distinct on the wire and some upstreams treat them differently.
+
+### `appendField`
+
+Pushes the value onto the array at the target, creating the array if absent. The target addresses the array **container**, not an element. Appending to a target that exists but is **not** an array is a no-op with an `append_non_array` drop (e.g. an Anthropic `system` field that arrived as a bare string — handle the string case with a `rewriteField` template concat gated on a `bodyField` type check).
+
+### What they mutate
+
+Each action appends a `bodypatch.Op` to `state.BodyRewrites` (parsed and validated; an invalid or `response.body` target errors at evaluate time and is recorded on the rule-matched event). `BodyRewriteHandler` reads the current outgoing body bytes (the typed re-marshal output when a typed action like `changeModelName` also ran, otherwise the verbatim inbound bytes), applies the batch, and replaces `r.Body` + `Content-Length`. Body patches run **post-routing**, so they cannot change the destination — routing-relevant model changes belong on `changeModelName`.
+
+### Telemetry
+
+- `gateway.rewrite.applied.total{action_type}` — mutations that changed the body.
+- `gateway.rewrite.dropped.total{action_type, reason}` — skipped mutations; `reason` ∈ `path_traverses_primitive`, `append_non_array`, `template_ref_miss`, `apply_error`.
+
+### Worked examples
+
+```yaml
+rules:
+  # Force usage in streaming responses — only when actually streaming.
+  - name: force-openai-streaming-usage
+    condition:
+      type: group
+      logicalOperator: And
+      children:
+        - { type: provider, operator: Equals, expectedProvider: openai }
+        - { type: endpoint, operator: Equals, expectedEndpoint: chat_completions }
+        - { type: bodyField, target: request.body.stream, operator: Equals, value: "true" }
+    actions:
+      - type: rewriteField
+        target: request.body.stream_options.include_usage
+        value: true            # creates stream_options:{} automatically
+
+  # Strip a field on the way upstream.
+  - name: redact-user
+    condition: { type: provider, operator: Equals, expectedProvider: openai }
+    actions:
+      - type: removeField
+        target: request.body.user
+
+  # Pin temperature.
+  - name: pin-temperature
+    condition: { type: provider, operator: Equals, expectedProvider: openai }
+    actions:
+      - type: rewriteField
+        target: request.body.temperature
+        value: 0
+
+  # Append a system message (OpenAI keeps system in the messages array).
+  - name: inject-system-openai
+    condition: { type: provider, operator: Equals, expectedProvider: openai }
+    actions:
+      - type: appendField
+        target: request.body.messages
+        value:
+          role: developer
+          content: "You are a governed assistant."
+```
+
+### Gotchas
+
+- **Request-side only in this release.** `response.body.*` (e.g. the Anthropic batches `results_url` rebase) is rejected at config-load; it ships with the response-side follow-up.
+- **`appendField` puts the element last.** OpenAI conventionally wants the system message first; appending mid/late is usually tolerated, but prepend semantics are not yet available.
+- **Polymorphic fields.** Anthropic `system` is string-or-array. Gate with a `bodyField` `Is` check and branch: `appendField` for the array shape, `rewriteField` with a `"{request.body.system}\n\n…"` template for the string shape.
 
 ---
 

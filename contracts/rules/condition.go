@@ -363,6 +363,7 @@ var conditionRegistry = models.PolymorphicRegistry[Condition]{
 		"header":    func() Condition { return &HeaderCondition{} },
 		"tag":       func() Condition { return &TagCondition{} },
 		"group":     func() Condition { return &RuleGroup{} },
+		"bodyField": func() Condition { return &BodyFieldCondition{} },
 	},
 	Fallback: func(disc string) Condition { return &UnknownCondition{Type: disc} },
 }

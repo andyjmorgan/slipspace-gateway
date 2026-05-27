@@ -102,6 +102,7 @@ func buildDataPlaneHandler(
 	kindFrom := makeKindFromContext(providers)
 
 	var h http.Handler = final
+	h = rules.BodyRewriteHandler(meters, h)
 	h = rules.BodyRemarshalHandler(meters, h)
 	h = resiliencemw.HTTPHandler(policyLookup, breakers, meters, h)
 	h = rules.HTTPHandler(evaluator, ruleMatchFromContext, observerFactory, h)
