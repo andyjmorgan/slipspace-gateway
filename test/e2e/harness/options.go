@@ -22,6 +22,13 @@ type Options struct {
 	// default. Short values exercise drain-timeout escalation.
 	DrainTimeoutSeconds int
 
+	// UpstreamResponseHeaderTimeoutSeconds sets
+	// SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS. 0 = leave default
+	// (120). Values below the 120 floor are rejected by the gateway at
+	// startup, so this is only useful for asserting a valid override
+	// threads through the binary without breaking forwarding.
+	UpstreamResponseHeaderTimeoutSeconds int
+
 	// PolicyYAML, when non-empty, replaces the policy.yaml content the
 	// harness would otherwise copy from config-dev/. Tests that need
 	// custom rules (terminating actions, multi-rule priority ordering,

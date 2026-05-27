@@ -59,6 +59,12 @@ type Forwarder struct {
 	// this package importing the rules engine — the closure reads the
 	// per-request state off ctx. nil disables the hook.
 	responseBodyTransform ResponseBodyTransformer
+
+	// responseHeaderTimeout is stamped onto every lazily-created transport
+	// as net/http.Transport.ResponseHeaderTimeout. New substitutes
+	// DefaultResponseHeaderTimeout when the Options value is non-positive,
+	// so this is always > 0 by the time getOrCreateTransport reads it.
+	responseHeaderTimeout time.Duration
 }
 
 // ResponseBodyTransformer mutates an upstream response before the client
@@ -87,6 +93,12 @@ type Options struct {
 	// ResponseBodyTransform is invoked from ModifyResponse for every
 	// upstream response (see ResponseBodyTransformer). nil disables it.
 	ResponseBodyTransform ResponseBodyTransformer
+
+	// ResponseHeaderTimeout caps time-to-first-byte from the upstream — the
+	// wait for response headers after the request body is fully written. It
+	// is set on every transport this Forwarder mints. A non-positive value
+	// falls back to DefaultResponseHeaderTimeout.
+	ResponseHeaderTimeout time.Duration
 }
 
 // Destination describes the resolved upstream target for a single Forward
@@ -134,12 +146,17 @@ func New(opts Options) *Forwarder {
 	if redactor == nil {
 		redactor = headers.NewRedactor(nil)
 	}
+	responseHeaderTimeout := opts.ResponseHeaderTimeout
+	if responseHeaderTimeout <= 0 {
+		responseHeaderTimeout = DefaultResponseHeaderTimeout
+	}
 	return &Forwarder{
 		transports:            make(map[string]*http.Transport),
 		logger:                logger,
 		observerFactory:       factory,
 		redactor:              redactor,
 		responseBodyTransform: opts.ResponseBodyTransform,
+		responseHeaderTimeout: responseHeaderTimeout,
 	}
 }
 

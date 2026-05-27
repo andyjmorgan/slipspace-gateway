@@ -477,6 +477,9 @@ func (h *Harness) gatewayEnv(configDir string) []string {
 	if h.opts.DrainTimeoutSeconds > 0 {
 		env = append(env, fmt.Sprintf("SLUICE_SHUTDOWN_DRAIN_SECONDS=%d", h.opts.DrainTimeoutSeconds))
 	}
+	if h.opts.UpstreamResponseHeaderTimeoutSeconds > 0 {
+		env = append(env, fmt.Sprintf("SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS=%d", h.opts.UpstreamResponseHeaderTimeoutSeconds))
+	}
 	// Tight snapshot interval so the admin dashboard reflects real
 	// traffic within an e2e test's wall-clock budget. Production
 	// default is 5 minutes (configured at the env var's default).

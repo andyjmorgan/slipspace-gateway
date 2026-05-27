@@ -48,6 +48,7 @@ Every `SLUICE_*` variable the gateway reads, in one table. Defaults are what `Lo
 | `SLUICE_SESSION_ID_HEADERS` | _(empty)_ | string (CSV) | Comma-separated header names appended, in order, to the built-in session-id fallback chain (`Thread_id` → `Session_id` → `x-claude-code-session-id`). The authoritative `X-Sluice-Session-Id` is always tried first regardless. Lets an operator bundle a custom client's conversation header (e.g. `X-Acme-Conversation-Id`) with no code change. A header also matched by `SLUICE_REDACT_EXTRA_HEADERS` is skipped during resolution, so a promoted session id can never bypass redaction. | Whitespace-trimmed per entry, empty entries dropped. Empty / unset uses the built-in chain only. | [Observability](#observability--otlp-prometheus-logging) |
 | `SLUICE_SHUTDOWN_DRAIN_SECONDS` | `300` (5 min) | int (seconds) | Bounds graceful drain on `SIGTERM` / `SIGINT`. The server stops accepting new requests, then waits up to this many seconds for in-flight requests to complete before hard-killing them. | `> 0`. | [Shutdown and drain](#shutdown-and-drain) |
 | `SLUICE_SPOOL_ROOT` | `/var/lib/sluice/spool` | string (path) | On-disk root for the connector spool. The spool constructs `records/<connector>/{active,sealed,uploading,deadletter,quarantine}/` beneath this. Mount a PVC in production so segments survive process restart. | Non-empty. The path is created lazily on first use; the process must have write permissions. | [Connector spool](#connector-spool) |
+| `SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS` | `120` (2 min) | int (seconds) | Caps time-to-first-byte from the upstream provider — the wait for response headers after the request body is fully written. Stamped onto every proxy transport as `ResponseHeaderTimeout`. Only bounds the header wait; once headers arrive, streaming bodies are not subject to it. | `>= 120`. Below the floor risks cancelling slow-but-healthy upstreams mid-handshake. | [Upstream forwarding](#upstream-forwarding) |
 | `SLUICE_WEBHOOK_ALLOW_PRIVATE` | _(unset)_ | bool (string `1` / `true`) | **Test-only.** Disables the per-call SSRF DNS guard on every webhook connector. The e2e harness sets this so its `httptest.Server` (bound to loopback) is reachable. **Never set this in production.** | `1` / `true` enables; anything else (including unset) leaves the guard on. | [Connectors → webhook → SSRF guard](connectors.md#ssrf-guard) |
 
 The CLI validator at `cmd/cli/validate.go` prints "N vars resolved" using `config.EnvVarNames()`; the count reflects exactly the entries in `envVarNames` ([`internal/config/env.go`](../internal/config/env.go)) — every `SLUICE_*` var `LoadEnv` consults itself. Three extras are read elsewhere:
@@ -175,6 +176,20 @@ When evaluation breaches the cap, the evaluator records a `rules.evaluation_dept
 | `SLUICE_SHUTDOWN_DRAIN_SECONDS` | `300` (5 min) | int (seconds) | Maximum graceful drain duration on `SIGTERM` / `SIGINT`. |
 
 On signal receipt the server stops accepting new requests and waits up to `SLUICE_SHUTDOWN_DRAIN_SECONDS` for in-flight requests to finish. After the deadline elapses, any still-running requests are hard-cancelled via context cancellation; the binary exits non-zero. 5 minutes accommodates a long streaming response from any of the supported providers; raise it if you're seeing premature cancellations on long-tail requests in your environment.
+
+---
+
+## Upstream forwarding
+
+| Variable | Default | Type | Effect |
+|---|---|---|---|
+| `SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS` | `120` (2 min) | int (seconds) | Time-to-first-byte cap on the upstream — the wait for response headers after the request body is fully written. |
+
+This maps to `net/http.Transport.ResponseHeaderTimeout` on every transport the proxy mints (one per upstream base URL). It bounds **only** the header wait: how long the gateway will sit waiting for the provider to start replying after the request is sent. Once the upstream returns its response headers, the body — including an arbitrarily long SSE stream — is not subject to this timeout; streaming completions that run for many minutes are unaffected.
+
+A provider under load can legitimately take more than a minute to emit the first byte of a long completion, so the default and enforced floor is `120`. `Validate` rejects anything below `120` (`MinUpstreamResponseHeaderTimeoutSeconds`) because a too-aggressive value surfaces as spurious `502 Bad Gateway` responses on slow-but-healthy upstreams — the transport cancels the connection mid-handshake and the proxy's `ErrorHandler` fires. Raise it (e.g. `300`) for providers or models with long pre-fill latencies; there is no upper bound.
+
+The connection-establishment timeouts (TCP dial 10 s, TLS handshake 10 s) and the idle keep-alive timeout (90 s) are not env-driven — they are fixed in [`internal/proxy/transport.go`](../internal/proxy/transport.go).
 
 ---
 
