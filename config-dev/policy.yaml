@@ -45,6 +45,7 @@ configurations:
       qwen-ollama: ""
 
     rule_names:
+      - tag-k3s-agentling
       - route-claude-models-to-anthropic
       - route-gemini-models-to-gemini
       - route-gpt-oss
@@ -117,6 +118,19 @@ rules:
     actions:
       - type: addTag
         tag: audit:large-prompt
+    behavior: continue
+
+  - name: tag-k3s-agentling
+    condition:
+      type: header
+      keyOperator: Equals
+      keyPattern: X-Agentling-Name
+      valueOperator: Equals
+      valuePattern: k3s-agentling
+      caseInsensitive: true
+    actions:
+      - type: addTag
+        tag: client:k3s-agentling
     behavior: continue
 
   - name: redact-emails
