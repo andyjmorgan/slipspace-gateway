@@ -10,15 +10,44 @@ import (
 func TestTransportCacheReuse(t *testing.T) {
 	f := New(Options{})
 
-	t1 := f.getOrCreateTransport("https://api.openai.com")
-	t2 := f.getOrCreateTransport("https://api.openai.com")
-	t3 := f.getOrCreateTransport("https://api.anthropic.com")
+	t1 := f.getOrCreateTransport("https://api.openai.com", 0)
+	t2 := f.getOrCreateTransport("https://api.openai.com", 0)
+	t3 := f.getOrCreateTransport("https://api.anthropic.com", 0)
 
 	if t1 != t2 {
 		t.Fatalf("expected same transport for identical baseURL, got %p and %p", t1, t2)
 	}
 	if t1 == t3 {
 		t.Fatalf("expected distinct transports for distinct baseURLs")
+	}
+}
+
+func TestTransportCache_PerTimeoutKeying(t *testing.T) {
+	f := New(Options{}) // default ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+
+	base := f.getOrCreateTransport("https://api.openai.com", 0)
+
+	// A zero override, and an override equal to the default, both reuse the
+	// baseURL-keyed default transport.
+	if got := f.getOrCreateTransport("https://api.openai.com", DefaultResponseHeaderTimeout); got != base {
+		t.Fatalf("override equal to default should reuse the default transport")
+	}
+
+	// A distinct override yields a distinct, stable transport.
+	override := f.getOrCreateTransport("https://api.openai.com", 5*time.Second)
+	if override == base {
+		t.Fatalf("distinct override should yield a distinct transport")
+	}
+	if override.ResponseHeaderTimeout != 5*time.Second {
+		t.Fatalf("override transport ResponseHeaderTimeout: want 5s got %s", override.ResponseHeaderTimeout)
+	}
+	if again := f.getOrCreateTransport("https://api.openai.com", 5*time.Second); again != override {
+		t.Fatalf("same (baseURL, override) should reuse the cached transport")
+	}
+
+	// The default transport is untouched by the override.
+	if base.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("default transport mutated: ResponseHeaderTimeout = %s", base.ResponseHeaderTimeout)
 	}
 }
 
@@ -34,7 +63,7 @@ func TestTransportCacheConcurrent(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			tr := f.getOrCreateTransport("https://api.openai.com")
+			tr := f.getOrCreateTransport("https://api.openai.com", 0)
 			results[idx] = reflect.ValueOf(tr).Pointer()
 		}(i)
 	}
@@ -99,13 +128,13 @@ func TestNewTransport_ResponseHeaderTimeout(t *testing.T) {
 
 func TestNew_ResponseHeaderTimeoutThreadedToTransport(t *testing.T) {
 	f := New(Options{ResponseHeaderTimeout: 200 * time.Second})
-	tr := f.getOrCreateTransport("https://api.openai.com")
+	tr := f.getOrCreateTransport("https://api.openai.com", 0)
 	if tr.ResponseHeaderTimeout != 200*time.Second {
 		t.Fatalf("transport ResponseHeaderTimeout: want 200s got %s", tr.ResponseHeaderTimeout)
 	}
 
 	def := New(Options{})
-	trDef := def.getOrCreateTransport("https://api.openai.com")
+	trDef := def.getOrCreateTransport("https://api.openai.com", 0)
 	if trDef.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
 		t.Fatalf("default transport ResponseHeaderTimeout: want %s got %s", DefaultResponseHeaderTimeout, trDef.ResponseHeaderTimeout)
 	}
