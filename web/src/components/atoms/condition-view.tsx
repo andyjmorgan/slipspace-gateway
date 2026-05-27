@@ -26,6 +26,8 @@ export function ConditionView({ condition }: { condition: RawCondition }) {
       return <ModelNameConditionView c={condition} />
     case "header":
       return <HeaderConditionView c={condition} />
+    case "bodyField":
+      return <BodyFieldConditionView c={condition} />
     case "group":
       return <GroupConditionView c={condition} />
     default:
@@ -83,6 +85,23 @@ function HeaderConditionView({ c }: { c: Record<string, unknown> }) {
         </>
       ) : null}
       {c.case_insensitive ? <Tag variant="ghost">case-insensitive</Tag> : null}
+      <NegatedFlag not={c.not} />
+    </ConditionRow>
+  )
+}
+
+function BodyFieldConditionView({ c }: { c: Record<string, unknown> }) {
+  const op = String(c.operator ?? "Exists")
+  // Exists ignores the operand; every other operator compares against value.
+  const showValue = op !== "Exists"
+  return (
+    <ConditionRow label="WHEN">
+      <FieldPill label="property">body field</FieldPill>
+      <FieldPill label="target"><span className="mono">{String(c.target ?? "")}</span></FieldPill>
+      <FieldPill label="op">{op}</FieldPill>
+      {showValue ? (
+        <FieldPill label="value"><span className="mono">{String(c.value ?? "")}</span></FieldPill>
+      ) : null}
       <NegatedFlag not={c.not} />
     </ConditionRow>
   )
