@@ -79,7 +79,14 @@ type ResilienceConfig struct {
 	// emit the HTTP status line before treating the attempt as a timeout.
 	// Maps to http.Transport.ResponseHeaderTimeout, not a context deadline,
 	// so post-commit streaming responses are not capped by this value.
-	// Zero falls back to the gateway-wide default (30s in v1.2).
+	//
+	// When set (> 0) it replaces the gateway-wide default
+	// (SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS, 120s) for every
+	// attempt under this policy. It is deliberately not floored: a
+	// failover / load-balance policy typically wants a *shorter* budget
+	// than the single-shot default so it can abandon a slow target and
+	// try a healthy one quickly. Zero leaves the gateway-wide default in
+	// force.
 	ResponseHeaderTimeoutSeconds int `yaml:"response_header_timeout_seconds,omitempty" json:"response_header_timeout_seconds,omitempty"`
 
 	// FailureStatusCodes is the policy-wide retry-trigger set. Per-target

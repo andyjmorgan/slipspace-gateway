@@ -247,7 +247,8 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 		observer = nopObserver{}
 	}
 
-	transport := f.getOrCreateTransport(baseKey)
+	headerTimeout, _ := ResponseHeaderTimeoutFromContext(ctx)
+	transport := f.getOrCreateTransport(baseKey, headerTimeout)
 
 	dropHeaders := append([]string{}, alwaysDropHeaders...)
 	dropHeaders = append(dropHeaders, dest.DropHeaders...)

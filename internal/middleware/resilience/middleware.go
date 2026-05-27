@@ -105,9 +105,13 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 //     UpstreamErrors) still fire from the per-attempt reporter
 //     observer. PR-10b refines the meter semantics to per-request and
 //     adds the dedicated gateway.resilience.* counters.
-//   - Policy.ResponseHeaderTimeoutSeconds is parsed but not yet
-//     applied per-attempt — the global Transport.ResponseHeaderTimeout
-//     applies to every attempt. Per-target Transports deferred.
+//   - Policy.ResponseHeaderTimeoutSeconds, when set, overrides the
+//     gateway-wide Transport.ResponseHeaderTimeout for every attempt
+//     under the policy (see withPolicyResponseHeaderTimeout) — the
+//     orchestrator stamps it on the attempt context and the forwarder
+//     keys a per-timeout transport off it. Per-target overrides of the
+//     header timeout are not modelled; ResilienceTarget.TimeoutSeconds
+//     (a whole-attempt wall-clock bound) remains unwired.
 func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, meters *observability.Meters, next http.Handler) http.Handler {
 	if next == nil {
 		panic("resilience: HTTPHandler called with nil next handler")
@@ -159,9 +163,9 @@ func runSingleTarget(
 	state *rules.MutableState,
 	next http.Handler,
 ) {
-	ctx := r.Context()
+	ctx := withPolicyResponseHeaderTimeout(r.Context(), pol)
 	if len(target.Actions) == 0 {
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(ctx))
 		return
 	}
 	clone, err := buildAttemptState(ctx, state, target)
@@ -215,6 +219,7 @@ func runFailover(
 	orchStart := time.Now()
 	abuf := NewAttemptBuffer(pol.Name)
 	ctx = WithAttemptBuffer(ctx, abuf)
+	ctx = withPolicyResponseHeaderTimeout(ctx, pol)
 	r = r.WithContext(ctx)
 
 	// finalStatus is the status the orchestrator surfaces to the
@@ -382,6 +387,7 @@ func runLoadBalance(
 	orchStart := time.Now()
 	abuf := NewAttemptBuffer(pol.Name)
 	ctx = WithAttemptBuffer(ctx, abuf)
+	ctx = withPolicyResponseHeaderTimeout(ctx, pol)
 	r = r.WithContext(ctx)
 
 	var finalStatus int
@@ -597,6 +603,21 @@ func newAttemptRecord(target string, started time.Time, buf *proxy.BufferingResp
 		rec.Error = err.Error()
 	}
 	return rec
+}
+
+// withPolicyResponseHeaderTimeout returns ctx carrying the policy's
+// ResponseHeaderTimeoutSeconds as a forwarder time-to-first-byte override
+// when the policy sets one (> 0), or ctx unchanged otherwise. A resilience
+// policy uses this to fail over off a slow target faster than the
+// gateway-wide default would allow; the value replaces — and is deliberately
+// not floored against — the default, so a load-balance policy may set a short
+// timeout on purpose. Stamped once per run (it is policy-wide, identical for
+// every attempt) so the attempt contexts derived from ctx inherit it.
+func withPolicyResponseHeaderTimeout(ctx context.Context, pol *contractsres.ResilienceConfig) context.Context {
+	if pol.ResponseHeaderTimeoutSeconds > 0 {
+		return proxy.WithResponseHeaderTimeout(ctx, time.Duration(pol.ResponseHeaderTimeoutSeconds)*time.Second)
+	}
+	return ctx
 }
 
 // effectiveCircuitBreaker resolves the breaker config for one target.

@@ -15,9 +15,26 @@ import (
 // is non-positive.
 const DefaultResponseHeaderTimeout = 120 * time.Second
 
-func (f *Forwarder) getOrCreateTransport(baseURL string) *http.Transport {
+// getOrCreateTransport returns the cached transport for baseURL, building one
+// on first use. headerTimeout is a per-request override of
+// ResponseHeaderTimeout (e.g. a resilience policy's shorter time-to-first-byte
+// budget so failover gives up on a slow target fast): a positive value that
+// differs from the Forwarder's default yields a transport keyed by
+// (baseURL, headerTimeout), so policy-scoped timeouts don't clobber the shared
+// default-timeout transport. A zero (or default-equal) value reuses the
+// baseURL-keyed default transport.
+func (f *Forwarder) getOrCreateTransport(baseURL string, headerTimeout time.Duration) *http.Transport {
+	effective := f.responseHeaderTimeout
+	key := baseURL
+	if headerTimeout > 0 && headerTimeout != f.responseHeaderTimeout {
+		effective = headerTimeout
+		// NUL separates the timeout suffix so it can't collide with any
+		// byte a URL can legally contain.
+		key = baseURL + "\x00" + headerTimeout.String()
+	}
+
 	f.transportsMu.RLock()
-	t, ok := f.transports[baseURL]
+	t, ok := f.transports[key]
 	f.transportsMu.RUnlock()
 	if ok {
 		return t
@@ -25,11 +42,11 @@ func (f *Forwarder) getOrCreateTransport(baseURL string) *http.Transport {
 
 	f.transportsMu.Lock()
 	defer f.transportsMu.Unlock()
-	if t, ok := f.transports[baseURL]; ok {
+	if t, ok := f.transports[key]; ok {
 		return t
 	}
-	t = newTransport(f.responseHeaderTimeout)
-	f.transports[baseURL] = t
+	t = newTransport(effective)
+	f.transports[key] = t
 	return t
 }
 

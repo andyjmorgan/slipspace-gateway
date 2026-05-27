@@ -137,7 +137,7 @@ resilience_policies:
     mode: failover | load_balance | load_balance_with_failover | none
     strict_weights: false                # default; only meaningful for load_balance modes
     failure_status_codes: [502, 503, 504] # policy-level default; targets can override
-    response_header_timeout_seconds: 30   # parsed, not yet enforced — see Known limitations
+    response_header_timeout_seconds: 20   # optional; overrides the gateway-wide time-to-first-byte cap for this policy
     circuit_breaker:                      # optional; per-target can override
       enabled: true
       failure_threshold: 5
@@ -166,7 +166,7 @@ resilience_policies:
 | `mode` | yes | See [Modes](#modes). |
 | `strict_weights` | no | Default `false`. Only meaningful in `load_balance` modes — see [strict_weights](#strict_weights-canary-mirroring). |
 | `failure_status_codes` | no | List of HTTP status codes that count as retryable for any target in this policy. Empty falls back to default `[500, 502, 503, 504]`. |
-| `response_header_timeout_seconds` | no | Parsed for forward compatibility; the v1.2 orchestrator does not yet enforce per-target transport timeouts. See [Known limitations](#known-limitations). |
+| `response_header_timeout_seconds` | no | Per-policy override of the gateway-wide time-to-first-byte cap (`SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this policy; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance policies usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
 | `circuit_breaker` | no | Policy-level breaker config; applied to every target unless the target overrides. Omit for no breaker. |
 | `targets` | yes | At least one target. |
 
@@ -557,7 +557,7 @@ The per-(policy, target) CB applies to both targets independently. If `backend-a
 
 ### `ResilienceConfig.TimeoutSeconds`
 
-Top-level policy-wide timeout, parsed from `timeout_seconds`. Was originally intended as a per-attempt wall-clock cap. The orchestrator does not currently honour it — per-attempt timeouts are governed by the global `Transport.ResponseHeaderTimeout` only. The field is preserved on the wire so a future per-target transport swap can read it without a schema migration.
+Top-level policy-wide timeout, parsed from `timeout_seconds`. Intended as a per-attempt **whole-attempt wall-clock** cap (distinct from `response_header_timeout_seconds`, which caps time-to-first-byte and *is* now honoured — see [Policy fields](#policy-fields)). The orchestrator does not currently honour `timeout_seconds`; the field is preserved on the wire so a future context-deadline path can read it without a schema migration.
 
 ### `ResilienceTarget.TimeoutSeconds`
 
@@ -590,7 +590,7 @@ These are documented intentionally — don't fix them without checking the miles
 
 1. **Body-mutating per-target actions across multiple attempts may leak state.** The typed body is shared between attempts; if attempt 1's `changeModelName` mutates it, attempt 2 sees the mutation. Restoration via re-parse from `Captured.Raw` is deferred.
 
-2. **`response_header_timeout_seconds` is parsed but inert.** The orchestrator does not yet construct per-target HTTP transports with custom timeouts; the global `Transport.ResponseHeaderTimeout` applies to every attempt. Per-target transports are scheduled for v1.3+.
+2. **`response_header_timeout_seconds` is honoured at the policy level only.** When a policy sets it, every attempt under that policy uses it as the time-to-first-byte cap (the forwarder keys a per-timeout transport off the attempt context). What's still deferred: a **per-target** header-timeout override, and the whole-attempt wall-clock `timeout_seconds` (a context-deadline path) — both scheduled for v1.3+.
 
 3. **"200 then die mid-stream" is invisible to the CB.** The breaker records an attempt as success at status-line commit. A stream that dies after headers will not trip the breaker.
 

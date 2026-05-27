@@ -4,11 +4,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 )
 
 // stubLookup builds a PolicyLookup from a literal map for tests.
@@ -239,4 +241,63 @@ func TestHTTPHandler_PanicsOnNilNext(t *testing.T) {
 		}
 	}()
 	_ = resiliencemw.HTTPHandler(stubLookup(nil), nil, nil, nil)
+}
+
+// timeoutCapture records the proxy ResponseHeaderTimeout override seen on
+// the attempt context, so we can assert the orchestrator stamps a policy's
+// ResponseHeaderTimeoutSeconds onto the forward path.
+type timeoutCapture struct {
+	override time.Duration
+	present  bool
+}
+
+func (c *timeoutCapture) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c.override, c.present = proxy.ResponseHeaderTimeoutFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func TestHTTPHandler_PolicyResponseHeaderTimeout_StampedOnAttempt(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		mode        contractsres.ResilienceMode
+		timeoutSecs int
+		wantPresent bool
+		wantValue   time.Duration
+	}{
+		{"failover with override", contractsres.ModeFailover, 20, true, 20 * time.Second},
+		{"load_balance with override", contractsres.ModeLoadBalance, 15, true, 15 * time.Second},
+		{"failover without override", contractsres.ModeFailover, 0, false, 0},
+		{"single-target (none) with override", contractsres.ModeNone, 25, true, 25 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lookup := stubLookup(map[string]*contractsres.ResilienceConfig{
+				"ha": {
+					Name:                         "ha",
+					Mode:                         tc.mode,
+					ResponseHeaderTimeoutSeconds: tc.timeoutSecs,
+					Targets: []contractsres.ResilienceTarget{
+						{Name: "primary", Provider: "openai", Order: 1, Weight: 1},
+					},
+				},
+			})
+			cap := &timeoutCapture{}
+			h := resiliencemw.HTTPHandler(lookup, nil, nil, cap.handler())
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "ha", Provider: "openai"})
+			h.ServeHTTP(httptest.NewRecorder(), req.WithContext(ctx))
+
+			if cap.present != tc.wantPresent {
+				t.Fatalf("override present = %v, want %v", cap.present, tc.wantPresent)
+			}
+			if cap.override != tc.wantValue {
+				t.Fatalf("override = %s, want %s", cap.override, tc.wantValue)
+			}
+		})
+	}
 }
