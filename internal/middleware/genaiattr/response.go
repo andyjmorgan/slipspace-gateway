@@ -19,10 +19,16 @@ type ResponseAttrs struct {
 
 	// OutputText is the model's response text, reassembled from the frames
 	// (concatenated streaming deltas, or the single non-streaming body).
-	// Used as the bounded output content on the operation-details event;
-	// works for both streaming and non-streaming since it reads the same
-	// collated frames as the other descriptors.
+	// Retained for text-only consumers; OutputParts is the full structured
+	// form including tool calls.
 	OutputText string
+
+	// OutputParts is the model's response as ordered message parts: the
+	// reassembled text (if any) followed by tool_call parts. Works for both
+	// streaming and non-streaming since it reads the same collated frames.
+	// On a finish_reason=tool_use turn the text part is absent and only the
+	// tool_call parts remain — so tool-only responses are no longer dropped.
+	OutputParts []Part
 
 	// ServiceTier and SystemFingerprint are OpenAI-specific response
 	// descriptors (openai.response.service_tier / system_fingerprint).
@@ -63,9 +69,84 @@ func ExtractResponseFrames(endpoint string, frames [][]byte) ResponseAttrs {
 	return fn(frames)
 }
 
+// toolAcc accumulates one tool call across streamed fragments (id and name
+// arrive once, arguments stream in pieces).
+type toolAcc struct {
+	id   string
+	name string
+	args strings.Builder
+}
+
+// toolAccList is an insertion-ordered set of tool-call accumulators keyed by
+// the provider's per-call index, so fragments reassemble into the original
+// call order regardless of frame interleaving.
+type toolAccList struct {
+	order []int
+	byIdx map[int]*toolAcc
+}
+
+func (l *toolAccList) get(idx int) *toolAcc {
+	if l.byIdx == nil {
+		l.byIdx = map[int]*toolAcc{}
+	}
+	a, ok := l.byIdx[idx]
+	if !ok {
+		a = &toolAcc{}
+		l.byIdx[idx] = a
+		l.order = append(l.order, idx)
+	}
+	return a
+}
+
+func (l *toolAccList) parts() []Part {
+	var parts []Part
+	for _, idx := range l.order {
+		a := l.byIdx[idx]
+		if a.name == "" && a.args.Len() == 0 && a.id == "" {
+			continue
+		}
+		parts = append(parts, Part{
+			Type:      "tool_call",
+			ID:        a.id,
+			Name:      a.name,
+			Arguments: argsRaw(a.args.String()),
+		})
+	}
+	return parts
+}
+
+// argsRaw normalises an accumulated tool-arguments string to raw JSON: the
+// fully-reassembled fragments are valid JSON; a still-partial or non-JSON
+// string is wrapped as a JSON string so the value stays well-formed.
+func argsRaw(s string) json.RawMessage {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if json.Valid([]byte(s)) {
+		return json.RawMessage(s)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(b)
+}
+
+// outputParts assembles the ordered output parts: the reassembled text first
+// (when non-empty), then the tool calls in call order.
+func outputParts(text string, tools []Part) []Part {
+	var parts []Part
+	if text != "" {
+		parts = append(parts, Part{Type: "text", Content: text})
+	}
+	return append(parts, tools...)
+}
+
 func extractOpenAIChatResponse(frames [][]byte) ResponseAttrs {
 	var a ResponseAttrs
 	var out strings.Builder
+	var tools toolAccList
 	for _, f := range frames {
 		var ch struct {
 			ID                string `json:"id"`
@@ -75,10 +156,12 @@ func extractOpenAIChatResponse(frames [][]byte) ResponseAttrs {
 			Choices           []struct {
 				FinishReason *string `json:"finish_reason"`
 				Delta        struct {
-					Content json.RawMessage `json:"content"`
+					Content   json.RawMessage  `json:"content"`
+					ToolCalls []openAIToolCall `json:"tool_calls"`
 				} `json:"delta"`
 				Message struct {
-					Content json.RawMessage `json:"content"`
+					Content   json.RawMessage  `json:"content"`
+					ToolCalls []openAIToolCall `json:"tool_calls"`
 				} `json:"message"`
 			} `json:"choices"`
 			Usage *struct {
@@ -103,6 +186,18 @@ func extractOpenAIChatResponse(frames [][]byte) ResponseAttrs {
 			// both reassembles either shape.
 			out.WriteString(textFromContent(choice.Delta.Content))
 			out.WriteString(textFromContent(choice.Message.Content))
+			// Streamed tool calls carry an explicit index; arguments stream
+			// in fragments. Non-streaming tool calls arrive whole, indexed by
+			// position. A response is one shape or the other, so the index
+			// spaces never collide.
+			for _, tc := range choice.Delta.ToolCalls {
+				acc := tools.get(tc.Index)
+				acc.merge(tc)
+			}
+			for i, tc := range choice.Message.ToolCalls {
+				acc := tools.get(i)
+				acc.merge(tc)
+			}
 		}
 		if ch.Usage != nil && ch.Usage.CompletionTokensDetails != nil && ch.Usage.CompletionTokensDetails.ReasoningTokens > 0 {
 			n := ch.Usage.CompletionTokensDetails.ReasoningTokens
@@ -110,13 +205,41 @@ func extractOpenAIChatResponse(frames [][]byte) ResponseAttrs {
 		}
 	}
 	a.OutputText = out.String()
+	a.OutputParts = outputParts(a.OutputText, tools.parts())
 	return a
 }
 
-// responsesOutput is one Responses-API output item; its content parts
-// carry the assistant text (type "output_text").
+// openAIToolCall is one entry of choices[].{delta,message}.tool_calls — the
+// streamed delta form carries an index and fragmented function.arguments;
+// the non-streaming form carries the whole call.
+type openAIToolCall struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+func (a *toolAcc) merge(tc openAIToolCall) {
+	if tc.ID != "" {
+		a.id = tc.ID
+	}
+	if tc.Function.Name != "" {
+		a.name = tc.Function.Name
+	}
+	a.args.WriteString(tc.Function.Arguments)
+}
+
+// responsesOutput is one Responses-API output item: an assistant message
+// (content parts with type "output_text") or a function_call item.
 type responsesOutput struct {
-	Content []struct {
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	CallID    string `json:"call_id"`
+	Content   []struct {
 		Text string `json:"text"`
 	} `json:"content"`
 }
@@ -124,8 +247,35 @@ type responsesOutput struct {
 func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 	var a ResponseAttrs
 	var out strings.Builder
+	var tools toolAccList
+	// A function call is keyed by its stable item id — the same id the
+	// streaming function_call_arguments.delta events reference — so the header
+	// (added/output item) and the fragmented arguments reassemble together.
+	// Part.ID carries the tool-call call_id the model uses in the transcript.
+	itemIdx := map[string]int{}
+	next := 0
+	accFor := func(itemID string) *toolAcc {
+		idx, ok := itemIdx[itemID]
+		if !ok {
+			idx = next
+			next++
+			itemIdx[itemID] = idx
+		}
+		return tools.get(idx)
+	}
 	writeOutputs := func(items []responsesOutput) {
 		for _, o := range items {
+			if o.Type == "function_call" {
+				acc := accFor(firstNonEmpty(o.ID, o.CallID))
+				if o.Name != "" {
+					acc.name = o.Name
+				}
+				if id := firstNonEmpty(o.CallID, o.ID); id != "" {
+					acc.id = id
+				}
+				acc.args.WriteString(o.Arguments)
+				continue
+			}
 			for _, c := range o.Content {
 				out.WriteString(c.Text)
 			}
@@ -138,7 +288,9 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 			ServiceTier string            `json:"service_tier"`
 			Type        string            `json:"type"`
 			Delta       string            `json:"delta"`
+			ItemID      string            `json:"item_id"`
 			Output      []responsesOutput `json:"output"`
+			Item        *responsesOutput  `json:"item"`
 			Response    *struct {
 				ID          string            `json:"id"`
 				Model       string            `json:"model"`
@@ -152,9 +304,21 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 		a.ID = firstNonEmpty(a.ID, ch.ID)
 		a.Model = firstNonEmpty(a.Model, ch.Model)
 		a.ServiceTier = firstNonEmpty(a.ServiceTier, ch.ServiceTier)
-		// Streaming text arrives on response.output_text.delta events.
-		if ch.Type == "response.output_text.delta" {
+		switch ch.Type {
+		case "response.output_text.delta":
 			out.WriteString(ch.Delta)
+		case "response.function_call_arguments.delta":
+			accFor(ch.ItemID).args.WriteString(ch.Delta)
+		case "response.output_item.added", "response.output_item.done":
+			if ch.Item != nil && ch.Item.Type == "function_call" {
+				acc := accFor(firstNonEmpty(ch.Item.ID, ch.ItemID))
+				if ch.Item.Name != "" {
+					acc.name = ch.Item.Name
+				}
+				if id := firstNonEmpty(ch.Item.CallID, ch.Item.ID); id != "" {
+					acc.id = id
+				}
+			}
 		}
 		writeOutputs(ch.Output)
 		if ch.Response != nil {
@@ -165,31 +329,47 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 		}
 	}
 	a.OutputText = out.String()
+	a.OutputParts = outputParts(a.OutputText, tools.parts())
 	return a
 }
 
 func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 	var a ResponseAttrs
 	var out strings.Builder
+	var tools toolAccList
 	for _, f := range frames {
 		var ch struct {
 			ID         string  `json:"id"`
 			Model      string  `json:"model"`
+			Type       string  `json:"type"`
+			Index      int     `json:"index"`
 			StopReason *string `json:"stop_reason"`
 			// Content is the non-streaming top-level content block array.
 			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type  string          `json:"type"`
+				Text  string          `json:"text"`
+				ID    string          `json:"id"`
+				Name  string          `json:"name"`
+				Input json.RawMessage `json:"input"`
 			} `json:"content"`
+			// ContentBlock carries the tool_use header on content_block_start.
+			ContentBlock *struct {
+				Type string `json:"type"`
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"content_block"`
 			Message *struct {
 				ID    string `json:"id"`
 				Model string `json:"model"`
 			} `json:"message"`
-			// Delta carries stop_reason on message_delta and text on
-			// content_block_delta (text_delta) — one struct decodes both.
+			// Delta carries stop_reason on message_delta, text on
+			// content_block_delta (text_delta), and tool-argument fragments on
+			// input_json_delta — one struct decodes all three.
 			Delta *struct {
-				StopReason *string `json:"stop_reason"`
-				Text       string  `json:"text"`
+				Type        string  `json:"type"`
+				StopReason  *string `json:"stop_reason"`
+				Text        string  `json:"text"`
+				PartialJSON string  `json:"partial_json"`
 			} `json:"delta"`
 		}
 		if json.Unmarshal(f, &ch) != nil {
@@ -204,25 +384,45 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 		if ch.StopReason != nil && *ch.StopReason != "" {
 			a.FinishReasons = appendUnique(a.FinishReasons, *ch.StopReason)
 		}
-		for _, blk := range ch.Content {
-			if blk.Type == "text" {
+		// Non-streaming: text + tool_use blocks arrive whole, indexed by
+		// position.
+		for i, blk := range ch.Content {
+			switch blk.Type {
+			case "text":
 				out.WriteString(blk.Text)
+			case "tool_use":
+				acc := tools.get(i)
+				acc.id = blk.ID
+				acc.name = blk.Name
+				acc.args.WriteString(string(nonEmptyRaw(blk.Input)))
 			}
+		}
+		// Streaming: a tool_use header on content_block_start, then argument
+		// fragments on input_json_delta, keyed by the block index.
+		if ch.Type == "content_block_start" && ch.ContentBlock != nil && ch.ContentBlock.Type == "tool_use" {
+			acc := tools.get(ch.Index)
+			acc.id = ch.ContentBlock.ID
+			acc.name = ch.ContentBlock.Name
 		}
 		if ch.Delta != nil {
 			if ch.Delta.StopReason != nil && *ch.Delta.StopReason != "" {
 				a.FinishReasons = appendUnique(a.FinishReasons, *ch.Delta.StopReason)
 			}
 			out.WriteString(ch.Delta.Text)
+			if ch.Delta.PartialJSON != "" {
+				tools.get(ch.Index).args.WriteString(ch.Delta.PartialJSON)
+			}
 		}
 	}
 	a.OutputText = out.String()
+	a.OutputParts = outputParts(a.OutputText, tools.parts())
 	return a
 }
 
 func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 	var a ResponseAttrs
 	var out strings.Builder
+	var toolParts []Part
 	for _, f := range frames {
 		var ch struct {
 			ResponseID   string `json:"responseId"`
@@ -231,7 +431,11 @@ func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 				FinishReason string `json:"finishReason"`
 				Content      struct {
 					Parts []struct {
-						Text string `json:"text"`
+						Text         string `json:"text"`
+						FunctionCall *struct {
+							Name string          `json:"name"`
+							Args json.RawMessage `json:"args"`
+						} `json:"functionCall"`
 					} `json:"parts"`
 				} `json:"content"`
 			} `json:"candidates"`
@@ -249,6 +453,14 @@ func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 				a.FinishReasons = appendUnique(a.FinishReasons, cand.FinishReason)
 			}
 			for _, p := range cand.Content.Parts {
+				if p.FunctionCall != nil {
+					toolParts = append(toolParts, Part{
+						Type:      "tool_call",
+						Name:      p.FunctionCall.Name,
+						Arguments: nonEmptyRaw(p.FunctionCall.Args),
+					})
+					continue
+				}
 				out.WriteString(p.Text)
 			}
 		}
@@ -258,6 +470,7 @@ func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 		}
 	}
 	a.OutputText = out.String()
+	a.OutputParts = outputParts(a.OutputText, toolParts)
 	return a
 }
 

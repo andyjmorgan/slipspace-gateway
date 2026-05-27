@@ -226,11 +226,14 @@ When an OTLP endpoint is configured, the data plane also emits OpenTelemetry **s
 - `gen_ai.client.inference.operation.details` — carries the full operation-detail attribute set (same as the span) plus the **bounded prompt/response content**.
 
 **Content capture** (`gen_ai.input.messages`, `output.messages`, `system_instructions`, `tool.definitions`) is **opt-in and off by default**, gated by `SLUICE_OTEL_CAPTURE_CONTENT`. When enabled it is:
+- **multi-part, per the message JSON schema** — messages are `[{role, parts:[…]}]` and system instructions are a bare parts array `[{type, …}]`. Parts carry the well-known types: `text` (`{type,content}`), `tool_call` (`{type,id,name,arguments}`), `tool_call_response` (`{type,id,result}`); media blocks pass through by `type` with no inline bytes. A tool-only model turn keeps its `tool_call` parts rather than vanishing;
+- **multi-source** — every system/developer message contributes to `system_instructions` (OpenAI chat + Responses `input[]`), each Anthropic `system` block is its own part, not just the first;
+- **spec-shaped tool definitions** — `tool.definitions` is normalised to `{type:"function",name,description,parameters}` regardless of the provider's native encoding (OpenAI's nested `function`, Anthropic's `input_schema`, Gemini's `functionDeclarations`);
 - **bounded** — only the latest user turn (not full history) and the model response; the full turn lives in the connector spool (the system of record), never telemetry (invariant #4);
-- **redacted** — credential-shaped tokens masked (`internal/contentredact`);
-- **capped** — each field size-limited; oversized tool definitions are replaced with a marker rather than truncated to invalid JSON.
+- **redacted** — credential-shaped tokens masked (`internal/contentredact`), applied before capping so a secret can't hide across the truncation boundary;
+- **capped** — each text/argument field size-limited; tool-definition parameter schemas are dropped wholesale over the cap (name/description kept legible).
 
-On the **span**, content rides as JSON strings (span attributes can't hold structured values — the spec permits a JSON string there); on the **event**, it is recorded in structured form, as the spec requires.
+On the **span**, content rides as JSON strings (span attributes can't hold structured values — the spec permits a JSON string there); on the **event**, it is recorded in structured form, as the spec requires. The operation-detail events are emitted within the request span's context, so the log records carry the span's `trace_id`/`span_id` for native trace↔logs correlation.
 
 ---
 

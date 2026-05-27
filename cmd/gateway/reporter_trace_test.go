@@ -10,9 +10,11 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -326,13 +328,13 @@ func TestEmitTrace_ContentOnSpan(t *testing.T) {
 
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	r := &reporterRun{
-		factory:        &reporterFactory{tracer: tp.Tracer("test"), captureContent: true},
-		provider:       "openai",
-		endpoint:       "chat_completions",
-		model:          "gpt-4o",
-		configuration:  "p",
-		started:        start,
-		respOutputText: "the answer",
+		factory:         &reporterFactory{tracer: tp.Tracer("test"), captureContent: true},
+		provider:        "openai",
+		endpoint:        "chat_completions",
+		model:           "gpt-4o",
+		configuration:   "p",
+		started:         start,
+		respOutputParts: []genaiattr.Part{{Type: "text", Content: "the answer"}},
 	}
 	ctx := bodycapture.WithCaptured(context.Background(), bodycapture.Captured{
 		Raw: []byte(`{"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi there"}],"tools":[{"type":"function"}]}`),
@@ -346,8 +348,9 @@ func TestEmitTrace_ContentOnSpan(t *testing.T) {
 	})
 
 	attrs := sr.Ended()[0].Attributes()
-	// On a span, content rides as scalar/JSON-string attributes.
-	if v, ok := attrValue(attrs, observability.AttrGenAISystemInstructions); !ok || v.AsString() != "be brief" {
+	// On a span, content rides as JSON-string attributes. system_instructions
+	// is a parts array; input/output messages are [{role,parts}].
+	if v, ok := attrValue(attrs, observability.AttrGenAISystemInstructions); !ok || !strings.Contains(v.AsString(), `"content":"be brief"`) {
 		t.Errorf("system_instructions on span = %q (ok=%v)", v.AsString(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrGenAIInputMessages); !ok || !strings.Contains(v.AsString(), "hi there") {
@@ -358,6 +361,46 @@ func TestEmitTrace_ContentOnSpan(t *testing.T) {
 	}
 	if _, ok := attrValue(attrs, observability.AttrGenAIToolDefinitions); !ok {
 		t.Errorf("tool.definitions absent on span")
+	}
+}
+
+func TestEmitTrace_SpanContextReachesEvents(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	rl := &recordingEventLogger{}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	r := &reporterRun{
+		factory:       &reporterFactory{tracer: tp.Tracer("t"), eventLogger: rl, captureContent: true},
+		provider:      "openai",
+		endpoint:      "chat_completions",
+		model:         "gpt-4o",
+		configuration: "p",
+		started:       start,
+	}
+	ev := events.Request{Provider: "openai", Endpoint: "chat_completions", Model: "gpt-4o", StatusCode: 200, DurationMs: 5}
+	traceCtx := r.emitTrace(context.Background(), ev)
+	r.emitEvents(traceCtx, ev)
+
+	if sc := trace.SpanContextFromContext(traceCtx); !sc.IsValid() {
+		t.Fatal("emitTrace returned a ctx with no span context")
+	}
+	if len(rl.records) == 0 {
+		t.Fatal("no event emitted")
+	}
+	// The log record's ctx carries the same trace as the recorded span, so a
+	// backend correlates the event to the span natively.
+	logTID := trace.SpanContextFromContext(rl.lastCtx).TraceID()
+	if logTID != sr.Ended()[0].SpanContext().TraceID() {
+		t.Errorf("event trace id %v != span trace id %v", logTID, sr.Ended()[0].SpanContext().TraceID())
+	}
+}
+
+func TestEmitTrace_NilTracerReturnsOriginalCtx(t *testing.T) {
+	r := &reporterRun{factory: &reporterFactory{}, started: time.Now()}
+	ctx := context.Background()
+	if got := r.emitTrace(ctx, events.Request{}); got != ctx {
+		t.Error("nil tracer should return the original ctx unchanged")
 	}
 }
 
