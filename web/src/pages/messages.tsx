@@ -412,8 +412,9 @@ type Bundle = {
 // bundleBySession groups newest-first entries into (configuration,
 // session_id) bundles — the same tuple the connector records bundle on —
 // preserving newest-bundle-first order by first appearance. Entries with
-// no session id collect under one trailing "no session" bundle so the
-// pane stays exhaustive.
+// no session id collect under one "no session" bundle that always renders
+// after every real group, so grouped sessions never sort below loose
+// ungrouped traffic even when the newest entry has no session.
 function bundleBySession(ordered: MessageEntry[]): Bundle[] {
   const byKey = new Map<string, Bundle>()
   const order: string[] = []
@@ -445,7 +446,12 @@ function bundleBySession(ordered: MessageEntry[]): Bundle[] {
       .filter((n) => !Number.isNaN(n))
     if (ts.length > 0) b.spanMs = Math.max(...ts) - Math.min(...ts)
   }
-  return order.map((k) => byKey.get(k)!)
+  // Force the no-session bundle (sessionId === "") to render after every
+  // real session group. Array sort is stable, so the 0/1 partition key
+  // preserves newest-first first-appearance order within each side.
+  return order
+    .map((k) => byKey.get(k)!)
+    .sort((a, b) => Number(a.sessionId === "") - Number(b.sessionId === ""))
 }
 
 // BundleGroup renders a collapsible session header row spanning the table
