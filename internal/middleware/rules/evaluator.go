@@ -261,6 +261,8 @@ func liveGatewayContext(initial GatewayContext, state *MutableState, body any) G
 		gc.Tags = state.Tags
 	}
 	gc.Body = body
+	// BodyRaw propagates verbatim — it is the inbound bytes and rule
+	// evaluation never mutates them (body patches apply post-rule).
 	if model := liveModelName(state, body); model != "" {
 		gc.Model = model
 	}
@@ -358,6 +360,15 @@ type GatewayContext struct {
 	// one (bodycapture.Captured.Body) — nil for passthrough
 	// endpoints. Content-based conditions type-switch on this.
 	Body any
+
+	// BodyRaw is the verbatim inbound request body bytes
+	// (bodycapture.Captured.Raw). BodyFieldCondition reads from this
+	// via gjson — the raw bytes, not the typed body, so unknown fields
+	// and exact shapes are visible. Reflects the inbound body; rule-
+	// driven typed mutations (changeModelName) are not re-serialised
+	// into it, which is fine because model matching has its own
+	// ModelNameCondition.
+	BodyRaw []byte
 
 	// Tags is the set of tags AddTagAction has attached to this
 	// request via earlier rules. TagCondition reads from here.

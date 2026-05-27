@@ -73,6 +73,7 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 			Headers:           r.Header,
 			ConfigurationName: ar.ConfigurationName,
 			Body:              captured.Body,
+			BodyRaw:           captured.Raw,
 		}
 
 		result, err := eval.Evaluate(ctx, gc, state, captured.Body)

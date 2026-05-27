@@ -382,6 +382,9 @@ var actionRegistry = models.PolymorphicRegistry[Action]{
 		"llmImpersonation":    func() Action { return &LlmImpersonationAction{} },
 		"addTag":              func() Action { return &AddTagAction{} },
 		"useResiliencePolicy": func() Action { return &UseResiliencePolicyAction{} },
+		"rewriteField":        func() Action { return &RewriteFieldAction{} },
+		"removeField":         func() Action { return &RemoveFieldAction{} },
+		"appendField":         func() Action { return &AppendFieldAction{} },
 	},
 	Fallback: func(disc string) Action { return &UnknownAction{Type: disc} },
 }

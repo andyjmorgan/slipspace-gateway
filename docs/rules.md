@@ -19,6 +19,7 @@ This page is the operator's reference for **conditions** — every type, every o
    - [`modelName`](#modelname)
    - [`header`](#header)
    - [`tag`](#tag)
+   - [`bodyField`](#bodyfield)
    - [`group`](#group)
    - [Unknown conditions](#unknown-conditions)
 7. [The `not` flag](#the-not-flag)
@@ -252,6 +253,56 @@ condition:
 ```
 
 Rule order matters: a `tag` condition only sees tags attached by rules that ran **earlier** in the configuration's `rule_names` list. A tag attached by a later rule is invisible to this one. For "any of {a, b, c}", compose three `tag` conditions under a `group` with `Or`; for "all of", use `And`.
+
+### `bodyField`
+
+Matches against a value read from the **inbound request body** by [`gjson`](https://github.com/tidwall/gjson). Reads the verbatim captured bytes, so unknown fields and exact shapes are visible. A missing body or an unresolvable target evaluates to false — the rule is inert, never request-breaking.
+
+| Field | Type | Notes |
+|---|---|---|
+| `type` | string | Always `"bodyField"`. |
+| `target` | string | `request.body.*` path. gjson query syntax allowed (e.g. `request.body.tools.#(name=="bash")`) — reads are unconstrained. |
+| `operator` | enum | `Equals`, `Contains`, `Matches`, `Exists`, `Is`. |
+| `value` | string | Comparison operand; ignored for `Exists`. |
+| `not` | bool | Inverts the match result. |
+
+| Operator | Behaviour |
+|---|---|
+| `Equals` | gjson string form of the read value equals `value`. Quote scalars uniformly (`value: "true"`, `value: "1024"`). |
+| `Contains` | read string value contains `value` as a substring. |
+| `Matches` | read string value matches the `value` regular expression (RE2 — linear time, no catastrophic backtracking). |
+| `Exists` | the target resolves to a present value. `value` ignored. |
+| `Is` | the read value is of the JSON type named by `value`: `string`, `number`, `bool`, `array`, `object`, or `null`. |
+
+```yaml
+# Gate a rewrite on whether the request is actually streaming.
+condition:
+  type: bodyField
+  target: request.body.stream
+  operator: Equals
+  value: "true"
+```
+
+```yaml
+# Fingerprint a caller by its system-prompt signature, then tag it.
+# NOTE: body-derived identity is heuristic and spoofable — use it for
+# attribution/telemetry/routing, never as an auth boundary.
+condition:
+  type: bodyField
+  target: request.body.system
+  operator: Contains
+  value: "You are Claude Code"
+```
+
+```yaml
+# Detect a tool definition via a gjson predicate read.
+condition:
+  type: bodyField
+  target: request.body.tools.#(name=="bash")
+  operator: Exists
+```
+
+`bodyField` reflects the **inbound** body; rule-driven typed mutations (`changeModelName`) are not re-serialized into what it reads. That is intentional — model matching has its own `modelName` condition, and the only typed body mutation is the model field. Body **writes** (`rewriteField` etc.) are constrained to bare paths; only `bodyField` **reads** may use query syntax. See [actions.md](actions.md#rewritefield--removefield--appendfield).
 
 ### `group`
 

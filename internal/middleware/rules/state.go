@@ -3,6 +3,8 @@ package rules
 import (
 	"net/http"
 	"net/url"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/bodypatch"
 )
 
 // QueryAddition is a single (key, value) pair from
@@ -96,6 +98,15 @@ type MutableState struct {
 	// gateway.tags.applied.total counter once per tag.
 	Tags []string
 
+	// BodyRewrites accumulates body-patch operations recorded by the
+	// rewriteField / removeField / appendField actions, in rule order.
+	// BodyRewriteHandler applies them against the serialized request
+	// body after the typed re-marshal step. Empty means nothing to do —
+	// the common path costs nothing. Distinct from BodyMutated, which
+	// tracks typed-body field mutation (changeModelName); a request can
+	// have both, and the byte patches always apply last.
+	BodyRewrites []bodypatch.Op
+
 	// PolicyRef names the resilience policy the rules engine resolved
 	// for this request. Set by UseResiliencePolicyAction; consumed
 	// post-rules by the v1.2 orchestrator. Empty means "no policy
@@ -188,6 +199,9 @@ func (s *MutableState) Clone() *MutableState {
 	}
 	if len(s.Tags) > 0 {
 		out.Tags = append([]string(nil), s.Tags...)
+	}
+	if len(s.BodyRewrites) > 0 {
+		out.BodyRewrites = append([]bodypatch.Op(nil), s.BodyRewrites...)
 	}
 	return out
 }

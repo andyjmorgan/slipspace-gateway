@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/sluice-gateway/internal/bodypatch"
 	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
 	"github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
 	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
@@ -71,6 +72,12 @@ func applyAction(
 		return applyAddTag(*a, state)
 	case *contractsrules.UseResiliencePolicyAction:
 		return applyUseResiliencePolicy(*a, state)
+	case *contractsrules.RewriteFieldAction:
+		return applyRewriteField(*a, state)
+	case *contractsrules.RemoveFieldAction:
+		return applyRemoveField(*a, state)
+	case *contractsrules.AppendFieldAction:
+		return applyAppendField(*a, state)
 	case *contractsrules.UnknownAction:
 		return contractsrules.Outcome{}, nil
 	default:
@@ -274,6 +281,55 @@ func applyAddTag(a contractsrules.AddTagAction, state *MutableState) (contractsr
 	}
 	state.AddTag(t)
 	return contractsrules.Outcome{}, nil
+}
+
+// applyRewriteField records a body set/replace operation on state. The
+// target is parsed (validated at config-load, re-parsed here) and the
+// resolved Op is appended to state.BodyRewrites for BodyRewriteHandler
+// to apply against the serialized body after evaluation. The action
+// itself does not touch the body — it queues the mutation so it lands
+// once, on the final bytes, after any typed re-marshal.
+func applyRewriteField(a contractsrules.RewriteFieldAction, state *MutableState) (contractsrules.Outcome, error) {
+	op, err := bodyOp(bodypatch.OpSet, a.ActionType(), a.Target, a.Value)
+	if err != nil {
+		return contractsrules.Outcome{}, err
+	}
+	state.BodyRewrites = append(state.BodyRewrites, op)
+	return contractsrules.Outcome{}, nil
+}
+
+// applyRemoveField records a body delete operation on state.
+func applyRemoveField(a contractsrules.RemoveFieldAction, state *MutableState) (contractsrules.Outcome, error) {
+	op, err := bodyOp(bodypatch.OpRemove, a.ActionType(), a.Target, contractsrules.RewriteValue{})
+	if err != nil {
+		return contractsrules.Outcome{}, err
+	}
+	state.BodyRewrites = append(state.BodyRewrites, op)
+	return contractsrules.Outcome{}, nil
+}
+
+// applyAppendField records a body array-append operation on state.
+func applyAppendField(a contractsrules.AppendFieldAction, state *MutableState) (contractsrules.Outcome, error) {
+	op, err := bodyOp(bodypatch.OpAppend, a.ActionType(), a.Target, a.Value)
+	if err != nil {
+		return contractsrules.Outcome{}, err
+	}
+	state.BodyRewrites = append(state.BodyRewrites, op)
+	return contractsrules.Outcome{}, nil
+}
+
+// bodyOp parses a write target and builds the bodypatch.Op. The
+// response.body scope is rejected here as a runtime backstop — the
+// contract's Validate already blocks it at config-load.
+func bodyOp(kind bodypatch.OpKind, actionType, target string, value contractsrules.RewriteValue) (bodypatch.Op, error) {
+	t, err := contractsrules.ParseTarget(target)
+	if err != nil {
+		return bodypatch.Op{}, fmt.Errorf("rules: %s: %w", actionType, err)
+	}
+	if t.Scope != contractsrules.ScopeRequestBody {
+		return bodypatch.Op{}, fmt.Errorf("rules: %s: %w", actionType, contractsrules.ErrResponseScopeUnsupported)
+	}
+	return bodypatch.Op{Kind: kind, Path: t.Path, Value: value, ActionType: actionType}, nil
 }
 
 // applyUseResiliencePolicy writes a.PolicyName into state.PolicyRef.

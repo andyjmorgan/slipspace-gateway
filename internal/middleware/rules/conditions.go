@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/tidwall/gjson"
+
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
 
@@ -37,6 +39,8 @@ func matchCondition(
 		return invertIf(c.Not, matchHeader(*c, gc))
 	case *contractsrules.TagCondition:
 		return invertIf(c.Not, matchTag(*c, gc))
+	case *contractsrules.BodyFieldCondition:
+		return invertIf(c.Not, matchBodyField(*c, gc))
 	case *contractsrules.RuleGroup:
 		return invertIf(c.Not, matchGroup(*c, gc, depth, maxDepth, groupDepthExceeded))
 	case *contractsrules.UnknownCondition:
@@ -113,6 +117,69 @@ func matchTag(c contractsrules.TagCondition, gc GatewayContext) bool {
 		}
 	}
 	return false
+}
+
+// matchBodyField reads a value from the inbound request body via gjson
+// and applies the configured operator. A missing body or an
+// unresolvable target evaluates to false (never an error — the rule is
+// inert, not request-breaking). The target may use gjson query syntax
+// because reads are unconstrained; only writes are limited to bare
+// paths.
+//
+// Equals compares the gjson string form of the read value to Value, so
+// operators quote scalars uniformly (value: "true", value: "1024").
+func matchBodyField(c contractsrules.BodyFieldCondition, gc GatewayContext) bool {
+	if len(gc.BodyRaw) == 0 {
+		return false
+	}
+	t, err := contractsrules.ParseReadTarget(c.Target)
+	if err != nil || t.Scope != contractsrules.ScopeRequestBody {
+		return false
+	}
+	r := gjson.GetBytes(gc.BodyRaw, t.Path)
+	switch c.Operator {
+	case contractsrules.BodyFieldExists:
+		return r.Exists()
+	case contractsrules.BodyFieldEquals:
+		return r.Exists() && r.String() == c.Value
+	case contractsrules.BodyFieldContains:
+		return r.Exists() && strings.Contains(r.String(), c.Value)
+	case contractsrules.BodyFieldMatches:
+		if !r.Exists() {
+			return false
+		}
+		re, err := regexp.Compile(c.Value)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(r.String())
+	case contractsrules.BodyFieldIsType:
+		return r.Exists() && bodyTypeMatches(r, c.Value)
+	default:
+		return false
+	}
+}
+
+// bodyTypeMatches maps a JSON type name to the gjson result's type.
+// Object and array both carry gjson.JSON, distinguished by IsObject /
+// IsArray.
+func bodyTypeMatches(r gjson.Result, want string) bool {
+	switch want {
+	case "string":
+		return r.Type == gjson.String
+	case "number":
+		return r.Type == gjson.Number
+	case "bool":
+		return r.Type == gjson.True || r.Type == gjson.False
+	case "null":
+		return r.Type == gjson.Null
+	case "array":
+		return r.IsArray()
+	case "object":
+		return r.IsObject()
+	default:
+		return false
+	}
 }
 
 // matchGroup recursively evaluates RuleGroup children with the

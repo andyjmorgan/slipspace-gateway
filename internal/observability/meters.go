@@ -58,6 +58,13 @@ const (
 	MetricRuleErrorsTotal        = "gateway.rule.errors.total"
 	MetricRuleEvaluationDuration = "gateway.rule.evaluation.duration"
 
+	// Body-rewrite instruments. applied counts successful field
+	// mutations; dropped counts mutations skipped with a reason
+	// (path_traverses_primitive, append_non_array, template_ref_miss,
+	// apply_error). Labels: action_type, and (dropped only) reason.
+	MetricRewriteAppliedTotal = "gateway.rewrite.applied.total"
+	MetricRewriteDroppedTotal = "gateway.rewrite.dropped.total"
+
 	// Crash-safety instruments. Both surface a panic that the
 	// gateway's recover() wrappers converted to a logged error
 	// rather than letting the process exit. A non-zero rate on
@@ -170,6 +177,15 @@ type Meters struct {
 	// evaluation cycle. Labels: configuration.
 	RuleEvaluationDuration metric.Float64Histogram
 
+	// RewriteAppliedTotal counts body-field mutations that changed the
+	// request body. Label: action_type (rewriteField|removeField|
+	// appendField).
+	RewriteAppliedTotal metric.Int64Counter
+
+	// RewriteDroppedTotal counts body-field mutations skipped without
+	// changing the body. Labels: action_type, reason.
+	RewriteDroppedTotal metric.Int64Counter
+
 	// GoroutinePanicsTotal counts panics caught by safego.Go in
 	// background goroutines. Label: site (the identifier the caller
 	// passed to safego.Go — e.g. "spool.uploader", "spool.drain").
@@ -267,6 +283,8 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricErrorResponsesTotal, "JSON error responses written by the gateway middleware chain.", "1", &m.ErrorResponsesTotal},
 		{MetricRuleMatchesTotal, "Rules that matched on a request.", "1", &m.RuleMatchesTotal},
 		{MetricRuleErrorsTotal, "Action execution failures during rule evaluation.", "1", &m.RuleErrorsTotal},
+		{MetricRewriteAppliedTotal, "Body-field mutations that changed the request body, by action_type.", "1", &m.RewriteAppliedTotal},
+		{MetricRewriteDroppedTotal, "Body-field mutations skipped without changing the body, by action_type and reason.", "1", &m.RewriteDroppedTotal},
 		{MetricGoroutinePanicsTotal, "Panics caught by safego.Go in background goroutines (process kept alive).", "1", &m.GoroutinePanicsTotal},
 		{MetricRequestPanicsTotal, "Panics caught by the request-path recovery middleware (client got 500, process kept alive).", "1", &m.RequestPanicsTotal},
 		{MetricAdminRequestsTotal, "Requests handled by the management-console listener (separate from data-plane requests).", "1", &m.AdminRequestsTotal},
