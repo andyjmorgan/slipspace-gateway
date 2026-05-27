@@ -4,6 +4,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
@@ -21,11 +24,16 @@ const headerCorrelationID = "X-Sluice-Correlation-Id"
 // cardinality and bundling is a records/live-feed concern, not telemetry.
 func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.SessionResolver, redactor *headers.Redactor, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract any inbound W3C trace context (traceparent/baggage) so the
+		// gateway's gen_ai span nests under the caller's distributed trace
+		// instead of starting a fresh root. No-op when the caller sent none.
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+
 		id := r.Header.Get(headerCorrelationID)
 		if id == "" {
 			id = observability.NewCorrelationID()
 		}
-		ctx := observability.WithCorrelationID(r.Context(), id)
+		ctx = observability.WithCorrelationID(ctx, id)
 		logger := baseLogger.With(observability.LogFieldCorrelationID, id)
 
 		sessionID, sessionSource := sessions.Resolve(r.Header, redactor.IsSensitive)

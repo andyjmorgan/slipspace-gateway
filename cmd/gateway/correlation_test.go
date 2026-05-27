@@ -7,6 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
@@ -31,6 +35,32 @@ func serveCorrelation(t *testing.T, resolver *observability.SessionResolver, red
 	rec := httptest.NewRecorder()
 	mw.ServeHTTP(rec, req)
 	return rec, gotID, gotSource
+}
+
+func TestCorrelationMiddleware_ExtractsInboundTraceContext(t *testing.T) {
+	// Global propagator is normally installed by observability.Setup; set it
+	// directly here. Not parallel — it mutates process-global state.
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	var sc trace.SpanContext
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sc = trace.SpanContextFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	mw := correlationMiddleware(quietLogger(), observability.NewSessionResolver(nil), headers.NewRedactor(nil), next)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	mw.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !sc.IsValid() {
+		t.Fatalf("expected a valid extracted span context from the inbound traceparent")
+	}
+	if got := sc.TraceID().String(); got != "0af7651916cd43dd8448eb211c80319c" {
+		t.Errorf("extracted trace id = %q, want the inbound 0af7651916cd43dd8448eb211c80319c", got)
+	}
+	if !sc.IsRemote() {
+		t.Errorf("expected the extracted span context to be marked remote")
+	}
 }
 
 func TestCorrelationMiddleware_ResolvesClientHeaderAndEchoes(t *testing.T) {

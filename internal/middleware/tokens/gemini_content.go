@@ -39,26 +39,11 @@ type geminiResponse struct {
 // to return nil usageMetadata in the final stream chunk. In that case
 // Snapshot.Recognised stays false and the reporter leaves the counter
 // unbumped — preferable to inventing a count.
-func extractGeminiContent(raw []byte) Snapshot {
+func extractGeminiContent(frames [][]byte) Snapshot {
 	var agg Aggregator
-
-	if looksLikeJSON(raw) {
-		var body geminiResponse
-		if err := json.Unmarshal(raw, &body); err == nil && body.UsageMetadata != nil {
-			agg.Handle(StrategyLastWins, geminiUsageToObservation(body.UsageMetadata))
-		}
-		return agg.Snapshot()
-	}
-
-	for _, ev := range parseSSE(raw) {
-		if ev.Data == "" {
-			continue
-		}
+	for _, f := range frames {
 		var frame geminiResponse
-		if err := json.Unmarshal([]byte(ev.Data), &frame); err != nil {
-			continue
-		}
-		if frame.UsageMetadata == nil {
+		if err := json.Unmarshal(f, &frame); err != nil || frame.UsageMetadata == nil {
 			continue
 		}
 		agg.Handle(StrategyLastWins, geminiUsageToObservation(frame.UsageMetadata))

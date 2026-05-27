@@ -19,7 +19,12 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	otellog "go.opentelemetry.io/otel/log"
+	logglobal "go.opentelemetry.io/otel/log/global"
+	lognoop "go.opentelemetry.io/otel/log/noop"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -99,6 +104,15 @@ type Provider struct {
 	// drained on Shutdown.
 	TracerProvider oteltrace.TracerProvider
 
+	// LoggerProvider is the OTel logs pipeline carrying the GenAI events
+	// (gen_ai.client.inference.operation.details and
+	// gen_ai.client.operation.exception). Always non-nil: a no-op provider
+	// when OTLP is disabled so callers emit unconditionally; an SDK provider
+	// registered globally and drained on Shutdown when OTLP is enabled.
+	// Distinct from Logger (slog) — this is the OTel log signal, not the
+	// gateway's own structured request logging.
+	LoggerProvider otellog.LoggerProvider
+
 	// Logger is the service-enriched root logger. Per-request loggers
 	// are derived from this and stashed on context.Context.
 	Logger *slog.Logger
@@ -127,6 +141,14 @@ type Provider struct {
 // returned tracer is a no-op that never records spans.
 func (p *Provider) Tracer() oteltrace.Tracer {
 	return p.TracerProvider.Tracer(TracerName)
+}
+
+// EventLogger returns the gateway-scoped OTel logger for emitting GenAI
+// events. LoggerProvider is always non-nil, so this is safe whether or not
+// OTLP is enabled — when disabled the returned logger is a no-op that
+// records nothing.
+func (p *Provider) EventLogger() otellog.Logger {
+	return p.LoggerProvider.Logger(LoggerName)
 }
 
 // Setup constructs the telemetry stack from the supplied configuration.
@@ -202,6 +224,16 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 	}
 	mp := sdkmetric.NewMeterProvider(opts...)
 	otel.SetMeterProvider(mp)
+
+	// Install the W3C trace-context + baggage propagator so the data plane
+	// can extract an inbound traceparent and nest its spans under a caller's
+	// distributed trace. Harmless when tracing is disabled (the no-op tracer
+	// records nothing); set unconditionally so propagation works the moment
+	// OTLP is enabled.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 	shutdownFns = append(shutdownFns, mp.Shutdown)
 
 	meters, err := NewMeters(mp.Meter(MeterName))
@@ -241,10 +273,31 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 		tp = sdkTP
 	}
 
+	// LoggerProvider mirrors TracerProvider: a no-op provider when OTLP is
+	// disabled, an SDK provider with an OTLP exporter + batch processor when
+	// enabled. Events (operation details, exceptions) emit out of band via
+	// the batch processor, never on the request path.
+	var lp otellog.LoggerProvider = lognoop.NewLoggerProvider()
+	if otlpEnabled {
+		logExp, lerr := newOTLPLogExporter(ctx, cfg.OTLPEndpoint, cfg.OTLPProtocol)
+		if lerr != nil {
+			_ = idempotentShutdown(shutdownFns)(ctx)
+			return nil, lerr
+		}
+		sdkLP := sdklog.NewLoggerProvider(
+			sdklog.WithResource(res),
+			sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)),
+		)
+		logglobal.SetLoggerProvider(sdkLP)
+		shutdownFns = append(shutdownFns, sdkLP.Shutdown)
+		lp = sdkLP
+	}
+
 	return &Provider{
 		Meters:         meters,
 		MeterProvider:  mp,
 		TracerProvider: tp,
+		LoggerProvider: lp,
 		Logger:         logger,
 		PromHandler:    promHandler,
 		Snapshotter:    snap,

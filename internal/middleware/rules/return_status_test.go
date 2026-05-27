@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
@@ -132,6 +133,8 @@ func (o *lifecycleObserver) OnResponseHeaders(_ context.Context, status int, _ h
 	o.gotHeaders = true
 	o.completeStatus = status
 }
+
+func (o *lifecycleObserver) OnResponseChunk(context.Context, time.Time) {}
 
 func (o *lifecycleObserver) OnUpstreamError(context.Context, error) {}
 

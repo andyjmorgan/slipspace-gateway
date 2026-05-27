@@ -1,0 +1,48 @@
+# GenAI Semantic-Convention Conformance — v1.41.0
+
+Status of the gateway's OpenTelemetry GenAI telemetry against the
+**OpenTelemetry Semantic Conventions for Generative AI v1.41.0**
+(`open-telemetry/semantic-conventions` tag `v1.41.0`; v1.41.1 is a
+k8s-only patch with zero gen-ai changes, so v1.41.0 == latest for GenAI).
+
+**Scope:** the GenAI **client** space for standard chat + content. The
+gateway is a client of the upstream providers (OpenAI, Anthropic, Gemini).
+
+**Verification:** independently audited against the pinned v1.41.0 spec by a
+separate agent — **AGREE, conforms for the client chat/content space**, no
+Required or Conditionally-Required element missing or mis-conditioned.
+
+## Implemented
+
+### Metrics (all 4 client metrics)
+- `gen_ai.client.token.usage` (keyed by `gen_ai.token.type`)
+- `gen_ai.client.operation.duration`
+- `gen_ai.client.operation.time_to_first_chunk` — streaming only
+- `gen_ai.client.operation.time_per_output_chunk` — per chunk after the first, via the proxy's per-flush `Observer.OnResponseChunk` hook
+
+Attributes: `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.token.type`, `gen_ai.request.model`, `gen_ai.response.model`, `server.address`/`server.port`, `error.type`.
+
+### Inference span (kind CLIENT, name `{operation.name} {request.model}`)
+Every Required/CR/Recommended attribute: operation/provider/request.model, response id/model/finish_reasons, request params (temperature, top_p, top_k, max_tokens, frequency/presence penalty, stop_sequences, seed, choice.count, stream), output.type, conversation.id, usage (input/output/cache_creation/cache_read/reasoning), response.time_to_first_chunk, server.address/port, error.type. Plus `openai.*` (request/response service_tier, system_fingerprint, api.type).
+
+### Events (OTel logs pipeline)
+- `gen_ai.client.operation.exception` — on every failure (status ≥ 400 or transport error).
+- `gen_ai.client.inference.operation.details` — bounded prompt/response content as **structured** log values: `gen_ai.input.messages` (latest user turn), `gen_ai.output.messages` (model response), `gen_ai.system_instructions`, `gen_ai.tool.definitions`. Opt-in via `SLUICE_OTEL_CAPTURE_CONTENT` (default off), per-field capped, and credential-redacted (`internal/contentredact`).
+
+### Decisions (all agent-validated)
+- **Client vantage** (not server) — the gateway times its outbound call; it doesn't generate tokens.
+- `gen_ai.provider.name`: `gemini`→`gcp.gemini`; openai/anthropic unchanged.
+- `gen_ai.operation.name` = `generate_content` for Gemini (not `chat`).
+- `server.address`/`port` = the **upstream provider** host:port.
+- `gen_ai.usage.input_tokens` is cache-inclusive (Anthropic page's computation); cache tokens emitted as `gen_ai.usage.cache_*.input_tokens` attributes (no cache *metric* exists in the spec).
+- Bounded content (latest user turn, not full history) — spec permits truncation; full content stays in the connector spool (invariant #4).
+- Inbound W3C trace context extracted (gateway spans nest under a caller's trace).
+
+## Deliberately not done
+
+- **Dropping `sluice.requests.total` and the `sluice.tokens.cache*` counters.** These are spec-legal additive extras under the `sluice.*` namespace, and they back the admin console's request/cache aggregation (the console reads metrics, not spans/events). The cache *data* also rides the `gen_ai.usage.cache_*` span/event attributes, but those are per-request, not aggregatable in the console — so dropping the counters would regress the console for zero conformance benefit. Kept.
+- **OTLP-export integration test.** The export byte path is the OTel SDK's responsibility (upstream-tested); our emission logic is covered by in-memory recorders, the pipeline wiring is unit-tested, and `make e2e` covers the real binary.
+- **Cosmetic:** internal identifiers `MetricRequestTimeToFirstByte`/`RequestTimeToFirstByte` retain a "first byte" name; the emitted metric string is correctly `gen_ai.client.operation.time_to_first_chunk`.
+
+## Out of scope (correctly not emitted)
+Embeddings-specific attrs; agent/tool/workflow spans; `gen_ai.server.*` metrics (the gateway is a client, not the model server).

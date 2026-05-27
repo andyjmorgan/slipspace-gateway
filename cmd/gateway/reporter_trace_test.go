@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -189,6 +191,194 @@ func TestEmitTrace_NoConversationIDWhenNoSession(t *testing.T) {
 	r.emitTrace(context.Background(), events.Request{Endpoint: "chat_completions", StatusCode: 200, DurationMs: 1})
 	if _, ok := attrValue(sr.Ended()[0].Attributes(), observability.AttrGenAIConversationID); ok {
 		t.Errorf("gen_ai.conversation.id should be absent when no session resolved")
+	}
+}
+
+func TestEmitTrace_ClientConformanceAttrs(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reasoning := 33
+	r := &reporterRun{
+		factory:           &reporterFactory{tracer: tp.Tracer("test")},
+		provider:          "gemini",
+		endpoint:          "generate_content",
+		model:             "gemini-2.0-flash",
+		configuration:     "prod",
+		serverAddress:     "generativelanguage.googleapis.com",
+		serverPort:        443,
+		streaming:         true,
+		started:           start,
+		firstByte:         start.Add(50 * time.Millisecond),
+		respID:            "resp-xyz",
+		respModel:         "gemini-2.0-flash-001",
+		respFinishReasons: []string{"STOP"},
+		respReasoning:     &reasoning,
+	}
+	r.emitTrace(context.Background(), events.Request{
+		Provider:            "gemini",
+		Endpoint:            "generate_content",
+		Model:               "gemini-2.0-flash",
+		StatusCode:          200,
+		DurationMs:          300,
+		Streaming:           true,
+		TokensIn:            120,
+		TokensOut:           40,
+		TokensCached:        2000,
+		TokensCacheCreation: 50,
+	})
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("len(spans) = %d, want 1", len(spans))
+	}
+	attrs := spans[0].Attributes()
+
+	// gemini maps to the gcp.gemini spec enum value.
+	if v, ok := attrValue(attrs, observability.AttrGenAIProviderName); !ok || v.AsString() != "gcp.gemini" {
+		t.Errorf("gen_ai.provider.name = %q (ok=%v), want gcp.gemini", v.AsString(), ok)
+	}
+	// generate_content is its own operation, not collapsed to chat.
+	if v, ok := attrValue(attrs, observability.AttrGenAIOperationName); !ok || v.AsString() != observability.OperationGenerateContent {
+		t.Errorf("gen_ai.operation.name = %q, want generate_content", v.AsString())
+	}
+	if spans[0].Name() != "generate_content gemini-2.0-flash" {
+		t.Errorf("span name = %q, want %q", spans[0].Name(), "generate_content gemini-2.0-flash")
+	}
+	if v, ok := attrValue(attrs, observability.AttrServerAddress); !ok || v.AsString() != "generativelanguage.googleapis.com" {
+		t.Errorf("server.address = %q (ok=%v)", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrServerPort); !ok || v.AsInt64() != 443 {
+		t.Errorf("server.port = %d (ok=%v), want 443", v.AsInt64(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIRequestStream); !ok || !v.AsBool() {
+		t.Errorf("gen_ai.request.stream = %v (ok=%v), want true", v.AsBool(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIResponseTimeToFirstChunk); !ok || v.AsFloat64() <= 0 {
+		t.Errorf("gen_ai.response.time_to_first_chunk = %v (ok=%v), want >0", v.AsFloat64(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIUsageCacheReadInputTokens); !ok || v.AsInt64() != 2000 {
+		t.Errorf("gen_ai.usage.cache_read.input_tokens = %d (ok=%v), want 2000", v.AsInt64(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIUsageCacheCreationInputTokens); !ok || v.AsInt64() != 50 {
+		t.Errorf("gen_ai.usage.cache_creation.input_tokens = %d (ok=%v), want 50", v.AsInt64(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIResponseID); !ok || v.AsString() != "resp-xyz" {
+		t.Errorf("gen_ai.response.id = %q (ok=%v), want resp-xyz", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIResponseModel); !ok || v.AsString() != "gemini-2.0-flash-001" {
+		t.Errorf("gen_ai.response.model = %q (ok=%v)", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIResponseFinishReasons); !ok || len(v.AsStringSlice()) != 1 || v.AsStringSlice()[0] != "STOP" {
+		t.Errorf("gen_ai.response.finish_reasons = %v (ok=%v), want [STOP]", v.AsStringSlice(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIUsageReasoningOutputTokens); !ok || v.AsInt64() != 33 {
+		t.Errorf("gen_ai.usage.reasoning.output_tokens = %d (ok=%v), want 33", v.AsInt64(), ok)
+	}
+}
+
+func TestEmitTrace_OpenAIProviderAttrs(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	r := &reporterRun{
+		factory:               &reporterFactory{tracer: tp.Tracer("test")},
+		provider:              "openai",
+		endpoint:              "chat_completions",
+		model:                 "gpt-4o",
+		configuration:         "prod",
+		started:               start,
+		respServiceTier:       "default",
+		respSystemFingerprint: "fp_44709d6fcb",
+	}
+	r.emitTrace(context.Background(), events.Request{
+		Provider:   "openai",
+		Endpoint:   "chat_completions",
+		Model:      "gpt-4o",
+		StatusCode: 200,
+		DurationMs: 50,
+	})
+
+	attrs := sr.Ended()[0].Attributes()
+	if v, ok := attrValue(attrs, observability.AttrOpenAIResponseServiceTier); !ok || v.AsString() != "default" {
+		t.Errorf("openai.response.service_tier = %q (ok=%v)", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrOpenAIResponseSystemFingerprint); !ok || v.AsString() != "fp_44709d6fcb" {
+		t.Errorf("openai.response.system_fingerprint = %q (ok=%v)", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrOpenAIAPIType); !ok || v.AsString() != "chat_completions" {
+		t.Errorf("openai.api.type = %q (ok=%v), want chat_completions", v.AsString(), ok)
+	}
+	// openai provider passes through unmapped.
+	if v, ok := attrValue(attrs, observability.AttrGenAIProviderName); !ok || v.AsString() != "openai" {
+		t.Errorf("gen_ai.provider.name = %q, want openai", v.AsString())
+	}
+}
+
+func TestEmitTrace_ContentOnSpan(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	r := &reporterRun{
+		factory:        &reporterFactory{tracer: tp.Tracer("test"), captureContent: true},
+		provider:       "openai",
+		endpoint:       "chat_completions",
+		model:          "gpt-4o",
+		configuration:  "p",
+		started:        start,
+		respOutputText: "the answer",
+	}
+	ctx := bodycapture.WithCaptured(context.Background(), bodycapture.Captured{
+		Raw: []byte(`{"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi there"}],"tools":[{"type":"function"}]}`),
+	})
+	r.emitTrace(ctx, events.Request{
+		Provider:   "openai",
+		Endpoint:   "chat_completions",
+		Model:      "gpt-4o",
+		StatusCode: 200,
+		DurationMs: 10,
+	})
+
+	attrs := sr.Ended()[0].Attributes()
+	// On a span, content rides as scalar/JSON-string attributes.
+	if v, ok := attrValue(attrs, observability.AttrGenAISystemInstructions); !ok || v.AsString() != "be brief" {
+		t.Errorf("system_instructions on span = %q (ok=%v)", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIInputMessages); !ok || !strings.Contains(v.AsString(), "hi there") {
+		t.Errorf("input.messages on span = %q (ok=%v)", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrGenAIOutputMessages); !ok || !strings.Contains(v.AsString(), "the answer") {
+		t.Errorf("output.messages on span = %q (ok=%v)", v.AsString(), ok)
+	}
+	if _, ok := attrValue(attrs, observability.AttrGenAIToolDefinitions); !ok {
+		t.Errorf("tool.definitions absent on span")
+	}
+}
+
+func TestEmitTrace_NonStreamingOmitsStreamAttrs(t *testing.T) {
+	r, sr := traceHarness(t) // openai, non-streaming, no upstream host captured
+	r.emitTrace(context.Background(), events.Request{
+		Provider:   "openai",
+		Endpoint:   "chat_completions",
+		Model:      "gpt-4o-mini",
+		StatusCode: 200,
+		DurationMs: 10,
+	})
+	attrs := sr.Ended()[0].Attributes()
+	if _, ok := attrValue(attrs, observability.AttrGenAIRequestStream); ok {
+		t.Error("gen_ai.request.stream should be absent on a non-streaming request")
+	}
+	if _, ok := attrValue(attrs, observability.AttrGenAIResponseTimeToFirstChunk); ok {
+		t.Error("gen_ai.response.time_to_first_chunk should be absent on a non-streaming request")
+	}
+	if _, ok := attrValue(attrs, observability.AttrServerAddress); ok {
+		t.Error("server.address should be absent when no upstream host was captured")
 	}
 }
 

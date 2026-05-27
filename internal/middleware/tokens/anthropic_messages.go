@@ -22,11 +22,6 @@ type anthropicUsage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
-// anthropicNonStream is the top-level response body when stream=false.
-type anthropicNonStream struct {
-	Usage *anthropicUsage `json:"usage,omitempty"`
-}
-
 // anthropicStreamFrame covers both event types we care about:
 //
 //   - message_start: usage lives at `message.usage`
@@ -54,23 +49,11 @@ type anthropicStreamMessage struct {
 // from a small initial value at message_start to a larger total at
 // message_delta — works correctly under LastWins because both
 // emissions are observed and the last one wins on every field.
-func extractAnthropicMessages(raw []byte) Snapshot {
+func extractAnthropicMessages(frames [][]byte) Snapshot {
 	var agg Aggregator
-
-	if looksLikeJSON(raw) {
-		var body anthropicNonStream
-		if err := json.Unmarshal(raw, &body); err == nil && body.Usage != nil {
-			agg.Handle(StrategyLastWins, anthropicUsageToObservation(body.Usage))
-		}
-		return agg.Snapshot()
-	}
-
-	for _, ev := range parseSSE(raw) {
-		if ev.Data == "" {
-			continue
-		}
+	for _, f := range frames {
 		var frame anthropicStreamFrame
-		if err := json.Unmarshal([]byte(ev.Data), &frame); err != nil {
+		if err := json.Unmarshal(f, &frame); err != nil {
 			continue
 		}
 		var u *anthropicUsage
@@ -78,6 +61,11 @@ func extractAnthropicMessages(raw []byte) Snapshot {
 		case frame.Type == "message_start" && frame.Message != nil:
 			u = frame.Message.Usage
 		case frame.Type == "message_delta":
+			u = frame.Usage
+		default:
+			// Non-streaming response body (type "message") carries usage at
+			// the top level; no streaming frame other than message_delta
+			// does, so this only fires for the whole-body single frame.
 			u = frame.Usage
 		}
 		if u == nil {

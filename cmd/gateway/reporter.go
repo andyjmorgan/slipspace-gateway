@@ -16,16 +16,20 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
 	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/contentredact"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
 	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/sseframe"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/tokens"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
@@ -82,11 +86,21 @@ type reporterFactory struct {
 	// OTLP endpoint configured, or test contexts); emitTrace no-ops then.
 	tracer trace.Tracer
 
+	// eventLogger emits the GenAI events (operation details, exception) at
+	// completion. May be nil (no OTLP endpoint, or test contexts); event
+	// emission no-ops then.
+	eventLogger otellog.Logger
+
+	// captureContent gates emission of the bounded prompt/response content
+	// on the operation-details event (SLUICE_OTEL_CAPTURE_CONTENT). Off by
+	// default — content stays in the connector spool (invariant #4).
+	captureContent bool
+
 	instanceID string
 	seq        atomic.Uint64
 }
 
-func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer) *reporterFactory {
+func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -95,14 +109,16 @@ func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger 
 		hostname = "local"
 	}
 	return &reporterFactory{
-		spool:      s,
-		resolved:   resolved,
-		logger:     logger,
-		meters:     meters,
-		liveFeed:   liveFeed,
-		bodyStore:  bodyStore,
-		tracer:     tracer,
-		instanceID: hostname,
+		spool:          s,
+		resolved:       resolved,
+		logger:         logger,
+		meters:         meters,
+		liveFeed:       liveFeed,
+		bodyStore:      bodyStore,
+		tracer:         tracer,
+		eventLogger:    eventLogger,
+		captureContent: captureContent,
+		instanceID:     hostname,
 	}
 }
 
@@ -110,16 +126,45 @@ func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger 
 // every Record as the (TsNs, instance_id, seq) tiebreaker.
 func (f *reporterFactory) nextSeq() uint64 { return f.seq.Add(1) }
 
+// upstreamServerAddrPort extracts the server.address / server.port pair —
+// the upstream host:port this request is forwarded to — from the resolved
+// Destination. When the URL carries no explicit port the scheme default is
+// used so server.port is populated alongside the address (the spec makes
+// server.port conditionally required whenever server.address is set).
+func upstreamServerAddrPort(dest proxy.Destination) (string, int) {
+	if dest.UpstreamURL == nil {
+		return "", 0
+	}
+	host := dest.UpstreamURL.Hostname()
+	if host == "" {
+		return "", 0
+	}
+	if p := dest.UpstreamURL.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			return host, n
+		}
+		return host, 0
+	}
+	switch dest.UpstreamURL.Scheme {
+	case "https":
+		return host, 443
+	case "http":
+		return host, 80
+	}
+	return host, 0
+}
+
 // Factory returns a proxy.ObserverFactory bound to this factory's
 // dependencies. The closure form makes the wiring in cmd/gateway main.go
 // read as a single expression.
 func (f *reporterFactory) Factory() proxy.ObserverFactory {
-	return func(ctx context.Context, _ proxy.Destination) proxy.Observer {
+	return func(ctx context.Context, dest proxy.Destination) proxy.Observer {
 		labels := observability.RequestLabelsFromContext(ctx)
 		apiKeyName := ""
 		if ar, ok := auth.FromContext(ctx); ok && ar.APIKey != nil {
 			apiKeyName = ar.APIKey.Name
 		}
+		serverAddress, serverPort := upstreamServerAddrPort(dest)
 		return &reporterRun{
 			factory:         f,
 			provider:        labels.Provider,
@@ -128,6 +173,8 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 			method:          labels.Method,
 			configuration:   labels.Configuration,
 			apiKeyName:      apiKeyName,
+			serverAddress:   serverAddress,
+			serverPort:      serverPort,
 			sessionID:       observability.SessionIDFromContext(ctx),
 			sessionIDSource: observability.SessionIDSourceFromContext(ctx),
 		}
@@ -155,6 +202,14 @@ type reporterRun struct {
 	model         string
 	configuration string
 	apiKeyName    string
+
+	// serverAddress + serverPort name the upstream this request was
+	// forwarded to — the GenAI server this client called — sourced from the
+	// resolved Destination. Emitted as server.address / server.port on the
+	// gen_ai.client.* metrics and the span (server.port rides along whenever
+	// server.address is set, per the spec's conditional-requirement rule).
+	serverAddress string
+	serverPort    int
 
 	// sessionID + sessionIDSource are the resolved bundle id and its
 	// provenance header, captured from context at construction time.
@@ -185,9 +240,56 @@ type reporterRun struct {
 
 	streaming bool
 
+	// chunkTimes records the flush timestamp of each streamed response
+	// chunk. OnResponseChunk only appends (no work on the streaming hot
+	// path); the time_to_first_chunk and time_per_output_chunk histograms
+	// are emitted from these at OnComplete, where the response model is
+	// known so it can ride as gen_ai.response.model.
+	chunkTimes []time.Time
+
 	// upstream captures the transport error from OnUpstreamError; nil
 	// on the success path.
 	upstream error
+
+	// responseFrames is the captured response collated exactly once (the
+	// JSON body as a single frame, or one frame per SSE data event) so the
+	// token-usage extractor and the response-attribute extractor share a
+	// single split rather than each re-scanning the body.
+	responseFrames [][]byte
+
+	// resp* hold the GenAI response descriptors extracted once from the
+	// captured response in OnComplete (response body or reassembled SSE):
+	// the provider-reported id/model, finish reasons, and reasoning-token
+	// count. Read by both the per-request metrics (gen_ai.response.model)
+	// and the span (id / model / finish_reasons / reasoning).
+	respID            string
+	respModel         string
+	respFinishReasons []string
+	respReasoning     *int
+
+	// respServiceTier + respSystemFingerprint are the OpenAI-specific
+	// response descriptors, emitted on the span only (not metrics —
+	// system_fingerprint is high-cardinality). Empty for non-OpenAI.
+	respServiceTier       string
+	respSystemFingerprint string
+
+	// respOutputText is the model's reassembled response text, extracted
+	// once from the collated response frames (genaiattr) — works for both
+	// streaming and non-streaming. Used as the bounded output content on
+	// both the span and the operation-details event.
+	respOutputText string
+
+	// reqContent is the bounded request content (system instructions,
+	// latest user turn, tool definitions) parsed once from the request body
+	// and shared by the span and event emitters. contentExtracted guards
+	// the lazy single parse (only done when content capture is enabled).
+	reqContent       genaiattr.Content
+	contentExtracted bool
+
+	// reqParams is the request sampling parameters parsed once from the
+	// request body and shared by the span and the operation-details event.
+	reqParams      genaiattr.RequestAttrs
+	reqParamsKnown bool
 
 	// ruleMatches buffers events.RuleMatched records driven by the
 	// rules middleware via OnRuleMatched. Merged with the context
@@ -202,15 +304,22 @@ func (r *reporterRun) OnRequestStart(ctx context.Context, _ proxy.Destination) {
 	}
 }
 
-func (r *reporterRun) OnResponseHeaders(ctx context.Context, status int, _ http.Header, streaming bool) {
+func (r *reporterRun) OnResponseHeaders(_ context.Context, status int, _ http.Header, streaming bool) {
 	r.firstByte = time.Now()
 	r.statusCode = status
 	r.streaming = streaming
+	// The time_to_first_chunk / time_per_output_chunk histograms are emitted
+	// at OnComplete (recordStreamingMetrics) rather than here, so they can
+	// carry gen_ai.response.model — unknown until the response is parsed.
+	// firstByte is stamped above; chunk gaps come from chunkTimes.
+}
 
-	if !r.started.IsZero() && r.factory.meters != nil && r.factory.meters.RequestTimeToFirstByte != nil {
-		ttfb := time.Since(r.started).Seconds()
-		r.factory.meters.RequestTimeToFirstByte.Record(ctx, ttfb, r.providerEndpointModelAttrs())
-	}
+// OnResponseChunk appends the flush timestamp of one streamed chunk. It does
+// no work beyond the append — the time_per_output_chunk observations are
+// derived from chunkTimes at OnComplete, keeping the streaming write path
+// free of metric recording.
+func (r *reporterRun) OnResponseChunk(_ context.Context, at time.Time) {
+	r.chunkTimes = append(r.chunkTimes, at)
 }
 
 func (r *reporterRun) OnUpstreamError(ctx context.Context, err error) {
@@ -254,7 +363,9 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 	}
 
 	r.populateTags(ctx, &ev)
+	r.captureResponseAttrs(ctx)
 	r.populateTokens(ctx, &ev)
+	r.recordStreamingMetrics(ctx)
 
 	// Multi-attempt orchestration suppresses the per-attempt terminal
 	// emit: the resilience orchestrator installs an AttemptBuffer on
@@ -280,7 +391,7 @@ func (r *reporterRun) recordPerRequestMetrics(ctx context.Context, ev events.Req
 	if r.factory.meters == nil {
 		return
 	}
-	attrs := withCompletionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration, ev.StatusCode)
+	attrs := r.withCompletionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration, ev.StatusCode)
 	if r.factory.meters.RequestsTotal != nil {
 		r.factory.meters.RequestsTotal.Add(ctx, 1, attrs)
 	}
@@ -303,6 +414,7 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 	r.captureBody(ctx, entryID, ev)
 	r.enqueueRecord(ctx, ev, matches)
 	r.emitTrace(ctx, ev)
+	r.emitEvents(ctx, ev)
 
 	logger := observability.FromContext(ctx)
 	logger.InfoContext(ctx, "request completed",
@@ -454,11 +566,14 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 		}
 	}
 	if r.streaming {
-		// We don't track per-chunk count yet; setting to 1 is enough
-		// for downstream consumers (and the e2e harness) to recognise
-		// the response as streaming. A follow-up can plumb the actual
-		// count out of the proxy's stream writer wrapper.
-		rec.Response.StreamChunks = 1
+		// Per-chunk count from the captured flush timestamps; fall back to 1
+		// so a stream that produced no observed flush still reads as
+		// streaming to downstream consumers and the e2e harness.
+		if n := len(r.chunkTimes); n > 0 {
+			rec.Response.StreamChunks = n
+		} else {
+			rec.Response.StreamChunks = 1
+		}
 	}
 	if !r.started.IsZero() {
 		rec.Response.LastByteNs = r.started.Add(time.Duration(ev.DurationMs) * time.Millisecond).UnixNano()
@@ -617,15 +732,10 @@ func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 // histogram (input/output, keyed by gen_ai.token.type), and the two
 // sluice.tokens.* cache counters.
 func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
-	buf, ok := livefeed.ResponseBufferFromContext(ctx)
-	if !ok || buf == nil {
+	if len(r.responseFrames) == 0 {
 		return
 	}
-	raw := buf.Bytes()
-	if len(raw) == 0 {
-		return
-	}
-	snap := tokens.Extract(ev.Provider, ev.Endpoint, raw)
+	snap := tokens.ExtractFrames(ev.Provider, ev.Endpoint, r.responseFrames)
 	if !snap.Recognised {
 		return
 	}
@@ -640,7 +750,7 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	// base carries the request dimensions without status. The full-slice
 	// expression caps base's capacity so each token.type append below
 	// allocates a fresh backing array rather than aliasing base.
-	base := requestDimensionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration)
+	base := r.requestDimensionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration)
 	base = base[:len(base):len(base)]
 	if snap.Input > 0 && r.factory.meters.TokenUsage != nil {
 		r.factory.meters.TokenUsage.Record(ctx, int64(snap.Input),
@@ -662,12 +772,65 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 // by per-request meters that fire mid-request (TimeToFirstByte). Status
 // is unknown at this point, so it carries only the request dimensions.
 func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
-	return metric.WithAttributes(
-		attribute.String(observability.AttrGenAIProviderName, r.provider),
+	attrs := []attribute.KeyValue{
+		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
 		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(r.model)),
 		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(r.endpoint)),
 		attribute.String(observability.AttrSluiceEndpoint, r.endpoint),
-	)
+	}
+	return metric.WithAttributes(append(attrs, r.serverAttrs()...)...)
+}
+
+// streamingMetricAttrs is the attribute set for the streaming latency
+// histograms (time_to_first_chunk, time_per_output_chunk), emitted at
+// OnComplete. Unlike providerEndpointModelAttrs it includes
+// gen_ai.response.model, which is known by completion time.
+func (r *reporterRun) streamingMetricAttrs() metric.MeasurementOption {
+	attrs := []attribute.KeyValue{
+		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
+		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(r.model)),
+		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(r.endpoint)),
+		attribute.String(observability.AttrSluiceEndpoint, r.endpoint),
+	}
+	if r.respModel != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIResponseModel, sanitiseModelLabel(r.respModel)))
+	}
+	return metric.WithAttributes(append(attrs, r.serverAttrs()...)...)
+}
+
+// recordStreamingMetrics emits the time_to_first_chunk and
+// time_per_output_chunk histograms from the captured flush timestamps.
+// Streaming only, and only at OnComplete so the response model is available
+// as an attribute. time_per_output_chunk records one observation per chunk
+// after the first.
+func (r *reporterRun) recordStreamingMetrics(ctx context.Context) {
+	if !r.streaming || r.factory.meters == nil {
+		return
+	}
+	attrs := r.streamingMetricAttrs()
+	if r.factory.meters.TimeToFirstChunk != nil && !r.firstByte.IsZero() && !r.started.IsZero() {
+		r.factory.meters.TimeToFirstChunk.Record(ctx, r.firstByte.Sub(r.started).Seconds(), attrs)
+	}
+	if r.factory.meters.TimePerOutputChunk != nil {
+		for i := 1; i < len(r.chunkTimes); i++ {
+			r.factory.meters.TimePerOutputChunk.Record(ctx, r.chunkTimes[i].Sub(r.chunkTimes[i-1]).Seconds(), attrs)
+		}
+	}
+}
+
+// serverAttrs returns the server.address / server.port pair naming the
+// upstream this client called, or nil when no upstream host is known.
+// server.port rides along whenever server.address is set, per the spec's
+// conditional-requirement rule.
+func (r *reporterRun) serverAttrs() []attribute.KeyValue {
+	if r.serverAddress == "" {
+		return nil
+	}
+	attrs := []attribute.KeyValue{attribute.String(observability.AttrServerAddress, r.serverAddress)}
+	if r.serverPort > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrServerPort, r.serverPort))
+	}
+	return attrs
 }
 
 // emitTrace synthesises the request's OTel span at completion. The span
@@ -687,11 +850,21 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) {
 
 	attrs := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIOperationName, op),
-		attribute.String(observability.AttrGenAIProviderName, ev.Provider),
+		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),
 		attribute.String(observability.AttrGenAIRequestModel, model),
 		attribute.String(observability.AttrSluiceEndpoint, ev.Endpoint),
 		attribute.String(observability.AttrSluiceConfiguration, r.configuration),
 		attribute.Int(observability.AttrHTTPResponseStatusCode, ev.StatusCode),
+	}
+	attrs = append(attrs, r.serverAttrs()...)
+	// gen_ai.request.stream is conditionally required iff the request is
+	// streaming; gen_ai.response.time_to_first_chunk is the streaming-only
+	// span companion to the TTFC metric.
+	if r.streaming {
+		attrs = append(attrs, attribute.Bool(observability.AttrGenAIRequestStream, true))
+		if !r.firstByte.IsZero() && !r.started.IsZero() {
+			attrs = append(attrs, attribute.Float64(observability.AttrGenAIResponseTimeToFirstChunk, r.firstByte.Sub(r.started).Seconds()))
+		}
 	}
 	if ev.CorrelationID != "" {
 		attrs = append(attrs, attribute.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
@@ -705,8 +878,29 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) {
 	if ev.TokensOut > 0 {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageOutputTokens, ev.TokensOut))
 	}
+	if ev.TokensCacheCreation > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageCacheCreationInputTokens, ev.TokensCacheCreation))
+	}
+	if ev.TokensCached > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageCacheReadInputTokens, ev.TokensCached))
+	}
+	attrs = r.appendRequestParamAttrs(ctx, attrs)
+	attrs = r.appendResponseAttrs(attrs)
+	// openai.api.type distinguishes the Chat Completions vs Responses API
+	// surface; our endpoint keys already match the spec's well-known values.
+	if ev.Provider == "openai" && (ev.Endpoint == "chat_completions" || ev.Endpoint == "responses") {
+		attrs = append(attrs, attribute.String(observability.AttrOpenAIAPIType, ev.Endpoint))
+	}
+	if r.factory.captureContent {
+		attrs = r.appendSpanContent(ctx, attrs)
+	}
+	// error.type: the HTTP status on a 4xx/5xx, else a stable
+	// transport_error token when the upstream call failed before a status
+	// (connection refused, EOF before headers, header timeout).
 	if ev.StatusCode >= 400 {
 		attrs = append(attrs, attribute.String(observability.AttrErrorType, strconv.Itoa(ev.StatusCode)))
+	} else if ev.UpstreamError != "" {
+		attrs = append(attrs, attribute.String(observability.AttrErrorType, "transport_error"))
 	}
 
 	parentCtx, span := r.factory.tracer.Start(ctx, op+" "+model,
@@ -716,6 +910,8 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) {
 	)
 	if ev.StatusCode >= 400 {
 		span.SetStatus(codes.Error, http.StatusText(ev.StatusCode))
+	} else if ev.UpstreamError != "" {
+		span.SetStatus(codes.Error, ev.UpstreamError)
 	}
 
 	for _, a := range ev.Attempts {
@@ -735,7 +931,7 @@ func (r *reporterRun) emitAttemptSpan(ctx context.Context, op, model string, a e
 	}
 	attrs := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIOperationName, op),
-		attribute.String(observability.AttrGenAIProviderName, r.provider),
+		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
 		attribute.String(observability.AttrGenAIRequestModel, model),
 		attribute.String(observability.AttrSluiceResilienceTarget, a.Target),
 		attribute.String(observability.AttrSluiceResilienceOutcome, a.Outcome),
@@ -763,6 +959,439 @@ func (r *reporterRun) emitAttemptSpan(ctx context.Context, op, model string, a e
 	span.End(trace.WithTimestamp(a.StartedAt.Add(time.Duration(a.DurationMs) * time.Millisecond)))
 }
 
+// emitEvents emits the GenAI log-record events at completion. The
+// gen_ai.client.operation.exception event fires on any failure (the spec's
+// error-recording mechanism). The gen_ai.client.inference.operation.details
+// event carries the bounded prompt/response content and fires only when
+// content capture is enabled — without content it would merely duplicate
+// the span's metadata. No-ops without an OTel event logger. Runs
+// post-flight; the batch log processor exports out of band.
+func (r *reporterRun) emitEvents(ctx context.Context, ev events.Request) {
+	if r.factory.eventLogger == nil {
+		return
+	}
+	ts := r.started
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	op := observability.OperationNameForEndpoint(ev.Endpoint)
+
+	if ev.StatusCode >= 400 || ev.UpstreamError != "" {
+		excType := strconv.Itoa(ev.StatusCode)
+		excMsg := http.StatusText(ev.StatusCode)
+		if ev.StatusCode < 400 && ev.UpstreamError != "" {
+			excType = "transport_error"
+			excMsg = ev.UpstreamError
+		}
+		var exc otellog.Record
+		exc.SetTimestamp(ts)
+		exc.SetEventName(observability.EventOperationException)
+		exc.SetSeverity(otellog.SeverityWarn)
+		exc.AddAttributes(
+			otellog.String(observability.AttrExceptionType, excType),
+			otellog.String(observability.AttrExceptionMessage, excMsg),
+			otellog.String(observability.AttrGenAIOperationName, op),
+			otellog.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),
+		)
+		if ev.CorrelationID != "" {
+			exc.AddAttributes(otellog.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
+		}
+		r.factory.eventLogger.Emit(ctx, exc)
+	}
+
+	if r.factory.captureContent {
+		r.emitOperationDetails(ctx, ev, ts, op)
+	}
+}
+
+// contentFieldCap bounds each captured content field. The latest user turn
+// and the model response are already bounded (one turn each), but a single
+// turn can still be large; the cap keeps a runaway turn from bloating a log
+// record. Full content lives in the connector spool.
+const contentFieldCap = 32 * 1024
+
+// toolDefsCap bounds the tool-definitions payload. Tool schemas are larger
+// than a single message turn, so the cap is higher; over it, the value is
+// replaced wholesale (never truncated, which would yield invalid JSON).
+const toolDefsCap = 64 * 1024
+
+// boundedToolDefs returns the redacted tool-definitions JSON as a span
+// string, or a size marker when it exceeds the cap. It never truncates
+// mid-document — a partial JSON string is worse than an omission marker.
+func boundedToolDefs(raw json.RawMessage) string {
+	if len(raw) > toolDefsCap {
+		return "[tool definitions omitted: " + strconv.Itoa(len(raw)) + " bytes]"
+	}
+	return contentredact.Redact(string(raw))
+}
+
+// emitOperationDetails emits the gen_ai.client.inference.operation.details
+// event carrying the bounded prompt/response content: the latest user turn,
+// the model's response, the system instructions, and the tool definitions.
+// Messages and tool definitions are recorded as structured log values (the
+// event's "MUST be structured" requirement); system_instructions is plain
+// text. Only fires when content capture is enabled.
+func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Request, ts time.Time, op string) {
+	attrs := []otellog.KeyValue{
+		otellog.String(observability.AttrGenAIOperationName, op),
+		otellog.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),
+		otellog.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(ev.Model)),
+		otellog.String(observability.AttrSluiceEndpoint, ev.Endpoint),
+		otellog.String(observability.AttrSluiceConfiguration, r.configuration),
+		otellog.Int(observability.AttrHTTPResponseStatusCode, ev.StatusCode),
+	}
+	if r.respModel != "" {
+		attrs = append(attrs, otellog.String(observability.AttrGenAIResponseModel, sanitiseModelLabel(r.respModel)))
+	}
+	if ev.CorrelationID != "" {
+		attrs = append(attrs, otellog.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
+	}
+	if r.sessionID != "" {
+		attrs = append(attrs, otellog.String(observability.AttrGenAIConversationID, r.sessionID))
+	}
+
+	// The event is "operation details": carry the same request/response/
+	// usage attribute set as the span so a log-only consumer is self-served.
+	if ev.TokensIn > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageInputTokens, ev.TokensIn))
+	}
+	if ev.TokensOut > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageOutputTokens, ev.TokensOut))
+	}
+	if ev.TokensCacheCreation > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageCacheCreationInputTokens, ev.TokensCacheCreation))
+	}
+	if ev.TokensCached > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageCacheReadInputTokens, ev.TokensCached))
+	}
+	if r.respReasoning != nil && *r.respReasoning > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageReasoningOutputTokens, *r.respReasoning))
+	}
+	if r.respID != "" {
+		attrs = append(attrs, otellog.String(observability.AttrGenAIResponseID, r.respID))
+	}
+	if len(r.respFinishReasons) > 0 {
+		attrs = append(attrs, logStringSlice(observability.AttrGenAIResponseFinishReasons, r.respFinishReasons))
+	}
+	if r.serverAddress != "" {
+		attrs = append(attrs, otellog.String(observability.AttrServerAddress, r.serverAddress))
+		if r.serverPort > 0 {
+			attrs = append(attrs, otellog.Int(observability.AttrServerPort, r.serverPort))
+		}
+	}
+	if r.streaming {
+		attrs = append(attrs, otellog.Bool(observability.AttrGenAIRequestStream, true))
+		if !r.firstByte.IsZero() && !r.started.IsZero() {
+			attrs = append(attrs, otellog.Float64(observability.AttrGenAIResponseTimeToFirstChunk, r.firstByte.Sub(r.started).Seconds()))
+		}
+	}
+	p := r.requestParams(ctx)
+	if p.Temperature != nil {
+		attrs = append(attrs, otellog.Float64(observability.AttrGenAIRequestTemperature, *p.Temperature))
+	}
+	if p.TopP != nil {
+		attrs = append(attrs, otellog.Float64(observability.AttrGenAIRequestTopP, *p.TopP))
+	}
+	if p.TopK != nil {
+		attrs = append(attrs, otellog.Float64(observability.AttrGenAIRequestTopK, *p.TopK))
+	}
+	if p.MaxTokens != nil {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIRequestMaxTokens, *p.MaxTokens))
+	}
+	if p.FrequencyPenalty != nil {
+		attrs = append(attrs, otellog.Float64(observability.AttrGenAIRequestFrequencyPenalty, *p.FrequencyPenalty))
+	}
+	if p.PresencePenalty != nil {
+		attrs = append(attrs, otellog.Float64(observability.AttrGenAIRequestPresencePenalty, *p.PresencePenalty))
+	}
+	if len(p.StopSequences) > 0 {
+		attrs = append(attrs, logStringSlice(observability.AttrGenAIRequestStopSequences, p.StopSequences))
+	}
+	if p.Seed != nil {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIRequestSeed, *p.Seed))
+	}
+	if p.ChoiceCount != nil && *p.ChoiceCount != 1 {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIRequestChoiceCount, *p.ChoiceCount))
+	}
+	if p.OutputType != "" {
+		attrs = append(attrs, otellog.String(observability.AttrGenAIOutputType, p.OutputType))
+	}
+	if ev.StatusCode >= 400 {
+		attrs = append(attrs, otellog.String(observability.AttrErrorType, strconv.Itoa(ev.StatusCode)))
+	} else if ev.UpstreamError != "" {
+		attrs = append(attrs, otellog.String(observability.AttrErrorType, "transport_error"))
+	}
+	if p.ServiceTier != "" && p.ServiceTier != "auto" {
+		attrs = append(attrs, otellog.String(observability.AttrOpenAIRequestServiceTier, p.ServiceTier))
+	}
+	if r.respServiceTier != "" {
+		attrs = append(attrs, otellog.String(observability.AttrOpenAIResponseServiceTier, r.respServiceTier))
+	}
+	if r.respSystemFingerprint != "" {
+		attrs = append(attrs, otellog.String(observability.AttrOpenAIResponseSystemFingerprint, r.respSystemFingerprint))
+	}
+	if ev.Provider == "openai" && (ev.Endpoint == "chat_completions" || ev.Endpoint == "responses") {
+		attrs = append(attrs, otellog.String(observability.AttrOpenAIAPIType, ev.Endpoint))
+	}
+
+	content := r.boundedContent(ctx)
+	if content.SystemInstructions != "" {
+		attrs = append(attrs, otellog.String(observability.AttrGenAISystemInstructions, capText(contentredact.Redact(content.SystemInstructions))))
+	}
+	if content.LatestUserText != "" {
+		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIInputMessages, Value: logTurnValue("user", content.LatestUserText)})
+	}
+	if r.respOutputText != "" {
+		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIOutputMessages, Value: logTurnValue("assistant", r.respOutputText)})
+	}
+	if td := content.ToolDefinitions; len(td) > 0 && len(td) <= toolDefsCap {
+		if v, ok := jsonToLogValue(td); ok {
+			attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIToolDefinitions, Value: v})
+		}
+	}
+
+	var rec otellog.Record
+	rec.SetTimestamp(ts)
+	rec.SetEventName(observability.EventInferenceDetails)
+	rec.SetSeverity(otellog.SeverityInfo)
+	rec.AddAttributes(attrs...)
+	r.factory.eventLogger.Emit(ctx, rec)
+}
+
+// logTurnValue builds the structured log value for one bounded message
+// turn in the GenAI message shape: [{role, parts:[{type:"text", content}]}].
+// The event convention requires messages be recorded in structured form
+// (not a JSON string), so this returns a slice-of-map otellog.Value.
+func logTurnValue(role, text string) otellog.Value {
+	return otellog.SliceValue(
+		otellog.MapValue(
+			otellog.String("role", role),
+			otellog.Slice("parts",
+				otellog.MapValue(
+					otellog.String("type", "text"),
+					// Redact before capping so a secret isn't split across the
+					// truncation boundary and missed.
+					otellog.String("content", capText(contentredact.Redact(text))),
+				),
+			),
+		),
+	)
+}
+
+// jsonToLogValue decodes a JSON document into a structured otellog.Value so
+// tool definitions ride the event in structured form. Returns ok=false on
+// unparseable input.
+func jsonToLogValue(raw json.RawMessage) (otellog.Value, bool) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return otellog.Value{}, false
+	}
+	return anyToLogValue(v), true
+}
+
+func anyToLogValue(v any) otellog.Value {
+	switch t := v.(type) {
+	case bool:
+		return otellog.BoolValue(t)
+	case float64:
+		return otellog.Float64Value(t)
+	case string:
+		return otellog.StringValue(contentredact.Redact(t))
+	case []any:
+		vals := make([]otellog.Value, len(t))
+		for i, e := range t {
+			vals[i] = anyToLogValue(e)
+		}
+		return otellog.SliceValue(vals...)
+	case map[string]any:
+		kvs := make([]otellog.KeyValue, 0, len(t))
+		for k, e := range t {
+			kvs = append(kvs, otellog.KeyValue{Key: k, Value: anyToLogValue(e)})
+		}
+		return otellog.MapValue(kvs...)
+	default:
+		// nil and any unmodelled type collapse to an empty string value.
+		return otellog.StringValue("")
+	}
+}
+
+func capText(s string) string {
+	if len(s) <= contentFieldCap {
+		return s
+	}
+	return s[:contentFieldCap] + "…[truncated]"
+}
+
+// boundedContent parses the request body for the bounded prompt content
+// (system instructions, latest user turn, tool definitions) exactly once,
+// caching it so the span and event emitters share a single parse rather
+// than each re-parsing the body. Zero Content when no body was captured.
+func (r *reporterRun) boundedContent(ctx context.Context) genaiattr.Content {
+	if r.contentExtracted {
+		return r.reqContent
+	}
+	r.contentExtracted = true
+	if captured, ok := bodycapture.FromContext(ctx); ok && len(captured.Raw) > 0 {
+		r.reqContent = genaiattr.ExtractContent(r.endpoint, captured.Raw)
+	}
+	return r.reqContent
+}
+
+// appendSpanContent attaches the bounded prompt/response content to the
+// span. Span attributes can't hold structured maps, so messages ride as
+// JSON strings (spec-permitted on spans, unlike events). Redacted + capped.
+func (r *reporterRun) appendSpanContent(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
+	content := r.boundedContent(ctx)
+	if content.SystemInstructions != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAISystemInstructions, capText(contentredact.Redact(content.SystemInstructions))))
+	}
+	if content.LatestUserText != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIInputMessages, jsonTurnString("user", content.LatestUserText)))
+	}
+	if r.respOutputText != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIOutputMessages, jsonTurnString("assistant", r.respOutputText)))
+	}
+	if len(content.ToolDefinitions) > 0 {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIToolDefinitions, boundedToolDefs(content.ToolDefinitions)))
+	}
+	return attrs
+}
+
+// jsonTurnString renders one bounded message turn as a JSON string for a
+// span attribute (spans cannot carry structured map/slice values; the spec
+// permits a JSON string there). Redacted then capped.
+func jsonTurnString(role, text string) string {
+	msg := []map[string]any{{
+		"role":  role,
+		"parts": []map[string]any{{"type": "text", "content": capText(contentredact.Redact(text))}},
+	}}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// logStringSlice builds an otellog slice-of-strings attribute (e.g. for
+// finish_reasons / stop_sequences on the operation-details event).
+func logStringSlice(key string, vals []string) otellog.KeyValue {
+	vs := make([]otellog.Value, len(vals))
+	for i, s := range vals {
+		vs[i] = otellog.StringValue(s)
+	}
+	return otellog.Slice(key, vs...)
+}
+
+// requestParams parses the request body for the GenAI sampling parameters
+// exactly once, caching the result so the span and the operation-details
+// event share a single parse. Zero RequestAttrs when no body was captured.
+func (r *reporterRun) requestParams(ctx context.Context) genaiattr.RequestAttrs {
+	if r.reqParamsKnown {
+		return r.reqParams
+	}
+	r.reqParamsKnown = true
+	if captured, ok := bodycapture.FromContext(ctx); ok && len(captured.Raw) > 0 {
+		r.reqParams = genaiattr.ExtractRequest(r.endpoint, captured.Raw)
+	}
+	return r.reqParams
+}
+
+// appendRequestParamAttrs appends the present GenAI request parameters to
+// the span. choice.count is emitted only when present and != 1, and
+// output.type only when a format was requested, matching the spec's
+// conditional-requirement rules.
+func (r *reporterRun) appendRequestParamAttrs(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
+	p := r.requestParams(ctx)
+	if p.Temperature != nil {
+		attrs = append(attrs, attribute.Float64(observability.AttrGenAIRequestTemperature, *p.Temperature))
+	}
+	if p.TopP != nil {
+		attrs = append(attrs, attribute.Float64(observability.AttrGenAIRequestTopP, *p.TopP))
+	}
+	if p.TopK != nil {
+		attrs = append(attrs, attribute.Float64(observability.AttrGenAIRequestTopK, *p.TopK))
+	}
+	if p.MaxTokens != nil {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIRequestMaxTokens, *p.MaxTokens))
+	}
+	if p.FrequencyPenalty != nil {
+		attrs = append(attrs, attribute.Float64(observability.AttrGenAIRequestFrequencyPenalty, *p.FrequencyPenalty))
+	}
+	if p.PresencePenalty != nil {
+		attrs = append(attrs, attribute.Float64(observability.AttrGenAIRequestPresencePenalty, *p.PresencePenalty))
+	}
+	if len(p.StopSequences) > 0 {
+		attrs = append(attrs, attribute.StringSlice(observability.AttrGenAIRequestStopSequences, p.StopSequences))
+	}
+	if p.Seed != nil {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIRequestSeed, *p.Seed))
+	}
+	if p.ChoiceCount != nil && *p.ChoiceCount != 1 {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIRequestChoiceCount, *p.ChoiceCount))
+	}
+	if p.OutputType != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIOutputType, p.OutputType))
+	}
+	// openai.request.service_tier is Conditionally Required only when the
+	// request carries a tier other than "auto".
+	if p.ServiceTier != "" && p.ServiceTier != "auto" {
+		attrs = append(attrs, attribute.String(observability.AttrOpenAIRequestServiceTier, p.ServiceTier))
+	}
+	return attrs
+}
+
+// captureResponseAttrs extracts the GenAI response descriptors from the
+// captured response — the JSON body or the reassembled SSE stream — exactly
+// once, stashing them on the run for the metric and span emitters. No-ops
+// when no response buffer is present (bodies disabled, or a transport
+// failure with no response).
+func (r *reporterRun) captureResponseAttrs(ctx context.Context) {
+	buf, ok := livefeed.ResponseBufferFromContext(ctx)
+	if !ok || buf == nil {
+		return
+	}
+	raw := buf.Bytes()
+	if len(raw) == 0 {
+		return
+	}
+	// Split the response once; populateTokens and the span both read these
+	// frames rather than re-scanning the body.
+	r.responseFrames = sseframe.Collate(raw)
+	resp := genaiattr.ExtractResponseFrames(r.endpoint, r.responseFrames)
+	r.respID = resp.ID
+	r.respModel = resp.Model
+	r.respFinishReasons = resp.FinishReasons
+	r.respReasoning = resp.ReasoningTokens
+	r.respServiceTier = resp.ServiceTier
+	r.respSystemFingerprint = resp.SystemFingerprint
+	r.respOutputText = resp.OutputText
+}
+
+// appendResponseAttrs appends the Recommended response descriptors captured
+// by captureResponseAttrs. Span-side companion to the gen_ai.response.model
+// already carried on the per-request metrics via requestDimensionAttrs.
+func (r *reporterRun) appendResponseAttrs(attrs []attribute.KeyValue) []attribute.KeyValue {
+	if r.respID != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIResponseID, r.respID))
+	}
+	if r.respModel != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIResponseModel, r.respModel))
+	}
+	if len(r.respFinishReasons) > 0 {
+		attrs = append(attrs, attribute.StringSlice(observability.AttrGenAIResponseFinishReasons, r.respFinishReasons))
+	}
+	if r.respReasoning != nil && *r.respReasoning > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageReasoningOutputTokens, *r.respReasoning))
+	}
+	if r.respServiceTier != "" {
+		attrs = append(attrs, attribute.String(observability.AttrOpenAIResponseServiceTier, r.respServiceTier))
+	}
+	if r.respSystemFingerprint != "" {
+		attrs = append(attrs, attribute.String(observability.AttrOpenAIResponseSystemFingerprint, r.respSystemFingerprint))
+	}
+	return attrs
+}
+
 // jsonBodyOrEscaped marshals body bytes onto a Record's inline
 // `body` field. JSON content passes through as-is (the consumer sees
 // a native JSON object/array); non-JSON content (SSE streams, plain
@@ -785,26 +1414,35 @@ func jsonBodyOrEscaped(b []byte) json.RawMessage {
 }
 
 // requestDimensionAttrs builds the gen_ai + sluice dimension attributes
-// shared by every per-request instrument: provider, request model, the
-// coarse gen_ai.operation.name, the precise sluice.endpoint route, and
-// the resolved configuration. Status is layered on separately because
-// token instruments don't carry it.
-func requestDimensionAttrs(provider, endpoint, model, configuration string) []attribute.KeyValue {
-	return []attribute.KeyValue{
-		attribute.String(observability.AttrGenAIProviderName, provider),
+// shared by every per-request instrument: gen_ai.provider.name (mapped to
+// the spec enum value), request model, the coarse gen_ai.operation.name,
+// the precise sluice.endpoint route, the resolved configuration, and the
+// upstream server.address/server.port. Status is layered on separately
+// because token instruments don't carry it.
+func (r *reporterRun) requestDimensionAttrs(provider, endpoint, model, configuration string) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{
+		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(provider)),
 		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(model)),
 		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(endpoint)),
 		attribute.String(observability.AttrSluiceEndpoint, endpoint),
 		attribute.String(observability.AttrSluiceConfiguration, configuration),
 	}
+	// gen_ai.response.model is Recommended on the client metrics; emitted
+	// when the response carried a model (captured in OnComplete before the
+	// metrics fire). Bounded cardinality — a provider model id, like the
+	// request model.
+	if r.respModel != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIResponseModel, sanitiseModelLabel(r.respModel)))
+	}
+	return append(attrs, r.serverAttrs()...)
 }
 
 // withCompletionAttrs extends the request dimensions with the HTTP status
 // code, and on the failure path the spec error.type. error.type is an
 // open enum, so the status code string is a spec-legal value; it is set
 // only for 4xx/5xx so the attribute's presence itself marks a failure.
-func withCompletionAttrs(provider, endpoint, model, configuration string, status int) metric.MeasurementOption {
-	attrs := requestDimensionAttrs(provider, endpoint, model, configuration)
+func (r *reporterRun) withCompletionAttrs(provider, endpoint, model, configuration string, status int) metric.MeasurementOption {
+	attrs := r.requestDimensionAttrs(provider, endpoint, model, configuration)
 	attrs = append(attrs, attribute.Int(observability.AttrHTTPResponseStatusCode, status))
 	if status >= 400 {
 		attrs = append(attrs, attribute.String(observability.AttrErrorType, strconv.Itoa(status)))
