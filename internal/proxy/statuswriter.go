@@ -31,6 +31,11 @@ type statusWriter struct {
 	// the Forwarder's ModifyResponse hook so the success log can report it
 	// without re-inspecting headers.
 	streaming bool
+
+	// onChunk, when set, fires on every streaming Flush — one call per
+	// response chunk delivered to the client (FlushInterval=-1). The
+	// Forwarder wires it to Observer.OnResponseChunk; nil disables it.
+	onChunk func()
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -60,6 +65,12 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 }
 
 func (w *statusWriter) Flush() {
+	// A flush on a streaming response is a chunk boundary. Fire the chunk
+	// hook before the downstream flush so the timestamp reflects when the
+	// chunk was ready, not after the (possibly blocking) socket write.
+	if w.streaming && w.onChunk != nil {
+		w.onChunk()
+	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}

@@ -64,8 +64,17 @@ const (
 	MetricUpstreamErrorsTotal = "gateway.upstream_errors.total"
 	MetricErrorResponsesTotal = "gateway.error_responses.total"
 
-	MetricRequestDuration        = "gen_ai.server.request.duration"
-	MetricRequestTimeToFirstByte = "gen_ai.server.time_to_first_token"
+	// The inference latency signals use the GenAI spec's *client* vantage,
+	// not the server one. Sluice is a client of the upstream provider — it
+	// calls the model and observes wire timing; it does not generate tokens,
+	// so it cannot produce the server metrics' defining quantity (model-
+	// internal time-to-generate-first-token). What it measures is the
+	// caller-observed round trip and time-to-first-chunk, which is exactly
+	// what gen_ai.client.operation.* is defined as. This pairs with the
+	// client-vantage gen_ai.client.token.usage above.
+	MetricRequestDuration    = "gen_ai.client.operation.duration"
+	MetricTimeToFirstChunk   = "gen_ai.client.operation.time_to_first_chunk"
+	MetricTimePerOutputChunk = "gen_ai.client.operation.time_per_output_chunk"
 
 	MetricActiveRequests = "gateway.active_requests"
 
@@ -133,9 +142,19 @@ const (
 // because Go does not permit composite literal constants; each slice is
 // only read by NewMeters and never mutated.
 var (
-	RequestDurationBuckets = []float64{0, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120}
+	// genAIDurationBuckets are the GenAI-semconv recommended boundaries
+	// (seconds) for gen_ai.client.operation.duration, .time_to_first_chunk,
+	// and .time_per_output_chunk — a power-of-two sweep from 10ms to ~82s.
+	// Shared so the three client latency histograms (and the resilience
+	// attempt-duration histogram, which mirrors the request shape) use the
+	// spec boundaries.
+	genAIDurationBuckets = []float64{0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92}
 
-	TimeToFirstByteBuckets = []float64{0, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}
+	RequestDurationBuckets = genAIDurationBuckets
+
+	TimeToFirstChunkBuckets = genAIDurationBuckets
+
+	TimePerOutputChunkBuckets = genAIDurationBuckets
 
 	// RuleEvaluationDurationBuckets gives sub-millisecond resolution
 	// since the engine runs synchronously on the request path; the
@@ -183,8 +202,13 @@ type Meters struct {
 	// code (machine-readable error name), status_code (HTTP status).
 	ErrorResponsesTotal metric.Int64Counter
 
-	RequestDuration        metric.Float64Histogram
-	RequestTimeToFirstByte metric.Float64Histogram
+	RequestDuration  metric.Float64Histogram
+	TimeToFirstChunk metric.Float64Histogram
+
+	// TimePerOutputChunk is the gen_ai.client.operation.time_per_output_chunk
+	// histogram: the gap between consecutive streamed response chunks, one
+	// observation per chunk after the first. Streaming requests only.
+	TimePerOutputChunk metric.Float64Histogram
 
 	ActiveRequests metric.Int64UpDownCounter
 
@@ -329,15 +353,25 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 	}
 	m.RequestDuration = reqDuration
 
-	ttfb, err := meter.Float64Histogram(MetricRequestTimeToFirstByte,
-		metric.WithDescription("Time from request acceptance to first response byte (streaming only)."),
+	ttfb, err := meter.Float64Histogram(MetricTimeToFirstChunk,
+		metric.WithDescription("Time from request acceptance to the first response chunk received from upstream. Streaming requests only — the GenAI spec scopes this metric to streaming calls; a non-streaming response has no first chunk distinct from the full body."),
 		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(TimeToFirstByteBuckets...),
+		metric.WithExplicitBucketBoundaries(TimeToFirstChunkBuckets...),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricRequestTimeToFirstByte, err)
+		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricTimeToFirstChunk, err)
 	}
-	m.RequestTimeToFirstByte = ttfb
+	m.TimeToFirstChunk = ttfb
+
+	tpoc, err := meter.Float64Histogram(MetricTimePerOutputChunk,
+		metric.WithDescription("Time between consecutive streamed response chunks, one observation per chunk after the first. Streaming requests only."),
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(TimePerOutputChunkBuckets...),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("observability: create histogram %s: %w", MetricTimePerOutputChunk, err)
+	}
+	m.TimePerOutputChunk = tpoc
 
 	tokenUsage, err := meter.Int64Histogram(MetricTokenUsage,
 		metric.WithDescription("Number of input/output tokens reported by upstream providers, keyed by gen_ai.token.type."),

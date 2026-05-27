@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 )
@@ -11,6 +12,7 @@ import (
 const (
 	eventStart    = "start"
 	eventHeaders  = "headers"
+	eventChunk    = "chunk"
 	eventError    = "upstream_error"
 	eventComplete = "complete"
 	eventRule     = "rule_matched"
@@ -25,6 +27,7 @@ type observerEvent struct {
 	err        error
 	dest       Destination
 	rule       events.RuleMatched
+	chunkAt    time.Time
 }
 
 type recordingObserver struct {
@@ -57,6 +60,12 @@ func (o *recordingObserver) OnResponseHeaders(_ context.Context, status int, h h
 		streaming:  streaming,
 		headers:    h.Clone(),
 	})
+}
+
+func (o *recordingObserver) OnResponseChunk(_ context.Context, at time.Time) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.events = append(o.events, observerEvent{kind: eventChunk, chunkAt: at})
 }
 
 func (o *recordingObserver) OnUpstreamError(_ context.Context, err error) {

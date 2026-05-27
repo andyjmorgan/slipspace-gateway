@@ -49,7 +49,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 	meters.UpstreamErrorsTotal.Add(ctx, 2)
 	meters.ErrorResponsesTotal.Add(ctx, 1)
 	meters.RequestDuration.Record(ctx, 0.42)
-	meters.RequestTimeToFirstByte.Record(ctx, 0.075)
+	meters.TimeToFirstChunk.Record(ctx, 0.075)
 	meters.ActiveRequests.Add(ctx, 1)
 	meters.ActiveRequests.Add(ctx, -1)
 	meters.RuleMatchesTotal.Add(ctx, 1)
@@ -85,7 +85,7 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 		observability.MetricUpstreamErrorsTotal,
 		observability.MetricErrorResponsesTotal,
 		observability.MetricRequestDuration,
-		observability.MetricRequestTimeToFirstByte,
+		observability.MetricTimeToFirstChunk,
 		observability.MetricActiveRequests,
 		observability.MetricRuleMatchesTotal,
 		observability.MetricRuleErrorsTotal,
@@ -277,7 +277,7 @@ func TestNewMeters_HistogramBoundariesMatchSpec(t *testing.T) {
 
 	ctx := context.Background()
 	meters.RequestDuration.Record(ctx, 0.5)
-	meters.RequestTimeToFirstByte.Record(ctx, 0.05)
+	meters.TimeToFirstChunk.Record(ctx, 0.05)
 	meters.RuleEvaluationDuration.Record(ctx, 0.002)
 
 	var rm metricdata.ResourceMetrics
@@ -287,7 +287,7 @@ func TestNewMeters_HistogramBoundariesMatchSpec(t *testing.T) {
 
 	checks := map[string][]float64{
 		observability.MetricRequestDuration:        observability.RequestDurationBuckets,
-		observability.MetricRequestTimeToFirstByte: observability.TimeToFirstByteBuckets,
+		observability.MetricTimeToFirstChunk:       observability.TimeToFirstChunkBuckets,
 		observability.MetricRuleEvaluationDuration: observability.RuleEvaluationDurationBuckets,
 	}
 

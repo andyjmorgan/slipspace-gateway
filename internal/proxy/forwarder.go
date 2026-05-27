@@ -261,6 +261,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 		logger:         reqLogger,
 		redactor:       f.redactor,
 	}
+	cw.onChunk = func() { observer.OnResponseChunk(ctx, time.Now()) }
 
 	// upstreamErr is set by ErrorHandler so the success-log path can skip
 	// emission when the transport failed — the error log there is the

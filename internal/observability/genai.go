@@ -33,6 +33,11 @@ const (
 	// AttrGenAIResponseModel is the model the provider reported serving.
 	AttrGenAIResponseModel = "gen_ai.response.model"
 
+	// AttrGenAIResponseID and AttrGenAIResponseFinishReasons are Recommended
+	// response descriptors parsed from the provider response body/stream.
+	AttrGenAIResponseID            = "gen_ai.response.id"
+	AttrGenAIResponseFinishReasons = "gen_ai.response.finish_reasons"
+
 	// AttrGenAITokenType keys the gen_ai.client.token.usage histogram by
 	// direction. The spec enum is input|output only — cache tokens have
 	// no value here and ride sluice.* counters instead.
@@ -48,6 +53,48 @@ const (
 	// counts. Span-only — the metric form is the token-usage histogram.
 	AttrGenAIUsageInputTokens  = "gen_ai.usage.input_tokens"  //nolint:gosec // G101 false positive: attribute key, not a credential
 	AttrGenAIUsageOutputTokens = "gen_ai.usage.output_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
+
+	// AttrGenAIUsageCacheCreationInputTokens and
+	// AttrGenAIUsageCacheReadInputTokens are the spec span/event attributes
+	// for provider-managed prompt-cache tokens (defined on the GenAI
+	// Anthropic page). gen_ai.usage.input_tokens is the cache-inclusive
+	// total. The spec has no cache metric — cache counts live as these
+	// attributes; the former sluice.tokens.cache* counters are dropped in
+	// favour of them (conformance: our overlap with OTel gives way to OTel).
+	// Billing aggregation continues to ride the connector Record, not a
+	// meter (invariant #4).
+	AttrGenAIUsageCacheCreationInputTokens = "gen_ai.usage.cache_creation.input_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
+	AttrGenAIUsageCacheReadInputTokens     = "gen_ai.usage.cache_read.input_tokens"     //nolint:gosec // G101 false positive: attribute key, not a credential
+
+	// AttrGenAIUsageReasoningOutputTokens is the Recommended count of
+	// reasoning/thinking tokens, emitted when the provider reports it
+	// (OpenAI reasoning_tokens, Gemini thoughtsTokenCount).
+	AttrGenAIUsageReasoningOutputTokens = "gen_ai.usage.reasoning.output_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
+
+	// AttrGenAIRequestStream marks whether the request used streaming.
+	// Conditionally required by the spec when the request is streaming.
+	AttrGenAIRequestStream = "gen_ai.request.stream"
+
+	// AttrGenAIResponseTimeToFirstChunk is the span-side companion to the
+	// time_to_first_chunk metric: wire time (seconds) to the first response
+	// chunk. Recommended on streaming requests only.
+	AttrGenAIResponseTimeToFirstChunk = "gen_ai.response.time_to_first_chunk"
+
+	// Request sampling parameters parsed from the inbound body. The penalty,
+	// temperature, top_p, top_k, max_tokens, and stop_sequences attributes
+	// are Recommended; choice.count is Conditionally Required (present and
+	// != 1); seed is Conditionally Required (present); output.type is
+	// Conditionally Required (when an output format is requested).
+	AttrGenAIRequestTemperature      = "gen_ai.request.temperature"
+	AttrGenAIRequestTopP             = "gen_ai.request.top_p"
+	AttrGenAIRequestTopK             = "gen_ai.request.top_k"
+	AttrGenAIRequestMaxTokens        = "gen_ai.request.max_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
+	AttrGenAIRequestFrequencyPenalty = "gen_ai.request.frequency_penalty"
+	AttrGenAIRequestPresencePenalty  = "gen_ai.request.presence_penalty"
+	AttrGenAIRequestStopSequences    = "gen_ai.request.stop_sequences"
+	AttrGenAIRequestSeed             = "gen_ai.request.seed"
+	AttrGenAIRequestChoiceCount      = "gen_ai.request.choice.count"
+	AttrGenAIOutputType              = "gen_ai.output.type"
 )
 
 // Reused stable OTel conventions from namespaces other than gen_ai.*.
@@ -65,6 +112,46 @@ const (
 	// AttrServerAddress is the stable server.address attribute naming the
 	// upstream host the request was forwarded to.
 	AttrServerAddress = "server.address"
+
+	// AttrServerPort is the stable server.port attribute. The GenAI spec
+	// makes it conditionally required whenever server.address is set.
+	AttrServerPort = "server.port"
+)
+
+// OpenAI-specific attributes (openai.* namespace), emitted only on OpenAI
+// operations. service_tier is Conditionally Required (request: present and
+// not "auto"; response: present); system_fingerprint and api.type are
+// Recommended. Span-only — system_fingerprint changes with the serving
+// backend and is too high-cardinality for a metric label, so the openai.*
+// set rides the span, not the meters.
+const (
+	AttrOpenAIRequestServiceTier        = "openai.request.service_tier"
+	AttrOpenAIResponseServiceTier       = "openai.response.service_tier"
+	AttrOpenAIResponseSystemFingerprint = "openai.response.system_fingerprint"
+	AttrOpenAIAPIType                   = "openai.api.type"
+)
+
+// GenAI event (log record) names and the exception attributes they carry.
+// Events ride the OTel logs signal; the operation-details event is the
+// structured carrier for bounded prompt/response content, the exception
+// event is the spec's error-recording mechanism.
+const (
+	EventInferenceDetails   = "gen_ai.client.inference.operation.details"
+	EventOperationException = "gen_ai.client.operation.exception"
+
+	AttrExceptionType    = "exception.type"
+	AttrExceptionMessage = "exception.message"
+)
+
+// Opt-In content attributes carried on the operation-details event. The
+// gateway emits a bounded subset (latest user turn, model response, system
+// instructions, tool definitions); the full content lives in the connector
+// spool. Gated by SLUICE_OTEL_CAPTURE_CONTENT.
+const (
+	AttrGenAIInputMessages      = "gen_ai.input.messages"
+	AttrGenAIOutputMessages     = "gen_ai.output.messages"
+	AttrGenAISystemInstructions = "gen_ai.system_instructions"
+	AttrGenAIToolDefinitions    = "gen_ai.tool.definitions"
 )
 
 // Sluice-namespaced extras — dimensions the GenAI spec has no concept for.
@@ -92,8 +179,9 @@ const (
 
 // gen_ai.operation.name values (spec-defined).
 const (
-	OperationChat       = "chat"
-	OperationEmbeddings = "embeddings"
+	OperationChat            = "chat"
+	OperationGenerateContent = "generate_content"
+	OperationEmbeddings      = "embeddings"
 )
 
 // gen_ai.token.type values (spec-defined).
@@ -102,20 +190,37 @@ const (
 	TokenTypeOutput = "output"
 )
 
-// OperationNameForEndpoint maps a Sluice endpoint key to the coarse
-// gen_ai.operation.name. The chat-shaped inference surfaces of all three
-// providers collapse to "chat"; embeddings to "embeddings". Endpoints the
-// spec has no operation for (e.g. models listing) fall through to their
-// own key — the precise route is always also emitted as sluice.endpoint,
-// so no information is lost.
+// OperationNameForEndpoint maps a Sluice endpoint key to the
+// gen_ai.operation.name spec value: OpenAI/Anthropic chat surfaces and the
+// OpenAI responses API to "chat", Gemini's generate_content to the dedicated
+// "generate_content" value, embeddings to "embeddings". Endpoints the spec
+// has no operation for (e.g. models listing) fall through to their own key —
+// the precise route is always also emitted as sluice.endpoint, so nothing is
+// lost.
 func OperationNameForEndpoint(endpoint string) string {
 	switch endpoint {
-	case "chat_completions", "messages", "generate_content", "responses":
+	case "chat_completions", "messages", "responses":
 		return OperationChat
+	case "generate_content":
+		return OperationGenerateContent
 	case "embeddings":
 		return OperationEmbeddings
 	default:
 		return endpoint
+	}
+}
+
+// GenAIProviderName maps a Sluice internal provider key to the OTel
+// gen_ai.provider.name enum value. "openai" and "anthropic" already match the
+// enum; "gemini" maps to the spec value "gcp.gemini". Unknown providers pass
+// through verbatim so a newly added provider surfaces rather than being
+// silently rewritten.
+func GenAIProviderName(provider string) string {
+	switch provider {
+	case "gemini":
+		return "gcp.gemini"
+	default:
+		return provider
 	}
 }
 

@@ -15,7 +15,7 @@ func TestOperationNameForEndpoint(t *testing.T) {
 	}{
 		{"chat_completions", observability.OperationChat},
 		{"messages", observability.OperationChat},
-		{"generate_content", observability.OperationChat},
+		{"generate_content", observability.OperationGenerateContent},
 		{"responses", observability.OperationChat},
 		{"embeddings", observability.OperationEmbeddings},
 		// Endpoints the GenAI spec has no operation for fall through to
@@ -30,6 +30,33 @@ func TestOperationNameForEndpoint(t *testing.T) {
 			t.Parallel()
 			if got := observability.OperationNameForEndpoint(tc.endpoint); got != tc.want {
 				t.Errorf("OperationNameForEndpoint(%q) = %q, want %q", tc.endpoint, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGenAIProviderName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		provider string
+		want     string
+	}{
+		// gemini is the one internal key that diverges from the spec enum.
+		{"gemini", "gcp.gemini"},
+		// openai and anthropic already match the gen_ai.provider.name enum.
+		{"openai", "openai"},
+		{"anthropic", "anthropic"},
+		// Unknown providers pass through verbatim rather than being dropped.
+		{"qwen", "qwen"},
+		{"", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			t.Parallel()
+			if got := observability.GenAIProviderName(tc.provider); got != tc.want {
+				t.Errorf("GenAIProviderName(%q) = %q, want %q", tc.provider, got, tc.want)
 			}
 		})
 	}

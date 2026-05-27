@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 )
@@ -24,6 +25,13 @@ type Observer interface {
 	// arrive. streaming is true iff the upstream Content-Type is
 	// text/event-stream (per RFC 6202 / SSE).
 	OnResponseHeaders(ctx context.Context, statusCode int, headers http.Header, streaming bool)
+
+	// OnResponseChunk fires once per streamed response chunk, at the moment
+	// the chunk is flushed to the client (driven by the proxy's
+	// FlushInterval=-1). It fires only for SSE/streaming responses, never
+	// for a non-streaming body. at is the flush time; consumers derive the
+	// inter-chunk gap (gen_ai.client.operation.time_per_output_chunk).
+	OnResponseChunk(ctx context.Context, at time.Time)
 
 	// OnUpstreamError fires instead of OnResponseHeaders when the request
 	// cannot reach the upstream or the upstream tears the connection
@@ -63,6 +71,7 @@ type nopObserver struct{}
 
 func (nopObserver) OnRequestStart(context.Context, Destination)               {}
 func (nopObserver) OnResponseHeaders(context.Context, int, http.Header, bool) {}
+func (nopObserver) OnResponseChunk(context.Context, time.Time)                {}
 func (nopObserver) OnUpstreamError(context.Context, error)                    {}
 func (nopObserver) OnComplete(context.Context, int, int64)                    {}
 func (nopObserver) OnRuleMatched(context.Context, events.RuleMatched)         {}

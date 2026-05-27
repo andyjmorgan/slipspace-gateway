@@ -88,6 +88,7 @@ const (
 	EnvPrometheusBind       = "SLUICE_PROMETHEUS_BIND"
 	EnvOTLPEndpoint         = "SLUICE_OTLP_ENDPOINT"
 	EnvOTLPProtocol         = "SLUICE_OTLP_PROTOCOL"
+	EnvOTelCaptureContent   = "SLUICE_OTEL_CAPTURE_CONTENT"
 	EnvConfigDir            = "SLUICE_CONFIG_DIR"
 	EnvSpoolRoot            = "SLUICE_SPOOL_ROOT"
 	EnvRulesMaxGroupDepth   = "SLUICE_RULES_MAX_GROUP_DEPTH"
@@ -113,6 +114,7 @@ var envVarNames = []string{
 	EnvPrometheusBind,
 	EnvOTLPEndpoint,
 	EnvOTLPProtocol,
+	EnvOTelCaptureContent,
 	EnvConfigDir,
 	EnvSpoolRoot,
 	EnvRulesMaxGroupDepth,
@@ -161,6 +163,12 @@ type ServerEnv struct {
 
 	// OTLPProtocol is the OTLP transport: "grpc" or "http/protobuf".
 	OTLPProtocol string
+
+	// OTelCaptureContent, when true, emits the bounded prompt/response
+	// content (latest user turn, model response, system instructions, tool
+	// definitions) on the GenAI operation-details event. Default false —
+	// content otherwise stays in the connector spool (invariant #4).
+	OTelCaptureContent bool
 
 	// ConfigDir holds the policy + providers YAML directory loaded by
 	// Load. The CLI's --dir flag overrides this for the file load only.
@@ -302,6 +310,7 @@ func LoadEnv() (*ServerEnv, error) {
 		PrometheusBind:                       envString(EnvPrometheusBind, ""),
 		OTLPEndpoint:                         envString(EnvOTLPEndpoint, ""),
 		OTLPProtocol:                         envString(EnvOTLPProtocol, DefaultOTLPProtocol),
+		OTelCaptureContent:                   envBool(EnvOTelCaptureContent, false),
 		ConfigDir:                            envString(EnvConfigDir, DefaultConfigDir),
 		SpoolRoot:                            envString(EnvSpoolRoot, DefaultSpoolRoot),
 		RulesMaxGroupDepth:                   groupDepth,
@@ -402,6 +411,23 @@ func envString(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool reads name as a boolean. Empty or unparseable returns fallback;
+// "1", "t", "true", "yes", "on" (case-insensitive) are true, and the
+// corresponding negatives are false.
+func envBool(name string, fallback bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	switch v {
+	case "":
+		return fallback
+	case "1", "t", "true", "yes", "on":
+		return true
+	case "0", "f", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 // envInt reads name and parses it as a base-10 int. An empty value

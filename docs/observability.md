@@ -88,10 +88,11 @@ The data-plane request lifecycle. Per-request counters fire **exactly once per i
 
 | Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|
-| `gateway.requests.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Total requests completed. One increment per inbound request at OnComplete, after rule mutation and (for orchestrated requests) after the resilience orchestrator has resolved a final status. |
-| `gateway.request.duration` | histogram | `provider, endpoint, model, configuration, status_code` | s | End-to-end request duration. Recorded alongside `requests.total` so the two share an attribute set and Grafana can join rate + quantile by the same dimensions. |
+| `sluice.requests.total` | counter | `gen_ai.provider.name, gen_ai.request.model, gen_ai.operation.name, sluice.endpoint, sluice.configuration, http.response.status_code, error.type (failure), server.address/port` | 1 | Total requests completed. One increment per inbound request at OnComplete, after rule mutation and (for orchestrated requests) after the resilience orchestrator has resolved a final status. Sluice-namespaced convenience counter — the GenAI spec derives request count from the duration histogram `_count`; this is a spec-legal additive extra the admin console's per-dimension counting is built on. |
+| `gen_ai.client.operation.duration` | histogram | `gen_ai.provider.name, gen_ai.request.model, gen_ai.operation.name, sluice.endpoint, sluice.configuration, http.response.status_code, error.type (failure)` | s | End-to-end request duration, observed by the gateway as it calls upstream — the GenAI *client* vantage (Sluice is a client of the provider; it times the round trip, it does not generate tokens). Recorded alongside `sluice.requests.total` so the two share an attribute set and Grafana can join rate + quantile by the same dimensions. |
 | `gateway.active_requests` | up-down counter | (none) | 1 | Requests currently in flight. Incremented at OnRequestStart, decremented at OnComplete. |
-| `gateway.request.time_to_first_byte` | histogram | `provider, endpoint, model` | s | Time from request acceptance to the first response byte. Recorded only when upstream returned headers; streaming and non-streaming both observe. No `configuration` or `status_code` — TTFB is a transport metric, not a billing one. |
+| `gen_ai.client.operation.time_to_first_chunk` | histogram | `gen_ai.provider.name, gen_ai.request.model, gen_ai.operation.name, sluice.endpoint` | s | Time from request acceptance to the first response chunk received from upstream (client vantage — time to *receive* the first chunk, not the server-side time to *generate* the first token). **Streaming requests only**, per the GenAI spec, which scopes this metric to streaming calls: a non-streaming response has no first chunk distinct from the whole body, so recording it there would only duplicate `operation.duration`. No `sluice.configuration` or status — it is a transport metric, not a billing one. |
+| `gen_ai.client.operation.time_per_output_chunk` | histogram | `gen_ai.provider.name, gen_ai.request.model, gen_ai.operation.name, gen_ai.response.model, sluice.endpoint, server.address/port` | s | Time between consecutive streamed response chunks — one observation per chunk after the first. **Streaming only.** Flush timestamps are captured per chunk on the write path (no recording there) and the gaps are emitted at OnComplete, so `gen_ai.response.model` can ride along. |
 | `gateway.upstream_errors.total` | counter | `provider, endpoint, model` | 1 | Errors returned by upstream providers. Bumped from `OnUpstreamError` (transport-level failure: connection refused, EOF before headers, timeout before status line). Provider 4xx / 5xx with a body do **not** fire this — those are normal completions. |
 | `gateway.request.panics.total` | counter | `provider, endpoint` | 1 | Panics caught by the request-path recovery middleware (`cmd/gateway/recover.go`). A non-zero rate implies a buggy middleware or handler leaked a panic that the recovery filter converted to a 500; investigate. |
 
@@ -209,11 +210,27 @@ Bucket boundaries are package-level vars in [`internal/observability/meters.go`]
 
 | Histogram | Buckets | Unit | Rationale |
 |---|---|---|---|
-| `gateway.request.duration`<br/>`gateway.resilience.attempt.duration` | `0, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120` | s | Covers the full envelope from millisecond completions (cached responses, fast 4xx) up to the streaming long tail without burning too many buckets in the middle. The resilience attempt histogram reuses the same shape so dashboards correlate end-to-end vs per-attempt without rebasing. |
-| `gateway.request.time_to_first_byte` | `0, 0.05, 0.1, 0.25, 0.5, 1, 2, 5` | s | TTFB is dominated by upstream queue latency; fine-grained low buckets matter, the long tail past 5s is rare and is captured by the +Inf bucket. |
+| `gen_ai.client.operation.duration`<br/>`gen_ai.client.operation.time_to_first_chunk`<br/>`gen_ai.client.operation.time_per_output_chunk`<br/>`gateway.resilience.attempt.duration` | `0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92` | s | The GenAI-semconv recommended boundaries — a power-of-two sweep from 10 ms to ~82 s. Shared across the three client latency histograms (and the resilience attempt histogram, which mirrors the request shape) so they use the spec values and dashboards correlate without rebasing. |
 | `gateway.events.inline_bytes` | `1024, 4096, 16384, 65536, 262144, 786432` | By | Powers of 4 from 1 KiB to 768 KiB (the stash threshold). The top bucket is precisely the threshold so the +Inf bucket counts stashed-eligible payloads. |
 | `gateway.rule.evaluation.duration` | `0, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1` | s | Sub-millisecond resolution since rule evaluation is synchronous on the request path. The long tail anchors at 1s to capture pathological policies (deep groups, regex catastrophes) without polluting the common case. |
 | `gateway.resilience.attempts_per_request` | `1, 2, 3, 5, 10` | 1 | Integer-tuned for the realistic spread: most requests are single-shot, multi-target failover rarely exceeds 3, and the +Inf bucket past 10 covers pathological policy fan-out. |
+
+## GenAI spans and events
+
+When an OTLP endpoint is configured, the data plane also emits OpenTelemetry **spans** and **events** (log records) conforming to the GenAI semantic conventions v1.41.0. The gateway is a *client* of the upstream provider, so it emits the `gen_ai.client.*` surface.
+
+**Span** — one `gen_ai` client span per request (name `{operation} {model}`, kind CLIENT), synthesised at completion with a backdated start so nothing on the request path waits on the tracer (the batch processor exports out of band). It carries the full GenAI attribute set: operation/provider/request model, response id/model/finish_reasons, request sampling params (temperature, top_p, …, seed, choice.count, output.type, stream), usage (input/output/cache_creation/cache_read/reasoning) tokens, `server.address`/`server.port`, `error.type`, and the `openai.*` deltas. Inbound W3C `traceparent` is extracted in the correlation middleware so the span nests under a caller's distributed trace.
+
+**Events** —
+- `gen_ai.client.operation.exception` — fires on any failure (4xx/5xx or transport error), carrying `exception.type` / `exception.message`.
+- `gen_ai.client.inference.operation.details` — carries the full operation-detail attribute set (same as the span) plus the **bounded prompt/response content**.
+
+**Content capture** (`gen_ai.input.messages`, `output.messages`, `system_instructions`, `tool.definitions`) is **opt-in and off by default**, gated by `SLUICE_OTEL_CAPTURE_CONTENT`. When enabled it is:
+- **bounded** — only the latest user turn (not full history) and the model response; the full turn lives in the connector spool (the system of record), never telemetry (invariant #4);
+- **redacted** — credential-shaped tokens masked (`internal/contentredact`);
+- **capped** — each field size-limited; oversized tool definitions are replaced with a marker rather than truncated to invalid JSON.
+
+On the **span**, content rides as JSON strings (span attributes can't hold structured values — the spec permits a JSON string there); on the **event**, it is recorded in structured form, as the spec requires.
 
 ---
 

@@ -1,9 +1,6 @@
 package tokens
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "encoding/json"
 
 // openaiResponsesUsage is the `usage` shape on a /v1/responses non-
 // stream body and on the terminal `response.completed` SSE event.
@@ -41,25 +38,11 @@ type openaiResponsesNestedResponse struct {
 // nested `response` object; intermediate `response.in_progress` events
 // carry the same shape but with usage either absent or partial — last
 // non-nil wins.
-func extractOpenAIResponses(raw []byte) Snapshot {
+func extractOpenAIResponses(frames [][]byte) Snapshot {
 	var agg Aggregator
-
-	if looksLikeJSON(raw) {
-		var body openaiResponsesBody
-		if err := json.Unmarshal(raw, &body); err == nil {
-			if u := pickResponsesUsage(&body); u != nil {
-				agg.Handle(StrategyLastWins, openaiResponsesUsageToObservation(u))
-			}
-		}
-		return agg.Snapshot()
-	}
-
-	for _, ev := range parseSSE(raw) {
-		if ev.Data == "" || strings.TrimSpace(ev.Data) == "[DONE]" {
-			continue
-		}
+	for _, f := range frames {
 		var frame openaiResponsesBody
-		if err := json.Unmarshal([]byte(ev.Data), &frame); err != nil {
+		if err := json.Unmarshal(f, &frame); err != nil {
 			continue
 		}
 		u := pickResponsesUsage(&frame)

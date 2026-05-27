@@ -416,14 +416,24 @@ func TestForward_Streaming(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		events := obs.snapshot()
+		var sawStreamingHeaders bool
+		var chunks int
 		for _, e := range events {
-			if e.kind == eventHeaders && e.streaming {
-				return
+			switch {
+			case e.kind == eventHeaders && e.streaming:
+				sawStreamingHeaders = true
+			case e.kind == eventChunk:
+				chunks++
 			}
+		}
+		// The proxy fires OnResponseChunk on every streaming flush; the
+		// upstream flushed two data chunks, so we expect at least two.
+		if sawStreamingHeaders && chunks >= 2 {
+			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("expected response headers event with streaming=true, got %+v", obs.snapshot())
+	t.Fatalf("expected streaming headers + >=2 chunk events, got %+v", obs.snapshot())
 }
 
 func readUntilBlank(r *bufio.Reader) (string, error) {

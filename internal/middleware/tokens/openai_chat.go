@@ -1,9 +1,6 @@
 package tokens
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "encoding/json"
 
 // openaiChatUsage is the wire shape OpenAI emits in the `usage` field of
 // both ChatCompletionResponse (non-stream body) and the terminal
@@ -46,26 +43,11 @@ type openaiChatChunk struct {
 // non-zero usage. A client-cancelled stream may not emit the terminal
 // chunk at all — in that case Recognised stays false and the reporter
 // leaves the counter unbumped.
-func extractOpenAIChat(raw []byte) Snapshot {
+func extractOpenAIChat(frames [][]byte) Snapshot {
 	var agg Aggregator
-
-	if looksLikeJSON(raw) {
-		var body openaiChatChunk
-		if err := json.Unmarshal(raw, &body); err == nil && body.Usage != nil {
-			agg.Handle(StrategyLastWins, openaiChatUsageToObservation(body.Usage))
-		}
-		return agg.Snapshot()
-	}
-
-	for _, ev := range parseSSE(raw) {
-		if ev.Data == "" || strings.TrimSpace(ev.Data) == "[DONE]" {
-			continue
-		}
+	for _, f := range frames {
 		var chunk openaiChatChunk
-		if err := json.Unmarshal([]byte(ev.Data), &chunk); err != nil {
-			continue
-		}
-		if chunk.Usage == nil {
+		if err := json.Unmarshal(f, &chunk); err != nil || chunk.Usage == nil {
 			continue
 		}
 		agg.Handle(StrategyLastWins, openaiChatUsageToObservation(chunk.Usage))

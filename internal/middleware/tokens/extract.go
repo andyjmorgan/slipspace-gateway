@@ -1,9 +1,12 @@
 package tokens
 
-// extractorFn signs every per-endpoint implementation. Implementations
-// own the wire-shape sniffing (JSON body vs SSE) and the Strategy
-// choice; the dispatcher only routes.
-type extractorFn func(raw []byte) Snapshot
+import "github.com/andyjmorgan/sluice-gateway/internal/middleware/sseframe"
+
+// extractorFn signs every per-endpoint implementation. The dispatcher
+// collates the response once (via sseframe) and hands each implementation
+// the resulting JSON frames; implementations only walk them and pick the
+// Strategy.
+type extractorFn func(frames [][]byte) Snapshot
 
 // registry maps endpoint names to extractor functions. Endpoint names
 // match the strings the config loader accepts under
@@ -24,29 +27,32 @@ var registry = map[string]extractorFn{
 	"generate_content": extractGeminiContent,
 }
 
-// Extract dispatches (provider, endpoint) onto the matching extractor
-// and returns the aggregated Snapshot from walking raw. raw may be
-// non-streaming JSON or SSE-framed chunks; the extractor sniffs the
-// first non-whitespace byte and picks the right path.
+// Extract collates raw — a non-streaming JSON body or SSE-framed chunks —
+// and dispatches it onto the matching extractor. Prefer ExtractFrames when
+// the caller already holds sseframe-collated frames, so the response body
+// is split only once per request.
 //
-// An unrecognised endpoint or a recognised endpoint that found no
-// usage data returns Snapshot{Recognised: false}. Callers use that
-// signal to leave the per-request token fields zero and skip bumping
-// the gateway.tokens.* counters — partial accounting is worse than
-// no accounting because dashboards will treat a missing total as a
-// real low number.
-//
-// provider is currently unused; stays in the signature so a future
-// provider with a name collision can disambiguate without breaking
-// the call site.
+// An unrecognised endpoint or a recognised endpoint that found no usage
+// data returns Snapshot{Recognised: false}. Callers use that signal to
+// leave the per-request token fields zero and skip recording — partial
+// accounting is worse than none, because dashboards treat a missing total
+// as a real low number.
 func Extract(provider, endpoint string, raw []byte) Snapshot {
+	return ExtractFrames(provider, endpoint, sseframe.Collate(raw))
+}
+
+// ExtractFrames dispatches frames already collated by sseframe.Collate onto
+// the matching extractor. provider is currently unused; it stays in the
+// signature so a future provider with a name collision can disambiguate
+// without breaking the call site.
+func ExtractFrames(provider, endpoint string, frames [][]byte) Snapshot {
 	_ = provider
-	if len(raw) == 0 {
+	if len(frames) == 0 {
 		return Snapshot{}
 	}
 	fn, ok := registry[endpoint]
 	if !ok {
 		return Snapshot{}
 	}
-	return fn(raw)
+	return fn(frames)
 }
