@@ -111,6 +111,20 @@ function ActionFields({ action }: { action: RawAction }) {
           <FieldPill label="tag"><span className="mono">{String(action.tag ?? "")}</span></FieldPill>
         </div>
       )
+    case "rewriteField":
+    case "appendField":
+      return (
+        <div className="flex items-center gap-2 flex-wrap">
+          <FieldPill label="target"><span className="mono">{String(action.target ?? "")}</span></FieldPill>
+          <FieldPill label="value"><span className="mono break-all">{formatRewriteValue(action.value)}</span></FieldPill>
+        </div>
+      )
+    case "removeField":
+      return (
+        <div className="flex items-center gap-2 flex-wrap">
+          <FieldPill label="target"><span className="mono">{String(action.target ?? "")}</span></FieldPill>
+        </div>
+      )
     default:
       return (
         <div className="flex items-center gap-2 flex-wrap">
@@ -134,5 +148,20 @@ function ActionKindBadge({ type }: { type: string }) {
   if (type === "setHeader" || type === "appendQueryString") return <Tag variant="default">augment</Tag>
   if (type === "useResiliencePolicy") return <Tag variant="violet">resilience</Tag>
   if (type === "addTag") return <Tag variant="default">tag</Tag>
+  if (type === "rewriteField" || type === "removeField" || type === "appendField") return <Tag variant="violet">body</Tag>
   return null
+}
+
+// formatRewriteValue renders a rewriteField/appendField value in its
+// wire form: template strings show as-is, every other JSON type
+// (number, bool, null, array, object) is stringified so the operator
+// sees exactly what lands on the body.
+function formatRewriteValue(v: unknown): string {
+  if (v === undefined) return ""
+  if (typeof v === "string") return v
+  try {
+    return JSON.stringify(v)
+  } catch {
+    return String(v)
+  }
 }
