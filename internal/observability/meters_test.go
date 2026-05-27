@@ -369,11 +369,16 @@ func TestNewMeters_PropagatesConstructionErrors(t *testing.T) {
 		meter metric.Meter
 	}{
 		{"counter", &failMeter{failInt64CounterAt: 1}},
+		// Float64Histograms are created in this order: request duration,
+		// time_to_first_chunk, time_per_output_chunk, rule eval duration,
+		// resilience attempt duration. Cover each construction-error path.
 		{"request_duration", &failMeter{failFloat64HistAt: 1}},
-		{"ttfb", &failMeter{failFloat64HistAt: 2}},
+		{"time_to_first_chunk", &failMeter{failFloat64HistAt: 2}},
+		{"time_per_output_chunk", &failMeter{failFloat64HistAt: 3}},
+		{"rule_eval_duration", &failMeter{failFloat64HistAt: 4}},
+		{"attempt_duration", &failMeter{failFloat64HistAt: 5}},
 		{"token_usage", &failMeter{failInt64HistAt: 1}},
 		{"active_requests", &failMeter{failInt64UpDown: true}},
-		{"rule_eval_duration", &failMeter{failFloat64HistAt: 3}},
 		{"attempts_per_request", &failMeter{failInt64HistAt: 2}},
 	}
 
