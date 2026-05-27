@@ -27,7 +27,7 @@ Every Required/CR/Recommended attribute: operation/provider/request.model, respo
 
 ### Events (OTel logs pipeline)
 - `gen_ai.client.operation.exception` — on every failure (status ≥ 400 or transport error).
-- `gen_ai.client.inference.operation.details` — bounded prompt/response content as **structured** log values: `gen_ai.input.messages` (latest user turn), `gen_ai.output.messages` (model response), `gen_ai.system_instructions`, `gen_ai.tool.definitions`. Opt-in via `SLUICE_OTEL_CAPTURE_CONTENT` (default off), per-field capped, and credential-redacted (`internal/contentredact`).
+- `gen_ai.client.inference.operation.details` — bounded prompt/response content as **structured** log values per the message JSON schema: `gen_ai.input.messages` / `gen_ai.output.messages` as `[{role, parts}]`, `gen_ai.system_instructions` as a bare parts array, `gen_ai.tool.definitions` normalised to `{type,name,description,parameters}`. Parts carry the well-known types `text` / `tool_call` / `tool_call_response`; media blocks pass through by type. Opt-in via `SLUICE_OTEL_CAPTURE_CONTENT` (default off), per-field capped, and credential-redacted (`internal/contentredact`). Emitted within the span context so records carry `trace_id`/`span_id`.
 
 ### Decisions (all agent-validated)
 - **Client vantage** (not server) — the gateway times its outbound call; it doesn't generate tokens.
@@ -35,8 +35,9 @@ Every Required/CR/Recommended attribute: operation/provider/request.model, respo
 - `gen_ai.operation.name` = `generate_content` for Gemini (not `chat`).
 - `server.address`/`port` = the **upstream provider** host:port.
 - `gen_ai.usage.input_tokens` is cache-inclusive (Anthropic page's computation); cache tokens emitted as `gen_ai.usage.cache_*.input_tokens` attributes (no cache *metric* exists in the spec).
-- Bounded content (latest user turn, not full history) — spec permits truncation; full content stays in the connector spool (invariant #4).
-- Inbound W3C trace context extracted (gateway spans nest under a caller's trace).
+- Bounded content (latest user turn, not full history) — spec permits truncation; full content stays in the connector spool (invariant #4). Within that bound the turn keeps its real parts (multimodal blocks by type, tool calls, tool results) rather than being flattened to one text part.
+- System instructions are multi-source: all system/developer messages (OpenAI chat + Responses `input[]`) and every Anthropic `system` block, not just the first.
+- Inbound W3C trace context extracted (gateway spans nest under a caller's trace); outbound, the operation-detail/exception log events are emitted under the request span so they correlate to it natively.
 
 ## Deliberately not done
 

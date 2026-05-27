@@ -154,6 +154,15 @@ const (
 	AttrGenAIToolDefinitions    = "gen_ai.tool.definitions"
 )
 
+// Well-known message-part type discriminators from the GenAI message JSON
+// schema. Text and pass-through media parts carry "content"; tool parts carry
+// the call/response fields instead.
+const (
+	PartTypeText             = "text"
+	PartTypeToolCall         = "tool_call"
+	PartTypeToolCallResponse = "tool_call_response"
+)
+
 // Sluice-namespaced extras — dimensions the GenAI spec has no concept for.
 const (
 	// AttrSluiceEndpoint is the precise provider route (chat_completions,

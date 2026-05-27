@@ -157,6 +157,149 @@ func TestExtractResponse_OpenAIServiceTierFingerprint(t *testing.T) {
 	}
 }
 
+// toolCalls returns the tool_call parts of an output parts slice.
+func toolCalls(parts []genaiattr.Part) []genaiattr.Part {
+	var tc []genaiattr.Part
+	for _, p := range parts {
+		if p.Type == "tool_call" {
+			tc = append(tc, p)
+		}
+	}
+	return tc
+}
+
+func TestExtractResponse_ToolCalls(t *testing.T) {
+	t.Parallel()
+
+	// OpenAI non-streaming: choices[].message.tool_calls.
+	t.Run("openai non-stream", func(t *testing.T) {
+		t.Parallel()
+		got := genaiattr.ExtractResponse("chat_completions", []byte(`{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"loc\":\"Paris\"}"}}]},"finish_reason":"tool_calls"}]}`))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].ID != "call_1" || tc[0].Name != "get_weather" {
+			t.Fatalf("tool calls = %+v", tc)
+		}
+		if string(tc[0].Arguments) != `{"loc":"Paris"}` {
+			t.Errorf("arguments = %s", tc[0].Arguments)
+		}
+		// Tool-only response keeps its tool_call and emits no text part.
+		if len(got.OutputParts) != 1 {
+			t.Errorf("output parts = %+v, want only the tool_call", got.OutputParts)
+		}
+	})
+
+	// OpenAI streaming: id+name on the first delta, arguments fragmented.
+	t.Run("openai stream fragmented args", func(t *testing.T) {
+		t.Parallel()
+		sse := "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_9\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"lo\"}}]}}]}\n\n" +
+			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"c\\\":\\\"Paris\\\"}\"}}]}}]}\n\n" +
+			"data: [DONE]\n\n"
+		got := genaiattr.ExtractResponse("chat_completions", []byte(sse))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].ID != "call_9" || tc[0].Name != "f" {
+			t.Fatalf("tool calls = %+v", tc)
+		}
+		if string(tc[0].Arguments) != `{"loc":"Paris"}` {
+			t.Errorf("reassembled arguments = %s, want {\"loc\":\"Paris\"}", tc[0].Arguments)
+		}
+	})
+
+	// Text followed by a tool call: both parts present, text first.
+	t.Run("openai text plus tool call", func(t *testing.T) {
+		t.Parallel()
+		got := genaiattr.ExtractResponse("chat_completions", []byte(`{"choices":[{"message":{"content":"let me check","tool_calls":[{"id":"c","function":{"name":"f","arguments":"{}"}}]}}]}`))
+		if len(got.OutputParts) != 2 || got.OutputParts[0].Type != "text" || got.OutputParts[1].Type != "tool_call" {
+			t.Fatalf("parts = %+v, want [text, tool_call]", got.OutputParts)
+		}
+	})
+
+	// Anthropic non-streaming: tool_use content block.
+	t.Run("anthropic non-stream", func(t *testing.T) {
+		t.Parallel()
+		got := genaiattr.ExtractResponse("messages", []byte(`{"content":[{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"loc":"Paris"}}],"stop_reason":"tool_use"}`))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].ID != "toolu_1" || tc[0].Name != "get_weather" || !strings.Contains(string(tc[0].Arguments), "Paris") {
+			t.Fatalf("tool calls = %+v", tc)
+		}
+	})
+
+	// Anthropic streaming: tool_use header then input_json_delta fragments.
+	t.Run("anthropic stream input_json_delta", func(t *testing.T) {
+		t.Parallel()
+		sse := "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_7\",\"name\":\"f\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"loc\\\":\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"Paris\\\"}\"}}\n\n"
+		got := genaiattr.ExtractResponse("messages", []byte(sse))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].ID != "toolu_7" || tc[0].Name != "f" {
+			t.Fatalf("tool calls = %+v", tc)
+		}
+		if string(tc[0].Arguments) != `{"loc":"Paris"}` {
+			t.Errorf("reassembled arguments = %s", tc[0].Arguments)
+		}
+	})
+
+	// Gemini: functionCall part.
+	t.Run("gemini function call", func(t *testing.T) {
+		t.Parallel()
+		got := genaiattr.ExtractResponse("generate_content", []byte(`{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"loc":"Paris"}}}]},"finishReason":"STOP"}]}`))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].Name != "get_weather" || !strings.Contains(string(tc[0].Arguments), "Paris") {
+			t.Fatalf("tool calls = %+v", tc)
+		}
+	})
+
+	// Responses non-streaming: function_call output item.
+	t.Run("responses function_call item", func(t *testing.T) {
+		t.Parallel()
+		got := genaiattr.ExtractResponse("responses", []byte(`{"output":[{"type":"function_call","name":"get_weather","arguments":"{\"loc\":\"Paris\"}","call_id":"fc_1"}]}`))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].ID != "fc_1" || tc[0].Name != "get_weather" {
+			t.Fatalf("tool calls = %+v", tc)
+		}
+		if string(tc[0].Arguments) != `{"loc":"Paris"}` {
+			t.Errorf("arguments = %s", tc[0].Arguments)
+		}
+	})
+
+	// Non-JSON arguments are wrapped as a JSON string so the value stays
+	// well-formed.
+	t.Run("openai invalid args wrapped", func(t *testing.T) {
+		t.Parallel()
+		got := genaiattr.ExtractResponse("chat_completions", []byte(`{"choices":[{"message":{"tool_calls":[{"id":"c","function":{"name":"f","arguments":"not json"}}]}}]}`))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || string(tc[0].Arguments) != `"not json"` {
+			t.Fatalf("wrapped args = %s", tc[0].Arguments)
+		}
+	})
+
+	// A tool call with no arguments yields a nil Arguments (not "").
+	t.Run("openai tool call no args", func(t *testing.T) {
+		t.Parallel()
+		got := genaiattr.ExtractResponse("chat_completions", []byte(`{"choices":[{"message":{"tool_calls":[{"id":"c","function":{"name":"f"}}]}}]}`))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].Arguments != nil {
+			t.Fatalf("no-arg tool call args = %v", tc[0].Arguments)
+		}
+	})
+
+	// Responses streaming: output_item.added carries name/call_id, the
+	// arguments arrive on function_call_arguments.delta keyed by item_id.
+	t.Run("responses stream function call", func(t *testing.T) {
+		t.Parallel()
+		sse := "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"name\":\"f\",\"call_id\":\"call_abc\"}}\n\n" +
+			"data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_2\",\"delta\":\"{\\\"a\\\":1}\"}\n\n"
+		got := genaiattr.ExtractResponse("responses", []byte(sse))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].Name != "f" || tc[0].ID != "call_abc" {
+			t.Fatalf("tool calls = %+v", tc)
+		}
+		if string(tc[0].Arguments) != `{"a":1}` {
+			t.Errorf("arguments = %s", tc[0].Arguments)
+		}
+	})
+}
+
 func TestExtractResponse_EdgeCases(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

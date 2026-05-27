@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/log/embedded"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -19,9 +20,11 @@ import (
 type recordingEventLogger struct {
 	embedded.Logger
 	records []otellog.Record
+	lastCtx context.Context
 }
 
-func (l *recordingEventLogger) Emit(_ context.Context, r otellog.Record) {
+func (l *recordingEventLogger) Emit(ctx context.Context, r otellog.Record) {
+	l.lastCtx = ctx
 	l.records = append(l.records, r)
 }
 
@@ -114,12 +117,12 @@ func TestEmitEvents_SuccessContentOffEmitsNothing(t *testing.T) {
 func TestEmitEvents_ContentRedacted(t *testing.T) {
 	rl := &recordingEventLogger{}
 	r := &reporterRun{
-		factory:        &reporterFactory{eventLogger: rl, captureContent: true},
-		provider:       "openai",
-		endpoint:       "chat_completions",
-		configuration:  "p",
-		started:        time.Now(),
-		respOutputText: "your key is sk_live_supersecret1234567890 keep it safe",
+		factory:         &reporterFactory{eventLogger: rl, captureContent: true},
+		provider:        "openai",
+		endpoint:        "chat_completions",
+		configuration:   "p",
+		started:         time.Now(),
+		respOutputParts: []genaiattr.Part{{Type: "text", Content: "your key is sk_live_supersecret1234567890 keep it safe"}},
 	}
 	r.emitEvents(context.Background(), events.Request{
 		Provider:   "openai",
@@ -144,14 +147,14 @@ func TestEmitEvents_ContentRedacted(t *testing.T) {
 func TestEmitEvents_OperationDetailsWhenContentOn(t *testing.T) {
 	rl := &recordingEventLogger{}
 	r := &reporterRun{
-		factory:        &reporterFactory{eventLogger: rl, captureContent: true},
-		provider:       "anthropic",
-		endpoint:       "messages",
-		model:          "claude-sonnet-4-6",
-		configuration:  "p",
-		started:        time.Now(),
-		respModel:      "claude-sonnet-4-6",
-		respOutputText: "the model reply",
+		factory:         &reporterFactory{eventLogger: rl, captureContent: true},
+		provider:        "anthropic",
+		endpoint:        "messages",
+		model:           "claude-sonnet-4-6",
+		configuration:   "p",
+		started:         time.Now(),
+		respModel:       "claude-sonnet-4-6",
+		respOutputParts: []genaiattr.Part{{Type: "text", Content: "the model reply"}},
 	}
 	r.emitEvents(context.Background(), events.Request{
 		Provider:   "anthropic",

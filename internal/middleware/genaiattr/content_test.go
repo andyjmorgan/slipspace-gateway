@@ -7,100 +7,216 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
 )
 
+// textOf joins the text-part content of a parts slice, for terse assertions.
+func textOf(parts []genaiattr.Part) string {
+	var b strings.Builder
+	for _, p := range parts {
+		if p.Type == "text" {
+			b.WriteString(p.Content)
+		}
+	}
+	return b.String()
+}
+
+func userText(c genaiattr.Content) string {
+	if c.InputMessage == nil {
+		return ""
+	}
+	return textOf(c.InputMessage.Parts)
+}
+
 func TestExtractContent_OpenAIChat(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
 		"messages": [
 			{"role": "system", "content": "Be terse."},
+			{"role": "developer", "content": "Use UK spelling."},
 			{"role": "user", "content": "first question"},
 			{"role": "assistant", "content": "an answer"},
 			{"role": "user", "content": "latest question"}
 		],
-		"tools": [{"type": "function", "function": {"name": "get_weather"}}]
+		"tools": [{"type": "function", "function": {"name": "get_weather", "description": "weather", "parameters": {"type": "object"}}}]
 	}`)
 	c := genaiattr.ExtractContent("chat_completions", raw)
-	if c.SystemInstructions != "Be terse." {
-		t.Errorf("system = %q", c.SystemInstructions)
+	// Both system AND developer messages contribute, in order (not first-only).
+	if got := textOf(c.SystemInstructions); got != "Be terse.Use UK spelling." {
+		t.Errorf("system parts = %q, want both system+developer", got)
+	}
+	if len(c.SystemInstructions) != 2 {
+		t.Errorf("system parts count = %d, want 2", len(c.SystemInstructions))
 	}
 	// Only the latest user turn is kept (bounded).
-	if c.LatestUserText != "latest question" {
-		t.Errorf("latest user = %q, want 'latest question'", c.LatestUserText)
+	if userText(c) != "latest question" {
+		t.Errorf("latest user = %q, want 'latest question'", userText(c))
 	}
-	if !strings.Contains(string(c.ToolDefinitions), "get_weather") {
-		t.Errorf("tools = %s", c.ToolDefinitions)
+	if len(c.ToolDefinitions) != 1 || c.ToolDefinitions[0].Name != "get_weather" || c.ToolDefinitions[0].Type != "function" {
+		t.Fatalf("tool defs = %+v", c.ToolDefinitions)
+	}
+	if !strings.Contains(string(c.ToolDefinitions[0].Parameters), "object") {
+		t.Errorf("tool params = %s", c.ToolDefinitions[0].Parameters)
 	}
 }
 
-func TestExtractContent_OpenAIChat_ArrayContent(t *testing.T) {
+func TestExtractContent_OpenAIChat_MultiPartUserTurn(t *testing.T) {
 	t.Parallel()
-	// content as an array of parts (vision-style) flattens to its text.
-	raw := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hello "},{"type":"text","text":"world"}]}]}`)
+	// Array content (vision-style): text parts preserved as separate parts,
+	// image block passes through by type with no inline bytes.
+	raw := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hello "},{"type":"image_url","image_url":{"url":"data:..."}},{"type":"text","text":"world"}]}]}`)
 	c := genaiattr.ExtractContent("chat_completions", raw)
-	if c.LatestUserText != "hello world" {
-		t.Errorf("latest user = %q, want 'hello world'", c.LatestUserText)
+	if c.InputMessage == nil || len(c.InputMessage.Parts) != 3 {
+		t.Fatalf("input parts = %+v", c.InputMessage)
+	}
+	if userText(c) != "hello world" {
+		t.Errorf("text = %q", userText(c))
+	}
+	if c.InputMessage.Parts[1].Type != "image_url" || c.InputMessage.Parts[1].Content != "" {
+		t.Errorf("image part should pass through by type with no bytes: %+v", c.InputMessage.Parts[1])
 	}
 	if c.ToolDefinitions != nil {
-		t.Errorf("tools should be nil when absent, got %s", c.ToolDefinitions)
+		t.Errorf("tools should be nil when absent, got %+v", c.ToolDefinitions)
 	}
 }
 
 func TestExtractContent_Anthropic(t *testing.T) {
 	t.Parallel()
-	raw := []byte(`{"system":"You are Claude.","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"bye"}],"tools":[{"name":"t"}]}`)
+	raw := []byte(`{"system":"You are Claude.","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"bye"}],"tools":[{"name":"t","description":"d","input_schema":{"type":"object"}}]}`)
 	c := genaiattr.ExtractContent("messages", raw)
-	if c.SystemInstructions != "You are Claude." {
-		t.Errorf("system = %q", c.SystemInstructions)
+	if textOf(c.SystemInstructions) != "You are Claude." {
+		t.Errorf("system = %q", textOf(c.SystemInstructions))
 	}
-	if c.LatestUserText != "bye" {
-		t.Errorf("latest user = %q, want 'bye'", c.LatestUserText)
+	if userText(c) != "bye" {
+		t.Errorf("latest user = %q, want 'bye'", userText(c))
 	}
-	if !strings.Contains(string(c.ToolDefinitions), "\"t\"") {
-		t.Errorf("tools = %s", c.ToolDefinitions)
+	// input_schema normalises to parameters under a function-typed tool.
+	if len(c.ToolDefinitions) != 1 || c.ToolDefinitions[0].Type != "function" || c.ToolDefinitions[0].Name != "t" {
+		t.Fatalf("tool defs = %+v", c.ToolDefinitions)
+	}
+	if !strings.Contains(string(c.ToolDefinitions[0].Parameters), "object") {
+		t.Errorf("anthropic input_schema not mapped to parameters: %s", c.ToolDefinitions[0].Parameters)
 	}
 }
 
 func TestExtractContent_Anthropic_SystemBlocks(t *testing.T) {
 	t.Parallel()
-	// Anthropic system may be an array of text blocks.
-	raw := []byte(`{"system":[{"type":"text","text":"part one "},{"type":"text","text":"part two"}],"messages":[{"role":"user","content":"q"}]}`)
+	// Anthropic system may be an array of text blocks; each becomes a part.
+	raw := []byte(`{"system":[{"type":"text","text":"part one"},{"type":"text","text":"part two"}],"messages":[{"role":"user","content":"q"}]}`)
 	c := genaiattr.ExtractContent("messages", raw)
-	if c.SystemInstructions != "part one part two" {
-		t.Errorf("system = %q", c.SystemInstructions)
+	if len(c.SystemInstructions) != 2 {
+		t.Fatalf("system parts = %d, want 2 (one per block)", len(c.SystemInstructions))
+	}
+	if c.SystemInstructions[0].Content != "part one" || c.SystemInstructions[1].Content != "part two" {
+		t.Errorf("system blocks not preserved separately: %+v", c.SystemInstructions)
+	}
+}
+
+func TestExtractContent_Anthropic_ToolUseAndResult(t *testing.T) {
+	t.Parallel()
+	// A user turn carrying a tool_result block maps to tool_call_response.
+	raw := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"42 degrees"},{"type":"text","text":"thanks"}]}]}`)
+	c := genaiattr.ExtractContent("messages", raw)
+	if c.InputMessage == nil || len(c.InputMessage.Parts) != 2 {
+		t.Fatalf("parts = %+v", c.InputMessage)
+	}
+	p := c.InputMessage.Parts[0]
+	if p.Type != "tool_call_response" || p.ID != "toolu_1" || p.Result != "42 degrees" {
+		t.Errorf("tool_result part = %+v", p)
 	}
 }
 
 func TestExtractContent_Gemini(t *testing.T) {
 	t.Parallel()
-	raw := []byte(`{"systemInstruction":{"parts":[{"text":"sys"}]},"contents":[{"role":"user","parts":[{"text":"q1"}]},{"role":"model","parts":[{"text":"a1"}]},{"role":"user","parts":[{"text":"q2"}]}],"tools":[{"functionDeclarations":[]}]}`)
+	raw := []byte(`{"systemInstruction":{"parts":[{"text":"sys"}]},"contents":[{"role":"user","parts":[{"text":"q1"}]},{"role":"model","parts":[{"text":"a1"}]},{"role":"user","parts":[{"text":"q2"}]}],"tools":[{"functionDeclarations":[{"name":"f1","parameters":{"type":"object"}},{"name":"f2"}]}]}`)
 	c := genaiattr.ExtractContent("generate_content", raw)
-	if c.SystemInstructions != "sys" {
-		t.Errorf("system = %q", c.SystemInstructions)
+	if textOf(c.SystemInstructions) != "sys" {
+		t.Errorf("system = %q", textOf(c.SystemInstructions))
 	}
-	if c.LatestUserText != "q2" {
-		t.Errorf("latest user = %q, want q2", c.LatestUserText)
+	if userText(c) != "q2" {
+		t.Errorf("latest user = %q, want q2", userText(c))
 	}
-	if len(c.ToolDefinitions) == 0 {
-		t.Errorf("tools should be present")
+	// functionDeclarations flatten — two declarations become two tools.
+	if len(c.ToolDefinitions) != 2 || c.ToolDefinitions[0].Name != "f1" || c.ToolDefinitions[1].Name != "f2" {
+		t.Fatalf("tool defs = %+v", c.ToolDefinitions)
+	}
+	if c.ToolDefinitions[0].Type != "function" {
+		t.Errorf("gemini tool type = %q, want function", c.ToolDefinitions[0].Type)
+	}
+}
+
+func TestExtractContent_Gemini_FunctionCallTurn(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"contents":[{"role":"user","parts":[{"functionCall":{"name":"get_weather","args":{"loc":"Paris"}}}]}]}`)
+	c := genaiattr.ExtractContent("generate_content", raw)
+	if c.InputMessage == nil || len(c.InputMessage.Parts) != 1 {
+		t.Fatalf("parts = %+v", c.InputMessage)
+	}
+	p := c.InputMessage.Parts[0]
+	if p.Type != "tool_call" || p.Name != "get_weather" || !strings.Contains(string(p.Arguments), "Paris") {
+		t.Errorf("functionCall part = %+v", p)
 	}
 }
 
 func TestExtractContent_OpenAIResponses(t *testing.T) {
 	t.Parallel()
 	// Responses API: instructions = system, input = prompt (string form).
-	c := genaiattr.ExtractContent("responses", []byte(`{"instructions":"be brief","input":"hello there","tools":[{"type":"function"}]}`))
-	if c.SystemInstructions != "be brief" {
-		t.Errorf("system = %q", c.SystemInstructions)
+	c := genaiattr.ExtractContent("responses", []byte(`{"instructions":"be brief","input":"hello there","tools":[{"type":"function","function":{"name":"f"}}]}`))
+	if textOf(c.SystemInstructions) != "be brief" {
+		t.Errorf("system = %q", textOf(c.SystemInstructions))
 	}
-	if c.LatestUserText != "hello there" {
-		t.Errorf("latest user (string input) = %q", c.LatestUserText)
+	if userText(c) != "hello there" {
+		t.Errorf("latest user (string input) = %q", userText(c))
 	}
-	if len(c.ToolDefinitions) == 0 {
-		t.Errorf("tools should be present")
+	if len(c.ToolDefinitions) != 1 || c.ToolDefinitions[0].Name != "f" {
+		t.Errorf("tools = %+v", c.ToolDefinitions)
 	}
-	// input as an array of items: latest user item's text wins.
-	c2 := genaiattr.ExtractContent("responses", []byte(`{"input":[{"role":"user","content":[{"type":"input_text","text":"q1"}]},{"role":"user","content":[{"type":"input_text","text":"q2"}]}]}`))
-	if c2.LatestUserText != "q2" {
-		t.Errorf("latest user (array input) = %q, want q2", c2.LatestUserText)
+}
+
+func TestExtractContent_OpenAIResponses_SystemInInput(t *testing.T) {
+	t.Parallel()
+	// System/developer items embedded in input[] also feed system_instructions
+	// (alongside top-level instructions), and the latest user item wins.
+	raw := []byte(`{"instructions":"top","input":[{"role":"developer","content":[{"type":"input_text","text":"dev rule"}]},{"role":"user","content":[{"type":"input_text","text":"q1"}]},{"role":"user","content":[{"type":"input_text","text":"q2"}]}]}`)
+	c := genaiattr.ExtractContent("responses", raw)
+	if got := textOf(c.SystemInstructions); got != "topdev rule" {
+		t.Errorf("system = %q, want instructions + input developer item", got)
+	}
+	if userText(c) != "q2" {
+		t.Errorf("latest user (array input) = %q, want q2", userText(c))
+	}
+}
+
+func TestExtractContent_PartEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	// An untyped block carrying text is treated as a text part.
+	if c := genaiattr.ExtractContent("chat_completions", []byte(`{"messages":[{"role":"user","content":[{"text":"bare"}]}]}`)); userText(c) != "bare" {
+		t.Errorf("untyped text part = %q, want 'bare'", userText(c))
+	}
+
+	// Content that is neither a string nor an array yields no parts.
+	c := genaiattr.ExtractContent("chat_completions", []byte(`{"messages":[{"role":"user","content":5}]}`))
+	if c.InputMessage == nil || len(c.InputMessage.Parts) != 0 {
+		t.Errorf("non-string/array content should yield no parts: %+v", c.InputMessage)
+	}
+
+	// An OpenAI tool without an explicit type defaults to "function".
+	if c := genaiattr.ExtractContent("chat_completions", []byte(`{"tools":[{"function":{"name":"f"}}],"messages":[]}`)); len(c.ToolDefinitions) != 1 || c.ToolDefinitions[0].Type != "function" {
+		t.Errorf("default tool type = %+v", c.ToolDefinitions)
+	}
+
+	// A Gemini functionResponse part maps to tool_call_response.
+	c4 := genaiattr.ExtractContent("generate_content", []byte(`{"contents":[{"role":"user","parts":[{"functionResponse":{"name":"f","response":{"ok":true}}}]}]}`))
+	if c4.InputMessage == nil || len(c4.InputMessage.Parts) != 1 || c4.InputMessage.Parts[0].Type != "tool_call_response" {
+		t.Fatalf("functionResponse part = %+v", c4.InputMessage)
+	}
+	if c4.InputMessage.Parts[0].Name != "f" {
+		t.Errorf("functionResponse name = %q", c4.InputMessage.Parts[0].Name)
+	}
+
+	// An Anthropic tool_result with array content flattens text + content
+	// fields to the result string.
+	c5 := genaiattr.ExtractContent("messages", []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"r1"},{"content":"r2"}]}]}]}`))
+	if c5.InputMessage == nil || c5.InputMessage.Parts[0].Result != "r1r2" {
+		t.Errorf("tool_result array content = %+v", c5.InputMessage)
 	}
 }
 
@@ -122,7 +238,7 @@ func TestExtractContent_EdgeCases(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := genaiattr.ExtractContent(tc.endpoint, []byte(tc.raw))
-			if c.SystemInstructions != "" || c.LatestUserText != "" || c.ToolDefinitions != nil {
+			if len(c.SystemInstructions) != 0 || c.InputMessage != nil || c.ToolDefinitions != nil {
 				t.Errorf("expected zero Content, got %+v", c)
 			}
 		})

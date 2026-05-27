@@ -273,11 +273,13 @@ type reporterRun struct {
 	respServiceTier       string
 	respSystemFingerprint string
 
-	// respOutputText is the model's reassembled response text, extracted
-	// once from the collated response frames (genaiattr) — works for both
-	// streaming and non-streaming. Used as the bounded output content on
-	// both the span and the operation-details event.
-	respOutputText string
+	// respOutputParts is the model's response as structured message parts
+	// (reassembled text plus tool_call parts), extracted once from the
+	// collated response frames (genaiattr) — works for both streaming and
+	// non-streaming. Used as the bounded output content on both the span and
+	// the operation-details event; a tool-only response keeps its tool_call
+	// parts rather than vanishing.
+	respOutputParts []genaiattr.Part
 
 	// reqContent is the bounded request content (system instructions,
 	// latest user turn, tool definitions) parsed once from the request body
@@ -413,8 +415,8 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 	entryID := r.appendLiveFeed(ev, matches)
 	r.captureBody(ctx, entryID, ev)
 	r.enqueueRecord(ctx, ev, matches)
-	r.emitTrace(ctx, ev)
-	r.emitEvents(ctx, ev)
+	traceCtx := r.emitTrace(ctx, ev)
+	r.emitEvents(traceCtx, ev)
 
 	logger := observability.FromContext(ctx)
 	logger.InfoContext(ctx, "request completed",
@@ -841,9 +843,14 @@ func (r *reporterRun) serverAttrs() []attribute.KeyValue {
 // gen_ai child span per attempt, reconstructed from each attempt's
 // StartedAt + DurationMs. No-ops when no tracer is configured or the
 // request start time was never recorded.
-func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) {
+// emitTrace records the request span (and any resilience attempt children)
+// and returns the span-carrying context so the caller can emit the GenAI log
+// events within it — the log records then pick up the span's trace_id/span_id
+// for native trace↔logs correlation. Returns the original ctx unchanged when
+// no span is recorded.
+func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.Context {
 	if r.factory.tracer == nil || r.started.IsZero() {
-		return
+		return ctx
 	}
 	op := observability.OperationNameForEndpoint(ev.Endpoint)
 	model := sanitiseModelLabel(ev.Model)
@@ -919,6 +926,9 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) {
 	}
 
 	span.End(trace.WithTimestamp(r.started.Add(time.Duration(ev.DurationMs) * time.Millisecond)))
+	// The SpanContext remains valid in parentCtx after End; emitting the log
+	// events with it attaches trace_id/span_id to the records.
+	return parentCtx
 }
 
 // emitAttemptSpan synthesises one child span for a resilience attempt,
@@ -1010,20 +1020,12 @@ func (r *reporterRun) emitEvents(ctx context.Context, ev events.Request) {
 // record. Full content lives in the connector spool.
 const contentFieldCap = 32 * 1024
 
-// toolDefsCap bounds the tool-definitions payload. Tool schemas are larger
-// than a single message turn, so the cap is higher; over it, the value is
-// replaced wholesale (never truncated, which would yield invalid JSON).
+// toolDefsCap bounds the combined size of the tool-definition parameter
+// schemas. Tool schemas are larger than a single message turn, so the cap is
+// higher; over it the parameter schemas are dropped (the spec says non-
+// required properties like parameters need not be populated by default),
+// leaving the lighter name/description so the tool set is still legible.
 const toolDefsCap = 64 * 1024
-
-// boundedToolDefs returns the redacted tool-definitions JSON as a span
-// string, or a size marker when it exceeds the cap. It never truncates
-// mid-document — a partial JSON string is worse than an omission marker.
-func boundedToolDefs(raw json.RawMessage) string {
-	if len(raw) > toolDefsCap {
-		return "[tool definitions omitted: " + strconv.Itoa(len(raw)) + " bytes]"
-	}
-	return contentredact.Redact(string(raw))
-}
 
 // emitOperationDetails emits the gen_ai.client.inference.operation.details
 // event carrying the bounded prompt/response content: the latest user turn,
@@ -1135,19 +1137,19 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	}
 
 	content := r.boundedContent(ctx)
-	if content.SystemInstructions != "" {
-		attrs = append(attrs, otellog.String(observability.AttrGenAISystemInstructions, capText(contentredact.Redact(content.SystemInstructions))))
+	if parts := sanitiseParts(content.SystemInstructions); len(parts) > 0 {
+		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAISystemInstructions, Value: logPartsValue(parts)})
 	}
-	if content.LatestUserText != "" {
-		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIInputMessages, Value: logTurnValue("user", content.LatestUserText)})
-	}
-	if r.respOutputText != "" {
-		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIOutputMessages, Value: logTurnValue("assistant", r.respOutputText)})
-	}
-	if td := content.ToolDefinitions; len(td) > 0 && len(td) <= toolDefsCap {
-		if v, ok := jsonToLogValue(td); ok {
-			attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIToolDefinitions, Value: v})
+	if content.InputMessage != nil {
+		if parts := sanitiseParts(content.InputMessage.Parts); len(parts) > 0 {
+			attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIInputMessages, Value: logMessagesValue(content.InputMessage.Role, parts)})
 		}
+	}
+	if parts := sanitiseParts(r.respOutputParts); len(parts) > 0 {
+		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIOutputMessages, Value: logMessagesValue("assistant", parts)})
+	}
+	if v, ok := logToolDefsValue(content.ToolDefinitions); ok {
+		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIToolDefinitions, Value: v})
 	}
 
 	var rec otellog.Record
@@ -1158,24 +1160,132 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	r.factory.eventLogger.Emit(ctx, rec)
 }
 
-// logTurnValue builds the structured log value for one bounded message
-// turn in the GenAI message shape: [{role, parts:[{type:"text", content}]}].
-// The event convention requires messages be recorded in structured form
-// (not a JSON string), so this returns a slice-of-map otellog.Value.
-func logTurnValue(role, text string) otellog.Value {
-	return otellog.SliceValue(
-		otellog.MapValue(
-			otellog.String("role", role),
-			otellog.Slice("parts",
-				otellog.MapValue(
-					otellog.String("type", "text"),
-					// Redact before capping so a secret isn't split across the
-					// truncation boundary and missed.
-					otellog.String("content", capText(contentredact.Redact(text))),
-				),
-			),
-		),
-	)
+// emitPart is a part whose text fields are already redacted and capped, ready
+// to render to either an otellog structured value (events) or a JSON map
+// (spans). Sanitising once keeps the two renderings byte-identical and avoids
+// re-redacting per signal.
+type emitPart struct {
+	typ       string
+	content   string
+	id        string
+	name      string
+	arguments json.RawMessage
+	result    string
+}
+
+// sanitiseParts redacts and caps each part's free text once. Tool-call
+// arguments are redacted as raw JSON (dropped if over the field cap or if
+// redaction breaks well-formedness); text/result fields are redacted then
+// capped (redact before cap so a secret can't hide across the boundary).
+func sanitiseParts(parts []genaiattr.Part) []emitPart {
+	out := make([]emitPart, 0, len(parts))
+	for _, p := range parts {
+		e := emitPart{typ: p.Type, id: p.ID, name: p.Name}
+		switch p.Type {
+		case observability.PartTypeToolCall:
+			if len(p.Arguments) > 0 && len(p.Arguments) <= contentFieldCap {
+				red := contentredact.Redact(string(p.Arguments))
+				if json.Valid([]byte(red)) {
+					e.arguments = json.RawMessage(red)
+				} else if b, err := json.Marshal(red); err == nil {
+					e.arguments = json.RawMessage(b)
+				}
+			}
+		case observability.PartTypeToolCallResponse:
+			e.result = capText(contentredact.Redact(p.Result))
+		default:
+			e.content = capText(contentredact.Redact(p.Content))
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// logPartValue renders one sanitised part to a structured otellog map,
+// emitting only the fields relevant to its type.
+func (e emitPart) logPartValue() otellog.Value {
+	kvs := []otellog.KeyValue{otellog.String("type", e.typ)}
+	switch e.typ {
+	case observability.PartTypeToolCall:
+		if e.id != "" {
+			kvs = append(kvs, otellog.String("id", e.id))
+		}
+		if e.name != "" {
+			kvs = append(kvs, otellog.String("name", e.name))
+		}
+		if len(e.arguments) > 0 {
+			if v, ok := jsonToLogValue(e.arguments); ok {
+				kvs = append(kvs, otellog.KeyValue{Key: "arguments", Value: v})
+			}
+		}
+	case observability.PartTypeToolCallResponse:
+		if e.id != "" {
+			kvs = append(kvs, otellog.String("id", e.id))
+		}
+		kvs = append(kvs, otellog.String("result", e.result))
+	default:
+		if e.content != "" {
+			kvs = append(kvs, otellog.String("content", e.content))
+		}
+	}
+	return otellog.MapValue(kvs...)
+}
+
+// logPartsValue renders a parts list to an otellog slice value — the
+// structured form gen_ai.system_instructions takes (a bare parts array).
+func logPartsValue(parts []emitPart) otellog.Value {
+	vals := make([]otellog.Value, len(parts))
+	for i, p := range parts {
+		vals[i] = p.logPartValue()
+	}
+	return otellog.SliceValue(vals...)
+}
+
+// logMessagesValue renders a single role-tagged turn to the messages-array
+// form gen_ai.input.messages / gen_ai.output.messages take: [{role, parts}].
+func logMessagesValue(role string, parts []emitPart) otellog.Value {
+	return otellog.SliceValue(otellog.MapValue(
+		otellog.String("role", role),
+		otellog.KeyValue{Key: "parts", Value: logPartsValue(parts)},
+	))
+}
+
+// logToolDefsValue renders gen_ai.tool.definitions to a structured otellog
+// slice of {type,name,description,parameters}. Parameter schemas are dropped
+// wholesale when their combined size exceeds toolDefsCap (kept legible via
+// name/description). Returns ok=false when there are no tools.
+func logToolDefsValue(defs []genaiattr.ToolDefinition) (otellog.Value, bool) {
+	if len(defs) == 0 {
+		return otellog.Value{}, false
+	}
+	withParams := toolDefParamsFit(defs)
+	vals := make([]otellog.Value, 0, len(defs))
+	for _, d := range defs {
+		kvs := []otellog.KeyValue{otellog.String("type", d.Type)}
+		if d.Name != "" {
+			kvs = append(kvs, otellog.String("name", d.Name))
+		}
+		if d.Description != "" {
+			kvs = append(kvs, otellog.String("description", capText(d.Description)))
+		}
+		if withParams && len(d.Parameters) > 0 {
+			if v, ok := jsonToLogValue(d.Parameters); ok {
+				kvs = append(kvs, otellog.KeyValue{Key: "parameters", Value: v})
+			}
+		}
+		vals = append(vals, otellog.MapValue(kvs...))
+	}
+	return otellog.SliceValue(vals...), true
+}
+
+// toolDefParamsFit reports whether the combined parameter-schema bytes are
+// within toolDefsCap, i.e. small enough to include the parameters.
+func toolDefParamsFit(defs []genaiattr.ToolDefinition) bool {
+	total := 0
+	for _, d := range defs {
+		total += len(d.Parameters)
+	}
+	return total <= toolDefsCap
 }
 
 // jsonToLogValue decodes a JSON document into a structured otellog.Value so
@@ -1242,30 +1352,105 @@ func (r *reporterRun) boundedContent(ctx context.Context) genaiattr.Content {
 // JSON strings (spec-permitted on spans, unlike events). Redacted + capped.
 func (r *reporterRun) appendSpanContent(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
 	content := r.boundedContent(ctx)
-	if content.SystemInstructions != "" {
-		attrs = append(attrs, attribute.String(observability.AttrGenAISystemInstructions, capText(contentredact.Redact(content.SystemInstructions))))
+	if parts := sanitiseParts(content.SystemInstructions); len(parts) > 0 {
+		if s := jsonPartsString(parts); s != "" {
+			attrs = append(attrs, attribute.String(observability.AttrGenAISystemInstructions, s))
+		}
 	}
-	if content.LatestUserText != "" {
-		attrs = append(attrs, attribute.String(observability.AttrGenAIInputMessages, jsonTurnString("user", content.LatestUserText)))
+	if content.InputMessage != nil {
+		if parts := sanitiseParts(content.InputMessage.Parts); len(parts) > 0 {
+			if s := jsonMessagesString(content.InputMessage.Role, parts); s != "" {
+				attrs = append(attrs, attribute.String(observability.AttrGenAIInputMessages, s))
+			}
+		}
 	}
-	if r.respOutputText != "" {
-		attrs = append(attrs, attribute.String(observability.AttrGenAIOutputMessages, jsonTurnString("assistant", r.respOutputText)))
+	if parts := sanitiseParts(r.respOutputParts); len(parts) > 0 {
+		if s := jsonMessagesString("assistant", parts); s != "" {
+			attrs = append(attrs, attribute.String(observability.AttrGenAIOutputMessages, s))
+		}
 	}
-	if len(content.ToolDefinitions) > 0 {
-		attrs = append(attrs, attribute.String(observability.AttrGenAIToolDefinitions, boundedToolDefs(content.ToolDefinitions)))
+	if s := jsonToolDefsString(content.ToolDefinitions); s != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIToolDefinitions, s))
 	}
 	return attrs
 }
 
-// jsonTurnString renders one bounded message turn as a JSON string for a
-// span attribute (spans cannot carry structured map/slice values; the spec
-// permits a JSON string there). Redacted then capped.
-func jsonTurnString(role, text string) string {
-	msg := []map[string]any{{
-		"role":  role,
-		"parts": []map[string]any{{"type": "text", "content": capText(contentredact.Redact(text))}},
-	}}
-	b, err := json.Marshal(msg)
+// jsonMap renders one sanitised part to a JSON map for a span attribute
+// (spans cannot carry structured map/slice values; the spec permits a JSON
+// string there). Tool-call arguments ride as raw JSON, already redacted.
+func (e emitPart) jsonMap() map[string]any {
+	m := map[string]any{"type": e.typ}
+	switch e.typ {
+	case observability.PartTypeToolCall:
+		if e.id != "" {
+			m["id"] = e.id
+		}
+		if e.name != "" {
+			m["name"] = e.name
+		}
+		if len(e.arguments) > 0 {
+			m["arguments"] = e.arguments
+		}
+	case observability.PartTypeToolCallResponse:
+		if e.id != "" {
+			m["id"] = e.id
+		}
+		m["result"] = e.result
+	default:
+		if e.content != "" {
+			m["content"] = e.content
+		}
+	}
+	return m
+}
+
+func partMaps(parts []emitPart) []map[string]any {
+	ms := make([]map[string]any, len(parts))
+	for i, p := range parts {
+		ms[i] = p.jsonMap()
+	}
+	return ms
+}
+
+// jsonPartsString renders a parts list as a JSON-array string — the span
+// form of gen_ai.system_instructions (a bare parts array).
+func jsonPartsString(parts []emitPart) string {
+	return marshalSpanJSON(partMaps(parts))
+}
+
+// jsonMessagesString renders a single role-tagged turn as a JSON string for a
+// span message attribute: [{role, parts}].
+func jsonMessagesString(role string, parts []emitPart) string {
+	return marshalSpanJSON([]map[string]any{{"role": role, "parts": partMaps(parts)}})
+}
+
+// jsonToolDefsString renders gen_ai.tool.definitions as a JSON-array string
+// for the span, dropping parameter schemas wholesale when their combined size
+// exceeds toolDefsCap. Returns "" when there are no tools.
+func jsonToolDefsString(defs []genaiattr.ToolDefinition) string {
+	if len(defs) == 0 {
+		return ""
+	}
+	withParams := toolDefParamsFit(defs)
+	ms := make([]map[string]any, 0, len(defs))
+	for _, d := range defs {
+		m := map[string]any{"type": d.Type}
+		if d.Name != "" {
+			m["name"] = d.Name
+		}
+		if d.Description != "" {
+			m["description"] = capText(d.Description)
+		}
+		if withParams && len(d.Parameters) > 0 {
+			m["parameters"] = d.Parameters
+		}
+		ms = append(ms, m)
+	}
+	return marshalSpanJSON(ms)
+}
+
+func marshalSpanJSON(v any) string {
+	b, err := json.Marshal(v)
 	if err != nil {
 		return ""
 	}
@@ -1364,7 +1549,7 @@ func (r *reporterRun) captureResponseAttrs(ctx context.Context) {
 	r.respReasoning = resp.ReasoningTokens
 	r.respServiceTier = resp.ServiceTier
 	r.respSystemFingerprint = resp.SystemFingerprint
-	r.respOutputText = resp.OutputText
+	r.respOutputParts = resp.OutputParts
 }
 
 // appendResponseAttrs appends the Recommended response descriptors captured
