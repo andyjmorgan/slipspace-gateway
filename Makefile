@@ -36,7 +36,8 @@ web: web-install
 	rm -rf internal/admin/webdist/index.html \
 		internal/admin/webdist/assets \
 		internal/admin/webdist/favicon.ico \
-		internal/admin/webdist/sluice.png
+		internal/admin/webdist/sluice.png \
+		internal/admin/webdist/sluice.svg
 	cd web && $(NPM) run build
 
 web-install:
