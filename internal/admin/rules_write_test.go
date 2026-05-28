@@ -298,7 +298,7 @@ func TestRulesCreate_ValidationFailure_Returns422(t *testing.T) {
 		"name": "validation-broken",
 		"condition": {"type": "provider", "operator": "Equals", "expectedProvider": "openai"},
 		"actions": [
-			{"type": "useResiliencePolicy", "policyName": "no-such-policy"}
+			{"type": "useResiliencePolicy", "policy_name": "no-such-policy"}
 		],
 		"behavior": "continue"
 	}`)

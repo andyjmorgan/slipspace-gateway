@@ -201,7 +201,7 @@ func TestUnmarshalAction_MissingDiscriminator(t *testing.T) {
 }
 
 func TestUnmarshalAction_UseResiliencePolicy(t *testing.T) {
-	raw := `{"type":"useResiliencePolicy","policyName":"ha"}`
+	raw := `{"type":"useResiliencePolicy","policy_name":"ha"}`
 	act, err := rules.UnmarshalAction([]byte(raw))
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -219,7 +219,7 @@ func TestUnmarshalAction_UseResiliencePolicy(t *testing.T) {
 }
 
 func TestUseResiliencePolicyAction_MarshalRoundTrip(t *testing.T) {
-	original := `{"type":"useResiliencePolicy","policyName":"failover-east-west","custom":42}`
+	original := `{"type":"useResiliencePolicy","policy_name":"failover-east-west","custom":42}`
 	act, err := rules.UnmarshalAction([]byte(original))
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -232,7 +232,7 @@ func TestUseResiliencePolicyAction_MarshalRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(out, &back); err != nil {
 		t.Fatalf("re-unmarshal: %v", err)
 	}
-	if back["type"] != "useResiliencePolicy" || back["policyName"] != "failover-east-west" {
+	if back["type"] != "useResiliencePolicy" || back["policy_name"] != "failover-east-west" {
 		t.Errorf("known fields lost: %+v", back)
 	}
 	if back["custom"] != float64(42) {

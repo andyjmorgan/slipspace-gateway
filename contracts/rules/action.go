@@ -326,7 +326,7 @@ type UseResiliencePolicyAction struct {
 	// `resilience_policies:` library. Validated cross-reference at
 	// config-load time — unknown names are a startup error, not a
 	// silent runtime fall-through.
-	PolicyName string `yaml:"policyName" json:"policyName"`
+	PolicyName string `yaml:"policyName" json:"policy_name"`
 
 	models.DynamicProperties `yaml:",inline"`
 }
