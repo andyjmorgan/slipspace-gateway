@@ -62,12 +62,14 @@ type MuxOptions struct {
 	// the actual start before observability/bus/router are wired.
 	GatewayStartedAt time.Time
 
-	// Resolved is the in-memory configuration the gateway is currently
+	// Store owns the live ResolvedConfig the gateway is currently
 	// serving. The read-only config endpoints under /api/v1/config/*
-	// marshal redacted projections of these fields straight out of
-	// the structure. Nil disables those endpoints — they return 503
-	// rather than panic, so a partial wiring still boots.
-	Resolved *config.ResolvedConfig
+	// marshal redacted projections of store.Snapshot() straight out of
+	// the structure on every request, so a Replace driven by the admin
+	// write path (Phase 2) is visible to subsequent reads atomically.
+	// Nil disables those endpoints — they return 503 rather than panic,
+	// so a partial wiring still boots.
+	Store *config.Store
 
 	// LiveFeed is the in-process ring of completed requests that backs
 	// the /api/v1/messages/* endpoints. Nil disables the endpoints
@@ -154,18 +156,18 @@ func NewMux(opts MuxOptions) http.Handler {
 			TimeseriesHandler(opts.Snapshotter),
 		),
 	)
-	// Read-only config inspection. The handlers project the in-memory
-	// ResolvedConfig onto redacted DTOs — every secret (api-key Secret,
-	// upstream credentials) is replaced by a last-4/length stub before
-	// it leaves the package.
-	configList := ConfigurationsListHandler(opts.Resolved)
-	configDetail := ConfigurationDetailHandler(opts.Resolved)
-	rulesList := RulesListHandler(opts.Resolved)
-	ruleDetail := RuleDetailHandler(opts.Resolved)
-	providersList := ProvidersListHandler(opts.Resolved)
-	providerDetail := ProviderDetailHandler(opts.Resolved)
-	routesAll := RoutesHandler(opts.Resolved)
-	apiKeysReveal := APIKeysRevealHandler(opts.Resolved)
+	// Read-only config inspection. The handlers snapshot the store on
+	// every request and project the snapshot onto redacted DTOs — every
+	// secret (api-key Secret, upstream credentials) is replaced by a
+	// last-4/length stub before it leaves the package.
+	configList := ConfigurationsListHandler(opts.Store)
+	configDetail := ConfigurationDetailHandler(opts.Store)
+	rulesList := RulesListHandler(opts.Store)
+	ruleDetail := RuleDetailHandler(opts.Store)
+	providersList := ProvidersListHandler(opts.Store)
+	providerDetail := ProviderDetailHandler(opts.Store)
+	routesAll := RoutesHandler(opts.Store)
+	apiKeysReveal := APIKeysRevealHandler(opts.Store)
 	apiMux.Handle("/api/v1/config/api-keys/reveal",
 		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/reveal", apiKeysReveal),
 	)
@@ -175,11 +177,28 @@ func NewMux(opts MuxOptions) http.Handler {
 	apiMux.Handle("/api/v1/config/configurations/",
 		InstrumentRoute(opts.Meters, "/api/v1/config/configurations/{name}", configDetail),
 	)
-	apiMux.Handle("/api/v1/config/rules",
+	// Rules surface — read (GET) plus the Phase 2 write API
+	// (POST/PUT/DELETE). Method-routed patterns let GET and POST share
+	// the same path under Go 1.22 ServeMux; the write handlers 503
+	// gracefully when ConfigDir is empty (admin write disabled by
+	// deployment).
+	rulesCreate := RulesCreateHandler(opts.Store, opts.ConfigDir)
+	rulesReplace := RulesReplaceHandler(opts.Store, opts.ConfigDir)
+	rulesDelete := RulesDeleteHandler(opts.Store, opts.ConfigDir)
+	apiMux.Handle("GET /api/v1/config/rules",
 		InstrumentRoute(opts.Meters, "/api/v1/config/rules", rulesList),
 	)
-	apiMux.Handle("/api/v1/config/rules/",
+	apiMux.Handle("POST /api/v1/config/rules",
+		InstrumentRoute(opts.Meters, "/api/v1/config/rules", rulesCreate),
+	)
+	apiMux.Handle("GET /api/v1/config/rules/{name}",
 		InstrumentRoute(opts.Meters, "/api/v1/config/rules/{name}", ruleDetail),
+	)
+	apiMux.Handle("PUT /api/v1/config/rules/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/rules/{name}", rulesReplace),
+	)
+	apiMux.Handle("DELETE /api/v1/config/rules/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/rules/{name}", rulesDelete),
 	)
 	apiMux.Handle("/api/v1/config/providers",
 		InstrumentRoute(opts.Meters, "/api/v1/config/providers", providersList),
@@ -222,7 +241,7 @@ func NewMux(opts MuxOptions) http.Handler {
 	// Read-only resilience policies surface. Powers the SPA's
 	// /policies page and the per-target circuit-state badges.
 	apiMux.Handle("/api/v1/policies",
-		InstrumentRoute(opts.Meters, "/api/v1/policies", PoliciesHandler(opts.Resolved, opts.BreakerStates)),
+		InstrumentRoute(opts.Meters, "/api/v1/policies", PoliciesHandler(opts.Store, opts.BreakerStates)),
 	)
 
 	// adminTree exposes the same routes the listener used to expose at

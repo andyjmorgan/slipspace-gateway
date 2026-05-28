@@ -25,13 +25,18 @@ import (
 // terminal into a single http.Handler. The order is fixed: routing fires first
 // so downstream stages can read the resolved (provider, endpoint) off the
 // context; the forwarder runs last and emits the upstream request.
+//
+// The store is read once per request inside the terminal handler — providers
+// are looked up via store.Snapshot().Providers, so an admin-write that lands
+// mid-request still produces a consistent answer (the request sees either
+// the pre-swap or the post-swap provider tree, never a torn mix).
 func buildDataPlaneHandler(
 	router *routing.Router,
 	resolver *auth.Resolver,
 	forwarder *proxy.Forwarder,
 	evaluator *rules.Evaluator,
 	observerFactory proxy.ObserverFactory,
-	providers contractsconfig.ProvidersConfig,
+	store *config.Store,
 	policyLookup resiliencemw.PolicyLookup,
 	breakers resiliencemw.BreakerStore,
 	meters *observability.Meters,
@@ -56,7 +61,8 @@ func buildDataPlaneHandler(
 			return
 		}
 
-		provider, ok := providers[state.Provider]
+		snap := store.Snapshot()
+		provider, ok := snap.Providers[state.Provider]
 		if !ok {
 			log.ErrorContext(ctx, "forwarder: unknown provider", "provider", state.Provider)
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
@@ -99,7 +105,7 @@ func buildDataPlaneHandler(
 		}
 	})
 
-	kindFrom := makeKindFromContext(providers)
+	kindFrom := makeKindFromContext(store)
 
 	var h http.Handler = final
 	h = rules.BodyRewriteHandler(meters, h)
@@ -112,16 +118,22 @@ func buildDataPlaneHandler(
 	return h
 }
 
-// makePolicyLookup binds resolved.ResilienceIndex into a closure that
-// the resilience middleware can call to fetch a policy by name. Pure
-// indirection; returns nil for unknown names so the middleware
-// degrades to passthrough rather than failing the request.
-func makePolicyLookup(resolved *config.ResolvedConfig) resiliencemw.PolicyLookup {
-	if resolved == nil || resolved.ResilienceIndex == nil {
+// makePolicyLookup binds the store into a closure that the resilience
+// middleware can call to fetch a policy by name. The closure reads
+// ResilienceIndex through store.Snapshot on every call so post-startup
+// config swaps surface immediately. Pure indirection; returns nil for
+// unknown names so the middleware degrades to passthrough rather than
+// failing the request.
+func makePolicyLookup(store *config.Store) resiliencemw.PolicyLookup {
+	if store == nil {
 		return func(string) *contractsres.ResilienceConfig { return nil }
 	}
 	return func(name string) *contractsres.ResilienceConfig {
-		return resolved.ResilienceIndex[name]
+		snap := store.Snapshot()
+		if snap == nil {
+			return nil
+		}
+		return snap.ResilienceIndex[name]
 	}
 }
 
@@ -147,15 +159,24 @@ func routeFromContext(ctx context.Context) (string, string, bool) {
 }
 
 // makeKindFromContext returns a closure that resolves the routed endpoint's
-// RequestKind via the providers map. Endpoints with no explicit kind fall back
-// to passthrough so the body capture middleware still buffers them.
-func makeKindFromContext(providers contractsconfig.ProvidersConfig) bodycapture.KindFromContextFunc {
+// RequestKind via the providers map. The map is read through the store on
+// every call so post-startup config swaps surface immediately. Endpoints
+// with no explicit kind fall back to passthrough so the body capture
+// middleware still buffers them.
+func makeKindFromContext(store *config.Store) bodycapture.KindFromContextFunc {
 	return func(ctx context.Context) (bodycapture.RequestKind, bool) {
 		m, ok := matchFromContext(ctx)
 		if !ok {
 			return "", false
 		}
-		p, ok := providers[m.Provider]
+		if store == nil {
+			return "", false
+		}
+		snap := store.Snapshot()
+		if snap == nil {
+			return "", false
+		}
+		p, ok := snap.Providers[m.Provider]
 		if !ok {
 			return "", false
 		}

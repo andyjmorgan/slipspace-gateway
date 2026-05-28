@@ -62,7 +62,7 @@ func fixtureConfig() *config.ResolvedConfig {
 }
 
 func TestResolver_Managed_OpenAI(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
@@ -93,7 +93,7 @@ func TestResolver_Managed_OpenAI(t *testing.T) {
 }
 
 func TestResolver_Managed_Anthropic(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
@@ -113,7 +113,7 @@ func TestResolver_Managed_Anthropic(t *testing.T) {
 }
 
 func TestResolver_Managed_Gemini(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
@@ -135,7 +135,7 @@ func TestResolver_Managed_Gemini(t *testing.T) {
 // provider-specific left to test at this layer.
 
 func TestResolver_Managed_MissingBearer(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	_, err := r.Resolve(http.Header{}, "openai", "chat_completions")
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("want ErrUnauthorized, got %v", err)
@@ -151,7 +151,7 @@ func TestResolver_Managed_MalformedAuthorization(t *testing.T) {
 		"sk_live_enabled",
 		"Basic dXNlcjpwYXNz",
 	}
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	for _, v := range cases {
 		t.Run(v, func(t *testing.T) {
 			h := http.Header{}
@@ -167,7 +167,7 @@ func TestResolver_Managed_MalformedAuthorization(t *testing.T) {
 }
 
 func TestResolver_Managed_CaseInsensitiveScheme(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "bearer sk_live_enabled")
 	if _, err := r.Resolve(headers, "openai", "chat_completions"); err != nil {
@@ -176,7 +176,7 @@ func TestResolver_Managed_CaseInsensitiveScheme(t *testing.T) {
 }
 
 func TestResolver_Managed_UnknownSecret(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_nope")
 	_, err := r.Resolve(headers, "openai", "chat_completions")
@@ -186,7 +186,7 @@ func TestResolver_Managed_UnknownSecret(t *testing.T) {
 }
 
 func TestResolver_Managed_DisabledKey(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_disabled")
 	ar, err := r.Resolve(headers, "openai", "chat_completions")
@@ -199,7 +199,7 @@ func TestResolver_Managed_DisabledKey(t *testing.T) {
 }
 
 func TestResolver_Managed_UnknownConfigurationOnKey(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_orphan")
 	_, err := r.Resolve(headers, "openai", "chat_completions")
@@ -209,7 +209,7 @@ func TestResolver_Managed_UnknownConfigurationOnKey(t *testing.T) {
 }
 
 func TestResolver_Passthrough_Happy(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderConfiguration, "prod")
 	headers.Set(HeaderAuthorization, "Bearer some-byok-token")
@@ -236,7 +236,7 @@ func TestResolver_Passthrough_Happy(t *testing.T) {
 }
 
 func TestResolver_Passthrough_UnknownConfiguration(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderConfiguration, "ghost")
 
@@ -255,7 +255,7 @@ func TestResolver_Passthrough_UnknownConfiguration(t *testing.T) {
 }
 
 func TestResolver_PassthroughWinsOverBearer(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderConfiguration, "prod")
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
@@ -273,7 +273,7 @@ func TestResolver_PassthroughWinsOverBearer(t *testing.T) {
 }
 
 func TestResolver_PassthroughHeaderWhitespaceTrimmed(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderConfiguration, "  prod  ")
 
@@ -287,7 +287,7 @@ func TestResolver_PassthroughHeaderWhitespaceTrimmed(t *testing.T) {
 }
 
 func TestResolver_PassthroughEmptyHeaderFallsThroughToManaged(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderConfiguration, "   ")
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
@@ -308,10 +308,10 @@ func TestResolver_NilGuards(t *testing.T) {
 		t.Fatalf("nil resolver: want ErrUnknownConfiguration, got %v", err)
 	}
 
-	r2 := &Resolver{cfg: nil}
+	r2 := &Resolver{store: nil}
 	_, err = r2.Resolve(http.Header{}, "openai", "chat_completions")
 	if !errors.Is(err, ErrUnknownConfiguration) {
-		t.Fatalf("nil cfg: want ErrUnknownConfiguration, got %v", err)
+		t.Fatalf("nil store: want ErrUnknownConfiguration, got %v", err)
 	}
 }
 
@@ -345,7 +345,7 @@ func TestUpstreamCredentialHeader_ByProvider(t *testing.T) {
 // callers don't need to inject Authorization manually.
 
 func TestResolver_Managed_DiscoversViaXAPIKey(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
 
@@ -365,7 +365,7 @@ func TestResolver_Managed_DiscoversViaXAPIKey(t *testing.T) {
 }
 
 func TestResolver_Managed_DiscoversViaXGoogAPIKey(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(headerGeminiAPIKey, "sk_live_enabled")
 
@@ -387,7 +387,7 @@ func TestResolver_Managed_DiscoversViaXGoogAPIKey(t *testing.T) {
 // resolve. Bearer is the explicit, historical signal — making it primary
 // minimises behaviour change for existing clients.
 func TestResolver_Managed_AuthorizationWinsOverNativeHeaders(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 	headers.Set(headerAnthropicAPIKey, "sk_live_orphan") // would route to a different (broken) configuration
@@ -410,7 +410,7 @@ func TestResolver_Managed_AuthorizationWinsOverNativeHeaders(t *testing.T) {
 // gemini-native. The order is fixed (not provider-aware) so a single client
 // hitting multiple endpoints behaves predictably.
 func TestResolver_Managed_XAPIKeyWinsOverXGoogAPIKey(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
 	headers.Set(headerGeminiAPIKey, "sk_live_disabled") // would 401 if it won
@@ -429,7 +429,7 @@ func TestResolver_Managed_XAPIKeyWinsOverXGoogAPIKey(t *testing.T) {
 // short-circuit — the resolver tries x-api-key next, matching Airia's
 // "any-header-can-carry-the-key" pattern.
 func TestResolver_Managed_MalformedAuthorizationFallsThroughToNative(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Token bogus")
 	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
@@ -448,7 +448,7 @@ func TestResolver_Managed_MalformedAuthorizationFallsThroughToNative(t *testing.
 // through to x-goog-api-key. Otherwise an attacker could probe by stuffing
 // every header.
 func TestResolver_Managed_NativeHeaderUnknownSecret(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(headerAnthropicAPIKey, "sk-anthropic-customer-byok") // not a Sluice secret
 	headers.Set(headerGeminiAPIKey, "sk_live_enabled")               // ignored, x-api-key short-circuits
@@ -466,7 +466,7 @@ func TestResolver_Managed_NativeHeaderUnknownSecret(t *testing.T) {
 // Claude Code passthrough flow where x-api-key carries an Anthropic key
 // that must not be confused with a Sluice secret.
 func TestResolver_Passthrough_NativeHeaderIgnored(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderConfiguration, "prod")
 	headers.Set(headerAnthropicAPIKey, "sk_live_enabled") // would resolve in managed mode
@@ -493,7 +493,7 @@ func TestResolver_Passthrough_NativeHeaderIgnored(t *testing.T) {
 // configuration, the client's Authorization is forwarded verbatim.
 
 func TestResolver_IdentityPassthrough_Success(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_enabled")
 	headers.Set(HeaderAuthorization, "Bearer client-byok-anthropic-token")
@@ -523,7 +523,7 @@ func TestResolver_IdentityPassthrough_Success(t *testing.T) {
 }
 
 func TestResolver_IdentityPassthrough_UnknownKey(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_does_not_exist")
 
@@ -545,7 +545,7 @@ func TestResolver_IdentityPassthrough_UnknownKey(t *testing.T) {
 }
 
 func TestResolver_IdentityPassthrough_DisabledKey(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_disabled")
 
@@ -559,7 +559,7 @@ func TestResolver_IdentityPassthrough_DisabledKey(t *testing.T) {
 }
 
 func TestResolver_IdentityPassthrough_OrphanConfiguration(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_orphan")
 
@@ -570,7 +570,7 @@ func TestResolver_IdentityPassthrough_OrphanConfiguration(t *testing.T) {
 }
 
 func TestResolver_IdentityPassthrough_HeaderTrimmed(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "  sk_live_enabled  ")
 
@@ -584,7 +584,7 @@ func TestResolver_IdentityPassthrough_HeaderTrimmed(t *testing.T) {
 }
 
 func TestResolver_IdentityPassthrough_EmptyHeaderFallsThroughToManaged(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "   ")
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
@@ -604,7 +604,7 @@ func TestResolver_IdentityPassthrough_EmptyHeaderFallsThroughToManaged(t *testin
 // emit a deprecation warning, and the configuration the identity key
 // belongs to is used (not the legacy header's named configuration).
 func TestResolver_IdentityWinsOverLegacyConfiguration(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_enabled")
 	headers.Set(HeaderConfiguration, "restricted")
@@ -630,7 +630,7 @@ func TestResolver_IdentityWinsOverLegacyConfiguration(t *testing.T) {
 // x-goog-api-key are treated as upstream credentials and forwarded
 // verbatim — never re-interpreted as Sluice secrets.
 func TestResolver_IdentityPassthrough_NativeHeaderIgnored(t *testing.T) {
-	r := NewResolver(fixtureConfig())
+	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_enabled")
 	headers.Set(headerAnthropicAPIKey, "sk_live_disabled") // would 401 if it were re-interpreted

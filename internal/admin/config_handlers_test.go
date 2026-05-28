@@ -156,7 +156,7 @@ func populateIndexes(rc *config.ResolvedConfig) {
 
 func TestConfigurationsListHandler_HappyPath(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.ConfigurationsListHandler(rc)
+	h := admin.ConfigurationsListHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/configurations", nil)
 	h.ServeHTTP(rec, req)
@@ -194,7 +194,7 @@ func TestConfigurationsListHandler_NilResolved503(t *testing.T) {
 
 func TestConfigurationDetailHandler_RedactsCredentialsAndKeys(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.ConfigurationDetailHandler(rc)
+	h := admin.ConfigurationDetailHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/configurations/dev", nil)
 	h.ServeHTTP(rec, req)
@@ -251,7 +251,7 @@ func TestConfigurationDetailHandler_RedactsCredentialsAndKeys(t *testing.T) {
 
 func TestConfigurationDetailHandler_NotFound(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.ConfigurationDetailHandler(rc)
+	h := admin.ConfigurationDetailHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/configurations/does-not-exist", nil)
 	h.ServeHTTP(rec, req)
@@ -262,7 +262,7 @@ func TestConfigurationDetailHandler_NotFound(t *testing.T) {
 
 func TestRulesListHandler_AlphabeticalAndIncludesUsedBy(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.RulesListHandler(rc)
+	h := admin.RulesListHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/rules", nil)
 	h.ServeHTTP(rec, req)
@@ -286,7 +286,7 @@ func TestRulesListHandler_AlphabeticalAndIncludesUsedBy(t *testing.T) {
 
 func TestRuleDetailHandler_HappyPath(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.RuleDetailHandler(rc)
+	h := admin.RuleDetailHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/rules/only-openai", nil)
 	h.ServeHTTP(rec, req)
@@ -323,7 +323,7 @@ func TestRuleDetailHandler_HappyPath(t *testing.T) {
 
 func TestRuleDetailHandler_NotFound(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.RuleDetailHandler(rc)
+	h := admin.RuleDetailHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/rules/missing", nil)
 	h.ServeHTTP(rec, req)
@@ -334,7 +334,7 @@ func TestRuleDetailHandler_NotFound(t *testing.T) {
 
 func TestProvidersListHandler_HappyPath(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.ProvidersListHandler(rc)
+	h := admin.ProvidersListHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/providers", nil)
 	h.ServeHTTP(rec, req)
@@ -358,7 +358,7 @@ func TestProvidersListHandler_HappyPath(t *testing.T) {
 
 func TestProviderDetailHandler_IncludesPerEndpointOverrides(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.ProviderDetailHandler(rc)
+	h := admin.ProviderDetailHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/providers/anthropic", nil)
 	h.ServeHTTP(rec, req)
@@ -387,7 +387,7 @@ func TestProviderDetailHandler_IncludesPerEndpointOverrides(t *testing.T) {
 // Basic auth as the rest of the admin tree.
 func TestAPIKeysRevealHandler_ReturnsPlaintextForExactMatch(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.APIKeysRevealHandler(rc)
+	h := admin.APIKeysRevealHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/api-keys/reveal?configuration=dev&name=dev-1", nil)
 	h.ServeHTTP(rec, req)
@@ -409,7 +409,7 @@ func TestAPIKeysRevealHandler_ReturnsPlaintextForExactMatch(t *testing.T) {
 
 func TestAPIKeysRevealHandler_MissingParamsAndMisses(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.APIKeysRevealHandler(rc)
+	h := admin.APIKeysRevealHandler(config.NewStore(rc))
 	cases := []struct {
 		name     string
 		path     string
@@ -474,9 +474,9 @@ func TestDetailHandlers_NotFoundOnBlankAndMissing(t *testing.T) {
 		handler http.Handler
 		prefix  string
 	}{
-		{"configurations", admin.ConfigurationDetailHandler(rc), "/api/v1/config/configurations/"},
-		{"rules", admin.RuleDetailHandler(rc), "/api/v1/config/rules/"},
-		{"providers", admin.ProviderDetailHandler(rc), "/api/v1/config/providers/"},
+		{"configurations", admin.ConfigurationDetailHandler(config.NewStore(rc)), "/api/v1/config/configurations/"},
+		{"rules", admin.RuleDetailHandler(config.NewStore(rc)), "/api/v1/config/rules/"},
+		{"providers", admin.ProviderDetailHandler(config.NewStore(rc)), "/api/v1/config/providers/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"/blank", func(t *testing.T) {
@@ -508,7 +508,7 @@ func TestRulesListHandler_UsedByCoversMultipleConfigurations(t *testing.T) {
 	prod.RuleNames = []string{"only-openai"}
 	rc.Configurations["prod"] = prod
 
-	h := admin.RulesListHandler(rc)
+	h := admin.RulesListHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/rules", nil)
 	h.ServeHTTP(rec, req)
@@ -532,7 +532,7 @@ func TestRulesListHandler_UsedByCoversMultipleConfigurations(t *testing.T) {
 
 func TestRoutesHandler_FlattensRouteIndex(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.RoutesHandler(rc)
+	h := admin.RoutesHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/routes", nil)
 	h.ServeHTTP(rec, req)

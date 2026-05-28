@@ -365,6 +365,19 @@ func emitRoutes(providerName, endpointName string, p contractsconfig.Provider, e
 	return out
 }
 
+// RevalidateAndIndex runs Validate followed by buildIndexes on r — the
+// same finalization sequence Load performs after decode. The admin-
+// write path calls this on a cloned snapshot before persisting and
+// publishing via Store.Replace, so the index tables a swap publishes
+// are always consistent with the validated structural state.
+func (r *ResolvedConfig) RevalidateAndIndex() error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	r.buildIndexes()
+	return nil
+}
+
 func (r *ResolvedConfig) buildIndexes() {
 	r.SecretIndex = make(map[string]*contractsconfig.APIKey, len(r.APIKeys))
 	for i := range r.APIKeys {

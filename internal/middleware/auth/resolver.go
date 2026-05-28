@@ -120,16 +120,21 @@ type AuthResult struct {
 // Resolver contains no HTTP serving concerns and is safe to call from tests
 // without standing up a server. HTTPHandler is the http.Handler adapter.
 type Resolver struct {
-	cfg *config.ResolvedConfig
+	// store is the live configuration snapshot the resolver reads
+	// SecretIndex and ConfigurationIndex through on every Resolve.
+	// Holding the Store rather than a ResolvedConfig snapshot lets the
+	// admin-write path swap configuration without rebuilding the
+	// resolver — the next Resolve sees the new snapshot atomically.
+	store *config.Store
 }
 
-// NewResolver constructs a Resolver bound to cfg.
-//
-// The resolver retains cfg by pointer but reads only SecretIndex and
-// ConfigurationIndex; it does not mutate either. Callers that swap the
-// underlying config must build a fresh Resolver.
-func NewResolver(cfg *config.ResolvedConfig) *Resolver {
-	return &Resolver{cfg: cfg}
+// NewResolver constructs a Resolver bound to store. The resolver loads
+// a snapshot from store at the top of every Resolve and passes that
+// snapshot through to the sub-resolve methods, so a Replace landing
+// mid-request still produces a consistent answer (the request sees
+// either the pre-swap or the post-swap snapshot, never a mix).
+func NewResolver(store *config.Store) *Resolver {
+	return &Resolver{store: store}
 }
 
 // Resolve decides the auth mode and returns the resulting AuthResult plus
@@ -138,7 +143,11 @@ func NewResolver(cfg *config.ResolvedConfig) *Resolver {
 // request — when present, resolution is always passthrough. Between the
 // two, X-Sluice-Identity wins over the deprecated X-Sluice-Configuration.
 func (r *Resolver) Resolve(headers http.Header, provider, endpoint string) (AuthResult, error) {
-	if r == nil || r.cfg == nil {
+	if r == nil || r.store == nil {
+		return AuthResult{}, ErrUnknownConfiguration
+	}
+	snap := r.store.Snapshot()
+	if snap == nil {
 		return AuthResult{}, ErrUnknownConfiguration
 	}
 
@@ -147,14 +156,14 @@ func (r *Resolver) Resolve(headers http.Header, provider, endpoint string) (Auth
 	legacyPresent := legacyConfigName != ""
 
 	if identityToken != "" {
-		return r.resolveIdentityPassthrough(identityToken, provider, endpoint, legacyPresent)
+		return r.resolveIdentityPassthrough(snap, identityToken, provider, endpoint, legacyPresent)
 	}
 
 	if legacyPresent {
-		return r.resolveLegacyPassthrough(legacyConfigName, provider, endpoint)
+		return r.resolveLegacyPassthrough(snap, legacyConfigName, provider, endpoint)
 	}
 
-	return r.resolveManaged(headers, provider, endpoint)
+	return r.resolveManaged(snap, headers, provider, endpoint)
 }
 
 // resolveIdentityPassthrough looks the supplied api-key secret up in
@@ -162,8 +171,8 @@ func (r *Resolver) Resolve(headers http.Header, provider, endpoint string) (Auth
 // substituting upstream credentials. Unknown or disabled keys fail with
 // ErrUnauthorized so attackers cannot probe configuration names by
 // presenting random identity values.
-func (r *Resolver) resolveIdentityPassthrough(token, provider, endpoint string, legacyAlsoPresent bool) (AuthResult, error) {
-	key, ok := r.cfg.SecretIndex[token]
+func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfig, token, provider, endpoint string, legacyAlsoPresent bool) (AuthResult, error) {
+	key, ok := snap.SecretIndex[token]
 	if !ok || key == nil {
 		return AuthResult{Mode: ModePassthrough, Provider: provider, Endpoint: endpoint, DropHeaders: passthroughDropHeaders()}, ErrUnauthorized
 	}
@@ -176,7 +185,7 @@ func (r *Resolver) resolveIdentityPassthrough(token, provider, endpoint string, 
 			DropHeaders: passthroughDropHeaders(),
 		}, ErrUnauthorized
 	}
-	cfg, ok := r.cfg.ConfigurationIndex[key.Configuration]
+	cfg, ok := snap.ConfigurationIndex[key.Configuration]
 	if !ok {
 		return AuthResult{
 			Mode:              ModePassthrough,
@@ -202,8 +211,8 @@ func (r *Resolver) resolveIdentityPassthrough(token, provider, endpoint string, 
 // resolveLegacyPassthrough is the original X-Sluice-Configuration path.
 // Marked legacy because the configuration name is human-readable and
 // guessable; X-Sluice-Identity supersedes it.
-func (r *Resolver) resolveLegacyPassthrough(configName, provider, endpoint string) (AuthResult, error) {
-	cfg, ok := r.cfg.ConfigurationIndex[configName]
+func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfig, configName, provider, endpoint string) (AuthResult, error) {
+	cfg, ok := snap.ConfigurationIndex[configName]
 	if !ok {
 		return AuthResult{LegacyConfigurationHeader: true}, ErrUnknownConfiguration
 	}
@@ -261,13 +270,13 @@ func (r *Resolver) discoverManagedKey(headers http.Header) (managedKeySource, bo
 	return managedKeySource{}, false
 }
 
-func (r *Resolver) resolveManaged(headers http.Header, provider, endpoint string) (AuthResult, error) {
+func (r *Resolver) resolveManaged(snap *config.ResolvedConfig, headers http.Header, provider, endpoint string) (AuthResult, error) {
 	src, ok := r.discoverManagedKey(headers)
 	if !ok {
 		return AuthResult{Mode: ModeManaged, Provider: provider, Endpoint: endpoint}, ErrUnauthorized
 	}
 
-	key, ok := r.cfg.SecretIndex[src.token]
+	key, ok := snap.SecretIndex[src.token]
 	if !ok || key == nil {
 		return AuthResult{Mode: ModeManaged, Provider: provider, Endpoint: endpoint}, ErrUnauthorized
 	}
@@ -281,7 +290,7 @@ func (r *Resolver) resolveManaged(headers http.Header, provider, endpoint string
 		}, ErrUnauthorized
 	}
 
-	cfg, ok := r.cfg.ConfigurationIndex[key.Configuration]
+	cfg, ok := snap.ConfigurationIndex[key.Configuration]
 	if !ok {
 		return AuthResult{
 			Mode:              ModeManaged,

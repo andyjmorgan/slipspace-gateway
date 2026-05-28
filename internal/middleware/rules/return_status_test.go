@@ -30,7 +30,7 @@ func returnStatusRule(name, body string, status int, bt contractsrules.StatusCod
 func TestEvaluator_ReturnStatusCode_TerminatesWithResponse(t *testing.T) {
 	t.Parallel()
 	r := returnStatusRule("block-pii", `{"error":"blocked"}`, 403, contractsrules.StatusBodyJSON)
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
@@ -71,7 +71,7 @@ func TestEvaluator_ReturnStatusCode_StopsActionLoop(t *testing.T) {
 			setHeaderAction("X-Should-Not-Set", "v"),
 		},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -96,7 +96,7 @@ func TestEvaluator_ReturnStatusCode_StopsRuleLoop(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Should-Not-Set", "v")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {first, second}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -110,7 +110,7 @@ func TestEvaluator_ReturnStatusCode_StopsRuleLoop(t *testing.T) {
 func TestEvaluator_ReturnStatusCode_ClampsBadStatus(t *testing.T) {
 	t.Parallel()
 	r := returnStatusRule("oops", "x", 99, contractsrules.StatusBodyText)
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	result, _ := e.Evaluate(ctx, newGC(), state, nil)
@@ -149,7 +149,7 @@ func TestHTTPHandler_SyntheticPath_WritesResponseAndDrivesLifecycle(t *testing.T
 	t.Parallel()
 
 	r := returnStatusRule("block-pii", "blocked", 429, contractsrules.StatusBodyText)
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"": {r}}), 8, nil)
 
 	obs := &lifecycleObserver{}
 	factory := func(context.Context, proxy.Destination) proxy.Observer { return obs }
@@ -200,7 +200,7 @@ func TestHTTPHandler_SyntheticPath_BodyTypeMaps(t *testing.T) {
 		t.Run(string(tc.bt), func(t *testing.T) {
 			t.Parallel()
 			r := returnStatusRule("t", "x", 418, tc.bt)
-			e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"": {r}}, 8, nil)
+			e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"": {r}}), 8, nil)
 			h := rules.HTTPHandler(e, stubMatch("openai", "chat_completions"), nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 			req := httptest.NewRequest(http.MethodPost, "/", nil)
 			w := httptest.NewRecorder()
@@ -218,7 +218,7 @@ func TestHTTPHandler_SyntheticPath_NilFactoryWorks(t *testing.T) {
 	// degrades to "write the response, skip lifecycle". Useful for
 	// tests and for non-reporter wiring.
 	r := returnStatusRule("t", "ok", 418, contractsrules.StatusBodyText)
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"": {r}}), 8, nil)
 	h := rules.HTTPHandler(e, stubMatch("openai", "chat_completions"), nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
@@ -250,7 +250,7 @@ func TestApplyLlmImpersonation_TerminatesWithPlainText(t *testing.T) {
 			},
 		},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
@@ -287,7 +287,7 @@ func TestApplyLlmImpersonation_EmptyMessageErrors(t *testing.T) {
 			&contractsrules.LlmImpersonationAction{Type: "llmImpersonation", Message: "   "},
 		},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
@@ -307,7 +307,7 @@ func TestSyntheticOutcomeFromContext_RoundTrip(t *testing.T) {
 	// package; instead exercise the full path through the middleware
 	// to install it.
 	r := returnStatusRule("t", "x", 418, contractsrules.StatusBodyText)
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"": {r}}), 8, nil)
 	var resultSeen rules.Result
 	wrap := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("next should not run on synthetic")

@@ -20,12 +20,16 @@ const (
 )
 
 // ConfigurationsListHandler returns the sorted summary list of every
-// configuration loaded from policy.yaml. A nil ResolvedConfig (admin
-// disabled in test or partial wiring) returns 503 rather than 200 with
-// an empty body so the SPA can distinguish "no configs" from "feature
-// unavailable".
-func ConfigurationsListHandler(resolved *config.ResolvedConfig) http.Handler {
+// configuration loaded from policy.yaml. A nil Store (admin disabled in
+// test or partial wiring) returns 503 rather than 200 with an empty body
+// so the SPA can distinguish "no configs" from "feature unavailable".
+//
+// Each handler snapshots the store once at the top of the request and
+// reads through that snapshot for the rest of the call, so a config
+// Replace landing mid-handler still produces a consistent JSON payload.
+func ConfigurationsListHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
@@ -47,9 +51,10 @@ func ConfigurationsListHandler(resolved *config.ResolvedConfig) http.Handler {
 
 // ConfigurationDetailHandler returns the redacted detail view of a single
 // configuration. 404 when the path component does not match a loaded
-// configuration name; 503 when ResolvedConfig is nil.
-func ConfigurationDetailHandler(resolved *config.ResolvedConfig) http.Handler {
+// configuration name; 503 when the store is nil.
+func ConfigurationDetailHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
@@ -78,8 +83,9 @@ func ConfigurationDetailHandler(resolved *config.ResolvedConfig) http.Handler {
 }
 
 // RulesListHandler returns the sorted rule library with usage backlinks.
-func RulesListHandler(resolved *config.ResolvedConfig) http.Handler {
+func RulesListHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
@@ -105,8 +111,9 @@ func RulesListHandler(resolved *config.ResolvedConfig) http.Handler {
 }
 
 // RuleDetailHandler returns the full rule body for a single rule.
-func RuleDetailHandler(resolved *config.ResolvedConfig) http.Handler {
+func RuleDetailHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
@@ -136,8 +143,9 @@ func RuleDetailHandler(resolved *config.ResolvedConfig) http.Handler {
 
 // ProvidersListHandler returns the sorted summary list of every provider
 // loaded from providers.yaml.
-func ProvidersListHandler(resolved *config.ResolvedConfig) http.Handler {
+func ProvidersListHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
@@ -154,8 +162,9 @@ func ProvidersListHandler(resolved *config.ResolvedConfig) http.Handler {
 // ProviderDetailHandler returns the provider's full endpoint catalogue,
 // including per-endpoint auth overrides — the load-bearing data for
 // debugging the OpenAI-compat surfaces on Anthropic and Gemini.
-func ProviderDetailHandler(resolved *config.ResolvedConfig) http.Handler {
+func ProviderDetailHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
@@ -208,9 +217,10 @@ func ProviderDetailHandler(resolved *config.ResolvedConfig) http.Handler {
 // by default; reveal is opt-in, per-row.
 //
 // Both query parameters are required. Returns 400 on either missing,
-// 404 when no key matches the composite, 503 on nil ResolvedConfig.
-func APIKeysRevealHandler(resolved *config.ResolvedConfig) http.Handler {
+// 404 when no key matches the composite, 503 when the store is nil.
+func APIKeysRevealHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
@@ -242,8 +252,9 @@ func APIKeysRevealHandler(resolved *config.ResolvedConfig) http.Handler {
 // gateway accepts and the (provider, endpoint) pair that owns it. This is
 // the data the routing middleware reads on every request; surfacing it
 // directly is the single highest-value page during routing debugging.
-func RoutesHandler(resolved *config.ResolvedConfig) http.Handler {
+func RoutesHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
@@ -266,6 +277,17 @@ func RoutesHandler(resolved *config.ResolvedConfig) http.Handler {
 		})
 		writeJSON(w, out)
 	})
+}
+
+// snapshot is the one-line nil-tolerant wrapper around store.Snapshot
+// every handler calls at the top of the request. Returns nil when the
+// store is nil or its current snapshot is nil; handlers translate that
+// to a 503.
+func snapshot(store *config.Store) *config.ResolvedConfig {
+	if store == nil {
+		return nil
+	}
+	return store.Snapshot()
 }
 
 // --- helpers --------------------------------------------------------------

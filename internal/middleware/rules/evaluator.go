@@ -17,6 +17,7 @@ import (
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
 	"github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
@@ -29,12 +30,17 @@ import (
 // Construction is config-load → NewEvaluator → long-lived shared
 // instance. Evaluate is goroutine-safe — every per-request mutable
 // piece (state, match buffer) is owned by the caller; the evaluator
-// holds only read-only references to rules + meters + the depth cap.
+// holds only read-only references to the store + meters + the depth
+// cap. Each Evaluate call loads a snapshot from the store once and
+// reads PerConfigurationRules through it, so a config swap landing
+// mid-request still produces a consistent answer (the request sees
+// either the pre-swap or the post-swap rule set, never a mix).
 type Evaluator struct {
-	// perConfigRules maps configuration name to its priority-sorted
-	// rule slice. Populated by config.Resolved.PerConfigurationRules;
-	// looked up once per request.
-	perConfigRules map[string][]*contractsrules.RuleContract
+	// store is the live configuration handle. Evaluate reads
+	// store.Snapshot().PerConfigurationRules once per call. May be nil
+	// in tests that exercise sub-pieces of the engine in isolation;
+	// Evaluate degrades to a no-op in that case.
+	store *config.Store
 
 	// maxGroupDepth caps recursive RuleGroup descent. Sourced from
 	// ServerEnv.RulesMaxGroupDepth; exceeding the cap fires
@@ -48,10 +54,9 @@ type Evaluator struct {
 	meters *observability.Meters
 }
 
-// NewEvaluator builds an Evaluator. The perConfigRules map is
-// retained, not copied; callers must not mutate it concurrently.
+// NewEvaluator builds an Evaluator bound to store.
 func NewEvaluator(
-	perConfigRules map[string][]*contractsrules.RuleContract,
+	store *config.Store,
 	maxGroupDepth int,
 	meters *observability.Meters,
 ) *Evaluator {
@@ -59,9 +64,9 @@ func NewEvaluator(
 		maxGroupDepth = 8
 	}
 	return &Evaluator{
-		perConfigRules: perConfigRules,
-		maxGroupDepth:  maxGroupDepth,
-		meters:         meters,
+		store:         store,
+		maxGroupDepth: maxGroupDepth,
+		meters:        meters,
 	}
 }
 
@@ -101,11 +106,15 @@ func (e *Evaluator) Evaluate(
 	state *MutableState,
 	body any,
 ) (Result, error) {
-	if e == nil {
+	if e == nil || e.store == nil {
+		return Result{}, nil
+	}
+	snap := e.store.Snapshot()
+	if snap == nil {
 		return Result{}, nil
 	}
 
-	rules := e.perConfigRules[gc.ConfigurationName]
+	rules := snap.PerConfigurationRules[gc.ConfigurationName]
 	start := time.Now()
 	defer func() {
 		if e.meters != nil && e.meters.RuleEvaluationDuration != nil {
