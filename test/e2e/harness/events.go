@@ -23,10 +23,10 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 )
 
-// PayloadMode is the legacy mode constant the in-tree harness API
-// historically carried over from the NATS reporting envelope. Kept
-// here for backwards-compatible test code; only PayloadInline is
-// emitted by the connector-spool harness.
+// PayloadMode discriminates how an Envelope carries its payload.
+// Only PayloadInline is emitted by the connector-spool harness;
+// PayloadStashed is retained as an exported constant so existing
+// tests that compare against it still compile.
 type PayloadMode uint8
 
 const (
@@ -34,10 +34,9 @@ const (
 	// InlinePayload.
 	PayloadInline PayloadMode = 0
 
-	// PayloadStashed marked NATS-era envelopes whose payload was
-	// stashed in the JetStream Object Store. Retained as an exported
-	// constant so existing tests that compare against it still
-	// compile; the connector path never emits it.
+	// PayloadStashed marks an Envelope whose payload lives in
+	// out-of-band object storage referenced by ObjectRef. The
+	// connector path never emits it.
 	PayloadStashed PayloadMode = 1
 )
 
@@ -59,8 +58,8 @@ type Envelope struct {
 	ObjectRef     *ObjectRef
 }
 
-// ObjectRef is the legacy stashed-payload pointer. Connector path
-// never sets this — kept for type-equivalence with the NATS-era API.
+// ObjectRef points at a payload held in out-of-band object storage
+// for PayloadStashed envelopes. The connector path never sets this.
 type ObjectRef struct {
 	Bucket string
 	Key    string
@@ -144,11 +143,10 @@ func (h *Harness) captureHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// emitRecord translates one captured Record into the legacy
-// Envelope(s) tests expect: one gateway.request envelope per record,
-// plus one gateway.rule.matched envelope per rule entry. Order
-// matches what the NATS-era publisher emitted so test assertions on
-// arrival order continue to pass.
+// emitRecord translates one captured Record into the Envelope(s)
+// tests expect: one gateway.request envelope per record, then one
+// gateway.rule.matched envelope per RulesFired entry, in declaration
+// order.
 func (h *Harness) emitRecord(rec cc.Record) {
 	req := events.Request{
 		CorrelationID: rec.CorrelationID,
@@ -280,9 +278,9 @@ func (h *Harness) waitEvent(subject string, timeout time.Duration) (Envelope, er
 	}
 }
 
-// subjectToEventType maps a NATS-style subject ("gateway.request" or
-// "gateway.rule.matched") into the bare event type the harness stores
-// on each Envelope.
+// subjectToEventType maps a dotted harness subject ("gateway.request"
+// or "gateway.rule.matched") into the bare event type stored on each
+// Envelope.
 func subjectToEventType(subject string) string {
 	return strings.TrimPrefix(subject, "gateway.")
 }
@@ -323,9 +321,8 @@ func randomID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// pendingEnvelopes guards the per-harness buffer of envelopes
-// fetched-but-not-yet-matched by waitEvent. Mirrors the NATS-era
-// pendingEvents slice.
+// pendingEnvelopeBuffer guards the per-harness buffer of envelopes
+// fetched-but-not-yet-matched by waitEvent.
 type pendingEnvelopeBuffer struct {
 	mu        sync.Mutex
 	envelopes []Envelope

@@ -1,10 +1,9 @@
 // Package events defines the JSON-encoded payload shapes the gateway
 // uses for in-process audit events fed to the live-messages ring and
-// the e2e harness translation layer. Each top-level type historically
-// mapped 1:1 to a subject under the gateway. prefix (e.g.
-// Request → gateway.request, RuleMatched → gateway.rule.matched); the
-// subject-style naming is retained for harness compatibility even
-// though the NATS bus has been replaced by the connector pipeline.
+// the e2e harness translation layer. Each top-level type maps 1:1 to
+// a dotted subject under the gateway. prefix (e.g. Request →
+// gateway.request, RuleMatched → gateway.rule.matched) that the
+// harness uses to address envelopes.
 //
 // The schemas live in a public package so downstream consumers — the
 // admin console SPA, the live-messages SSE stream, and external
