@@ -226,3 +226,86 @@ export type PoliciesResponse = {
 export function usePolicies(): ConfigFetchHandle<PoliciesResponse> {
   return useConfigFetch<PoliciesResponse>("/api/v1/policies")
 }
+
+// ---------------------------------------------------------------------------
+// Rules write API. Mirrors the Phase 2 backend handlers under
+// /admin/api/v1/config/rules[/{name}] — see internal/admin/rules_write.go.
+// Every write goes through the same Snapshot.Clone → mutate → Validate →
+// WritePolicyYAML → Store.Replace flow, so a 200/201/204 here means the
+// next GET reflects the new state and the change is persisted to
+// SLUICE_CONFIG_DIR/policy.yaml.
+
+/**
+ * RuleWriteBody is the JSON wire shape the create/replace handlers
+ * accept. Mirrors RuleContract — name plus a polymorphic condition
+ * and an ordered action list. Condition and Action are dispatched on
+ * the `type` discriminator and use snake_case JSON field names per
+ * the schema convention.
+ */
+export type RuleWriteBody = {
+  name: string
+  behavior?: string
+  condition?: Record<string, unknown>
+  actions?: Record<string, unknown>[]
+}
+
+/**
+ * RuleConflict is the JSON envelope the backend returns with 409 on
+ * the rules write endpoints. `used_by` is populated only on the
+ * DELETE-referenced path; create-duplicate and PUT-rename responses
+ * leave it absent.
+ */
+export type RuleConflict = {
+  error: string
+  name?: string
+  used_by?: string[]
+}
+
+/**
+ * RuleValidationError is the JSON envelope returned with 422 when the
+ * post-mutation Validate fails. `detail` carries the wrapped sentinel
+ * chain so the SPA can show the operator the underlying reason.
+ */
+export type RuleValidationFailure = {
+  error: string
+  detail: string
+}
+
+/**
+ * createRule POSTs a new rule. 201 returns the canonical RuleDetail.
+ * 409 surfaces as APIError with body={RuleConflict, name:"..."} —
+ * callers should pattern-match on `status === 409`.
+ */
+export async function createRule(rule: RuleWriteBody): Promise<RuleDetail> {
+  return apiFetch<RuleDetail>("/api/v1/config/rules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rule),
+  })
+}
+
+/**
+ * replaceRule PUTs a rule by URL name. 200 returns the updated
+ * RuleDetail. Rename is rejected by the backend with 409 — pass the
+ * same name on the URL and in the body to avoid that path. 404 fires
+ * when the URL name does not match any existing rule.
+ */
+export async function replaceRule(name: string, rule: RuleWriteBody): Promise<RuleDetail> {
+  return apiFetch<RuleDetail>(`/api/v1/config/rules/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rule),
+  })
+}
+
+/**
+ * deleteRule removes a rule by name. 204 on success. 409 with
+ * RuleConflict.used_by populated when the rule is referenced by one
+ * or more configurations — the editor renders the list inline and
+ * asks the operator to unbind first.
+ */
+export async function deleteRule(name: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/config/rules/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  })
+}

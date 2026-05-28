@@ -5,6 +5,7 @@ import { ConfigurationsPage } from "@/pages/configurations"
 import { ConfigurationDetailPage } from "@/pages/configuration-detail"
 import { RulesPage } from "@/pages/rules"
 import { RuleDetailPage } from "@/pages/rule-detail"
+import { RuleEditorPage } from "@/pages/rule-editor"
 import { ProvidersPage } from "@/pages/providers"
 import { ProviderDetailPage } from "@/pages/provider-detail"
 import { RoutesPage } from "@/pages/routes"
@@ -31,6 +32,8 @@ export default function App() {
         <Route path="/configurations" element={<ConfigurationsPage />} />
         <Route path="/configurations/:name" element={<ConfigurationDetailPage />} />
         <Route path="/rules" element={<RulesPage />} />
+        <Route path="/rules/new" element={<RuleEditorPage mode="create" />} />
+        <Route path="/rules/:name/edit" element={<RuleEditorPage mode="edit" />} />
         <Route path="/rules/:name" element={<RuleDetailPage />} />
         <Route path="/providers" element={<ProvidersPage />} />
         <Route path="/providers/:name" element={<ProviderDetailPage />} />

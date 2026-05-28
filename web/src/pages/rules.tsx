@@ -2,6 +2,7 @@ import { Link } from "react-router"
 import { useRules } from "@/lib/config-api"
 import { PanelCard } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
+import { Button } from "@/components/ui/button"
 import {
   PageHeader,
   LoadingPanel,
@@ -19,6 +20,11 @@ export function RulesPage() {
       <PageHeader
         title="Rules"
         sub="Shared library. A rule can attach to many configurations; the 'used by' column shows which ones do."
+        action={
+          <Link to="/rules/new">
+            <Button size="sm">+ New rule</Button>
+          </Link>
+        }
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}

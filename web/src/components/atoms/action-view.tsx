@@ -102,7 +102,7 @@ function ActionFields({ action }: { action: RawAction }) {
     case "useResiliencePolicy":
       return (
         <div className="flex items-center gap-2 flex-wrap">
-          <FieldPill label="policy"><span className="mono">{String(action.policyName ?? "")}</span></FieldPill>
+          <FieldPill label="policy"><span className="mono">{String(action.policy_name ?? "")}</span></FieldPill>
         </div>
       )
     case "addTag":
