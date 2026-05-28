@@ -35,6 +35,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed/accumulator"
+	"github.com/andyjmorgan/sluice-gateway/internal/observability/unmapped"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/spool"
 )
@@ -410,6 +411,75 @@ func (r *reporterRun) recordPerRequestMetrics(ctx context.Context, ev events.Req
 	if r.factory.meters.RequestDuration != nil {
 		r.factory.meters.RequestDuration.Record(ctx, float64(ev.DurationMs)/1000.0, attrs)
 	}
+	r.recordUnmappedFields(ctx, ev)
+}
+
+// recordUnmappedFields walks the typed request body and the reconstructed
+// typed response for provider fields this build does not model, recording
+// gateway.unmapped_fields.total once per (direction, field) and logging the
+// full set. This is the provider-drift early-warning signal: a non-zero count
+// means the provider shipped a field we silently round-trip via
+// DynamicProperties but never decode, so a contract update is due. Reporting
+// stays separate from telemetry (CLAUDE.md invariant #4) — the field paths
+// ride the meter and the log, never the connector record.
+func (r *reporterRun) recordUnmappedFields(ctx context.Context, ev events.Request) {
+	counter := r.factory.meters.UnmappedFieldsTotal
+	if counter == nil {
+		return
+	}
+	var reqFields []string
+	if captured, ok := bodycapture.FromContext(ctx); ok {
+		reqFields = unmapped.RequestFields(captured.Body)
+	}
+	respFields := unmapped.ResponseFields(ev.Endpoint, r.responseForUnmapped(ctx, ev))
+	r.emitUnmappedFields(ctx, counter, "request", reqFields)
+	r.emitUnmappedFields(ctx, counter, "response", respFields)
+}
+
+// responseForUnmapped returns the response as a complete, non-streaming-shaped
+// body suitable for typed unmarshalling: the captured bytes for a
+// non-streaming response, or the accumulator's reassembly for a streamed one.
+// The captured buffer is already byte-bounded, so a truncated body simply
+// fails the typed parse and yields no fields rather than a false positive.
+func (r *reporterRun) responseForUnmapped(ctx context.Context, ev events.Request) []byte {
+	buf, ok := livefeed.ResponseBufferFromContext(ctx)
+	if !ok || buf == nil {
+		return nil
+	}
+	raw := buf.Bytes()
+	if len(raw) == 0 {
+		return nil
+	}
+	if !ev.Streaming {
+		return raw
+	}
+	if res := accumulator.Accumulate(ev.Provider, ev.Endpoint, raw); res.Recognised && len(res.Assembled) > 0 {
+		return res.Assembled
+	}
+	return nil
+}
+
+// emitUnmappedFields records one counter increment per unmapped field path —
+// the field set is bounded by the provider API surface, so field is a safe
+// metric dimension — and logs the full set once for the request.
+func (r *reporterRun) emitUnmappedFields(ctx context.Context, counter metric.Int64Counter, direction string, fields []string) {
+	if len(fields) == 0 {
+		return
+	}
+	base := []attribute.KeyValue{
+		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
+		attribute.String(observability.AttrSluiceEndpoint, r.endpoint),
+		attribute.String(observability.AttrSluiceUnmappedDirection, direction),
+	}
+	for _, f := range fields {
+		counter.Add(ctx, 1, metric.WithAttributes(append(base[:len(base):len(base)], attribute.String(observability.AttrSluiceUnmappedField, f))...))
+	}
+	observability.FromContext(ctx).Warn("unmapped provider fields detected",
+		"direction", direction,
+		"provider", r.provider,
+		"endpoint", r.endpoint,
+		"fields", fields,
+	)
 }
 
 // publishTerminalEvent is the terminal half of OnComplete:

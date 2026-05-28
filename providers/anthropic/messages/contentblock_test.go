@@ -88,6 +88,61 @@ func TestUnmarshalContentBlock_ToolResult(t *testing.T) {
 	roundTrip(t, in, v)
 }
 
+func TestUnmarshalContentBlock_Thinking(t *testing.T) {
+	in := []byte(`{"signature":"EtgFCmYI","thinking":"Let me work through this.","type":"thinking"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tb, ok := v.(*ThinkingBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if tb.Thinking != "Let me work through this." || tb.Signature != "EtgFCmYI" {
+		t.Fatalf("thinking = %+v", tb)
+	}
+	if tb.BlockType() != "thinking" {
+		t.Fatalf("block type = %q", tb.BlockType())
+	}
+	roundTrip(t, in, v)
+}
+
+func TestUnmarshalContentBlock_ThinkingExtraFieldsRoundTrip(t *testing.T) {
+	// A field Anthropic adds to a thinking block must survive via Extra.
+	in := []byte(`{"signature":"sig","estimated_tokens":50,"thinking":"hmm","type":"thinking"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tb, ok := v.(*ThinkingBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if _, ok := tb.Extra["estimated_tokens"]; !ok {
+		t.Fatalf("estimated_tokens not preserved in Extra: %+v", tb.Extra)
+	}
+	roundTrip(t, in, v)
+}
+
+func TestUnmarshalContentBlock_RedactedThinking(t *testing.T) {
+	in := []byte(`{"data":"EvwBCkgYAiADKkBx...","type":"redacted_thinking"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	rb, ok := v.(*RedactedThinkingBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if rb.Data != "EvwBCkgYAiADKkBx..." {
+		t.Fatalf("data = %q", rb.Data)
+	}
+	if rb.BlockType() != "redacted_thinking" {
+		t.Fatalf("block type = %q", rb.BlockType())
+	}
+	roundTrip(t, in, v)
+}
+
 func TestUnmarshalContentBlock_UnknownDiscriminatorRoundTrips(t *testing.T) {
 	in := []byte(`{"lat":40.7,"lon":-74,"type":"weather_widget"}`)
 	v, err := UnmarshalContentBlock(in)
@@ -189,6 +244,8 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ImageSource{}),
 		reflect.TypeOf(ToolUseBlock{}),
 		reflect.TypeOf(ToolResultBlock{}),
+		reflect.TypeOf(ThinkingBlock{}),
+		reflect.TypeOf(RedactedThinkingBlock{}),
 		reflect.TypeOf(UnknownBlock{}),
 	}
 	for _, rt := range types {
@@ -207,7 +264,7 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 }
 
 func TestContentBlock_RegistryCoversAllConcreteTypes(t *testing.T) {
-	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false}
+	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "thinking": false, "redacted_thinking": false}
 	for k := range blockRegistry.Factories {
 		if _, ok := want[k]; !ok {
 			t.Errorf("unexpected registry key %q", k)

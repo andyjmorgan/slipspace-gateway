@@ -256,6 +256,7 @@ func geminiParts(in []geminiPart) []Part {
 // contentParts converts a message "content" field — a plain string or an
 // array of typed blocks — into bounded parts. Text blocks become "text"
 // parts; Anthropic tool_use/tool_result map to tool_call/tool_call_response;
+// thinking/redacted_thinking map to "reasoning" (redacted carries no text);
 // other blocks (images, audio) pass through by type with no inline bytes
 // (telemetry stays bounded — the full blob rides the spool).
 func contentParts(raw json.RawMessage) []Part {
@@ -277,6 +278,7 @@ func contentParts(raw json.RawMessage) []Part {
 		Input     json.RawMessage `json:"input"`
 		ToolUseID string          `json:"tool_use_id"`
 		Content   json.RawMessage `json:"content"`
+		Thinking  string          `json:"thinking"`
 	}
 	if json.Unmarshal(raw, &blocks) != nil {
 		return nil
@@ -292,6 +294,11 @@ func contentParts(raw json.RawMessage) []Part {
 			parts = append(parts, Part{Type: "tool_call", ID: b.ID, Name: b.Name, Arguments: nonEmptyRaw(b.Input)})
 		case "tool_result":
 			parts = append(parts, Part{Type: "tool_call_response", ID: b.ToolUseID, Result: textFromContent(b.Content)})
+		case "thinking":
+			parts = append(parts, Part{Type: "reasoning", Content: b.Thinking})
+		case "redacted_thinking":
+			// Opaque encrypted trace — surface the part, never its bytes.
+			parts = append(parts, Part{Type: "reasoning"})
 		case "":
 			// An untyped block with text is still text (lenient providers).
 			if b.Text != "" {

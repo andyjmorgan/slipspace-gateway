@@ -123,6 +123,27 @@ func TestExtractContent_Anthropic_ToolUseAndResult(t *testing.T) {
 	}
 }
 
+func TestExtractContent_Anthropic_Thinking(t *testing.T) {
+	t.Parallel()
+	// thinking + text + redacted_thinking in a turn map to ordered parts:
+	// reasoning (with content), text, reasoning (redacted, no content).
+	raw := []byte(`{"messages":[{"role":"user","content":[{"type":"thinking","thinking":"reason","signature":"s"},{"type":"text","text":"answer"},{"type":"redacted_thinking","data":"blob"}]}]}`)
+	c := genaiattr.ExtractContent("messages", raw)
+	if c.InputMessage == nil || len(c.InputMessage.Parts) != 3 {
+		t.Fatalf("parts = %+v", c.InputMessage)
+	}
+	p := c.InputMessage.Parts
+	if p[0].Type != "reasoning" || p[0].Content != "reason" {
+		t.Errorf("part0 = %+v, want reasoning/reason", p[0])
+	}
+	if p[1].Type != "text" || p[1].Content != "answer" {
+		t.Errorf("part1 = %+v, want text/answer", p[1])
+	}
+	if p[2].Type != "reasoning" || p[2].Content != "" {
+		t.Errorf("part2 (redacted) = %+v, want reasoning/empty", p[2])
+	}
+}
+
 func TestExtractContent_Gemini(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{"systemInstruction":{"parts":[{"text":"sys"}]},"contents":[{"role":"user","parts":[{"text":"q1"}]},{"role":"model","parts":[{"text":"a1"}]},{"role":"user","parts":[{"text":"q2"}]}],"tools":[{"functionDeclarations":[{"name":"f1","parameters":{"type":"object"}},{"name":"f2"}]}]}`)

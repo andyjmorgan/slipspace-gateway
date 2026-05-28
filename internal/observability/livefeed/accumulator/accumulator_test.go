@@ -282,6 +282,69 @@ func TestAccumulate_AnthropicMessages_ConcatsTextBlocks(t *testing.T) {
 	}
 }
 
+func TestAccumulate_AnthropicMessages_ReassemblesThinking(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me ","estimated_tokens":10}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reason."}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EpkECmMID"}}` + "\n\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The answer."}}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	if !got.Recognised {
+		t.Fatalf("got %+v", got)
+	}
+	resp := parseAnthropic(t, got.Assembled)
+	if len(resp.Content) != 2 {
+		t.Fatalf("Content=%d want 2", len(resp.Content))
+	}
+	tb, ok := resp.Content[0].(*messages.ThinkingBlock)
+	if !ok {
+		t.Fatalf("block[0] = %T want *ThinkingBlock", resp.Content[0])
+	}
+	if tb.Thinking != "Let me reason." {
+		t.Errorf("thinking=%q", tb.Thinking)
+	}
+	if tb.Signature != "EpkECmMID" {
+		t.Errorf("signature=%q", tb.Signature)
+	}
+	txt, ok := resp.Content[1].(*messages.TextBlock)
+	if !ok || txt.Text != "The answer." {
+		t.Fatalf("block[1] = %T %+v", resp.Content[1], resp.Content[1])
+	}
+}
+
+func TestAccumulate_AnthropicMessages_InterleavedThinkTextThink(t *testing.T) {
+	t.Parallel()
+	// think, text, think again — each index must stay its own ordered block.
+	raw := []byte("" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"first"}}` + "\n\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"mid"}}` + "\n\n" +
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"thinking","thinking":"","signature":""}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":"second"}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"signature_delta","signature":"sig2"}}` + "\n\n")
+	resp := parseAnthropic(t, Accumulate("anthropic", "messages", raw).Assembled)
+	if len(resp.Content) != 3 {
+		t.Fatalf("Content=%d want 3", len(resp.Content))
+	}
+	t0, _ := resp.Content[0].(*messages.ThinkingBlock)
+	t1, _ := resp.Content[1].(*messages.TextBlock)
+	t2, _ := resp.Content[2].(*messages.ThinkingBlock)
+	if t0 == nil || t0.Thinking != "first" {
+		t.Errorf("block[0]=%+v", resp.Content[0])
+	}
+	if t1 == nil || t1.Text != "mid" {
+		t.Errorf("block[1]=%+v", resp.Content[1])
+	}
+	if t2 == nil || t2.Thinking != "second" || t2.Signature != "sig2" {
+		t.Errorf("block[2]=%+v", resp.Content[2])
+	}
+}
+
 func TestAccumulate_AnthropicMessages_AssemblesToolUse(t *testing.T) {
 	t.Parallel()
 	raw := []byte("" +

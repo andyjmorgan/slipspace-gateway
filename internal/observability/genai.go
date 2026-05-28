@@ -161,6 +161,12 @@ const (
 	PartTypeText             = "text"
 	PartTypeToolCall         = "tool_call"
 	PartTypeToolCallResponse = "tool_call_response"
+
+	// PartTypeReasoning is the semconv message part type for a model's
+	// reasoning/thinking trace (Anthropic thinking + redacted_thinking
+	// blocks). Redacted thinking carries no recoverable text, so its part is
+	// emitted with empty content — the type alone signals its presence.
+	PartTypeReasoning = "reasoning"
 )
 
 // Sluice-namespaced extras — dimensions the GenAI spec has no concept for.
@@ -184,6 +190,16 @@ const (
 	// cb_blocked).
 	AttrSluiceResilienceTarget  = "sluice.resilience.target"
 	AttrSluiceResilienceOutcome = "sluice.resilience.outcome"
+
+	// AttrSluiceUnmappedField is the dotted JSON path of a provider field
+	// this build does not model — the per-field dimension on
+	// gateway.unmapped_fields.total. Cardinality is bounded by the provider
+	// API surface (tens of field names), not by request volume.
+	AttrSluiceUnmappedField = "sluice.unmapped_field"
+
+	// AttrSluiceUnmappedDirection is "request" or "response", marking which
+	// side of the exchange carried the unmapped field.
+	AttrSluiceUnmappedDirection = "sluice.unmapped_direction"
 )
 
 // gen_ai.operation.name values (spec-defined).

@@ -2,6 +2,7 @@ package genaiattr
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/sseframe"
@@ -335,8 +336,7 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 
 func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 	var a ResponseAttrs
-	var out strings.Builder
-	var tools toolAccList
+	blocks := anthropicBlockList{byIdx: map[int]*anthropicBlock{}}
 	for _, f := range frames {
 		var ch struct {
 			ID         string  `json:"id"`
@@ -346,30 +346,35 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 			StopReason *string `json:"stop_reason"`
 			// Content is the non-streaming top-level content block array.
 			Content []struct {
-				Type  string          `json:"type"`
-				Text  string          `json:"text"`
-				ID    string          `json:"id"`
-				Name  string          `json:"name"`
-				Input json.RawMessage `json:"input"`
+				Type     string          `json:"type"`
+				Text     string          `json:"text"`
+				ID       string          `json:"id"`
+				Name     string          `json:"name"`
+				Input    json.RawMessage `json:"input"`
+				Thinking string          `json:"thinking"`
 			} `json:"content"`
-			// ContentBlock carries the tool_use header on content_block_start.
+			// ContentBlock carries the tool_use / thinking header on
+			// content_block_start.
 			ContentBlock *struct {
-				Type string `json:"type"`
-				ID   string `json:"id"`
-				Name string `json:"name"`
+				Type     string `json:"type"`
+				ID       string `json:"id"`
+				Name     string `json:"name"`
+				Thinking string `json:"thinking"`
 			} `json:"content_block"`
 			Message *struct {
 				ID    string `json:"id"`
 				Model string `json:"model"`
 			} `json:"message"`
 			// Delta carries stop_reason on message_delta, text on
-			// content_block_delta (text_delta), and tool-argument fragments on
-			// input_json_delta — one struct decodes all three.
+			// content_block_delta (text_delta), thinking on thinking_delta,
+			// and tool-argument fragments on input_json_delta — one struct
+			// decodes them all.
 			Delta *struct {
 				Type        string  `json:"type"`
 				StopReason  *string `json:"stop_reason"`
 				Text        string  `json:"text"`
 				PartialJSON string  `json:"partial_json"`
+				Thinking    string  `json:"thinking"`
 			} `json:"delta"`
 		}
 		if json.Unmarshal(f, &ch) != nil {
@@ -384,39 +389,138 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 		if ch.StopReason != nil && *ch.StopReason != "" {
 			a.FinishReasons = appendUnique(a.FinishReasons, *ch.StopReason)
 		}
-		// Non-streaming: text + tool_use blocks arrive whole, indexed by
-		// position.
+		// Non-streaming: thinking + text + tool_use blocks arrive whole,
+		// indexed by array position.
 		for i, blk := range ch.Content {
+			b := blocks.get(i)
+			b.setKind(blk.Type)
 			switch blk.Type {
 			case "text":
-				out.WriteString(blk.Text)
+				b.text.WriteString(blk.Text)
 			case "tool_use":
-				acc := tools.get(i)
-				acc.id = blk.ID
-				acc.name = blk.Name
-				acc.args.WriteString(string(nonEmptyRaw(blk.Input)))
+				b.toolID = blk.ID
+				b.toolName = blk.Name
+				b.toolArgs.WriteString(string(nonEmptyRaw(blk.Input)))
+			case "thinking":
+				b.thinking.WriteString(blk.Thinking)
 			}
 		}
-		// Streaming: a tool_use header on content_block_start, then argument
-		// fragments on input_json_delta, keyed by the block index.
-		if ch.Type == "content_block_start" && ch.ContentBlock != nil && ch.ContentBlock.Type == "tool_use" {
-			acc := tools.get(ch.Index)
-			acc.id = ch.ContentBlock.ID
-			acc.name = ch.ContentBlock.Name
+		// Streaming: each block opens with a content_block_start carrying its
+		// kind, then accumulates on the matching delta, keyed by block index.
+		// Thinking and text can interleave (think, text, think again), so each
+		// index keeps its own ordered slot.
+		if ch.Type == "content_block_start" && ch.ContentBlock != nil {
+			b := blocks.get(ch.Index)
+			b.setKind(ch.ContentBlock.Type)
+			switch ch.ContentBlock.Type {
+			case "tool_use":
+				b.toolID = ch.ContentBlock.ID
+				b.toolName = ch.ContentBlock.Name
+			case "thinking":
+				b.thinking.WriteString(ch.ContentBlock.Thinking)
+			}
 		}
 		if ch.Delta != nil {
 			if ch.Delta.StopReason != nil && *ch.Delta.StopReason != "" {
 				a.FinishReasons = appendUnique(a.FinishReasons, *ch.Delta.StopReason)
 			}
-			out.WriteString(ch.Delta.Text)
+			if ch.Delta.Text != "" {
+				b := blocks.get(ch.Index)
+				b.setKind("text")
+				b.text.WriteString(ch.Delta.Text)
+			}
+			if ch.Delta.Thinking != "" {
+				b := blocks.get(ch.Index)
+				b.setKind("thinking")
+				b.thinking.WriteString(ch.Delta.Thinking)
+			}
 			if ch.Delta.PartialJSON != "" {
-				tools.get(ch.Index).args.WriteString(ch.Delta.PartialJSON)
+				b := blocks.get(ch.Index)
+				b.setKind("tool_use")
+				b.toolArgs.WriteString(ch.Delta.PartialJSON)
 			}
 		}
 	}
-	a.OutputText = out.String()
-	a.OutputParts = outputParts(a.OutputText, tools.parts())
+	a.OutputText = blocks.text()
+	a.OutputParts = blocks.parts()
 	return a
+}
+
+// anthropicBlock is the in-flight reconstruction of one Anthropic response
+// content block. kind is fixed on first sight; only the buffers matching kind
+// are populated.
+type anthropicBlock struct {
+	kind     string
+	text     strings.Builder
+	thinking strings.Builder
+	toolID   string
+	toolName string
+	toolArgs strings.Builder
+}
+
+func (b *anthropicBlock) setKind(k string) {
+	if b.kind == "" {
+		b.kind = k
+	}
+}
+
+// anthropicBlockList keeps response content blocks in index order so the
+// emitted parts preserve the wire order — thinking, text, and tool blocks can
+// interleave (the model may think, answer, then think again), and collapsing
+// them into one aggregate part per kind would lose that ordering.
+type anthropicBlockList struct {
+	order []int
+	byIdx map[int]*anthropicBlock
+}
+
+func (l *anthropicBlockList) get(idx int) *anthropicBlock {
+	if b, ok := l.byIdx[idx]; ok {
+		return b
+	}
+	b := &anthropicBlock{}
+	l.byIdx[idx] = b
+	l.order = append(l.order, idx)
+	return b
+}
+
+// text concatenates every text block in index order — the flat OutputText
+// retained for text-only consumers.
+func (l *anthropicBlockList) text() string {
+	sort.Ints(l.order)
+	var s strings.Builder
+	for _, idx := range l.order {
+		if b := l.byIdx[idx]; b.kind == "text" {
+			s.WriteString(b.text.String())
+		}
+	}
+	return s.String()
+}
+
+// parts emits one ordered Part per content block: reasoning for thinking /
+// redacted_thinking (redacted carries no text), text for text, tool_call for
+// tool_use. Empty text blocks are dropped; a thinking block is always emitted
+// so its presence (and any content) reaches telemetry.
+func (l *anthropicBlockList) parts() []Part {
+	sort.Ints(l.order)
+	var parts []Part
+	for _, idx := range l.order {
+		b := l.byIdx[idx]
+		switch b.kind {
+		case "text":
+			if b.text.Len() > 0 {
+				parts = append(parts, Part{Type: "text", Content: b.text.String()})
+			}
+		case "thinking":
+			parts = append(parts, Part{Type: "reasoning", Content: b.thinking.String()})
+		case "redacted_thinking":
+			parts = append(parts, Part{Type: "reasoning"})
+		case "tool_use":
+			if b.toolID != "" || b.toolName != "" || b.toolArgs.Len() > 0 {
+				parts = append(parts, Part{Type: "tool_call", ID: b.toolID, Name: b.toolName, Arguments: argsRaw(b.toolArgs.String())})
+			}
+		}
+	}
+	return parts
 }
 
 func extractGeminiResponse(frames [][]byte) ResponseAttrs {

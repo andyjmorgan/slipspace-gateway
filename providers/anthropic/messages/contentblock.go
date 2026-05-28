@@ -18,7 +18,7 @@ import (
 
 // ContentBlock is the polymorphic interface implemented by every Anthropic
 // content block type — TextBlock, ImageBlock, ToolUseBlock, ToolResultBlock,
-// and the UnknownBlock fallback.
+// ThinkingBlock, RedactedThinkingBlock, and the UnknownBlock fallback.
 //
 // The discriminator is the "type" field. Unknown discriminator values are
 // dispatched to UnknownBlock, which preserves both the type value AND any
@@ -186,6 +186,73 @@ func (b *ToolResultBlock) UnmarshalJSON(data []byte) error { return models.Unmar
 // resulting object.
 func (b ToolResultBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
 
+// ThinkingBlock is the "thinking" content block variant carrying the model's
+// extended-thinking trace. The non-streaming response embeds it directly; the
+// streaming response delivers it as a thinking content_block_start followed by
+// thinking_delta fragments and a terminal signature_delta (see stream.go).
+//
+// Signature is a cryptographic attestation over the thinking content that the
+// client MUST echo back verbatim on the assistant turn for tool use to resume.
+// It is load-bearing — see the round-trip invariant in CLAUDE.md. Unknown
+// fields round-trip via the embedded DynamicProperties.
+type ThinkingBlock struct {
+	// Type is the wire "type" discriminator, always "thinking".
+	Type string `json:"type"`
+
+	// Thinking is the model's reasoning trace.
+	Thinking string `json:"thinking"`
+
+	// Signature is the cryptographic signature over the thinking trace.
+	// Empty on a content_block_start; populated by the terminal
+	// signature_delta when streaming.
+	Signature string `json:"signature,omitempty"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "thinking" discriminator.
+func (ThinkingBlock) BlockType() string { return "thinking" }
+
+func (ThinkingBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *ThinkingBlock) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, b) }
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b ThinkingBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
+// RedactedThinkingBlock is the "redacted_thinking" content block variant —
+// thinking the provider has encrypted because it tripped a safety classifier.
+// Data is an opaque blob that carries no human-readable content but MUST be
+// echoed back verbatim alongside any sibling thinking blocks. Unknown fields
+// round-trip via the embedded DynamicProperties.
+type RedactedThinkingBlock struct {
+	// Type is the wire "type" discriminator, always "redacted_thinking".
+	Type string `json:"type"`
+
+	// Data is the opaque encrypted thinking payload.
+	Data string `json:"data"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "redacted_thinking" discriminator.
+func (RedactedThinkingBlock) BlockType() string { return "redacted_thinking" }
+
+func (RedactedThinkingBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *RedactedThinkingBlock) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, b)
+}
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b RedactedThinkingBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
 // UnknownBlock preserves any content block whose "type" discriminator this
 // package has not modelled. Type carries the unknown discriminator verbatim
 // and every other JSON field lands in DynamicProperties.Extra so the block
@@ -214,10 +281,12 @@ func (b UnknownBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynam
 var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
 	DiscriminatorField: "type",
 	Factories: map[string]func() ContentBlock{
-		"text":        func() ContentBlock { return &TextBlock{} },
-		"image":       func() ContentBlock { return &ImageBlock{} },
-		"tool_use":    func() ContentBlock { return &ToolUseBlock{} },
-		"tool_result": func() ContentBlock { return &ToolResultBlock{} },
+		"text":              func() ContentBlock { return &TextBlock{} },
+		"image":             func() ContentBlock { return &ImageBlock{} },
+		"tool_use":          func() ContentBlock { return &ToolUseBlock{} },
+		"tool_result":       func() ContentBlock { return &ToolResultBlock{} },
+		"thinking":          func() ContentBlock { return &ThinkingBlock{} },
+		"redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
 	},
 	Fallback: func(disc string) ContentBlock { return &UnknownBlock{Type: disc} },
 }
