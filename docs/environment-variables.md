@@ -1,6 +1,8 @@
 # Environment Variables
 
-Sluice's server config is loaded once at process start from `SLUICE_*` environment variables. There is no live-reload pathway — every value documented here lands on the in-memory `ServerEnv` (or the admin `Config`) at startup and is read-only thereafter. Restart to apply a change.
+Sluice's server config is loaded once at process start from `SLUICE_*` environment variables. There is no live-reload pathway for server-level settings — every value documented here lands on the in-memory `ServerEnv` (or the admin `Config`) at startup and is read-only thereafter. Restart to apply a change.
+
+Policy-level configuration (rules, configurations, api_keys, providers, resilience policies, connectors) is loaded from `SLUICE_CONFIG_DIR` and has a partial live-edit story: rules can be created / edited / deleted through the admin write API and apply to the next request without a restart (see [`docs/admin-console.md → Rules write API`](admin-console.md#rules-write-api)). Direct YAML edits and the other top-level blocks still require a restart. This page is scoped to env-var-driven server config only.
 
 This page is the operator's lookup reference. The big table below covers every `SLUICE_*` variable the gateway reads, with default, type, effect, and validation rules. The grouped tables that follow exist to give context — when you're tuning a knob, the group's prose tells you what neighbourhood you're in.
 

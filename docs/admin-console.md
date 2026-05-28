@@ -1,6 +1,8 @@
 # Admin Console
 
-Sluice's admin console is a read-only management surface bolted onto the gateway binary. It runs as a **second `http.Server` on its own port** (default `:8081`), separate from the data plane (`:8585`), so admin traffic and proxy traffic never share a listener — no shared connection pool, no shared middleware stack, no risk of a stuck admin handler back-pressuring the request path.
+Sluice's admin console is a management surface bolted onto the gateway binary. It runs as a **second `http.Server` on its own port** (default `:8081`), separate from the data plane (`:8585`), so admin traffic and proxy traffic never share a listener — no shared connection pool, no shared middleware stack, no risk of a stuck admin handler back-pressuring the request path.
+
+The console exposes both read-only inspection surfaces (dashboard, configuration inspector, live messages, policies, export) and a write API for editing the rules library (`POST/PUT/DELETE /api/v1/config/rules[/{name}]`). Writes clone the live config snapshot, validate the clone, persist `policy.yaml` atomically, and publish via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLUICE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
 
 The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `gateway.admin.enabled: true` *and* a password is configured. With either condition false, the listener never opens.
 
@@ -225,18 +227,30 @@ All routes are mounted under `Prefix = "/admin"`. Every route is wrapped in `Ins
 | `GET /admin/api/v1/dashboard/summary?window=1h\|24h` | `DashboardSummary` (`contracts/admin/dashboard.go`) | Totals, rates, p50/p95/p99, by-provider, by-endpoint, by-configuration, by-model, rules-fired, tags-fired, provider-health. `window` defaults to `MuxOptions.DashboardWindow` (24h). Provider-health is read over a separate 5m window (`MuxOptions.FiveMinWindow`). |
 | `GET /admin/api/v1/dashboard/timeseries?series=...&window=...` | `DashboardTimeseries` (`contracts/admin/dashboard.go`) | One series per charted curve. Single-series queries (RPS, error rate) return one entry; multi-series queries (p95 by provider) return one entry per group key. |
 
-### Configuration inspector (read-only)
+### Configuration inspector
 
 | Method · Path | Response shape | Notes |
 |---|---|---|
 | `GET /admin/api/v1/config/configurations` | `[]ConfigurationSummary` | List of every configured `Configuration` with rule + API-key counts. |
 | `GET /admin/api/v1/config/configurations/{name}` | `ConfigurationDetail` | Full configuration including the resolved rule chain and the (redacted) upstream credential map. |
-| `GET /admin/api/v1/config/rules` | `[]RuleSummary` | Every rule defined in `rules.yaml`. |
+| `GET /admin/api/v1/config/rules` | `[]RuleSummary` | Every rule defined in `policy.yaml`. |
 | `GET /admin/api/v1/config/rules/{name}` | `RuleDetail` | Full rule body — condition tree, action list, references. |
 | `GET /admin/api/v1/config/providers` | `[]ProviderSummary` | Every provider declared in `providers.yaml`. |
 | `GET /admin/api/v1/config/providers/{name}` | `ProviderDetail` | Provider detail including endpoint map with per-endpoint `auth_header`/`auth_format` overrides. |
 | `GET /admin/api/v1/config/routes` | `[]RouteRow` | Flattened path → (provider, endpoint, methods) table — the actual data the routing middleware reads on every request. |
 | `GET /admin/api/v1/config/api-keys/reveal?configuration=&name=` | `APIKeyReveal` | Returns the plaintext secret for a single API key keyed by the composite. Both query params required (400 if missing); 404 on no match; 503 on nil resolved config. List endpoints stay redacted by default; reveal is opt-in, per-row. |
+
+### Rules write API
+
+The rules library is the only top-level block with a write surface today (v1.1.18). Mutations clone the live `ResolvedConfig`, run `Validate` + `buildIndexes` on the clone, persist `policy.yaml` via atomic temp-file rename, then publish through `config.Store.Replace`. On any error the live snapshot is untouched — disk is only written after validation passes.
+
+| Method · Path | Response shape | Notes |
+|---|---|---|
+| `POST /admin/api/v1/config/rules` | `RuleDetail` | Create a new rule. Body is a `RuleContract` JSON payload (snake_case field names). 201 on success; 409 with `{error, name}` when the name already exists; 400 on JSON parse failure or missing name; 422 with `{error, detail}` when the post-mutation `Validate` rejects the clone. |
+| `PUT /admin/api/v1/config/rules/{name}` | `RuleDetail` | Replace an existing rule's condition, actions, and behavior. The URL `name` is authoritative — a body `name` field must match it or omit; mismatched names return 409. 404 when the URL name does not resolve. |
+| `DELETE /admin/api/v1/config/rules/{name}` | `204 No Content` | Delete a rule. 404 if absent. **409 with `{error, name, used_by:[...]}`** when one or more configurations reference the rule via `rule_names` — operators must unbind first to keep the post-delete `Validate` clean. |
+
+The write endpoints return 503 when `SLUICE_CONFIG_DIR` is empty (i.e. the gateway was started without a config dir) — the data plane works fine in that case but admin writes are disabled. The on-disk write requires the config dir to be writable; see [deployment.md → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api).
 
 ### Configuration export (Settings page)
 

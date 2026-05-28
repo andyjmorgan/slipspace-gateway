@@ -549,7 +549,11 @@ The admin block's `ErrPasswordRequired` and `ErrInvalidBindAddr` propagate from 
 
 These are documented intentionally — don't fix them without checking the milestone first.
 
-1. **No hot reload in v1.0 / v1.1 / v1.2.** Restart the gateway to apply config changes. The `ResolvedConfig` is constructed once at startup and held read-only thereafter. v1.3+ adds an `fsnotify`-based reload path that swaps the indexed view atomically without dropping in-flight requests.
+1. **Live edits limited to the rules library.** Mutations via `POST/PUT/DELETE /admin/api/v1/config/rules` clone the live snapshot, validate, persist `policy.yaml` atomically, and publish through `config.Store.Replace` so the next request evaluates the new rule set — no restart, no torn reads (see [Atomic snapshot store](#atomic-snapshot-store) below). Every other top-level block (configurations, api_keys, providers, connectors, resilience_policies) is still loaded once at startup; direct YAML edits to those blocks require a process restart. v1.3+ adds an `fsnotify`-based reload path that swaps the indexed view atomically for direct-edit changes without dropping in-flight requests.
+
+   ### Atomic snapshot store
+
+   `internal/config/store.go::Store` owns the live `ResolvedConfig` behind an `atomic.Pointer`. Every consumer (router, auth resolver, rules evaluator, forwarder, reporter, admin handlers) holds the `*Store`, never the `*ResolvedConfig` itself. Reads call `store.Snapshot()` at request top and operate on that pointer for the rest of the request — a `Replace` landing mid-handler is invisible to the in-flight call. Writers (admin mutations only) follow `Clone → mutate → RevalidateAndIndex → WritePolicyYAML → Store.Replace`; failure at any step leaves the live snapshot untouched. Pre-derived consumers like the router subscribe to `Store.Replace` so their derived state (compiled regex patterns, exact-match map) rebuilds atomically alongside the snapshot. This is load-bearing invariant #9 in [`CLAUDE.md`](../CLAUDE.md).
 
 2. **No `${VAR}` substitution.** See [Why no `${VAR}` substitution](#why-no-var-substitution). The one operator escape hatch is `SLUICE_ADMIN_PASSWORD`, which overrides `admin.password` at runtime.
 
