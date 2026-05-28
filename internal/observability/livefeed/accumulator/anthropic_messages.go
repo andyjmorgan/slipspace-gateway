@@ -28,7 +28,10 @@ import (
 // Content blocks are kept in index order. TextBlock.Text accumulates
 // across TextDelta events; ToolUseBlock.Input accumulates across
 // InputJSONDelta events as a JSON string that is parsed once at
-// assembly time. message_delta overlays the terminal stop_reason,
+// assembly time. ThinkingBlock.Thinking accumulates across
+// ThinkingDelta events, with the terminal SignatureDelta setting its
+// Signature, so the reconstructed block matches the non-streaming
+// shape. message_delta overlays the terminal stop_reason,
 // stop_sequence, and merges Usage so the assembled response carries
 // the final accounting.
 func accumulateAnthropicMessages(raw []byte) Result {
@@ -73,7 +76,7 @@ type anthropicState struct {
 }
 
 // anthropicBlockState carries the in-flight reconstruction of one
-// content block. Only one of textBuf / toolArgs is populated per
+// content block. Only the buffers matching kind are populated per
 // block — the kind is fixed at block_start time.
 type anthropicBlockState struct {
 	kind     string
@@ -81,6 +84,11 @@ type anthropicBlockState struct {
 	toolID   string
 	toolName string
 	toolArgs strings.Builder
+	// thinkingBuf accumulates thinking_delta fragments; signature is set
+	// once by the terminal signature_delta. Both only populate when
+	// kind == "thinking".
+	thinkingBuf strings.Builder
+	signature   string
 	// raw holds the original block as emitted by content_block_start;
 	// kept so unknown block kinds (and any DynamicProperties that
 	// rode in on the start event) survive assembly.
@@ -119,10 +127,17 @@ func (s *anthropicState) absorbBlockStart(index int, block messages.ContentBlock
 			st.toolID = b.ID
 			st.toolName = b.Name
 		}
+	case *messages.ThinkingBlock:
+		st.kind = "thinking"
+		if b != nil {
+			if b.Thinking != "" {
+				st.thinkingBuf.WriteString(b.Thinking)
+			}
+			st.signature = b.Signature
+		}
 	default:
-		// Unknown / thinking / other — keep the raw block as-is; any
-		// subsequent deltas will land on textBuf and round-trip
-		// imperfectly, which is fine for the live-messages viewer.
+		// RedactedThinkingBlock / unknown — keep the raw block as-is;
+		// it carries no deltas to accumulate.
 	}
 }
 
@@ -141,6 +156,10 @@ func (s *anthropicState) absorbBlockDelta(index int, delta messages.ContentBlock
 		st.textBuf.WriteString(d.Text)
 	case *messages.InputJSONDelta:
 		st.toolArgs.WriteString(d.PartialJSON)
+	case *messages.ThinkingDelta:
+		st.thinkingBuf.WriteString(d.Thinking)
+	case *messages.SignatureDelta:
+		st.signature = d.Signature
 	}
 }
 
@@ -207,6 +226,16 @@ func (s *anthropicState) assemble() messages.MessagesResponse {
 				Input: input,
 			}
 			if existing, ok := st.raw.(*messages.ToolUseBlock); ok && existing != nil {
+				block.DynamicProperties = existing.DynamicProperties
+			}
+			content = append(content, block)
+		case "thinking":
+			block := &messages.ThinkingBlock{
+				Type:      "thinking",
+				Thinking:  st.thinkingBuf.String(),
+				Signature: st.signature,
+			}
+			if existing, ok := st.raw.(*messages.ThinkingBlock); ok && existing != nil {
 				block.DynamicProperties = existing.DynamicProperties
 			}
 			content = append(content, block)

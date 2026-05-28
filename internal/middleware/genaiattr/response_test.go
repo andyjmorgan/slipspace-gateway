@@ -61,6 +61,79 @@ func TestExtractResponse_Anthropic_SSE(t *testing.T) {
 	}
 }
 
+func TestExtractResponse_Anthropic_ThinkingJSON(t *testing.T) {
+	t.Parallel()
+	// Non-streaming: a thinking block precedes the text block in Content.
+	raw := []byte(`{"id":"msg_1","model":"claude-opus-4-7","content":[{"type":"thinking","thinking":"deliberating","signature":"sig"},{"type":"text","text":"the answer"}],"stop_reason":"end_turn"}`)
+	got := genaiattr.ExtractResponse("messages", raw)
+	if len(got.OutputParts) != 2 {
+		t.Fatalf("parts = %+v, want [reasoning, text]", got.OutputParts)
+	}
+	if got.OutputParts[0].Type != "reasoning" || got.OutputParts[0].Content != "deliberating" {
+		t.Errorf("part0 = %+v, want reasoning/deliberating", got.OutputParts[0])
+	}
+	if got.OutputParts[1].Type != "text" || got.OutputParts[1].Content != "the answer" {
+		t.Errorf("part1 = %+v, want text/the answer", got.OutputParts[1])
+	}
+	if got.OutputText != "the answer" {
+		t.Errorf("output text = %q, want 'the answer' (text blocks only)", got.OutputText)
+	}
+}
+
+func TestExtractResponse_Anthropic_ThinkingSSE(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"step \"}}\n\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"one\"}}\n\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n" +
+		"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n")
+	got := genaiattr.ExtractResponse("messages", raw)
+	if len(got.OutputParts) != 2 {
+		t.Fatalf("parts = %+v, want [reasoning, text]", got.OutputParts)
+	}
+	if got.OutputParts[0].Type != "reasoning" || got.OutputParts[0].Content != "step one" {
+		t.Errorf("part0 = %+v, want reasoning/'step one'", got.OutputParts[0])
+	}
+	if got.OutputParts[1].Type != "text" || got.OutputParts[1].Content != "done" {
+		t.Errorf("part1 = %+v, want text/done", got.OutputParts[1])
+	}
+}
+
+func TestExtractResponse_Anthropic_InterleavedThinkTextThink(t *testing.T) {
+	t.Parallel()
+	// think, text, think again — the parts must preserve wire order, not be
+	// collapsed into one aggregate reasoning part.
+	raw := []byte(`{"id":"m","model":"claude","content":[{"type":"thinking","thinking":"A","signature":"s1"},{"type":"text","text":"B"},{"type":"thinking","thinking":"C","signature":"s2"}]}`)
+	got := genaiattr.ExtractResponse("messages", raw)
+	if len(got.OutputParts) != 3 {
+		t.Fatalf("parts = %+v, want 3", got.OutputParts)
+	}
+	want := []struct{ typ, content string }{
+		{"reasoning", "A"},
+		{"text", "B"},
+		{"reasoning", "C"},
+	}
+	for i, w := range want {
+		if got.OutputParts[i].Type != w.typ || got.OutputParts[i].Content != w.content {
+			t.Errorf("part%d = %+v, want %s/%s", i, got.OutputParts[i], w.typ, w.content)
+		}
+	}
+}
+
+func TestExtractResponse_Anthropic_RedactedThinking(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"id":"m","model":"claude","content":[{"type":"redacted_thinking","data":"blob"},{"type":"text","text":"hi"}]}`)
+	got := genaiattr.ExtractResponse("messages", raw)
+	if len(got.OutputParts) != 2 {
+		t.Fatalf("parts = %+v, want [reasoning, text]", got.OutputParts)
+	}
+	if got.OutputParts[0].Type != "reasoning" || got.OutputParts[0].Content != "" {
+		t.Errorf("part0 = %+v, want reasoning with empty content", got.OutputParts[0])
+	}
+}
+
 func TestExtractResponse_Gemini(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{"responseId":"resp-1","modelVersion":"gemini-2.0-flash-001","candidates":[{"finishReason":"STOP"}],"usageMetadata":{"thoughtsTokenCount":33}}`)
