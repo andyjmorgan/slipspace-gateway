@@ -233,6 +233,38 @@ When an OTLP endpoint is configured, the data plane also emits OpenTelemetry **s
 - **redacted** — credential-shaped tokens masked (`internal/contentredact`), applied before capping so a secret can't hide across the truncation boundary;
 - **capped** — each text/argument field size-limited; tool-definition parameter schemas are dropped wholesale over the cap (name/description kept legible).
 
+**Tuning the caps.** The default caps (32 KiB per text field, 32 KiB per system-instruction part, 64 KiB combined tool-definition parameters) are operator-tunable via the `telemetry:` block in `admin.yaml`. Defaults preserve today's behaviour, so a deployment that doesn't set the block sees no change. Three knobs:
+
+```yaml
+telemetry:
+  content_capture:
+    # Per text-field cap on input.messages / output.messages content
+    # (text parts' `content`, tool_call_response `result`, tool_call
+    # `arguments` whole-document size, plus each tool definition's
+    # `description`). 0 = unbounded. Default 32768.
+    messages_max_bytes: 32768
+
+    # Per text-field cap on system_instructions parts' `content`.
+    # 0 = unbounded. Default 32768.
+    system_instructions_max_bytes: 32768
+
+    # Combined `parameters` JSON-schema size across all tool
+    # definitions. Once exceeded, parameters are dropped wholesale
+    # from every definition (type/name/description still emitted).
+    # 0 = unbounded. Default 65536.
+    tool_definitions_max_bytes: 65536
+```
+
+| YAML state | Behaviour |
+|---|---|
+| key absent | use built-in default (32 KiB / 32 KiB / 64 KiB) |
+| key present, value `0` | unbounded — no truncation, no drop |
+| key present, value `N > 0` | cap at N bytes |
+
+Tool-call `arguments` overflow drops the whole document rather than truncating in place — a half-truncated JSON object would not parse. All other text fields are credential-redacted before the cap is applied (so a secret never hides across the boundary) and the marker `…[truncated]` makes the truncation visible to downstream consumers.
+
+The caps shape only what reaches the span and the operation-details event; they do not affect the connector spool, which carries the full unredacted body to operator-configured destinations (invariant #4). `SLUICE_OTEL_CAPTURE_CONTENT` still gates emission entirely — the caps only apply when capture is on.
+
 On the **span**, content rides as JSON strings (span attributes can't hold structured values — the spec permits a JSON string there); on the **event**, it is recorded in structured form, as the spec requires. The operation-detail events are emitted within the request span's context, so the log records carry the span's `trace_id`/`span_id` for native trace↔logs correlation.
 
 ---

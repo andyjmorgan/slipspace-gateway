@@ -85,6 +85,7 @@ The loader recognises seven top-level keys, distributed across three files:
 | `resilience_policies` | `policy.yaml` | Top-level resilience policy library. Definitions are unique by name; configurations reference one through `resilience_name`. |
 | `connectors` | `policy.yaml` | Top-level connector destinations (s3, azure_blob, webhook). Definitions are unique by name; configurations attach them through `connector_bindings`. |
 | `admin` | `admin.yaml` | Management console gate. Optional file; absent means the console never starts. |
+| `telemetry` | `admin.yaml` | Operator-tunable telemetry knobs (today: GenAI content-capture byte caps). Optional block; absent resolves to built-in defaults. |
 
 Any other top-level key in any file aborts the load.
 
@@ -288,6 +289,36 @@ The console's runtime behaviour (live-feed capacity, body capture budget, snapsh
 
 ---
 
+## `telemetry` block
+
+`admin.yaml` may also carry `telemetry:` — operator-tunable knobs that shape what the gateway emits to its telemetry signals. Today the only nested block is `content_capture`, which caps the bytes the gateway includes on the GenAI span and `gen_ai.client.inference.operation.details` event when `SLUICE_OTEL_CAPTURE_CONTENT=true`. The block is **optional**; absent fields fall back to the built-in defaults, so existing deployments need no change.
+
+```yaml
+telemetry:
+  content_capture:
+    messages_max_bytes: 32768
+    system_instructions_max_bytes: 32768
+    tool_definitions_max_bytes: 65536
+```
+
+### Cap semantics
+
+| YAML state | Behaviour |
+|---|---|
+| key absent | use built-in default (32 KiB / 32 KiB / 64 KiB) |
+| key present, value `0` | unbounded — no truncation, no drop |
+| key present, value `N > 0` | cap at N bytes |
+
+| Field | Default | What it caps |
+|---|---|---|
+| `messages_max_bytes` | 32 KiB | Every text field carried under `input.messages` / `output.messages` content: text parts' `content`, tool_call_response `result`, tool_call `arguments` (whole-document drop on overflow to keep the JSON well-formed), and each tool definition's `description`. |
+| `system_instructions_max_bytes` | 32 KiB | Per-part `content` under `gen_ai.system_instructions`. |
+| `tool_definitions_max_bytes` | 64 KiB | Combined `parameters` JSON-schema size across every tool definition. Once exceeded, parameters are dropped wholesale from every definition (type/name/description still emitted). |
+
+The caps shape only what reaches the span and the operation-details event — they do not affect the connector spool, which carries the full unredacted body to operator-configured destinations (invariant #4). `SLUICE_OTEL_CAPTURE_CONTENT` is the master switch; the caps only apply when capture is on. See [observability.md](observability.md#genai-spans-and-events) for the full content-capture story.
+
+---
+
 ## The binding triangle
 
 ```mermaid
@@ -463,6 +494,11 @@ admin:
   enabled: true
   bind_addr: "0.0.0.0:8081"
   password: "operator-secret"
+telemetry:
+  content_capture:
+    messages_max_bytes: 32768
+    system_instructions_max_bytes: 32768
+    tool_definitions_max_bytes: 65536
 ```
 
 What this gives you: openai is the bare-routable default (so `POST /v1/chat/completions` lands on openai); anthropic is prefix-required (so `/anthropic/v1/messages` is reachable) but its native `/v1/messages` is bare-routable too via `prefix_optional`; the `claude-*` model rewrites to anthropic with the resilience policy carrying both providers as failover targets.
