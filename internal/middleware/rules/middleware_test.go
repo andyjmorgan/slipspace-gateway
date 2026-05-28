@@ -50,7 +50,7 @@ func TestHTTPHandler_RuleAppliesStashesState(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Tagged", "yes")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"": {r}}), 8, nil)
 
 	var stateSeen *rules.MutableState
 	next := http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
@@ -118,7 +118,7 @@ func TestHTTPHandler_ExtractInboundModel_PathParamsBranch(t *testing.T) {
 		Condition: modelCondition(contractsrules.StringEquals, "gemini-2.0-flash-001"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Match", "yes")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"": {tagOnGemini}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"": {tagOnGemini}}), 8, nil)
 	matchWithParams := func(context.Context) (string, string, string, map[string]string, bool) {
 		return "gemini", "generate_content", "/v1beta/models/{model}:generateContent", map[string]string{"model": "gemini-2.0-flash-001"}, true
 	}

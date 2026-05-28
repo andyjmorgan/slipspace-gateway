@@ -49,7 +49,7 @@ func TestEvaluator_EmitsMatchAndDurationMeters(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Tagged", "yes")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, meters)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, meters)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -76,7 +76,7 @@ func TestEvaluator_EmitsErrorMeterOnActionFailure(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{&contractsrules.ChangeUrlAction{NewURL: "://broken"}},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, meters)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, meters)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -105,7 +105,7 @@ func TestEvaluator_EmitsErrorMeterOnGroupDepthExceeded(t *testing.T) {
 		Condition: outer,
 		Actions:   []contractsrules.Action{setHeaderAction("X", "v")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 1, meters)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 1, meters)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {

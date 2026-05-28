@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
 )
@@ -61,9 +62,9 @@ func TestEvaluator_SingleRule_AppliesAction(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-Tagged", "yes")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{
 		"dev": {r1},
-	}, 8, nil)
+	}), 8, nil)
 
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
@@ -106,7 +107,7 @@ func TestEvaluator_RuleIDPropagates(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Test", "v")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -125,7 +126,7 @@ func TestEvaluator_NoMatch_NoRecord(t *testing.T) {
 		Condition: providerCondition("anthropic"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Test", "v")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -152,7 +153,7 @@ func TestEvaluator_BehaviorExit_HaltsIteration(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {first, second}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -182,7 +183,7 @@ func TestEvaluator_BehaviorContinue_IsDefault(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {first, second}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -205,7 +206,7 @@ func TestEvaluator_TypedBody_ChangeModelName(t *testing.T) {
 			&contractsrules.ChangeModelNameAction{Type: "changeModelName", NewModelName: "gpt-4o"},
 		},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	body := &openaichat.ChatCompletionRequest{Model: "gpt-3.5"}
 	ctx, _ := rules.WithMatchBuffer(context.Background())
@@ -231,7 +232,7 @@ func TestEvaluator_ActionError_RecordedOnEvent(t *testing.T) {
 			&contractsrules.ChangeUrlAction{Type: "changeUrl", NewURL: "://busted"},
 		},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -256,7 +257,7 @@ func TestEvaluator_UnknownConfigName_NoOp(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X", "v")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"prod": {r}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"prod": {r}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 	if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
@@ -282,4 +283,55 @@ func TestEvaluator_DefaultMaxGroupDepth(t *testing.T) {
 	if e == nil {
 		t.Fatal("nil evaluator returned")
 	}
+}
+
+// TestEvaluator_PicksUpStoreReplace proves that swapping the underlying
+// config snapshot causes the next Evaluate call to read the new rule
+// library. This is the load-bearing test for the read-through path that
+// Phase 2's admin write endpoints will rely on.
+func TestEvaluator_PicksUpStoreReplace(t *testing.T) {
+	t.Parallel()
+
+	tag := func(name, value string) *contractsrules.RuleContract {
+		return &contractsrules.RuleContract{
+			Name:      name,
+			Condition: providerCondition("openai"),
+			Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-Tagged", value)},
+		}
+	}
+	initialRule := tag("initial", "first")
+	replacedRule := tag("replaced", "second")
+
+	store := config.NewStore(&config.ResolvedConfig{
+		PerConfigurationRules: map[string][]*contractsrules.RuleContract{
+			"dev": {initialRule},
+		},
+	})
+	e := rules.NewEvaluator(store, 8, nil)
+
+	mustEval := func(label string, wantRule string) {
+		t.Helper()
+		state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
+		ctx, buf := rules.WithMatchBuffer(context.Background())
+		if _, err := e.Evaluate(ctx, newGC(), state, nil); err != nil {
+			t.Fatalf("%s: Evaluate: %v", label, err)
+		}
+		matches := buf.Drain()
+		if len(matches) != 1 {
+			t.Fatalf("%s: matches=%d, want 1", label, len(matches))
+		}
+		if matches[0].RuleName != wantRule {
+			t.Fatalf("%s: rule=%q, want %q", label, matches[0].RuleName, wantRule)
+		}
+	}
+
+	mustEval("pre-swap", "initial")
+
+	store.Replace(&config.ResolvedConfig{
+		PerConfigurationRules: map[string][]*contractsrules.RuleContract{
+			"dev": {replacedRule},
+		},
+	})
+
+	mustEval("post-swap", "replaced")
 }

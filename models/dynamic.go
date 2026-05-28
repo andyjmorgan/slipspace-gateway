@@ -32,9 +32,15 @@ var ErrNotStruct = errors.New("dynamic: v must reference a struct")
 // here is what prevents that.
 type DynamicProperties struct {
 	// Extra holds JSON object keys that did not match any typed field on the
-	// embedding struct. Keys are preserved verbatim and re-emitted on
+	// embedding struct. Keys are preserved verbatim and re-emitted on JSON
 	// marshal so the wire payload survives a parse-and-reserialise cycle.
-	Extra map[string]json.RawMessage `json:"-"`
+	//
+	// The yaml:"-" tag keeps Extra out of YAML output entirely. YAML is the
+	// operator-authored format for our own schemas (rules, configurations);
+	// it never carries provider-side unknown fields, so there is nothing
+	// for YAML to preserve here. Provider model YAML round-trips are not
+	// a supported path either — providers are JSON-only.
+	Extra map[string]json.RawMessage `json:"-" yaml:"-"`
 }
 
 // MarshalDynamic merges v's typed fields and its embedded DynamicProperties.Extra

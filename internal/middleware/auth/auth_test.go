@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -30,7 +31,7 @@ func captureLogger() (*slog.Logger, *bytes.Buffer) {
 }
 
 func TestHTTPHandler_HappyPathManaged(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
+	resolver := NewResolver(config.NewStore(fixtureConfig()))
 	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
 
 	var captured AuthResult
@@ -71,7 +72,7 @@ func TestHTTPHandler_HappyPathManaged(t *testing.T) {
 }
 
 func TestHTTPHandler_HappyPathPassthrough(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
+	resolver := NewResolver(config.NewStore(fixtureConfig()))
 	route := routeStub{provider: "anthropic", endpoint: "messages", ok: true}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +104,7 @@ func TestHTTPHandler_HappyPathPassthrough(t *testing.T) {
 }
 
 func TestHTTPHandler_Unauthorized(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
+	resolver := NewResolver(config.NewStore(fixtureConfig()))
 	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
 
 	nextCalled := false
@@ -126,7 +127,7 @@ func TestHTTPHandler_Unauthorized(t *testing.T) {
 }
 
 func TestHTTPHandler_DisabledKey_LogsDisabledResult(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
+	resolver := NewResolver(config.NewStore(fixtureConfig()))
 	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
 
 	h := HTTPHandler(resolver, route.From, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -148,7 +149,7 @@ func TestHTTPHandler_DisabledKey_LogsDisabledResult(t *testing.T) {
 }
 
 func TestHTTPHandler_UnknownConfiguration(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
+	resolver := NewResolver(config.NewStore(fixtureConfig()))
 	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
 
 	h := HTTPHandler(resolver, route.From, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -165,7 +166,7 @@ func TestHTTPHandler_UnknownConfiguration(t *testing.T) {
 }
 
 func TestHTTPHandler_NoRouteOnContext(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
+	resolver := NewResolver(config.NewStore(fixtureConfig()))
 	route := routeStub{ok: false}
 
 	h := HTTPHandler(resolver, route.From, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -187,8 +188,8 @@ func TestHTTPHandler_PanicsOnNilDeps(t *testing.T) {
 		next     http.Handler
 	}{
 		{"nil resolver", nil, func(context.Context) (string, string, bool) { return "", "", true }, http.NotFoundHandler()},
-		{"nil routeFrom", NewResolver(fixtureConfig()), nil, http.NotFoundHandler()},
-		{"nil next", NewResolver(fixtureConfig()), func(context.Context) (string, string, bool) { return "", "", true }, nil},
+		{"nil routeFrom", NewResolver(config.NewStore(fixtureConfig())), nil, http.NotFoundHandler()},
+		{"nil next", NewResolver(config.NewStore(fixtureConfig())), func(context.Context) (string, string, bool) { return "", "", true }, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,7 +237,7 @@ func TestWithAuthRoundTrip(t *testing.T) {
 }
 
 func TestHTTPHandler_IdentityPassthroughHappyPath(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
+	resolver := NewResolver(config.NewStore(fixtureConfig()))
 	route := routeStub{provider: "anthropic", endpoint: "messages", ok: true}
 
 	var captured AuthResult
@@ -275,7 +276,7 @@ func TestHTTPHandler_IdentityPassthroughHappyPath(t *testing.T) {
 }
 
 func TestHTTPHandler_LegacyConfigurationHeaderLogsDeprecation(t *testing.T) {
-	resolver := NewResolver(fixtureConfig())
+	resolver := NewResolver(config.NewStore(fixtureConfig()))
 	route := routeStub{provider: "anthropic", endpoint: "messages", ok: true}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

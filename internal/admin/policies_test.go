@@ -40,7 +40,7 @@ func TestPoliciesHandler_NilConfigReturns503(t *testing.T) {
 func TestPoliciesHandler_EmptyConfig(t *testing.T) {
 	t.Parallel()
 	resolved := &config.ResolvedConfig{}
-	h := PoliciesHandler(resolved, nil)
+	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil))
 
@@ -73,7 +73,7 @@ func TestPoliciesHandler_ProjectsTargetsAndCircuitState(t *testing.T) {
 		// "ha|backup" intentionally absent → "closed"
 	}}
 
-	h := PoliciesHandler(resolved, cb)
+	h := PoliciesHandler(config.NewStore(resolved), cb)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil))
 	if rec.Code != http.StatusOK {
@@ -113,7 +113,7 @@ func TestPoliciesHandler_NilBreakerSource_AllUnknown(t *testing.T) {
 	}
 	resolved := &config.ResolvedConfig{ResiliencePolicies: []contractsres.ResilienceConfig{pol}}
 
-	h := PoliciesHandler(resolved, nil)
+	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil))
 
@@ -144,7 +144,7 @@ func TestPoliciesHandler_PolicyCBEnabledFlag(t *testing.T) {
 	}
 	resolved := &config.ResolvedConfig{ResiliencePolicies: []contractsres.ResilienceConfig{pol}}
 
-	h := PoliciesHandler(resolved, nil)
+	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil))
 

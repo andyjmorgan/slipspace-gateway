@@ -49,7 +49,7 @@ func FuzzResolve(f *testing.F) {
 			"/gemini/v1beta/models/{model}:generateContent": {Provider: "gemini", Endpoint: "generate_content"},
 		},
 	}
-	r, err := routing.New(rc)
+	r, err := routing.New(config.NewStore(rc), nil)
 	if err != nil {
 		f.Fatalf("New: %v", err)
 	}

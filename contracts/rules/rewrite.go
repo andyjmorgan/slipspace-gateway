@@ -232,7 +232,7 @@ type RewriteFieldAction struct {
 	// Value is the value written at the target.
 	Value RewriteValue `yaml:"value" json:"value"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "rewriteField" discriminator.
@@ -260,7 +260,7 @@ type RemoveFieldAction struct {
 	// Target is the dotted body path to delete (request.body.*).
 	Target string `yaml:"target" json:"target"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "removeField" discriminator.
@@ -292,7 +292,7 @@ type AppendFieldAction struct {
 	// Value is the element appended to the array.
 	Value RewriteValue `yaml:"value" json:"value"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "appendField" discriminator.
@@ -369,7 +369,7 @@ type BodyFieldCondition struct {
 	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ConditionType returns the "bodyField" discriminator.

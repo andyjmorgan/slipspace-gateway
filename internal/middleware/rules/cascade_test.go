@@ -69,7 +69,7 @@ func TestCascade_ProviderMutationVisibleToLaterRule(t *testing.T) {
 		Condition: providerCondition("anthropic"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-PostFlip", "yes")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {flip, tag}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {flip, tag}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
@@ -104,7 +104,7 @@ func TestCascade_ModelMutationVisibleToLaterRule(t *testing.T) {
 		Condition: modelCondition(contractsrules.StringEquals, "tier-cheap"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Cost-Tier", "low")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	body := &openaichat.ChatCompletionRequest{Model: "gpt-4o-mini"}
 	ctx, buf := rules.WithMatchBuffer(context.Background())
@@ -157,7 +157,7 @@ func TestCascade_ModelMutationVisibleToCatchAll_MultipleSources(t *testing.T) {
 		rule("normalise-gemini", "gemini-"),
 		catchall,
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": configRules}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": configRules}), 8, nil)
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,7 +191,7 @@ func TestCascade_HeaderMutationVisibleToLaterRule(t *testing.T) {
 		Condition: headerCondition("X-Tenant-Class", "premium"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Premium-Feature", "enabled")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {tagger, gate}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {tagger, gate}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 
@@ -224,7 +224,7 @@ func TestCascade_BehaviorExit_StopsAfterCascadeMutation(t *testing.T) {
 		Condition: providerCondition("anthropic"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Should-Not-Appear", "y")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {flipAndExit, wouldFire}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {flipAndExit, wouldFire}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 
@@ -259,7 +259,7 @@ func TestCascade_TerminatingAction_StopsImmediately(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Should-Not-Appear", "y")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {terminate, follower}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {terminate, follower}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
@@ -300,7 +300,7 @@ func TestCascade_NoOscillation(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Loop-Marker", "fired")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {flipForward, flipBack, wouldRefire}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {flipForward, flipBack, wouldRefire}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
@@ -333,7 +333,7 @@ func TestCascade_ConfigurationNameNotMutated(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{changeProvider("anthropic")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {flip}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {flip}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, buf := rules.WithMatchBuffer(context.Background())
 
@@ -365,7 +365,7 @@ func TestCascade_NoMutation_FrozenBehaviorIntact(t *testing.T) {
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Second", "yes")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {first, second}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {first, second}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 
@@ -400,7 +400,7 @@ func TestCascade_LiveModelFromGeminiBodyPathParams(t *testing.T) {
 		Condition: modelCondition(contractsrules.StringEquals, "tier-multimodal"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Tier", "multimodal")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}), 8, nil)
 
 	// Seed the initial gc with the Gemini-style model and the
 	// state's PathParams with the same — Gemini routes by URL
@@ -442,7 +442,7 @@ func TestCascade_LiveModelFromAnthropicBody(t *testing.T) {
 		Condition: modelCondition(contractsrules.StringEquals, "tier-cheap"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Cost-Tier", "low")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}), 8, nil)
 	state := rules.NewMutableState("anthropic", "messages", "", nil, http.Header{})
 	body := &messages.MessagesRequest{Model: "claude-haiku-4-5"}
 	gc := rules.GatewayContext{Provider: "anthropic", Endpoint: "messages", Model: "claude-haiku-4-5", ConfigurationName: "dev"}
@@ -474,7 +474,7 @@ func TestCascade_LiveModelFromOpenAIResponsesBody(t *testing.T) {
 		Condition: modelCondition(contractsrules.StringEquals, "tier-cheap"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Cost-Tier", "low")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}), 8, nil)
 	state := rules.NewMutableState("openai", "responses", "", nil, http.Header{})
 	body := &openairesponses.ResponsesRequest{Model: "gpt-4o-mini"}
 	gc := rules.GatewayContext{Provider: "openai", Endpoint: "responses", Model: "gpt-4o-mini", ConfigurationName: "dev"}
@@ -509,7 +509,7 @@ func TestCascade_EndpointCondition_FrozenWhenNoActionMutatesEndpoint(t *testing.
 		Condition: endpointCondition("chat_completions"),
 		Actions:   []contractsrules.Action{setHeaderAction("X-Endpoint-Tag", "matched")},
 	}
-	e := rules.NewEvaluator(map[string][]*contractsrules.RuleContract{"dev": {flip, endpointGate}}, 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {flip, endpointGate}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 

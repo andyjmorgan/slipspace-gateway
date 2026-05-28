@@ -53,7 +53,7 @@ type ChangeProviderAction struct {
 	// NewProvider is the provider name to route to. Must exist in providers.yaml.
 	NewProvider string `yaml:"newProvider" json:"new_provider"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "changeProvider" discriminator.
@@ -78,7 +78,7 @@ type ChangeModelNameAction struct {
 	// request body's model field.
 	NewModelName string `yaml:"newModelName" json:"new_model_name"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "changeModelName" discriminator.
@@ -103,7 +103,7 @@ type ChangeUrlAction struct {
 	// request only.
 	NewURL string `yaml:"newUrl" json:"new_url"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "changeUrl" discriminator.
@@ -135,7 +135,7 @@ type ChangeApiKeyAction struct {
 	// passthrough auth scenarios.
 	UseSluiceKey bool `yaml:"useSluiceKey,omitempty" json:"use_sluice_key,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "changeApiKey" discriminator.
@@ -167,7 +167,7 @@ type SetHeaderAction struct {
 	// HeaderRemove.
 	HeaderValue string `yaml:"headerValue,omitempty" json:"header_value,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "setHeader" discriminator.
@@ -195,7 +195,7 @@ type AppendQueryStringAction struct {
 	// Value is the query-string parameter value.
 	Value string `yaml:"value" json:"value"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "appendQueryString" discriminator.
@@ -226,7 +226,7 @@ type ReturnStatusCodeAction struct {
 	// BodyType selects the Content-Type family applied to Body.
 	BodyType StatusCodeBodyType `yaml:"bodyType,omitempty" json:"body_type,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "returnStatusCode" discriminator.
@@ -253,7 +253,7 @@ type LlmImpersonationAction struct {
 	// provider's response shape.
 	Message string `yaml:"message" json:"message"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "llmImpersonation" discriminator.
@@ -292,7 +292,7 @@ type AddTagAction struct {
 	// "audit:pii") to namespace.
 	Tag string `yaml:"tag" json:"tag"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "addTag" discriminator.
@@ -328,7 +328,7 @@ type UseResiliencePolicyAction struct {
 	// silent runtime fall-through.
 	PolicyName string `yaml:"policyName" json:"policyName"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the "useResiliencePolicy" discriminator.
@@ -353,7 +353,7 @@ type UnknownAction struct {
 	// re-emitted on marshal.
 	Type string `yaml:"type" json:"type"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ActionType returns the unknown discriminator value verbatim.

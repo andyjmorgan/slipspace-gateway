@@ -3,6 +3,8 @@ package routing_test
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 
@@ -91,7 +93,7 @@ func buildConfig(t *testing.T) *config.ResolvedConfig {
 }
 
 func TestNew_NilConfig(t *testing.T) {
-	if _, err := routing.New(nil); err == nil {
+	if _, err := routing.New(nil, nil); err == nil {
 		t.Fatal("New(nil) want error, got nil")
 	}
 }
@@ -103,7 +105,7 @@ func TestNew_UnknownProviderInRouteIndex(t *testing.T) {
 			"/v1/chat/completions": {Provider: "ghost", Endpoint: "chat"},
 		},
 	}
-	if _, err := routing.New(rc); err == nil {
+	if _, err := routing.New(config.NewStore(rc), nil); err == nil {
 		t.Fatal("want error for unknown provider, got nil")
 	}
 }
@@ -121,7 +123,7 @@ func TestNew_UnknownEndpointInRouteIndex(t *testing.T) {
 			"/v1/chat": {Provider: "openai", Endpoint: "ghost"},
 		},
 	}
-	if _, err := routing.New(rc); err == nil {
+	if _, err := routing.New(config.NewStore(rc), nil); err == nil {
 		t.Fatal("want error for unknown endpoint, got nil")
 	}
 }
@@ -139,14 +141,14 @@ func TestNew_EmptyMethodList(t *testing.T) {
 			"/v1/chat": {Provider: "openai", Endpoint: "chat"},
 		},
 	}
-	if _, err := routing.New(rc); err == nil {
+	if _, err := routing.New(config.NewStore(rc), nil); err == nil {
 		t.Fatal("want error for empty method list, got nil")
 	}
 }
 
 func TestResolve(t *testing.T) {
 	rc := buildConfig(t)
-	r, err := routing.New(rc)
+	r, err := routing.New(config.NewStore(rc), nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -298,7 +300,7 @@ func TestResolve(t *testing.T) {
 // endpoint declares no explicit Path.
 func TestResolve_PopulatesMatchedPath(t *testing.T) {
 	rc := buildConfig(t)
-	r, err := routing.New(rc)
+	r, err := routing.New(config.NewStore(rc), nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -354,7 +356,7 @@ func TestResolve_AgainstConfigDevFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Load(%s): %v", dir, err)
 	}
-	r, err := routing.New(resolved)
+	r, err := routing.New(config.NewStore(resolved), nil)
 	if err != nil {
 		t.Fatalf("routing.New: %v", err)
 	}
@@ -412,7 +414,7 @@ func TestNew_DeterministicPatternOrder(t *testing.T) {
 		},
 	}
 	for i := 0; i < 5; i++ {
-		r, err := routing.New(rc)
+		r, err := routing.New(config.NewStore(rc), nil)
 		if err != nil {
 			t.Fatalf("iter %d: New: %v", i, err)
 		}
@@ -420,5 +422,113 @@ func TestNew_DeterministicPatternOrder(t *testing.T) {
 		if err != nil || got.Provider != "a" {
 			t.Fatalf("iter %d: got %+v %v", i, got, err)
 		}
+	}
+}
+
+// TestRouter_RetainsStateOnInvalidReplace proves a Replace that lands a
+// route table the post-construction rebuilder cannot index — an unknown
+// provider reference — does NOT corrupt the active router. The previous
+// snapshot's tables remain in effect; Resolve answers come back unchanged.
+// At runtime this code path is dead because the admin-write Validate
+// gate rejects malformed configs before they reach Replace; the test
+// exists to lock the retain-on-failure invariant down regardless.
+func TestRouter_RetainsStateOnInvalidReplace(t *testing.T) {
+	t.Parallel()
+
+	initial := &config.ResolvedConfig{
+		Providers: contractsconfig.ProvidersConfig{
+			"openai": {
+				Endpoints: map[string]contractsconfig.Endpoint{
+					"chat": {Method: []string{"POST"}, AcceptedPaths: []string{"/v1/chat"}},
+				},
+			},
+		},
+		RouteIndex: map[string]config.Route{
+			"/v1/chat": {Provider: "openai", Endpoint: "chat", AcceptedPath: "/v1/chat"},
+		},
+	}
+	// invalid: RouteIndex references a provider that does not exist.
+	invalid := &config.ResolvedConfig{
+		Providers: contractsconfig.ProvidersConfig{},
+		RouteIndex: map[string]config.Route{
+			"/v1/chat": {Provider: "ghost", Endpoint: "chat", AcceptedPath: "/v1/chat"},
+		},
+	}
+
+	store := config.NewStore(initial)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r, err := routing.New(store, logger)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	store.Replace(invalid)
+
+	got, err := r.Resolve("POST", "/v1/chat")
+	if err != nil {
+		t.Fatalf("post-invalid-replace Resolve: %v", err)
+	}
+	if got.Provider != "openai" || got.Endpoint != "chat" {
+		t.Fatalf("post-invalid-replace match=%+v, want pre-replace openai.chat", got)
+	}
+}
+
+// TestRouter_RebuildsOnStoreReplace proves Resolve picks up the new route
+// table after the store swaps to a snapshot whose RouteIndex changed.
+// This is the load-bearing test for the subscribe path that Phase 2's
+// admin write endpoints will rely on.
+func TestRouter_RebuildsOnStoreReplace(t *testing.T) {
+	t.Parallel()
+
+	initial := &config.ResolvedConfig{
+		Providers: contractsconfig.ProvidersConfig{
+			"openai": {
+				Endpoints: map[string]contractsconfig.Endpoint{
+					"chat": {Method: []string{"POST"}, AcceptedPaths: []string{"/v1/chat"}},
+				},
+			},
+		},
+		RouteIndex: map[string]config.Route{
+			"/v1/chat": {Provider: "openai", Endpoint: "chat", AcceptedPath: "/v1/chat"},
+		},
+	}
+
+	next := &config.ResolvedConfig{
+		Providers: contractsconfig.ProvidersConfig{
+			"openai": {
+				Endpoints: map[string]contractsconfig.Endpoint{
+					"chat": {Method: []string{"POST"}, AcceptedPaths: []string{"/v1/chat"}},
+					"new":  {Method: []string{"POST"}, AcceptedPaths: []string{"/v2/new"}},
+				},
+			},
+		},
+		RouteIndex: map[string]config.Route{
+			"/v1/chat": {Provider: "openai", Endpoint: "chat", AcceptedPath: "/v1/chat"},
+			"/v2/new":  {Provider: "openai", Endpoint: "new", AcceptedPath: "/v2/new"},
+		},
+	}
+
+	store := config.NewStore(initial)
+	r, err := routing.New(store, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := r.Resolve("POST", "/v2/new"); !errors.Is(err, routing.ErrNoRoute) {
+		t.Fatalf("pre-swap Resolve(/v2/new) err=%v, want ErrNoRoute", err)
+	}
+
+	store.Replace(next)
+
+	got, err := r.Resolve("POST", "/v2/new")
+	if err != nil {
+		t.Fatalf("post-swap Resolve(/v2/new) err=%v, want nil", err)
+	}
+	if got.Provider != "openai" || got.Endpoint != "new" {
+		t.Fatalf("post-swap match=%+v, want openai.new", got)
+	}
+
+	if _, err := r.Resolve("POST", "/v1/chat"); err != nil {
+		t.Fatalf("post-swap Resolve(/v1/chat) lost the old route: %v", err)
 	}
 }

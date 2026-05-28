@@ -23,12 +23,16 @@ type CircuitBreakerStateSource interface {
 }
 
 // PoliciesHandler serves GET /admin/api/v1/policies. Returns 503 when
-// resolved is nil (no config bound) so a partial boot still produces
+// the store is nil (no config bound) so a partial boot still produces
 // a clean response. The CB source may be nil — every target then
 // reports state="unknown", letting the SPA boot before the
 // orchestrator is fully wired.
-func PoliciesHandler(resolved *config.ResolvedConfig, cb CircuitBreakerStateSource) http.Handler {
+//
+// The handler snapshots the store once at the top of the request and
+// reads through that snapshot for the rest of the call.
+func PoliciesHandler(store *config.Store, cb CircuitBreakerStateSource) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config not loaded", http.StatusServiceUnavailable)
 			return

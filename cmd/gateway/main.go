@@ -101,12 +101,19 @@ func run(ctx context.Context) error {
 	}
 	defer spoolCleanup()
 
-	router, err := routing.New(resolved)
+	// The Store owns the live ResolvedConfig and brokers swaps via
+	// subscribers. Consumers that pre-derive state (routing.Router)
+	// subscribe; hot-readers (auth.Resolver, rules.Evaluator, admin
+	// handlers, reporter) call Snapshot per operation. Phase 2 adds
+	// the admin write path that calls store.Replace.
+	store := config.NewStore(resolved)
+
+	router, err := routing.New(store, logger)
 	if err != nil {
 		return fmt.Errorf("gateway: router: %w", err)
 	}
 
-	resolver := auth.NewResolver(resolved)
+	resolver := auth.NewResolver(store)
 
 	liveFeed, err := buildLiveFeed(env, logger)
 	if err != nil {
@@ -119,7 +126,7 @@ func run(ctx context.Context) error {
 	}
 
 	contentCaps := resolved.Telemetry.ContentCapture.Resolve()
-	reporter := newReporterFactory(spoolInst, resolved, logger, obs.Meters, liveFeed, bodyStore, obs.Tracer(), obs.EventLogger(), env.OTelCaptureContent, contentCaps)
+	reporter := newReporterFactory(spoolInst, store, logger, obs.Meters, liveFeed, bodyStore, obs.Tracer(), obs.EventLogger(), env.OTelCaptureContent, contentCaps)
 	observerFactory := reporter.Factory()
 	// One Redactor for the whole process — the built-in substring
 	// list plus any operator-supplied extras from
@@ -148,10 +155,10 @@ func run(ctx context.Context) error {
 		},
 	})
 
-	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, env.RulesMaxGroupDepth, obs.Meters)
+	evaluator := rules.NewEvaluator(store, env.RulesMaxGroupDepth, obs.Meters)
 
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
-	policyLookup := makePolicyLookup(resolved)
+	policyLookup := makePolicyLookup(store)
 	// The CB StateListener fires from inside breaker.mu without a
 	// request ctx — see circuitBreakerTransitionListener for the
 	// context.Background() rationale.
@@ -159,7 +166,7 @@ func run(ctx context.Context) error {
 	if err := registerBreakerStateGauge(obs, breakers); err != nil {
 		return fmt.Errorf("gateway: register cb.state gauge: %w", err)
 	}
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, resolved.Providers, policyLookup, breakers, obs.Meters, errs, redactor, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, store, policyLookup, breakers, obs.Meters, errs, redactor, logger)
 
 	// responseCaptureMiddleware sits between recover and the data
 	// plane so every panic is still logged, but the per-request
@@ -191,7 +198,7 @@ func run(ctx context.Context) error {
 	// is bound to ctx; the loop exits on cancellation.
 	obs.Snapshotter.Start(ctx)
 
-	startAdmin(ctx, resolved, obs, logger, drain, startedAt, liveFeed, bodyStore, breakerStoreAdapter{store: breakers}, env.ConfigDir)
+	startAdmin(ctx, store, obs, logger, drain, startedAt, liveFeed, bodyStore, breakerStoreAdapter{store: breakers}, env.ConfigDir)
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -369,13 +376,20 @@ func shutdownPromServer(srv *http.Server) {
 }
 
 // startAdmin brings up the management-console listener on a second
-// http.Server when resolved.Admin is non-nil and Enabled. The console
-// is fully off when the feature flag is false: no goroutine is spawned,
-// no port is opened.
+// http.Server when store.Snapshot().Admin is non-nil and Enabled. The
+// console is fully off when the feature flag is false: no goroutine is
+// spawned, no port is opened.
 //
 // The drain budget mirrors the data plane's so a SIGTERM gives in-flight
 // admin requests the same shutdown headroom as proxy requests.
-func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, breakerStates admin.CircuitBreakerStateSource, configDir string) {
+//
+// The non-mutating snapshot fields read here (Admin, Providers names,
+// RuleNames, AddTag actions, BindAddr) are sampled at startup. The
+// admin write path (Phase 2) does not allow editing the Admin block
+// nor the provider list, so caching these at boot is safe; the
+// per-request reads happen through opts.Store inside the handlers.
+func startAdmin(ctx context.Context, store *config.Store, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, breakerStates admin.CircuitBreakerStateSource, configDir string) {
+	resolved := store.Snapshot()
 	if resolved.Admin == nil || !resolved.Admin.Enabled {
 		logger.InfoContext(ctx, "admin console disabled")
 		return
@@ -405,7 +419,7 @@ func startAdmin(ctx context.Context, resolved *config.ResolvedConfig, obs *obser
 		RuleAttachments:  ruleAttachments,
 		TagAttachments:   tagAttachments,
 		GatewayStartedAt: startedAt,
-		Resolved:         resolved,
+		Store:            store,
 		LiveFeed:         liveFeed,
 		BodyStore:        bodyStore,
 		BreakerStates:    breakerStates,

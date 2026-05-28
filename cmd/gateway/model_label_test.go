@@ -219,14 +219,16 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 
-	router, err := routing.New(resolved)
+	store := config.NewStore(resolved)
+
+	router, err := routing.New(store, nil)
 	if err != nil {
 		upstream.Close()
 		cancel()
 		t.Fatalf("routing.New: %v", err)
 	}
 
-	resolver := auth.NewResolver(resolved)
+	resolver := auth.NewResolver(store)
 
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -241,10 +243,10 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 
 	reporter := newReporterFactory(nil, nil, logger, meters, nil, nil, nil, nil, false, testDefaultCaps())
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
-	evaluator := rules.NewEvaluator(resolved.PerConfigurationRules, 8, meters)
+	evaluator := rules.NewEvaluator(store, 8, meters)
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, reporter.Factory(), resolved.Providers, makePolicyLookup(resolved), resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
+	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, reporter.Factory(), store, makePolicyLookup(store), resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
 	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), nil, dataPlane)
 
 	gateway := httptest.NewServer(root)

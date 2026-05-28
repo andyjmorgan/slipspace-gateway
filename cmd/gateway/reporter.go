@@ -69,15 +69,16 @@ func sanitiseModelLabel(raw string) string {
 }
 
 // reporterFactory captures the dependencies needed by every per-request
-// reporter observer. Spool is the destination side-channel; resolved
-// drives per-configuration ConnectorBindings lookups; the meters /
-// liveFeed / bodyStore handles are process-lifetime values.
+// reporter observer. Spool is the destination side-channel; store drives
+// per-configuration ConnectorBindings lookups via store.Snapshot at
+// record-build time; the meters / liveFeed / bodyStore handles are
+// process-lifetime values.
 //
 // instanceID + seq stamp every Record so consumers can sort by
 // (TsNs, instance_id, seq) per the design note's sort key.
 type reporterFactory struct {
 	spool     *spool.Spool
-	resolved  *config.ResolvedConfig
+	store     *config.Store
 	logger    *slog.Logger
 	meters    *observability.Meters
 	liveFeed  *livefeed.Ring
@@ -109,7 +110,7 @@ type reporterFactory struct {
 	seq        atomic.Uint64
 }
 
-func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool, caps contractsconfig.ResolvedContentCaps) *reporterFactory {
+func newReporterFactory(s *spool.Spool, store *config.Store, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool, caps contractsconfig.ResolvedContentCaps) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -119,7 +120,7 @@ func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger 
 	}
 	return &reporterFactory{
 		spool:          s,
-		resolved:       resolved,
+		store:          store,
 		logger:         logger,
 		meters:         meters,
 		liveFeed:       liveFeed,
@@ -453,7 +454,14 @@ func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matc
 	if r.factory.spool == nil {
 		return
 	}
-	cfg := r.factory.resolved.ConfigurationIndex[r.configuration]
+	if r.factory.store == nil {
+		return
+	}
+	snap := r.factory.store.Snapshot()
+	if snap == nil {
+		return
+	}
+	cfg := snap.ConfigurationIndex[r.configuration]
 	if cfg == nil || len(cfg.ConnectorBindings) == 0 {
 		return
 	}

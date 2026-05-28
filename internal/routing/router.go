@@ -4,21 +4,32 @@ package routing
 
 import (
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
 // Router matches incoming HTTP requests to (provider, endpoint) pairs.
 //
-// The route table is partitioned at construction time: paths without
-// placeholders live in exact for O(1) lookup; paths with `{name}`
-// segments live in patterns as compiled regexes. Resolve probes exact
-// first and falls through to patterns only on miss — exact-match always
-// wins over a pattern that would also match the same path.
+// Internal state (the exact map + compiled pattern slice) is held behind
+// an atomic.Pointer so a config.Store.Replace can swap the route table
+// in lockstep with the new ResolvedConfig snapshot without blocking
+// in-flight Resolve calls. Resolve reads state with a single atomic load
+// and walks the snapshot it observed for the rest of the call, so a swap
+// that lands mid-request still produces a consistent answer (either the
+// pre-swap or the post-swap table — never a torn mix).
 type Router struct {
+	// state carries the active route table. Replaced atomically by the
+	// store subscriber on every successful config swap.
+	state atomic.Pointer[routerState]
+}
+
+// routerState is the per-snapshot derived form of the route table.
+type routerState struct {
 	// exact holds literal paths. Lookup is a single map probe.
 	exact map[string]bound
 
@@ -95,17 +106,63 @@ type Match struct {
 	Params map[string]string
 }
 
-// New builds a Router from the resolved config. The methods allowed for
-// each route are stashed at build time so Resolve is a single map lookup
-// on the exact-match path. Patterns are sorted lexicographically by source
-// path so two overlapping patterns resolve in a stable, restart-
-// independent order.
-func New(resolved *config.ResolvedConfig) (*Router, error) {
-	if resolved == nil {
-		return nil, fmt.Errorf("routing: new: resolved config is nil")
+// New builds a Router from the live snapshot of store and registers a
+// subscriber that rebuilds the internal route table on every subsequent
+// successful Replace. The initial build runs synchronously here so a
+// startup with a broken route table fails fast; later rebuilds happen
+// inside the subscriber and are silent — the admin-write path runs
+// Validate on its clone before calling Replace, so an invalid table
+// never reaches here at runtime.
+//
+// logger is used only by the subscriber's failure path; nil is safe and
+// downgrades the failure to a silent state-retain.
+func New(store *config.Store, logger *slog.Logger) (*Router, error) {
+	if store == nil {
+		return nil, fmt.Errorf("routing: new: store is nil")
 	}
 
-	r := &Router{
+	r := &Router{}
+	st, err := buildState(store.Snapshot())
+	if err != nil {
+		return nil, err
+	}
+	r.state.Store(st)
+
+	// Subscribe fires immediately with the current snapshot; skip that
+	// first invocation since the synchronous build above already produced
+	// the same state. Subsequent fires are real Replace events.
+	first := true
+	store.Subscribe(func(resolved *config.ResolvedConfig) {
+		if first {
+			first = false
+			return
+		}
+		next, err := buildState(resolved)
+		if err != nil {
+			if logger != nil {
+				logger.Error("routing: rebuild on config swap failed; retaining previous route table", slog.String("error", err.Error()))
+			}
+			return
+		}
+		r.state.Store(next)
+	})
+
+	return r, nil
+}
+
+// buildState produces a fully indexed routerState from resolved. Errors
+// here are the same shape the v0 New produced — they describe an
+// inconsistency between the route index and the providers tree (an
+// unknown provider, an endpoint with no declared methods, an
+// uncompilable pattern). Validate catches every such case on the clone
+// in the admin-write path, so at runtime this only fires for an initial
+// startup load.
+func buildState(resolved *config.ResolvedConfig) (*routerState, error) {
+	if resolved == nil {
+		return nil, fmt.Errorf("routing: build: resolved config is nil")
+	}
+
+	st := &routerState{
 		exact: make(map[string]bound),
 	}
 
@@ -123,7 +180,7 @@ func New(resolved *config.ResolvedConfig) (*Router, error) {
 		}
 
 		if !strings.ContainsRune(path, '{') {
-			r.exact[path] = bound{
+			st.exact[path] = bound{
 				Provider:     route.Provider,
 				Endpoint:     route.Endpoint,
 				AcceptedPath: route.AcceptedPath,
@@ -136,7 +193,7 @@ func New(resolved *config.ResolvedConfig) (*Router, error) {
 		if err != nil {
 			return nil, err
 		}
-		r.patterns = append(r.patterns, patternedRoute{
+		st.patterns = append(st.patterns, patternedRoute{
 			Path:         path,
 			AcceptedPath: route.AcceptedPath,
 			Regex:        re,
@@ -147,11 +204,11 @@ func New(resolved *config.ResolvedConfig) (*Router, error) {
 		})
 	}
 
-	sort.Slice(r.patterns, func(i, j int) bool {
-		return r.patterns[i].Path < r.patterns[j].Path
+	sort.Slice(st.patterns, func(i, j int) bool {
+		return st.patterns[i].Path < st.patterns[j].Path
 	})
 
-	return r, nil
+	return st, nil
 }
 
 // Resolve returns the (provider, endpoint) match for an inbound request,
@@ -163,9 +220,10 @@ func New(resolved *config.ResolvedConfig) (*Router, error) {
 // after path matching, so a path-matched-but-method-rejected request
 // reports ErrMethodNotAllowed rather than falling through to ErrNoRoute.
 func (r *Router) Resolve(method, path string) (Match, error) {
+	st := r.state.Load()
 	m := strings.ToUpper(method)
 
-	if b, ok := r.exact[path]; ok {
+	if b, ok := st.exact[path]; ok {
 		if _, allowed := b.Methods[m]; !allowed {
 			return Match{}, ErrMethodNotAllowed
 		}
@@ -176,8 +234,8 @@ func (r *Router) Resolve(method, path string) (Match, error) {
 		}, nil
 	}
 
-	for i := range r.patterns {
-		p := &r.patterns[i]
+	for i := range st.patterns {
+		p := &st.patterns[i]
 		sub := p.Regex.FindStringSubmatch(path)
 		if sub == nil {
 			continue

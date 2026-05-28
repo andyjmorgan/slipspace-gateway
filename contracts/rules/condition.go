@@ -32,7 +32,7 @@ type ProviderCondition struct {
 	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ConditionType returns the "provider" discriminator.
@@ -63,7 +63,7 @@ type EndpointCondition struct {
 	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ConditionType returns the "endpoint" discriminator.
@@ -97,7 +97,7 @@ type ModelNameCondition struct {
 	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ConditionType returns the "modelName" discriminator.
@@ -140,7 +140,7 @@ type HeaderCondition struct {
 	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ConditionType returns the "header" discriminator.
@@ -180,7 +180,7 @@ type TagCondition struct {
 	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ConditionType returns the "tag" discriminator.
@@ -213,7 +213,7 @@ type RuleGroup struct {
 	// Not inverts the group's result after the logical combination.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ConditionType returns the "group" discriminator.
@@ -338,7 +338,7 @@ type UnknownCondition struct {
 	// re-emitted on marshal.
 	Type string `yaml:"type" json:"type"`
 
-	models.DynamicProperties
+	models.DynamicProperties `yaml:",inline"`
 }
 
 // ConditionType returns the unknown discriminator value verbatim.
