@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
@@ -96,11 +97,19 @@ type reporterFactory struct {
 	// default — content stays in the connector spool (invariant #4).
 	captureContent bool
 
+	// caps bounds the bytes the captured-content emitters include on the
+	// span and operation-details event. Resolved at startup from
+	// admin.yaml's telemetry block; the reporter reads it on every
+	// content-bearing request when captureContent is on. A cap of 0 in
+	// any field means "no cap" — see contracts/config/telemetry.go for
+	// the absent-vs-explicit-zero semantics.
+	caps contractsconfig.ResolvedContentCaps
+
 	instanceID string
 	seq        atomic.Uint64
 }
 
-func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool) *reporterFactory {
+func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool, caps contractsconfig.ResolvedContentCaps) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -118,6 +127,7 @@ func newReporterFactory(s *spool.Spool, resolved *config.ResolvedConfig, logger 
 		tracer:         tracer,
 		eventLogger:    eventLogger,
 		captureContent: captureContent,
+		caps:           caps,
 		instanceID:     hostname,
 	}
 }
@@ -1014,19 +1024,6 @@ func (r *reporterRun) emitEvents(ctx context.Context, ev events.Request) {
 	}
 }
 
-// contentFieldCap bounds each captured content field. The latest user turn
-// and the model response are already bounded (one turn each), but a single
-// turn can still be large; the cap keeps a runaway turn from bloating a log
-// record. Full content lives in the connector spool.
-const contentFieldCap = 32 * 1024
-
-// toolDefsCap bounds the combined size of the tool-definition parameter
-// schemas. Tool schemas are larger than a single message turn, so the cap is
-// higher; over it the parameter schemas are dropped (the spec says non-
-// required properties like parameters need not be populated by default),
-// leaving the lighter name/description so the tool set is still legible.
-const toolDefsCap = 64 * 1024
-
 // emitOperationDetails emits the gen_ai.client.inference.operation.details
 // event carrying the bounded prompt/response content: the latest user turn,
 // the model's response, the system instructions, and the tool definitions.
@@ -1136,19 +1133,20 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 		attrs = append(attrs, otellog.String(observability.AttrOpenAIAPIType, ev.Endpoint))
 	}
 
+	caps := r.factory.caps
 	content := r.boundedContent(ctx)
-	if parts := sanitiseParts(content.SystemInstructions); len(parts) > 0 {
+	if parts := sanitiseParts(content.SystemInstructions, caps.SystemInstructions, caps.Messages); len(parts) > 0 {
 		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAISystemInstructions, Value: logPartsValue(parts)})
 	}
 	if content.InputMessage != nil {
-		if parts := sanitiseParts(content.InputMessage.Parts); len(parts) > 0 {
+		if parts := sanitiseParts(content.InputMessage.Parts, caps.Messages, caps.Messages); len(parts) > 0 {
 			attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIInputMessages, Value: logMessagesValue(content.InputMessage.Role, parts)})
 		}
 	}
-	if parts := sanitiseParts(r.respOutputParts); len(parts) > 0 {
+	if parts := sanitiseParts(r.respOutputParts, caps.Messages, caps.Messages); len(parts) > 0 {
 		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIOutputMessages, Value: logMessagesValue("assistant", parts)})
 	}
-	if v, ok := logToolDefsValue(content.ToolDefinitions); ok {
+	if v, ok := logToolDefsValue(content.ToolDefinitions, caps.Messages, caps.ToolDefinitions); ok {
 		attrs = append(attrs, otellog.KeyValue{Key: observability.AttrGenAIToolDefinitions, Value: v})
 	}
 
@@ -1174,16 +1172,19 @@ type emitPart struct {
 }
 
 // sanitiseParts redacts and caps each part's free text once. Tool-call
-// arguments are redacted as raw JSON (dropped if over the field cap or if
-// redaction breaks well-formedness); text/result fields are redacted then
-// capped (redact before cap so a secret can't hide across the boundary).
-func sanitiseParts(parts []genaiattr.Part) []emitPart {
+// arguments are redacted as raw JSON (dropped wholesale when over
+// toolArgsCap or when redaction breaks well-formedness); text and tool-
+// response result fields are redacted then capped at textCap (redact
+// before cap so a secret can't hide across the truncation boundary). A
+// cap of 0 in either argument means "no cap" — the field rides through
+// unbounded.
+func sanitiseParts(parts []genaiattr.Part, textCap, toolArgsCap int) []emitPart {
 	out := make([]emitPart, 0, len(parts))
 	for _, p := range parts {
 		e := emitPart{typ: p.Type, id: p.ID, name: p.Name}
 		switch p.Type {
 		case observability.PartTypeToolCall:
-			if len(p.Arguments) > 0 && len(p.Arguments) <= contentFieldCap {
+			if len(p.Arguments) > 0 && (toolArgsCap <= 0 || len(p.Arguments) <= toolArgsCap) {
 				red := contentredact.Redact(string(p.Arguments))
 				if json.Valid([]byte(red)) {
 					e.arguments = json.RawMessage(red)
@@ -1192,9 +1193,9 @@ func sanitiseParts(parts []genaiattr.Part) []emitPart {
 				}
 			}
 		case observability.PartTypeToolCallResponse:
-			e.result = capText(contentredact.Redact(p.Result))
+			e.result = capText(contentredact.Redact(p.Result), textCap)
 		default:
-			e.content = capText(contentredact.Redact(p.Content))
+			e.content = capText(contentredact.Redact(p.Content), textCap)
 		}
 		out = append(out, e)
 	}
@@ -1251,14 +1252,16 @@ func logMessagesValue(role string, parts []emitPart) otellog.Value {
 }
 
 // logToolDefsValue renders gen_ai.tool.definitions to a structured otellog
-// slice of {type,name,description,parameters}. Parameter schemas are dropped
-// wholesale when their combined size exceeds toolDefsCap (kept legible via
-// name/description). Returns ok=false when there are no tools.
-func logToolDefsValue(defs []genaiattr.ToolDefinition) (otellog.Value, bool) {
+// slice of {type,name,description,parameters}. Parameter schemas are
+// dropped wholesale when their combined size exceeds toolDefsCap (kept
+// legible via name/description); descCap caps each individual tool's
+// description text. A toolDefsCap or descCap of 0 means "no cap".
+// Returns ok=false when there are no tools.
+func logToolDefsValue(defs []genaiattr.ToolDefinition, descCap, toolDefsCap int) (otellog.Value, bool) {
 	if len(defs) == 0 {
 		return otellog.Value{}, false
 	}
-	withParams := toolDefParamsFit(defs)
+	withParams := toolDefParamsFit(defs, toolDefsCap)
 	vals := make([]otellog.Value, 0, len(defs))
 	for _, d := range defs {
 		kvs := []otellog.KeyValue{otellog.String("type", d.Type)}
@@ -1266,7 +1269,7 @@ func logToolDefsValue(defs []genaiattr.ToolDefinition) (otellog.Value, bool) {
 			kvs = append(kvs, otellog.String("name", d.Name))
 		}
 		if d.Description != "" {
-			kvs = append(kvs, otellog.String("description", capText(d.Description)))
+			kvs = append(kvs, otellog.String("description", capText(d.Description, descCap)))
 		}
 		if withParams && len(d.Parameters) > 0 {
 			if v, ok := jsonToLogValue(d.Parameters); ok {
@@ -1278,9 +1281,13 @@ func logToolDefsValue(defs []genaiattr.ToolDefinition) (otellog.Value, bool) {
 	return otellog.SliceValue(vals...), true
 }
 
-// toolDefParamsFit reports whether the combined parameter-schema bytes are
-// within toolDefsCap, i.e. small enough to include the parameters.
-func toolDefParamsFit(defs []genaiattr.ToolDefinition) bool {
+// toolDefParamsFit reports whether the combined parameter-schema bytes
+// are within toolDefsCap, i.e. small enough to include the parameters.
+// A cap of 0 means "no cap" and the result is always true.
+func toolDefParamsFit(defs []genaiattr.ToolDefinition, toolDefsCap int) bool {
+	if toolDefsCap <= 0 {
+		return true
+	}
 	total := 0
 	for _, d := range defs {
 		total += len(d.Parameters)
@@ -1325,11 +1332,16 @@ func anyToLogValue(v any) otellog.Value {
 	}
 }
 
-func capText(s string) string {
-	if len(s) <= contentFieldCap {
+// capText truncates s at cap bytes with a "…[truncated]" marker. A cap
+// of 0 (or negative) means "no cap" and returns s unchanged. The byte-
+// boundary truncation is the same as before — callers pass already-
+// redacted text so a partial UTF-8 sequence at the cut point is not a
+// new exposure surface.
+func capText(s string, cap int) string {
+	if cap <= 0 || len(s) <= cap {
 		return s
 	}
-	return s[:contentFieldCap] + "…[truncated]"
+	return s[:cap] + "…[truncated]"
 }
 
 // boundedContent parses the request body for the bounded prompt content
@@ -1351,25 +1363,26 @@ func (r *reporterRun) boundedContent(ctx context.Context) genaiattr.Content {
 // span. Span attributes can't hold structured maps, so messages ride as
 // JSON strings (spec-permitted on spans, unlike events). Redacted + capped.
 func (r *reporterRun) appendSpanContent(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
+	caps := r.factory.caps
 	content := r.boundedContent(ctx)
-	if parts := sanitiseParts(content.SystemInstructions); len(parts) > 0 {
+	if parts := sanitiseParts(content.SystemInstructions, caps.SystemInstructions, caps.Messages); len(parts) > 0 {
 		if s := jsonPartsString(parts); s != "" {
 			attrs = append(attrs, attribute.String(observability.AttrGenAISystemInstructions, s))
 		}
 	}
 	if content.InputMessage != nil {
-		if parts := sanitiseParts(content.InputMessage.Parts); len(parts) > 0 {
+		if parts := sanitiseParts(content.InputMessage.Parts, caps.Messages, caps.Messages); len(parts) > 0 {
 			if s := jsonMessagesString(content.InputMessage.Role, parts); s != "" {
 				attrs = append(attrs, attribute.String(observability.AttrGenAIInputMessages, s))
 			}
 		}
 	}
-	if parts := sanitiseParts(r.respOutputParts); len(parts) > 0 {
+	if parts := sanitiseParts(r.respOutputParts, caps.Messages, caps.Messages); len(parts) > 0 {
 		if s := jsonMessagesString("assistant", parts); s != "" {
 			attrs = append(attrs, attribute.String(observability.AttrGenAIOutputMessages, s))
 		}
 	}
-	if s := jsonToolDefsString(content.ToolDefinitions); s != "" {
+	if s := jsonToolDefsString(content.ToolDefinitions, caps.Messages, caps.ToolDefinitions); s != "" {
 		attrs = append(attrs, attribute.String(observability.AttrGenAIToolDefinitions, s))
 	}
 	return attrs
@@ -1424,14 +1437,16 @@ func jsonMessagesString(role string, parts []emitPart) string {
 	return marshalSpanJSON([]map[string]any{{"role": role, "parts": partMaps(parts)}})
 }
 
-// jsonToolDefsString renders gen_ai.tool.definitions as a JSON-array string
-// for the span, dropping parameter schemas wholesale when their combined size
-// exceeds toolDefsCap. Returns "" when there are no tools.
-func jsonToolDefsString(defs []genaiattr.ToolDefinition) string {
+// jsonToolDefsString renders gen_ai.tool.definitions as a JSON-array
+// string for the span, dropping parameter schemas wholesale when their
+// combined size exceeds toolDefsCap and capping each tool's description
+// at descCap. A cap of 0 in either argument means "no cap". Returns ""
+// when there are no tools.
+func jsonToolDefsString(defs []genaiattr.ToolDefinition, descCap, toolDefsCap int) string {
 	if len(defs) == 0 {
 		return ""
 	}
-	withParams := toolDefParamsFit(defs)
+	withParams := toolDefParamsFit(defs, toolDefsCap)
 	ms := make([]map[string]any, 0, len(defs))
 	for _, d := range defs {
 		m := map[string]any{"type": d.Type}
@@ -1439,7 +1454,7 @@ func jsonToolDefsString(defs []genaiattr.ToolDefinition) string {
 			m["name"] = d.Name
 		}
 		if d.Description != "" {
-			m["description"] = capText(d.Description)
+			m["description"] = capText(d.Description, descCap)
 		}
 		if withParams && len(d.Parameters) > 0 {
 			m["parameters"] = d.Parameters

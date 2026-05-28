@@ -26,7 +26,7 @@ func newTestReporter(t *testing.T, ring *livefeed.Ring) *reporterRun {
 	if err != nil {
 		t.Fatalf("NewMeters: %v", err)
 	}
-	f := newReporterFactory(nil, nil, logger, meters, ring, nil, nil, nil, false)
+	f := newReporterFactory(nil, nil, logger, meters, ring, nil, nil, nil, false, testDefaultCaps())
 	return &reporterRun{
 		factory:       f,
 		provider:      "openai",

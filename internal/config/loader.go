@@ -27,6 +27,7 @@ const (
 	keyResiliencePolicies = "resilience_policies"
 	keyConnectors         = "connectors"
 	keyAdmin              = "admin"
+	keyTelemetry          = "telemetry"
 )
 
 const (
@@ -50,7 +51,8 @@ var allowedKeysByFile = map[string]map[string]struct{}{
 		keyConnectors:         {},
 	},
 	filenameAdmin: {
-		keyAdmin: {},
+		keyAdmin:     {},
+		keyTelemetry: {},
 	},
 }
 
@@ -233,6 +235,11 @@ func decode(merged *mergedTree) (*ResolvedConfig, error) {
 		out.Admin = &admin.Config{}
 		if err := node.Decode(out.Admin); err != nil {
 			return nil, fmt.Errorf("config: decode admin: %w: %w", ErrParse, err)
+		}
+	}
+	if node, ok := merged.nodes[keyTelemetry]; ok {
+		if err := node.Decode(&out.Telemetry); err != nil {
+			return nil, fmt.Errorf("config: decode telemetry: %w: %w", ErrParse, err)
 		}
 	}
 	return out, nil

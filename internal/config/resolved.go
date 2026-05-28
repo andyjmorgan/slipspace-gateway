@@ -93,6 +93,13 @@ type ResolvedConfig struct {
 	// starts in that case. When non-nil, AdminConfig.Validate has
 	// already passed (called from ResolvedConfig.Validate).
 	Admin *admin.Config
+
+	// Telemetry is the `telemetry:` block from admin.yaml — operator
+	// knobs that shape what the gateway emits to its telemetry signals
+	// (today just the content-capture byte caps). Always present; an
+	// absent block yields a zero value whose Resolve() supplies the
+	// built-in defaults, so the reporter never sees nil.
+	Telemetry contractsconfig.Telemetry
 }
 
 // Route names the (provider, endpoint) pair that owns an accepted_paths entry
