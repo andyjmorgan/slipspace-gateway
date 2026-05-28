@@ -152,9 +152,10 @@ Sluice has no opinion on whether you ship it via Helm, kustomize, raw manifests,
 | `Service` (data plane) | ClusterIP on `:8585` → pod `:8585`. The one externally-reachable surface. |
 | `Service` (admin) | Optional. ClusterIP on `:8081` → pod `:8081`. Front with an ingress + auth proxy or expose loopback-only inside the cluster. |
 | `Service` (prometheus) | Optional. ClusterIP on `:9090` → pod `:9090`. Or use a `Service`-less `ServiceMonitor` pointing at pod IPs. |
-| `ConfigMap` | Mounts `providers.yaml` + `policy.yaml` (+ `admin.yaml`) at `/etc/sluice/`. |
+| `ConfigMap` | Mounts `providers.yaml` + `policy.yaml` (+ `admin.yaml`) at `/etc/sluice/`. Read-only as a direct mount; for admin write API support see [Read-write config dir](#read-write-config-dir-admin-write-api). |
 | `Secret` | Provides `SLUICE_ADMIN_PASSWORD`, upstream provider keys referenced by `policy.yaml`, and connector secrets referenced by `connectors:` (s3 keys, azure SAS / account keys, webhook signing secrets). |
-| `PersistentVolumeClaim` | Optional — required when `policy.yaml` declares any `connectors:` entries. Mounted at `SLUICE_SPOOL_ROOT` (default `/var/lib/sluice/spool`) so sealed segments survive process restarts. |
+| `PersistentVolumeClaim` (spool) | Optional — required when `policy.yaml` declares any `connectors:` entries. Mounted at `SLUICE_SPOOL_ROOT` (default `/var/lib/sluice/spool`) so sealed segments survive process restarts. |
+| `PersistentVolumeClaim` (config, optional) | Mount at `SLUICE_CONFIG_DIR` instead of an `emptyDir` when admin-API rule edits need to persist across pod restarts. See [Read-write config dir](#read-write-config-dir-admin-write-api). |
 
 The data plane and admin listeners run in the **same pod**, in the same container. There is no separate admin sidecar — they share the binary, the in-process metric registry, and the live-feed ring.
 
@@ -244,9 +245,45 @@ Sluice reads a directory at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The lo
 
 The container runs as UID `65532:65532`. ConfigMap and Secret projected files default to mode `0644`, owned by root; both are world-readable, so the gateway can read them as the nonroot user with no further tuning. If you set `defaultMode: 0400` on a Secret projection, also set `fsGroup: 65532` on the pod's `securityContext` so the gateway can still read.
 
-### Restart-to-apply
+### Read-write config dir (admin write API)
 
-There is no in-binary file watcher. Edit the ConfigMap or Secret, then roll the Deployment (`kubectl rollout restart deployment/sluice-gateway`). Hot reload is a v1.2+ task.
+The rules write API (`POST/PUT/DELETE /admin/api/v1/config/rules`) re-marshals `policy.yaml` on every successful write via a temp-file rename inside `SLUICE_CONFIG_DIR`. **Direct ConfigMap or Secret mounts are read-only at the kubelet projection layer** — even if the volumeMount drops `readOnly: true`, kubelet still refuses writes through the projected files. Without a writable mount, write API calls return `500` with `permission denied`.
+
+Two patterns work in production:
+
+**1. initContainer + emptyDir (ephemeral writes).** The init container copies the immutable ConfigMap/Secret into an `emptyDir`; the main container points `SLUICE_CONFIG_DIR` at the `emptyDir`. Edits made via the admin API survive within the pod's lifetime but are lost on restart — on the next pod boot the init container re-seeds from the source ConfigMap, so committing changes back to the source is the operator's responsibility (typically by re-rendering the ConfigMap from the latest `policy.yaml`).
+
+```yaml
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: copy-config
+          image: busybox:1.36
+          command: ["sh","-c","cp /secret/providers.yaml /secret/policy.yaml /secret/admin.yaml /etc/sluice/ && chmod 0644 /etc/sluice/*.yaml"]
+          volumeMounts:
+            - { name: sluice-config-secret, mountPath: /secret, readOnly: true }
+            - { name: sluice-config-rw,     mountPath: /etc/sluice }
+      containers:
+        - name: gateway
+          env:
+            - { name: SLUICE_CONFIG_DIR, value: /etc/sluice }
+          volumeMounts:
+            - { name: sluice-config-rw, mountPath: /etc/sluice }
+      volumes:
+        - name: sluice-config-secret
+          secret: { secretName: sluice-gateway-config }
+        - name: sluice-config-rw
+          emptyDir: {}
+```
+
+`readOnlyRootFilesystem: true` does **not** block writes to explicitly-mounted volumes, so the security posture is unchanged from the read-only mount.
+
+**2. PVC (durable writes).** Mount a `PersistentVolumeClaim` at `/etc/sluice` instead of an `emptyDir`. Admin edits persist across pod restarts and rollouts. Trade-off: the operator has to seed `providers.yaml` + `admin.yaml` + the initial `policy.yaml` onto the PVC out-of-band (init job, manual `kubectl cp`, or a one-off init container that copies-if-absent). Use this when the admin console is the source of truth for rules and the operator does not want a parallel ConfigMap-to-API sync loop.
+
+### Restart-to-apply (non-admin paths only)
+
+Rule edits via the admin write API apply live — `config.Store.Replace` swaps the snapshot atomically and the next request evaluates against the new rule set. **Direct YAML edits on disk** (e.g. updating the source ConfigMap, editing the PVC contents from a sidecar, manual `kubectl cp`) still require a process restart — the in-binary `fsnotify` watcher is a v1.2+ task. To apply a direct edit, roll the Deployment (`kubectl rollout restart deployment/sluice-gateway`). Other top-level blocks (configurations, api_keys, providers, connectors, resilience_policies) have no write API yet; restart is the only path.
 
 ---
 

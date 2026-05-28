@@ -46,7 +46,7 @@ SLUICE_API_KEY=sk_live_... uv run --project test/smoke pytest -v
 Three YAML files live in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`):
 
 - **`providers.yaml`** — operator-owned route table. One entry per provider; one entry per endpoint under each provider. Per-endpoint `auth_header` / `auth_format` overrides let a single provider expose multiple credential conventions.
-- **`policy.yaml`** — configurations, API keys, rule library, resilience library, connectors. The control plane (v1.1) will write this exclusively.
+- **`policy.yaml`** — configurations, API keys, rule library, resilience library, connectors. The admin write API edits the rules block live (`POST/PUT/DELETE /admin/api/v1/config/rules`) and persists changes atomically; every other block is YAML-only and applies on restart.
 - **`admin.yaml`** *(optional, v1.1)* — gates the management console. Off by default. When enabled, the gateway starts a second listener on `bind_addr` serving the embedded SPA at `/` and the control-plane API under `/api/v1/*`. Username is hardcoded to `admin`; the password is read from `SLUICE_ADMIN_PASSWORD` if set, otherwise from the yaml `password` field.
 
 End-of-request records can be shipped to external destinations (S3, Azure Blob, webhook) via the `connectors:` block in `policy.yaml`. Records are buffered on a disk spool (default `/var/lib/sluice/spool`) and uploaded out of band; see [docs/connectors.md](docs/connectors.md), [docs/connector-bindings.md](docs/connector-bindings.md), and [docs/spool.md](docs/spool.md).
