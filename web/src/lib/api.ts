@@ -21,17 +21,29 @@ export class UnauthorizedError extends Error {
 
 export class APIError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /**
+   * body is the parsed JSON envelope the server sent with the error,
+   * when there was one. Callers (e.g. the rule editor) read this to
+   * render structured 409/422 payloads — `RuleConflictError` with the
+   * `used_by` list, `RuleValidationError` with the underlying detail
+   * string, etc.
+   */
+  body?: unknown
+  constructor(status: number, message: string, body?: unknown) {
     super(message)
     this.name = "APIError"
     this.status = status
+    this.body = body
   }
 }
 
 /**
  * Fetch JSON from the gateway's admin API. The Basic auth header is
  * attached automatically when credentials are cached. 401 clears the
- * cache and throws UnauthorizedError; other non-2xx throws APIError.
+ * cache and throws UnauthorizedError; other non-2xx throws APIError
+ * (whose `body` field carries the parsed JSON body when the server
+ * sent one, so callers can render structured error envelopes like the
+ * 409 RuleConflictError shape).
  */
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
@@ -47,7 +59,20 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
   if (!res.ok) {
     const text = await res.text().catch(() => "")
-    throw new APIError(res.status, text || res.statusText)
+    let body: unknown
+    if (text) {
+      try {
+        body = JSON.parse(text)
+      } catch {
+        // non-JSON error body — leave body undefined
+      }
+    }
+    throw new APIError(res.status, text || res.statusText, body)
+  }
+  // 204 No Content carries no body. Return undefined cast to T so
+  // void-typed callers (DELETE) don't need a special branch.
+  if (res.status === 204) {
+    return undefined as T
   }
   return res.json() as Promise<T>
 }
