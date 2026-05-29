@@ -12,6 +12,7 @@ func FuzzUnmarshalPart(f *testing.F) {
 		`{"inlineData":{"data":"AAA","mimeType":"image/png"}}`,
 		`{"fileData":{"fileUri":"gs://b/f","mimeType":"text/plain"}}`,
 		`{"functionCall":{"name":"x","args":{"q":"r"}}}`,
+		`{"functionCall":{"name":"x","args":{"q":"r"}},"thoughtSignature":"CsABAQ"}`,
 		`{"functionResponse":{"name":"x","response":{"r":1}}}`,
 		`{"executableCode":{"code":"1","language":"PYTHON"}}`,
 		`{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"1"}}`,

@@ -318,14 +318,24 @@ type FunctionDeclaration struct {
 	// decide when to call the function.
 	Description string `json:"description,omitempty"`
 
-	// Parameters is the JSON-Schema document describing the function's
-	// arguments. Kept raw so callers build/inspect schemas without
-	// going through a typed schema model.
+	// Parameters describes the function's arguments as a Gemini Schema
+	// (the OpenAPI 3.0 subset). Kept raw so callers build/inspect schemas
+	// without going through a typed schema model.
 	Parameters json.RawMessage `json:"parameters,omitempty"`
 
-	// Response is the JSON-Schema document describing the function's
-	// return shape. Kept raw for the same reason as Parameters.
+	// ParametersJsonSchema describes the function's arguments as a full
+	// JSON Schema (draft 2020-12) — the newer alternative to Parameters
+	// that recent SDKs (incl. gemini-cli) emit. Mutually exclusive with
+	// Parameters upstream; kept raw for the same reason.
+	ParametersJsonSchema json.RawMessage `json:"parametersJsonSchema,omitempty"`
+
+	// Response is the function's return shape as a Gemini Schema. Kept raw
+	// for the same reason as Parameters.
 	Response json.RawMessage `json:"response,omitempty"`
+
+	// ResponseJsonSchema is the function's return shape as a full JSON
+	// Schema — the JSON-Schema counterpart to Response.
+	ResponseJsonSchema json.RawMessage `json:"responseJsonSchema,omitempty"`
 
 	models.DynamicProperties
 }

@@ -30,6 +30,12 @@ type GenerateContentResponse struct {
 	// ResponseID is Google's response identifier.
 	ResponseID string `json:"responseId,omitempty"`
 
+	// Error carries Google's top-level error envelope
+	// ({code, message, status, details}) when generateContent fails
+	// without an HTTP-transport error. Kept raw because the details array
+	// is polymorphic.
+	Error json.RawMessage `json:"error,omitempty"`
+
 	models.DynamicProperties
 }
 
@@ -55,6 +61,10 @@ type Candidate struct {
 	// ("STOP", "MAX_TOKENS", "SAFETY", "RECITATION", "OTHER", ...).
 	// Nil while still in progress.
 	FinishReason *string `json:"finishReason,omitempty"`
+
+	// FinishMessage is the human-readable elaboration of FinishReason
+	// (e.g. "Model generated function call(s)."). Nil while in progress.
+	FinishMessage *string `json:"finishMessage,omitempty"`
 
 	// Index is the candidate's zero-based position within Candidates.
 	Index *int `json:"index,omitempty"`
@@ -227,6 +237,10 @@ type UsageMetadata struct {
 	// ThoughtsTokenCount counts tokens billed for the model's hidden
 	// thinking trace.
 	ThoughtsTokenCount *int `json:"thoughtsTokenCount,omitempty"`
+
+	// ServiceTier is the processing tier Google served the request on
+	// (e.g. "standard"). Mirrors the tier echoed by other providers.
+	ServiceTier *string `json:"serviceTier,omitempty"`
 
 	// PromptTokensDetails breaks PromptTokenCount down by modality.
 	PromptTokensDetails []ModalityTokenCount `json:"promptTokensDetails,omitempty"`

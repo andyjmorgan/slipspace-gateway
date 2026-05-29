@@ -146,6 +146,86 @@ func TestGenerateContentResponse_FullRoundTrip(t *testing.T) {
 	roundTripJSON(t, in, resp)
 }
 
+// TestGenerateContentResponse_ToolThinkingFields mirrors a real gemini-2.5
+// tool-calling response: a function-call part carrying thoughtSignature, a
+// finishMessage alongside finishReason, and usageMetadata.serviceTier. All
+// must decode typed and round-trip with nothing left in Extra.
+func TestGenerateContentResponse_ToolThinkingFields(t *testing.T) {
+	in := []byte(`{` +
+		`"candidates":[{` +
+		`"content":{"parts":[{"functionCall":{"args":{"city":"Dublin"},"name":"get_weather"},"thoughtSignature":"CsABAQw51se"}],"role":"model"},` +
+		`"finishMessage":"Model generated function call(s).",` +
+		`"finishReason":"STOP",` +
+		`"index":0` +
+		`}],` +
+		`"modelVersion":"gemini-2.5-flash",` +
+		`"responseId":"S-QZasLLFYjX",` +
+		`"usageMetadata":{"candidatesTokenCount":15,"promptTokenCount":43,"serviceTier":"standard","thoughtsTokenCount":43,"totalTokenCount":101}` +
+		`}`)
+	var resp GenerateContentResponse
+	if err := json.Unmarshal(in, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	c := resp.Candidates[0]
+	if c.FinishMessage == nil || *c.FinishMessage != "Model generated function call(s)." {
+		t.Fatalf("finishMessage = %v", c.FinishMessage)
+	}
+	fc, ok := c.Content.Parts[0].(*FunctionCallPart)
+	if !ok {
+		t.Fatalf("part = %T", c.Content.Parts[0])
+	}
+	if fc.ThoughtSignature == nil || *fc.ThoughtSignature != "CsABAQw51se" {
+		t.Fatalf("thoughtSignature = %v", fc.ThoughtSignature)
+	}
+	if resp.UsageMetadata.ServiceTier == nil || *resp.UsageMetadata.ServiceTier != "standard" {
+		t.Fatalf("serviceTier = %v", resp.UsageMetadata.ServiceTier)
+	}
+	if len(resp.Extra) != 0 || len(c.Extra) != 0 || len(fc.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked: resp=%v cand=%v part=%v", resp.Extra, c.Extra, fc.Extra)
+	}
+	roundTripJSON(t, in, resp)
+}
+
+// TestGenerateContentResponse_ErrorEnvelope exercises Google's top-level
+// error envelope returned when generateContent fails without an
+// HTTP-transport error.
+func TestGenerateContentResponse_ErrorEnvelope(t *testing.T) {
+	in := []byte(`{"error":{"code":404,"message":"models/x is not found","status":"NOT_FOUND"}}`)
+	var resp GenerateContentResponse
+	if err := json.Unmarshal(in, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Error) == 0 {
+		t.Fatalf("error envelope not captured")
+	}
+	if len(resp.Extra) != 0 {
+		t.Fatalf("unmapped fields: %v", resp.Extra)
+	}
+	roundTripJSON(t, in, resp)
+}
+
+// TestFunctionDeclaration_ParametersJsonSchema covers the full-JSON-Schema
+// function-param field recent SDKs (incl. gemini-cli) send in place of the
+// OpenAPI-subset parameters field.
+func TestFunctionDeclaration_ParametersJsonSchema(t *testing.T) {
+	in := []byte(`{` +
+		`"name":"get_weather",` +
+		`"parametersJsonSchema":{"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},` +
+		`"responseJsonSchema":{"type":"object"}` +
+		`}`)
+	var fd FunctionDeclaration
+	if err := json.Unmarshal(in, &fd); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(fd.ParametersJsonSchema) == 0 || len(fd.ResponseJsonSchema) == 0 {
+		t.Fatalf("json-schema fields not captured: params=%s response=%s", fd.ParametersJsonSchema, fd.ResponseJsonSchema)
+	}
+	if len(fd.Extra) != 0 {
+		t.Fatalf("unmapped fields: %v", fd.Extra)
+	}
+	roundTripJSON(t, in, fd)
+}
+
 func TestGenerateContentResponse_GroundingMetadataRoundTrips(t *testing.T) {
 	in := []byte(`{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"groundingMetadata":{"webSearchQueries":["q1"]},"logprobsResult":{"chosenCandidates":[]},"urlContextMetadata":{"urls":[]}}]}`)
 	var resp GenerateContentResponse

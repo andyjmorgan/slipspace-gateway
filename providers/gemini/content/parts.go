@@ -203,6 +203,13 @@ type FunctionCallPart struct {
 	// FunctionCall carries the call's name and arguments.
 	FunctionCall FunctionCall `json:"functionCall"`
 
+	// ThoughtSignature is the cryptographic signature Gemini 2.5 attaches
+	// to a function-call part produced after a thinking step. It must
+	// round-trip verbatim — the client echoes it back on the next turn so
+	// the model can resume the thought it interrupted to call the tool;
+	// dropping it breaks multi-turn thinking with tools.
+	ThoughtSignature *string `json:"thoughtSignature,omitempty"`
+
 	models.DynamicProperties
 }
 
