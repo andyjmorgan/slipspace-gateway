@@ -66,6 +66,28 @@ func TestUnmarshalContentBlock_ToolUse(t *testing.T) {
 	roundTrip(t, in, v)
 }
 
+// TestUnmarshalContentBlock_ToolUseWithCaller covers the caller attribution
+// Anthropic attaches to tool_use blocks ({"type":"direct"} for a top-level
+// call), as seen on live claude-sonnet-4-6 responses.
+func TestUnmarshalContentBlock_ToolUseWithCaller(t *testing.T) {
+	in := []byte(`{"caller":{"type":"direct"},"id":"tool_1","input":{"city":"Dublin"},"name":"get_weather","type":"tool_use"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tu, ok := v.(*ToolUseBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if tu.Caller == nil || tu.Caller.Type != "direct" {
+		t.Fatalf("caller = %+v", tu.Caller)
+	}
+	if len(tu.Extra) != 0 || len(tu.Caller.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked: block=%v caller=%v", tu.Extra, tu.Caller.Extra)
+	}
+	roundTrip(t, in, v)
+}
+
 func TestUnmarshalContentBlock_ToolResult(t *testing.T) {
 	in := []byte(`{"content":"42","is_error":false,"tool_use_id":"tool_1","type":"tool_result"}`)
 	v, err := UnmarshalContentBlock(in)
@@ -243,6 +265,7 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ImageBlock{}),
 		reflect.TypeOf(ImageSource{}),
 		reflect.TypeOf(ToolUseBlock{}),
+		reflect.TypeOf(ToolCaller{}),
 		reflect.TypeOf(ToolResultBlock{}),
 		reflect.TypeOf(ThinkingBlock{}),
 		reflect.TypeOf(RedactedThinkingBlock{}),

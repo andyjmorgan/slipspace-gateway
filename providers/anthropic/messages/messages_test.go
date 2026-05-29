@@ -398,6 +398,52 @@ func TestMessagesResponse_UsageDriftFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMessagesResponse_CallerAndContextMgmtRoundTrip mirrors a live
+// claude-sonnet-4-6 tool-use response: a tool_use block with caller
+// attribution, a null stop_details, and the context-management applied_edits
+// envelope. All decode typed and round-trip with nothing left in Extra.
+func TestMessagesResponse_CallerAndContextMgmtRoundTrip(t *testing.T) {
+	in := []byte(`{` +
+		`"content":[{"caller":{"type":"direct"},"id":"toolu_1","input":{"city":"Dublin"},"name":"get_weather","type":"tool_use"}],` +
+		`"context_management":{"applied_edits":[]},` +
+		`"id":"msg_1",` +
+		`"model":"claude-sonnet-4-6",` +
+		`"role":"assistant",` +
+		`"stop_details":null,` +
+		`"stop_reason":"tool_use",` +
+		`"stop_sequence":null,` +
+		`"type":"message",` +
+		`"usage":{"input_tokens":596,"output_tokens":97}` +
+		`}`)
+	var resp MessagesResponse
+	if err := json.Unmarshal(in, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tu, ok := resp.Content[0].(*ToolUseBlock)
+	if !ok {
+		t.Fatalf("content[0] = %T", resp.Content[0])
+	}
+	if tu.Caller == nil || tu.Caller.Type != "direct" {
+		t.Fatalf("caller = %+v", tu.Caller)
+	}
+	if resp.ContextManagement == nil || string(resp.ContextManagement.AppliedEdits) != "[]" {
+		t.Fatalf("context_management = %+v", resp.ContextManagement)
+	}
+	if string(resp.StopDetails) != "null" {
+		t.Fatalf("stop_details = %s (want null)", resp.StopDetails)
+	}
+	if len(resp.Extra) != 0 || len(tu.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked: resp=%v block=%v", resp.Extra, tu.Extra)
+	}
+	out, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("round-trip drift\n in: %s\nout: %s", in, out)
+	}
+}
+
 func TestMessagesRequest_OutputConfigRoundTrip(t *testing.T) {
 	// effort is modelled; the structured-output "format" block is not, so it
 	// must survive via DynamicProperties.Extra rather than being dropped.
@@ -438,6 +484,7 @@ func TestMessages_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(CacheCreation{}),
 		reflect.TypeOf(OutputTokensDetails{}),
 		reflect.TypeOf(Container{}),
+		reflect.TypeOf(ContextManagement{}),
 	}
 	for _, rt := range types {
 		t.Run(rt.Name(), func(t *testing.T) {
