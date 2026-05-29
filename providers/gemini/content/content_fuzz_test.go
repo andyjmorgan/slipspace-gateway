@@ -43,6 +43,7 @@ func FuzzUnmarshalGenerateContentResponse(f *testing.F) {
 		`{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}],"futureField":42}`,
 		`{"candidates":[{"content":{"parts":[{"functionCall":{"args":{},"name":"x"},"thoughtSignature":"Cs"}],"role":"model"},"finishMessage":"done","finishReason":"STOP"}],"usageMetadata":{"serviceTier":"standard","totalTokenCount":1}}`,
 		`{"error":{"code":404,"message":"nope","status":"NOT_FOUND"}}`,
+		`{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"groundingMetadata":{"searchEntryPoint":{"renderedContent":"<div/>"},"groundingChunks":[{"web":{"uri":"u","title":"t"}}],"groundingSupports":[{"segment":{"endIndex":2,"text":"hi"},"groundingChunkIndices":[0]}],"webSearchQueries":["q"]}}],"usageMetadata":{"toolUsePromptTokensDetails":[{"modality":"TEXT","tokenCount":1}],"totalTokenCount":1}}`,
 		`{"modelVersion":"v","responseId":"r"}`,
 	}
 	for _, s := range seeds {

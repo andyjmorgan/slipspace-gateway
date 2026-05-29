@@ -226,6 +226,51 @@ func TestFunctionDeclaration_ParametersJsonSchema(t *testing.T) {
 	roundTripJSON(t, in, fd)
 }
 
+// TestGroundingMetadata_TypedRoundTrip mirrors a live google_search grounded
+// response: searchEntryPoint, groundingChunks.web, groundingSupports.segment,
+// webSearchQueries, plus the toolUsePromptTokensDetails usage breakdown. All
+// decode typed and round-trip with nothing left in Extra.
+func TestGroundingMetadata_TypedRoundTrip(t *testing.T) {
+	in := []byte(`{` +
+		`"candidates":[{` +
+		`"content":{"parts":[{"text":"Max Verstappen won."}],"role":"model"},` +
+		`"finishReason":"STOP",` +
+		`"groundingMetadata":{` +
+		`"groundingChunks":[{"web":{"title":"f1.com","uri":"https://vertex.example/r/1"}}],` +
+		`"groundingSupports":[{"groundingChunkIndices":[0],"segment":{"endIndex":18,"text":"Max Verstappen won"}}],` +
+		`"searchEntryPoint":{"renderedContent":"<div>search</div>"},` +
+		`"webSearchQueries":["current f1 world champion"]` +
+		`}` +
+		`}],` +
+		`"usageMetadata":{"candidatesTokenCount":5,"promptTokenCount":9,"toolUsePromptTokenCount":12,"toolUsePromptTokensDetails":[{"modality":"TEXT","tokenCount":12}],"totalTokenCount":26}` +
+		`}`)
+	var resp GenerateContentResponse
+	if err := json.Unmarshal(in, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	gm := resp.Candidates[0].GroundingMetadata
+	if gm == nil {
+		t.Fatalf("grounding metadata nil")
+	}
+	if len(gm.GroundingChunks) != 1 || gm.GroundingChunks[0].Web == nil || gm.GroundingChunks[0].Web.URI != "https://vertex.example/r/1" {
+		t.Fatalf("grounding chunks = %+v", gm.GroundingChunks)
+	}
+	if len(gm.GroundingSupports) != 1 || gm.GroundingSupports[0].Segment == nil ||
+		gm.GroundingSupports[0].Segment.EndIndex == nil || *gm.GroundingSupports[0].Segment.EndIndex != 18 {
+		t.Fatalf("grounding supports = %+v", gm.GroundingSupports)
+	}
+	if gm.SearchEntryPoint == nil || gm.SearchEntryPoint.RenderedContent == "" {
+		t.Fatalf("search entry point = %+v", gm.SearchEntryPoint)
+	}
+	if len(resp.UsageMetadata.ToolUsePromptTokensDetails) != 1 {
+		t.Fatalf("toolUsePromptTokensDetails = %+v", resp.UsageMetadata.ToolUsePromptTokensDetails)
+	}
+	if len(resp.Candidates[0].Extra) != 0 || len(gm.Extra) != 0 {
+		t.Fatalf("unmapped leaked: cand=%v gm=%v", resp.Candidates[0].Extra, gm.Extra)
+	}
+	roundTripJSON(t, in, resp)
+}
+
 func TestGenerateContentResponse_GroundingMetadataRoundTrips(t *testing.T) {
 	in := []byte(`{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"groundingMetadata":{"webSearchQueries":["q1"]},"logprobsResult":{"chosenCandidates":[]},"urlContextMetadata":{"urls":[]}}]}`)
 	var resp GenerateContentResponse
@@ -233,8 +278,9 @@ func TestGenerateContentResponse_GroundingMetadataRoundTrips(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	c := resp.Candidates[0]
-	if string(c.GroundingMetadata) != `{"webSearchQueries":["q1"]}` {
-		t.Fatalf("grounding = %s", c.GroundingMetadata)
+	if c.GroundingMetadata == nil || len(c.GroundingMetadata.WebSearchQueries) != 1 ||
+		c.GroundingMetadata.WebSearchQueries[0] != "q1" {
+		t.Fatalf("grounding = %+v", c.GroundingMetadata)
 	}
 	if string(c.URLContextMetadata) != `{"urls":[]}` {
 		t.Fatalf("url ctx = %s", c.URLContextMetadata)
@@ -307,6 +353,12 @@ func TestContent_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(PromptFeedback{}),
 		reflect.TypeOf(UsageMetadata{}),
 		reflect.TypeOf(ModalityTokenCount{}),
+		reflect.TypeOf(GroundingMetadata{}),
+		reflect.TypeOf(SearchEntryPoint{}),
+		reflect.TypeOf(GroundingChunk{}),
+		reflect.TypeOf(GroundingChunkWeb{}),
+		reflect.TypeOf(GroundingSupport{}),
+		reflect.TypeOf(Segment{}),
 	}
 	for _, rt := range types {
 		t.Run(rt.Name(), func(t *testing.T) {
