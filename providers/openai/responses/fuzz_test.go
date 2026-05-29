@@ -57,6 +57,7 @@ func FuzzResponsesResponse(f *testing.F) {
 	seeds := []string{
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[]}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"incomplete","incomplete_details":{"reason":"x"}}`,
+		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","billing":{"payer":"developer"},"frequency_penalty":0,"presence_penalty":0,"moderation":null,"reasoning":{"context":null,"effort":"low"}}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[],"temperature":1,"top_p":1,"top_logprobs":0,"max_output_tokens":2048,"max_tool_calls":null,"store":true,"background":false,"completed_at":2,"truncation":"disabled","service_tier":"default","prompt_cache_retention":"in_memory","prompt_cache_key":null,"safety_identifier":null,"user":null,"instructions":null,"tools":[],"tool_choice":"auto","text":{"format":{"type":"text"}}}`,
 		`{}`,
 	}
