@@ -93,6 +93,30 @@ func TestUnmarshalPart_FunctionCall(t *testing.T) {
 	roundTripPart(t, in, v)
 }
 
+// TestUnmarshalPart_FunctionCallWithThoughtSignature exercises the real
+// Gemini 2.5 wire shape: a function-call part carrying the cryptographic
+// thoughtSignature the model attaches after a thinking step. The signature
+// must survive round-tripping and not leak into Extra (load-bearing — the
+// client echoes it back to resume the interrupted thought).
+func TestUnmarshalPart_FunctionCallWithThoughtSignature(t *testing.T) {
+	in := []byte(`{"functionCall":{"args":{"city":"Dublin"},"name":"get_weather"},"thoughtSignature":"CsABAQw51seYwZ"}`)
+	v, err := UnmarshalPart(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	fc, ok := v.(*FunctionCallPart)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if fc.ThoughtSignature == nil || *fc.ThoughtSignature != "CsABAQw51seYwZ" {
+		t.Fatalf("thoughtSignature = %v", fc.ThoughtSignature)
+	}
+	if len(fc.Extra) != 0 {
+		t.Fatalf("expected no unmapped fields, got %v", fc.Extra)
+	}
+	roundTripPart(t, in, v)
+}
+
 func TestUnmarshalPart_FunctionResponse(t *testing.T) {
 	in := []byte(`{"functionResponse":{"id":"c1","name":"search","response":{"result":"ok"}}}`)
 	v, err := UnmarshalPart(in)

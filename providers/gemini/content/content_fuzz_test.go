@@ -10,6 +10,7 @@ func FuzzUnmarshalGenerateContentRequest(f *testing.F) {
 		`{"contents":[{"parts":[{"text":"hi"}],"role":"user"}]}`,
 		`{"contents":[{"parts":[{"inlineData":{"data":"AAA","mimeType":"image/png"}}],"role":"user"}]}`,
 		`{"contents":[{"parts":[{"functionCall":{"args":{},"name":"x"}}],"role":"model"}]}`,
+		`{"contents":[{"parts":[{"functionCall":{"args":{},"name":"x"},"thoughtSignature":"Cs"}],"role":"model"}],"tools":[{"functionDeclarations":[{"name":"x","parametersJsonSchema":{"type":"object"}}]}]}`,
 		`{"contents":[{"parts":[{"text":"hi"}],"role":"user"}],"generationConfig":{"temperature":0.1}}`,
 		`{"contents":[],"systemInstruction":{"parts":[{"text":"sys"}],"role":"system"}}`,
 		`{"contents":[{"parts":[{"futurePart":{"a":1}}],"role":"user"}]}`,
@@ -40,6 +41,8 @@ func FuzzUnmarshalGenerateContentResponse(f *testing.F) {
 		`{"candidates":[],"promptFeedback":{"blockReason":"SAFETY"}}`,
 		`{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}],"usageMetadata":{"promptTokenCount":1,"totalTokenCount":2}}`,
 		`{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}],"futureField":42}`,
+		`{"candidates":[{"content":{"parts":[{"functionCall":{"args":{},"name":"x"},"thoughtSignature":"Cs"}],"role":"model"},"finishMessage":"done","finishReason":"STOP"}],"usageMetadata":{"serviceTier":"standard","totalTokenCount":1}}`,
+		`{"error":{"code":404,"message":"nope","status":"NOT_FOUND"}}`,
 		`{"modelVersion":"v","responseId":"r"}`,
 	}
 	for _, s := range seeds {
