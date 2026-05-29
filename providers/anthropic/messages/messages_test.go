@@ -360,6 +360,67 @@ func TestTool_AndToolChoice_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestMessagesResponse_UsageDriftFieldsRoundTrip(t *testing.T) {
+	in := []byte(`{
+		"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-7",
+		"content":[{"type":"text","text":"ok"}],
+		"stop_reason":"end_turn","stop_sequence":null,
+		"usage":{
+			"input_tokens":10,
+			"output_tokens":25,
+			"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":4},
+			"output_tokens_details":{"thinking_tokens":12},
+			"inference_geo":"not_available",
+			"service_tier":"standard"
+		}
+	}`)
+	var resp MessagesResponse
+	if err := json.Unmarshal(in, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Usage.CacheCreation == nil || resp.Usage.CacheCreation.Ephemeral5mInputTokens == nil ||
+		*resp.Usage.CacheCreation.Ephemeral5mInputTokens != 4 {
+		t.Fatalf("cache_creation = %+v", resp.Usage.CacheCreation)
+	}
+	if resp.Usage.OutputTokensDetails == nil || resp.Usage.OutputTokensDetails.ThinkingTokens == nil ||
+		*resp.Usage.OutputTokensDetails.ThinkingTokens != 12 {
+		t.Fatalf("output_tokens_details = %+v", resp.Usage.OutputTokensDetails)
+	}
+	if resp.Usage.InferenceGeo != "not_available" {
+		t.Fatalf("inference_geo = %q", resp.Usage.InferenceGeo)
+	}
+	out, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("round-trip drift\n in: %s\nout: %s", in, out)
+	}
+}
+
+func TestMessagesRequest_OutputConfigRoundTrip(t *testing.T) {
+	// effort is modelled; the structured-output "format" block is not, so it
+	// must survive via DynamicProperties.Extra rather than being dropped.
+	in := []byte(`{"max_tokens":1024,"messages":[{"content":"hi","role":"user"}],"model":"claude-opus-4-7","output_config":{"effort":"xhigh","format":{"schema":{"type":"object"},"type":"json_schema"}}}`)
+	var req MessagesRequest
+	if err := json.Unmarshal(in, &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if req.OutputConfig == nil || req.OutputConfig.Effort != "xhigh" {
+		t.Fatalf("output_config = %+v", req.OutputConfig)
+	}
+	if string(req.OutputConfig.Extra["format"]) != `{"schema":{"type":"object"},"type":"json_schema"}` {
+		t.Fatalf("format did not round-trip via Extra: %v", req.OutputConfig.Extra)
+	}
+	out, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("round-trip drift\n in: %s\nout: %s", in, out)
+	}
+}
+
 func TestMessages_AllExportedFieldsHaveJSONTag(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeOf(MessagesRequest{}),
@@ -370,9 +431,12 @@ func TestMessages_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ThinkingConfig{}),
 		reflect.TypeOf(SystemBlock{}),
 		reflect.TypeOf(CacheControl{}),
+		reflect.TypeOf(OutputConfig{}),
 		reflect.TypeOf(MessagesResponse{}),
 		reflect.TypeOf(Usage{}),
 		reflect.TypeOf(ServerToolUseUsage{}),
+		reflect.TypeOf(CacheCreation{}),
+		reflect.TypeOf(OutputTokensDetails{}),
 		reflect.TypeOf(Container{}),
 	}
 	for _, rt := range types {
