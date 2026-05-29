@@ -61,6 +61,9 @@ type MessagesRequest struct {
 	// ServiceTier selects a service tier (e.g., "auto", "standard_only").
 	ServiceTier string `json:"service_tier,omitempty"`
 
+	// OutputConfig configures output controls such as reasoning effort.
+	OutputConfig *OutputConfig `json:"output_config,omitempty"`
+
 	models.DynamicProperties
 }
 
@@ -309,6 +312,26 @@ func (b *SystemBlock) UnmarshalJSON(data []byte) error { return models.Unmarshal
 // MarshalJSON encodes b and merges DynamicProperties.Extra back into the
 // resulting object.
 func (b SystemBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
+// OutputConfig carries Anthropic output controls on a MessagesRequest. Only
+// the reasoning-effort hint is modelled; other controls (e.g. a structured-
+// output "format" block) round-trip via the embedded DynamicProperties until
+// a captured sample justifies typing them.
+type OutputConfig struct {
+	// Effort is the reasoning-effort hint ("low", "medium", "high",
+	// "xhigh", "max").
+	Effort string `json:"effort,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into o, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (o *OutputConfig) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, o) }
+
+// MarshalJSON encodes o and merges DynamicProperties.Extra back into the
+// resulting object.
+func (o OutputConfig) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(o) }
 
 // CacheControl is the prompt-caching hint attached to system blocks, tools,
 // and content blocks. Unknown fields round-trip via the embedded

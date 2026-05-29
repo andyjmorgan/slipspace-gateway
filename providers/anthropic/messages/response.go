@@ -129,6 +129,18 @@ type Usage struct {
 	// ServerToolUse counts server-side tool calls (e.g., web search).
 	ServerToolUse *ServerToolUseUsage `json:"server_tool_use,omitempty"`
 
+	// CacheCreation breaks prompt-cache writes down by cache TTL tier. Nil
+	// when the model did not report tiered cache activity.
+	CacheCreation *CacheCreation `json:"cache_creation,omitempty"`
+
+	// OutputTokensDetails breaks the generated output tokens down (e.g. how
+	// many were spent inside thinking blocks). Nil when not reported.
+	OutputTokensDetails *OutputTokensDetails `json:"output_tokens_details,omitempty"`
+
+	// InferenceGeo is the geographic region inference ran in (e.g.
+	// "not_available"). Empty when the model did not report it.
+	InferenceGeo string `json:"inference_geo,omitempty"`
+
 	// ServiceTier echoes the service tier that actually served the
 	// request.
 	ServiceTier string `json:"service_tier,omitempty"`
@@ -164,6 +176,48 @@ func (s *ServerToolUseUsage) UnmarshalJSON(data []byte) error {
 // MarshalJSON encodes s and merges DynamicProperties.Extra back into the
 // resulting object.
 func (s ServerToolUseUsage) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(s) }
+
+// CacheCreation breaks prompt-cache write tokens down by cache TTL tier.
+// Unknown fields round-trip via the embedded DynamicProperties.
+type CacheCreation struct {
+	// Ephemeral5mInputTokens counts tokens written to the 5-minute
+	// ephemeral cache tier.
+	Ephemeral5mInputTokens *int `json:"ephemeral_5m_input_tokens,omitempty"`
+
+	// Ephemeral1hInputTokens counts tokens written to the 1-hour ephemeral
+	// cache tier.
+	Ephemeral1hInputTokens *int `json:"ephemeral_1h_input_tokens,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into c, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (c *CacheCreation) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, c) }
+
+// MarshalJSON encodes c and merges DynamicProperties.Extra back into the
+// resulting object.
+func (c CacheCreation) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
+
+// OutputTokensDetails breaks the generated output token count down by category.
+// Unknown fields round-trip via the embedded DynamicProperties.
+type OutputTokensDetails struct {
+	// ThinkingTokens counts output tokens generated inside thinking blocks,
+	// including the thinking-block delimiter tokens.
+	ThinkingTokens *int `json:"thinking_tokens,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into o, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (o *OutputTokensDetails) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, o)
+}
+
+// MarshalJSON encodes o and merges DynamicProperties.Extra back into the
+// resulting object.
+func (o OutputTokensDetails) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(o) }
 
 // Container describes the code-execution container the request ran tools
 // against (when the request used the code-execution tool). Unknown fields

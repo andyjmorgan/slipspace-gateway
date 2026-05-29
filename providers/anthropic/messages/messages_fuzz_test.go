@@ -11,6 +11,7 @@ func FuzzMessagesRequestUnmarshal(f *testing.F) {
 		[]byte(`{"max_tokens":1,"messages":[{"content":[{"type":"text","text":"hi"}],"role":"user"}],"model":"m"}`),
 		[]byte(`{"max_tokens":1,"messages":[{"content":[{"type":"future","x":1}],"role":"user"}],"model":"m","metadata":{"user_id":"u","extra":1}}`),
 		[]byte(`{"future":"keep","max_tokens":1,"messages":[{"content":"hi","role":"user"}],"model":"m","system":[{"text":"s","type":"text"}]}`),
+		[]byte(`{"max_tokens":1,"messages":[{"content":"hi","role":"user"}],"model":"m","output_config":{"effort":"xhigh","format":{"schema":{"type":"object"},"type":"json_schema"}}}`),
 		[]byte(`{}`),
 	}
 	for _, s := range seeds {
@@ -45,6 +46,7 @@ func FuzzMessagesResponseUnmarshal(f *testing.F) {
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[],"usage":{"input_tokens":0,"output_tokens":0}}`),
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":1}}`),
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"future","p":1}],"usage":{"input_tokens":1,"output_tokens":1}}`),
+		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":1,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"output_tokens_details":{"thinking_tokens":0},"inference_geo":"not_available"}}`),
 	}
 	for _, s := range seeds {
 		f.Add(s)
