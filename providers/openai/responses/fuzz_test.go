@@ -36,6 +36,7 @@ func FuzzResponsesRequest(f *testing.F) {
 		`{"model":"m","input":"hi"}`,
 		`{"model":"m","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]}`,
 		`{"model":"m","input":"hi","reasoning":{"effort":"low"},"max_output_tokens":10}`,
+		`{"model":"m","input":"hi","parallel_tool_calls":true,"top_logprobs":5,"max_tool_calls":3,"service_tier":"flex","prompt_cache_key":"k","prompt_cache_retention":"24h","safety_identifier":"s","include":["reasoning.encrypted_content"],"text":{"format":{"type":"text"}}}`,
 		`{}`,
 	}
 	for _, s := range seeds {
@@ -56,6 +57,7 @@ func FuzzResponsesResponse(f *testing.F) {
 	seeds := []string{
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[]}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"incomplete","incomplete_details":{"reason":"x"}}`,
+		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[],"temperature":1,"top_p":1,"top_logprobs":0,"max_output_tokens":2048,"max_tool_calls":null,"store":true,"background":false,"completed_at":2,"truncation":"disabled","service_tier":"default","prompt_cache_retention":"in_memory","prompt_cache_key":null,"safety_identifier":null,"user":null,"instructions":null,"tools":[],"tool_choice":"auto","text":{"format":{"type":"text"}}}`,
 		`{}`,
 	}
 	for _, s := range seeds {

@@ -109,6 +109,143 @@ func TestResponsesResponse_IncompleteWithReasoning(t *testing.T) {
 	roundTripJSON(t, in, &resp)
 }
 
+func TestResponsesRequest_CodexEchoedFields(t *testing.T) {
+	in := []byte(`{` +
+		`"include":["reasoning.encrypted_content"],` +
+		`"input":"hi",` +
+		`"max_tool_calls":10,` +
+		`"model":"gpt-5.2-chat",` +
+		`"parallel_tool_calls":true,` +
+		`"prompt_cache_key":"codex-cache-key",` +
+		`"prompt_cache_retention":"24h",` +
+		`"safety_identifier":"sid-abc",` +
+		`"service_tier":"default",` +
+		`"text":{"format":{"type":"text"}},` +
+		`"top_logprobs":5` +
+		`}`)
+	var req ResponsesRequest
+	if err := json.Unmarshal(in, &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if req.ParallelToolCalls == nil || !*req.ParallelToolCalls {
+		t.Fatalf("parallel_tool_calls = %v", req.ParallelToolCalls)
+	}
+	if req.TopLogprobs == nil || *req.TopLogprobs != 5 {
+		t.Fatalf("top_logprobs = %v", req.TopLogprobs)
+	}
+	if req.MaxToolCalls == nil || *req.MaxToolCalls != 10 {
+		t.Fatalf("max_tool_calls = %v", req.MaxToolCalls)
+	}
+	if req.ServiceTier == nil || *req.ServiceTier != "default" {
+		t.Fatalf("service_tier = %v", req.ServiceTier)
+	}
+	if req.PromptCacheKey == nil || *req.PromptCacheKey != "codex-cache-key" {
+		t.Fatalf("prompt_cache_key = %v", req.PromptCacheKey)
+	}
+	if req.PromptCacheRetention == nil || *req.PromptCacheRetention != "24h" {
+		t.Fatalf("prompt_cache_retention = %v", req.PromptCacheRetention)
+	}
+	if req.SafetyIdentifier == nil || *req.SafetyIdentifier != "sid-abc" {
+		t.Fatalf("safety_identifier = %v", req.SafetyIdentifier)
+	}
+	if len(req.Include) != 1 || req.Include[0] != "reasoning.encrypted_content" {
+		t.Fatalf("include = %v", req.Include)
+	}
+	if string(req.Text) != `{"format":{"type":"text"}}` {
+		t.Fatalf("text = %s", req.Text)
+	}
+	if len(req.Extra) != 0 {
+		t.Fatalf("expected no unmapped fields, got %v", req.Extra)
+	}
+	roundTripJSON(t, in, &req)
+}
+
+// TestResponsesResponse_CodexEchoedFields exercises the config fields the
+// /v1/responses object echoes back — the surface a real codex (gpt-5.x)
+// response carries. Fields OpenAI emits as null (max_tool_calls,
+// prompt_cache_key, safety_identifier, user, instructions) are modelled as
+// json.RawMessage so the null round-trips intact rather than being dropped.
+func TestResponsesResponse_CodexEchoedFields(t *testing.T) {
+	in := []byte(`{` +
+		`"background":false,` +
+		`"completed_at":1700000001,` +
+		`"created_at":1700000000,` +
+		`"id":"resp_codex",` +
+		`"instructions":null,` +
+		`"max_output_tokens":2048,` +
+		`"max_tool_calls":null,` +
+		`"model":"gpt-5.2-chat",` +
+		`"object":"response",` +
+		`"output":[{"content":[{"text":"ok","type":"output_text"}],"id":"msg_1","role":"assistant","status":"completed","type":"message"}],` +
+		`"parallel_tool_calls":true,` +
+		`"prompt_cache_key":null,` +
+		`"prompt_cache_retention":"in_memory",` +
+		`"safety_identifier":null,` +
+		`"service_tier":"default",` +
+		`"status":"completed",` +
+		`"store":true,` +
+		`"temperature":1,` +
+		`"text":{"format":{"type":"text"},"verbosity":"medium"},` +
+		`"tool_choice":"auto",` +
+		`"tools":[],` +
+		`"top_logprobs":0,` +
+		`"top_p":1,` +
+		`"truncation":"disabled",` +
+		`"usage":{"input_tokens":22,"output_tokens":71,"total_tokens":93},` +
+		`"user":null` +
+		`}`)
+	var resp ResponsesResponse
+	if err := json.Unmarshal(in, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Temperature == nil || *resp.Temperature != 1 {
+		t.Fatalf("temperature = %v", resp.Temperature)
+	}
+	if resp.TopP == nil || *resp.TopP != 1 {
+		t.Fatalf("top_p = %v", resp.TopP)
+	}
+	if resp.TopLogprobs == nil || *resp.TopLogprobs != 0 {
+		t.Fatalf("top_logprobs = %v", resp.TopLogprobs)
+	}
+	if resp.MaxOutputTokens == nil || *resp.MaxOutputTokens != 2048 {
+		t.Fatalf("max_output_tokens = %v", resp.MaxOutputTokens)
+	}
+	if resp.Store == nil || !*resp.Store {
+		t.Fatalf("store = %v", resp.Store)
+	}
+	if resp.Background == nil || *resp.Background {
+		t.Fatalf("background = %v", resp.Background)
+	}
+	if resp.CompletedAt == nil || *resp.CompletedAt != 1700000001 {
+		t.Fatalf("completed_at = %v", resp.CompletedAt)
+	}
+	if resp.Truncation == nil || *resp.Truncation != "disabled" {
+		t.Fatalf("truncation = %v", resp.Truncation)
+	}
+	if resp.ServiceTier == nil || *resp.ServiceTier != "default" {
+		t.Fatalf("service_tier = %v", resp.ServiceTier)
+	}
+	if resp.PromptCacheRetention == nil || *resp.PromptCacheRetention != "in_memory" {
+		t.Fatalf("prompt_cache_retention = %v", resp.PromptCacheRetention)
+	}
+	if string(resp.MaxToolCalls) != "null" {
+		t.Fatalf("max_tool_calls = %s (want null)", resp.MaxToolCalls)
+	}
+	if string(resp.User) != "null" {
+		t.Fatalf("user = %s (want null)", resp.User)
+	}
+	if string(resp.ToolChoice) != `"auto"` {
+		t.Fatalf("tool_choice = %s", resp.ToolChoice)
+	}
+	if string(resp.Tools) != "[]" {
+		t.Fatalf("tools = %s (want [])", resp.Tools)
+	}
+	if len(resp.Extra) != 0 {
+		t.Fatalf("expected no unmapped fields, got %v", resp.Extra)
+	}
+	roundTripJSON(t, in, &resp)
+}
+
 func TestStreamEvent_AllKnownTypes(t *testing.T) {
 	cases := []struct {
 		name string

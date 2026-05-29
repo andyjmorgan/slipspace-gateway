@@ -80,8 +80,46 @@ type ResponsesRequest struct {
 	Background bool `json:"background,omitempty"`
 
 	// User is the caller-supplied end-user identifier used by OpenAI for
-	// abuse detection.
+	// abuse detection. Deprecated upstream in favour of SafetyIdentifier and
+	// PromptCacheKey, but still accepted.
 	User string `json:"user,omitempty"`
+
+	// ParallelToolCalls allows the model to run tool calls in parallel when
+	// non-nil; nil defers to the server default (true).
+	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
+
+	// TopLogprobs requests up to N (0–20) most-likely tokens with log
+	// probabilities at each output position; nil disables logprobs.
+	TopLogprobs *int `json:"top_logprobs,omitempty"`
+
+	// MaxToolCalls caps the total number of built-in tool calls the model may
+	// issue across the response; nil leaves it unbounded.
+	MaxToolCalls *int `json:"max_tool_calls,omitempty"`
+
+	// ServiceTier selects the processing tier ("auto", "default", "flex",
+	// "scale", "priority"); nil defers to "auto".
+	ServiceTier *string `json:"service_tier,omitempty"`
+
+	// PromptCacheKey buckets similar requests to raise prompt-cache hit rates;
+	// the supported replacement for User.
+	PromptCacheKey *string `json:"prompt_cache_key,omitempty"`
+
+	// PromptCacheRetention selects the prompt-cache retention policy
+	// ("in_memory" or "24h"); nil uses the model default.
+	PromptCacheRetention *string `json:"prompt_cache_retention,omitempty"`
+
+	// SafetyIdentifier is a stable, hashed end-user identifier used for abuse
+	// detection; the supported replacement for User.
+	SafetyIdentifier *string `json:"safety_identifier,omitempty"`
+
+	// Include requests additional output data on the response (e.g.
+	// "reasoning.encrypted_content", "message.output_text.logprobs").
+	Include []string `json:"include,omitempty"`
+
+	// Text configures the text / structured-output response format. Kept raw
+	// because its format sub-object is polymorphic (text, json_schema, or
+	// json_object).
+	Text json.RawMessage `json:"text,omitempty"`
 
 	models.DynamicProperties
 }
@@ -147,6 +185,73 @@ type ResponsesResponse struct {
 	// Error carries the upstream error payload when Status == "failed".
 	// Kept raw because OpenAI's error shape evolves frequently.
 	Error json.RawMessage `json:"error,omitempty"`
+
+	// Instructions echoes the system/developer instructions for the response.
+	// Kept raw because the value is polymorphic (a string or an array of
+	// input items) and OpenAI emits it as null when unset.
+	Instructions json.RawMessage `json:"instructions,omitempty"`
+
+	// Tools echoes the tool catalogue the model was offered. Kept raw so an
+	// empty array ("tools":[]) round-trips intact rather than collapsing to
+	// an omitted field, and so codex's open-ended custom tool shapes survive.
+	Tools json.RawMessage `json:"tools,omitempty"`
+
+	// ToolChoice echoes the resolved tool-selection directive. Kept raw
+	// because OpenAI ships both string and object forms.
+	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
+
+	// Text echoes the text / structured-output format configuration. Kept raw
+	// because its format sub-object is polymorphic.
+	Text json.RawMessage `json:"text,omitempty"`
+
+	// Temperature echoes the sampling temperature the model used.
+	Temperature *float64 `json:"temperature,omitempty"`
+
+	// TopP echoes the nucleus-sampling cutoff the model used.
+	TopP *float64 `json:"top_p,omitempty"`
+
+	// TopLogprobs echoes the requested logprobs count.
+	TopLogprobs *int `json:"top_logprobs,omitempty"`
+
+	// MaxOutputTokens echoes the generated-token ceiling.
+	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
+
+	// MaxToolCalls echoes the built-in-tool-call ceiling. Kept raw because
+	// OpenAI emits it as null when unbounded.
+	MaxToolCalls json.RawMessage `json:"max_tool_calls,omitempty"`
+
+	// Store echoes whether the response was persisted for later retrieval.
+	Store *bool `json:"store,omitempty"`
+
+	// Background echoes whether the response ran in background mode.
+	Background *bool `json:"background,omitempty"`
+
+	// CompletedAt is the response completion time as a Unix epoch in seconds;
+	// present only once the response reaches a terminal status.
+	CompletedAt *int64 `json:"completed_at,omitempty"`
+
+	// Truncation echoes the context-overflow truncation strategy ("auto" or
+	// "disabled").
+	Truncation *string `json:"truncation,omitempty"`
+
+	// ServiceTier echoes the processing tier actually used to serve the
+	// request, which may differ from the requested tier.
+	ServiceTier *string `json:"service_tier,omitempty"`
+
+	// PromptCacheRetention echoes the prompt-cache retention policy.
+	PromptCacheRetention *string `json:"prompt_cache_retention,omitempty"`
+
+	// PromptCacheKey echoes the request's prompt-cache key. Kept raw because
+	// OpenAI emits it as null when unset.
+	PromptCacheKey json.RawMessage `json:"prompt_cache_key,omitempty"`
+
+	// SafetyIdentifier echoes the request's safety identifier. Kept raw
+	// because OpenAI emits it as null when unset.
+	SafetyIdentifier json.RawMessage `json:"safety_identifier,omitempty"`
+
+	// User echoes the deprecated end-user identifier. Kept raw because OpenAI
+	// emits it as null when unset.
+	User json.RawMessage `json:"user,omitempty"`
 
 	models.DynamicProperties
 }
