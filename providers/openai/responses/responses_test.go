@@ -246,6 +246,47 @@ func TestResponsesResponse_CodexEchoedFields(t *testing.T) {
 	roundTripJSON(t, in, &resp)
 }
 
+// TestResponsesResponse_BillingPenaltiesModeration covers the fields the live
+// /v1/responses object returns that the published openai-openapi spec omits
+// (spec lag) — confirmed against real api.openai.com, not just Azure.
+func TestResponsesResponse_BillingPenaltiesModeration(t *testing.T) {
+	in := []byte(`{` +
+		`"billing":{"payer":"developer"},` +
+		`"created_at":1700000000,` +
+		`"frequency_penalty":0,` +
+		`"id":"resp_x",` +
+		`"model":"gpt-4o-mini",` +
+		`"moderation":null,` +
+		`"object":"response",` +
+		`"presence_penalty":0,` +
+		`"reasoning":{"context":null,"effort":"low"},` +
+		`"status":"completed"` +
+		`}`)
+	var resp ResponsesResponse
+	if err := json.Unmarshal(in, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Billing == nil || resp.Billing.Payer != "developer" {
+		t.Fatalf("billing = %+v", resp.Billing)
+	}
+	if resp.FrequencyPenalty == nil || *resp.FrequencyPenalty != 0 {
+		t.Fatalf("frequency_penalty = %v", resp.FrequencyPenalty)
+	}
+	if resp.PresencePenalty == nil || *resp.PresencePenalty != 0 {
+		t.Fatalf("presence_penalty = %v", resp.PresencePenalty)
+	}
+	if string(resp.Moderation) != "null" {
+		t.Fatalf("moderation = %s (want null)", resp.Moderation)
+	}
+	if resp.Reasoning == nil || string(resp.Reasoning.Context) != "null" {
+		t.Fatalf("reasoning.context = %s (want null)", resp.Reasoning.Context)
+	}
+	if len(resp.Extra) != 0 || len(resp.Reasoning.Extra) != 0 || len(resp.Billing.Extra) != 0 {
+		t.Fatalf("unmapped leaked: resp=%v reasoning=%v billing=%v", resp.Extra, resp.Reasoning.Extra, resp.Billing.Extra)
+	}
+	roundTripJSON(t, in, &resp)
+}
+
 func TestStreamEvent_AllKnownTypes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -378,6 +419,7 @@ func TestResponses_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(Tool{}),
 		reflect.TypeOf(ReasoningOptions{}),
 		reflect.TypeOf(ReasoningOutput{}),
+		reflect.TypeOf(Billing{}),
 		reflect.TypeOf(IncompleteDetails{}),
 		reflect.TypeOf(Usage{}),
 		reflect.TypeOf(InputTokensDetails{}),

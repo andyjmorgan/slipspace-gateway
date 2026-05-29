@@ -253,8 +253,38 @@ type ResponsesResponse struct {
 	// emits it as null when unset.
 	User json.RawMessage `json:"user,omitempty"`
 
+	// FrequencyPenalty echoes the frequency penalty applied. Present on the
+	// live /v1/responses object though absent from the published spec.
+	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
+
+	// PresencePenalty echoes the presence penalty applied. Present on the
+	// live /v1/responses object though absent from the published spec.
+	PresencePenalty *float64 `json:"presence_penalty,omitempty"`
+
+	// Billing carries OpenAI's billing attribution (e.g. {"payer":"developer"}).
+	Billing *Billing `json:"billing,omitempty"`
+
+	// Moderation carries the moderation outcome. Kept raw because OpenAI
+	// emits it as null when no moderation result is attached.
+	Moderation json.RawMessage `json:"moderation,omitempty"`
+
 	models.DynamicProperties
 }
+
+// Billing is OpenAI's billing-attribution block on a /v1/responses response.
+// Unknown fields round-trip via the embedded DynamicProperties.
+type Billing struct {
+	// Payer identifies who is billed for the request (e.g. "developer").
+	Payer string `json:"payer,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into b, routing unknown fields into Extra.
+func (b *Billing) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, b) }
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back in.
+func (b Billing) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
 
 // UnmarshalJSON decodes data into r, routing any field not declared on the
 // struct into DynamicProperties.Extra.
@@ -336,6 +366,11 @@ type ReasoningOutput struct {
 	// Summary is the textual reasoning summary. Kept raw because OpenAI
 	// has shipped both string and array shapes for this field.
 	Summary json.RawMessage `json:"summary,omitempty"`
+
+	// Context echoes the reasoning context configuration. Kept raw because
+	// OpenAI emits it as null when unset and the populated shape is
+	// undocumented.
+	Context json.RawMessage `json:"context,omitempty"`
 
 	models.DynamicProperties
 }
