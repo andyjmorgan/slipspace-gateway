@@ -43,8 +43,40 @@ type MessagesResponse struct {
 	// used the code-execution tool.
 	Container *Container `json:"container,omitempty"`
 
+	// StopDetails carries the structured elaboration of StopReason on the
+	// stop types that emit one. Kept raw because Anthropic emits it as null
+	// for ordinary stops and the populated shape is stop-type-specific.
+	StopDetails json.RawMessage `json:"stop_details,omitempty"`
+
+	// ContextManagement reports the context-editing operations the server
+	// applied to the request (returned under the context-management beta).
+	ContextManagement *ContextManagement `json:"context_management,omitempty"`
+
 	models.DynamicProperties
 }
+
+// ContextManagement reports the context-editing operations the server applied
+// to a request under the context-management beta. Unknown fields round-trip
+// via the embedded DynamicProperties.
+type ContextManagement struct {
+	// AppliedEdits lists the edits the server applied (empty when none).
+	// Kept raw so an empty array ("applied_edits":[]) round-trips intact
+	// rather than collapsing to an omitted field, and because the edit
+	// record shape is beta and stop-type-specific.
+	AppliedEdits json.RawMessage `json:"applied_edits,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into c, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (c *ContextManagement) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, c)
+}
+
+// MarshalJSON encodes c and merges DynamicProperties.Extra back into the
+// resulting object.
+func (c ContextManagement) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
 
 // UnmarshalJSON decodes data into r. The Content array is dispatched through
 // the polymorphic ContentBlock registry so unknown block discriminators
@@ -65,6 +97,8 @@ func (r *MessagesResponse) UnmarshalJSON(data []byte) error {
 		StopSequence:      shadow.StopSequence,
 		Usage:             shadow.Usage,
 		Container:         shadow.Container,
+		StopDetails:       shadow.StopDetails,
+		ContextManagement: shadow.ContextManagement,
 		DynamicProperties: shadow.DynamicProperties,
 	}
 
@@ -100,6 +134,10 @@ type messagesResponseRaw struct {
 	Usage Usage `json:"usage"`
 
 	Container *Container `json:"container,omitempty"`
+
+	StopDetails json.RawMessage `json:"stop_details,omitempty"`
+
+	ContextManagement *ContextManagement `json:"context_management,omitempty"`
 
 	models.DynamicProperties
 }

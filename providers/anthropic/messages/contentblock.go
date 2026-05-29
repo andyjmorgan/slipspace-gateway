@@ -136,8 +136,30 @@ type ToolUseBlock struct {
 	// callers can route it without going through a typed schema model.
 	Input json.RawMessage `json:"input,omitempty"`
 
+	// Caller attributes the tool call to its invoker (e.g. {"type":"direct"}
+	// for a top-level call). Anthropic emits this on tool_use blocks to
+	// distinguish direct calls from those made by a sub-agent.
+	Caller *ToolCaller `json:"caller,omitempty"`
+
 	models.DynamicProperties
 }
+
+// ToolCaller attributes a ToolUseBlock to its invoker. Unknown fields
+// round-trip via the embedded DynamicProperties.
+type ToolCaller struct {
+	// Type is the caller kind, e.g. "direct".
+	Type string `json:"type,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into c, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (c *ToolCaller) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, c) }
+
+// MarshalJSON encodes c and merges DynamicProperties.Extra back into the
+// resulting object.
+func (c ToolCaller) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
 
 // BlockType returns the "tool_use" discriminator.
 func (ToolUseBlock) BlockType() string { return "tool_use" }
