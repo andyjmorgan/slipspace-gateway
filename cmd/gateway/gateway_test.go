@@ -23,7 +23,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
-	"github.com/andyjmorgan/sluice-gateway/internal/routing"
 )
 
 type capturedUpstream struct {
@@ -71,23 +70,16 @@ func newTestEnv(t *testing.T) *testEnv {
 	dir := writeTestConfig(t, upstream.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	resolved, err := config.Load(ctx, dir)
+	resolved, err := config.LoadV2(ctx, dir)
 	if err != nil {
 		upstream.Close()
 		cancel()
-		t.Fatalf("config.Load: %v", err)
+		t.Fatalf("config.LoadV2: %v", err)
 	}
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 
 	store := config.NewStore(resolved)
-
-	router, err := routing.New(store, nil)
-	if err != nil {
-		upstream.Close()
-		cancel()
-		t.Fatalf("routing.New: %v", err)
-	}
 
 	resolver := auth.NewResolver(store)
 	meters, err := observability.NewMeters(noop.NewMeterProvider().Meter("test"))
@@ -101,7 +93,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	evaluator := rules.NewEvaluator(store, 8, meters)
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, reporter.Factory(), store, makePolicyLookup(store), resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
+	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
 	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), nil, dataPlane)
 
 	mux := http.NewServeMux()
@@ -131,66 +123,50 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	providersYAML := fmt.Sprintf(`providers:
+	backendsYAML := fmt.Sprintf(`backends:
   openai:
-    prefix: openai
-    prefix_required: false
     base_url: %s
-    endpoints:
-      chat_completions:
+    protocols:
+      chat:
         path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions, /chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-      models:
-        path: /v1/models
-        method: [GET]
-        accepted_paths: [/v1/models, /models]
-        request_kind: passthrough
+        auth: { header: Authorization, format: "Bearer {key}" }
   anthropic:
-    prefix: anthropic
-    prefix_required: true
     base_url: %s
     required_headers:
       anthropic-version: "2023-06-01"
-    endpoints:
+    protocols:
       messages:
         path: /v1/messages
-        method: [POST]
-        accepted_paths: [/v1/messages]
-        accepts_streaming: true
-        request_kind: messages
-      chat_completions:
+        auth: { header: x-api-key, format: "{key}" }
+      chat:
         path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-        auth_header: Authorization
-        auth_format: "Bearer {key}"
+        auth: { header: Authorization, format: "Bearer {key}" }
+    passthrough:
+      models:
+        paths:
+          - { match: /v1/models, methods: [GET] }
   gemini:
-    prefix: gemini
-    prefix_required: true
     base_url: %s
-    endpoints:
-      chat_completions:
+    protocols:
+      chat:
         path: /v1beta/openai/chat/completions
-        method: [POST]
-        accepted_paths: [/v1beta/openai/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-        auth_header: Authorization
-        auth_format: "Bearer {key}"
+        auth: { header: Authorization, format: "Bearer {key}" }
 `, upstreamURL, upstreamURL, upstreamURL)
 
 	//nolint:gosec // test fixture keys; not real credentials
 	policyYAML := `configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-upstream-openai
       anthropic: sk-upstream-anthropic
       gemini: gm-upstream-gemini
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], backend: openai }
+      - { protocol: chat, models: ["claude-*"], backend: anthropic }
+      - { protocol: messages, models: ["claude-*"], backend: anthropic }
+      - { protocol: chat, models: ["gemini-*"], backend: gemini }
+    passthrough_bindings:
+      - { family: models, backend: anthropic }
 
 api_keys:
   - secret: sk_dev_local
@@ -204,8 +180,8 @@ api_keys:
 `
 
 	for name, body := range map[string]string{
-		"providers.yaml": providersYAML,
-		"policy.yaml":    policyYAML,
+		"backends.yaml": backendsYAML,
+		"policy.yaml":   policyYAML,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)
@@ -297,7 +273,10 @@ func TestGateway_DisabledBearer(t *testing.T) {
 func TestGateway_UnknownPath(t *testing.T) {
 	env := newTestEnv(t)
 
+	// Auth runs before selection in v2, so an unknown path still needs a
+	// valid credential to reach the 404 (no passthrough family claims it).
 	req := newReq(t, http.MethodGet, env.gatewayURL+"/does/not/exist", "")
+	req.Header.Set("Authorization", "Bearer sk_dev_local")
 	resp := doReq(t, req)
 	defer closeBody(resp)
 
@@ -309,7 +288,10 @@ func TestGateway_UnknownPath(t *testing.T) {
 func TestGateway_MethodNotAllowed(t *testing.T) {
 	env := newTestEnv(t)
 
-	req := newReq(t, http.MethodGet, env.gatewayURL+"/v1/chat/completions", "")
+	// The models passthrough family accepts GET only; a POST to its path is
+	// 405. Method enforcement now lives on passthrough families.
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/models", `{}`)
+	req.Header.Set("Authorization", "Bearer sk_dev_local")
 	resp := doReq(t, req)
 	defer closeBody(resp)
 
@@ -321,7 +303,7 @@ func TestGateway_MethodNotAllowed(t *testing.T) {
 func TestGateway_PassthroughMode(t *testing.T) {
 	env := newTestEnv(t)
 
-	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{}`)
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{"model":"gpt-4o"}`)
 	req.Header.Set("Authorization", "Bearer customer-supplied-token")
 	req.Header.Set("X-Sluice-Configuration", "dev")
 	req.Header.Set("Content-Type", "application/json")
@@ -350,7 +332,7 @@ func TestGateway_PassthroughMode(t *testing.T) {
 func TestGateway_IdentityPassthroughMode(t *testing.T) {
 	env := newTestEnv(t)
 
-	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{}`)
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{"model":"gpt-4o"}`)
 	req.Header.Set("Authorization", "Bearer customer-supplied-token")
 	req.Header.Set("X-Sluice-Identity", "sk_dev_local")
 	req.Header.Set("Content-Type", "application/json")
@@ -390,16 +372,15 @@ func TestGateway_IdentityPassthroughMode_UnknownKey(t *testing.T) {
 	}
 }
 
-// TestGateway_AnthropicChatCompletions_OpenAICompatSurface exercises the
-// new v1.0.2 surface: the gateway routes /anthropic/v1/chat/completions
-// to Anthropic's OpenAI-compatible chat completions endpoint, swapping
-// the upstream credential into Authorization: Bearer (not the native
-// x-api-key).
+// TestGateway_AnthropicChatCompletions_OpenAICompatSurface exercises the v2
+// model-keyed redirect: a chat request whose model is claude-* binds to the
+// anthropic backend's chat protocol, swapping the upstream credential into
+// Authorization: Bearer (not the native x-api-key).
 func TestGateway_AnthropicChatCompletions_OpenAICompatSurface(t *testing.T) {
 	env := newTestEnv(t)
 
 	body := `{"model":"claude-haiku-4-5","messages":[{"role":"user","content":"hi"}]}`
-	req := newReq(t, http.MethodPost, env.gatewayURL+"/anthropic/v1/chat/completions", body)
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", body)
 	req.Header.Set("Authorization", "Bearer sk_dev_local")
 	req.Header.Set("Content-Type", "application/json")
 
@@ -428,7 +409,7 @@ func TestGateway_GeminiChatCompletions_OpenAICompatSurface(t *testing.T) {
 	env := newTestEnv(t)
 
 	body := `{"model":"gemini-2.0-flash-001","messages":[{"role":"user","content":"hi"}]}`
-	req := newReq(t, http.MethodPost, env.gatewayURL+"/gemini/v1beta/openai/chat/completions", body)
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", body)
 	req.Header.Set("Authorization", "Bearer sk_dev_local")
 	req.Header.Set("Content-Type", "application/json")
 
@@ -451,10 +432,10 @@ func TestGateway_GeminiChatCompletions_OpenAICompatSurface(t *testing.T) {
 	}
 }
 
-func TestGateway_AnthropicPrefixRouting(t *testing.T) {
+func TestGateway_AnthropicMessagesRouting(t *testing.T) {
 	env := newTestEnv(t)
 
-	req := newReq(t, http.MethodPost, env.gatewayURL+"/anthropic/v1/messages", `{}`)
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/messages", `{"model":"claude-3-5-sonnet"}`)
 	req.Header.Set("Authorization", "Bearer sk_dev_local")
 	req.Header.Set("Content-Type", "application/json")
 
