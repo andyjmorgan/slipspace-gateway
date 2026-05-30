@@ -21,7 +21,8 @@ The source of truth lives in [`internal/spool/`](../internal/spool/). If a value
 9. [Recovery on startup](#recovery-on-startup)
 10. [Sizing the spool](#sizing-the-spool)
 11. [Environment variables](#environment-variables)
-12. [Cross-references](#cross-references)
+12. [Payload backref contract](#payload-backref-contract)
+13. [Cross-references](#cross-references)
 
 ---
 
@@ -248,6 +249,24 @@ The spool reads one env var directly:
 `Validate` rejects an empty `SLUICE_SPOOL_ROOT` at startup. Pointing it at a tmpfs is supported for ephemeral-by-design deployments but accepts the loss-on-restart semantics that come with it.
 
 Per-track tuning (ring depth, rotation, retry, breaker) is **not** env-driven. Connector-level overrides land on the YAML entry in `connectors:`; everything else uses the constants from [`internal/spool/options.go`](../internal/spool/options.go). The decision is intentional — these are knobs an operator tunes per destination, not globally per process.
+
+---
+
+## Payload backref contract
+
+How an operator gets from a slim trace to the full request/response body. Telemetry is bounded by design — the GenAI span/event carries only capped, redacted content — while the complete bodies live in the records this spool ships. The handle that bridges the two is `correlation_id`.
+
+The contract is deliberately a **soft promise**:
+
+> `correlation_id` is on the trace (`sluice.correlation_id`) and on every record. A backing payload **may** be fetchable by it — check for it — but its absence is a normal answer, never an error.
+
+"Absent" is expected whenever a record never reached a durable destination: excluded by a binding's `sampling` / `filter`, truncated past `max_body_bytes`, or dropped under the [Loss policy](#loss-policy) (ring full / disk full). A consumer correlating a trace to its payload must treat "no payload" as a first-class outcome and never assume the fetch succeeds.
+
+This is the only contract that survives the spool's best-effort nature. A *hard* pointer — a guaranteed storage path emitted onto the request span at request time — would dangle exactly under load (the record may be dropped after the span is emitted), and would weld the trace channel to a specific record store, breaking the reporting/telemetry separation. The soft promise turns the loss policy into a documented feature rather than a broken guarantee.
+
+**Status: contract agreed, emission not yet implemented.** What holds today: `correlation_id` is the shared key, present on both the span and the record. What is proposed: the upload worker emits a `correlation_id → object_key` backref **after a successful upload** (out of band, not on the live request span), so the promise stays one-directional — *present ⇒ valid, absent ⇒ expected* — with no dangling pointers and the request path untouched. Whether to additionally key objects per-request (e.g. `payloads/<correlation_id>`) for a direct fetch versus listing the time partition is an independent ergonomics decision.
+
+Resilience does not complicate this. The captured payload mirrors the **client-visible outcome**: a committed response (any status) is stored; if nothing committed (all attempts transport-errored / cb-blocked) only the request is. Failover decides on the buffered status *before* commit, so a streamed response that breaks mid-flight was already committed and is never a failover case. Losing attempts keep metadata only in `Record.Attempts[]` (target / status / outcome) — the failover story without the failed bodies. Per-attempt full-body capture is a possible future per-binding opt-in, off by default.
 
 ---
 
