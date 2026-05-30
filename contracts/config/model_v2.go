@@ -154,8 +154,19 @@ type Group struct {
 	// group that includes it.
 	CircuitBreaker *resilience.CircuitBreakerConfig `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
 
+	// StrictWeights, in load_balance mode, makes the first weighted-random
+	// pick final — no re-roll onto another target on a retryable failure.
+	// Used for canary mirroring where the under-weighted target's failures
+	// must surface to the client. Ignored in failover mode.
+	StrictWeights bool `yaml:"strict_weights,omitempty" json:"strict_weights,omitempty"`
+
+	// ResponseHeaderTimeoutSeconds, when > 0, overrides the gateway-wide
+	// upstream response-header timeout for every attempt under this group —
+	// so a group can fail over off a slow target faster than the default.
+	ResponseHeaderTimeoutSeconds int `yaml:"response_header_timeout_seconds,omitempty" json:"response_header_timeout_seconds,omitempty"`
+
 	// Targets is the backends this group routes across, each with its own
-	// optional per-target overrides (model alias, query, path).
+	// optional per-target overrides (model alias, query, path, weight).
 	Targets []Target `yaml:"targets" json:"targets"`
 }
 
@@ -180,6 +191,11 @@ type Target struct {
 	// Path overrides the protocol path for this target (e.g. an Azure
 	// deployment-specific path on a shared backend connection).
 	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+
+	// Weight is the relative selection weight in load_balance mode. Zero is
+	// treated as 1 (even weighting) by the orchestrator synthesiser; ignored
+	// in failover mode, where Order (declaration order) drives sequencing.
+	Weight int `yaml:"weight,omitempty" json:"weight,omitempty"`
 }
 
 // Binding maps a generative (protocol, model) pair to a destination — a single

@@ -90,6 +90,9 @@ type Target struct {
 	// Alias, when non-empty, is the model name to rewrite the request body to
 	// when this target is dispatched.
 	Alias string
+
+	// Weight is the relative load-balance selection weight (0 = even).
+	Weight int
 }
 
 // Group is a resolved resilience group: the orchestration policy plus the
@@ -107,6 +110,13 @@ type Group struct {
 	// CircuitBreaker is the group-wide breaker config (breaker state is keyed
 	// per backend downstream).
 	CircuitBreaker *resilience.CircuitBreakerConfig
+
+	// StrictWeights, in load_balance mode, makes the first weighted pick final.
+	StrictWeights bool
+
+	// ResponseHeaderTimeoutSeconds overrides the gateway-wide upstream
+	// response-header timeout for every attempt under this group (0 = default).
+	ResponseHeaderTimeoutSeconds int
 
 	// Targets is the resolved targets the orchestrator dispatches across.
 	Targets []Target
@@ -137,11 +147,13 @@ func Select(
 				return Destination{}, fmt.Errorf("selection: binding references unknown group %q", b.Group)
 			}
 			resolved := Group{
-				Name:               b.Group,
-				Mode:               grp.Mode,
-				FailureStatusCodes: grp.FailureStatusCodes,
-				CircuitBreaker:     grp.CircuitBreaker,
-				Targets:            make([]Target, 0, len(grp.Targets)),
+				Name:                         b.Group,
+				Mode:                         grp.Mode,
+				FailureStatusCodes:           grp.FailureStatusCodes,
+				CircuitBreaker:               grp.CircuitBreaker,
+				StrictWeights:                grp.StrictWeights,
+				ResponseHeaderTimeoutSeconds: grp.ResponseHeaderTimeoutSeconds,
+				Targets:                      make([]Target, 0, len(grp.Targets)),
 			}
 			for _, gt := range grp.Targets {
 				t, err := resolveTarget(protocol, cfg, backends, gt)
@@ -217,6 +229,7 @@ func resolveTarget(
 		Query:           mergeQuery(be.Query, tgt.Query),
 		Credential:      cred,
 		Alias:           tgt.Alias,
+		Weight:          tgt.Weight,
 	}, nil
 }
 

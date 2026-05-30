@@ -21,19 +21,26 @@ import (
 func groupToResilienceConfig(name string, g selection.Group) contractsres.ResilienceConfig {
 	targets := make([]contractsres.ResilienceTarget, 0, len(g.Targets))
 	for i, t := range g.Targets {
+		weight := t.Weight
+		if weight == 0 {
+			weight = 1 // even weighting when unset
+		}
 		targets = append(targets, contractsres.ResilienceTarget{
 			Name:     t.Backend,
 			Provider: t.Backend,
 			Order:    i + 1,
+			Weight:   weight,
 			Actions:  backendSwitchActions(t.Backend, t.Alias),
 		})
 	}
 	return contractsres.ResilienceConfig{
-		Name:               name,
-		Mode:               g.Mode,
-		FailureStatusCodes: g.FailureStatusCodes,
-		CircuitBreaker:     g.CircuitBreaker,
-		Targets:            targets,
+		Name:                         name,
+		Mode:                         g.Mode,
+		FailureStatusCodes:           g.FailureStatusCodes,
+		CircuitBreaker:               g.CircuitBreaker,
+		StrictWeights:                g.StrictWeights,
+		ResponseHeaderTimeoutSeconds: g.ResponseHeaderTimeoutSeconds,
+		Targets:                      targets,
 	}
 }
 
