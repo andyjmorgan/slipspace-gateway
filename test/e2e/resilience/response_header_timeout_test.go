@@ -18,12 +18,12 @@ import (
 const headerTimeoutFailoverPolicy = `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
-    rule_names:
-      - enable-failover
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], group: fast-failover }
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
@@ -31,27 +31,13 @@ api_keys:
     configuration: dev
     enabled: true
 
-rules:
-  - name: enable-failover
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: useResiliencePolicy
-        policyName: fast-failover
-
-resilience_policies:
-  - name: fast-failover
+groups:
+  fast-failover:
     mode: failover
     response_header_timeout_seconds: 1
     targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
-      - name: openai-backup
-        provider: openai
-        order: 2
+      - { backend: openai }
+      - { backend: anthropic }
 `
 
 // TestFailover_ResponseHeaderTimeout_AbandonsSlowPrimary proves the per-policy
