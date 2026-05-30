@@ -18,7 +18,7 @@ func TestNewStore_PanicsOnNil(t *testing.T) {
 
 func TestStore_SnapshotReturnsInitial(t *testing.T) {
 	t.Parallel()
-	initial := &ResolvedConfig{}
+	initial := &ResolvedConfigV2{}
 	s := NewStore(initial)
 	if got := s.Snapshot(); got != initial {
 		t.Fatalf("Snapshot()=%p, want %p", got, initial)
@@ -27,8 +27,8 @@ func TestStore_SnapshotReturnsInitial(t *testing.T) {
 
 func TestStore_ReplaceSwapsSnapshot(t *testing.T) {
 	t.Parallel()
-	first := &ResolvedConfig{}
-	second := &ResolvedConfig{}
+	first := &ResolvedConfigV2{}
+	second := &ResolvedConfigV2{}
 	s := NewStore(first)
 	s.Replace(second)
 	if got := s.Snapshot(); got != second {
@@ -38,7 +38,7 @@ func TestStore_ReplaceSwapsSnapshot(t *testing.T) {
 
 func TestStore_ReplacePanicsOnNil(t *testing.T) {
 	t.Parallel()
-	s := NewStore(&ResolvedConfig{})
+	s := NewStore(&ResolvedConfigV2{})
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("Replace(nil) did not panic")
@@ -49,11 +49,11 @@ func TestStore_ReplacePanicsOnNil(t *testing.T) {
 
 func TestStore_SubscribeFiresImmediately(t *testing.T) {
 	t.Parallel()
-	initial := &ResolvedConfig{}
+	initial := &ResolvedConfigV2{}
 	s := NewStore(initial)
 
-	var got *ResolvedConfig
-	s.Subscribe(func(r *ResolvedConfig) { got = r })
+	var got *ResolvedConfigV2
+	s.Subscribe(func(r *ResolvedConfigV2) { got = r })
 
 	if got != initial {
 		t.Fatalf("subscriber received %p on Subscribe, want initial %p", got, initial)
@@ -62,12 +62,12 @@ func TestStore_SubscribeFiresImmediately(t *testing.T) {
 
 func TestStore_SubscribeFiresOnReplace(t *testing.T) {
 	t.Parallel()
-	first := &ResolvedConfig{}
-	second := &ResolvedConfig{}
+	first := &ResolvedConfigV2{}
+	second := &ResolvedConfigV2{}
 	s := NewStore(first)
 
-	var calls []*ResolvedConfig
-	s.Subscribe(func(r *ResolvedConfig) { calls = append(calls, r) })
+	var calls []*ResolvedConfigV2
+	s.Subscribe(func(r *ResolvedConfigV2) { calls = append(calls, r) })
 
 	s.Replace(second)
 
@@ -84,13 +84,13 @@ func TestStore_SubscribeFiresOnReplace(t *testing.T) {
 
 func TestStore_MultipleSubscribersAllFire(t *testing.T) {
 	t.Parallel()
-	first := &ResolvedConfig{}
-	second := &ResolvedConfig{}
+	first := &ResolvedConfigV2{}
+	second := &ResolvedConfigV2{}
 	s := NewStore(first)
 
 	var a, b int
-	s.Subscribe(func(*ResolvedConfig) { a++ })
-	s.Subscribe(func(*ResolvedConfig) { b++ })
+	s.Subscribe(func(*ResolvedConfigV2) { a++ })
+	s.Subscribe(func(*ResolvedConfigV2) { b++ })
 
 	s.Replace(second)
 
@@ -101,9 +101,9 @@ func TestStore_MultipleSubscribersAllFire(t *testing.T) {
 
 func TestStore_SubscribeNilIsNoop(t *testing.T) {
 	t.Parallel()
-	s := NewStore(&ResolvedConfig{})
+	s := NewStore(&ResolvedConfigV2{})
 	s.Subscribe(nil)
-	s.Replace(&ResolvedConfig{})
+	s.Replace(&ResolvedConfigV2{})
 }
 
 func TestStore_ConcurrentReadDuringReplace(t *testing.T) {
@@ -111,9 +111,9 @@ func TestStore_ConcurrentReadDuringReplace(t *testing.T) {
 	const readers = 16
 	const swaps = 200
 
-	configs := make([]*ResolvedConfig, swaps+1)
+	configs := make([]*ResolvedConfigV2, swaps+1)
 	for i := range configs {
-		configs[i] = &ResolvedConfig{}
+		configs[i] = &ResolvedConfigV2{}
 	}
 	s := NewStore(configs[0])
 

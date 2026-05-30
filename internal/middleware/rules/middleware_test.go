@@ -25,9 +25,6 @@ func TestHTTPHandler_NilArgsPanic(t *testing.T) {
 		{"nil evaluator", func() {
 			rules.HTTPHandler(nil, stubMatch("o", "e"), nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		}},
-		{"nil matchFrom", func() {
-			rules.HTTPHandler(rules.NewEvaluator(nil, 8, nil), nil, nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-		}},
 		{"nil next", func() { rules.HTTPHandler(rules.NewEvaluator(nil, 8, nil), stubMatch("o", "e"), nil, nil) }},
 	}
 	for _, tc := range cases {

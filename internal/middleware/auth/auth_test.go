@@ -15,16 +15,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
-type routeStub struct {
-	provider string
-	endpoint string
-	ok       bool
-}
-
-func (s routeStub) From(_ context.Context) (string, string, bool) {
-	return s.provider, s.endpoint, s.ok
-}
-
 func captureLogger() (*slog.Logger, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
 	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})), buf
@@ -32,7 +22,6 @@ func captureLogger() (*slog.Logger, *bytes.Buffer) {
 
 func TestHTTPHandler_HappyPathManaged(t *testing.T) {
 	resolver := NewResolver(config.NewStore(fixtureConfig()))
-	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
 
 	var captured AuthResult
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +33,7 @@ func TestHTTPHandler_HappyPathManaged(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := HTTPHandler(resolver, route.From, next)
+	h := HTTPHandler(resolver, next)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	req.Header.Set(HeaderAuthorization, "Bearer sk_live_enabled")
@@ -63,8 +52,8 @@ func TestHTTPHandler_HappyPathManaged(t *testing.T) {
 	if captured.Configuration == nil {
 		t.Fatal("Configuration should propagate on success")
 	}
-	if got := captured.Configuration.UpstreamCredentials["openai"]; got != "sk-openai-upstream" {
-		t.Fatalf("Configuration.UpstreamCredentials[openai] = %q, want sk-openai-upstream", got)
+	if got := captured.Configuration.Credentials["openai"]; got != "sk-openai-upstream" {
+		t.Fatalf("Configuration.Credentials[openai] = %q, want sk-openai-upstream", got)
 	}
 	if !strings.Contains(logs.String(), `"result":"success"`) {
 		t.Fatalf("success result not logged: %s", logs.String())
@@ -73,7 +62,6 @@ func TestHTTPHandler_HappyPathManaged(t *testing.T) {
 
 func TestHTTPHandler_HappyPathPassthrough(t *testing.T) {
 	resolver := NewResolver(config.NewStore(fixtureConfig()))
-	route := routeStub{provider: "anthropic", endpoint: "messages", ok: true}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ar, _ := FromContext(r.Context())
@@ -89,7 +77,7 @@ func TestHTTPHandler_HappyPathPassthrough(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := HTTPHandler(resolver, route.From, next)
+	h := HTTPHandler(resolver, next)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set(HeaderConfiguration, "prod")
@@ -105,14 +93,13 @@ func TestHTTPHandler_HappyPathPassthrough(t *testing.T) {
 
 func TestHTTPHandler_Unauthorized(t *testing.T) {
 	resolver := NewResolver(config.NewStore(fixtureConfig()))
-	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
 
 	nextCalled := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		nextCalled = true
 	})
 
-	h := HTTPHandler(resolver, route.From, next)
+	h := HTTPHandler(resolver, next)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -128,9 +115,8 @@ func TestHTTPHandler_Unauthorized(t *testing.T) {
 
 func TestHTTPHandler_DisabledKey_LogsDisabledResult(t *testing.T) {
 	resolver := NewResolver(config.NewStore(fixtureConfig()))
-	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
 
-	h := HTTPHandler(resolver, route.From, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	h := HTTPHandler(resolver, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	req.Header.Set(HeaderAuthorization, "Bearer sk_live_disabled")
@@ -150,9 +136,8 @@ func TestHTTPHandler_DisabledKey_LogsDisabledResult(t *testing.T) {
 
 func TestHTTPHandler_UnknownConfiguration(t *testing.T) {
 	resolver := NewResolver(config.NewStore(fixtureConfig()))
-	route := routeStub{provider: "openai", endpoint: "chat_completions", ok: true}
 
-	h := HTTPHandler(resolver, route.From, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	h := HTTPHandler(resolver, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	req.Header.Set(HeaderConfiguration, "ghost")
@@ -165,31 +150,14 @@ func TestHTTPHandler_UnknownConfiguration(t *testing.T) {
 	assertErrorBody(t, rec.Result().Body, "unknown configuration")
 }
 
-func TestHTTPHandler_NoRouteOnContext(t *testing.T) {
-	resolver := NewResolver(config.NewStore(fixtureConfig()))
-	route := routeStub{ok: false}
-
-	h := HTTPHandler(resolver, route.From, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d want 500", rec.Code)
-	}
-}
-
 func TestHTTPHandler_PanicsOnNilDeps(t *testing.T) {
 	cases := []struct {
 		name     string
 		resolver *Resolver
-		route    RouteFromContextFunc
 		next     http.Handler
 	}{
-		{"nil resolver", nil, func(context.Context) (string, string, bool) { return "", "", true }, http.NotFoundHandler()},
-		{"nil routeFrom", NewResolver(config.NewStore(fixtureConfig())), nil, http.NotFoundHandler()},
-		{"nil next", NewResolver(config.NewStore(fixtureConfig())), func(context.Context) (string, string, bool) { return "", "", true }, nil},
+		{"nil resolver", nil, http.NotFoundHandler()},
+		{"nil next", NewResolver(config.NewStore(fixtureConfig())), nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,7 +166,7 @@ func TestHTTPHandler_PanicsOnNilDeps(t *testing.T) {
 					t.Fatalf("expected panic for %s", tc.name)
 				}
 			}()
-			HTTPHandler(tc.resolver, tc.route, tc.next)
+			HTTPHandler(tc.resolver, tc.next)
 		})
 	}
 }
@@ -238,7 +206,6 @@ func TestWithAuthRoundTrip(t *testing.T) {
 
 func TestHTTPHandler_IdentityPassthroughHappyPath(t *testing.T) {
 	resolver := NewResolver(config.NewStore(fixtureConfig()))
-	route := routeStub{provider: "anthropic", endpoint: "messages", ok: true}
 
 	var captured AuthResult
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +214,7 @@ func TestHTTPHandler_IdentityPassthroughHappyPath(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := HTTPHandler(resolver, route.From, next)
+	h := HTTPHandler(resolver, next)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set(HeaderIdentity, "sk_live_enabled")
@@ -277,13 +244,12 @@ func TestHTTPHandler_IdentityPassthroughHappyPath(t *testing.T) {
 
 func TestHTTPHandler_LegacyConfigurationHeaderLogsDeprecation(t *testing.T) {
 	resolver := NewResolver(config.NewStore(fixtureConfig()))
-	route := routeStub{provider: "anthropic", endpoint: "messages", ok: true}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := HTTPHandler(resolver, route.From, next)
+	h := HTTPHandler(resolver, next)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set(HeaderConfiguration, "prod")

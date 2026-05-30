@@ -302,7 +302,7 @@ func TestEvaluator_PicksUpStoreReplace(t *testing.T) {
 	initialRule := tag("initial", "first")
 	replacedRule := tag("replaced", "second")
 
-	store := config.NewStore(&config.ResolvedConfig{
+	store := config.NewStore(&config.ResolvedConfigV2{
 		PerConfigurationRules: map[string][]*contractsrules.RuleContract{
 			"dev": {initialRule},
 		},
@@ -327,7 +327,7 @@ func TestEvaluator_PicksUpStoreReplace(t *testing.T) {
 
 	mustEval("pre-swap", "initial")
 
-	store.Replace(&config.ResolvedConfig{
+	store.Replace(&config.ResolvedConfigV2{
 		PerConfigurationRules: map[string][]*contractsrules.RuleContract{
 			"dev": {replacedRule},
 		},
