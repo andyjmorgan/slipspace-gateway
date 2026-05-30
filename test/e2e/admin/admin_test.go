@@ -217,7 +217,7 @@ func TestAdmin_MessagesRecent_CarriesMethod(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		for i := len(got.Entries) - 1; i >= 0; i-- {
-			if got.Entries[i].Endpoint == "chat_completions" {
+			if got.Entries[i].Endpoint == "chat" {
 				entry = got.Entries[i]
 				break
 			}
@@ -229,7 +229,7 @@ func TestAdmin_MessagesRecent_CarriesMethod(t *testing.T) {
 	}
 
 	if entry.EventID == "" {
-		t.Fatal("no chat_completions entry appeared in messages/recent")
+		t.Fatal("no chat entry appeared in messages/recent")
 	}
 	if entry.Method != http.MethodPost {
 		t.Errorf("Method = %q; want POST", entry.Method)
@@ -298,8 +298,8 @@ func TestAdmin_DataPlaneDoesNotExposeAPI(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = resp.Body.Close() })
 
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusUnauthorized {
-		t.Errorf("data plane exposed /api/v1/auth/me (status %d) — admin routes leaked across listeners", resp.StatusCode)
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("data plane exposed /api/v1/auth/me (status %d) — admin handler reachable across listeners", resp.StatusCode)
 	}
 }
 

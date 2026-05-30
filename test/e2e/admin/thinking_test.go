@@ -44,7 +44,7 @@ func TestAdmin_ThinkingStream_ReassembledIntoBody(t *testing.T) {
 		},
 	})
 
-	stream := h.PostStream("/anthropic/v1/messages",
+	stream := h.PostStream("/v1/messages",
 		map[string]any{
 			"model":      "claude-opus-4-7",
 			"max_tokens": 100,
