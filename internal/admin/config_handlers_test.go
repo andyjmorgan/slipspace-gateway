@@ -8,65 +8,71 @@ import (
 	"testing"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
-// fixtureResolved builds a small but representative ResolvedConfig with the
-// indexes populated. Used by every handler test below to avoid duplicating
-// the wiring.
-func fixtureResolved(t *testing.T) *config.ResolvedConfig {
+// fixtureResolved builds a small but representative v2 ResolvedConfigV2 with the
+// indexes populated. Used by every handler test below to avoid duplicating the
+// wiring.
+func fixtureResolved(t *testing.T) *config.ResolvedConfigV2 {
 	t.Helper()
-	resilienceName := "fast-fail"
-	rc := &config.ResolvedConfig{
-		Providers: contractsconfig.ProvidersConfig{
-			"openai": contractsconfig.Provider{
+	rc := &config.ResolvedConfigV2{
+		Backends: contractsconfig.BackendsConfig{
+			"openai": contractsconfig.Backend{
 				BaseURL: "https://api.openai.com",
-				Endpoints: map[string]contractsconfig.Endpoint{
-					"chat_completions": {
-						Path:          "/v1/chat/completions",
-						Method:        []string{"POST"},
-						AcceptedPaths: []string{"/v1/chat/completions"},
-						RequestKind:   "openai.chat",
-					},
-					"models": {
-						Path:          "/v1/models",
-						Method:        []string{"GET"},
-						AcceptedPaths: []string{"/v1/models"},
-						RequestKind:   "openai.models",
+				Protocols: map[string]contractsconfig.BackendProtocol{
+					"chat": {
+						Path: "/v1/chat/completions",
+						Auth: &contractsconfig.BackendAuth{Header: "Authorization", Format: "Bearer {key}"},
 					},
 				},
 			},
-			"anthropic": contractsconfig.Provider{
-				BaseURL:        "https://api.anthropic.com",
-				Prefix:         "anthropic",
-				PrefixRequired: true,
-				Endpoints: map[string]contractsconfig.Endpoint{
+			"anthropic": contractsconfig.Backend{
+				BaseURL: "https://api.anthropic.com",
+				Protocols: map[string]contractsconfig.BackendProtocol{
 					"messages": {
-						Path:           "/v1/messages",
-						Method:         []string{"POST"},
-						AcceptedPaths:  []string{"/v1/messages"},
-						RequestKind:    "anthropic.messages",
-						PrefixOptional: true,
+						Path: "/v1/messages",
+						Auth: &contractsconfig.BackendAuth{Header: "x-api-key", Format: "{key}"},
+					},
+					"chat": {
+						Path: "/v1/chat/completions",
+						Auth: &contractsconfig.BackendAuth{Header: "Authorization", Format: "Bearer {key}"},
+					},
+				},
+				Passthrough: map[string]contractsconfig.PassthroughFamily{
+					"messages_batches": {
+						Auth: &contractsconfig.BackendAuth{Header: "x-api-key", Format: "{key}"},
+						Paths: []contractsconfig.PassthroughPath{
+							{Match: "/v1/messages/batches", Methods: []string{"POST", "GET"}},
+						},
 					},
 				},
 			},
 		},
-		Configurations: contractsconfig.ConfigurationsConfig{
-			"dev": contractsconfig.Configuration{
-				UpstreamCredentials: map[string]string{
+		Configurations: map[string]contractsconfig.ConfigurationV2{
+			"dev": {
+				Credentials: map[string]string{
 					"openai":    "sk-very-secret-openai-key-abcd1234",
 					"anthropic": "sk-ant-supersecret-mnop5678",
 				},
-				RuleNames:      []string{"only-openai"},
-				ResilienceName: &resilienceName,
-				Tags:           map[string]string{"tier": "dev"},
+				Bindings: []contractsconfig.Binding{
+					{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"},
+					{Protocol: "messages", Models: []string{"claude-*"}, Backend: "anthropic"},
+				},
+				PassthroughBindings: []contractsconfig.PassthroughBinding{
+					{Family: "messages_batches", Backend: "anthropic"},
+				},
+				RuleNames: []string{"only-openai"},
+				Tags:      map[string]string{"tier": "dev"},
 			},
-			"prod": contractsconfig.Configuration{
-				UpstreamCredentials: map[string]string{
+			"prod": {
+				Credentials: map[string]string{
 					"openai": "sk-prod-tighten-this-wxyz9876",
+				},
+				Bindings: []contractsconfig.Binding{
+					{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"},
 				},
 			},
 		},
@@ -89,30 +95,20 @@ func fixtureResolved(t *testing.T) *config.ResolvedConfig {
 				Behavior: rulescontract.BehaviorContinue,
 			},
 		},
-		ResiliencePolicies: []resilience.ResilienceConfig{
-			{Name: "fast-fail", Mode: resilience.ModeNone, TimeoutSeconds: 5},
-		},
 	}
-	if err := rc.Validate(); err != nil {
-		t.Fatalf("fixture: validate: %v", err)
-	}
-	// Hand-populate the indexes the handlers read. Mirrors the pattern in
-	// internal/routing/router_test.go::buildConfig — kept inline rather
-	// than exporting buildIndexes from the config package so the handler
-	// tests stay decoupled from loader internals.
 	populateIndexes(rc)
 	return rc
 }
 
-// populateIndexes mirrors config.buildIndexes for the handful of indexes
-// the admin handlers read. Kept local to the test so a future loader
-// refactor does not break these tests through the back door.
-func populateIndexes(rc *config.ResolvedConfig) {
+// populateIndexes mirrors config.buildIndexes for the handful of indexes the
+// admin handlers read. Kept local to the test so a future loader refactor does
+// not break these tests through the back door.
+func populateIndexes(rc *config.ResolvedConfigV2) {
 	rc.SecretIndex = make(map[string]*contractsconfig.APIKey, len(rc.APIKeys))
 	for i := range rc.APIKeys {
 		rc.SecretIndex[rc.APIKeys[i].Secret] = &rc.APIKeys[i]
 	}
-	rc.ConfigurationIndex = make(map[string]*contractsconfig.Configuration, len(rc.Configurations))
+	rc.ConfigurationIndex = make(map[string]*contractsconfig.ConfigurationV2, len(rc.Configurations))
 	for name, cfg := range rc.Configurations {
 		entry := cfg
 		rc.ConfigurationIndex[name] = &entry
@@ -120,10 +116,6 @@ func populateIndexes(rc *config.ResolvedConfig) {
 	rc.RuleIndex = make(map[string]*rulescontract.RuleContract, len(rc.Rules))
 	for i := range rc.Rules {
 		rc.RuleIndex[rc.Rules[i].Name] = &rc.Rules[i]
-	}
-	rc.ResilienceIndex = make(map[string]*resilience.ResilienceConfig, len(rc.ResiliencePolicies))
-	for i := range rc.ResiliencePolicies {
-		rc.ResilienceIndex[rc.ResiliencePolicies[i].Name] = &rc.ResiliencePolicies[i]
 	}
 	rc.PerConfigurationRules = make(map[string][]*rulescontract.RuleContract, len(rc.Configurations))
 	for name, cfg := range rc.Configurations {
@@ -137,20 +129,6 @@ func populateIndexes(rc *config.ResolvedConfig) {
 			}
 		}
 		rc.PerConfigurationRules[name] = attached
-	}
-	rc.RouteIndex = make(map[string]config.Route)
-	for providerName, p := range rc.Providers {
-		for endpointName, e := range p.Endpoints {
-			bareEmits := !p.PrefixRequired || e.PrefixOptional
-			for _, ap := range e.AcceptedPaths {
-				if p.Prefix != "" {
-					rc.RouteIndex["/"+p.Prefix+ap] = config.Route{Provider: providerName, Endpoint: endpointName}
-				}
-				if bareEmits {
-					rc.RouteIndex[ap] = config.Route{Provider: providerName, Endpoint: endpointName}
-				}
-			}
-		}
 	}
 }
 
@@ -203,9 +181,7 @@ func TestConfigurationDetailHandler_RedactsCredentialsAndKeys(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	// Hard rule: no upstream credential or api-key secret leaves the
-	// handler. If any plaintext token appears in the body the redaction
-	// boundary has been bypassed.
+	// Hard rule: no upstream credential or api-key secret leaves the handler.
 	for _, leaked := range []string{
 		"sk-very-secret-openai-key-abcd1234",
 		"sk-ant-supersecret-mnop5678",
@@ -223,14 +199,20 @@ func TestConfigurationDetailHandler_RedactsCredentialsAndKeys(t *testing.T) {
 	if got.Name != "dev" {
 		t.Errorf("Name = %q", got.Name)
 	}
-	if got.UpstreamCredentials["openai"].Last4 != "1234" {
-		t.Errorf("openai last4 = %q, want 1234", got.UpstreamCredentials["openai"].Last4)
+	if got.Credentials["openai"].Last4 != "1234" {
+		t.Errorf("openai last4 = %q, want 1234", got.Credentials["openai"].Last4)
 	}
-	if got.UpstreamCredentials["openai"].Length != len("sk-very-secret-openai-key-abcd1234") {
-		t.Errorf("openai length = %d", got.UpstreamCredentials["openai"].Length)
+	if got.Credentials["openai"].Length != len("sk-very-secret-openai-key-abcd1234") {
+		t.Errorf("openai length = %d", got.Credentials["openai"].Length)
 	}
-	if got.UpstreamCredentials["anthropic"].Last4 != "5678" {
-		t.Errorf("anthropic last4 = %q", got.UpstreamCredentials["anthropic"].Last4)
+	if got.Credentials["anthropic"].Last4 != "5678" {
+		t.Errorf("anthropic last4 = %q", got.Credentials["anthropic"].Last4)
+	}
+	if len(got.Bindings) != 2 {
+		t.Errorf("Bindings = %+v, want 2", got.Bindings)
+	}
+	if len(got.PassthroughBindings) != 1 || got.PassthroughBindings[0].Family != "messages_batches" {
+		t.Errorf("PassthroughBindings = %+v", got.PassthroughBindings)
 	}
 	if len(got.APIKeys) != 2 {
 		t.Fatalf("APIKeys len = %d, want 2 (only the keys belonging to dev)", len(got.APIKeys))
@@ -293,10 +275,6 @@ func TestRuleDetailHandler_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	// The Condition/Actions fields are interfaces — Go cannot
-	// re-unmarshal them without a dispatcher, but the SPA consumes the
-	// payload as untyped JSON, so we deserialise via a JSON-friendly
-	// shadow struct here.
 	var got struct {
 		Name      string            `json:"name"`
 		Behavior  string            `json:"behavior,omitempty"`
@@ -332,16 +310,16 @@ func TestRuleDetailHandler_NotFound(t *testing.T) {
 	}
 }
 
-func TestProvidersListHandler_HappyPath(t *testing.T) {
+func TestBackendsListHandler_HappyPath(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.ProvidersListHandler(config.NewStore(rc))
+	h := admin.BackendsListHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/providers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/backends", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var got []admin.ProviderSummary
+	var got []admin.BackendSummary
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -351,40 +329,42 @@ func TestProvidersListHandler_HappyPath(t *testing.T) {
 	if got[0].Name != "anthropic" || got[1].Name != "openai" {
 		t.Errorf("order = [%s, %s], want sorted", got[0].Name, got[1].Name)
 	}
-	if !got[0].PrefixRequired {
-		t.Errorf("anthropic PrefixRequired = false, want true")
+	if !got[0].HasPassthrough {
+		t.Errorf("anthropic HasPassthrough = false, want true")
 	}
 }
 
-func TestProviderDetailHandler_IncludesPerEndpointOverrides(t *testing.T) {
+func TestBackendDetailHandler_IncludesProtocolsAndPassthrough(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.ProviderDetailHandler(config.NewStore(rc))
+	h := admin.BackendDetailHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/providers/anthropic", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/backends/anthropic", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got admin.ProviderDetail
+	var got admin.BackendDetail
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if got.Name != "anthropic" {
 		t.Errorf("Name = %q", got.Name)
 	}
-	if len(got.Endpoints) != 1 || got.Endpoints[0].Name != "messages" {
-		t.Errorf("Endpoints = %+v", got.Endpoints)
+	if len(got.Protocols) != 2 {
+		t.Errorf("Protocols = %+v, want 2 (chat, messages)", got.Protocols)
 	}
-	if !got.Endpoints[0].PrefixOptional {
-		t.Errorf("messages PrefixOptional = false, want true")
+	// Sorted: chat then messages.
+	if got.Protocols[0].Name != "chat" || got.Protocols[1].Name != "messages" {
+		t.Errorf("Protocols order = %+v", got.Protocols)
+	}
+	if got.Protocols[1].AuthHeader != "x-api-key" {
+		t.Errorf("messages auth header = %q, want x-api-key", got.Protocols[1].AuthHeader)
+	}
+	if len(got.Passthrough) != 1 || got.Passthrough[0].Name != "messages_batches" {
+		t.Errorf("Passthrough = %+v", got.Passthrough)
 	}
 }
 
-// TestAPIKeysRevealHandler_ReturnsPlaintextForExactMatch is the reveal
-// endpoint's happy path. The plaintext secret comes back unredacted —
-// that's the entire point of this endpoint — but only when the composite
-// (configuration, name) lookup matches exactly. Lives behind the same
-// Basic auth as the rest of the admin tree.
 func TestAPIKeysRevealHandler_ReturnsPlaintextForExactMatch(t *testing.T) {
 	rc := fixtureResolved(t)
 	h := admin.APIKeysRevealHandler(config.NewStore(rc))
@@ -433,10 +413,6 @@ func TestAPIKeysRevealHandler_MissingParamsAndMisses(t *testing.T) {
 	}
 }
 
-// TestAllHandlers_NilResolvedReturn503 guards every config handler against
-// nil ResolvedConfig — the wiring contract is "feature unavailable" not
-// "panic on construct". One subtest per handler keeps the failure mode
-// obvious in CI output.
 func TestAllHandlers_NilResolvedReturn503(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -448,9 +424,9 @@ func TestAllHandlers_NilResolvedReturn503(t *testing.T) {
 		{"configurations.detail", admin.ConfigurationDetailHandler(nil), "/api/v1/config/configurations/x"},
 		{"rules.list", admin.RulesListHandler(nil), "/api/v1/config/rules"},
 		{"rules.detail", admin.RuleDetailHandler(nil), "/api/v1/config/rules/x"},
-		{"providers.list", admin.ProvidersListHandler(nil), "/api/v1/config/providers"},
-		{"providers.detail", admin.ProviderDetailHandler(nil), "/api/v1/config/providers/x"},
-		{"routes", admin.RoutesHandler(nil), "/api/v1/config/routes"},
+		{"backends.list", admin.BackendsListHandler(nil), "/api/v1/config/backends"},
+		{"backends.detail", admin.BackendDetailHandler(nil), "/api/v1/config/backends/x"},
+		{"bindings", admin.BindingsHandler(nil), "/api/v1/config/bindings"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -464,9 +440,6 @@ func TestAllHandlers_NilResolvedReturn503(t *testing.T) {
 	}
 }
 
-// TestDetailHandlers_NotFoundOnBlankAndMissing covers two close-together
-// 404 paths on each detail handler — empty path (trailing slash) and a
-// name that does not match any loaded entity.
 func TestDetailHandlers_NotFoundOnBlankAndMissing(t *testing.T) {
 	rc := fixtureResolved(t)
 	cases := []struct {
@@ -476,7 +449,7 @@ func TestDetailHandlers_NotFoundOnBlankAndMissing(t *testing.T) {
 	}{
 		{"configurations", admin.ConfigurationDetailHandler(config.NewStore(rc)), "/api/v1/config/configurations/"},
 		{"rules", admin.RuleDetailHandler(config.NewStore(rc)), "/api/v1/config/rules/"},
-		{"providers", admin.ProviderDetailHandler(config.NewStore(rc)), "/api/v1/config/providers/"},
+		{"backends", admin.BackendDetailHandler(config.NewStore(rc)), "/api/v1/config/backends/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"/blank", func(t *testing.T) {
@@ -498,9 +471,6 @@ func TestDetailHandlers_NotFoundOnBlankAndMissing(t *testing.T) {
 	}
 }
 
-// TestRulesListHandler_UsedByCoversMultipleConfigurations verifies a rule
-// referenced by two configurations comes back with both names — the
-// "used by" backlink is otherwise easy to silently drop.
 func TestRulesListHandler_UsedByCoversMultipleConfigurations(t *testing.T) {
 	rc := fixtureResolved(t)
 	// Attach the same rule to prod so it now appears under both configs.
@@ -530,34 +500,33 @@ func TestRulesListHandler_UsedByCoversMultipleConfigurations(t *testing.T) {
 	}
 }
 
-func TestRoutesHandler_FlattensRouteIndex(t *testing.T) {
+func TestBindingsHandler_FlattensAcrossConfigurations(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.RoutesHandler(config.NewStore(rc))
+	h := admin.BindingsHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/routes", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/bindings", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var got []admin.RouteRow
+	var got struct {
+		Bindings []admin.BindingRow `json:"bindings"`
+		Passthrough []admin.PassthroughBindingRow `json:"passthrough_bindings"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(got) == 0 {
-		t.Fatalf("expected non-empty route table")
+	// dev has 2 generative bindings, prod has 1 → 3 total.
+	if len(got.Bindings) != 3 {
+		t.Fatalf("bindings = %d, want 3", len(got.Bindings))
 	}
-	// anthropic.messages is PrefixOptional so it should appear at both
-	// /v1/messages (bare) and /anthropic/v1/messages (prefixed).
-	var seenBare, seenPrefixed bool
-	for _, r := range got {
-		switch r.Path {
-		case "/v1/messages":
-			seenBare = true
-		case "/anthropic/v1/messages":
-			seenPrefixed = true
+	// Each row carries its owning configuration.
+	for _, b := range got.Bindings {
+		if b.Configuration == "" {
+			t.Errorf("binding row missing configuration: %+v", b)
 		}
 	}
-	if !seenBare || !seenPrefixed {
-		t.Errorf("expected both bare and prefixed anthropic.messages; saw bare=%v prefixed=%v", seenBare, seenPrefixed)
+	if len(got.Passthrough) != 1 || got.Passthrough[0].Family != "messages_batches" {
+		t.Errorf("passthrough = %+v", got.Passthrough)
 	}
 }

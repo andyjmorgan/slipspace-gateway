@@ -28,42 +28,6 @@ func TestSortedCopy(t *testing.T) {
 	}
 }
 
-func TestMethodsFor(t *testing.T) {
-	t.Parallel()
-	resolved := &config.ResolvedConfig{
-		Providers: contractsconfig.ProvidersConfig{
-			"openai": contractsconfig.Provider{
-				Endpoints: map[string]contractsconfig.Endpoint{
-					"chat":   {Method: []string{"POST", "OPTIONS"}},
-					"models": {Method: nil},
-				},
-			},
-		},
-	}
-
-	// Known endpoint with methods → sorted copy.
-	got := methodsFor(resolved, config.Route{Provider: "openai", Endpoint: "chat"})
-	if !reflect.DeepEqual(got, []string{"OPTIONS", "POST"}) {
-		t.Errorf("known endpoint with methods = %v, want [OPTIONS POST]", got)
-	}
-
-	// Endpoint with no methods declared → wildcard placeholder.
-	got = methodsFor(resolved, config.Route{Provider: "openai", Endpoint: "models"})
-	if !reflect.DeepEqual(got, []string{"*"}) {
-		t.Errorf("methodless endpoint = %v, want [*]", got)
-	}
-
-	// Unknown provider → nil.
-	if got := methodsFor(resolved, config.Route{Provider: "missing", Endpoint: "chat"}); got != nil {
-		t.Errorf("unknown provider = %v, want nil", got)
-	}
-
-	// Unknown endpoint on known provider → nil.
-	if got := methodsFor(resolved, config.Route{Provider: "openai", Endpoint: "missing"}); got != nil {
-		t.Errorf("unknown endpoint = %v, want nil", got)
-	}
-}
-
 func TestBuildRuleAttachments_FallbackToRuleNamesIndex(t *testing.T) {
 	t.Parallel()
 	// PerConfigurationRules is empty for "prod", but RuleNames + RuleIndex
@@ -72,9 +36,9 @@ func TestBuildRuleAttachments_FallbackToRuleNamesIndex(t *testing.T) {
 		Name:     "redirect-haiku",
 		Behavior: "continue",
 	}
-	resolved := &config.ResolvedConfig{
-		Configurations: contractsconfig.ConfigurationsConfig{
-			"prod": contractsconfig.Configuration{RuleNames: []string{"redirect-haiku", "unknown-rule"}},
+	resolved := &config.ResolvedConfigV2{
+		Configurations: map[string]contractsconfig.ConfigurationV2{
+			"prod": {RuleNames: []string{"redirect-haiku", "unknown-rule"}},
 		},
 		RuleIndex:             map[string]*rulescontract.RuleContract{"redirect-haiku": rule},
 		PerConfigurationRules: map[string][]*rulescontract.RuleContract{},
@@ -87,7 +51,7 @@ func TestBuildRuleAttachments_FallbackToRuleNamesIndex(t *testing.T) {
 
 func TestBuildRuleAttachments_UnknownConfigReturnsNil(t *testing.T) {
 	t.Parallel()
-	resolved := &config.ResolvedConfig{Configurations: contractsconfig.ConfigurationsConfig{}}
+	resolved := &config.ResolvedConfigV2{Configurations: map[string]contractsconfig.ConfigurationV2{}}
 	if got := buildRuleAttachments("missing", resolved); got != nil {
 		t.Errorf("unknown config = %v, want nil", got)
 	}

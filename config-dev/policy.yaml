@@ -1,42 +1,51 @@
-# Two configurations are loaded here:
+# v2 model: configurations carry credentials (per backend), bindings (the
+# router as data — (protocol, models) → backend|group), passthrough bindings,
+# and transform rules. The v1 changeProvider/changeUrl/changeApiKey/
+# useResiliencePolicy routing actions are gone — routing is bindings now; rules
+# are pure request/response transforms (tags, header sets, body rewrites).
 #
-# 1. `dev` — the long-standing fixture the e2e harness drives. The
-#    harness hardcodes the api-key secret and the configuration name,
-#    so anything in this block needs to stay backwards-compatible.
+# Two configurations:
+#   1. `dev` — the long-standing fixture the e2e harness drives. The harness
+#      hardcodes the api-key secret + configuration name, so this block stays
+#      backwards-compatible.
+#   2. `production` — a sanitised replica of the cluster policy. Real
+#      credentials swapped for *-mock equivalents; binding/backend structure
+#      mirrors what runs in the office cluster.
 #
-# 2. `production` — a sanitised replica of the cluster sluice-gateway
-#    secret's policy.yaml (office cluster, sluice-gateway namespace).
-#    Every real credential has been swapped for a *-mock or
-#    sk_dev_replica_* equivalent; structure is verbatim from the
-#    cluster so the admin console reflects what's actually running.
-#
-# Rule evaluation order is the YAML list position in `rule_names` —
-# there is no separate priority field. More-specific rules (claude/
-# gemini model routing) come first so they short-circuit before the
-# coarser ones (provider-equals header injection).
+# Rule evaluation order is the rule_names list position. Rules condition on the
+# resolved backend (provider:), protocol (endpoint:), and client model
+# (modelName:) — selection runs before rules.
 
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
+
+    bindings:
+      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], backend: openai }
+      - { protocol: responses, models: ["gpt-*"], backend: openai }
+      - { protocol: chat, models: ["claude-*"], backend: anthropic }
+      - { protocol: messages, models: ["claude-*"], backend: anthropic }
+      - { protocol: chat, models: ["gemini-*"], backend: gemini }
+      - { protocol: generate_content, models: ["gemini-*"], backend: gemini }
+      - { protocol: chat, models: ["ha-*"], group: high-availability }
+
+    passthrough_bindings:
+      - { family: messages_batches, backend: anthropic }
 
     rule_names:
       - tag-openai-chat
       - tag-anthropic-messages
       - tag-large-prompt
-      - route-claude-models-to-anthropic
-      - route-gemini-models-to-gemini
       - redact-emails
-
-    resilience_name: high-availability
 
     tags:
       tier: dev
 
   production:
-    upstream_credentials:
+    credentials:
       openai: sk-mock-openai
       anthropic: sk-ant-mock-anthropic
       gemini: gemini-mock
@@ -44,13 +53,16 @@ configurations:
       qwen36: ""
       qwen-ollama: ""
 
+    bindings:
+      - { protocol: chat, models: ["gpt-oss*"], backend: gpt-oss }
+      - { protocol: chat, models: ["qwen3.6*"], backend: qwen36 }
+      - { protocol: chat, models: ["qwen2.5-coder:7b"], backend: qwen-ollama }
+      - { protocol: chat, models: ["claude-*"], backend: anthropic }
+      - { protocol: chat, models: ["gemini-*"], backend: gemini }
+      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], backend: openai }
+
     rule_names:
       - tag-k3s-agentling
-      - route-claude-models-to-anthropic
-      - route-gemini-models-to-gemini
-      - route-gpt-oss
-      - route-qwen36
-      - route-qwen-ollama
 
     tags:
       tier: production
@@ -85,7 +97,7 @@ rules:
           expectedProvider: openai
         - type: endpoint
           operator: Equals
-          expectedEndpoint: chat_completions
+          expectedEndpoint: chat
     actions:
       - type: addTag
         tag: surface:openai-chat
@@ -144,71 +156,3 @@ rules:
         headerAction: Set
         headerValue: emails
     behavior: continue
-
-  - name: route-gpt-oss
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: gpt-oss
-    actions:
-      - type: changeProvider
-        newProvider: gpt-oss
-    behavior: continue
-
-  - name: route-qwen36
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: "qwen3.6"
-    actions:
-      - type: changeProvider
-        newProvider: qwen36
-    behavior: continue
-
-  - name: route-qwen-ollama
-    condition:
-      type: modelName
-      operator: Equals
-      expectedModelName: "qwen2.5-coder:7b"
-    actions:
-      - type: changeProvider
-        newProvider: qwen-ollama
-    behavior: continue
-
-  - name: route-claude-models-to-anthropic
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: claude-
-    actions:
-      - type: changeProvider
-        newProvider: anthropic
-    behavior: continue
-
-  - name: route-gemini-models-to-gemini
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: gemini-
-    actions:
-      - type: changeProvider
-        newProvider: gemini
-    behavior: continue
-
-resilience_policies:
-  - name: high-availability
-    mode: failover
-    timeout_seconds: 30
-    targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
-      - name: anthropic-fallback
-        provider: anthropic
-        order: 2
-        # actions: form is accepted alongside the legacy scalar fields.
-        # The orchestrator (v1.2 PR-6+) reads Actions when present and
-        # falls back to the scalar fields otherwise.
-        actions:
-          - type: changeModelName
-            newModelName: claude-3-5-sonnet
