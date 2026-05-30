@@ -41,7 +41,7 @@ def _client(
     return genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
-            base_url=f"{gateway_url}/gemini",
+            base_url=gateway_url,
             headers=headers,
         ),
     )
@@ -264,7 +264,7 @@ def test_passthrough_mode(gateway_url: str, mockllm_url: str) -> None:
     client = genai.Client(
         api_key="byok-token-xyz",
         http_options=types.HttpOptions(
-            base_url=f"{gateway_url}/gemini",
+            base_url=gateway_url,
             headers={
                 "Authorization": "Bearer byok-token-xyz",
                 "X-Sluice-Configuration": "dev",

@@ -2,7 +2,7 @@
 that v1.0.2 wires on Anthropic and Gemini.
 
 The SDK is identical to `test_openai_sdk.py`; the only difference is the
-`base_url` — pointing at `{gateway}/anthropic/v1` or `{gateway}/gemini/v1beta/openai`.
+`base_url` — pointing at the bare gateway `{gateway}/v1`; model-keyed bindings route claude-* to anthropic and gemini-* to gemini.
 The gateway's per-endpoint `auth_header: Authorization, auth_format: "Bearer {key}"`
 override means upstream sees `Authorization: Bearer ...` rather than the
 provider-native `x-api-key` / `x-goog-api-key`.
@@ -52,7 +52,7 @@ def test_anthropic_openai_compat_chat(gateway_url: str, mockllm_url: str) -> Non
     )
 
     client = openai.OpenAI(
-        base_url=f"{gateway_url}/anthropic/v1",
+        base_url=f"{gateway_url}/v1",
         api_key=API_KEY,
         max_retries=0,
     )
@@ -75,7 +75,7 @@ def test_gemini_openai_compat_chat(gateway_url: str, mockllm_url: str) -> None:
     )
 
     client = openai.OpenAI(
-        base_url=f"{gateway_url}/gemini/v1beta/openai",
+        base_url=f"{gateway_url}/v1",
         api_key=API_KEY,
         max_retries=0,
     )
