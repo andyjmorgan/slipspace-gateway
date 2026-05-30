@@ -537,7 +537,23 @@ func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matc
 	}
 	rec := r.buildRecord(ctx, ev, matches)
 	for _, b := range cfg.ConnectorBindings {
-		modified, ship := evaluateBinding(rec, b)
+		var connectorType string
+		if c := snap.ConnectorIndex[b.Connector]; c != nil {
+			connectorType = c.Type
+		}
+		modified, ship, ov := evaluateBinding(rec, b, connectorType)
+		if ov.Triggered {
+			msg := "connector record body exceeded max_body_bytes; bodies stripped"
+			if ov.Dropped {
+				msg = "connector record body exceeded max_body_bytes; record dropped"
+			}
+			observability.FromContext(ctx).Error(msg,
+				"connector", b.Connector,
+				"connector_type", connectorType,
+				"max_body_bytes", ov.CapBytes,
+				"body_bytes", ov.BodyBytes,
+			)
+		}
 		if !ship {
 			continue
 		}

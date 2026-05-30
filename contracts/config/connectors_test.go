@@ -224,7 +224,7 @@ func TestConnectorBinding_Validate_Happy(t *testing.T) {
 		Connector:         "x",
 		Sampling:          0.5,
 		SamplingKey:       SamplingKeyCorrelationID,
-		MaxBodyBytes:      1024,
+		MaxBodyBytes:      ptrInt(1024),
 		OversizeBehaviour: OversizeMetadataOnly,
 		Filter: &ConnectorFilter{
 			Providers: []string{"openai"},
@@ -249,7 +249,7 @@ func TestConnectorBinding_Validate_Rejections(t *testing.T) {
 		{"sampling above 1", ConnectorBinding{Connector: "x", Sampling: 1.5}, "sampling"},
 		{"bad sampling key", ConnectorBinding{Connector: "x", SamplingKey: "uuid"}, "sampling_key"},
 		{"bad oversize", ConnectorBinding{Connector: "x", OversizeBehaviour: "truncate"}, "oversize_behaviour"},
-		{"negative max body", ConnectorBinding{Connector: "x", MaxBodyBytes: -1}, "max_body_bytes"},
+		{"negative max body", ConnectorBinding{Connector: "x", MaxBodyBytes: ptrInt(-1)}, "max_body_bytes"},
 		{"filter bad status min", ConnectorBinding{Connector: "x", Filter: &ConnectorFilter{StatusMin: 50, StatusMax: 200}}, "status_min"},
 		{"filter status reversed", ConnectorBinding{Connector: "x", Filter: &ConnectorFilter{StatusMin: 500, StatusMax: 300}}, "status_min"},
 		{"filter wildcard mid-string", ConnectorBinding{Connector: "x", Filter: &ConnectorFilter{Models: []string{"gpt-*-mini"}}}, "wildcard"},
@@ -416,6 +416,26 @@ func TestRejectLocalOrPrivateHost_NonIPHostPasses(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectorBinding_Validate_ExplicitZeroMaxBodyOK(t *testing.T) {
+	b := &ConnectorBinding{Connector: "x", MaxBodyBytes: ptrInt(0)}
+	if err := b.Validate(); err != nil {
+		t.Errorf("explicit max_body_bytes: 0 is the unlimited override, should validate: %v", err)
+	}
+}
+
+func TestDefaultMaxBodyBytes(t *testing.T) {
+	if got := DefaultMaxBodyBytes(ConnectorTypeWebhook); got != WebhookDefaultMaxBodyBytes {
+		t.Errorf("webhook default = %d, want %d", got, WebhookDefaultMaxBodyBytes)
+	}
+	for _, ct := range []string{ConnectorTypeS3, ConnectorTypeAzureBlob, "", "unknown"} {
+		if got := DefaultMaxBodyBytes(ct); got != 0 {
+			t.Errorf("DefaultMaxBodyBytes(%q) = %d, want 0 (no cap)", ct, got)
+		}
+	}
+}
+
+func ptrInt(i int) *int { return &i }
 
 func TestHasAnyRef(t *testing.T) {
 	if hasAnyRef("", "", "") {

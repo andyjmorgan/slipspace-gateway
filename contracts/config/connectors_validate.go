@@ -297,7 +297,7 @@ func (b *ConnectorBinding) Validate() error {
 		return fmt.Errorf("%w: binding %q: oversize_behaviour %q invalid (want metadata_only | drop_record)",
 			ErrConnectorValidation, b.Connector, b.OversizeBehaviour)
 	}
-	if b.MaxBodyBytes < 0 {
+	if b.MaxBodyBytes != nil && *b.MaxBodyBytes < 0 {
 		return fmt.Errorf("%w: binding %q: max_body_bytes cannot be negative",
 			ErrConnectorValidation, b.Connector)
 	}
