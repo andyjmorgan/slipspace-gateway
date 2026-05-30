@@ -537,7 +537,11 @@ func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matc
 	}
 	rec := r.buildRecord(ctx, ev, matches)
 	for _, b := range cfg.ConnectorBindings {
-		modified, ship := evaluateBinding(rec, b)
+		var connectorType string
+		if c := snap.ConnectorIndex[b.Connector]; c != nil {
+			connectorType = c.Type
+		}
+		modified, ship := evaluateBinding(rec, b, connectorType)
 		if !ship {
 			continue
 		}

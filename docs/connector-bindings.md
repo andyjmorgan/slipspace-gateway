@@ -85,7 +85,7 @@ Each binding entry's fields:
 | `connector` | string | — (required) | Name of an entry in the top-level `connectors:` slice. Unknown name aborts load. |
 | `sampling` | float in `[0, 1]` | `1.0` (everything) | Fraction of records routed to this binding. |
 | `sampling_key` | enum | `correlation_id` | `correlation_id` (deterministic, retries stay grouped) or `random` (per-record). |
-| `max_body_bytes` | int | per-type default (s3/azure 16 MiB, webhook 1 MiB) | Per-record body cap. |
+| `max_body_bytes` | int (optional) | unset → per-type default (webhook 1 MiB; s3/azure none) | Per-record body cap. Unset applies the connector-type default; explicit `0` means no cap (the override); a positive value caps the larger of request/response body. See [Per-record body cap](#per-record-body-cap). |
 | `oversize_behaviour` | enum | `metadata_only` | What to do when the record's body exceeds the cap: `metadata_only` (strip body, ship metadata) or `drop_record` (skip entirely). |
 | `filter` | object | nil (all-pass) | Predicate filter narrowing which records this binding receives. See [Filter](#filter). |
 
@@ -167,14 +167,31 @@ A record passes iff **every** populated predicate evaluates true:
 max_body_bytes: 16777216     # 16 MiB
 ```
 
-Zero (or unset) falls back to per-type defaults:
+`max_body_bytes` is a three-way knob — unset, explicit zero, and positive each mean something distinct:
+
+| Value | Effective cap |
+|---|---|
+| **unset** | The connector-type default (below). |
+| **`0`** | No cap — the explicit override that opts a binding out of its type default. |
+| **`> 0`** | Cap at that many bytes. |
+| **`< 0`** | Config-load error. |
+
+Per-type defaults applied when `max_body_bytes` is unset:
 
 | Connector type | Default | Reasoning |
 |---|---|---|
-| `s3`, `azure_blob` | 16 MiB | Blob stores want infrequent large objects; 16 MiB accommodates max-context model responses without surprises. |
-| `webhook` | 1 MiB | HTTPS receivers process synchronously; 1 MiB keeps per-delivery latency bounded. |
+| `webhook` | 1 MiB | Receivers process each delivery synchronously; an unbounded body can stall the receiver, so webhook bindings get a protective default. Set `max_body_bytes: 0` to opt out. |
+| `s3`, `azure_blob` | none (no cap) | Blob stores ingest large objects out of band, so there is no default cap. |
 
-The cap is **per record**, not per segment — multiple oversized records on the same segment are each evaluated independently. Negative values are a config-load error.
+Bodies are already bounded upstream regardless: the bodycapture middleware reads at most `MaxBodyBytes` (10 MiB) from the inbound request, so a record's bodies never exceed that ceiling even with no binding cap.
+
+```yaml
+max_body_bytes: 1048576      # 1 MiB — explicit cap
+# max_body_bytes: 0          # opt a webhook binding out of its 1 MiB default
+# (omit entirely)            # webhook → 1 MiB default; s3/azure → no cap
+```
+
+The cap is **per record**, not per segment — multiple oversized records on the same segment are each evaluated independently.
 
 ---
 

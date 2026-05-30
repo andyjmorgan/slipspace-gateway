@@ -56,6 +56,13 @@ type Envelope struct {
 
 	InlinePayload []byte
 	ObjectRef     *ObjectRef
+
+	// Record is the raw connector Record this envelope was translated
+	// from, set on "request" envelopes. Tests that need to assert on the
+	// connector wire payload directly — body capture, BodyOmitted under
+	// an oversize cap — read it here rather than through InlinePayload,
+	// which is the flattened request-event projection.
+	Record *cc.Record
 }
 
 // ObjectRef points at a payload held in out-of-band object storage
@@ -183,6 +190,7 @@ func (h *Harness) emitRecord(rec cc.Record) {
 	}
 
 	if payload, err := json.Marshal(req); err == nil {
+		recCopy := rec
 		h.pushEvelope(Envelope{
 			SchemaVersion: 1,
 			EventID:       rec.ID,
@@ -190,6 +198,7 @@ func (h *Harness) emitRecord(rec cc.Record) {
 			Timestamp:     time.Unix(0, rec.TsNs).UTC(),
 			Mode:          PayloadInline,
 			InlinePayload: payload,
+			Record:        &recCopy,
 		})
 	}
 

@@ -28,14 +28,14 @@ var sampleRandFloat64 = rand.Float64 //nolint:gosec // G404: non-crypto by desig
 // The returned Record is a value-copy so the caller's original is
 // unmodified across bindings; multiple bindings on one configuration
 // can each apply different size caps without polluting each other.
-func evaluateBinding(rec cc.Record, b contractsconfig.ConnectorBinding) (cc.Record, bool) {
+func evaluateBinding(rec cc.Record, b contractsconfig.ConnectorBinding, connectorType string) (cc.Record, bool) {
 	if !samplingIncludes(rec, b) {
 		return cc.Record{}, false
 	}
 	if !matchesFilter(rec, b.Filter) {
 		return cc.Record{}, false
 	}
-	return applyOversize(rec, b)
+	return applyOversize(rec, b, connectorType)
 }
 
 // samplingIncludes decides whether rec is in the sampled set for b.
@@ -181,11 +181,19 @@ func matchesTagsAll(recTags, want []string) bool {
 }
 
 // applyOversize compares the record's request + response body lengths
-// against the binding's max_body_bytes. Within cap → ship as-is.
+// against the binding's effective body cap. Within cap → ship as-is.
 // Oversize → either drop (drop_record) or strip bodies and mark
 // omitted (metadata_only, default).
-func applyOversize(rec cc.Record, b contractsconfig.ConnectorBinding) (cc.Record, bool) {
-	maxBytes := b.MaxBodyBytes
+//
+// The effective cap is the binding's MaxBodyBytes when set (an explicit
+// 0 means no cap — the override that opts a webhook binding out of the
+// protective default), or the connector-type default when unset. A
+// resolved cap of <= 0 means unlimited.
+func applyOversize(rec cc.Record, b contractsconfig.ConnectorBinding, connectorType string) (cc.Record, bool) {
+	maxBytes := contractsconfig.DefaultMaxBodyBytes(connectorType)
+	if b.MaxBodyBytes != nil {
+		maxBytes = *b.MaxBodyBytes
+	}
 	if maxBytes <= 0 {
 		return rec, true
 	}

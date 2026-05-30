@@ -13,6 +13,24 @@ const (
 	ConnectorTypeWebhook   = "webhook"
 )
 
+// WebhookDefaultMaxBodyBytes caps webhook deliveries when the binding
+// leaves max_body_bytes unset. Webhook receivers process a delivery
+// synchronously, so an unbounded body can stall the receiver; blob
+// stores ingest large objects out of band and so have no default cap.
+const WebhookDefaultMaxBodyBytes = 1 << 20 // 1 MiB
+
+// DefaultMaxBodyBytes is the body cap applied to a binding whose
+// MaxBodyBytes is nil (unset), keyed by the bound connector's type.
+// Zero means no cap. This is the single authority for the per-type
+// default — the runtime ([cmd/gateway/binding.go]) reads it, never
+// hardcodes the value.
+func DefaultMaxBodyBytes(connectorType string) int {
+	if connectorType == ConnectorTypeWebhook {
+		return WebhookDefaultMaxBodyBytes
+	}
+	return 0
+}
+
 // Auth modes for cloud-bucket connectors (s3, azure_blob). The set of
 // valid modes is type-specific; validation enforces.
 const (
@@ -182,10 +200,21 @@ type ConnectorBinding struct {
 	// records for one request in or out together) or "random".
 	SamplingKey string `yaml:"sampling_key,omitempty" json:"sampling_key,omitempty"`
 
-	// MaxBodyBytes caps the per-record body that ships to this
-	// destination. Zero = use the per-type default (s3/azure 16 MiB,
-	// webhook 1 MiB).
-	MaxBodyBytes int `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`
+	// MaxBodyBytes caps the larger of the per-record request/response
+	// body that ships to this destination. A pointer so the unset case
+	// is distinguishable from an explicit zero:
+	//
+	//   - nil (unset) → apply the connector-type default. webhook
+	//     defaults to 1 MiB because receivers process deliveries
+	//     synchronously; s3/azure_blob default to no cap (they ingest
+	//     large objects out of band).
+	//   - 0 → no cap (the explicit override that opts a webhook binding
+	//     out of the protective default).
+	//   - >0 → cap at that many bytes.
+	//
+	// Bodies are bounded upstream regardless by the bodycapture
+	// middleware's 10 MiB inbound read limit. Negative is a config error.
+	MaxBodyBytes *int `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`
 
 	// OversizeBehaviour is "metadata_only" (default) or "drop_record".
 	OversizeBehaviour string `yaml:"oversize_behaviour,omitempty" json:"oversize_behaviour,omitempty"`
