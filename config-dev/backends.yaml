@@ -106,12 +106,3 @@ backends:
         path: /v1/chat/completions
       messages:
         path: /v1/messages
-
-groups:
-  high-availability:
-    mode: failover
-    failure_status_codes: [502, 503, 504]
-    targets:
-      - backend: openai
-      - backend: anthropic
-        alias: claude-3-5-sonnet

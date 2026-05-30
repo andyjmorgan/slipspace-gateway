@@ -30,7 +30,6 @@ configurations:
       - { protocol: messages, models: ["claude-*"], backend: anthropic }
       - { protocol: chat, models: ["gemini-*"], backend: gemini }
       - { protocol: generate_content, models: ["gemini-*"], backend: gemini }
-      - { protocol: chat, models: ["ha-*"], group: high-availability }
 
     passthrough_bindings:
       - { family: messages_batches, backend: anthropic }
