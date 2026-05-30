@@ -46,19 +46,23 @@ func runConfigValidate(ctx context.Context, args []string, stdout, _ io.Writer) 
 		resolvedDir = *dir
 	}
 
-	resolved, err := config.Load(ctx, resolvedDir)
+	resolved, err := config.LoadV2(ctx, resolvedDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(stdout, "FAIL: %s: %s\n", classifyConfigErr(err), err.Error())
 		return errHandled
 	}
 
+	bindings := 0
+	for _, cfg := range resolved.Configurations {
+		bindings += len(cfg.Bindings) + len(cfg.PassthroughBindings)
+	}
 	_, _ = fmt.Fprintf(stdout,
-		"OK: env %d vars resolved, %d configuration(s), %d api_keys, %d providers, %d routes\n",
+		"OK: env %d vars resolved, %d configuration(s), %d api_keys, %d backends, %d bindings\n",
 		len(config.EnvVarNames()),
 		len(resolved.Configurations),
 		len(resolved.APIKeys),
-		len(resolved.Providers),
-		len(resolved.RouteIndex),
+		len(resolved.Backends),
+		bindings,
 	)
 	return nil
 }
