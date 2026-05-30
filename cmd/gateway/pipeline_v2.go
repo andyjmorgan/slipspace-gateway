@@ -138,7 +138,10 @@ func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Ha
 				return
 			}
 			ctx = withPassthroughMatch(ctx, pm)
-			state := rules.NewMutableState(pm.Backend, pi.protocol, r.URL.Path, pm.Params, r.Header)
+			// Rules condition on the passthrough family name as the
+			// "endpoint" (e.g. messages_batches), since a passthrough request
+			// has no generative protocol.
+			state := rules.NewMutableState(pm.Backend, pm.Family, r.URL.Path, pm.Params, r.Header)
 			for _, t := range pm.Tags {
 				state.AddTag(t)
 			}

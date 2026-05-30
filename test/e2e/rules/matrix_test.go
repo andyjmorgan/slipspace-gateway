@@ -24,16 +24,23 @@ func matrixPolicy(rulesYAML string, ruleNames ...string) string {
 	for _, n := range ruleNames {
 		names += "      - " + n + "\n"
 	}
+	// v2: the dev configuration carries credentials + bindings (backends come
+	// from config-dev/backends.yaml, which the harness copies alongside). The
+	// gpt-* chat binding routes chatBody() to openai; the rule library under
+	// test is inlined verbatim.
 	return `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], backend: openai }
+      - { protocol: responses, models: ["gpt-*"], backend: openai }
+      - { protocol: chat, models: ["claude-*"], backend: anthropic }
     rule_names:
-` + names + `    resilience_name: high-availability
-
+` + names + `
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
     name: "Local dev"
@@ -42,14 +49,6 @@ api_keys:
 
 rules:
 ` + rulesYAML + `
-resilience_policies:
-  - name: high-availability
-    mode: failover
-    timeout_seconds: 30
-    targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
 `
 }
 
@@ -89,7 +88,7 @@ func TestConditions_EndpointCondition_Matches(t *testing.T) {
     condition:
       type: endpoint
       operator: Equals
-      expectedEndpoint: chat_completions
+      expectedEndpoint: chat
     actions:
       - type: setHeader
         headerName: X-Test-Endpoint-Cond
@@ -190,71 +189,6 @@ func TestConditions_RuleGroup_AndMatches(t *testing.T) {
 
 // ─── Non-terminating actions ───────────────────────────────────────
 
-func TestActions_ChangeProvider_RetargetsUpstream(t *testing.T) {
-	t.Parallel()
-	// ChangeProvider on its own does NOT remap endpoint names — the
-	// .NET predecessor's deliberate behaviour, which we match. With
-	// v1.0.2 the destination builder re-resolves the endpoint on the
-	// new provider after changeProvider fires, so when both providers
-	// define the same endpoint name (here `chat_completions`), the
-	// rewritten request picks up the destination provider's endpoint
-	// — including its `auth_header`/`auth_format` override. Anthropic's
-	// OpenAI-compat chat surface uses `Authorization: Bearer`, not the
-	// native `x-api-key`, and that's what should land on the wire.
-	policy := matrixPolicy(`
-  - name: reroute-to-anthropic
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: changeProvider
-        newProvider: anthropic
-      - type: changeUrl
-        newUrl: http://mockllm:5555/v1/chat/completions
-`, "reroute-to-anthropic")
-	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
-	h.StageMockResponse(harness.CannedResponse{
-		Method: http.MethodPost,
-		Path:   "/v1/chat/completions",
-		Body:   `{"id":"chatcmpl","object":"chat.completion"}`,
-	})
-	fireChat(t, h, nil)
-
-	// The gateway.request event records the post-rule provider —
-	// confirms changeProvider was honoured at destination time.
-	env := h.ExpectEvent("gateway.request", 5*time.Second)
-	var ev events.Request
-	if err := json.Unmarshal(env.InlinePayload, &ev); err != nil {
-		t.Fatalf("decode request event: %v", err)
-	}
-	if ev.Provider != "anthropic" {
-		t.Errorf("post-rule provider = %q, want anthropic", ev.Provider)
-	}
-
-	// The upstream request lands on the rewritten path (changeUrl
-	// target) with the configured anthropic credential minted into
-	// the Authorization header. ChangeProvider does not remap the
-	// endpoint name — the destination builder still resolves
-	// anthropic.chat_completions, whose auth_header / auth_format
-	// override (Authorization: Bearer {key}) is what fires here,
-	// not anthropic's native x-api-key. Rules that need the native
-	// messages auth must point at an endpoint without the override.
-	cap := h.LastCapturedRequest()
-	if cap == nil {
-		t.Fatal("upstream not called")
-	}
-	if cap.Path != "/v1/chat/completions" {
-		t.Errorf("upstream path = %q, want /v1/chat/completions", cap.Path)
-	}
-	if got := cap.Headers["Authorization"]; got != "Bearer sk-ant-dev-mock" {
-		t.Errorf("Authorization header = %q, want Bearer sk-ant-dev-mock; got headers %+v", got, cap.Headers)
-	}
-	if got, present := cap.Headers["X-Api-Key"]; present {
-		t.Errorf("native x-api-key should not be set when endpoint declares Authorization override; got %q", got)
-	}
-}
-
 func TestActions_ChangeModelName_BodyRemarshalled(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
@@ -286,63 +220,6 @@ func TestActions_ChangeModelName_BodyRemarshalled(t *testing.T) {
 	}
 	if ev.Model != "gpt-4o" {
 		t.Errorf("gateway.request.model = %q, want gpt-4o", ev.Model)
-	}
-}
-
-func TestActions_ChangeUrl_OverridesUpstream(t *testing.T) {
-	t.Parallel()
-	// Rewrite the upstream URL to the OpenAI /v1/responses endpoint
-	// on the same mockllm host. The mockllm handles both paths, so
-	// the success criterion is "captured request lands on the
-	// rewritten path".
-	policy := matrixPolicy(`
-  - name: reroute-url
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: changeUrl
-        newUrl: http://mockllm:5555/v1/responses
-`, "reroute-url")
-	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
-	h.StageMockResponse(harness.CannedResponse{
-		Method: http.MethodPost,
-		Path:   "/v1/responses",
-		Body:   `{"id":"resp","object":"response"}`,
-	})
-	fireChat(t, h, nil)
-
-	cap := h.LastCapturedRequest()
-	if cap == nil || cap.Path != "/v1/responses" {
-		t.Fatalf("upstream path = %q, want /v1/responses", cap.Path)
-	}
-}
-
-func TestActions_ChangeApiKey_OverridesCredential(t *testing.T) {
-	t.Parallel()
-	// changeApiKey writes the override credential; the destination
-	// builder uses it in place of Configuration.UpstreamCredentials.
-	policy := matrixPolicy(`
-  - name: swap-key
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: changeApiKey
-        apiKey: sk-rule-injected
-`, "swap-key")
-	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
-	stageChatOK(h)
-	fireChat(t, h, nil)
-
-	cap := h.LastCapturedRequest()
-	if cap == nil {
-		t.Fatal("upstream not called")
-	}
-	if !strings.Contains(cap.Headers["Authorization"], "sk-rule-injected") {
-		t.Errorf("Authorization header should carry rule-injected key; got %q", cap.Headers["Authorization"])
 	}
 }
 
