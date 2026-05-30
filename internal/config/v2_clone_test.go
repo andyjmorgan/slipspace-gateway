@@ -161,7 +161,7 @@ func TestListConfigFiles(t *testing.T) {
 	writeFile(t, dir, "policy.yaml", "configurations: {}\n")
 	writeFile(t, dir, "backends.yaml", "backends: {}\n")
 	writeFile(t, dir, "notes.txt", "ignored")
-	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
