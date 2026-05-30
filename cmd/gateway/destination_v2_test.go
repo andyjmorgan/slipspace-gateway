@@ -13,7 +13,7 @@ import (
 // managed with a credential sets the backend's auth header and strips the
 // others, and managed with an empty credential strips everything.
 func TestBuildDestinationV2_CredentialModes(t *testing.T) {
-	target := selection.Target{
+	target := selection.Target{ //nolint:gosec // synthetic test fixture, not a real credential
 		Backend:    "anthropic",
 		BaseURL:    "https://api.anthropic.com",
 		Path:       "/v1/messages",

@@ -43,9 +43,7 @@ func buildDataPlaneHandler(
 	redactor *headers.Redactor,
 	_ *slog.Logger,
 ) http.Handler {
-	final := buildFinalHandler(store, forwarder, errs)
-
-	var h http.Handler = final
+	h := buildFinalHandler(store, forwarder, errs)
 	h = rules.BodyRewriteHandler(meters, h)
 	h = rules.BodyRemarshalHandler(meters, h)
 	h = resiliencemw.HTTPHandler(nil, breakers, meters, h)

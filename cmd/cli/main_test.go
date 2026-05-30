@@ -280,7 +280,6 @@ func TestConfigValidate_NoConfigurations(t *testing.T) {
 	}
 }
 
-
 func TestConfigValidate_UnexpectedPositional_ReturnsUsage(t *testing.T) {
 	_, _, code := runCLI(t, "config", "validate", "extra")
 	if code != 2 {

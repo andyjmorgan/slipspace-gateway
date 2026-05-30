@@ -510,7 +510,7 @@ func TestBindingsHandler_FlattensAcrossConfigurations(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	var got struct {
-		Bindings []admin.BindingRow `json:"bindings"`
+		Bindings    []admin.BindingRow            `json:"bindings"`
 		Passthrough []admin.PassthroughBindingRow `json:"passthrough_bindings"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
