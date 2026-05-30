@@ -16,13 +16,13 @@ export function PoliciesPage() {
   return (
     <div>
       <PageHeader
-        title="Resilience policies"
-        sub="Failover and load-balance targets with live per-pod circuit-breaker state. Read-only for now; editing lands in v1.3."
+        title="Groups"
+        sub="Failover and load-balance backend groups with live per-pod circuit-breaker state. Read-only for now; editing lands in v1.3."
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}
       {state.status === "ok" && state.data.policies.length === 0 && (
-        <EmptyPanel message="No resilience policies configured." />
+        <EmptyPanel message="No groups configured." />
       )}
       {state.status === "ok" && state.data.policies.length > 0 && (
         <div className="space-y-3">
@@ -56,7 +56,7 @@ function PolicyCard({ pol }: { pol: PolicySummary }) {
         <thead>
           <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
             <th className="text-left font-medium px-4 py-2">Target</th>
-            <th className="text-left font-medium px-4 py-2">Provider</th>
+            <th className="text-left font-medium px-4 py-2">Backend</th>
             <th className="text-right font-medium px-4 py-2">Order</th>
             <th className="text-right font-medium px-4 py-2">Weight</th>
             <th className="text-left font-medium px-4 py-2">Circuit state</th>

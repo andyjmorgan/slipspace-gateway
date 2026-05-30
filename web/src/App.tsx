@@ -6,9 +6,9 @@ import { ConfigurationDetailPage } from "@/pages/configuration-detail"
 import { RulesPage } from "@/pages/rules"
 import { RuleDetailPage } from "@/pages/rule-detail"
 import { RuleEditorPage } from "@/pages/rule-editor"
-import { ProvidersPage } from "@/pages/providers"
-import { ProviderDetailPage } from "@/pages/provider-detail"
-import { RoutesPage } from "@/pages/routes"
+import { BackendsPage } from "@/pages/backends"
+import { BackendDetailPage } from "@/pages/backend-detail"
+import { BindingsPage } from "@/pages/bindings"
 import { MessagesPage } from "@/pages/messages"
 import { PoliciesPage } from "@/pages/policies"
 import { SettingsPage } from "@/pages/settings"
@@ -35,9 +35,9 @@ export default function App() {
         <Route path="/rules/new" element={<RuleEditorPage mode="create" />} />
         <Route path="/rules/:name/edit" element={<RuleEditorPage mode="edit" />} />
         <Route path="/rules/:name" element={<RuleDetailPage />} />
-        <Route path="/providers" element={<ProvidersPage />} />
-        <Route path="/providers/:name" element={<ProviderDetailPage />} />
-        <Route path="/routes" element={<RoutesPage />} />
+        <Route path="/backends" element={<BackendsPage />} />
+        <Route path="/backends/:name" element={<BackendDetailPage />} />
+        <Route path="/bindings" element={<BindingsPage />} />
         <Route path="/policies" element={<PoliciesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

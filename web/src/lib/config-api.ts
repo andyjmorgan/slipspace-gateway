@@ -33,7 +33,9 @@ export type APIKeySummary = {
 
 export type ConfigurationDetail = {
   name: string
-  upstream_credentials: Record<string, RedactedSecret>
+  credentials: Record<string, RedactedSecret>
+  bindings: BindingRow[]
+  passthrough_bindings: PassthroughBindingRow[]
   rules: RuleAttachment[]
   tags?: Record<string, string>
   api_keys: APIKeySummary[]
@@ -58,42 +60,60 @@ export type RuleDetail = {
   used_by: string[]
 }
 
-export type ProviderSummary = {
+export type BackendSummary = {
   name: string
-  prefix?: string
-  prefix_required: boolean
   base_url: string
-  endpoint_count: number
+  protocols: string[]
+  has_passthrough: boolean
 }
 
-export type EndpointSummary = {
+export type ProtocolRow = {
   name: string
   path: string
-  methods: string[]
-  accepted_paths: string[]
-  accepts_streaming: boolean
-  request_kind: string
   auth_header?: string
   auth_format?: string
-  prefix_optional?: boolean
 }
 
-export type ProviderDetail = {
+export type PassthroughPathRow = {
+  match: string
+  methods: string[]
+}
+
+export type PassthroughFamilyRow = {
   name: string
-  prefix?: string
-  prefix_required: boolean
-  base_url: string
   auth_header?: string
-  auth_format?: string
+  paths: PassthroughPathRow[]
+}
+
+export type BackendDetail = {
+  name: string
+  base_url: string
   required_headers?: Record<string, string>
-  endpoints: EndpointSummary[]
+  query?: Record<string, string>
+  protocols: ProtocolRow[]
+  passthrough?: PassthroughFamilyRow[]
 }
 
-export type RouteRow = {
-  path: string
-  provider: string
-  endpoint: string
-  methods: string[]
+export type BindingRow = {
+  configuration?: string
+  protocol: string
+  models: string[]
+  backend?: string
+  group?: string
+  alias?: string
+  tags?: string[]
+}
+
+export type PassthroughBindingRow = {
+  configuration?: string
+  family: string
+  backend: string
+  tags?: string[]
+}
+
+export type BindingsResponse = {
+  bindings: BindingRow[]
+  passthrough_bindings: PassthroughBindingRow[]
 }
 
 export type APIKeyReveal = {
@@ -177,12 +197,12 @@ export function useRule(name: string | undefined): ConfigFetchHandle<RuleDetail>
   return useConfigFetch<RuleDetail>(name ? `/api/v1/config/rules/${encodeURIComponent(name)}` : null)
 }
 
-export function useProviders(): ConfigFetchHandle<ProviderSummary[]> {
-  return useConfigFetch<ProviderSummary[]>("/api/v1/config/providers")
+export function useBackends(): ConfigFetchHandle<BackendSummary[]> {
+  return useConfigFetch<BackendSummary[]>("/api/v1/config/backends")
 }
 
-export function useProvider(name: string | undefined): ConfigFetchHandle<ProviderDetail> {
-  return useConfigFetch<ProviderDetail>(name ? `/api/v1/config/providers/${encodeURIComponent(name)}` : null)
+export function useBackend(name: string | undefined): ConfigFetchHandle<BackendDetail> {
+  return useConfigFetch<BackendDetail>(name ? `/api/v1/config/backends/${encodeURIComponent(name)}` : null)
 }
 
 /**
@@ -197,8 +217,8 @@ export async function revealAPIKey(configuration: string, name: string): Promise
   return apiFetch<APIKeyReveal>(`/api/v1/config/api-keys/reveal?${qs}`)
 }
 
-export function useRoutes(): ConfigFetchHandle<RouteRow[]> {
-  return useConfigFetch<RouteRow[]>("/api/v1/config/routes")
+export function useBindings(): ConfigFetchHandle<BindingsResponse> {
+  return useConfigFetch<BindingsResponse>("/api/v1/config/bindings")
 }
 
 export type PolicyTarget = {

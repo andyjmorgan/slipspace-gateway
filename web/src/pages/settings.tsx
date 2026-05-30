@@ -113,7 +113,7 @@ export function SettingsPage() {
           Bundles every YAML file the loader sees into a single ZIP with a{" "}
           <span className="mono">MANIFEST.txt</span> header. Every{" "}
           <span className="mono">api_keys[].secret</span>,{" "}
-          <span className="mono">upstream_credentials</span> value, and{" "}
+          <span className="mono">credentials</span> value, and{" "}
           <span className="mono">admin.password</span> is replaced by{" "}
           <span className="mono">***</span> before the file leaves the gateway.
         </div>
