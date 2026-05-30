@@ -18,16 +18,11 @@ from google.genai import types
 
 
 @pytest.mark.parametrize(
-    "prefix",
-    ["/gemini", ""],
-    ids=["prefixed", "bare-prefix-optional"],
-)
-@pytest.mark.parametrize(
     "auth_header",
     ["bearer", "native-x-goog-api-key"],
 )
 def test_gemini_generate_content(
-    base_url: str, api_key: str, prefix: str, auth_header: str
+    base_url: str, api_key: str, auth_header: str
 ) -> None:
     # v1.0.7: vanilla google-genai client with just api_key= now works
     # because sluice discovers the Sluice secret from `x-goog-api-key`. The
@@ -38,7 +33,7 @@ def test_gemini_generate_content(
     client = genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
-            base_url=f"{base_url}{prefix}",
+            base_url=base_url,
             headers=extra_headers,
         ),
     )

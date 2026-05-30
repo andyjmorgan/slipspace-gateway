@@ -48,7 +48,7 @@ def test_qwen_changeprovider_redirect(
         pytest.skip("SLUICE_SMOKE_QWEN not set — cluster-specific rule check disabled")
 
     client = openai.OpenAI(
-        base_url=f"{base_url}/openai/v1",
+        base_url=f"{base_url}/v1",
         api_key=api_key,
         max_retries=0,
         timeout=30,

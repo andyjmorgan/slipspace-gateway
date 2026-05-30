@@ -2,7 +2,7 @@
 
 v1.0.2 wires `/gemini/v1beta/openai/chat/completions` to Gemini's
 OpenAI-shaped surface. Drive it with the OpenAI SDK pointed at
-`{base_url}/gemini/v1beta/openai`.
+`{base_url}/v1`.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import openai
 
 def test_gemini_openai_compat_chat(base_url: str, api_key: str) -> None:
     client = openai.OpenAI(
-        base_url=f"{base_url}/gemini/v1beta/openai",
+        base_url=f"{base_url}/v1",
         api_key=api_key,
         max_retries=0,
         timeout=30,

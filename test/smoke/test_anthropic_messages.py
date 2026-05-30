@@ -1,13 +1,10 @@
 """Smoke test: Anthropic Messages API via sluice-gateway managed mode.
 
-Parametrized over both surface forms (v1.0.6) and both inbound auth headers
-(v1.0.7):
-  - prefixed:  POST /anthropic/v1/messages  (Sluice's namespaced route)
-  - bare:      POST /v1/messages            (vanilla Anthropic SDK, prefix_optional)
+Under v2 routing is model-keyed (no provider path prefixes): a claude-* model
+on POST /v1/messages binds to the anthropic backend. Parametrized over both
+inbound auth headers (v1.0.7):
   - bearer:    Authorization: Bearer sk_live_...   (Sluice's historical signal)
   - native:    x-api-key: sk_live_...              (vanilla Anthropic SDK default)
-
-Together: 4 cases per smoke run. All must succeed on the live gateway.
 """
 
 from __future__ import annotations
@@ -17,16 +14,11 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "prefix",
-    ["/anthropic", ""],
-    ids=["prefixed", "bare-prefix-optional"],
-)
-@pytest.mark.parametrize(
     "auth_header",
     ["bearer", "native-x-api-key"],
 )
 def test_anthropic_messages(
-    base_url: str, api_key: str, prefix: str, auth_header: str
+    base_url: str, api_key: str, auth_header: str
 ) -> None:
     # v1.0.7: vanilla anthropic SDK with just api_key= now works because
     # sluice discovers the Sluice secret from `x-api-key`. Older clients
@@ -36,7 +28,7 @@ def test_anthropic_messages(
         {"Authorization": f"Bearer {api_key}"} if auth_header == "bearer" else None
     )
     client = anthropic.Anthropic(
-        base_url=f"{base_url}{prefix}",
+        base_url=base_url,
         api_key=api_key,
         default_headers=default_headers,
         max_retries=0,

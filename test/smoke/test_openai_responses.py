@@ -7,7 +7,7 @@ import openai
 
 def test_openai_responses(base_url: str, api_key: str) -> None:
     client = openai.OpenAI(
-        base_url=f"{base_url}/openai/v1",
+        base_url=f"{base_url}/v1",
         api_key=api_key,
         max_retries=0,
         timeout=30,
