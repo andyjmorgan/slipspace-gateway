@@ -600,7 +600,7 @@ Binds the request to a named resilience policy. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `useResiliencePolicy`. |
-| `PolicyName` | `policyName` | `policyName` | conditional | Name of a `ResilienceConfig` in the top-level `resilience_policies:` library. Empty string explicitly clears any prior `PolicyRef`. |
+| `PolicyName` | `policyName` | `policy_name` | conditional | Name of a `ResilienceConfig` in the top-level `resilience_policies:` library. Empty string explicitly clears any prior `PolicyRef`. |
 
 ### What it mutates
 

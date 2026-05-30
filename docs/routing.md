@@ -46,7 +46,7 @@ flowchart LR
     G --> H[upstream provider]
 ```
 
-Routing is the **first** middleware in the chain. Every other stage reads its result from context — `auth` picks credentials by `(provider, endpoint)`; `bodycapture` picks the typed model by the endpoint's `request_kind`; the forwarder builds the upstream URL from the provider's `base_url` plus the endpoint's `path`. If routing misses, the chain short-circuits with a 404 or 405; nothing downstream runs.
+Routing is the **first** middleware in the chain. Every other stage reads its result from context — `auth` picks credentials by `(provider, endpoint)`; `bodycapture` picks the typed model by the endpoint's `request_kind`; the forwarder builds the upstream URL from the provider's `base_url` plus the endpoint's `path` (or the matched `accepted_path` when `path` is unset — see [`accepted_paths`](#accepted_paths)). If routing misses, the chain short-circuits with a 404 or 405; nothing downstream runs.
 
 ---
 
@@ -98,7 +98,9 @@ providers:
         request_kind: chat
 ```
 
-Both entries resolve to the same `(openai, chat_completions)` pair. The forwarder uses `Endpoint.Path` (not the matched `accepted_path`) when building the upstream URL, so all variants converge on the same upstream request — the gateway accepts permissively and forwards canonically.
+Both entries resolve to the same `(openai, chat_completions)` pair. When `Endpoint.Path` is set, the forwarder uses it (not the matched `accepted_path`) when building the upstream URL, so all variants converge on the same upstream request — the gateway accepts permissively and forwards canonically.
+
+When `Endpoint.Path` is **empty**, the forwarder mirrors the matched (un-prefixed) `accepted_path` verbatim onto the upstream `base_url` instead — `state.MatchedPath` carries it from the router to the destination builder. This lets one endpoint entry serve several distinct upstream paths: declare the variants as `accepted_paths`, leave `path` unset, and each inbound path flows through unchanged. Set `path` only when you want every variant collapsed onto a single canonical upstream path.
 
 Patterned `accepted_paths` (entries with `{name}` placeholders) work the same way; they're just expanded into compiled regexes instead of map keys. See [Path placeholders and captured params](#path-placeholders-and-captured-params).
 

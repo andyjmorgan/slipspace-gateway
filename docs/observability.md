@@ -388,6 +388,8 @@ The `id`, `ts_ns`, `seq`, `instance_id` quartet stamps each record so consumers 
 
 **Consumer sort key.** A consumer reading sealed segments must sort by `(ts_ns, instance_id, seq)` before assuming order; segments arrive from the spool's per-track drain in the same order their records enqueued, but **across** connectors there is no global ordering guarantee. The `seq` field is the per-instance disambiguator when `ts_ns` collides.
 
+**Trace → full payload.** A slim GenAI span and its full request/response record share `correlation_id` — the handle for hopping from a trace to the captured bodies. The link is a deliberate **soft promise**: a backing payload *may* be fetchable by `correlation_id`, but its absence is a normal answer (sampled, filtered, oversize, or dropped under the spool's loss policy), never an error. See [spool.md → Payload backref contract](spool.md#payload-backref-contract).
+
 ---
 
 ## Session bundling

@@ -26,9 +26,10 @@ This page is the operator's reference. It covers the resolution algorithm, every
 
 > **Two modes, one resolution surface. Managed substitutes credentials; passthrough forwards them. Both bind the request to a Configuration.**
 
-A request reaches the gateway with some combination of three signals:
+A request reaches the gateway with some combination of these signals:
 
-- The `X-Sluice-Configuration` header — names a Configuration directly.
+- The `X-Sluice-Identity` header — carries a Sluice-issued api-key secret that *selects* a Configuration (via the matching key's `configuration:`) **without** swapping the upstream credential. This is the preferred passthrough selector.
+- The `X-Sluice-Configuration` header — names a Configuration directly. **Deprecated** in favour of `X-Sluice-Identity`: a configuration name is human-readable and guessable, whereas an api-key secret is not.
 - An `Authorization: Bearer <token>` header — may carry a Sluice-issued secret (managed) or an upstream provider token (passthrough).
 - A provider-native credential header — `x-api-key` (Anthropic SDKs) or `x-goog-api-key` (Gemini SDKs).
 
@@ -37,7 +38,7 @@ The auth middleware ([`internal/middleware/auth/resolver.go`](../internal/middle
 | Mode | Inbound signal | Outbound credential |
 |---|---|---|
 | `managed` | A Sluice-issued secret discovered on `Authorization`, `x-api-key`, or `x-goog-api-key` | Minted by the destination builder from `Configuration.UpstreamCredentials[provider]`. |
-| `passthrough` | `X-Sluice-Configuration: <name>` present (and the client carries their own upstream token on `Authorization`) | The inbound `Authorization` value, forwarded verbatim. |
+| `passthrough` | A passthrough selector present — `X-Sluice-Identity: <sluice-secret>` (preferred) or `X-Sluice-Configuration: <name>` (deprecated) — while the client carries their own upstream token on `Authorization` | The inbound `Authorization` value, forwarded verbatim. |
 
 Resolution decides which **policy** runs — the Configuration's rules, resilience policy, tags. Resolution does *not* mint the upstream credential. That happens later in the destination builder, where the per-`(provider, endpoint)` auth-header convention is applied. Splitting identity-resolution from credential-injection is what lets a single rule (`changeProvider`, `changeApiKey`) retarget mid-pipeline without fragmenting the credential mint site (invariant 6 in [`CLAUDE.md`](../CLAUDE.md)).
 
@@ -47,11 +48,19 @@ Resolution decides which **policy** runs — the Configuration's rules, resilien
 
 ```mermaid
 flowchart TB
-    Start[Client request enters auth middleware] --> CfgHdr{X-Sluice-Configuration<br/>present?}
+    Start[Client request enters auth middleware] --> IdHdr{X-Sluice-Identity<br/>present?}
+    IdHdr -- yes --> IdLookup[lookup secret in SecretIndex]
+    IdLookup --> IdFound{secret known<br/>and enabled?}
+    IdFound -- no --> Err401id[401 unauthorized]
+    IdFound -- yes --> IdCfg[lookup Configuration by<br/>key.Configuration]
+    IdCfg --> IdCfgFound{configuration<br/>known?}
+    IdCfgFound -- no --> Err403id[403 unknown configuration]
+    IdCfgFound -- yes --> PassResultId[AuthResult mode=passthrough<br/>APIKey set<br/>LegacyConfigurationHeader=X-Sluice-Configuration also present?<br/>DropHeaders=both selector headers]
+    IdHdr -- no --> CfgHdr{X-Sluice-Configuration<br/>present?}
     CfgHdr -- yes --> CfgLookup[lookup Configuration by name]
     CfgLookup --> CfgFound{configuration<br/>known?}
     CfgFound -- no --> Err403[403 unknown configuration]
-    CfgFound -- yes --> PassResult[AuthResult mode=passthrough<br/>APIKey=nil<br/>DropHeaders=X-Sluice-Configuration]
+    CfgFound -- yes --> PassResult[AuthResult mode=passthrough<br/>APIKey=nil<br/>LegacyConfigurationHeader=true<br/>DropHeaders=both selector headers]
     CfgHdr -- no --> Discover[walk inbound headers:<br/>Authorization Bearer<br/>then x-api-key<br/>then x-goog-api-key]
     Discover --> Found{first non-empty<br/>header parsed?}
     Found -- no --> Err401a[401 unauthorized<br/>missing bearer]
@@ -63,15 +72,17 @@ flowchart TB
     Enabled -- yes --> CfgByKey[lookup Configuration by<br/>key.Configuration]
     CfgByKey --> CfgFound2{configuration<br/>known?}
     CfgFound2 -- no --> Err403b[403 unknown configuration]
-    CfgFound2 -- yes --> ManagedResult[AuthResult mode=managed<br/>APIKey set<br/>DropHeaders=source header<br/>+ X-Sluice-Configuration]
-    PassResult --> Forward[forward to bodycapture + rules + forwarder]
+    CfgFound2 -- yes --> ManagedResult[AuthResult mode=managed<br/>APIKey set<br/>DropHeaders=source header<br/>+ both selector headers]
+    PassResultId --> Forward[forward to bodycapture + rules + forwarder]
+    PassResult --> Forward
     ManagedResult --> Forward
 ```
 
-Two rules to internalise:
+Three rules to internalise:
 
-1. **`X-Sluice-Configuration` takes precedence over any bearer.** If both are present, resolution is passthrough — the Sluice-issued bearer is ignored. This is by design: callers carrying both signals are explicitly asking to keep their own upstream credential and let the gateway pick the policy. Document this rule for clients so they don't get surprised when their managed-mode key turns into a passthrough resolution because they added the configuration header by accident.
-2. **Managed-mode key discovery walks one header at a time and stops at the first present.** Authorization Bearer wins, then `x-api-key`, then `x-goog-api-key`. If the first present header carries a value that is *not* a known Sluice secret, resolution short-circuits to 401 rather than falling through — an attacker cannot stuff multiple headers to confuse the resolver.
+1. **Either passthrough selector takes precedence over any bearer.** If `X-Sluice-Identity` or `X-Sluice-Configuration` is present, resolution is passthrough — the `Authorization` bearer is forwarded verbatim, never looked up as a managed key. This is by design: callers carrying a selector are explicitly asking to keep their own upstream credential and let the gateway pick the policy. Document it for clients so a managed-mode key doesn't silently turn into a passthrough resolution because they added a selector header by accident.
+2. **Between the two selectors, `X-Sluice-Identity` wins.** When both are present, the identity secret resolves the Configuration and `AuthResult.LegacyConfigurationHeader` is set so the HTTP handler can emit a deprecation warning — the signal an operator watches to find callers still on the guessable `X-Sluice-Configuration`. An unknown or disabled identity secret fails **401**, not 403, so an attacker cannot probe configuration names by presenting random identity values (contrast the legacy header, which 403s on an unknown name and so leaks name validity).
+3. **Managed-mode key discovery walks one header at a time and stops at the first present.** Authorization Bearer wins, then `x-api-key`, then `x-goog-api-key`. If the first present header carries a value that is *not* a known Sluice secret, resolution short-circuits to 401 rather than falling through — an attacker cannot stuff multiple headers to confuse the resolver.
 
 ---
 
@@ -96,7 +107,7 @@ flowchart LR
 1. The auth middleware walks `Authorization` → `x-api-key` → `x-goog-api-key` looking for a Sluice secret. The first present header wins; if its value is unknown, resolution fails 401 without falling through.
 2. The matched `APIKey` is looked up in `SecretIndex`. If `Enabled` is false, resolution fails 401.
 3. `APIKey.Configuration` names a Configuration. If the name is missing from `ConfigurationIndex`, resolution fails 403 with `unknown configuration`.
-4. `AuthResult.DropHeaders` is seeded with `X-Sluice-Configuration` (always — it is policy-routing metadata, never forwarded) plus the source header the Sluice secret was discovered on. The Sluice secret never leaves the gateway.
+4. `AuthResult.DropHeaders` is seeded with **both** selector headers (`X-Sluice-Identity`, `X-Sluice-Configuration` — always, they are policy-routing metadata never forwarded) plus the source header the Sluice secret was discovered on. The Sluice secret never leaves the gateway.
 5. Downstream of auth, the destination builder ([`cmd/gateway/handler.go::buildDestination`](../cmd/gateway/handler.go)) looks up `Configuration.UpstreamCredentials[state.Provider]` and mints the outbound header via [`resolveCredentialHeader`](../cmd/gateway/handler.go) — see [Outbound credential headers](#outbound-credential-headers).
 
 ### Failure modes
@@ -116,37 +127,47 @@ The disabled-key vs unknown-key distinction lives only in the structured log —
 
 ## Passthrough mode
 
-Passthrough mode is the BYOK (bring-your-own-key) path. The client carries their own upstream token; the gateway picks the policy via `X-Sluice-Configuration` and forwards the `Authorization` header verbatim. The upstream rejects bad tokens — the gateway does no token validation for passthrough.
+Passthrough mode is the BYOK (bring-your-own-key) path. The client carries their own upstream token; the gateway picks the policy via a passthrough **selector** and forwards the `Authorization` header verbatim. The upstream rejects bad tokens — the gateway does no upstream-token validation for passthrough.
+
+There are two selectors:
+
+- **`X-Sluice-Identity` (preferred)** — carries a Sluice-issued api-key secret. The matching key's `configuration:` field picks the Configuration. The secret is looked up in `SecretIndex` and must resolve to an *enabled* key, so an unknown or disabled value fails **401** — a configuration name is never echoed back, and cannot be probed. `AuthResult.APIKey` is set on this path, so the request carries a per-client identity for audit even though credentials are still forwarded verbatim.
+- **`X-Sluice-Configuration` (deprecated)** — names a Configuration directly. No key lookup; an unknown name fails **403 `unknown configuration`**, which leaks name validity. Retained for backward compatibility; new integrations should use `X-Sluice-Identity`.
+
+When both are present, `X-Sluice-Identity` wins and `AuthResult.LegacyConfigurationHeader` is set so the handler logs a deprecation warning.
 
 ### Wire flow
 
 ```mermaid
 flowchart LR
-    A[Client] -- X-Sluice-Configuration: code-assistants<br/>Authorization: Bearer their-own-token --> B[gateway:8585]
+    A[Client] -- X-Sluice-Identity: sk_live_xxx<br/>Authorization: Bearer their-own-token --> B[gateway:8585]
     B --> C[auth middleware]
-    C -- lookup Configuration<br/>no api_key check --> D[bodycapture + rules + resilience]
+    C -- resolve key → Configuration<br/>no credential swap --> D[bodycapture + rules + resilience]
     D --> E[destination builder]
     E -- credStripNoSet OR<br/>credForwardInbound --> F[forwarder]
-    F -- Authorization: Bearer their-own-token<br/>X-Sluice-Configuration STRIPPED --> G[upstream]
+    F -- Authorization: Bearer their-own-token<br/>both selector headers STRIPPED --> G[upstream]
 ```
 
 ### Algorithm
 
-1. The auth middleware reads `X-Sluice-Configuration` and trims whitespace. Any non-empty value forces passthrough resolution regardless of any bearer also on the request.
-2. The name is looked up in `ConfigurationIndex`. If absent, resolution fails 403 `unknown configuration`.
-3. `AuthResult` is built with `Mode=passthrough`, `APIKey=nil`, `Configuration` set, `DropHeaders=[X-Sluice-Configuration]`. No api_key lookup runs — the upstream owns credential validation.
+1. The auth middleware reads `X-Sluice-Identity` first, trimming whitespace. A non-empty value is looked up in `SecretIndex`; the resolved key must be enabled, and its `configuration:` must name a known Configuration. Failures are 401 (unknown/disabled secret) or 403 (key references a missing configuration — a load-time validation skew). `AuthResult` is built with `Mode=passthrough` and `APIKey` set.
+2. Otherwise the middleware reads `X-Sluice-Configuration` and trims whitespace. Any non-empty value forces legacy passthrough regardless of any bearer also on the request. The name is looked up in `ConfigurationIndex`; if absent, resolution fails 403 `unknown configuration`. `AuthResult` is built with `Mode=passthrough`, `APIKey=nil`, `LegacyConfigurationHeader=true`.
+3. Either path leaves no managed-mode api_key swap — the upstream owns credential validation. `DropHeaders` always includes **both** selector headers (`X-Sluice-Identity`, `X-Sluice-Configuration`) regardless of which one drove resolution.
 4. Downstream, the destination builder takes the `credForwardInbound` branch by default for passthrough mode: the forwarder's `alwaysDropHeaders` strips inbound `Authorization` unconditionally, and the destination builder re-injects the inbound value via `OutgoingHeaders` so the upstream still sees it. (A rule firing `changeApiKey` shifts this to `credSetFromProvider` — see [`buildDestination`](../cmd/gateway/handler.go) for the full credential decision table.)
 
 ### Failure modes
 
 | Inbound state | Wire response | `result` tag in log |
 |---|---|---|
-| `X-Sluice-Configuration: ""` (empty / whitespace-only) | falls through to managed-mode discovery; whitespace is trimmed in resolution | (managed-mode result tags) |
+| `X-Sluice-Identity` value not a known/enabled secret | 401 `unauthorized` | `unknown_key` / `disabled_key` (collapsed to 401 on the wire) |
+| `X-Sluice-Identity` valid but the key's `configuration:` is absent from `ConfigurationIndex` | 403 `unknown configuration` | `unknown_configuration` — load-time validation skew only |
+| Both selector headers present | `X-Sluice-Identity` resolves; `LegacyConfigurationHeader` set → deprecation warning logged | (identity-path result tags) |
+| `X-Sluice-Configuration: ""` (empty / whitespace-only) and no identity header | falls through to managed-mode discovery; whitespace is trimmed in resolution | (managed-mode result tags) |
 | `X-Sluice-Configuration` names a Configuration absent from `ConfigurationIndex` | 403 `unknown configuration` | `unknown_configuration` |
-| `X-Sluice-Configuration` valid, no `Authorization` header | request forwarded with no `Authorization`; upstream returns its own auth error | `success` |
-| `X-Sluice-Configuration` valid + bogus `Authorization` value | forwarded verbatim; upstream returns 401/403 | `success` at the gateway layer — auth resolution succeeded, the upstream's rejection is its own concern. |
+| Valid selector, no `Authorization` header | request forwarded with no `Authorization`; upstream returns its own auth error | `success` |
+| Valid selector + bogus `Authorization` value | forwarded verbatim; upstream returns 401/403 | `success` at the gateway layer — auth resolution succeeded, the upstream's rejection is its own concern. |
 
-Passthrough resolution intentionally does no rate-limiting, no per-client identity, no `APIKey` checks. The Configuration is the only knob; auditing a passthrough request through the rule chain is the audit story.
+Passthrough resolution does no rate-limiting and no upstream-token validation. With `X-Sluice-Identity` it *does* carry a per-client `APIKey` identity for audit; the legacy header carries none. The Configuration is the policy knob either way; auditing a passthrough request through the rule chain is the audit story.
 
 ---
 
@@ -159,7 +180,8 @@ Every header the data plane reads from the client.
 | `Authorization` | auth middleware (managed discovery, passthrough verbatim forward) | Managed: parsed as `Bearer <token>`, looked up in `SecretIndex`. Passthrough: forwarded verbatim to upstream. | **Never verbatim in managed mode** — stripped via `DropHeaders` and the destination builder mints a fresh credential. **Forwarded verbatim in passthrough mode** — re-injected through `OutgoingHeaders` because the forwarder's `alwaysDropHeaders` strips inbound `Authorization` unconditionally. |
 | `x-api-key` | auth middleware (managed discovery, second-fallback) | Managed: discovered as the Sluice secret if `Authorization` was absent. Used by vanilla Anthropic SDKs that don't speak Bearer. | Never in managed mode — stripped via `DropHeaders` and the destination builder mints the per-provider credential header. The destination builder also strips it on the cross-provider path so an inbound `x-api-key` cannot leak to OpenAI. |
 | `x-goog-api-key` | auth middleware (managed discovery, third-fallback) | Managed: discovered as the Sluice secret if `Authorization` and `x-api-key` were absent. Used by vanilla Gemini SDKs. | Never in managed mode — same stripping as `x-api-key`. |
-| `X-Sluice-Configuration` | auth middleware | When present and non-empty, forces passthrough resolution and names the Configuration to apply. Trimmed for whitespace. | **Never.** Always stripped from the outbound request — both modes append it to `DropHeaders` unconditionally. It is policy-routing metadata, not credential, and leaking it upstream confuses providers that reject unknown `X-*` headers. |
+| `X-Sluice-Identity` | auth middleware | **Preferred passthrough selector.** Carries a Sluice-issued api-key secret; the matching enabled key's `configuration:` picks the Configuration, with credentials still forwarded verbatim. Unknown/disabled secret → 401 (no name leak). Trimmed for whitespace. Its value is a credential, so the built-in log/record redactor masks it by default (matches the `sluice-identity` substring — see [environment-variables.md](environment-variables.md)). | **Never.** Always stripped — `passthroughDropHeaders` blacklists it (and `X-Sluice-Configuration`) in every passthrough resolution, and the managed path drops it too. |
+| `X-Sluice-Configuration` | auth middleware | **Deprecated passthrough selector** (use `X-Sluice-Identity`). When present and non-empty and no identity header is set, forces legacy passthrough and names the Configuration directly. Unknown name → 403, which leaks name validity. Trimmed for whitespace. When it co-exists with `X-Sluice-Identity`, the identity header wins and a deprecation warning is logged. | **Never.** Always stripped from the outbound request — both modes append it to `DropHeaders` unconditionally. It is policy-routing metadata, not credential, and leaking it upstream confuses providers that reject unknown `X-*` headers. |
 | `X-Sluice-Correlation-Id` | [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) | When present, becomes the request's correlation ID. When absent, the gateway generates one. Echoed on the **response** so the client can stitch logs end-to-end. | Forwarded upstream as part of the inbound request unless a rule strips it via `setHeader`. The upstream typically ignores it. |
 | `X-Sluice-Session-Id` | correlation middleware (echoes only) + mock LLM (scenario keying) | Optional client-supplied session identifier. Echoed on the response when present so the client can correlate multi-turn flows. The mock LLM uses it to key session-scoped scenarios during E2E tests. | Forwarded upstream as part of the inbound request. |
 | `Origin`, `Referer`, `Cookie` | forwarder `alwaysDropHeaders` | Browser-session state the gateway has no use for. Stripped in both modes — Anthropic in particular rejects requests carrying a browser `Origin` for organisations with custom retention policy. | **Never.** |
@@ -234,7 +256,7 @@ Content-Type: application/json
    - `Mode = managed`
    - `APIKey.Name = "acme-prod"`
    - `Configuration` = the `production` bundle
-   - `DropHeaders = ["X-Sluice-Configuration", "Authorization"]`
+   - `DropHeaders = ["X-Sluice-Identity", "X-Sluice-Configuration", "Authorization"]`
 
 ### Destination build
 
@@ -261,6 +283,8 @@ The Sluice secret `sk_live_acme_prod_42` is dropped before forwarding. The OpenA
 
 Claude Code is configured to point its OAuth-issued upstream Anthropic token at the gateway, with `X-Sluice-Configuration: code-assistants` so the gateway can still apply rules and observability.
 
+> This example uses the **legacy** `X-Sluice-Configuration` selector to show the credential-forwarding mechanics. The modern equivalent sends `X-Sluice-Identity: <sluice-secret>` instead — the resolution is identical except the Configuration is reached via the key's `configuration:` (so `APIKey` is set, an unknown value 401s rather than 403s, and `DropHeaders` carries both selector headers).
+
 ### Inbound
 
 ```http
@@ -283,7 +307,7 @@ Content-Type: application/json
    - `Mode = passthrough`
    - `APIKey = nil`
    - `Configuration` = the `code-assistants` bundle
-   - `DropHeaders = ["X-Sluice-Configuration"]`
+   - `DropHeaders = ["X-Sluice-Identity", "X-Sluice-Configuration"]` (both selector headers, always)
 
 ### Destination build
 
