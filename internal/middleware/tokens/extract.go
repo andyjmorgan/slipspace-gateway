@@ -22,6 +22,7 @@ type extractorFn func(frames [][]byte) Snapshot
 // protocol.
 var registry = map[string]extractorFn{
 	"chat_completions": extractOpenAIChat,
+	"chat":             extractOpenAIChat,
 	"responses":        extractOpenAIResponses,
 	"messages":         extractAnthropicMessages,
 	"generate_content": extractGeminiContent,

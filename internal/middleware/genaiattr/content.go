@@ -95,7 +95,7 @@ func ExtractContent(endpoint string, requestRaw []byte) Content {
 		return Content{}
 	}
 	switch endpoint {
-	case "chat_completions":
+	case "chat_completions", "chat":
 		return openAIChatContent(requestRaw)
 	case "responses":
 		return openAIResponsesContent(requestRaw)

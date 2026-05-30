@@ -224,7 +224,7 @@ const (
 // lost.
 func OperationNameForEndpoint(endpoint string) string {
 	switch endpoint {
-	case "chat_completions", "messages", "responses":
+	case "chat_completions", "chat", "messages", "responses":
 		return OperationChat
 	case "generate_content":
 		return OperationGenerateContent

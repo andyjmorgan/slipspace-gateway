@@ -44,6 +44,7 @@ type requestExtractorFn func(raw []byte) RequestAttrs
 // and livefeed/accumulator registries so a new provider extends all three.
 var requestRegistry = map[string]requestExtractorFn{
 	"chat_completions": extractOpenAIChatRequest,
+	"chat":             extractOpenAIChatRequest,
 	"responses":        extractOpenAIResponsesRequest,
 	"messages":         extractAnthropicRequest,
 	"generate_content": extractGeminiRequest,

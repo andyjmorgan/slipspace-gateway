@@ -37,7 +37,7 @@ func TestTokens_OpenAIChat_NonStream(t *testing.T) {
 	})
 
 	resp := h.PostJSON("/v1/chat/completions",
-		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}},
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}},
 		nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
@@ -86,7 +86,7 @@ func TestTokens_OpenAIChat_Stream(t *testing.T) {
 	})
 
 	stream := h.PostStream("/v1/chat/completions",
-		map[string]any{"model": "gpt", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
+		map[string]any{"model": "gpt-4o", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
 		nil)
 	stream.Discard()
 
@@ -127,7 +127,7 @@ func TestTokens_Anthropic_StreamDeltaWithCache(t *testing.T) {
 		},
 	})
 
-	stream := h.PostStream("/anthropic/v1/messages",
+	stream := h.PostStream("/v1/messages",
 		map[string]any{"model": "claude-haiku-4-5", "max_tokens": 100, "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
 		http.Header{"x-api-key": []string{"placeholder"}, "anthropic-version": []string{"2023-06-01"}})
 	stream.Discard()
@@ -176,7 +176,7 @@ func TestTokens_Gemini_NonStreamMaxTokens(t *testing.T) {
 		}`,
 	})
 
-	resp := h.PostJSON("/gemini/v1beta/models/gemini-2.5-flash:generateContent",
+	resp := h.PostJSON("/v1beta/models/gemini-2.5-flash:generateContent",
 		map[string]any{"contents": []map[string]any{{"parts": []map[string]string{{"text": "."}}}}},
 		http.Header{"x-goog-api-key": []string{"placeholder"}})
 	if resp.StatusCode != http.StatusOK {
@@ -219,7 +219,7 @@ func TestTokens_StreamingWithoutUsage_NoFields(t *testing.T) {
 	})
 
 	stream := h.PostStream("/v1/chat/completions",
-		map[string]any{"model": "gpt", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
+		map[string]any{"model": "gpt-4o", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
 		nil)
 	stream.Discard()
 

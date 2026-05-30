@@ -56,7 +56,7 @@ func ResponseFields(endpoint string, raw []byte) []string {
 // extractor use. ok is false for an endpoint with no modelled response shape.
 func typedResponse(endpoint string) (any, bool) {
 	switch endpoint {
-	case "chat_completions":
+	case "chat_completions", "chat":
 		return &openaichat.ChatCompletionResponse{}, true
 	case "responses":
 		return &openairesponses.ResponsesResponse{}, true

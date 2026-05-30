@@ -189,6 +189,17 @@ func outboundModel(captured bodycapture.Captured, state *rules.MutableState) str
 	return bodycapture.Model(captured.Body)
 }
 
+// openAIAPIType maps the v2 protocol endpoint label to the OpenAI api.type
+// span/event attribute's spec value: the chat protocol reports
+// "chat_completions" (the well-known surface name), everything else passes
+// through unchanged.
+func openAIAPIType(endpoint string) string {
+	if endpoint == "chat" {
+		return "chat_completions"
+	}
+	return endpoint
+}
+
 func joinPaths(base, target string) string {
 	if base == "" {
 		return target
