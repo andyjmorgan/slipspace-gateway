@@ -28,14 +28,38 @@ var sampleRandFloat64 = rand.Float64 //nolint:gosec // G404: non-crypto by desig
 // The returned Record is a value-copy so the caller's original is
 // unmodified across bindings; multiple bindings on one configuration
 // can each apply different size caps without polluting each other.
-func evaluateBinding(rec cc.Record, b contractsconfig.ConnectorBinding, connectorType string) (cc.Record, bool) {
+//
+// The third return value reports oversize handling so the caller can
+// log it — body capping is silent on the wire, and an operator chasing
+// a destination missing its bodies needs the breadcrumb.
+func evaluateBinding(rec cc.Record, b contractsconfig.ConnectorBinding, connectorType string) (cc.Record, bool, oversizeOutcome) {
 	if !samplingIncludes(rec, b) {
-		return cc.Record{}, false
+		return cc.Record{}, false, oversizeOutcome{}
 	}
 	if !matchesFilter(rec, b.Filter) {
-		return cc.Record{}, false
+		return cc.Record{}, false, oversizeOutcome{}
 	}
 	return applyOversize(rec, b, connectorType)
+}
+
+// oversizeOutcome describes how a binding's body cap acted on a record.
+// The zero value (Triggered=false) means the body was within cap or no
+// cap applied — nothing to log.
+type oversizeOutcome struct {
+	// Triggered is true when the record's largest body exceeded the
+	// effective cap.
+	Triggered bool
+
+	// Dropped is true when Triggered and the behaviour was drop_record
+	// (the whole record was discarded, not just its bodies).
+	Dropped bool
+
+	// CapBytes is the effective cap that was exceeded.
+	CapBytes int
+
+	// BodyBytes is the larger of the request/response body length that
+	// tripped the cap.
+	BodyBytes int
 }
 
 // samplingIncludes decides whether rec is in the sampled set for b.
@@ -189,20 +213,20 @@ func matchesTagsAll(recTags, want []string) bool {
 // 0 means no cap — the override that opts a webhook binding out of the
 // protective default), or the connector-type default when unset. A
 // resolved cap of <= 0 means unlimited.
-func applyOversize(rec cc.Record, b contractsconfig.ConnectorBinding, connectorType string) (cc.Record, bool) {
+func applyOversize(rec cc.Record, b contractsconfig.ConnectorBinding, connectorType string) (cc.Record, bool, oversizeOutcome) {
 	maxBytes := contractsconfig.DefaultMaxBodyBytes(connectorType)
 	if b.MaxBodyBytes != nil {
 		maxBytes = *b.MaxBodyBytes
 	}
 	if maxBytes <= 0 {
-		return rec, true
+		return rec, true, oversizeOutcome{}
 	}
 	maxLen := rec.Request.BodyBytes
 	if rec.Response.BodyBytes > maxLen {
 		maxLen = rec.Response.BodyBytes
 	}
 	if maxLen <= maxBytes {
-		return rec, true
+		return rec, true, oversizeOutcome{}
 	}
 	behaviour := b.OversizeBehaviour
 	if behaviour == "" {
@@ -210,18 +234,18 @@ func applyOversize(rec cc.Record, b contractsconfig.ConnectorBinding, connectorT
 	}
 	switch behaviour {
 	case contractsconfig.OversizeDropRecord:
-		return cc.Record{}, false
+		return cc.Record{}, false, oversizeOutcome{Triggered: true, Dropped: true, CapBytes: maxBytes, BodyBytes: maxLen}
 	case contractsconfig.OversizeMetadataOnly:
 		out := rec
 		out.Request.Body = nil
 		out.Request.BodyOmitted = true
 		out.Response.Body = nil
 		out.Response.BodyOmitted = true
-		return out, true
+		return out, true, oversizeOutcome{Triggered: true, CapBytes: maxBytes, BodyBytes: maxLen}
 	default:
 		// Unknown behaviour — config validation should have rejected
 		// it at load time; surface as ship-as-is so the operator
 		// gets the record rather than silent drop.
-		return rec, true
+		return rec, true, oversizeOutcome{}
 	}
 }

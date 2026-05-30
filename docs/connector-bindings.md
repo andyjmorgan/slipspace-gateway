@@ -202,9 +202,19 @@ When a record's body exceeds `max_body_bytes`, the binding's `oversize_behaviour
 | Value | Behaviour |
 |---|---|
 | `metadata_only` (default) | Strip both request and response bodies; set `Request.BodyOmitted` and `Response.BodyOmitted` to `true`; ship the rest of the record (headers, timing, tokens, rule matches, attempts). |
-| `drop_record` | Skip the record entirely — no enqueue, no metric, no log. |
+| `drop_record` | Skip the record entirely — no enqueue. |
 
 `metadata_only` is the safe default. The consumer downstream sees a record that says "this request happened, here are the labels and tokens, the body was too big to capture." `drop_record` is appropriate when the downstream pipeline is genuinely useless without bodies (e.g. a webhook receiver that does prompt content analysis) and you'd rather have nothing than partial.
+
+Either outcome is logged at **ERROR** so the capping is never silent — an operator chasing a destination missing its bodies sees the breadcrumb on the request's correlation_id:
+
+```json
+{"level":"ERROR","msg":"connector record body exceeded max_body_bytes; bodies stripped",
+ "correlation_id":"...","connector":"siem-webhook","connector_type":"webhook",
+ "max_body_bytes":1048576,"body_bytes":2202010}
+```
+
+The message reads `...; record dropped` for `drop_record`. The log carries the effective cap that was hit (`max_body_bytes`) and the body length that tripped it (`body_bytes`), so a recurring oversize is easy to spot and re-tune.
 
 The cap **does not** truncate the body to fit. Either the body is captured in full or it is replaced with `BodyOmitted=true`. There is no head-only / partial body shape on the wire — keep that separation explicit so consumers can't accidentally read truncated content as authoritative.
 

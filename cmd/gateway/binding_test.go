@@ -31,7 +31,7 @@ func makeRec() cc.Record {
 
 func TestEvaluateBinding_PassThrough_NoOverrides(t *testing.T) {
 	rec := makeRec()
-	out, ship := evaluateBinding(rec, contractsconfig.ConnectorBinding{Connector: "x"}, contractsconfig.ConnectorTypeS3)
+	out, ship, _ := evaluateBinding(rec, contractsconfig.ConnectorBinding{Connector: "x"}, contractsconfig.ConnectorTypeS3)
 	if !ship {
 		t.Fatal("expected ship with no overrides")
 	}
@@ -56,7 +56,7 @@ func TestEvaluateBinding_SamplingOutSkips(t *testing.T) {
 	if samplingIncludes(rec, b) {
 		t.Fatalf("could not find a correlation_id that buckets above 0.0001 in 10k tries; FNV distribution broken?")
 	}
-	_, ship := evaluateBinding(rec, b, contractsconfig.ConnectorTypeS3)
+	_, ship, _ := evaluateBinding(rec, b, contractsconfig.ConnectorTypeS3)
 	if ship {
 		t.Error("0.0001 sampling with an out-bucket id should drop the record")
 	}
@@ -68,7 +68,7 @@ func TestEvaluateBinding_FilterMissSkips(t *testing.T) {
 		Connector: "x",
 		Filter:    &contractsconfig.ConnectorFilter{Providers: []string{"anthropic"}},
 	}
-	_, ship := evaluateBinding(rec, b, contractsconfig.ConnectorTypeS3)
+	_, ship, _ := evaluateBinding(rec, b, contractsconfig.ConnectorTypeS3)
 	if ship {
 		t.Error("anthropic-only filter should reject an openai record")
 	}
@@ -77,7 +77,7 @@ func TestEvaluateBinding_FilterMissSkips(t *testing.T) {
 func TestEvaluateBinding_OversizeMetadataOnlyStrips(t *testing.T) {
 	rec := makeRec()
 	b := contractsconfig.ConnectorBinding{Connector: "x", MaxBodyBytes: intPtr(256)}
-	out, ship := evaluateBinding(rec, b, contractsconfig.ConnectorTypeS3)
+	out, ship, ov := evaluateBinding(rec, b, contractsconfig.ConnectorTypeS3)
 	if !ship {
 		t.Fatal("metadata_only default should still ship")
 	}
@@ -86,6 +86,9 @@ func TestEvaluateBinding_OversizeMetadataOnlyStrips(t *testing.T) {
 	}
 	if len(out.Response.Body) != 0 || !out.Response.BodyOmitted {
 		t.Errorf("response body not stripped: %+v", out.Response)
+	}
+	if !ov.Triggered || ov.Dropped {
+		t.Errorf("oversize outcome = %+v, want triggered + not dropped", ov)
 	}
 }
 
@@ -96,9 +99,12 @@ func TestEvaluateBinding_OversizeDropRecordSkips(t *testing.T) {
 		MaxBodyBytes:      intPtr(256),
 		OversizeBehaviour: "drop_record",
 	}
-	_, ship := evaluateBinding(rec, b, contractsconfig.ConnectorTypeS3)
+	_, ship, ov := evaluateBinding(rec, b, contractsconfig.ConnectorTypeS3)
 	if ship {
 		t.Error("drop_record on oversize should skip the record")
+	}
+	if !ov.Triggered || !ov.Dropped {
+		t.Errorf("oversize outcome = %+v, want triggered + dropped", ov)
 	}
 }
 
@@ -272,7 +278,7 @@ func TestMatchesFilter_TagsAll(t *testing.T) {
 
 func TestApplyOversize_NoCapShipsAsIs(t *testing.T) {
 	rec := makeRec()
-	out, ship := applyOversize(rec, contractsconfig.ConnectorBinding{}, contractsconfig.ConnectorTypeS3)
+	out, ship, _ := applyOversize(rec, contractsconfig.ConnectorBinding{}, contractsconfig.ConnectorTypeS3)
 	if !ship {
 		t.Fatal("no cap should ship")
 	}
@@ -285,7 +291,7 @@ func TestApplyOversize_WithinCapShipsAsIs(t *testing.T) {
 	rec := makeRec()
 	rec.Request.BodyBytes = 100
 	rec.Response.BodyBytes = 200
-	out, ship := applyOversize(rec, contractsconfig.ConnectorBinding{MaxBodyBytes: intPtr(500)}, contractsconfig.ConnectorTypeS3)
+	out, ship, _ := applyOversize(rec, contractsconfig.ConnectorBinding{MaxBodyBytes: intPtr(500)}, contractsconfig.ConnectorTypeS3)
 	if !ship || out.Request.BodyOmitted || out.Response.BodyOmitted {
 		t.Errorf("within-cap should not strip: %+v", out)
 	}
@@ -297,7 +303,7 @@ func TestApplyOversize_UnknownBehaviourShipsAsIs(t *testing.T) {
 	// operator at least sees a record.
 	rec := makeRec()
 	rec.Request.BodyBytes = 1024
-	out, ship := applyOversize(rec, contractsconfig.ConnectorBinding{
+	out, ship, _ := applyOversize(rec, contractsconfig.ConnectorBinding{
 		MaxBodyBytes:      intPtr(256),
 		OversizeBehaviour: "explode",
 	}, contractsconfig.ConnectorTypeS3)
@@ -316,12 +322,15 @@ func TestApplyOversize_WebhookDefaultCapStripsOversize(t *testing.T) {
 	// 1 MiB protective default — a 2 MiB body trips metadata_only.
 	rec := makeRec()
 	rec.Request.BodyBytes = 2 << 20
-	out, ship := applyOversize(rec, contractsconfig.ConnectorBinding{Connector: "hook"}, contractsconfig.ConnectorTypeWebhook)
+	out, ship, ov := applyOversize(rec, contractsconfig.ConnectorBinding{Connector: "hook"}, contractsconfig.ConnectorTypeWebhook)
 	if !ship {
 		t.Fatal("metadata_only default should still ship")
 	}
 	if !out.Request.BodyOmitted {
 		t.Errorf("webhook default cap should strip a 2 MiB body: %+v", out.Request)
+	}
+	if !ov.Triggered || ov.Dropped || ov.CapBytes != contractsconfig.WebhookDefaultMaxBodyBytes {
+		t.Errorf("oversize outcome = %+v, want triggered + cap=%d", ov, contractsconfig.WebhookDefaultMaxBodyBytes)
 	}
 }
 
@@ -329,7 +338,7 @@ func TestApplyOversize_WebhookUnderDefaultCapShips(t *testing.T) {
 	rec := makeRec()
 	rec.Request.BodyBytes = 512 << 10 // 512 KiB, under the 1 MiB default
 	rec.Response.BodyBytes = 0
-	out, ship := applyOversize(rec, contractsconfig.ConnectorBinding{Connector: "hook"}, contractsconfig.ConnectorTypeWebhook)
+	out, ship, _ := applyOversize(rec, contractsconfig.ConnectorBinding{Connector: "hook"}, contractsconfig.ConnectorTypeWebhook)
 	if !ship || out.Request.BodyOmitted {
 		t.Errorf("a body under the webhook default should ship intact: %+v", out.Request)
 	}
@@ -340,12 +349,15 @@ func TestApplyOversize_WebhookExplicitZeroOverridesToUnlimited(t *testing.T) {
 	// default — the 2 MiB body ships intact.
 	rec := makeRec()
 	rec.Request.BodyBytes = 2 << 20
-	out, ship := applyOversize(rec, contractsconfig.ConnectorBinding{
+	out, ship, ov := applyOversize(rec, contractsconfig.ConnectorBinding{
 		Connector:    "hook",
 		MaxBodyBytes: intPtr(0),
 	}, contractsconfig.ConnectorTypeWebhook)
 	if !ship || out.Request.BodyOmitted {
 		t.Errorf("explicit zero should be unlimited, body intact: %+v", out.Request)
+	}
+	if ov.Triggered {
+		t.Errorf("explicit-zero override should not trigger oversize: %+v", ov)
 	}
 }
 
@@ -354,7 +366,7 @@ func TestApplyOversize_S3HasNoDefaultCap(t *testing.T) {
 	// no cap, even for a body well past the webhook default.
 	rec := makeRec()
 	rec.Request.BodyBytes = 8 << 20
-	out, ship := applyOversize(rec, contractsconfig.ConnectorBinding{Connector: "audit"}, contractsconfig.ConnectorTypeS3)
+	out, ship, _ := applyOversize(rec, contractsconfig.ConnectorBinding{Connector: "audit"}, contractsconfig.ConnectorTypeS3)
 	if !ship || out.Request.BodyOmitted {
 		t.Errorf("s3 has no default cap, body should ship intact: %+v", out.Request)
 	}
