@@ -40,7 +40,10 @@ def test_gemini_generate_content(
     resp = client.models.generate_content(
         model="gemini-2.5-flash",
         contents="Reply with exactly one word: pong",
-        config=types.GenerateContentConfig(max_output_tokens=32),
+        # gemini-2.5-flash is a thinking model — reasoning tokens count against
+        # the budget, so a tiny cap (e.g. 32) intermittently finishes MAX_TOKENS
+        # with no text part. Give it real headroom for a one-word reply.
+        config=types.GenerateContentConfig(max_output_tokens=512),
     )
 
     assert resp.candidates, "no candidates returned"
