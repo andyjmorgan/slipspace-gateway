@@ -26,7 +26,7 @@ func TestAnthropic_Messages_NonStreaming_PrefixRouting(t *testing.T) {
 		"max_tokens": 64,
 		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
 	}
-	resp := h.PostJSON("/anthropic/v1/messages", body, nil)
+	resp := h.PostJSON("/v1/messages", body, nil)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
@@ -117,7 +117,7 @@ func TestAnthropic_Messages_Streaming(t *testing.T) {
 		"stream":     true,
 		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
 	}
-	stream := h.PostStream("/anthropic/v1/messages", body, nil)
+	stream := h.PostStream("/v1/messages", body, nil)
 	chunks := stream.CollectAll(5 * time.Second)
 	if len(chunks) != 4 {
 		t.Fatalf("chunks=%d want 4", len(chunks))
@@ -134,7 +134,7 @@ func TestAnthropic_Models_PrefixRouting(t *testing.T) {
 		Body:   `{"data":[{"id":"claude-3-haiku-20240307","type":"model"}]}`,
 	})
 
-	req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/anthropic/v1/models", http.NoBody)
+	req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/v1/models", http.NoBody)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}

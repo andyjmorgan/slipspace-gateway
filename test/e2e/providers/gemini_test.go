@@ -26,7 +26,7 @@ func TestGemini_GenerateContent_NonStreaming_PrefixRouting(t *testing.T) {
 			{"role": "user", "parts": []map[string]string{{"text": "hi"}}},
 		},
 	}
-	resp := h.PostJSON("/gemini/v1beta/models/gemini-1.5-flash:generateContent", body, nil)
+	resp := h.PostJSON("/v1beta/models/gemini-1.5-flash:generateContent", body, nil)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
@@ -94,29 +94,6 @@ func TestGemini_GenerateContent_BareRoute_Streaming(t *testing.T) {
 	}
 }
 
-// TestGemini_Models_PrefixOnly asserts gemini.models stays prefix-required:
-// bare /v1beta/models must NOT route since the endpoint did not opt in to
-// prefix_optional. Locks in the asymmetric design where only generate_content
-// is bare-routable.
-func TestGemini_Models_PrefixOnly(t *testing.T) {
-	t.Parallel()
-	h := harness.New(t)
-
-	req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/v1beta/models", http.NoBody)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+h.APIKey)
-	resp, err := h.HTTP.Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("bare /v1beta/models must not route; gemini.models is prefix-only (status=200)")
-	}
-}
-
 func TestGemini_GenerateContent_Streaming(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
@@ -137,7 +114,7 @@ func TestGemini_GenerateContent_Streaming(t *testing.T) {
 			{"role": "user", "parts": []map[string]string{{"text": "hi"}}},
 		},
 	}
-	stream := h.PostStream("/gemini/v1beta/models/gemini-1.5-flash:generateContent", body, nil)
+	stream := h.PostStream("/v1beta/models/gemini-1.5-flash:generateContent", body, nil)
 	chunks := stream.CollectAll(5 * time.Second)
 	if len(chunks) != 2 {
 		t.Fatalf("chunks=%d want 2", len(chunks))
@@ -172,7 +149,7 @@ func TestGemini_StreamGenerateContent_FoldedEndpoint(t *testing.T) {
 			{"role": "user", "parts": []map[string]string{{"text": "hi"}}},
 		},
 	}
-	stream := h.PostStream("/gemini/v1beta/models/gemini-1.5-flash:streamGenerateContent", body, nil)
+	stream := h.PostStream("/v1beta/models/gemini-1.5-flash:streamGenerateContent", body, nil)
 	if got := len(stream.CollectAll(5 * time.Second)); got != 2 {
 		t.Fatalf("chunks=%d want 2", got)
 	}
@@ -196,7 +173,7 @@ func TestGemini_Models_PrefixRouting(t *testing.T) {
 		Body:   `{"models":[{"name":"models/gemini-1.5-flash"}]}`,
 	})
 
-	req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/gemini/v1beta/models", http.NoBody)
+	req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/v1beta/models", http.NoBody)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
