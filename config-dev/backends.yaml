@@ -20,6 +20,14 @@ backends:
         auth:
           header: Authorization
           format: "Bearer {key}"
+    passthrough:
+      models:
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+        paths:
+          - match: /v1/models
+            methods: [GET]
 
   anthropic:
     base_url: http://mockllm:5555
@@ -62,6 +70,14 @@ backends:
         auth:
           header: Authorization
           format: "Bearer {key}"
+    passthrough:
+      models:
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
+        paths:
+          - match: /v1beta/models
+            methods: [GET]
 
   gpt-oss:
     base_url: http://mockllm:5555
