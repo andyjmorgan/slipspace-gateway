@@ -22,7 +22,7 @@ func TestErrors_Upstream4xx(t *testing.T) {
 	})
 
 	resp := h.PostJSON("/v1/chat/completions",
-		map[string]any{"model": "x", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, resp.Body)
@@ -44,7 +44,7 @@ func TestErrors_Upstream5xx(t *testing.T) {
 	})
 
 	resp := h.PostJSON("/v1/chat/completions",
-		map[string]any{"model": "x", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status=%d want 502", resp.StatusCode)
@@ -64,7 +64,7 @@ func TestErrors_MalformedUpstreamBody(t *testing.T) {
 	})
 
 	resp := h.PostJSON("/v1/chat/completions",
-		map[string]any{"model": "x", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d want 200 (gateway forwards upstream byte-for-byte) body=%s", resp.StatusCode, resp.Body)
@@ -79,7 +79,7 @@ func TestErrors_NoCannedResponse_UpstreamReturns404(t *testing.T) {
 	h := harness.New(t)
 
 	resp := h.PostJSON("/v1/chat/completions",
-		map[string]any{"model": "x", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status=%d want 404 (mockllm 'no canned response')", resp.StatusCode)
@@ -100,7 +100,10 @@ func TestErrors_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
 
-	req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/v1/chat/completions", http.NoBody)
+	// Under v2 method enforcement lives on passthrough families: the models
+	// family accepts GET only, so a POST to /v1/models is 405. (Generative
+	// protocols don't gate on method — a wrong verb there is a no-binding 404.)
+	req, err := http.NewRequest(http.MethodPost, h.GatewayURL+"/v1/models", http.NoBody)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}

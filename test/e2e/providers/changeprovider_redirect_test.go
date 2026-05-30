@@ -39,7 +39,7 @@ func TestRule_ChangeProvider_ClaudeRedirectsToAnthropic(t *testing.T) {
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
 	}
 	// Send to the OPENAI surface, not anthropic.
-	resp := h.PostJSON("/openai/v1/chat/completions", body, nil)
+	resp := h.PostJSON("/v1/chat/completions", body, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
 	}
@@ -90,7 +90,7 @@ func TestRule_ChangeProvider_GeminiRedirectsToGemini(t *testing.T) {
 		"model":    "gemini-2.0-flash-001",
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
 	}
-	resp := h.PostJSON("/openai/v1/chat/completions", body, nil)
+	resp := h.PostJSON("/v1/chat/completions", body, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
 	}
@@ -130,7 +130,7 @@ func TestRule_ChangeProvider_OpenAIPassthrough(t *testing.T) {
 		"model":    "gpt-4o-mini",
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
 	}
-	resp := h.PostJSON("/openai/v1/chat/completions", body, nil)
+	resp := h.PostJSON("/v1/chat/completions", body, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
 	}

@@ -42,9 +42,6 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 	if eval == nil {
 		panic("rules: HTTPHandler called with nil evaluator")
 	}
-	if matchFrom == nil {
-		panic("rules: HTTPHandler called with nil matchFrom")
-	}
 	if next == nil {
 		panic("rules: HTTPHandler called with nil next handler")
 	}
@@ -53,23 +50,35 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 		ctx := r.Context()
 		logger := observability.FromContext(ctx)
 
-		provider, endpoint, matchedPath, params, ok := matchFrom(ctx)
-		if !ok {
-			logger.ErrorContext(ctx, "rules: no route on context")
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-
 		ar, _ := auth.FromContext(ctx)
 		captured, _ := bodycapture.FromContext(ctx)
 
+		// v2: the selection middleware seeds the MutableState (backend,
+		// protocol, path params, resilience PolicyRef) before rules run, so
+		// reuse it. The matchFrom fallback covers callers that drive the
+		// middleware without a pre-seeded state (legacy tests).
+		state := MutableStateFromContext(ctx)
+		if state == nil {
+			if matchFrom == nil {
+				logger.ErrorContext(ctx, "rules: no state and no matchFrom on context")
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			provider, endpoint, matchedPath, params, ok := matchFrom(ctx)
+			if !ok {
+				logger.ErrorContext(ctx, "rules: no route on context")
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			state = NewMutableState(provider, endpoint, matchedPath, params, r.Header)
+		}
+
 		ctx, _ = WithMatchBuffer(ctx)
 
-		state := NewMutableState(provider, endpoint, matchedPath, params, r.Header)
 		gc := GatewayContext{
-			Provider:          provider,
-			Endpoint:          endpoint,
-			Model:             extractInboundModel(captured, params),
+			Provider:          state.Provider,
+			Endpoint:          state.Endpoint,
+			Model:             extractInboundModel(captured, state.PathParams),
 			Headers:           r.Header,
 			ConfigurationName: ar.ConfigurationName,
 			Body:              captured.Body,

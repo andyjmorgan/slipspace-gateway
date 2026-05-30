@@ -76,16 +76,29 @@ func TestRules_MatchPublishesEvent(t *testing.T) {
 	}
 }
 
-// TestRules_NoMatchEmitsNoEvent fires a request that none of the
-// config-dev library rules match: gpt-oss provider (no provider/
-// endpoint tag rule covers it under the dev configuration), model
-// name that starts with neither `claude-` nor `gemini-` (so the
-// route-* rules skip), and no x-sluice-tag-large header. Verifies
-// the engine is selective — no gateway.rule.matched envelope arrives
-// within a short window.
+// noRulesPolicy routes gpt-* chat to openai but attaches zero rules, so a
+// request flows through the engine and matches nothing.
+const noRulesPolicy = `
+configurations:
+  dev:
+    credentials:
+      openai: sk-dev-mock
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], backend: openai }
+
+api_keys:
+  - secret: sk_dev_local_development_only_not_for_production
+    name: "Local dev"
+    configuration: dev
+    enabled: true
+`
+
+// TestRules_NoMatchEmitsNoEvent fires a request through a configuration with
+// no rules attached. The request routes (gpt-* → openai) and returns 200, but
+// the engine matches nothing — no gateway.rule.matched envelope arrives.
 func TestRules_NoMatchEmitsNoEvent(t *testing.T) {
 	t.Parallel()
-	h := harness.New(t)
+	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: noRulesPolicy})
 
 	h.StageMockResponse(harness.CannedResponse{
 		Method: http.MethodPost,
@@ -93,9 +106,9 @@ func TestRules_NoMatchEmitsNoEvent(t *testing.T) {
 		Body:   `{"id":"chatcmpl-x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`,
 	})
 
-	resp := h.PostJSON("/gpt-oss/v1/chat/completions",
+	resp := h.PostJSON("/v1/chat/completions",
 		map[string]any{
-			"model":    "gpt-oss-internal",
+			"model":    "gpt-4o-mini",
 			"messages": []map[string]string{{"role": "user", "content": "hi"}},
 		},
 		nil,

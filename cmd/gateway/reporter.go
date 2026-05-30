@@ -998,9 +998,10 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 	attrs = r.appendRequestParamAttrs(ctx, attrs)
 	attrs = r.appendResponseAttrs(attrs)
 	// openai.api.type distinguishes the Chat Completions vs Responses API
-	// surface; our endpoint keys already match the spec's well-known values.
-	if ev.Provider == "openai" && (ev.Endpoint == "chat_completions" || ev.Endpoint == "responses") {
-		attrs = append(attrs, attribute.String(observability.AttrOpenAIAPIType, ev.Endpoint))
+	// surface. The v2 endpoint label is the protocol ("chat"/"responses"); the
+	// emitted api.type keeps the spec's well-known value ("chat_completions").
+	if ev.Provider == "openai" && (ev.Endpoint == "chat" || ev.Endpoint == "responses") {
+		attrs = append(attrs, attribute.String(observability.AttrOpenAIAPIType, openAIAPIType(ev.Endpoint)))
 	}
 	if r.factory.captureContent {
 		attrs = r.appendSpanContent(ctx, attrs)
@@ -1223,8 +1224,8 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	if r.respSystemFingerprint != "" {
 		attrs = append(attrs, otellog.String(observability.AttrOpenAIResponseSystemFingerprint, r.respSystemFingerprint))
 	}
-	if ev.Provider == "openai" && (ev.Endpoint == "chat_completions" || ev.Endpoint == "responses") {
-		attrs = append(attrs, otellog.String(observability.AttrOpenAIAPIType, ev.Endpoint))
+	if ev.Provider == "openai" && (ev.Endpoint == "chat" || ev.Endpoint == "responses") {
+		attrs = append(attrs, otellog.String(observability.AttrOpenAIAPIType, openAIAPIType(ev.Endpoint)))
 	}
 
 	caps := r.factory.caps

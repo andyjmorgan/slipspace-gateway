@@ -229,8 +229,8 @@ func TestConfigValidate_HappyPath(t *testing.T) {
 	expectedFragments := []string{
 		"configuration(s)",
 		"api_keys",
-		"providers",
-		"routes",
+		"backends",
+		"bindings",
 	}
 	for _, f := range expectedFragments {
 		if !strings.Contains(stdout.String(), f) {
@@ -250,20 +250,6 @@ func TestConfigValidate_EmptyDirectory(t *testing.T) {
 	}
 }
 
-func TestConfigValidate_UnexpectedFile(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "random.yaml"), []byte("gateway:\n  http:\n    bind: 0.0.0.0:8585\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, code := runCLI(t, "config", "validate", "--dir", dir)
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1; stdout=%q", code, stdout.String())
-	}
-	if !strings.HasPrefix(stdout.String(), "FAIL: unexpected_config_file:") {
-		t.Fatalf("stdout = %q, want FAIL: unexpected_config_file prefix", stdout.String())
-	}
-}
-
 func TestConfigValidate_ParseError(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte("api_keys:\n  - secret: [unclosed\n"), 0o600); err != nil {
@@ -273,8 +259,10 @@ func TestConfigValidate_ParseError(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stdout=%q", code, stdout.String())
 	}
-	if !strings.HasPrefix(stdout.String(), "FAIL: parse_error:") {
-		t.Fatalf("stdout = %q, want FAIL: parse_error prefix", stdout.String())
+	// LoadV2 wraps the underlying yaml error; the cli reports it under the
+	// generic failure prefix rather than a v1-specific parse_error class.
+	if !strings.HasPrefix(stdout.String(), "FAIL: ") {
+		t.Fatalf("stdout = %q, want FAIL prefix", stdout.String())
 	}
 }
 
@@ -289,20 +277,6 @@ func TestConfigValidate_NoConfigurations(t *testing.T) {
 	}
 	if !strings.HasPrefix(stdout.String(), "FAIL: no_configurations:") {
 		t.Fatalf("stdout = %q, want FAIL: no_configurations prefix", stdout.String())
-	}
-}
-
-func TestConfigValidate_WrongFileForKey(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte("gateway:\n  http:\n    bind: 0.0.0.0:8585\nconfigurations: {dev: {}}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, code := runCLI(t, "config", "validate", "--dir", dir)
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1", code)
-	}
-	if !strings.HasPrefix(stdout.String(), "FAIL: wrong_file_for_key:") {
-		t.Fatalf("stdout = %q, want FAIL: wrong_file_for_key prefix", stdout.String())
 	}
 }
 

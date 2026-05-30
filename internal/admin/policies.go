@@ -3,9 +3,10 @@ package admin
 import (
 	"net/http"
 	"os"
+	"sort"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
@@ -44,48 +45,54 @@ func PoliciesHandler(store *config.Store, cb CircuitBreakerStateSource) http.Han
 // buildPoliciesResponse projects resolved + cb into the wire DTO. Kept
 // pure so the unit tests can exercise it without spinning up an HTTP
 // recorder.
-func buildPoliciesResponse(resolved *config.ResolvedConfig, cb CircuitBreakerStateSource) adminc.PoliciesResponse {
+func buildPoliciesResponse(resolved *config.ResolvedConfigV2, cb CircuitBreakerStateSource) adminc.PoliciesResponse {
 	host, _ := os.Hostname()
 	if host == "" {
 		host = "unknown"
 	}
+	names := make([]string, 0, len(resolved.Groups))
+	for name := range resolved.Groups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	out := adminc.PoliciesResponse{
 		Pod:      host,
-		Policies: make([]adminc.PolicySummary, 0, len(resolved.ResiliencePolicies)),
+		Policies: make([]adminc.PolicySummary, 0, len(names)),
 	}
-	for i := range resolved.ResiliencePolicies {
-		out.Policies = append(out.Policies, summarisePolicy(resolved.ResiliencePolicies[i], cb))
+	for _, name := range names {
+		out.Policies = append(out.Policies, summariseGroup(name, resolved.Groups[name], cb))
 	}
 	return out
 }
 
-func summarisePolicy(pol contractsres.ResilienceConfig, cb CircuitBreakerStateSource) adminc.PolicySummary {
+// summariseGroup projects a v2 resilience group onto the policy DTO. Group
+// targets are backends (with an optional model alias); per-attempt circuit
+// state is keyed by (group, backend).
+func summariseGroup(name string, g contractsconfig.Group, cb CircuitBreakerStateSource) adminc.PolicySummary {
 	summary := adminc.PolicySummary{
-		Name:               pol.Name,
-		Mode:               string(pol.Mode),
-		StrictWeights:      pol.StrictWeights,
-		FailureStatusCodes: append([]int(nil), pol.FailureStatusCodes...),
-		Targets:            make([]adminc.PolicyTarget, 0, len(pol.Targets)),
+		Name:               name,
+		Mode:               string(g.Mode),
+		FailureStatusCodes: append([]int(nil), g.FailureStatusCodes...),
+		Targets:            make([]adminc.PolicyTarget, 0, len(g.Targets)),
 	}
-	if pol.CircuitBreaker != nil && pol.CircuitBreaker.Enabled {
+	if g.CircuitBreaker != nil && g.CircuitBreaker.Enabled {
 		summary.CircuitBreakerEnabled = true
 	}
-	for _, t := range pol.Targets {
-		summary.Targets = append(summary.Targets, summariseTarget(pol.Name, t, cb))
+	for i, t := range g.Targets {
+		summary.Targets = append(summary.Targets, summariseGroupTarget(name, i+1, t, cb))
 	}
 	return summary
 }
 
-func summariseTarget(policy string, t contractsres.ResilienceTarget, cb CircuitBreakerStateSource) adminc.PolicyTarget {
+func summariseGroupTarget(group string, order int, t contractsconfig.Target, cb CircuitBreakerStateSource) adminc.PolicyTarget {
 	tgt := adminc.PolicyTarget{
-		Name:         t.Name,
-		Provider:     t.Provider,
-		Order:        t.Order,
-		Weight:       t.Weight,
+		Name:         t.Backend,
+		Provider:     t.Backend,
+		Order:        order,
 		CircuitState: "unknown",
 	}
 	if cb != nil {
-		tgt.CircuitState = cb.State(policy, t.Name)
+		tgt.CircuitState = cb.State(group, t.Backend)
 	}
 	return tgt
 }

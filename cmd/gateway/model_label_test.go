@@ -22,7 +22,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
-	"github.com/andyjmorgan/sluice-gateway/internal/routing"
 	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
 	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
 	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
@@ -210,23 +209,16 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 	dir := writeTestConfig(t, upstream.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	resolved, err := config.Load(ctx, dir)
+	resolved, err := config.LoadV2(ctx, dir)
 	if err != nil {
 		upstream.Close()
 		cancel()
-		t.Fatalf("config.Load: %v", err)
+		t.Fatalf("config.LoadV2: %v", err)
 	}
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 
 	store := config.NewStore(resolved)
-
-	router, err := routing.New(store, nil)
-	if err != nil {
-		upstream.Close()
-		cancel()
-		t.Fatalf("routing.New: %v", err)
-	}
 
 	resolver := auth.NewResolver(store)
 
@@ -246,7 +238,7 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 	evaluator := rules.NewEvaluator(store, 8, meters)
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, reporter.Factory(), store, makePolicyLookup(store), resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
+	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
 	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), nil, dataPlane)
 
 	gateway := httptest.NewServer(root)

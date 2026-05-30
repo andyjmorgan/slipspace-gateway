@@ -78,24 +78,16 @@ type AuthResult struct {
 	// has no key to attribute). Downstream code must nil-check.
 	APIKey *contractsconfig.APIKey
 
-	// Configuration is the resolved policy bundle. Nil only when
-	// resolution failed before configuration lookup.
-	Configuration *contractsconfig.Configuration
+	// Configuration is the resolved v2 policy bundle (backends credentials +
+	// bindings + rules). Nil only when resolution failed before configuration
+	// lookup.
+	Configuration *contractsconfig.ConfigurationV2
 
 	// ConfigurationName is the name the policy was looked up by — the
 	// X-Sluice-Configuration value (legacy passthrough) or
 	// APIKey.Configuration (managed and identity-passthrough). Retained
 	// for structured logging even when Configuration is nil.
 	ConfigurationName string
-
-	// Provider is the upstream provider name routed to (openai, anthropic,
-	// gemini, ...). Injected from the routing decision; not resolved by
-	// auth.
-	Provider string
-
-	// Endpoint is the upstream endpoint name routed to. Injected from the
-	// routing decision; not resolved by auth.
-	Endpoint string
 
 	// DropHeaders names inbound headers the forwarder must strip before
 	// sending upstream. Auth always emits both passthrough selector
@@ -142,7 +134,7 @@ func NewResolver(store *config.Store) *Resolver {
 // selector header takes precedence over any bearer token on the same
 // request — when present, resolution is always passthrough. Between the
 // two, X-Sluice-Identity wins over the deprecated X-Sluice-Configuration.
-func (r *Resolver) Resolve(headers http.Header, provider, endpoint string) (AuthResult, error) {
+func (r *Resolver) Resolve(headers http.Header) (AuthResult, error) {
 	if r == nil || r.store == nil {
 		return AuthResult{}, ErrUnknownConfiguration
 	}
@@ -156,14 +148,14 @@ func (r *Resolver) Resolve(headers http.Header, provider, endpoint string) (Auth
 	legacyPresent := legacyConfigName != ""
 
 	if identityToken != "" {
-		return r.resolveIdentityPassthrough(snap, identityToken, provider, endpoint, legacyPresent)
+		return r.resolveIdentityPassthrough(snap, identityToken, legacyPresent)
 	}
 
 	if legacyPresent {
-		return r.resolveLegacyPassthrough(snap, legacyConfigName, provider, endpoint)
+		return r.resolveLegacyPassthrough(snap, legacyConfigName)
 	}
 
-	return r.resolveManaged(snap, headers, provider, endpoint)
+	return r.resolveManaged(snap, headers)
 }
 
 // resolveIdentityPassthrough looks the supplied api-key secret up in
@@ -171,17 +163,15 @@ func (r *Resolver) Resolve(headers http.Header, provider, endpoint string) (Auth
 // substituting upstream credentials. Unknown or disabled keys fail with
 // ErrUnauthorized so attackers cannot probe configuration names by
 // presenting random identity values.
-func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfig, token, provider, endpoint string, legacyAlsoPresent bool) (AuthResult, error) {
+func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfigV2, token string, legacyAlsoPresent bool) (AuthResult, error) {
 	key, ok := snap.SecretIndex[token]
 	if !ok || key == nil {
-		return AuthResult{Mode: ModePassthrough, Provider: provider, Endpoint: endpoint, DropHeaders: passthroughDropHeaders()}, ErrUnauthorized
+		return AuthResult{Mode: ModePassthrough, DropHeaders: passthroughDropHeaders()}, ErrUnauthorized
 	}
 	if !key.Enabled {
 		return AuthResult{
 			Mode:        ModePassthrough,
 			APIKey:      key,
-			Provider:    provider,
-			Endpoint:    endpoint,
 			DropHeaders: passthroughDropHeaders(),
 		}, ErrUnauthorized
 	}
@@ -191,8 +181,6 @@ func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfig, token
 			Mode:              ModePassthrough,
 			APIKey:            key,
 			ConfigurationName: key.Configuration,
-			Provider:          provider,
-			Endpoint:          endpoint,
 			DropHeaders:       passthroughDropHeaders(),
 		}, ErrUnknownConfiguration
 	}
@@ -201,8 +189,6 @@ func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfig, token
 		APIKey:                    key,
 		Configuration:             cfg,
 		ConfigurationName:         key.Configuration,
-		Provider:                  provider,
-		Endpoint:                  endpoint,
 		DropHeaders:               passthroughDropHeaders(),
 		LegacyConfigurationHeader: legacyAlsoPresent,
 	}, nil
@@ -211,7 +197,7 @@ func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfig, token
 // resolveLegacyPassthrough is the original X-Sluice-Configuration path.
 // Marked legacy because the configuration name is human-readable and
 // guessable; X-Sluice-Identity supersedes it.
-func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfig, configName, provider, endpoint string) (AuthResult, error) {
+func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfigV2, configName string) (AuthResult, error) {
 	cfg, ok := snap.ConfigurationIndex[configName]
 	if !ok {
 		return AuthResult{LegacyConfigurationHeader: true}, ErrUnknownConfiguration
@@ -221,8 +207,6 @@ func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfig, configN
 		Mode:                      ModePassthrough,
 		Configuration:             cfg,
 		ConfigurationName:         configName,
-		Provider:                  provider,
-		Endpoint:                  endpoint,
 		DropHeaders:               passthroughDropHeaders(),
 		LegacyConfigurationHeader: true,
 	}, nil
@@ -270,23 +254,21 @@ func (r *Resolver) discoverManagedKey(headers http.Header) (managedKeySource, bo
 	return managedKeySource{}, false
 }
 
-func (r *Resolver) resolveManaged(snap *config.ResolvedConfig, headers http.Header, provider, endpoint string) (AuthResult, error) {
+func (r *Resolver) resolveManaged(snap *config.ResolvedConfigV2, headers http.Header) (AuthResult, error) {
 	src, ok := r.discoverManagedKey(headers)
 	if !ok {
-		return AuthResult{Mode: ModeManaged, Provider: provider, Endpoint: endpoint}, ErrUnauthorized
+		return AuthResult{Mode: ModeManaged}, ErrUnauthorized
 	}
 
 	key, ok := snap.SecretIndex[src.token]
 	if !ok || key == nil {
-		return AuthResult{Mode: ModeManaged, Provider: provider, Endpoint: endpoint}, ErrUnauthorized
+		return AuthResult{Mode: ModeManaged}, ErrUnauthorized
 	}
 
 	if !key.Enabled {
 		return AuthResult{
-			Mode:     ModeManaged,
-			APIKey:   key,
-			Provider: provider,
-			Endpoint: endpoint,
+			Mode:   ModeManaged,
+			APIKey: key,
 		}, ErrUnauthorized
 	}
 
@@ -296,8 +278,6 @@ func (r *Resolver) resolveManaged(snap *config.ResolvedConfig, headers http.Head
 			Mode:              ModeManaged,
 			APIKey:            key,
 			ConfigurationName: key.Configuration,
-			Provider:          provider,
-			Endpoint:          endpoint,
 		}, ErrUnknownConfiguration
 	}
 
@@ -317,8 +297,6 @@ func (r *Resolver) resolveManaged(snap *config.ResolvedConfig, headers http.Head
 		APIKey:            key,
 		Configuration:     cfg,
 		ConfigurationName: key.Configuration,
-		Provider:          provider,
-		Endpoint:          endpoint,
 		DropHeaders:       drops,
 	}, nil
 }

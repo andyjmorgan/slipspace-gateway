@@ -164,9 +164,9 @@ func NewMux(opts MuxOptions) http.Handler {
 	configDetail := ConfigurationDetailHandler(opts.Store)
 	rulesList := RulesListHandler(opts.Store)
 	ruleDetail := RuleDetailHandler(opts.Store)
-	providersList := ProvidersListHandler(opts.Store)
-	providerDetail := ProviderDetailHandler(opts.Store)
-	routesAll := RoutesHandler(opts.Store)
+	backendsList := BackendsListHandler(opts.Store)
+	backendDetail := BackendDetailHandler(opts.Store)
+	bindingsAll := BindingsHandler(opts.Store)
 	apiKeysReveal := APIKeysRevealHandler(opts.Store)
 	apiMux.Handle("/api/v1/config/api-keys/reveal",
 		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/reveal", apiKeysReveal),
@@ -200,14 +200,14 @@ func NewMux(opts MuxOptions) http.Handler {
 	apiMux.Handle("DELETE /api/v1/config/rules/{name}",
 		InstrumentRoute(opts.Meters, "/api/v1/config/rules/{name}", rulesDelete),
 	)
-	apiMux.Handle("/api/v1/config/providers",
-		InstrumentRoute(opts.Meters, "/api/v1/config/providers", providersList),
+	apiMux.Handle("/api/v1/config/backends",
+		InstrumentRoute(opts.Meters, "/api/v1/config/backends", backendsList),
 	)
-	apiMux.Handle("/api/v1/config/providers/",
-		InstrumentRoute(opts.Meters, "/api/v1/config/providers/{name}", providerDetail),
+	apiMux.Handle("/api/v1/config/backends/",
+		InstrumentRoute(opts.Meters, "/api/v1/config/backends/{name}", backendDetail),
 	)
-	apiMux.Handle("/api/v1/config/routes",
-		InstrumentRoute(opts.Meters, "/api/v1/config/routes", routesAll),
+	apiMux.Handle("/api/v1/config/bindings",
+		InstrumentRoute(opts.Meters, "/api/v1/config/bindings", bindingsAll),
 	)
 	// Settings page — redacted config export. Both endpoints share the
 	// same redactor; the files endpoint backs the tabbed inspector view,

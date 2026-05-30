@@ -6,7 +6,7 @@ import {
   ListTree,
   Server,
   SlidersHorizontal,
-  Route as RouteIcon,
+  Waypoints,
   Activity,
   Shield,
 } from "lucide-react"
@@ -25,9 +25,9 @@ const NAV: NavItem[] = [
   { to: "/messages", label: "Live messages", icon: Activity },
   { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, section: "Read-only inspect" },
   { to: "/rules", label: "Rules", icon: ListTree },
-  { to: "/providers", label: "Providers", icon: Server },
-  { to: "/routes", label: "Routes", icon: RouteIcon },
-  { to: "/policies", label: "Policies", icon: Shield },
+  { to: "/backends", label: "Backends", icon: Server },
+  { to: "/bindings", label: "Bindings", icon: Waypoints },
+  { to: "/policies", label: "Groups", icon: Shield },
   { to: "/settings", label: "Settings", icon: SettingsIcon, section: "System" },
 ]
 

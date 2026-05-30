@@ -290,7 +290,7 @@ func TestEmitTrace_OpenAIProviderAttrs(t *testing.T) {
 	r := &reporterRun{
 		factory:               &reporterFactory{tracer: tp.Tracer("test")},
 		provider:              "openai",
-		endpoint:              "chat_completions",
+		endpoint:              "chat",
 		model:                 "gpt-4o",
 		configuration:         "prod",
 		started:               start,
@@ -299,7 +299,7 @@ func TestEmitTrace_OpenAIProviderAttrs(t *testing.T) {
 	}
 	r.emitTrace(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Endpoint:   "chat",
 		Model:      "gpt-4o",
 		StatusCode: 200,
 		DurationMs: 50,

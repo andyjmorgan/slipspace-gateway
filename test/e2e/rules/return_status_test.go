@@ -18,13 +18,14 @@ import (
 const returnStatusPolicy = `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], backend: openai }
     rule_names:
       - rate-limit-openai
-    resilience_name: high-availability
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
@@ -44,15 +45,6 @@ rules:
         bodyType: json
         body: '{"error":"rate_limited","retry_after":60}'
     behavior: exit
-
-resilience_policies:
-  - name: high-availability
-    mode: failover
-    timeout_seconds: 30
-    targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
 `
 
 // TestReturnStatusCode_E2E proves the full synthetic-response path
@@ -104,7 +96,7 @@ func TestReturnStatusCode_E2E(t *testing.T) {
 	if reqEv.StatusCode != 429 {
 		t.Errorf("gateway.request.status_code = %d, want 429 (synthetic)", reqEv.StatusCode)
 	}
-	if reqEv.Provider != "openai" || reqEv.Endpoint != "chat_completions" {
+	if reqEv.Provider != "openai" || reqEv.Endpoint != "chat" {
 		t.Errorf("gateway.request labels: provider=%q endpoint=%q", reqEv.Provider, reqEv.Endpoint)
 	}
 	if reqEv.Model != "gpt-4o-mini" {

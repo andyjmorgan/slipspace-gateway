@@ -46,7 +46,7 @@ func TestStreaming_SSEFraming_PreservesChunkBoundaries(t *testing.T) {
 	})
 
 	stream := h.PostStream("/v1/chat/completions",
-		map[string]any{"model": "x", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
+		map[string]any{"model": "gpt-4o", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
 		nil)
 	chunks := stream.CollectAll(5 * time.Second)
 	if len(chunks) != 5 {
@@ -81,7 +81,7 @@ func TestStreaming_SlowUpstream_ChunksArriveAsTheyAreEmitted(t *testing.T) {
 
 	start := time.Now()
 	stream := h.PostStream("/v1/chat/completions",
-		map[string]any{"model": "x", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
+		map[string]any{"model": "gpt-4o", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
 		nil)
 	defer func() { _ = stream.Close() }()
 
@@ -132,7 +132,7 @@ func TestStreaming_ClientDisconnect_GatewayCleansUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	body := strings.NewReader(`{"model":"x","stream":true,"messages":[{"role":"user","content":"."}]}`)
+	body := strings.NewReader(`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"."}]}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.GatewayURL+"/v1/chat/completions", body)
 	if err != nil {
 		t.Fatalf("new request: %v", err)

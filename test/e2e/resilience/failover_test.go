@@ -16,12 +16,13 @@ import (
 const failoverPolicy = `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
-    rule_names:
-      - enable-failover
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], group: cross-provider-failover }
+      - { protocol: messages, models: ["claude-*"], backend: anthropic }
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
@@ -29,27 +30,13 @@ api_keys:
     configuration: dev
     enabled: true
 
-rules:
-  - name: enable-failover
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: useResiliencePolicy
-        policyName: cross-provider-failover
-
-resilience_policies:
-  - name: cross-provider-failover
+groups:
+  cross-provider-failover:
     mode: failover
     failure_status_codes: [503]
     targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
-      - name: openai-backup
-        provider: openai
-        order: 2
+      - { backend: openai }
+      - { backend: anthropic }
 `
 
 // TestFailover_PrimaryReturns503_BackupServes200 — the headline

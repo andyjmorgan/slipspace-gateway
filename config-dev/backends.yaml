@@ -1,0 +1,108 @@
+# v2 model: backends are connections (base_url + per-protocol auth). They carry
+# NO credentials — the configuration brings those. Routing is config data
+# (bindings on the configuration), so there is no route table here.
+#
+# In local dev every backend points at the mock LLM; the per-protocol paths and
+# auth conventions mirror the real upstreams so the admin console + selection
+# behave as they do in production.
+
+backends:
+  openai:
+    base_url: http://mockllm:5555
+    protocols:
+      chat:
+        path: /v1/chat/completions
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+      responses:
+        path: /v1/responses
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
+      models:
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+        paths:
+          - match: /v1/models
+            methods: [GET]
+
+  anthropic:
+    base_url: http://mockllm:5555
+    required_headers:
+      anthropic-version: "2023-06-01"
+    protocols:
+      messages:
+        path: /v1/messages
+        auth:
+          header: x-api-key
+          format: "{key}"
+      chat:
+        path: /v1/chat/completions
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
+      messages_batches:
+        auth:
+          header: x-api-key
+          format: "{key}"
+        paths:
+          - match: /v1/messages/batches
+            methods: [POST, GET]
+          - match: "/v1/messages/batches/{id}"
+            methods: [GET, DELETE]
+          - match: "/v1/messages/batches/{id}/results"
+            methods: [GET]
+
+  gemini:
+    base_url: http://mockllm:5555
+    protocols:
+      generate_content:
+        path: "/v1beta/models/{model}:{op}"
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
+      chat:
+        path: /v1beta/openai/chat/completions
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
+      models:
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
+        paths:
+          - match: /v1beta/models
+            methods: [GET]
+
+  gpt-oss:
+    base_url: http://mockllm:5555
+    protocols:
+      chat:
+        path: /v1/chat/completions
+      responses:
+        path: /v1/responses
+      messages:
+        path: /v1/messages
+
+  qwen36:
+    base_url: http://mockllm:5555
+    protocols:
+      chat:
+        path: /v1/chat/completions
+      responses:
+        path: /v1/responses
+      messages:
+        path: /v1/messages
+
+  qwen-ollama:
+    base_url: http://mockllm:5555
+    protocols:
+      chat:
+        path: /v1/chat/completions
+      messages:
+        path: /v1/messages

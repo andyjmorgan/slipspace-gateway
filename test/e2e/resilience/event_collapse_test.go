@@ -61,8 +61,8 @@ func TestEventCollapse_MultiAttemptFailover_OneEventWithAttempts(t *testing.T) {
 		t.Fatalf("Attempts len = %d; want 2 (primary 503 → backup 200)", got)
 	}
 
-	if ev.Attempts[0].Target != "openai-primary" {
-		t.Errorf("Attempts[0].Target = %q; want openai-primary", ev.Attempts[0].Target)
+	if ev.Attempts[0].Target != "openai" {
+		t.Errorf("Attempts[0].Target = %q; want openai", ev.Attempts[0].Target)
 	}
 	if ev.Attempts[0].StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("Attempts[0].StatusCode = %d; want 503", ev.Attempts[0].StatusCode)
@@ -71,8 +71,8 @@ func TestEventCollapse_MultiAttemptFailover_OneEventWithAttempts(t *testing.T) {
 		t.Errorf("Attempts[0].Outcome = %q; want failure_status", ev.Attempts[0].Outcome)
 	}
 
-	if ev.Attempts[1].Target != "openai-backup" {
-		t.Errorf("Attempts[1].Target = %q; want openai-backup", ev.Attempts[1].Target)
+	if ev.Attempts[1].Target != "anthropic" {
+		t.Errorf("Attempts[1].Target = %q; want anthropic", ev.Attempts[1].Target)
 	}
 	if ev.Attempts[1].StatusCode != http.StatusOK {
 		t.Errorf("Attempts[1].StatusCode = %d; want 200", ev.Attempts[1].StatusCode)

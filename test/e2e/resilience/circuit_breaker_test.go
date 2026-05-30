@@ -16,12 +16,12 @@ import (
 const cbPolicyYAML = `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
-    rule_names:
-      - enable-cb
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], group: cb-failover }
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
@@ -29,18 +29,8 @@ api_keys:
     configuration: dev
     enabled: true
 
-rules:
-  - name: enable-cb
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: useResiliencePolicy
-        policyName: cb-failover
-
-resilience_policies:
-  - name: cb-failover
+groups:
+  cb-failover:
     mode: failover
     failure_status_codes: [503]
     circuit_breaker:
@@ -51,12 +41,8 @@ resilience_policies:
       half_open_success_threshold: 2
       minimum_throughput: 2
     targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
-      - name: openai-backup
-        provider: openai
-        order: 2
+      - { backend: openai }
+      - { backend: anthropic }
 `
 
 // TestCircuitBreaker_TripsAndSkipsAfterFailures — fire 2 requests

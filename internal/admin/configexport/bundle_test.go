@@ -105,19 +105,6 @@ func TestLoadRedacted_MalformedYAMLSurfacesAsError(t *testing.T) {
 	}
 }
 
-func TestLoadRedacted_UnexpectedFileRejected(t *testing.T) {
-	// config.ListConfigFiles refuses unknown filenames; the bundler must
-	// surface that error rather than silently skip the file.
-	dir := writeConfigDir(t, map[string]string{
-		"policy.yaml":     samplePolicyYAML,
-		"unexpected.yaml": "ignored: true\n",
-	})
-	_, err := configexport.LoadRedacted(dir)
-	if err == nil {
-		t.Fatal("expected error for unexpected file, got nil")
-	}
-}
-
 func TestWriteZip_ContainsManifestAndAllFiles(t *testing.T) {
 	files := []configexport.File{
 		{Name: "policy.yaml", Content: "policy: redacted\n"},

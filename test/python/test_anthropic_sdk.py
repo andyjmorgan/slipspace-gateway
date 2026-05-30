@@ -32,7 +32,7 @@ def _client(
     via `headers`.
     """
     return anthropic.Anthropic(
-        base_url=f"{gateway_url}/anthropic",
+        base_url=gateway_url,
         api_key=api_key,
         default_headers=headers,
         max_retries=0,

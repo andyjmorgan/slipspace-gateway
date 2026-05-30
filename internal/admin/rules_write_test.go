@@ -16,7 +16,7 @@ import (
 )
 
 // writableFixture loads the config-dev tree into a fresh tmp dir so
-// each test gets its own writable policy.yaml + the providers.yaml +
+// each test gets its own writable policy.yaml + the backends.yaml +
 // admin.yaml siblings the loader needs. Returns the dir and the
 // loaded Store, ready for the mutation pipeline to run end-to-end.
 func writableFixture(t *testing.T) (string, *config.Store) {
@@ -27,7 +27,7 @@ func writableFixture(t *testing.T) (string, *config.Store) {
 		t.Fatalf("abs: %v", err)
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"policy.yaml", "providers.yaml", "admin.yaml"} {
+	for _, name := range []string{"policy.yaml", "backends.yaml", "admin.yaml"} {
 		body, err := os.ReadFile(filepath.Join(src, name)) //nolint:gosec // path is the test fixture under config-dev
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -36,7 +36,7 @@ func writableFixture(t *testing.T) (string, *config.Store) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	resolved, err := config.Load(context.Background(), dir)
+	resolved, err := config.LoadV2(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestRulesCreate_HappyPath(t *testing.T) {
 	}
 	// Disk persistence: re-load the dir and confirm the rule survives
 	// a fresh decode.
-	reloaded, err := config.Load(context.Background(), dir)
+	reloaded, err := config.LoadV2(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("re-Load: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestRulesDelete_Referenced_Returns409WithUsedBy(t *testing.T) {
 		t.Errorf("UsedBy=%v, want to include dev", body.UsedBy)
 	}
 	// Rule must still be present on disk after the rejected delete.
-	reloaded, err := config.Load(context.Background(), dir)
+	reloaded, err := config.LoadV2(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("re-Load: %v", err)
 	}
@@ -287,8 +287,8 @@ func TestRulesDelete_Missing_Returns404(t *testing.T) {
 }
 
 // TestRulesCreate_ValidationFailure_Returns422 covers the post-mutation
-// Validate path: a useResiliencePolicy action referencing an unknown
-// policy fails validateLibraries' cross-block check.
+// Validate path: a rule with no condition fails the rule contract's
+// Validate (ErrNoCondition), which RevalidateAndIndex surfaces as 422.
 func TestRulesCreate_ValidationFailure_Returns422(t *testing.T) {
 	t.Parallel()
 	dir, store := writableFixture(t)
@@ -296,9 +296,8 @@ func TestRulesCreate_ValidationFailure_Returns422(t *testing.T) {
 
 	body := []byte(`{
 		"name": "validation-broken",
-		"condition": {"type": "provider", "operator": "Equals", "expectedProvider": "openai"},
 		"actions": [
-			{"type": "useResiliencePolicy", "policy_name": "no-such-policy"}
+			{"type": "setHeader", "headerName": "X-Broken", "headerAction": "Set", "headerValue": "x"}
 		],
 		"behavior": "continue"
 	}`)

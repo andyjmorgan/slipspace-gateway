@@ -16,12 +16,12 @@ import (
 const loadBalanceYAML = `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
-    rule_names:
-      - enable-load-balance
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], group: weighted-pool }
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
@@ -29,27 +29,13 @@ api_keys:
     configuration: dev
     enabled: true
 
-rules:
-  - name: enable-load-balance
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: useResiliencePolicy
-        policyName: weighted-pool
-
-resilience_policies:
-  - name: weighted-pool
+groups:
+  weighted-pool:
     mode: load_balance
     failure_status_codes: [503]
     targets:
-      - name: openai-half-1
-        provider: openai
-        weight: 50
-      - name: openai-half-2
-        provider: openai
-        weight: 50
+      - { backend: openai, weight: 50 }
+      - { backend: anthropic, weight: 50 }
 `
 
 // TestLoadBalance_FirstAttemptCommits — a healthy target gets
@@ -124,12 +110,12 @@ func TestLoadBalance_StrictWeights_NoReRoll(t *testing.T) {
 	strictYAML := `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
-    rule_names:
-      - enable-strict-lb
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], group: strict-pool }
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
@@ -137,28 +123,14 @@ api_keys:
     configuration: dev
     enabled: true
 
-rules:
-  - name: enable-strict-lb
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: useResiliencePolicy
-        policyName: strict-pool
-
-resilience_policies:
-  - name: strict-pool
+groups:
+  strict-pool:
     mode: load_balance
     strict_weights: true
     failure_status_codes: [503]
     targets:
-      - name: a
-        provider: openai
-        weight: 50
-      - name: b
-        provider: openai
-        weight: 50
+      - { backend: openai, weight: 50 }
+      - { backend: anthropic, weight: 50 }
 `
 	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: strictYAML})
 	sess := h.NewSession(t)

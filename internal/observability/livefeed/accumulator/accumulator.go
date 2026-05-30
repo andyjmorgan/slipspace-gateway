@@ -41,6 +41,7 @@ type accumulatorFn func(raw []byte) Result
 // switch on provider; today, names are stable per protocol.
 var registry = map[string]accumulatorFn{
 	"chat_completions": accumulateOpenAIChat,
+	"chat":             accumulateOpenAIChat,
 	"messages":         accumulateAnthropicMessages,
 	"generate_content": accumulateGeminiContent,
 	"responses":        accumulateOpenAIResponses,

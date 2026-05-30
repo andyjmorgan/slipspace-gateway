@@ -9,7 +9,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
-func fixtureConfig() *config.ResolvedConfig {
+func fixtureConfig() *config.ResolvedConfigV2 {
 	enabled := contractsconfig.APIKey{ //nolint:gosec // test fixture, not a credential
 		Secret:        "sk_live_enabled",
 		Name:          "enabled-key",
@@ -28,22 +28,22 @@ func fixtureConfig() *config.ResolvedConfig {
 		Configuration: "ghost",
 		Enabled:       true,
 	}
-	openaiCfg := contractsconfig.Configuration{
-		UpstreamCredentials: map[string]string{
+	openaiCfg := contractsconfig.ConfigurationV2{
+		Credentials: map[string]string{
 			"openai":    "sk-openai-upstream",
 			"anthropic": "ak-anthropic-upstream",
 			"gemini":    "AIza-gemini-upstream",
 			"custom":    "custom-upstream",
 		},
 	}
-	restricted := contractsconfig.Configuration{
-		UpstreamCredentials: map[string]string{
+	restricted := contractsconfig.ConfigurationV2{
+		Credentials: map[string]string{
 			"openai": "sk-openai-restricted",
 		},
 	}
 
-	cfg := &config.ResolvedConfig{
-		Configurations: contractsconfig.ConfigurationsConfig{
+	cfg := &config.ResolvedConfigV2{
+		Configurations: map[string]contractsconfig.ConfigurationV2{
 			"prod":       openaiCfg,
 			"restricted": restricted,
 		},
@@ -54,7 +54,7 @@ func fixtureConfig() *config.ResolvedConfig {
 		disabled.Secret: &disabled,
 		orphan.Secret:   &orphan,
 	}
-	cfg.ConfigurationIndex = map[string]*contractsconfig.Configuration{
+	cfg.ConfigurationIndex = map[string]*contractsconfig.ConfigurationV2{
 		"prod":       &openaiCfg,
 		"restricted": &restricted,
 	}
@@ -66,7 +66,7 @@ func TestResolver_Managed_OpenAI(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -81,8 +81,8 @@ func TestResolver_Managed_OpenAI(t *testing.T) {
 	// job. The resolver propagates the Configuration pointer so the
 	// destination builder can look up the credential. DropHeaders
 	// is reduced to the policy header only.
-	if cred := ar.Configuration.UpstreamCredentials["openai"]; cred != "sk-openai-upstream" { //nolint:gosec // test fixture, not a real credential
-		t.Fatalf("Configuration.UpstreamCredentials[openai] = %q want sk-openai-upstream", cred)
+	if cred := ar.Configuration.Credentials["openai"]; cred != "sk-openai-upstream" { //nolint:gosec // test fixture, not a real credential
+		t.Fatalf("Configuration.Credentials[openai] = %q want sk-openai-upstream", cred)
 	}
 	if !sliceContains(ar.DropHeaders, HeaderConfiguration) {
 		t.Fatalf("X-Sluice-Configuration should be dropped, got %v", ar.DropHeaders)
@@ -97,14 +97,14 @@ func TestResolver_Managed_Anthropic(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "anthropic", "messages")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
 	if ar.Configuration == nil {
 		t.Fatal("Configuration should be resolved")
 	}
-	if cred := ar.Configuration.UpstreamCredentials["anthropic"]; cred != "ak-anthropic-upstream" { //nolint:gosec // test fixture
+	if cred := ar.Configuration.Credentials["anthropic"]; cred != "ak-anthropic-upstream" { //nolint:gosec // test fixture
 		t.Fatalf("anthropic credential = %q want ak-anthropic-upstream", cred)
 	}
 	if !sliceContains(ar.DropHeaders, HeaderConfiguration) {
@@ -117,14 +117,14 @@ func TestResolver_Managed_Gemini(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "gemini", "generate_content")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
 	if ar.Configuration == nil {
 		t.Fatal("Configuration should be resolved")
 	}
-	if cred := ar.Configuration.UpstreamCredentials["gemini"]; cred != "AIza-gemini-upstream" { //nolint:gosec // test fixture
+	if cred := ar.Configuration.Credentials["gemini"]; cred != "AIza-gemini-upstream" { //nolint:gosec // test fixture
 		t.Fatalf("gemini credential = %q want AIza-gemini-upstream", cred)
 	}
 }
@@ -136,7 +136,7 @@ func TestResolver_Managed_Gemini(t *testing.T) {
 
 func TestResolver_Managed_MissingBearer(t *testing.T) {
 	r := NewResolver(config.NewStore(fixtureConfig()))
-	_, err := r.Resolve(http.Header{}, "openai", "chat_completions")
+	_, err := r.Resolve(http.Header{})
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("want ErrUnauthorized, got %v", err)
 	}
@@ -158,7 +158,7 @@ func TestResolver_Managed_MalformedAuthorization(t *testing.T) {
 			if v != "" {
 				h.Set(HeaderAuthorization, v)
 			}
-			_, err := r.Resolve(h, "openai", "chat_completions")
+			_, err := r.Resolve(h)
 			if !errors.Is(err, ErrUnauthorized) {
 				t.Fatalf("want ErrUnauthorized for %q, got %v", v, err)
 			}
@@ -170,7 +170,7 @@ func TestResolver_Managed_CaseInsensitiveScheme(t *testing.T) {
 	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "bearer sk_live_enabled")
-	if _, err := r.Resolve(headers, "openai", "chat_completions"); err != nil {
+	if _, err := r.Resolve(headers); err != nil {
 		t.Fatalf("lowercase scheme should be accepted, got %v", err)
 	}
 }
@@ -179,7 +179,7 @@ func TestResolver_Managed_UnknownSecret(t *testing.T) {
 	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_nope")
-	_, err := r.Resolve(headers, "openai", "chat_completions")
+	_, err := r.Resolve(headers)
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("want ErrUnauthorized, got %v", err)
 	}
@@ -189,7 +189,7 @@ func TestResolver_Managed_DisabledKey(t *testing.T) {
 	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_disabled")
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("want ErrUnauthorized, got %v", err)
 	}
@@ -202,7 +202,7 @@ func TestResolver_Managed_UnknownConfigurationOnKey(t *testing.T) {
 	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
 	headers.Set(HeaderAuthorization, "Bearer sk_live_orphan")
-	_, err := r.Resolve(headers, "openai", "chat_completions")
+	_, err := r.Resolve(headers)
 	if !errors.Is(err, ErrUnknownConfiguration) {
 		t.Fatalf("want ErrUnknownConfiguration, got %v", err)
 	}
@@ -214,7 +214,7 @@ func TestResolver_Passthrough_Happy(t *testing.T) {
 	headers.Set(HeaderConfiguration, "prod")
 	headers.Set(HeaderAuthorization, "Bearer some-byok-token")
 
-	ar, err := r.Resolve(headers, "anthropic", "messages")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -240,7 +240,7 @@ func TestResolver_Passthrough_UnknownConfiguration(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderConfiguration, "ghost")
 
-	_, err := r.Resolve(headers, "openai", "chat_completions")
+	_, err := r.Resolve(headers)
 	if !errors.Is(err, ErrUnknownConfiguration) {
 		t.Fatalf("want ErrUnknownConfiguration, got %v", err)
 	}
@@ -260,7 +260,7 @@ func TestResolver_PassthroughWinsOverBearer(t *testing.T) {
 	headers.Set(HeaderConfiguration, "prod")
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -277,7 +277,7 @@ func TestResolver_PassthroughHeaderWhitespaceTrimmed(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderConfiguration, "  prod  ")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want success, got %v", err)
 	}
@@ -292,7 +292,7 @@ func TestResolver_PassthroughEmptyHeaderFallsThroughToManaged(t *testing.T) {
 	headers.Set(HeaderConfiguration, "   ")
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want success, got %v", err)
 	}
@@ -303,13 +303,13 @@ func TestResolver_PassthroughEmptyHeaderFallsThroughToManaged(t *testing.T) {
 
 func TestResolver_NilGuards(t *testing.T) {
 	var r *Resolver
-	_, err := r.Resolve(http.Header{}, "openai", "chat_completions")
+	_, err := r.Resolve(http.Header{})
 	if !errors.Is(err, ErrUnknownConfiguration) {
 		t.Fatalf("nil resolver: want ErrUnknownConfiguration, got %v", err)
 	}
 
 	r2 := &Resolver{store: nil}
-	_, err = r2.Resolve(http.Header{}, "openai", "chat_completions")
+	_, err = r2.Resolve(http.Header{})
 	if !errors.Is(err, ErrUnknownConfiguration) {
 		t.Fatalf("nil store: want ErrUnknownConfiguration, got %v", err)
 	}
@@ -349,7 +349,7 @@ func TestResolver_Managed_DiscoversViaXAPIKey(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "anthropic", "messages")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want success, got %v", err)
 	}
@@ -369,7 +369,7 @@ func TestResolver_Managed_DiscoversViaXGoogAPIKey(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(headerGeminiAPIKey, "sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "gemini", "generate_content")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want success, got %v", err)
 	}
@@ -393,7 +393,7 @@ func TestResolver_Managed_AuthorizationWinsOverNativeHeaders(t *testing.T) {
 	headers.Set(headerAnthropicAPIKey, "sk_live_orphan") // would route to a different (broken) configuration
 	headers.Set(headerGeminiAPIKey, "sk_live_disabled")  // would 401
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want success via Authorization, got %v", err)
 	}
@@ -415,7 +415,7 @@ func TestResolver_Managed_XAPIKeyWinsOverXGoogAPIKey(t *testing.T) {
 	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
 	headers.Set(headerGeminiAPIKey, "sk_live_disabled") // would 401 if it won
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want success via x-api-key, got %v", err)
 	}
@@ -434,7 +434,7 @@ func TestResolver_Managed_MalformedAuthorizationFallsThroughToNative(t *testing.
 	headers.Set(HeaderAuthorization, "Token bogus")
 	headers.Set(headerAnthropicAPIKey, "sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "anthropic", "messages")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want success via x-api-key fallthrough, got %v", err)
 	}
@@ -453,7 +453,7 @@ func TestResolver_Managed_NativeHeaderUnknownSecret(t *testing.T) {
 	headers.Set(headerAnthropicAPIKey, "sk-anthropic-customer-byok") // not a Sluice secret
 	headers.Set(headerGeminiAPIKey, "sk_live_enabled")               // ignored, x-api-key short-circuits
 
-	_, err := r.Resolve(headers, "anthropic", "messages")
+	_, err := r.Resolve(headers)
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("want ErrUnauthorized (no x-api-key→x-goog-api-key fallthrough), got %v", err)
 	}
@@ -471,7 +471,7 @@ func TestResolver_Passthrough_NativeHeaderIgnored(t *testing.T) {
 	headers.Set(HeaderConfiguration, "prod")
 	headers.Set(headerAnthropicAPIKey, "sk_live_enabled") // would resolve in managed mode
 
-	ar, err := r.Resolve(headers, "anthropic", "messages")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want passthrough success, got %v", err)
 	}
@@ -498,7 +498,7 @@ func TestResolver_IdentityPassthrough_Success(t *testing.T) {
 	headers.Set(HeaderIdentity, "sk_live_enabled")
 	headers.Set(HeaderAuthorization, "Bearer client-byok-anthropic-token")
 
-	ar, err := r.Resolve(headers, "anthropic", "messages")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -527,7 +527,7 @@ func TestResolver_IdentityPassthrough_UnknownKey(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_does_not_exist")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("unknown identity must 401, got %v", err)
 	}
@@ -549,7 +549,7 @@ func TestResolver_IdentityPassthrough_DisabledKey(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_disabled")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("disabled key must 401, got %v", err)
 	}
@@ -563,7 +563,7 @@ func TestResolver_IdentityPassthrough_OrphanConfiguration(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "sk_live_orphan")
 
-	_, err := r.Resolve(headers, "openai", "chat_completions")
+	_, err := r.Resolve(headers)
 	if !errors.Is(err, ErrUnknownConfiguration) {
 		t.Fatalf("orphan key must surface ErrUnknownConfiguration, got %v", err)
 	}
@@ -574,7 +574,7 @@ func TestResolver_IdentityPassthrough_HeaderTrimmed(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(HeaderIdentity, "  sk_live_enabled  ")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("whitespace-padded identity must trim and succeed, got %v", err)
 	}
@@ -589,7 +589,7 @@ func TestResolver_IdentityPassthrough_EmptyHeaderFallsThroughToManaged(t *testin
 	headers.Set(HeaderIdentity, "   ")
 	headers.Set(HeaderAuthorization, "Bearer sk_live_enabled")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("blank identity must fall through to managed, got %v", err)
 	}
@@ -609,7 +609,7 @@ func TestResolver_IdentityWinsOverLegacyConfiguration(t *testing.T) {
 	headers.Set(HeaderIdentity, "sk_live_enabled")
 	headers.Set(HeaderConfiguration, "restricted")
 
-	ar, err := r.Resolve(headers, "openai", "chat_completions")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("want success via identity, got %v", err)
 	}
@@ -635,7 +635,7 @@ func TestResolver_IdentityPassthrough_NativeHeaderIgnored(t *testing.T) {
 	headers.Set(HeaderIdentity, "sk_live_enabled")
 	headers.Set(headerAnthropicAPIKey, "sk_live_disabled") // would 401 if it were re-interpreted
 
-	ar, err := r.Resolve(headers, "anthropic", "messages")
+	ar, err := r.Resolve(headers)
 	if err != nil {
 		t.Fatalf("identity must short-circuit before native-header discovery, got %v", err)
 	}

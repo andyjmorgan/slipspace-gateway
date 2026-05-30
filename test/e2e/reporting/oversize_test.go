@@ -34,7 +34,7 @@ func TestReporting_WebhookDefaultBodyCapStripsOversize(t *testing.T) {
 	// webhook default with margin.
 	huge := strings.Repeat("a", 3*512*1024)
 	resp := h.PostJSON("/v1/chat/completions",
-		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": huge}}},
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": huge}}},
 		http.Header{"X-Sluice-Correlation-Id": []string{"oversize-webhook"}})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)

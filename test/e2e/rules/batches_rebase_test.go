@@ -19,8 +19,10 @@ const batchID = "msgbatch_01YPjqLcfEGCQPhw7jrj8awq"
 const batchesRebasePolicy = `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       anthropic: sk-ant-dev-mock
+    passthrough_bindings:
+      - { family: messages_batches, backend: anthropic }
     rule_names:
       - rebase-batches-results-url
     tags:
@@ -43,7 +45,7 @@ rules:
           expectedProvider: anthropic
         - type: endpoint
           operator: Equals
-          expectedEndpoint: messages_batches_retrieve
+          expectedEndpoint: messages_batches
     actions:
       - type: rewriteField
         target: response.body.results_url
@@ -80,7 +82,7 @@ func TestRewrite_Batches_ResultsURLRebase(t *testing.T) {
 		Body:   string(fixture),
 	})
 
-	resp := h.Get("/anthropic/v1/messages/batches/"+batchID, nil)
+	resp := h.Get("/v1/messages/batches/"+batchID, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d body=%s", resp.StatusCode, resp.Body)
 	}

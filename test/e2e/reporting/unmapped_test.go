@@ -23,11 +23,11 @@ func TestMetrics_UnmappedFields_RequestFieldEmitted(t *testing.T) {
 	h.StageMockResponse(harness.CannedResponse{
 		Method: http.MethodPost,
 		Path:   "/v1/messages",
-		Body:   `{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`,
+		Body:   `{"id":"msg_1","type":"message","role":"assistant","model":"claude-3","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`,
 	})
 
 	const field = "future_probe_field"
-	resp := h.PostJSON("/anthropic/v1/messages",
+	resp := h.PostJSON("/v1/messages",
 		map[string]any{
 			"model":      "claude-opus-4-7",
 			"max_tokens": 10,

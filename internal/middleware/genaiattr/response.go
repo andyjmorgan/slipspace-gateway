@@ -42,6 +42,7 @@ type responseExtractorFn func(frames [][]byte) ResponseAttrs
 
 var responseRegistry = map[string]responseExtractorFn{
 	"chat_completions": extractOpenAIChatResponse,
+	"chat":             extractOpenAIChatResponse,
 	"responses":        extractOpenAIResponsesResponse,
 	"messages":         extractAnthropicResponse,
 	"generate_content": extractGeminiResponse,

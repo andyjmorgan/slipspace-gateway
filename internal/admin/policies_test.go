@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
@@ -39,7 +40,7 @@ func TestPoliciesHandler_NilConfigReturns503(t *testing.T) {
 
 func TestPoliciesHandler_EmptyConfig(t *testing.T) {
 	t.Parallel()
-	resolved := &config.ResolvedConfig{}
+	resolved := &config.ResolvedConfigV2{}
 	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil))
@@ -58,16 +59,15 @@ func TestPoliciesHandler_EmptyConfig(t *testing.T) {
 
 func TestPoliciesHandler_ProjectsTargetsAndCircuitState(t *testing.T) {
 	t.Parallel()
-	pol := contractsres.ResilienceConfig{
-		Name:               "ha",
+	grp := contractsconfig.Group{
 		Mode:               contractsres.ModeFailover,
 		FailureStatusCodes: []int{503},
-		Targets: []contractsres.ResilienceTarget{
-			{Name: "primary", Provider: "openai", Order: 1},
-			{Name: "backup", Provider: "anthropic", Order: 2},
+		Targets: []contractsconfig.Target{
+			{Backend: "primary"},
+			{Backend: "backup"},
 		},
 	}
-	resolved := &config.ResolvedConfig{ResiliencePolicies: []contractsres.ResilienceConfig{pol}}
+	resolved := &config.ResolvedConfigV2{Groups: contractsconfig.GroupsConfig{"ha": grp}}
 	cb := stubBreakerStates{states: map[string]string{
 		"ha|primary": "open",
 		// "ha|backup" intentionally absent → "closed"
@@ -104,14 +104,13 @@ func TestPoliciesHandler_ProjectsTargetsAndCircuitState(t *testing.T) {
 
 func TestPoliciesHandler_NilBreakerSource_AllUnknown(t *testing.T) {
 	t.Parallel()
-	pol := contractsres.ResilienceConfig{
-		Name: "ha",
+	grp := contractsconfig.Group{
 		Mode: contractsres.ModeFailover,
-		Targets: []contractsres.ResilienceTarget{
-			{Name: "primary", Provider: "openai", Order: 1},
+		Targets: []contractsconfig.Target{
+			{Backend: "primary"},
 		},
 	}
-	resolved := &config.ResolvedConfig{ResiliencePolicies: []contractsres.ResilienceConfig{pol}}
+	resolved := &config.ResolvedConfigV2{Groups: contractsconfig.GroupsConfig{"ha": grp}}
 
 	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()
@@ -128,8 +127,7 @@ func TestPoliciesHandler_NilBreakerSource_AllUnknown(t *testing.T) {
 
 func TestPoliciesHandler_PolicyCBEnabledFlag(t *testing.T) {
 	t.Parallel()
-	pol := contractsres.ResilienceConfig{
-		Name: "ha",
+	grp := contractsconfig.Group{
 		Mode: contractsres.ModeFailover,
 		CircuitBreaker: &contractsres.CircuitBreakerConfig{
 			Enabled:                  true,
@@ -138,11 +136,11 @@ func TestPoliciesHandler_PolicyCBEnabledFlag(t *testing.T) {
 			CooldownSeconds:          30,
 			HalfOpenSuccessThreshold: 2,
 		},
-		Targets: []contractsres.ResilienceTarget{
-			{Name: "primary", Provider: "openai", Order: 1},
+		Targets: []contractsconfig.Target{
+			{Backend: "primary"},
 		},
 	}
-	resolved := &config.ResolvedConfig{ResiliencePolicies: []contractsres.ResilienceConfig{pol}}
+	resolved := &config.ResolvedConfigV2{Groups: contractsconfig.GroupsConfig{"ha": grp}}
 
 	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()

@@ -33,7 +33,7 @@ func TestAnthropic_ChatCompletions_OpenAICompat_NonStreaming(t *testing.T) {
 		"model":    "claude-3-haiku-20240307",
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
 	}
-	resp := h.PostJSON("/anthropic/v1/chat/completions", body, nil)
+	resp := h.PostJSON("/v1/chat/completions", body, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
 	}
@@ -78,7 +78,7 @@ func TestAnthropic_ChatCompletions_OpenAICompat_Streaming(t *testing.T) {
 		"stream":   true,
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
 	}
-	stream := h.PostStream("/anthropic/v1/chat/completions", body, nil)
+	stream := h.PostStream("/v1/chat/completions", body, nil)
 	chunks := stream.CollectAll(5 * time.Second)
 	if stream.Status() != http.StatusOK {
 		t.Fatalf("status=%d", stream.Status())
@@ -141,7 +141,7 @@ func TestGemini_ChatCompletions_OpenAICompat_NonStreaming(t *testing.T) {
 		"model":    "gemini-2.0-flash-001",
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
 	}
-	resp := h.PostJSON("/gemini/v1beta/openai/chat/completions", body, nil)
+	resp := h.PostJSON("/v1/chat/completions", body, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
 	}
@@ -186,7 +186,7 @@ func TestGemini_ChatCompletions_OpenAICompat_Streaming(t *testing.T) {
 		"stream":   true,
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
 	}
-	stream := h.PostStream("/gemini/v1beta/openai/chat/completions", body, nil)
+	stream := h.PostStream("/v1/chat/completions", body, nil)
 	chunks := stream.CollectAll(5 * time.Second)
 	if stream.Status() != http.StatusOK {
 		t.Fatalf("status=%d", stream.Status())

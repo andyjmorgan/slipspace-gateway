@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
@@ -16,12 +17,12 @@ import (
 const failoverPolicyYAML = `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
-    rule_names:
-      - enable-failover
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], group: cross-provider-failover }
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
@@ -29,27 +30,13 @@ api_keys:
     configuration: dev
     enabled: true
 
-rules:
-  - name: enable-failover
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: useResiliencePolicy
-        policyName: cross-provider-failover
-
-resilience_policies:
-  - name: cross-provider-failover
+groups:
+  cross-provider-failover:
     mode: failover
     failure_status_codes: [503]
     targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
-      - name: openai-backup
-        provider: openai
-        order: 2
+      - { backend: openai }
+      - { backend: anthropic }
 `
 
 // TestAdmin_Policies_ReturnsConfiguredPolicy hits /admin/api/v1/policies
@@ -131,33 +118,36 @@ func TestAdmin_MessagesRecent_CarriesAttemptsForMultiAttempt(t *testing.T) {
 		t.Fatalf("client status = %d; want 200", resp.StatusCode)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, h.AdminURL+"/api/v1/messages/recent", nil)
-	req.SetBasicAuth(adminc.Username, h.AdminPassword)
-	r, err := h.HTTP.Do(req)
-	if err != nil {
-		t.Fatalf("messages/recent: %v", err)
-	}
-	t.Cleanup(func() { _ = r.Body.Close() })
-
-	var got adminc.MessagesRecentResponse
-	if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-
-	if len(got.Entries) == 0 {
-		t.Fatalf("entries = 0; expected at least 1 from the failover run")
-	}
-
-	// Find the entry for our chat request (most recent should be it).
+	// The reporter appends the live-feed entry from OnComplete on the server
+	// goroutine after the response is written, so poll for it.
 	var entry adminc.MessageEntry
-	for i := len(got.Entries) - 1; i >= 0; i-- {
-		if got.Entries[i].Endpoint == "chat_completions" {
-			entry = got.Entries[i]
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		req, _ := http.NewRequest(http.MethodGet, h.AdminURL+"/api/v1/messages/recent", nil)
+		req.SetBasicAuth(adminc.Username, h.AdminPassword)
+		r, err := h.HTTP.Do(req)
+		if err != nil {
+			t.Fatalf("messages/recent: %v", err)
+		}
+		var got adminc.MessagesRecentResponse
+		if derr := json.NewDecoder(r.Body).Decode(&got); derr != nil {
+			_ = r.Body.Close()
+			t.Fatalf("decode: %v", derr)
+		}
+		_ = r.Body.Close()
+		for i := len(got.Entries) - 1; i >= 0; i-- {
+			if got.Entries[i].Endpoint == "chat" {
+				entry = got.Entries[i]
+				break
+			}
+		}
+		if entry.EventID != "" {
 			break
 		}
+		time.Sleep(200 * time.Millisecond)
 	}
 	if entry.EventID == "" {
-		t.Fatalf("no chat_completions entry found among %d", len(got.Entries))
+		t.Fatal("no chat entry appeared in messages/recent from the failover run")
 	}
 
 	if entry.PolicyRef != "cross-provider-failover" {
@@ -166,10 +156,10 @@ func TestAdmin_MessagesRecent_CarriesAttemptsForMultiAttempt(t *testing.T) {
 	if len(entry.Attempts) != 2 {
 		t.Fatalf("Attempts len = %d; want 2", len(entry.Attempts))
 	}
-	if entry.Attempts[0].Target != "openai-primary" || entry.Attempts[0].Outcome != "failure_status" {
-		t.Errorf("attempt[0] = %+v; want primary/failure_status", entry.Attempts[0])
+	if entry.Attempts[0].Target != "openai" || entry.Attempts[0].Outcome != "failure_status" {
+		t.Errorf("attempt[0] = %+v; want openai/failure_status", entry.Attempts[0])
 	}
-	if entry.Attempts[1].Target != "openai-backup" || entry.Attempts[1].Outcome != "success" {
-		t.Errorf("attempt[1] = %+v; want backup/success", entry.Attempts[1])
+	if entry.Attempts[1].Target != "anthropic" || entry.Attempts[1].Outcome != "success" {
+		t.Errorf("attempt[1] = %+v; want anthropic/success", entry.Attempts[1])
 	}
 }

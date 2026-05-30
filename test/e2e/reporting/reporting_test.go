@@ -24,7 +24,7 @@ func TestReporting_RequestEvent_Inline(t *testing.T) {
 
 	const correlationID = "report-test-correlation"
 	resp := h.PostJSON("/v1/chat/completions",
-		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}},
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}},
 		http.Header{"X-Sluice-Correlation-Id": []string{correlationID}})
 
 	if resp.StatusCode != http.StatusOK {
@@ -49,13 +49,13 @@ func TestReporting_RequestEvent_Inline(t *testing.T) {
 	if ev.Provider != "openai" {
 		t.Errorf("Provider=%q want openai", ev.Provider)
 	}
-	if ev.Endpoint != "chat_completions" {
-		t.Errorf("Endpoint=%q want chat_completions", ev.Endpoint)
+	if ev.Endpoint != "chat" {
+		t.Errorf("Endpoint=%q want chat", ev.Endpoint)
 	}
 	if ev.Method != http.MethodPost {
 		t.Errorf("Method=%q want POST", ev.Method)
 	}
-	if ev.Model != "gpt" {
+	if ev.Model != "gpt-4o" {
 		t.Errorf("Model=%q want gpt", ev.Model)
 	}
 	if ev.StatusCode != http.StatusOK {
@@ -120,7 +120,7 @@ func TestReporting_Disabled_NoEvent(t *testing.T) {
 	})
 
 	resp := h.PostJSON("/v1/chat/completions",
-		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
 	}
@@ -147,7 +147,7 @@ func TestReporting_Streaming_EventEmitted(t *testing.T) {
 	})
 
 	stream := h.PostStream("/v1/chat/completions",
-		map[string]any{"model": "gpt", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
+		map[string]any{"model": "gpt-4o", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
 		nil)
 	_ = stream.CollectAll(5 * time.Second)
 
@@ -159,7 +159,7 @@ func TestReporting_Streaming_EventEmitted(t *testing.T) {
 	if !ev.Streaming {
 		t.Errorf("Streaming=false, want true for SSE response")
 	}
-	if ev.Provider != "openai" || ev.Endpoint != "chat_completions" {
+	if ev.Provider != "openai" || ev.Endpoint != "chat" {
 		t.Errorf("provider/endpoint=%q/%q", ev.Provider, ev.Endpoint)
 	}
 }

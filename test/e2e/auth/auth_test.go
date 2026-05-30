@@ -29,7 +29,7 @@ func TestAuth_Matrix(t *testing.T) {
 	})
 
 	body := map[string]any{
-		"model":    "gpt",
+		"model":    "gpt-4o",
 		"messages": []map[string]string{{"role": "user", "content": "."}},
 	}
 
@@ -142,8 +142,8 @@ func TestAuth_Passthrough_PreservesXAPIKey(t *testing.T) {
 	})
 
 	const customerKey = "sk-ant-customer-upstream-byok"
-	body := map[string]any{"model": "x", "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "."}}}
-	resp := h.PostJSON("/anthropic/v1/messages", body, http.Header{
+	body := map[string]any{"model": "claude-3", "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "."}}}
+	resp := h.PostJSON("/v1/messages", body, http.Header{
 		"X-Api-Key":              []string{customerKey},
 		"X-Sluice-Configuration": []string{"dev"},
 	})
@@ -170,7 +170,7 @@ func TestAuth_UnknownConfig(t *testing.T) {
 	body := map[string]any{
 		"contents": []map[string]any{{"role": "user", "parts": []map[string]string{{"text": "hi"}}}},
 	}
-	resp := h.PostJSON("/gemini/v1beta/models/gemini-1.5-flash:generateContent", body,
+	resp := h.PostJSON("/v1beta/models/gemini-1.5-flash:generateContent", body,
 		http.Header{
 			"Authorization":          []string{"Bearer customer-token"},
 			"X-Sluice-Configuration": []string{"does-not-exist"},

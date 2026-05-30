@@ -119,18 +119,25 @@ func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, meters *observabili
 	if breakers == nil {
 		breakers = noopBreakerStore{}
 	}
-	if lookup == nil {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		state := rules.MutableStateFromContext(ctx)
-		if state == nil || state.PolicyRef == "" {
+		if state == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		pol := lookup(state.PolicyRef)
+		// v2 path: the selection middleware synthesises the per-request
+		// policy from the chosen binding and stashes it on context. v1/test
+		// path: resolve it by name from the PolicyLookup library.
+		pol := ResilienceConfigFromContext(ctx)
+		if pol == nil {
+			if lookup == nil || state.PolicyRef == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			pol = lookup(state.PolicyRef)
+		}
 		if pol == nil || len(pol.Targets) == 0 {
 			next.ServeHTTP(w, r)
 			return

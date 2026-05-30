@@ -40,7 +40,7 @@ func TestShutdown_SIGTERM_ExitsCleanly(t *testing.T) {
 	})
 
 	stream := h.PostStream("/v1/chat/completions",
-		map[string]any{"model": "x", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
+		map[string]any{"model": "gpt-4o", "stream": true, "messages": []map[string]string{{"role": "user", "content": "."}}},
 		nil)
 
 	first, err := stream.Next()

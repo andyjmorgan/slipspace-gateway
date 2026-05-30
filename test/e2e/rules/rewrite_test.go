@@ -26,8 +26,10 @@ import (
 const rewritePolicy = `
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], backend: openai }
     rule_names:
       - force-stream-usage
       - strip-user
@@ -53,7 +55,7 @@ rules:
           expectedProvider: openai
         - type: endpoint
           operator: Equals
-          expectedEndpoint: chat_completions
+          expectedEndpoint: chat
         - type: bodyField
           target: request.body.stream
           operator: Equals

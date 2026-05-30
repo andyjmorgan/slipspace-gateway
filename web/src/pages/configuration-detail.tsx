@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Link, useParams } from "react-router"
 import { Eye, EyeOff, Copy, Check } from "lucide-react"
-import { useConfiguration, revealAPIKey, type RedactedSecret, type RuleAttachment, type APIKeySummary } from "@/lib/config-api"
+import { useConfiguration, revealAPIKey, type RedactedSecret, type RuleAttachment, type APIKeySummary, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
@@ -66,18 +66,19 @@ export function ConfigurationDetailPage() {
         }
       />
 
-      <UpstreamCredentialsCard creds={c.upstream_credentials} />
+      <CredentialsCard creds={c.credentials} />
+      <BindingsCard bindings={c.bindings} passthrough={c.passthrough_bindings} />
       <AttachedRulesCard rules={c.rules} />
       <APIKeysCard configuration={c.name} keys={c.api_keys} />
     </div>
   )
 }
 
-function UpstreamCredentialsCard({ creds }: { creds: Record<string, RedactedSecret> }) {
+function CredentialsCard({ creds }: { creds: Record<string, RedactedSecret> }) {
   const entries = Object.entries(creds)
   return (
     <PanelCard>
-      <PanelHead title="Upstream credentials" sub="redacted · managed mode swaps these onto the upstream request" />
+      <PanelHead title="Credentials" sub="redacted · managed mode swaps these onto the upstream request, keyed by backend" />
       {entries.length === 0 && (
         <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">
           No managed-mode credentials. Passthrough-only configuration.
@@ -87,17 +88,99 @@ function UpstreamCredentialsCard({ creds }: { creds: Record<string, RedactedSecr
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Provider</th>
+              <th className="text-left font-medium px-4 py-2">Backend</th>
               <th className="text-left font-medium px-4 py-2">Redacted</th>
               <th className="text-right font-medium px-4 py-2">Length</th>
             </tr>
           </thead>
           <tbody>
-            {entries.map(([provider, redacted]) => (
-              <tr key={provider} className="border-t border-[color:var(--border)]">
-                <td className="px-4 py-2.5"><ProviderChip name={provider} /></td>
+            {entries.map(([backend, redacted]) => (
+              <tr key={backend} className="border-t border-[color:var(--border)]">
+                <td className="px-4 py-2.5">
+                  <Link to={`/backends/${encodeURIComponent(backend)}`}><ProviderChip name={backend} /></Link>
+                </td>
                 <td className="px-4 py-2.5"><Redacted r={redacted} /></td>
                 <td className="mono tnum text-right px-4 py-2.5 text-[color:var(--text-3)]">{redacted.length}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </PanelCard>
+  )
+}
+
+function BindingsCard({
+  bindings,
+  passthrough,
+}: {
+  bindings: BindingRow[]
+  passthrough: PassthroughBindingRow[]
+}) {
+  const total = bindings.length + passthrough.length
+  return (
+    <PanelCard>
+      <PanelHead title="Bindings" sub={`how this configuration maps models to backends · ${total}`} />
+      {total === 0 && (
+        <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No bindings configured.</div>
+      )}
+      {bindings.length > 0 && (
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
+              <th className="text-left font-medium px-4 py-2">Protocol</th>
+              <th className="text-left font-medium px-4 py-2">Models</th>
+              <th className="text-left font-medium px-4 py-2">Target</th>
+              <th className="text-left font-medium px-4 py-2">Alias</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bindings.map((b, i) => (
+              <tr key={`${b.protocol}::${i}`} className="border-t border-[color:var(--border)]">
+                <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">{b.protocol}</td>
+                <td className="px-4 py-2.5">
+                  <div className="flex gap-1 flex-wrap">
+                    {b.models.length === 0 ? (
+                      <Tag variant="ghost">any</Tag>
+                    ) : (
+                      b.models.map((m) => (
+                        <Tag key={m} variant="default"><span className="mono">{m}</span></Tag>
+                      ))
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-2.5">
+                  {b.backend ? (
+                    <Link to={`/backends/${encodeURIComponent(b.backend)}`}><ProviderChip name={b.backend} /></Link>
+                  ) : b.group ? (
+                    <Tag variant="violet"><span className="mono">group {b.group}</span></Tag>
+                  ) : (
+                    <span className="text-[color:var(--text-4)]">—</span>
+                  )}
+                </td>
+                <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">
+                  {b.alias ?? <span className="text-[color:var(--text-4)]">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {passthrough.length > 0 && (
+        <table className="w-full text-[12.5px] border-t border-[color:var(--border)]">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
+              <th className="text-left font-medium px-4 py-2">Passthrough family</th>
+              <th className="text-left font-medium px-4 py-2">Backend</th>
+            </tr>
+          </thead>
+          <tbody>
+            {passthrough.map((b, i) => (
+              <tr key={`${b.family}::${i}`} className="border-t border-[color:var(--border)]">
+                <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">{b.family}</td>
+                <td className="px-4 py-2.5">
+                  <Link to={`/backends/${encodeURIComponent(b.backend)}`}><ProviderChip name={b.backend} /></Link>
+                </td>
               </tr>
             ))}
           </tbody>

@@ -110,3 +110,13 @@ var ErrDuplicateConnectorName = errors.New("config: connector name defined more 
 // top-level connectors block. Caught at config-load so a misconfigured
 // binding never reaches the spool.
 var ErrUnknownConnectorReference = errors.New("config: configuration references unknown connector")
+
+// ErrDuplicateKey is returned by LoadV2 when a top-level block (backends,
+// groups, configurations, …) is set by more than one YAML file in the config
+// directory. Each block must have a single authoring home.
+var ErrDuplicateKey = errors.New("config: top-level block set by more than one file")
+
+// ErrV2Validation is the umbrella sentinel for v2 config validation failures
+// (unknown backend/group/protocol reference, malformed binding, model-pattern
+// collision, …). Wrapped with a specific message at each call site.
+var ErrV2Validation = errors.New("config: v2 validation")

@@ -57,12 +57,12 @@ func TestMetrics_ResilienceCountersAfterFailover(t *testing.T) {
 	wantSeries := []seriesProbe{
 		{
 			name:     "gateway_resilience_attempts_total (primary/failure_status)",
-			matcher:  mustMatchAll(`gateway_resilience_attempts_total\{`, `outcome="failure_status"`, `policy="cross-provider-failover"`, `target="openai-primary"`),
+			matcher:  mustMatchAll(`gateway_resilience_attempts_total\{`, `outcome="failure_status"`, `policy="cross-provider-failover"`, `target="openai"`),
 			describe: "per-attempt counter, primary outcome=failure_status",
 		},
 		{
 			name:     "gateway_resilience_attempts_total (backup/success)",
-			matcher:  mustMatchAll(`gateway_resilience_attempts_total\{`, `outcome="success"`, `policy="cross-provider-failover"`, `target="openai-backup"`),
+			matcher:  mustMatchAll(`gateway_resilience_attempts_total\{`, `outcome="success"`, `policy="cross-provider-failover"`, `target="anthropic"`),
 			describe: "per-attempt counter, backup outcome=success",
 		},
 		{
@@ -77,7 +77,7 @@ func TestMetrics_ResilienceCountersAfterFailover(t *testing.T) {
 		},
 		{
 			name:     "gateway_resilience_attempt_duration_seconds_count",
-			matcher:  mustMatchAll(`gateway_resilience_attempt_duration_seconds_count\{`, `policy="cross-provider-failover"`, `target="openai-primary"`),
+			matcher:  mustMatchAll(`gateway_resilience_attempt_duration_seconds_count\{`, `policy="cross-provider-failover"`, `target="openai"`),
 			describe: "per-attempt duration histogram count for primary",
 		},
 	}

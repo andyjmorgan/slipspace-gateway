@@ -5,13 +5,13 @@ import (
 	"sync/atomic"
 )
 
-// Store owns the live ResolvedConfig and brokers updates to it. It is the
+// Store owns the live ResolvedConfigV2 and brokers updates to it. It is the
 // single point of truth for the running gateway's configuration; every
-// consumer that previously held a *ResolvedConfig now holds a *Store and
+// consumer that previously held a *ResolvedConfigV2 now holds a *Store and
 // reads through Snapshot.
 //
 // The pointer is swapped atomically. Readers never block, never lock, and
-// never see a torn ResolvedConfig — Replace publishes the new snapshot
+// never see a torn ResolvedConfigV2 — Replace publishes the new snapshot
 // with a single atomic write and fires subscribers afterwards. Writers
 // (Phase 2: admin write endpoints) clone the current snapshot, mutate the
 // clone, Validate it, and then call Replace.
@@ -24,7 +24,7 @@ import (
 type Store struct {
 	// current carries the live snapshot. Readers use atomic load; the
 	// pointer changes only inside Replace.
-	current atomic.Pointer[ResolvedConfig]
+	current atomic.Pointer[ResolvedConfigV2]
 
 	// mu guards subs and serialises Replace calls. The read path
 	// (Snapshot) never touches it.
@@ -34,13 +34,13 @@ type Store struct {
 	// immediately on Subscribe. The slice is copied under mu before
 	// dispatch so subscribers may Subscribe new callbacks from inside
 	// their own callback without deadlocking.
-	subs []func(*ResolvedConfig)
+	subs []func(*ResolvedConfigV2)
 }
 
 // NewStore returns a Store seeded with initial. initial must be non-nil
 // — there is no "config not yet loaded" state at runtime; the gateway
-// either has a validated ResolvedConfig or refuses to start.
-func NewStore(initial *ResolvedConfig) *Store {
+// either has a validated ResolvedConfigV2 or refuses to start.
+func NewStore(initial *ResolvedConfigV2) *Store {
 	if initial == nil {
 		panic("config: NewStore: initial snapshot is nil")
 	}
@@ -49,12 +49,12 @@ func NewStore(initial *ResolvedConfig) *Store {
 	return s
 }
 
-// Snapshot returns the live ResolvedConfig pointer. The returned pointer
+// Snapshot returns the live ResolvedConfigV2 pointer. The returned pointer
 // is stable for the lifetime of the snapshot — even after a Replace, the
 // previous pointer remains a valid read of the configuration that was
 // active when the request started, so callers may keep it across multiple
 // lookups inside a single request without risk of mid-request shear.
-func (s *Store) Snapshot() *ResolvedConfig {
+func (s *Store) Snapshot() *ResolvedConfigV2 {
 	return s.current.Load()
 }
 
@@ -65,7 +65,7 @@ func (s *Store) Snapshot() *ResolvedConfig {
 //
 // Callbacks are dispatched synchronously from Replace. Subscribers must
 // not block — heavy work goes on its own goroutine.
-func (s *Store) Subscribe(fn func(*ResolvedConfig)) {
+func (s *Store) Subscribe(fn func(*ResolvedConfigV2)) {
 	if fn == nil {
 		return
 	}
@@ -85,13 +85,13 @@ func (s *Store) Subscribe(fn func(*ResolvedConfig)) {
 // readers. The subscribe-list is snapshotted under mu and dispatched
 // outside the critical section so a slow subscriber cannot stall an
 // unrelated Replace.
-func (s *Store) Replace(next *ResolvedConfig) {
+func (s *Store) Replace(next *ResolvedConfigV2) {
 	if next == nil {
 		panic("config: Store.Replace: next is nil")
 	}
 	s.mu.Lock()
 	s.current.Store(next)
-	subs := make([]func(*ResolvedConfig), len(s.subs))
+	subs := make([]func(*ResolvedConfigV2), len(s.subs))
 	copy(subs, s.subs)
 	s.mu.Unlock()
 	for _, fn := range subs {
