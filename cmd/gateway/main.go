@@ -24,7 +24,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
-	"github.com/andyjmorgan/sluice-gateway/internal/routing"
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/server"
 	"github.com/andyjmorgan/sluice-gateway/internal/spool"
@@ -74,7 +73,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("gateway: validate env: %w", err)
 	}
 
-	resolved, err := config.Load(ctx, env.ConfigDir)
+	resolved, err := config.LoadV2(ctx, env.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("gateway: load config %q: %w", env.ConfigDir, err)
 	}
@@ -107,11 +106,6 @@ func run(ctx context.Context) error {
 	// handlers, reporter) call Snapshot per operation. Phase 2 adds
 	// the admin write path that calls store.Replace.
 	store := config.NewStore(resolved)
-
-	router, err := routing.New(store, logger)
-	if err != nil {
-		return fmt.Errorf("gateway: router: %w", err)
-	}
 
 	resolver := auth.NewResolver(store)
 
@@ -158,7 +152,6 @@ func run(ctx context.Context) error {
 	evaluator := rules.NewEvaluator(store, env.RulesMaxGroupDepth, obs.Meters)
 
 	errs := httperr.New(obs.Meters.ErrorResponsesTotal, logger)
-	policyLookup := makePolicyLookup(store)
 	// The CB StateListener fires from inside breaker.mu without a
 	// request ctx — see circuitBreakerTransitionListener for the
 	// context.Background() rationale.
@@ -166,7 +159,7 @@ func run(ctx context.Context) error {
 	if err := registerBreakerStateGauge(obs, breakers); err != nil {
 		return fmt.Errorf("gateway: register cb.state gauge: %w", err)
 	}
-	dataPlane := buildDataPlaneHandler(router, resolver, forwarder, evaluator, observerFactory, store, policyLookup, breakers, obs.Meters, errs, redactor, logger)
+	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, observerFactory, store, breakers, obs.Meters, errs, redactor, logger)
 
 	// responseCaptureMiddleware sits between recover and the data
 	// plane so every panic is still logged, but the per-request
@@ -203,7 +196,7 @@ func run(ctx context.Context) error {
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
 		"config_dir", env.ConfigDir,
-		"providers", len(resolved.Providers),
+		"backends", len(resolved.Backends),
 		"configurations", len(resolved.Configurations),
 		"api_keys", len(resolved.APIKeys),
 		"admin_enabled", resolved.Admin != nil && resolved.Admin.Enabled,
@@ -228,7 +221,7 @@ func run(ctx context.Context) error {
 // recovery aborts gateway boot; an operator-visible error is the
 // right escalation since silently dropping records on a misconfigured
 // spool root is worse than refusing to start.
-func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.ResolvedConfig, logger *slog.Logger) (*spool.Spool, func(), error) {
+func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.ResolvedConfigV2, logger *slog.Logger) (*spool.Spool, func(), error) {
 	noop := func() {}
 	if len(resolved.Connectors) == 0 {
 		logger.InfoContext(ctx, "no connectors configured; spool disabled")
@@ -395,8 +388,8 @@ func startAdmin(ctx context.Context, store *config.Store, obs *observability.Pro
 		return
 	}
 
-	providers := make([]string, 0, len(resolved.Providers))
-	for name := range resolved.Providers {
+	providers := make([]string, 0, len(resolved.Backends))
+	for name := range resolved.Backends {
 		providers = append(providers, name)
 	}
 
@@ -458,7 +451,7 @@ func shutdownAdminServer(srv *http.Server, drain time.Duration) {
 // joins against. A rule referenced by zero configurations is omitted —
 // it would never appear in a rules-fired event so the dashboard never
 // needs to render it.
-func buildRuleAttachments(resolved *config.ResolvedConfig) map[string][]string {
+func buildRuleAttachments(resolved *config.ResolvedConfigV2) map[string][]string {
 	out := map[string][]string{}
 	for name, cfg := range resolved.Configurations {
 		for _, ruleName := range cfg.RuleNames {
@@ -480,7 +473,7 @@ func buildRuleAttachments(resolved *config.ResolvedConfig) map[string][]string {
 // The same configuration name can appear multiple times for the same
 // tag if multiple rules in that configuration's chain attach it; we
 // dedupe so the SPA sees one entry per (tag, configuration) pair.
-func buildTagAttachments(resolved *config.ResolvedConfig) map[string][]string {
+func buildTagAttachments(resolved *config.ResolvedConfigV2) map[string][]string {
 	out := map[string][]string{}
 	for configName, cfg := range resolved.Configurations {
 		for _, ruleName := range cfg.RuleNames {

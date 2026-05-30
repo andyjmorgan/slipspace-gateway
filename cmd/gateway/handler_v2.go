@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/selection"
@@ -13,17 +14,18 @@ import (
 
 // groupToResilienceConfig synthesises the resilience orchestrator's input from
 // a selected v2 group. The orchestrator is reused unchanged: each v2 target
-// becomes a ResilienceTarget whose Provider is the backend name (the v2 final
-// handler resolves state.Provider as a backend) and whose ModelRewrite is the
-// per-target alias. Order is preserved for failover; load_balance ignores it.
+// becomes a ResilienceTarget whose per-attempt Actions switch the backend
+// (state.Provider, re-resolved by the final handler) and rewrite the body model
+// to the per-target alias. Order is preserved for failover; load_balance
+// ignores it.
 func groupToResilienceConfig(name string, g selection.Group) contractsres.ResilienceConfig {
 	targets := make([]contractsres.ResilienceTarget, 0, len(g.Targets))
 	for i, t := range g.Targets {
 		targets = append(targets, contractsres.ResilienceTarget{
-			Name:         t.Backend,
-			Provider:     t.Backend,
-			Order:        i + 1,
-			ModelRewrite: t.Alias,
+			Name:     t.Backend,
+			Provider: t.Backend,
+			Order:    i + 1,
+			Actions:  backendSwitchActions(t.Backend, t.Alias),
 		})
 	}
 	return contractsres.ResilienceConfig{
@@ -33,6 +35,38 @@ func groupToResilienceConfig(name string, g selection.Group) contractsres.Resili
 		CircuitBreaker:     g.CircuitBreaker,
 		Targets:            targets,
 	}
+}
+
+// singleTargetConfig synthesises a degenerate ModeNone policy carrying one
+// target, so a single-backend binding flows through the same orchestrator path
+// as a group: the backend switch + body alias are applied once, before the
+// body re-marshal step, and the final handler re-resolves the backend. This is
+// what lets a single binding carry a model alias (e.g. foundry-model → the
+// upstream deployment name) without a bespoke pre-forward rewrite stage.
+func singleTargetConfig(t selection.Target) contractsres.ResilienceConfig {
+	return contractsres.ResilienceConfig{
+		Name: "binding:" + t.Backend,
+		Mode: contractsres.ModeNone,
+		Targets: []contractsres.ResilienceTarget{{
+			Name:     t.Backend,
+			Provider: t.Backend,
+			Order:    1,
+			Actions:  backendSwitchActions(t.Backend, t.Alias),
+		}},
+	}
+}
+
+// backendSwitchActions builds the internal action pair the orchestrator applies
+// per attempt: changeProvider switches state.Provider to the backend (the final
+// handler re-resolves transport from it), and changeModelName rewrites the body
+// model to the alias when one is set. These two action types survive only as
+// internal selection primitives — they are no longer authorable in rules.
+func backendSwitchActions(backend, alias string) []contractsrules.Action {
+	acts := []contractsrules.Action{&contractsrules.ChangeProviderAction{NewProvider: backend}}
+	if alias != "" {
+		acts = append(acts, &contractsrules.ChangeModelNameAction{NewModelName: alias})
+	}
+	return acts
 }
 
 // buildDestinationV2 resolves the upstream destination for a v2 request from
