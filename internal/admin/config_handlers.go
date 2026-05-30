@@ -16,7 +16,7 @@ import (
 const (
 	pathConfigurations = "/api/v1/config/configurations/"
 	pathRules          = "/api/v1/config/rules/"
-	pathProviders      = "/api/v1/config/providers/"
+	pathBackends       = "/api/v1/config/backends/"
 )
 
 // ConfigurationsListHandler returns the sorted summary list of every
@@ -71,9 +71,12 @@ func ConfigurationDetailHandler(store *config.Store) http.Handler {
 			return
 		}
 
+		gen, pass := bindingRowsFromConfiguration("", cfg)
 		out := ConfigurationDetail{
 			Name:                name,
-			UpstreamCredentials: redactMap(cfg.UpstreamCredentials),
+			Credentials:         redactMap(cfg.Credentials),
+			Bindings:            gen,
+			PassthroughBindings: pass,
 			Tags:                cfg.Tags,
 			Rules:               buildRuleAttachments(name, resolved),
 			APIKeys:             buildAPIKeySummaries(name, resolved.APIKeys),
@@ -141,71 +144,46 @@ func RuleDetailHandler(store *config.Store) http.Handler {
 	})
 }
 
-// ProvidersListHandler returns the sorted summary list of every provider
-// loaded from providers.yaml.
-func ProvidersListHandler(store *config.Store) http.Handler {
+// BackendsListHandler returns the sorted summary list of every backend
+// connection loaded from the v2 config (was the providers list).
+func BackendsListHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		out := make([]ProviderSummary, 0, len(resolved.Providers))
-		for name, p := range resolved.Providers {
-			out = append(out, providerSummaryFromContract(name, p))
+		out := make([]BackendSummary, 0, len(resolved.Backends))
+		for name, b := range resolved.Backends {
+			out = append(out, backendSummaryFromContract(name, b))
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		writeJSON(w, out)
 	})
 }
 
-// ProviderDetailHandler returns the provider's full endpoint catalogue,
-// including per-endpoint auth overrides — the load-bearing data for
-// debugging the OpenAI-compat surfaces on Anthropic and Gemini.
-func ProviderDetailHandler(store *config.Store) http.Handler {
+// BackendDetailHandler returns a backend's full protocol catalogue, including
+// per-protocol auth conventions + passthrough families — the load-bearing data
+// for debugging the OpenAI-compat surfaces on Anthropic and Gemini.
+func BackendDetailHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		name := strings.TrimPrefix(r.URL.Path, pathProviders)
+		name := strings.TrimPrefix(r.URL.Path, pathBackends)
 		name = strings.TrimSuffix(name, "/")
 		if name == "" {
 			http.NotFound(w, r)
 			return
 		}
-		p, ok := resolved.Providers[name]
+		b, ok := resolved.Backends[name]
 		if !ok {
 			http.NotFound(w, r)
 			return
 		}
-		eps := make([]EndpointSummary, 0, len(p.Endpoints))
-		for epName, e := range p.Endpoints {
-			eps = append(eps, EndpointSummary{
-				Name:             epName,
-				Path:             e.Path,
-				Methods:          append([]string(nil), e.Method...),
-				AcceptedPaths:    append([]string(nil), e.AcceptedPaths...),
-				AcceptsStreaming: e.AcceptsStreaming,
-				RequestKind:      e.RequestKind,
-				AuthHeader:       e.AuthHeader,
-				AuthFormat:       e.AuthFormat,
-				PrefixOptional:   e.PrefixOptional,
-			})
-		}
-		sort.Slice(eps, func(i, j int) bool { return eps[i].Name < eps[j].Name })
-		out := ProviderDetail{
-			Name:            name,
-			Prefix:          p.Prefix,
-			PrefixRequired:  p.PrefixRequired,
-			BaseURL:         p.BaseURL,
-			AuthHeader:      p.AuthHeader,
-			AuthFormat:      p.AuthFormat,
-			RequiredHeaders: p.RequiredHeaders,
-			Endpoints:       eps,
-		}
-		writeJSON(w, out)
+		writeJSON(w, backendDetailFromContract(name, b))
 	})
 }
 
@@ -248,34 +226,46 @@ func APIKeysRevealHandler(store *config.Store) http.Handler {
 	})
 }
 
-// RoutesHandler returns the flattened route table — every URL path the
-// gateway accepts and the (provider, endpoint) pair that owns it. This is
-// the data the routing middleware reads on every request; surfacing it
-// directly is the single highest-value page during routing debugging.
-func RoutesHandler(store *config.Store) http.Handler {
+// BindingsHandler returns the flattened binding table across every
+// configuration — the v2 analogue of the route table. A binding is
+// (protocol, models) → backend|group; this is the data selection reads on
+// every request, so surfacing it is the highest-value page for routing
+// debugging. Passthrough bindings are returned as a separate list.
+func BindingsHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		out := make([]RouteRow, 0, len(resolved.RouteIndex))
-		for path, route := range resolved.RouteIndex {
-			methods := methodsFor(resolved, route)
-			out = append(out, RouteRow{
-				Path:     path,
-				Provider: route.Provider,
-				Endpoint: route.Endpoint,
-				Methods:  methods,
-			})
+		var (
+			gen  []BindingRow
+			pass []PassthroughBindingRow
+		)
+		for name, cfg := range resolved.Configurations {
+			g, p := bindingRowsFromConfiguration(name, cfg)
+			gen = append(gen, g...)
+			pass = append(pass, p...)
 		}
-		sort.Slice(out, func(i, j int) bool {
-			if out[i].Path != out[j].Path {
-				return out[i].Path < out[j].Path
+		sort.Slice(gen, func(i, j int) bool {
+			if gen[i].Configuration != gen[j].Configuration {
+				return gen[i].Configuration < gen[j].Configuration
 			}
-			return out[i].Provider < out[j].Provider
+			if gen[i].Protocol != gen[j].Protocol {
+				return gen[i].Protocol < gen[j].Protocol
+			}
+			return strings.Join(gen[i].Models, ",") < strings.Join(gen[j].Models, ",")
 		})
-		writeJSON(w, out)
+		sort.Slice(pass, func(i, j int) bool {
+			if pass[i].Configuration != pass[j].Configuration {
+				return pass[i].Configuration < pass[j].Configuration
+			}
+			return pass[i].Family < pass[j].Family
+		})
+		writeJSON(w, struct {
+			Bindings            []BindingRow            `json:"bindings"`
+			PassthroughBindings []PassthroughBindingRow `json:"passthrough_bindings"`
+		}{Bindings: gen, PassthroughBindings: pass})
 	})
 }
 
@@ -283,7 +273,7 @@ func RoutesHandler(store *config.Store) http.Handler {
 // every handler calls at the top of the request. Returns nil when the
 // store is nil or its current snapshot is nil; handlers translate that
 // to a 503.
-func snapshot(store *config.Store) *config.ResolvedConfig {
+func snapshot(store *config.Store) *config.ResolvedConfigV2 {
 	if store == nil {
 		return nil
 	}
@@ -320,7 +310,7 @@ func buildAPIKeySummaries(configName string, keys []contractsconfig.APIKey) []AP
 // runtime priority order. Falls back to the configuration's RuleNames
 // ordering if the indexes have not been built (defensive — Validate
 // builds them, but the handlers do not require that).
-func buildRuleAttachments(configName string, resolved *config.ResolvedConfig) []RuleAttachment {
+func buildRuleAttachments(configName string, resolved *config.ResolvedConfigV2) []RuleAttachment {
 	cfg, ok := resolved.Configurations[configName]
 	if !ok {
 		return nil
@@ -351,7 +341,7 @@ func buildRuleAttachments(configName string, resolved *config.ResolvedConfig) []
 // invertRuleUsage maps rule name → configurations that reference it.
 // Configuration order matches insertion order from the map; callers sort
 // for stable rendering.
-func invertRuleUsage(resolved *config.ResolvedConfig) map[string][]string {
+func invertRuleUsage(resolved *config.ResolvedConfigV2) map[string][]string {
 	out := make(map[string][]string)
 	for name, cfg := range resolved.Configurations {
 		for _, ruleName := range cfg.RuleNames {
@@ -366,29 +356,6 @@ func sortedCopy(in []string) []string {
 		return []string{}
 	}
 	out := append([]string(nil), in...)
-	sort.Strings(out)
-	return out
-}
-
-// methodsFor returns the HTTP methods declared on the endpoint that owns
-// the given route. An endpoint with no declared methods falls back to a
-// single-element list of "*" so the SPA can render a placeholder rather
-// than an empty column. Returns an empty slice when the route cannot be
-// resolved against the providers tree — should not happen for routes
-// that already passed Validate.
-func methodsFor(resolved *config.ResolvedConfig, route config.Route) []string {
-	provider, ok := resolved.Providers[route.Provider]
-	if !ok {
-		return nil
-	}
-	endpoint, ok := provider.Endpoints[route.Endpoint]
-	if !ok {
-		return nil
-	}
-	if len(endpoint.Method) == 0 {
-		return []string{"*"}
-	}
-	out := append([]string(nil), endpoint.Method...)
 	sort.Strings(out)
 	return out
 }

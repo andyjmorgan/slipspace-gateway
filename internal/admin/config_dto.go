@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"sort"
+
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
@@ -60,11 +62,17 @@ type RuleAttachment struct {
 }
 
 // ConfigurationDetail is the full read-only view of a single configuration,
-// with every secret redacted at the boundary.
+// with every secret redacted at the boundary. Under v2 it carries the
+// per-backend credentials the configuration holds plus its bindings (the
+// router, as data) — generative and passthrough.
 type ConfigurationDetail struct {
 	Name string `json:"name"`
 
-	UpstreamCredentials map[string]RedactedSecret `json:"upstream_credentials"`
+	Credentials map[string]RedactedSecret `json:"credentials"`
+
+	Bindings []BindingRow `json:"bindings"`
+
+	PassthroughBindings []PassthroughBindingRow `json:"passthrough_bindings"`
 
 	Rules []RuleAttachment `json:"rules"`
 
@@ -105,72 +113,94 @@ type RuleDetail struct {
 	UsedBy []string `json:"used_by"`
 }
 
-// EndpointSummary is one row in a ProviderDetail's endpoint table.
-type EndpointSummary struct {
+// ProtocolRow is one row in a BackendDetail's protocol table: the wire shape
+// the backend serves, its upstream path, and the per-protocol auth convention
+// (the load-bearing data for debugging the OpenAI-compat surfaces).
+type ProtocolRow struct {
 	Name string `json:"name"`
 
 	Path string `json:"path"`
 
+	AuthHeader string `json:"auth_header,omitempty"`
+
+	AuthFormat string `json:"auth_format,omitempty"`
+}
+
+// PassthroughFamilyRow is one opaque passthrough family exposed by a backend:
+// a named set of path patterns + methods proxied verbatim, with no GenAI
+// telemetry or body inspection.
+type PassthroughFamilyRow struct {
+	Name string `json:"name"`
+
+	AuthHeader string `json:"auth_header,omitempty"`
+
+	Paths []PassthroughPathRow `json:"paths"`
+}
+
+// PassthroughPathRow is one path pattern + its accepted methods within a
+// passthrough family.
+type PassthroughPathRow struct {
+	Match string `json:"match"`
+
 	Methods []string `json:"methods"`
-
-	AcceptedPaths []string `json:"accepted_paths"`
-
-	AcceptsStreaming bool `json:"accepts_streaming"`
-
-	RequestKind string `json:"request_kind"`
-
-	AuthHeader string `json:"auth_header,omitempty"`
-
-	AuthFormat string `json:"auth_format,omitempty"`
-
-	PrefixOptional bool `json:"prefix_optional,omitempty"`
 }
 
-// ProviderSummary is the row shape returned by the providers list endpoint.
-type ProviderSummary struct {
+// BackendSummary is the row shape returned by the backends list endpoint.
+type BackendSummary struct {
 	Name string `json:"name"`
-
-	Prefix string `json:"prefix,omitempty"`
-
-	PrefixRequired bool `json:"prefix_required"`
 
 	BaseURL string `json:"base_url"`
 
-	EndpointCount int `json:"endpoint_count"`
+	Protocols []string `json:"protocols"`
+
+	HasPassthrough bool `json:"has_passthrough"`
 }
 
-// ProviderDetail is the full read-only view of one provider: required
-// headers + per-endpoint auth overrides included so an operator can
-// debug the OpenAI-compat surfaces at a glance.
-type ProviderDetail struct {
+// BackendDetail is the full read-only view of one backend connection: base URL,
+// required headers, default query, per-protocol auth, and passthrough families.
+type BackendDetail struct {
 	Name string `json:"name"`
 
-	Prefix string `json:"prefix,omitempty"`
-
-	PrefixRequired bool `json:"prefix_required"`
-
 	BaseURL string `json:"base_url"`
-
-	AuthHeader string `json:"auth_header,omitempty"`
-
-	AuthFormat string `json:"auth_format,omitempty"`
 
 	RequiredHeaders map[string]string `json:"required_headers,omitempty"`
 
-	Endpoints []EndpointSummary `json:"endpoints"`
+	Query map[string]string `json:"query,omitempty"`
+
+	Protocols []ProtocolRow `json:"protocols"`
+
+	Passthrough []PassthroughFamilyRow `json:"passthrough,omitempty"`
 }
 
-// RouteRow is one row in the flattened-routes endpoint. The route table
-// is the data the routing middleware reads on every request; surfacing
-// it is high-leverage during debugging.
-type RouteRow struct {
-	Path string `json:"path"`
+// BindingRow is one generative binding: (protocol, models) → backend|group,
+// with optional per-binding alias/tags. It is the v2 analogue of a route row —
+// the router expressed as configuration data.
+type BindingRow struct {
+	Configuration string `json:"configuration,omitempty"`
 
-	Provider string `json:"provider"`
+	Protocol string `json:"protocol"`
 
-	Endpoint string `json:"endpoint"`
+	Models []string `json:"models"`
 
-	Methods []string `json:"methods"`
+	Backend string `json:"backend,omitempty"`
+
+	Group string `json:"group,omitempty"`
+
+	Alias string `json:"alias,omitempty"`
+
+	Tags []string `json:"tags,omitempty"`
+}
+
+// PassthroughBindingRow is one passthrough binding: an opaque family exposed on
+// a backend by a configuration.
+type PassthroughBindingRow struct {
+	Configuration string `json:"configuration,omitempty"`
+
+	Family string `json:"family"`
+
+	Backend string `json:"backend"`
+
+	Tags []string `json:"tags,omitempty"`
 }
 
 // Internal helpers that build the DTO summaries from the contract types.
@@ -241,14 +271,87 @@ func pluralChildren(n int) string {
 	return itoa(n) + " children"
 }
 
-// providerSummaryFromContract folds the loaded provider into the wire
-// summary, counting endpoints lazily.
-func providerSummaryFromContract(name string, p contractsconfig.Provider) ProviderSummary {
-	return ProviderSummary{
-		Name:           name,
-		Prefix:         p.Prefix,
-		PrefixRequired: p.PrefixRequired,
-		BaseURL:        p.BaseURL,
-		EndpointCount:  len(p.Endpoints),
+// backendSummaryFromContract folds a loaded backend into the wire summary,
+// listing its protocol names and whether it exposes any passthrough family.
+func backendSummaryFromContract(name string, b contractsconfig.Backend) BackendSummary {
+	protos := make([]string, 0, len(b.Protocols))
+	for p := range b.Protocols {
+		protos = append(protos, p)
 	}
+	sort.Strings(protos)
+	return BackendSummary{
+		Name:           name,
+		BaseURL:        b.BaseURL,
+		Protocols:      protos,
+		HasPassthrough: len(b.Passthrough) > 0,
+	}
+}
+
+// backendDetailFromContract projects a backend onto the full detail DTO:
+// per-protocol auth conventions + passthrough families, sorted for stable
+// rendering.
+func backendDetailFromContract(name string, b contractsconfig.Backend) BackendDetail {
+	protos := make([]ProtocolRow, 0, len(b.Protocols))
+	for pname, p := range b.Protocols {
+		row := ProtocolRow{Name: pname, Path: p.Path}
+		if p.Auth != nil {
+			row.AuthHeader = p.Auth.Header
+			row.AuthFormat = p.Auth.Format
+		}
+		protos = append(protos, row)
+	}
+	sort.Slice(protos, func(i, j int) bool { return protos[i].Name < protos[j].Name })
+
+	var families []PassthroughFamilyRow
+	for fname, f := range b.Passthrough {
+		fr := PassthroughFamilyRow{Name: fname}
+		if f.Auth != nil {
+			fr.AuthHeader = f.Auth.Header
+		}
+		for _, pp := range f.Paths {
+			fr.Paths = append(fr.Paths, PassthroughPathRow{
+				Match:   pp.Match,
+				Methods: append([]string(nil), pp.Methods...),
+			})
+		}
+		families = append(families, fr)
+	}
+	sort.Slice(families, func(i, j int) bool { return families[i].Name < families[j].Name })
+
+	return BackendDetail{
+		Name:            name,
+		BaseURL:         b.BaseURL,
+		RequiredHeaders: b.RequiredHeaders,
+		Query:           b.Query,
+		Protocols:       protos,
+		Passthrough:     families,
+	}
+}
+
+// bindingRowsFromConfiguration flattens a configuration's bindings into wire
+// rows. configName is stamped on each row when non-empty so the global
+// bindings view can attribute each row to its owning configuration.
+func bindingRowsFromConfiguration(configName string, cfg contractsconfig.ConfigurationV2) ([]BindingRow, []PassthroughBindingRow) {
+	gen := make([]BindingRow, 0, len(cfg.Bindings))
+	for _, b := range cfg.Bindings {
+		gen = append(gen, BindingRow{
+			Configuration: configName,
+			Protocol:      b.Protocol,
+			Models:        append([]string(nil), b.Models...),
+			Backend:       b.Backend,
+			Group:         b.Group,
+			Alias:         b.Alias,
+			Tags:          append([]string(nil), b.Tags...),
+		})
+	}
+	pass := make([]PassthroughBindingRow, 0, len(cfg.PassthroughBindings))
+	for _, pb := range cfg.PassthroughBindings {
+		pass = append(pass, PassthroughBindingRow{
+			Configuration: configName,
+			Family:        pb.Family,
+			Backend:       pb.Backend,
+			Tags:          append([]string(nil), pb.Tags...),
+		})
+	}
+	return gen, pass
 }
