@@ -9,7 +9,7 @@
 // destructive last resort.
 
 import { useState } from "react"
-import { Copy, Check } from "lucide-react"
+import { Copy, Check, Eye, EyeOff } from "lucide-react"
 import {
   useAPIKeys,
   useConfigurations,
@@ -17,6 +17,7 @@ import {
   patchAPIKey,
   replaceAPIKey,
   deleteAPIKey,
+  revealAPIKey,
   apiKeyRef,
   type APIKeyListItem,
   type APIKeyReveal,
@@ -150,7 +151,37 @@ function APIKeyRow({
 }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [revealed, setRevealed] = useState<string | null>(null)
+  const [revealing, setRevealing] = useState(false)
+  const [copied, setCopied] = useState(false)
   const ref = apiKeyRef(k)
+
+  // reveal fetches the stored plaintext secret for an existing key via the
+  // reveal endpoint (admin-auth gated — the operator already holds the
+  // password). Parity with the per-key reveal on the configuration detail page.
+  const reveal = async () => {
+    setRevealing(true)
+    setErr(null)
+    try {
+      const r = await revealAPIKey(k.configuration, k.name)
+      setRevealed(r.secret)
+    } catch (e) {
+      if (e instanceof UnauthorizedError) setErr("Session expired — log in again.")
+      else setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRevealing(false)
+    }
+  }
+
+  const copyRevealed = async () => {
+    if (revealed == null) return
+    try {
+      await navigator.clipboard.writeText(revealed)
+      setCopied(true)
+    } catch {
+      // clipboard unavailable — operator can select-copy the shown value
+    }
+  }
 
   const toggle = async () => {
     setBusy(true)
@@ -170,7 +201,45 @@ function APIKeyRow({
     <tr className="border-t border-[color:var(--border)]">
       <td className="px-4 py-2.5 mono">{k.name}</td>
       <td className="px-4 py-2.5 mono text-[color:var(--text-2)]">{k.configuration}</td>
-      <td className="px-4 py-2.5"><Redacted r={k.secret} /></td>
+      <td className="px-4 py-2.5">
+        {revealed != null ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="mono text-[12px] break-all">{revealed}</span>
+            <button
+              type="button"
+              aria-label="Copy secret"
+              onClick={copyRevealed}
+              className="inline-flex items-center text-[color:var(--text-3)] hover:text-[color:var(--text)]"
+            >
+              {copied ? <Check size={11} /> : <Copy size={11} />}
+            </button>
+            <button
+              type="button"
+              aria-label="Hide secret"
+              onClick={() => {
+                setRevealed(null)
+                setCopied(false)
+              }}
+              className="inline-flex items-center text-[color:var(--text-3)] hover:text-[color:var(--text)]"
+            >
+              <EyeOff size={11} />
+            </button>
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-2">
+            <Redacted r={k.secret} />
+            <button
+              type="button"
+              onClick={reveal}
+              disabled={revealing}
+              className="inline-flex items-center gap-1 text-[11px] text-[color:var(--text-3)] hover:text-[color:var(--text)]"
+            >
+              <Eye size={11} />
+              <span>{revealing ? "…" : "reveal"}</span>
+            </button>
+          </span>
+        )}
+      </td>
       <td className="px-4 py-2.5">
         {k.enabled ? <Tag variant="success">enabled</Tag> : <Tag variant="danger">disabled</Tag>}
         {err && <div className="text-[11px] mt-1" style={{ color: "var(--err)" }}>{err}</div>}
