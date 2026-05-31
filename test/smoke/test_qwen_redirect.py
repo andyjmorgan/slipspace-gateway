@@ -1,15 +1,14 @@
-"""Smoke test: cluster-side `changeProvider` rules redirecting qwen models.
+"""Smoke test: cluster-side qwen model routing via v2 bindings.
 
-The prod cluster's `policy.yaml` carries two model-keyed rules added during
-the v1.0.1 cycle that route qwen models off the openai surface to local
-vLLM / Ollama backends:
+The prod cluster's config binds the coder model off the openai chat surface
+to a local Ollama-backed resilience group:
 
-- `qwen2.5-coder:7b` → `qwen-ollama` provider at `192.168.69.21:11434`
-- `qwen3-coder` → `qwen-vllm` provider at the in-cluster vLLM Service
+- `qwen2.5-coder:7b` → `qwen-load-balance` group (qwen-ollama in-cluster +
+  qwen-ollama-standalone at `192.168.69.21:11434`)
 
-These rules live ONLY on the cluster (they don't ship in `config-dev/`),
-so the tests skip cleanly when the harness isn't pointed at a deploy
-known to carry them. Set `SLUICE_SMOKE_QWEN=true` to enable.
+This binding lives ONLY on the cluster (it doesn't ship in `config-dev/`),
+so the test skips cleanly when the harness isn't pointed at a deploy known
+to carry it. Set `SLUICE_SMOKE_QWEN=true` to enable.
 """
 
 from __future__ import annotations
@@ -26,8 +25,7 @@ def qwen_enabled() -> bool:
 
 
 QWEN_MODELS = [
-    pytest.param("qwen2.5-coder:7b", id="ollama"),
-    pytest.param("qwen3-coder", id="vllm"),
+    pytest.param("qwen2.5-coder:7b", id="ollama-loadbalance"),
 ]
 
 
@@ -38,17 +36,17 @@ def test_qwen_changeprovider_redirect(
     qwen_enabled: bool,
     model: str,
 ) -> None:
-    """Qwen model name on the openai chat surface → cluster rule redirects upstream.
+    """Qwen model on the openai chat surface → v2 binding routes to the local group.
 
     Asserts the response carries the qwen model name (NOT an openai model),
-    proving the changeProvider rule fired and the gateway hit the private
-    qwen backend rather than OpenAI's servers.
+    proving the (chat, qwen2.5-coder:7b) binding selected the qwen-load-balance
+    group and the gateway hit the private qwen backend rather than OpenAI.
     """
     if not qwen_enabled:
         pytest.skip("SLUICE_SMOKE_QWEN not set — cluster-specific rule check disabled")
 
     client = openai.OpenAI(
-        base_url=f"{base_url}/openai/v1",
+        base_url=f"{base_url}/v1",
         api_key=api_key,
         max_retries=0,
         timeout=30,

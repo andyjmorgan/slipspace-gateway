@@ -1,7 +1,7 @@
 """Smoke test: model-keyed changeProvider redirect.
 
 Customer points the OpenAI SDK at the gateway's openai surface
-(`{base_url}/openai/v1`) and calls with a claude-* or gemini-*
+(`{base_url}/v1`) and calls with a claude-* or gemini-*
 model. A rule in policy.yaml fires on the model name and rewrites
 state.Provider, transparently redirecting to anthropic's or
 gemini's OpenAI-compat chat endpoint. The customer's SDK
@@ -17,7 +17,7 @@ import pytest
 
 def _openai_client(base_url: str, api_key: str) -> openai.OpenAI:
     return openai.OpenAI(
-        base_url=f"{base_url}/openai/v1",
+        base_url=f"{base_url}/v1",
         api_key=api_key,
         max_retries=0,
         timeout=30,

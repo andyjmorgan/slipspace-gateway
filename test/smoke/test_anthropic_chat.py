@@ -1,7 +1,7 @@
 """Smoke test: Anthropic OpenAI-compat chat completions via sluice-gateway.
 
 v1.0.2 wires `/anthropic/v1/chat/completions` to Anthropic's OpenAI-shaped
-surface. Drive it with the OpenAI SDK pointed at `{base_url}/anthropic/v1`.
+surface. Drive it with the OpenAI SDK pointed at `{base_url}/v1`.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import openai
 
 def test_anthropic_openai_compat_chat(base_url: str, api_key: str) -> None:
     client = openai.OpenAI(
-        base_url=f"{base_url}/anthropic/v1",
+        base_url=f"{base_url}/v1",
         api_key=api_key,
         max_retries=0,
         timeout=30,
