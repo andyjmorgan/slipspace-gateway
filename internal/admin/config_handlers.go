@@ -65,24 +65,32 @@ func ConfigurationDetailHandler(store *config.Store) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		cfg, ok := resolved.Configurations[name]
-		if !ok {
+		if _, ok := resolved.Configurations[name]; !ok {
 			http.NotFound(w, r)
 			return
 		}
 
-		gen, pass := bindingRowsFromConfiguration("", cfg)
-		out := ConfigurationDetail{
-			Name:                name,
-			Credentials:         redactMap(cfg.Credentials),
-			Bindings:            gen,
-			PassthroughBindings: pass,
-			Tags:                cfg.Tags,
-			Rules:               buildRuleAttachments(name, resolved),
-			APIKeys:             buildAPIKeySummaries(name, resolved.APIKeys),
-		}
-		writeJSON(w, out)
+		writeJSON(w, configurationDetailView(name, resolved))
 	})
+}
+
+// configurationDetailView projects one configuration into the redacted detail
+// DTO — credentials masked, bindings split into generative + passthrough, rule
+// attachments and api-key summaries resolved. Shared by the GET detail handler
+// and the create/replace write handlers so a write response is byte-identical to
+// a follow-up GET.
+func configurationDetailView(name string, resolved *config.ResolvedConfigV2) ConfigurationDetail {
+	cfg := resolved.Configurations[name]
+	gen, pass := bindingRowsFromConfiguration("", cfg)
+	return ConfigurationDetail{
+		Name:                name,
+		Credentials:         redactMap(cfg.Credentials),
+		Bindings:            gen,
+		PassthroughBindings: pass,
+		Tags:                cfg.Tags,
+		Rules:               buildRuleAttachments(name, resolved),
+		APIKeys:             buildAPIKeySummaries(name, resolved.APIKeys),
+	}
 }
 
 // RulesListHandler returns the sorted rule library with usage backlinks.
