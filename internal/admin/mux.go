@@ -168,8 +168,36 @@ func NewMux(opts MuxOptions) http.Handler {
 	backendDetail := BackendDetailHandler(opts.Store)
 	bindingsAll := BindingsHandler(opts.Store)
 	apiKeysReveal := APIKeysRevealHandler(opts.Store)
-	apiMux.Handle("/api/v1/config/api-keys/reveal",
+	// API keys — dedicated resource (GET/POST/PUT/PATCH/DELETE). Never part of
+	// a configuration payload. POST mints + one-time-reveals the secret; reads
+	// are redacted; PATCH toggles Enabled (the reversible off-switch). The exact
+	// /reveal path is GET-routed so it out-specifies the {id} wildcard cleanly.
+	apiKeysList := APIKeysListHandler(opts.Store)
+	apiKeyDetail := APIKeyDetailHandler(opts.Store)
+	apiKeysCreate := APIKeysCreateHandler(opts.Store, opts.ConfigDir)
+	apiKeysReplace := APIKeysReplaceHandler(opts.Store, opts.ConfigDir)
+	apiKeysPatch := APIKeysPatchHandler(opts.Store, opts.ConfigDir)
+	apiKeysDelete := APIKeysDeleteHandler(opts.Store, opts.ConfigDir)
+	apiMux.Handle("GET /api/v1/config/api-keys/reveal",
 		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/reveal", apiKeysReveal),
+	)
+	apiMux.Handle("GET /api/v1/config/api-keys",
+		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys", apiKeysList),
+	)
+	apiMux.Handle("POST /api/v1/config/api-keys",
+		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys", apiKeysCreate),
+	)
+	apiMux.Handle("GET /api/v1/config/api-keys/{id}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/{id}", apiKeyDetail),
+	)
+	apiMux.Handle("PUT /api/v1/config/api-keys/{id}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/{id}", apiKeysReplace),
+	)
+	apiMux.Handle("PATCH /api/v1/config/api-keys/{id}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/{id}", apiKeysPatch),
+	)
+	apiMux.Handle("DELETE /api/v1/config/api-keys/{id}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/{id}", apiKeysDelete),
 	)
 	// Configurations surface — read (GET) plus the write API (POST/PUT/DELETE).
 	// Credentials are masked on read and write-back-if-delivered on write;

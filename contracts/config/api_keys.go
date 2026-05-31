@@ -1,11 +1,20 @@
 package config
 
+import "github.com/google/uuid"
+
 // APIKeysConfig is the merged `api_keys` block — a flat list of gateway-issued
 // keys, each pointing at a named Configuration.
 type APIKeysConfig []APIKey
 
 // APIKey is a single gateway-issued credential.
 type APIKey struct {
+	// ID is the stable identifier the admin write API and the (future)
+	// central control plane address the key by. Optional in operator-authored
+	// YAML — nil is allowed for the local file model — and minted by the admin
+	// API on create; the central server requires it. Same nilable-UUID pattern
+	// as RuleContract.ID / ResilienceConfig.ID.
+	ID *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
+
 	// Secret is the bearer token clients present (conventionally prefixed
 	// "sk_live_…" for production keys or "sk_dev_…" for development keys).
 	// Authentication compares this in constant time.
