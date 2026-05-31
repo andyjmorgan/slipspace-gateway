@@ -200,11 +200,26 @@ func NewMux(opts MuxOptions) http.Handler {
 	apiMux.Handle("DELETE /api/v1/config/rules/{name}",
 		InstrumentRoute(opts.Meters, "/api/v1/config/rules/{name}", rulesDelete),
 	)
-	apiMux.Handle("/api/v1/config/backends",
+	// Backends surface — read (GET) plus the write API (POST/PUT/DELETE),
+	// method-routed under the same paths; write handlers 503 when ConfigDir
+	// is empty (admin write disabled by deployment).
+	backendsCreate := BackendsCreateHandler(opts.Store, opts.ConfigDir)
+	backendsReplace := BackendsReplaceHandler(opts.Store, opts.ConfigDir)
+	backendsDelete := BackendsDeleteHandler(opts.Store, opts.ConfigDir)
+	apiMux.Handle("GET /api/v1/config/backends",
 		InstrumentRoute(opts.Meters, "/api/v1/config/backends", backendsList),
 	)
-	apiMux.Handle("/api/v1/config/backends/",
+	apiMux.Handle("POST /api/v1/config/backends",
+		InstrumentRoute(opts.Meters, "/api/v1/config/backends", backendsCreate),
+	)
+	apiMux.Handle("GET /api/v1/config/backends/{name}",
 		InstrumentRoute(opts.Meters, "/api/v1/config/backends/{name}", backendDetail),
+	)
+	apiMux.Handle("PUT /api/v1/config/backends/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/backends/{name}", backendsReplace),
+	)
+	apiMux.Handle("DELETE /api/v1/config/backends/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/backends/{name}", backendsDelete),
 	)
 	apiMux.Handle("/api/v1/config/bindings",
 		InstrumentRoute(opts.Meters, "/api/v1/config/bindings", bindingsAll),

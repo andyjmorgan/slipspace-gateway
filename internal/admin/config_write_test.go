@@ -2,6 +2,7 @@ package admin
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
@@ -108,6 +109,40 @@ func TestReferrersToGroup(t *testing.T) {
 	got := referrersToGroup(snap, "g1")
 	if !reflect.DeepEqual(got, []string{"configuration:prod binding"}) {
 		t.Errorf("referrersToGroup(g1) = %v, want [configuration:prod binding]", got)
+	}
+}
+
+func TestReferrersToBackend_Passthrough(t *testing.T) {
+	snap := validSnapshot()
+	cfg := snap.Configurations["prod"]
+	cfg.PassthroughBindings = []contractsconfig.PassthroughBinding{{Family: "batches", Backend: "openai"}}
+	snap.Configurations["prod"] = cfg
+
+	got := referrersToBackend(snap, "openai")
+	found := false
+	for _, r := range got {
+		if strings.Contains(r, "passthrough") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a passthrough referrer, got %v", got)
+	}
+}
+
+func TestReferrersToConfiguration_SecretLabelFallback(t *testing.T) {
+	snap := validSnapshot()
+	snap.APIKeys = append(snap.APIKeys, contractsconfig.APIKey{Secret: "sk_live_y", Configuration: "prod", Enabled: true})
+
+	got := referrersToConfiguration(snap, "prod")
+	hasSecretLabel := false
+	for _, r := range got {
+		if r == "api_key:sk_live_y" {
+			hasSecretLabel = true
+		}
+	}
+	if !hasSecretLabel {
+		t.Errorf("expected a secret-labelled referrer for the unnamed key, got %v", got)
 	}
 }
 
