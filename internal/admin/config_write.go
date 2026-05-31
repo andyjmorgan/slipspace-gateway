@@ -1,10 +1,35 @@
 package admin
 
 import (
+	"net/http"
 	"sort"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
+
+// maxConfigBodyBytes caps an inbound config-write JSON body. A backend with a
+// dozen protocols or a configuration with many bindings is still a few KiB;
+// 256 KiB is generous headroom against a runaway client forcing the gateway to
+// buffer arbitrary memory.
+const maxConfigBodyBytes = 256 * 1024
+
+// ConflictError is the 409 wire shape shared by every config-write resource —
+// name-already-exists on POST, rename-not-supported on PUT, or
+// still-referenced on DELETE. UsedBy is populated only in the referenced case.
+type ConflictError struct {
+	Error string `json:"error"`
+
+	Name string `json:"name,omitempty"`
+
+	UsedBy []string `json:"used_by,omitempty"`
+}
+
+// isDryRun reports whether the request asked for a validate-only preview
+// (?dry_run=true) — the candidate is validated against a clone and the result
+// reported, but the live snapshot is never swapped and nothing is persisted.
+func isDryRun(r *http.Request) bool {
+	return r.URL.Query().Get("dry_run") == "true"
+}
 
 // This file holds the shared scaffolding every per-resource config-write
 // handler (backends, groups, configurations, connectors, api_keys) builds on,
