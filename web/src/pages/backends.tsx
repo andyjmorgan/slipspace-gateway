@@ -3,6 +3,7 @@ import { useBackends } from "@/lib/config-api"
 import { PanelCard, TableScroll } from "@/components/atoms/card"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Tag } from "@/components/atoms/tag"
+import { Button } from "@/components/ui/button"
 import {
   PageHeader,
   LoadingPanel,
@@ -20,6 +21,11 @@ export function BackendsPage() {
       <PageHeader
         title="Backends"
         sub="Upstream services the gateway forwards to, shared across every configuration — base URLs, the protocols each one speaks, and whether it accepts passthrough traffic."
+        action={
+          <Link to="/backends/new">
+            <Button size="sm">+ New backend</Button>
+          </Link>
+        }
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}

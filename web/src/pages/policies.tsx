@@ -1,6 +1,8 @@
+import { Link } from "react-router"
 import { usePolicies, type PolicySummary, type PolicyTarget } from "@/lib/config-api"
 import { PanelCard, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
+import { Button } from "@/components/ui/button"
 import {
   PageHeader,
   LoadingPanel,
@@ -17,7 +19,12 @@ export function PoliciesPage() {
     <div>
       <PageHeader
         title="Groups"
-        sub="Failover and load-balance backend groups with live per-pod circuit-breaker state. Read-only for now; editing lands in v1.3."
+        sub="Failover and load-balance backend groups with live per-pod circuit-breaker state. Edit the policy + targets; live breaker state shown below."
+        action={
+          <Link to="/groups/new">
+            <Button size="sm">+ New group</Button>
+          </Link>
+        }
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}
@@ -51,6 +58,9 @@ function PolicyCard({ pol }: { pol: PolicySummary }) {
             retry on {pol.failure_status_codes.join(", ")}
           </span>
         )}
+        <Link to={`/groups/${encodeURIComponent(pol.name)}/edit`} className="ml-auto">
+          <Button type="button" size="xs" variant="outline">Edit</Button>
+        </Link>
       </div>
       <TableScroll>
         <thead>

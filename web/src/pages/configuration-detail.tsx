@@ -1,10 +1,12 @@
 import { useState } from "react"
-import { Link, useParams } from "react-router"
+import { Link, useNavigate, useParams } from "react-router"
 import { Eye, EyeOff, Copy, Check } from "lucide-react"
-import { useConfiguration, revealAPIKey, type RedactedSecret, type RuleAttachment, type APIKeySummary, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
+import { useConfiguration, revealAPIKey, deleteConfiguration, type RedactedSecret, type RuleAttachment, type APIKeySummary, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
+import { Button } from "@/components/ui/button"
+import { DeleteDialog } from "@/components/forms/write-atoms"
 import { cn } from "@/lib/utils"
 import {
   PageHeader,
@@ -17,8 +19,10 @@ import {
 
 export function ConfigurationDetailPage() {
   const { name } = useParams<{ name: string }>()
+  const nav = useNavigate()
   const { state } = useConfiguration(name)
   useUnauthorizedRedirect(state)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   if (state.status === "loading") {
     return (
@@ -60,10 +64,28 @@ export function ConfigurationDetailPage() {
           </div>
         }
         action={
-          <Link to="/configurations" className="text-[12.5px] text-[color:var(--text-3)] hover:underline">
-            ← back to all configurations
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link to={`/configurations/${encodeURIComponent(c.name)}/edit`}>
+              <Button size="sm" variant="outline">Edit</Button>
+            </Link>
+            <Button size="sm" variant="destructive" onClick={() => setConfirmDelete(true)}>Delete</Button>
+            <Link to="/configurations" className="text-[12.5px] text-[color:var(--text-3)] hover:underline ml-1">
+              ← back
+            </Link>
+          </div>
         }
+      />
+
+      <DeleteDialog
+        open={confirmDelete}
+        resourceKind="configuration"
+        resourceName={c.name}
+        requireConfirmName
+        onConfirm={async () => {
+          await deleteConfiguration(c.name)
+          nav("/configurations", { replace: true })
+        }}
+        onClose={() => setConfirmDelete(false)}
       />
 
       <CredentialsCard creds={c.credentials} />

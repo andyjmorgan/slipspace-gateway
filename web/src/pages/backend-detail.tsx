@@ -1,8 +1,11 @@
-import { Link, useParams } from "react-router"
-import { useBackend, type PassthroughFamilyRow } from "@/lib/config-api"
+import { useState } from "react"
+import { Link, useNavigate, useParams } from "react-router"
+import { useBackend, deleteBackend, type PassthroughFamilyRow } from "@/lib/config-api"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
+import { Button } from "@/components/ui/button"
+import { DeleteDialog } from "@/components/forms/write-atoms"
 import {
   PageHeader,
   LoadingPanel,
@@ -13,8 +16,10 @@ import {
 
 export function BackendDetailPage() {
   const { name } = useParams<{ name: string }>()
+  const nav = useNavigate()
   const { state } = useBackend(name)
   useUnauthorizedRedirect(state)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   if (state.status === "loading") return <Wrap name={name}><LoadingPanel /></Wrap>
   if (state.status === "error") return <Wrap name={name}><ErrorPanel message={state.message} /></Wrap>
@@ -36,10 +41,28 @@ export function BackendDetailPage() {
           </div>
         }
         action={
-          <Link to="/backends" className="text-[12.5px] text-[color:var(--text-3)] hover:underline">
-            ← back to all backends
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link to={`/backends/${encodeURIComponent(b.name)}/edit`}>
+              <Button size="sm" variant="outline">Edit</Button>
+            </Link>
+            <Button size="sm" variant="destructive" onClick={() => setConfirmDelete(true)}>Delete</Button>
+            <Link to="/backends" className="text-[12.5px] text-[color:var(--text-3)] hover:underline ml-1">
+              ← back
+            </Link>
+          </div>
         }
+      />
+
+      <DeleteDialog
+        open={confirmDelete}
+        resourceKind="backend"
+        resourceName={b.name}
+        requireConfirmName
+        onConfirm={async () => {
+          await deleteBackend(b.name)
+          nav("/backends", { replace: true })
+        }}
+        onClose={() => setConfirmDelete(false)}
       />
 
       <PanelCard>

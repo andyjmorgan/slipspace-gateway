@@ -78,6 +78,12 @@ type ConfigurationDetail struct {
 
 	Tags map[string]string `json:"tags,omitempty"`
 
+	// ConnectorBindings is exposed so the configuration editor can round-trip
+	// them on a full-replace PUT — without this an edit would silently drop the
+	// configuration's connector bindings. No secrets (connector credentials are
+	// secret_refs), so the raw contract type is returned.
+	ConnectorBindings []contractsconfig.ConnectorBinding `json:"connector_bindings,omitempty"`
+
 	APIKeys []APIKeySummary `json:"api_keys"`
 }
 
