@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
@@ -141,6 +143,7 @@ func (r *ResolvedConfigV2) validateLibrariesV2() error {
 
 func (r *ResolvedConfigV2) validateConfigurationsV2() error {
 	secrets := make(map[string]int, len(r.APIKeys))
+	ids := make(map[uuid.UUID]int, len(r.APIKeys))
 	for i := range r.APIKeys {
 		k := &r.APIKeys[i]
 		if k.Secret == "" {
@@ -150,6 +153,12 @@ func (r *ResolvedConfigV2) validateConfigurationsV2() error {
 			return fmt.Errorf("%w: api_keys[%d] and api_keys[%d]: duplicate secret", ErrV2Validation, prev, i)
 		}
 		secrets[k.Secret] = i
+		if k.ID != nil {
+			if prev, dup := ids[*k.ID]; dup {
+				return fmt.Errorf("%w: api_keys[%d] and api_keys[%d]: duplicate id %s", ErrV2Validation, prev, i, k.ID)
+			}
+			ids[*k.ID] = i
+		}
 		if _, ok := r.Configurations[k.Configuration]; !ok {
 			return fmt.Errorf("%w: api_keys[%d] %q references %q", ErrUnknownConfiguration, i, k.Name, k.Configuration)
 		}
