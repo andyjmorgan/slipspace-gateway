@@ -221,6 +221,28 @@ func NewMux(opts MuxOptions) http.Handler {
 	apiMux.Handle("DELETE /api/v1/config/backends/{name}",
 		InstrumentRoute(opts.Meters, "/api/v1/config/backends/{name}", backendsDelete),
 	)
+	// Groups surface — editable CRUD under /config/groups (the richer
+	// live-circuit-breaker projection stays on /api/v1/policies).
+	groupsList := GroupsListHandler(opts.Store)
+	groupDetail := GroupDetailHandler(opts.Store)
+	groupsCreate := GroupsCreateHandler(opts.Store, opts.ConfigDir)
+	groupsReplace := GroupsReplaceHandler(opts.Store, opts.ConfigDir)
+	groupsDelete := GroupsDeleteHandler(opts.Store, opts.ConfigDir)
+	apiMux.Handle("GET /api/v1/config/groups",
+		InstrumentRoute(opts.Meters, "/api/v1/config/groups", groupsList),
+	)
+	apiMux.Handle("POST /api/v1/config/groups",
+		InstrumentRoute(opts.Meters, "/api/v1/config/groups", groupsCreate),
+	)
+	apiMux.Handle("GET /api/v1/config/groups/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/groups/{name}", groupDetail),
+	)
+	apiMux.Handle("PUT /api/v1/config/groups/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/groups/{name}", groupsReplace),
+	)
+	apiMux.Handle("DELETE /api/v1/config/groups/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/groups/{name}", groupsDelete),
+	)
 	apiMux.Handle("/api/v1/config/bindings",
 		InstrumentRoute(opts.Meters, "/api/v1/config/bindings", bindingsAll),
 	)
