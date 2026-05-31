@@ -15,8 +15,9 @@ func (r *ResolvedConfigV2) Clone() *ResolvedConfigV2 {
 		return nil
 	}
 	out := &ResolvedConfigV2{
-		Admin:     r.Admin,
-		Telemetry: r.Telemetry,
+		Admin:       r.Admin,
+		Telemetry:   r.Telemetry,
+		SourceFiles: cloneStringMap(r.SourceFiles),
 	}
 
 	if r.Backends != nil {

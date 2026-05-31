@@ -256,7 +256,7 @@ func commitClone(clone *config.ResolvedConfigV2, configDir string, store *config
 	if err := clone.RevalidateAndIndex(); err != nil {
 		return validationError{wrapped: err}
 	}
-	if err := config.WritePolicyYAMLV2(configDir, clone); err != nil {
+	if err := config.WriteConfigV2(configDir, clone); err != nil {
 		return fmt.Errorf("persist: %w", err)
 	}
 	store.Replace(clone)

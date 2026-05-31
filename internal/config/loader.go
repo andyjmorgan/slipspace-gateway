@@ -7,17 +7,27 @@ import (
 	"sort"
 )
 
-// Top-level block keys the v2 policy.yaml writer emits. Kept here (rather than
-// in the writer) because they double as the canonical block-name vocabulary.
+// Top-level block keys the v2 writer emits. Kept here (rather than in the
+// writer) because they double as the canonical block-name vocabulary — the same
+// strings ResolvedConfigV2.SourceFiles is keyed by.
 const (
+	keyBackends       = "backends"
+	keyGroups         = "groups"
 	keyConfigurations = "configurations"
 	keyAPIKeys        = "api_keys"
 	keyRules          = "rules"
 	keyConnectors     = "connectors"
+	keyAdmin          = "admin"
+	keyTelemetry      = "telemetry"
 )
 
-// filenamePolicy is the policy.yaml file the admin rules-write path rewrites.
-const filenamePolicy = "policy.yaml"
+// Canonical filenames the writer falls back to for a block with no recorded
+// SourceFiles origin (e.g. a block first introduced through the admin API).
+const (
+	filenameBackends = "backends.yaml"
+	filenamePolicy   = "policy.yaml"
+	filenameAdmin    = "admin.yaml"
+)
 
 // ListConfigFiles enumerates the *.yaml files in dir and returns a map of
 // filename to absolute path. Under the v2 model the loader merges every *.yaml

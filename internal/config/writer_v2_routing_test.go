@@ -1,0 +1,233 @@
+package config
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+)
+
+const (
+	fxBackends = `backends:
+  openai:
+    base_url: https://api.openai.com
+    protocols:
+      chat:
+        path: /v1/chat/completions
+groups:
+  g1:
+    mode: failover
+    targets:
+      - backend: openai
+`
+	fxPolicy = `configurations:
+  prod:
+    credentials:
+      openai: sk-test
+    bindings:
+      - protocol: chat
+        models: ["gpt-*"]
+        backend: openai
+api_keys:
+  - secret: sk_live_x
+    name: k1
+    configuration: prod
+    enabled: true
+`
+	fxAdmin = `admin:
+  enabled: true
+  bind_addr: ":8081"
+`
+)
+
+func writeFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+}
+
+func readFile(t *testing.T, dir, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // test reads a file under t.TempDir()
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return b
+}
+
+func loadDir(t *testing.T, dir string) *ResolvedConfigV2 {
+	t.Helper()
+	rc, err := LoadV2(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("LoadV2: %v", err)
+	}
+	return rc
+}
+
+func TestLoadV2_SourceFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"backends.yaml": fxBackends,
+		"policy.yaml":   fxPolicy,
+		"admin.yaml":    fxAdmin,
+	})
+	rc := loadDir(t, dir)
+
+	want := map[string]string{
+		"backends":       "backends.yaml",
+		"groups":         "backends.yaml",
+		"configurations": "policy.yaml",
+		"api_keys":       "policy.yaml",
+		"admin":          "admin.yaml",
+	}
+	for block, file := range want {
+		if got := rc.SourceFiles[block]; got != file {
+			t.Errorf("SourceFiles[%q] = %q, want %q", block, got, file)
+		}
+	}
+	if _, ok := rc.SourceFiles["telemetry"]; ok {
+		t.Errorf("telemetry should not be recorded when absent from config")
+	}
+}
+
+func TestWriteConfigV2_RoundTripInPlace(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"backends.yaml": fxBackends,
+		"policy.yaml":   fxPolicy,
+		"admin.yaml":    fxAdmin,
+	})
+	adminBefore := readFile(t, dir, "admin.yaml")
+
+	rc := loadDir(t, dir)
+	if err := WriteConfigV2(dir, rc); err != nil {
+		t.Fatalf("WriteConfigV2: %v", err)
+	}
+
+	got := loadDir(t, dir)
+	if got.Backends["openai"].BaseURL != "https://api.openai.com" {
+		t.Errorf("backend base_url lost on round-trip: %q", got.Backends["openai"].BaseURL)
+	}
+	if len(got.Groups) != 1 {
+		t.Errorf("groups = %d, want 1", len(got.Groups))
+	}
+	if got.Configurations["prod"].Credentials["openai"] != "sk-test" {
+		t.Errorf("credential lost on round-trip")
+	}
+	if len(got.APIKeys) != 1 || got.APIKeys[0].Secret != "sk_live_x" {
+		t.Errorf("api_keys lost on round-trip: %+v", got.APIKeys)
+	}
+	if got.Admin == nil || !got.Admin.Enabled {
+		t.Errorf("admin block lost on round-trip")
+	}
+
+	// A standalone admin.yaml (no editable block) must not be rewritten.
+	adminAfter := readFile(t, dir, "admin.yaml")
+	if string(adminBefore) != string(adminAfter) {
+		t.Errorf("standalone admin.yaml was rewritten:\nbefore=%q\nafter=%q", adminBefore, adminAfter)
+	}
+}
+
+func TestWriteConfigV2_BackendEditLandsInBackendsFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"backends.yaml": fxBackends,
+		"policy.yaml":   fxPolicy,
+	})
+	rc := loadDir(t, dir)
+
+	clone := rc.Clone()
+	be := clone.Backends["openai"]
+	be.BaseURL = "https://moved.example.com"
+	clone.Backends["openai"] = be
+	if err := clone.RevalidateAndIndex(); err != nil {
+		t.Fatalf("revalidate: %v", err)
+	}
+	if err := WriteConfigV2(dir, clone); err != nil {
+		t.Fatalf("WriteConfigV2: %v", err)
+	}
+
+	backendsBytes := readFile(t, dir, "backends.yaml")
+	policyBytes := readFile(t, dir, "policy.yaml")
+	if !strings.Contains(string(backendsBytes), "moved.example.com") {
+		t.Errorf("edited backend did not land in backends.yaml")
+	}
+	if strings.Contains(string(policyBytes), "moved.example.com") {
+		t.Errorf("backend leaked into policy.yaml")
+	}
+	if got := loadDir(t, dir).Backends["openai"].BaseURL; got != "https://moved.example.com" {
+		t.Errorf("reloaded base_url = %q, want moved", got)
+	}
+}
+
+func TestWriteConfigV2_ClearRemovedBlock(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"backends.yaml": fxBackends,
+		"policy.yaml":   fxPolicy,
+	})
+	rc := loadDir(t, dir)
+
+	clone := rc.Clone()
+	clone.Groups = nil // delete the last group
+	if err := clone.RevalidateAndIndex(); err != nil {
+		t.Fatalf("revalidate: %v", err)
+	}
+	if err := WriteConfigV2(dir, clone); err != nil {
+		t.Fatalf("WriteConfigV2: %v", err)
+	}
+
+	got := loadDir(t, dir)
+	if len(got.Groups) != 0 {
+		t.Errorf("groups not cleared: %d", len(got.Groups))
+	}
+	if got.Backends["openai"].BaseURL == "" {
+		t.Errorf("backends dropped when clearing groups from the same file")
+	}
+}
+
+func TestWriteConfigV2_NewBlockDefaultFile(t *testing.T) {
+	dir := t.TempDir()
+	// backends.yaml carries only backends — no groups block, so "groups" has
+	// no recorded source file.
+	writeFiles(t, dir, map[string]string{
+		"backends.yaml": `backends:
+  openai:
+    base_url: https://api.openai.com
+    protocols:
+      chat:
+        path: /v1/chat/completions
+`,
+		"policy.yaml": fxPolicy,
+	})
+	rc := loadDir(t, dir)
+	if _, ok := rc.SourceFiles["groups"]; ok {
+		t.Fatalf("groups unexpectedly has a source file")
+	}
+
+	clone := rc.Clone()
+	clone.Groups = contractsconfig.GroupsConfig{
+		"g2": {Mode: "failover", Targets: []contractsconfig.Target{{Backend: "openai"}}},
+	}
+	if err := clone.RevalidateAndIndex(); err != nil {
+		t.Fatalf("revalidate: %v", err)
+	}
+	if err := WriteConfigV2(dir, clone); err != nil {
+		t.Fatalf("WriteConfigV2: %v", err)
+	}
+
+	// groups had no origin -> defaults to backends.yaml.
+	backendsBytes := readFile(t, dir, "backends.yaml")
+	if !strings.Contains(string(backendsBytes), "g2") {
+		t.Errorf("new group did not default into backends.yaml")
+	}
+	if len(loadDir(t, dir).Groups) != 1 {
+		t.Errorf("new group did not reload")
+	}
+}
