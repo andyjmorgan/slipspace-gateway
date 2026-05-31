@@ -261,6 +261,28 @@ func NewMux(opts MuxOptions) http.Handler {
 	apiMux.Handle("/api/v1/config/bindings",
 		InstrumentRoute(opts.Meters, "/api/v1/config/bindings", bindingsAll),
 	)
+	// Connectors surface — read + write CRUD. Connector credentials are
+	// secret_ref indirections (env:/file:), so no masking is needed.
+	connectorsList := ConnectorsListHandler(opts.Store)
+	connectorDetail := ConnectorDetailHandler(opts.Store)
+	connectorsCreate := ConnectorsCreateHandler(opts.Store, opts.ConfigDir)
+	connectorsReplace := ConnectorsReplaceHandler(opts.Store, opts.ConfigDir)
+	connectorsDelete := ConnectorsDeleteHandler(opts.Store, opts.ConfigDir)
+	apiMux.Handle("GET /api/v1/config/connectors",
+		InstrumentRoute(opts.Meters, "/api/v1/config/connectors", connectorsList),
+	)
+	apiMux.Handle("POST /api/v1/config/connectors",
+		InstrumentRoute(opts.Meters, "/api/v1/config/connectors", connectorsCreate),
+	)
+	apiMux.Handle("GET /api/v1/config/connectors/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/connectors/{name}", connectorDetail),
+	)
+	apiMux.Handle("PUT /api/v1/config/connectors/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/connectors/{name}", connectorsReplace),
+	)
+	apiMux.Handle("DELETE /api/v1/config/connectors/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/connectors/{name}", connectorsDelete),
+	)
 	// Settings page — redacted config export. Both endpoints share the
 	// same redactor; the files endpoint backs the tabbed inspector view,
 	// the download endpoint streams the ZIP bundle.
