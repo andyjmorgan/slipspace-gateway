@@ -31,6 +31,18 @@ export type APIKeySummary = {
   enabled: boolean
 }
 
+// ConnectorBinding mirrors the contract type. The editor does not yet offer a
+// rich editor for these, but reads and round-trips them verbatim on save so a
+// full-replace PUT never drops a configuration's connector bindings.
+export type ConnectorBinding = {
+  connector: string
+  sampling?: number
+  sampling_key?: string
+  max_body_bytes?: number
+  oversize_behaviour?: string
+  filter?: unknown
+}
+
 export type ConfigurationDetail = {
   name: string
   credentials: Record<string, RedactedSecret>
@@ -38,6 +50,7 @@ export type ConfigurationDetail = {
   passthrough_bindings: PassthroughBindingRow[]
   rules: RuleAttachment[]
   tags?: Record<string, string>
+  connector_bindings?: ConnectorBinding[]
   api_keys: APIKeySummary[]
 }
 
@@ -121,6 +134,169 @@ export type APIKeyReveal = {
   secret: string
   enabled: boolean
   configuration: string
+}
+
+// ---------------------------------------------------------------------------
+// v2 contract shapes the write editors read + submit. These mirror the Go
+// contract types (contracts/config/model_v2.go, connectors.go, api_keys.go) on
+// the wire — the GET detail endpoints return the contract type directly for
+// backends/groups/connectors (no DTO projection except for credentials, which
+// are redacted on the configuration detail and never travel on the backend /
+// group / connector shapes).
+
+export type BackendAuth = {
+  header: string
+  format?: string
+}
+
+export type BackendProtocol = {
+  path?: string
+  auth?: BackendAuth | null
+}
+
+export type PassthroughPath = {
+  match: string
+  methods: string[]
+}
+
+export type PassthroughFamily = {
+  auth?: BackendAuth | null
+  paths: PassthroughPath[]
+}
+
+// Backend is the full editable backend connection. The GET /backends/{name}
+// detail endpoint returns the BackendDetail DTO (protocols/passthrough as
+// arrays); the write body accepts the contract Backend (protocols/passthrough
+// as maps). The editor seeds from BackendDetail and submits this map shape.
+export type Backend = {
+  base_url: string
+  required_headers?: Record<string, string>
+  query?: Record<string, string>
+  protocols?: Record<string, BackendProtocol>
+  passthrough?: Record<string, PassthroughFamily>
+}
+
+export type BackendWriteBody = Backend & {
+  name: string
+}
+
+// CircuitBreakerConfig mirrors contracts/resilience.CircuitBreakerConfig.
+// The editor only toggles `enabled`; the remaining tuning fields round-trip
+// untouched (the read seeds and the write passes through whatever was set).
+export type CircuitBreakerConfig = {
+  enabled?: boolean
+  failure_threshold?: number
+  failure_rate_threshold?: number
+  cooldown_seconds?: number
+  half_open_success_threshold?: number
+}
+
+export type Target = {
+  backend: string
+  alias?: string
+  query?: Record<string, string>
+  path?: string
+  weight?: number
+}
+
+export type Group = {
+  mode: string
+  failure_status_codes?: number[]
+  circuit_breaker?: CircuitBreakerConfig | null
+  strict_weights?: boolean
+  response_header_timeout_seconds?: number
+  targets: Target[]
+}
+
+export type GroupView = Group & {
+  name: string
+}
+
+export type GroupWriteBody = Group & {
+  name: string
+}
+
+export type ConnectorAuth = {
+  mode: string
+  access_key_id_ref?: string
+  secret_access_key_ref?: string
+  role_arn?: string
+  external_id_ref?: string
+  sas_token_ref?: string
+  account_key_ref?: string
+}
+
+export type ConnectorRotation = {
+  max_bytes?: number
+  max_age_seconds?: number
+}
+
+// Connector is the full editable connector definition (s3 / azure_blob /
+// webhook). Carries no plaintext secrets — cloud + webhook credentials are
+// secret_ref indirections resolved at runtime — so it round-trips directly with
+// no mask/write-back.
+export type Connector = {
+  name: string
+  type: string
+  auth?: ConnectorAuth | null
+  rotation?: ConnectorRotation | null
+  bucket?: string
+  prefix?: string
+  region?: string
+  endpoint_url?: string
+  use_path_style?: boolean
+  account?: string
+  container?: string
+  url?: string
+  secret_ref?: string
+  timeout_ms?: number
+}
+
+export type APIKeyListItem = {
+  id?: string
+  name: string
+  configuration: string
+  enabled: boolean
+  secret: RedactedSecret
+}
+
+// ConfigurationWriteBody is the POST/PUT shape for a configuration. Credentials
+// is map[backend] -> string | null with write-back-if-delivered semantics: null
+// keeps the stored secret for that backend (the masked-unchanged signal), a
+// real string sets it, "" is a no-credential backend. A backend absent from the
+// map is dropped. There is deliberately no api_keys field — keys are managed
+// only via the dedicated /api-keys endpoints.
+export type ConfigurationWriteBody = {
+  name: string
+  credentials?: Record<string, string | null>
+  bindings?: BindingRow[]
+  passthrough_bindings?: PassthroughBindingRow[]
+  rule_names?: string[]
+  tags?: Record<string, string>
+  connector_bindings?: ConnectorBinding[]
+}
+
+// ConflictError is the 409 wire shape shared by every config-write resource —
+// name-already-exists on POST, rename-not-supported on PUT, or still-referenced
+// on DELETE. UsedBy is populated only in the referenced case.
+export type ConflictError = {
+  error: string
+  name?: string
+  used_by?: string[]
+}
+
+// ValidationFailure is the 422 wire shape returned when the post-mutation
+// RevalidateAndIndex fails.
+export type ValidationFailure = {
+  error: string
+  detail: string
+}
+
+// PreviewResult is the dry-run wire shape: whether a candidate mutation would
+// pass validation, and the underlying error when not.
+export type PreviewResult = {
+  valid: boolean
+  error?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +395,30 @@ export async function revealAPIKey(configuration: string, name: string): Promise
 
 export function useBindings(): ConfigFetchHandle<BindingsResponse> {
   return useConfigFetch<BindingsResponse>("/api/v1/config/bindings")
+}
+
+export function useConnectors(): ConfigFetchHandle<Connector[]> {
+  return useConfigFetch<Connector[]>("/api/v1/config/connectors")
+}
+
+export function useConnector(name: string | undefined): ConfigFetchHandle<Connector> {
+  return useConfigFetch<Connector>(name ? `/api/v1/config/connectors/${encodeURIComponent(name)}` : null)
+}
+
+export function useGroups(): ConfigFetchHandle<GroupView[]> {
+  return useConfigFetch<GroupView[]>("/api/v1/config/groups")
+}
+
+export function useGroup(name: string | undefined): ConfigFetchHandle<GroupView> {
+  return useConfigFetch<GroupView>(name ? `/api/v1/config/groups/${encodeURIComponent(name)}` : null)
+}
+
+export function useAPIKeys(): ConfigFetchHandle<APIKeyListItem[]> {
+  return useConfigFetch<APIKeyListItem[]>("/api/v1/config/api-keys")
+}
+
+export function useAPIKey(id: string | undefined): ConfigFetchHandle<APIKeyListItem> {
+  return useConfigFetch<APIKeyListItem>(id ? `/api/v1/config/api-keys/${encodeURIComponent(id)}` : null)
 }
 
 export type PolicyTarget = {
@@ -328,4 +528,183 @@ export async function deleteRule(name: string): Promise<void> {
   await apiFetch<void>(`/api/v1/config/rules/${encodeURIComponent(name)}`, {
     method: "DELETE",
   })
+}
+
+// ---------------------------------------------------------------------------
+// Backends / groups / configurations / connectors / api_keys write API.
+// Every write mirrors the same Snapshot.Clone -> mutate -> Validate ->
+// WritePolicyYAML -> Store.Replace flow as rules; a 200/201/204 means the next
+// GET reflects the new state and the change is persisted. POST/PUT accept
+// ?dry_run=true and return PreviewResult without persisting (the diff-preview's
+// safety half — see internal/admin/config_write.go::previewMutation).
+
+function dryRunPath(path: string): string {
+  return path.includes("?") ? `${path}&dry_run=true` : `${path}?dry_run=true`
+}
+
+// Backends ------------------------------------------------------------------
+
+export async function createBackend(body: BackendWriteBody): Promise<BackendDetail> {
+  return apiFetch<BackendDetail>("/api/v1/config/backends", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function replaceBackend(name: string, body: BackendWriteBody): Promise<BackendDetail> {
+  return apiFetch<BackendDetail>(`/api/v1/config/backends/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteBackend(name: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/config/backends/${encodeURIComponent(name)}`, { method: "DELETE" })
+}
+
+export async function previewBackend(name: string | null, body: BackendWriteBody): Promise<PreviewResult> {
+  const base = name ? `/api/v1/config/backends/${encodeURIComponent(name)}` : "/api/v1/config/backends"
+  return apiFetch<PreviewResult>(dryRunPath(base), {
+    method: name ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+// Groups --------------------------------------------------------------------
+
+export async function createGroup(body: GroupWriteBody): Promise<GroupView> {
+  return apiFetch<GroupView>("/api/v1/config/groups", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function replaceGroup(name: string, body: GroupWriteBody): Promise<GroupView> {
+  return apiFetch<GroupView>(`/api/v1/config/groups/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteGroup(name: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/config/groups/${encodeURIComponent(name)}`, { method: "DELETE" })
+}
+
+export async function previewGroup(name: string | null, body: GroupWriteBody): Promise<PreviewResult> {
+  const base = name ? `/api/v1/config/groups/${encodeURIComponent(name)}` : "/api/v1/config/groups"
+  return apiFetch<PreviewResult>(dryRunPath(base), {
+    method: name ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+// Configurations ------------------------------------------------------------
+
+export async function createConfiguration(body: ConfigurationWriteBody): Promise<ConfigurationDetail> {
+  return apiFetch<ConfigurationDetail>("/api/v1/config/configurations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function replaceConfiguration(name: string, body: ConfigurationWriteBody): Promise<ConfigurationDetail> {
+  return apiFetch<ConfigurationDetail>(`/api/v1/config/configurations/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteConfiguration(name: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/config/configurations/${encodeURIComponent(name)}`, { method: "DELETE" })
+}
+
+export async function previewConfiguration(name: string | null, body: ConfigurationWriteBody): Promise<PreviewResult> {
+  const base = name ? `/api/v1/config/configurations/${encodeURIComponent(name)}` : "/api/v1/config/configurations"
+  return apiFetch<PreviewResult>(dryRunPath(base), {
+    method: name ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+// Connectors ----------------------------------------------------------------
+
+export async function createConnector(body: Connector): Promise<Connector> {
+  return apiFetch<Connector>("/api/v1/config/connectors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function replaceConnector(name: string, body: Connector): Promise<Connector> {
+  return apiFetch<Connector>(`/api/v1/config/connectors/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteConnector(name: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/config/connectors/${encodeURIComponent(name)}`, { method: "DELETE" })
+}
+
+// API keys ------------------------------------------------------------------
+
+export type APIKeyCreateBody = {
+  name: string
+  configuration: string
+  enabled?: boolean
+}
+
+// createAPIKey mints a key. The 201 response carries the PLAINTEXT secret
+// exactly once — show it, let the operator copy it, then it is gone forever.
+export async function createAPIKey(body: APIKeyCreateBody): Promise<APIKeyReveal> {
+  return apiFetch<APIKeyReveal>("/api/v1/config/api-keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+// replaceAPIKey reassigns an existing key's configuration + enabled state. The
+// secret is immutable; rename is rejected with 409 (use patchAPIKey).
+export async function replaceAPIKey(id: string, body: { configuration: string; enabled: boolean }): Promise<APIKeyListItem> {
+  return apiFetch<APIKeyListItem>(`/api/v1/config/api-keys/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+// patchAPIKey is the partial update — the everyday enable/disable off-switch,
+// plus rename / reassign. Omitted fields are unchanged; the secret is never
+// touched.
+export async function patchAPIKey(
+  id: string,
+  body: { name?: string; configuration?: string; enabled?: boolean },
+): Promise<APIKeyListItem> {
+  return apiFetch<APIKeyListItem>(`/api/v1/config/api-keys/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteAPIKey(id: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/config/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// apiKeyRef returns the path ref for a key — its minted UUID when present,
+// otherwise the name fallback (matches apiKeyIndexByRef on the Go side).
+export function apiKeyRef(k: APIKeyListItem): string {
+  return k.id ?? k.name
 }

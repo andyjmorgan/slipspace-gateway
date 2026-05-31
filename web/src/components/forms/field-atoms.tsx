@@ -5,6 +5,7 @@
 
 import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
+import type { KVPair } from "./field-helpers"
 
 // FieldRow lays out a label above its control, with optional hint text
 // below and an error slot that reuses the page-level --err variable.
@@ -225,5 +226,141 @@ export function FieldGrid({ children, className }: { children: ReactNode; classN
     <div className={cn("grid grid-cols-1 sm:grid-cols-2 gap-3", className)}>
       {children}
     </div>
+  )
+}
+
+// KeyValueEditor edits an ordered list of key/value pairs that serialises
+// to a Record<string,string> (required_headers, query, tags). The internal
+// shape is a pair array so an empty key while typing does not collapse a
+// row; the caller maps it back to a record on submit.
+export function KeyValueEditor({
+  label,
+  pairs,
+  onChange,
+  keyPlaceholder = "key",
+  valuePlaceholder = "value",
+  addLabel = "+ Add row",
+  hint,
+}: {
+  label: string
+  pairs: KVPair[]
+  onChange: (next: KVPair[]) => void
+  keyPlaceholder?: string
+  valuePlaceholder?: string
+  addLabel?: string
+  hint?: string
+}) {
+  return (
+    <FieldRow label={label} hint={pairs.length === 0 ? hint : undefined}>
+      <div className="flex flex-col gap-2">
+        {pairs.map((p, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={p.key}
+              placeholder={keyPlaceholder}
+              onChange={(e) => {
+                const copy = pairs.slice()
+                copy[i] = { ...copy[i], key: e.target.value }
+                onChange(copy)
+              }}
+              className={cn(inputClassName, "mono flex-1 min-w-0")}
+            />
+            <input
+              type="text"
+              value={p.value}
+              placeholder={valuePlaceholder}
+              onChange={(e) => {
+                const copy = pairs.slice()
+                copy[i] = { ...copy[i], value: e.target.value }
+                onChange(copy)
+              }}
+              className={cn(inputClassName, "mono flex-1 min-w-0")}
+            />
+            <button
+              type="button"
+              aria-label="Remove row"
+              onClick={() => {
+                const copy = pairs.slice()
+                copy.splice(i, 1)
+                onChange(copy)
+              }}
+              className="text-[color:var(--text-3)] hover:text-[color:var(--err)] text-[12px] px-1"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => onChange([...pairs, { key: "", value: "" }])}
+          className="self-start text-[11.5px] text-[color:var(--text-3)] hover:text-[color:var(--text)]"
+        >
+          {addLabel}
+        </button>
+      </div>
+    </FieldRow>
+  )
+}
+
+// StringListEditor edits an ordered list of single strings (model patterns,
+// tags, methods, failure status codes as text). Empty trailing entries are
+// dropped on read via stringsFromList (see field-helpers.ts).
+export function StringListEditor({
+  label,
+  values,
+  onChange,
+  placeholder,
+  addLabel = "+ Add",
+  hint,
+  mono = true,
+}: {
+  label: string
+  values: string[]
+  onChange: (next: string[]) => void
+  placeholder?: string
+  addLabel?: string
+  hint?: string
+  mono?: boolean
+}) {
+  return (
+    <FieldRow label={label} hint={values.length === 0 ? hint : undefined}>
+      <div className="flex flex-col gap-2">
+        {values.map((v, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={v}
+              placeholder={placeholder}
+              onChange={(e) => {
+                const copy = values.slice()
+                copy[i] = e.target.value
+                onChange(copy)
+              }}
+              className={cn(inputClassName, "flex-1 min-w-0", mono && "mono")}
+            />
+            <button
+              type="button"
+              aria-label="Remove entry"
+              onClick={() => {
+                const copy = values.slice()
+                copy.splice(i, 1)
+                onChange(copy)
+              }}
+              className="text-[color:var(--text-3)] hover:text-[color:var(--err)] text-[12px] px-1"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => onChange([...values, ""])}
+          className="self-start text-[11.5px] text-[color:var(--text-3)] hover:text-[color:var(--text)]"
+        >
+          {addLabel}
+        </button>
+      </div>
+    </FieldRow>
   )
 }

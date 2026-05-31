@@ -9,6 +9,8 @@ import {
   Waypoints,
   Activity,
   Shield,
+  KeyRound,
+  Database,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { fetchVersion } from "@/lib/api"
@@ -23,11 +25,13 @@ type NavItem = {
 const NAV: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/messages", label: "Live messages", icon: Activity },
-  { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, section: "Read-only inspect" },
+  { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, section: "Configuration" },
   { to: "/rules", label: "Rules", icon: ListTree },
   { to: "/backends", label: "Backends", icon: Server },
-  { to: "/bindings", label: "Bindings", icon: Waypoints },
   { to: "/policies", label: "Groups", icon: Shield },
+  { to: "/connectors", label: "Connectors", icon: Database },
+  { to: "/api-keys", label: "API keys", icon: KeyRound },
+  { to: "/bindings", label: "Bindings", icon: Waypoints },
   { to: "/settings", label: "Settings", icon: SettingsIcon, section: "System" },
 ]
 

@@ -88,6 +88,7 @@ func configurationDetailView(name string, resolved *config.ResolvedConfigV2) Con
 		Bindings:            gen,
 		PassthroughBindings: pass,
 		Tags:                cfg.Tags,
+		ConnectorBindings:   cfg.ConnectorBindings,
 		Rules:               buildRuleAttachments(name, resolved),
 		APIKeys:             buildAPIKeySummaries(name, resolved.APIKeys),
 	}
