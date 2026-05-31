@@ -16,7 +16,7 @@ Both modes resolve to a named **Configuration** — a reusable policy bundle (up
 
 ## Where the canonical design lives
 
-**DonkeyWork project `793a6cba-bd53-4b7e-8913-20fee7cb5f87`** ("Sluice Gateway") holds the source of truth: 16 design notes, 7 milestones, 40+ tasks with acceptance criteria.
+**DonkeyWork project `522d9204-c3b6-4719-b0c9-8ef91b968314`** ("Sluice Gateway") holds the source of truth: 20+ design notes, 16 milestones, 120+ tasks with acceptance criteria.
 
 Fetch via:
 - `mcp__donkeywork__notes_list_by_project` for the design notes
@@ -215,6 +215,6 @@ Follow the global working-style rules (drive don't present, one decision at a ti
 ## Quick links
 
 - Repo: `git@github.com:andyjmorgan/sluice-gateway.git`
-- DonkeyWork project: `793a6cba-bd53-4b7e-8913-20fee7cb5f87`
+- DonkeyWork project: `522d9204-c3b6-4719-b0c9-8ef91b968314`
 - .NET predecessor (read-only reference): `~/Source/Repos/airia-ai-gateway`
 - Mock LLM (temporary, never commit): `~/Source/Repos/airia-llmock`
