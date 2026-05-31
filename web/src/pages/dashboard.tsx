@@ -6,7 +6,7 @@ import { KPI } from "@/components/atoms/kpi"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Segmented } from "@/components/atoms/segmented"
 import { LineChart } from "@/components/atoms/line-chart"
-import { PanelCard, PanelHead } from "@/components/atoms/card"
+import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { fmt } from "@/lib/fmt"
 import { providerColor } from "@/lib/provider-color"
 import {
@@ -251,7 +251,7 @@ function ByProviderStrip({ rows }: { rows: DashboardProviderRow[] }) {
   return (
     <PanelCard>
       <PanelHead title="Traffic by provider" sub="requests · 24h" />
-      <div className="px-4 py-3 flex flex-col gap-2.5">
+      <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
           <div key={r.provider} className="grid grid-cols-[110px_1fr_auto_auto_auto] items-center gap-3">
             <div>
@@ -290,11 +290,11 @@ function ByEndpointStrip({ rows, window }: { rows: DashboardEndpointRow[]; windo
   return (
     <PanelCard>
       <PanelHead title="Traffic by endpoint" sub={sub} />
-      <div className="px-4 py-3 flex flex-col gap-2.5">
+      <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
           <div
             key={`${r.provider}.${r.endpoint}`}
-            className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3"
+            className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3 min-w-[30rem]"
           >
             <div className="flex items-center gap-2 min-w-0">
               <ProviderChip name={r.provider} />
@@ -335,9 +335,9 @@ function ByConfigurationStrip({ rows, window }: { rows: DashboardConfigurationRo
   return (
     <PanelCard>
       <PanelHead title="Traffic by configuration" sub={sub} />
-      <div className="px-4 py-3 flex flex-col gap-2.5">
+      <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
-          <div key={r.configuration} className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3">
+          <div key={r.configuration} className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3 min-w-[30rem]">
             <div className="mono text-[12px] truncate" title={r.configuration}>
               {r.configuration}
             </div>
@@ -422,7 +422,7 @@ function RulesFired({ rows }: { rows: DashboardRuleFiredRow[] }) {
   return (
     <PanelCard>
       <PanelHead title="Rules fired" sub="match counts · 24h" />
-      <div className="px-4 py-3 flex flex-col gap-2.5">
+      <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
           <div key={r.rule_name} className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
             <div className="mono text-[12px] truncate">{r.rule_name}</div>
@@ -460,7 +460,7 @@ function TagsFired({ rows }: { rows: DashboardTagFiredRow[] }) {
   return (
     <PanelCard>
       <PanelHead title="Tags fired" sub="apply counts · 24h" />
-      <div className="px-4 py-3 flex flex-col gap-2.5">
+      <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
           <div key={r.tag} className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
             <TagChip name={r.tag} />
@@ -506,7 +506,7 @@ function ModelsCard({ rows }: { rows: DashboardModelRow[] }) {
   return (
     <PanelCard>
       <PanelHead title="Models" sub="aggregated · 24h" />
-      <table className="w-full text-[12.5px]">
+      <TableScroll>
         <thead>
           <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
             <th className="text-left font-medium px-4 py-2">Model</th>
@@ -533,7 +533,7 @@ function ModelsCard({ rows }: { rows: DashboardModelRow[] }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </TableScroll>
     </PanelCard>
   )
 }

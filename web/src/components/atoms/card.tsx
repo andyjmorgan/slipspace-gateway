@@ -30,6 +30,22 @@ export function PanelCard({
   )
 }
 
+export function TableScroll({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className={cn("w-full min-w-[34rem] text-[12.5px]", className)}>
+        {children}
+      </table>
+    </div>
+  )
+}
+
 export function PanelHead({
   title,
   sub,

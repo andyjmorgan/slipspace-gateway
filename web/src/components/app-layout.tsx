@@ -18,7 +18,7 @@ export function AppLayout() {
       )}
       <div className="flex flex-col flex-1 min-w-0">
         <Topbar onMenuToggle={() => setMobileNavOpen((v) => !v)} />
-        <div className="flex-1 px-7 pt-6 pb-18 overflow-auto">
+        <div className="flex-1 px-4 sm:px-7 pt-6 pb-18 overflow-auto">
           <Outlet />
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { usePolicies, type PolicySummary, type PolicyTarget } from "@/lib/config-api"
-import { PanelCard } from "@/components/atoms/card"
+import { PanelCard, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import {
   PageHeader,
@@ -52,7 +52,7 @@ function PolicyCard({ pol }: { pol: PolicySummary }) {
           </span>
         )}
       </div>
-      <table className="w-full text-[12.5px]">
+      <TableScroll>
         <thead>
           <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
             <th className="text-left font-medium px-4 py-2">Target</th>
@@ -77,7 +77,7 @@ function PolicyCard({ pol }: { pol: PolicySummary }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </TableScroll>
     </PanelCard>
   )
 }

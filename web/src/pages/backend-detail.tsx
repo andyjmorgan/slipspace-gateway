@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router"
 import { useBackend, type PassthroughFamilyRow } from "@/lib/config-api"
-import { PanelCard, PanelHead } from "@/components/atoms/card"
+import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import {
@@ -69,7 +69,7 @@ export function BackendDetailPage() {
 
       <PanelCard>
         <PanelHead title="Protocols" sub={`${b.protocols.length} · auth overrides shown inline where a protocol sets one`} />
-        <table className="w-full text-[12.5px]">
+        <TableScroll>
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Name</th>
@@ -100,7 +100,7 @@ export function BackendDetailPage() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </TableScroll>
       </PanelCard>
 
       {b.passthrough && b.passthrough.length > 0 && (
@@ -134,7 +134,7 @@ function KeyValueCard({
   return (
     <PanelCard>
       <PanelHead title={title} sub={sub} />
-      <table className="w-full text-[12.5px]">
+      <TableScroll>
         <thead>
           <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
             <th className="text-left font-medium px-4 py-2">{keyLabel}</th>
@@ -149,7 +149,7 @@ function KeyValueCard({
             </tr>
           ))}
         </tbody>
-      </table>
+      </TableScroll>
     </PanelCard>
   )
 }

@@ -1,6 +1,6 @@
 import { Link } from "react-router"
 import { useBackends } from "@/lib/config-api"
-import { PanelCard } from "@/components/atoms/card"
+import { PanelCard, TableScroll } from "@/components/atoms/card"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Tag } from "@/components/atoms/tag"
 import {
@@ -28,7 +28,7 @@ export function BackendsPage() {
       )}
       {state.status === "ok" && state.data.length > 0 && (
         <PanelCard>
-          <table className="w-full text-[12.5px]">
+          <TableScroll>
             <thead>
               <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
                 <th className="text-left font-medium px-4 py-2">Name</th>
@@ -65,7 +65,7 @@ export function BackendsPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </TableScroll>
         </PanelCard>
       )}
     </div>
