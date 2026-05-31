@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { Link } from "react-router"
 import { useBindings, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
-import { PanelCard, PanelHead } from "@/components/atoms/card"
+import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Input } from "@/components/ui/input"
@@ -72,7 +72,7 @@ export function BindingsPage() {
                 />
               }
             />
-            <table className="w-full text-[12.5px]">
+            <TableScroll>
               <thead>
                 <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
                   <th className="text-left font-medium px-4 py-2">Configuration</th>
@@ -87,7 +87,7 @@ export function BindingsPage() {
                   <BindingRowView key={`${b.configuration ?? ""}::${b.protocol}::${i}`} b={b} />
                 ))}
               </tbody>
-            </table>
+            </TableScroll>
           </PanelCard>
 
           {totalPassthrough > 0 && (
@@ -96,7 +96,7 @@ export function BindingsPage() {
                 title={`${passthrough.length} of ${totalPassthrough} passthrough bindings`}
                 sub="client-token families forwarded verbatim to a backend"
               />
-              <table className="w-full text-[12.5px]">
+              <TableScroll>
                 <thead>
                   <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
                     <th className="text-left font-medium px-4 py-2">Configuration</th>
@@ -110,7 +110,7 @@ export function BindingsPage() {
                     <PassthroughRowView key={`${b.configuration ?? ""}::${b.family}::${i}`} b={b} />
                   ))}
                 </tbody>
-              </table>
+              </TableScroll>
             </PanelCard>
           )}
         </>

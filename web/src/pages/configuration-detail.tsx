@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Link, useParams } from "react-router"
 import { Eye, EyeOff, Copy, Check } from "lucide-react"
 import { useConfiguration, revealAPIKey, type RedactedSecret, type RuleAttachment, type APIKeySummary, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
-import { PanelCard, PanelHead } from "@/components/atoms/card"
+import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { cn } from "@/lib/utils"
@@ -85,7 +85,7 @@ function CredentialsCard({ creds }: { creds: Record<string, RedactedSecret> }) {
         </div>
       )}
       {entries.length > 0 && (
-        <table className="w-full text-[12.5px]">
+        <TableScroll>
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Backend</th>
@@ -104,7 +104,7 @@ function CredentialsCard({ creds }: { creds: Record<string, RedactedSecret> }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </TableScroll>
       )}
     </PanelCard>
   )
@@ -125,7 +125,7 @@ function BindingsCard({
         <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No bindings configured.</div>
       )}
       {bindings.length > 0 && (
-        <table className="w-full text-[12.5px]">
+        <TableScroll>
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Protocol</th>
@@ -164,10 +164,10 @@ function BindingsCard({
               </tr>
             ))}
           </tbody>
-        </table>
+        </TableScroll>
       )}
       {passthrough.length > 0 && (
-        <table className="w-full text-[12.5px] border-t border-[color:var(--border)]">
+        <TableScroll className="border-t border-[color:var(--border)]">
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Passthrough family</th>
@@ -184,7 +184,7 @@ function BindingsCard({
               </tr>
             ))}
           </tbody>
-        </table>
+        </TableScroll>
       )}
     </PanelCard>
   )
@@ -198,7 +198,7 @@ function AttachedRulesCard({ rules }: { rules: RuleAttachment[] }) {
         <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No rules attached.</div>
       )}
       {rules.length > 0 && (
-        <table className="w-full text-[12.5px]">
+        <TableScroll>
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Name</th>
@@ -229,7 +229,7 @@ function AttachedRulesCard({ rules }: { rules: RuleAttachment[] }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </TableScroll>
       )}
     </PanelCard>
   )
@@ -247,7 +247,7 @@ function APIKeysCard({ configuration, keys }: { configuration: string; keys: API
         <EmptyPanel message="No API keys attached to this configuration." />
       )}
       {keys.length > 0 && (
-        <table className="w-full text-[12.5px]">
+        <TableScroll>
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Name</th>
@@ -262,7 +262,7 @@ function APIKeysCard({ configuration, keys }: { configuration: string; keys: API
               <APIKeyRow key={k.name} configuration={configuration} k={k} />
             ))}
           </tbody>
-        </table>
+        </TableScroll>
       )}
     </PanelCard>
   )
