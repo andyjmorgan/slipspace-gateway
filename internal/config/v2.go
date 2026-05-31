@@ -65,6 +65,15 @@ type ResolvedConfigV2 struct {
 
 	// ConnectorIndex maps connector name to a pointer into Connectors.
 	ConnectorIndex map[string]*contractsconfig.Connector
+
+	// SourceFiles records which file each top-level block was loaded from
+	// (block name -> filename, e.g. "backends" -> "backends.yaml"). The admin
+	// write path uses it to persist a mutated block back to the file it came
+	// from rather than a fixed filename, so an operator's chosen layout
+	// survives a round-trip and a co-located block is never dropped. Blocks
+	// introduced through the API with no recorded origin fall back to a
+	// canonical default file (see writer_v2.go).
+	SourceFiles map[string]string
 }
 
 // v2Doc is the decode target for one YAML file's top-level blocks. Files are
@@ -119,6 +128,8 @@ func LoadV2(ctx context.Context, dir string) (*ResolvedConfigV2, error) {
 			return nil, merr
 		}
 	}
+
+	r.SourceFiles = seen
 
 	if verr := r.Validate(); verr != nil {
 		return nil, verr
