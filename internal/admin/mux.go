@@ -171,11 +171,26 @@ func NewMux(opts MuxOptions) http.Handler {
 	apiMux.Handle("/api/v1/config/api-keys/reveal",
 		InstrumentRoute(opts.Meters, "/api/v1/config/api-keys/reveal", apiKeysReveal),
 	)
-	apiMux.Handle("/api/v1/config/configurations",
+	// Configurations surface — read (GET) plus the write API (POST/PUT/DELETE).
+	// Credentials are masked on read and write-back-if-delivered on write;
+	// api_keys are never accepted here (managed only via /api-keys).
+	configCreate := ConfigurationsCreateHandler(opts.Store, opts.ConfigDir)
+	configReplace := ConfigurationsReplaceHandler(opts.Store, opts.ConfigDir)
+	configDelete := ConfigurationsDeleteHandler(opts.Store, opts.ConfigDir)
+	apiMux.Handle("GET /api/v1/config/configurations",
 		InstrumentRoute(opts.Meters, "/api/v1/config/configurations", configList),
 	)
-	apiMux.Handle("/api/v1/config/configurations/",
+	apiMux.Handle("POST /api/v1/config/configurations",
+		InstrumentRoute(opts.Meters, "/api/v1/config/configurations", configCreate),
+	)
+	apiMux.Handle("GET /api/v1/config/configurations/{name}",
 		InstrumentRoute(opts.Meters, "/api/v1/config/configurations/{name}", configDetail),
+	)
+	apiMux.Handle("PUT /api/v1/config/configurations/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/configurations/{name}", configReplace),
+	)
+	apiMux.Handle("DELETE /api/v1/config/configurations/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/configurations/{name}", configDelete),
 	)
 	// Rules surface — read (GET) plus the Phase 2 write API
 	// (POST/PUT/DELETE). Method-routed patterns let GET and POST share
