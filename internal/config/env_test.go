@@ -41,6 +41,8 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 		{"ControlPlaneTLSEnabled", env.ControlPlaneTLSEnabled, true},
 		{"ControlPlaneHeartbeatSeconds", env.ControlPlaneHeartbeatSeconds, config.DefaultControlPlaneHeartbeatSeconds},
 		{"GatewayID", env.GatewayID, ""},
+		{"ControlPlaneBootstrapAPIKey", env.ControlPlaneBootstrapAPIKey, ""},
+		{"ControlPlaneCachePath", env.ControlPlaneCachePath, ""},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
@@ -72,6 +74,8 @@ func TestLoadEnv_ControlPlaneOverrides(t *testing.T) {
 	t.Setenv(config.EnvControlPlaneHeartbeatSeconds, "7")
 	t.Setenv(config.EnvGatewayID, "gw-7")
 	t.Setenv(config.EnvGatewayLabels, "cluster=prod, role=edge")
+	t.Setenv(config.EnvControlPlaneBootstrapAPIKey, "sk_live_boot")
+	t.Setenv(config.EnvControlPlaneCachePath, "/var/lib/sluice/cp/closure.yaml")
 
 	env, err := config.LoadEnv()
 	if err != nil {
@@ -81,6 +85,12 @@ func TestLoadEnv_ControlPlaneOverrides(t *testing.T) {
 		t.Fatalf("Validate: %v", err)
 	}
 
+	if env.ControlPlaneBootstrapAPIKey != "sk_live_boot" { //nolint:gosec // test fixture, not a credential
+		t.Errorf("ControlPlaneBootstrapAPIKey = %q", env.ControlPlaneBootstrapAPIKey)
+	}
+	if env.ControlPlaneCachePath != "/var/lib/sluice/cp/closure.yaml" {
+		t.Errorf("ControlPlaneCachePath = %q", env.ControlPlaneCachePath)
+	}
 	if env.ControlPlaneEndpoint != "cp.internal:8485" {
 		t.Errorf("ControlPlaneEndpoint = %q", env.ControlPlaneEndpoint)
 	}

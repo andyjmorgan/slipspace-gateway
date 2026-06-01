@@ -116,6 +116,10 @@ const (
 	EnvControlPlaneHeartbeatSeconds = "SLUICE_CP_HEARTBEAT_SECONDS"
 	EnvGatewayID                    = "SLUICE_GATEWAY_ID"
 	EnvGatewayLabels                = "SLUICE_GATEWAY_LABELS"
+
+	// Config distribution (Phase 2b). Bootstrap key empty = registration only.
+	EnvControlPlaneBootstrapAPIKey = "SLUICE_CP_BOOTSTRAP_API_KEY" //nolint:gosec // env var name, not a credential value
+	EnvControlPlaneCachePath       = "SLUICE_CP_CACHE_PATH"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -147,6 +151,8 @@ var envVarNames = []string{
 	EnvControlPlaneHeartbeatSeconds,
 	EnvGatewayID,
 	EnvGatewayLabels,
+	EnvControlPlaneBootstrapAPIKey,
+	EnvControlPlaneCachePath,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -293,6 +299,16 @@ type ServerEnv struct {
 	// GatewayLabels is operator metadata reported to the CP, parsed from a
 	// "k=v,k=v" list. Surfaced in the fleet console.
 	GatewayLabels []string
+
+	// ControlPlaneBootstrapAPIKey is the api-key whose per-configuration
+	// closure this gateway fetches from the control plane and serves. Empty
+	// disables config sync (registration/heartbeat still run when an endpoint
+	// is set) — the gateway then serves its local file-backed config.
+	ControlPlaneBootstrapAPIKey string
+
+	// ControlPlaneCachePath is the file the last-good closure is persisted to
+	// for serve-stale across restarts. Empty disables the disk cache.
+	ControlPlaneCachePath string
 }
 
 // PrometheusEnabled reports whether the Prometheus scrape listener is
@@ -385,6 +401,8 @@ func LoadEnv() (*ServerEnv, error) {
 		ControlPlaneHeartbeatSeconds:         cpHeartbeat,
 		GatewayID:                            envString(EnvGatewayID, ""),
 		GatewayLabels:                        envCSVList(EnvGatewayLabels),
+		ControlPlaneBootstrapAPIKey:          envString(EnvControlPlaneBootstrapAPIKey, ""),
+		ControlPlaneCachePath:                envString(EnvControlPlaneCachePath, ""),
 	}, nil
 }
 

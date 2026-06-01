@@ -111,9 +111,16 @@ func (r *Reconciler) Run(ctx context.Context) {
 }
 
 func (r *Reconciler) dial() (*grpc.ClientConn, error) {
+	return dialControlPlane(r.opts.Endpoint, r.opts.Token, r.opts.TLS, r.opts.TLSConfig)
+}
+
+// dialControlPlane builds a lazy gRPC client to the control plane with the
+// channel's transport security and the per-RPC bootstrap token. Shared by the
+// reconciler and the config syncer.
+func dialControlPlane(endpoint, token string, useTLS bool, tlsCfg *tls.Config) (*grpc.ClientConn, error) {
 	var transport credentials.TransportCredentials
-	if r.opts.TLS {
-		cfg := r.opts.TLSConfig
+	if useTLS {
+		cfg := tlsCfg
 		if cfg == nil {
 			cfg = &tls.Config{MinVersion: tls.VersionTLS12}
 		}
@@ -123,13 +130,13 @@ func (r *Reconciler) dial() (*grpc.ClientConn, error) {
 	}
 
 	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(transport)}
-	if r.opts.Token != "" {
+	if token != "" {
 		dialOpts = append(dialOpts, grpc.WithPerRPCCredentials(tokenCreds{
-			token:  r.opts.Token,
-			secure: r.opts.TLS,
+			token:  token,
+			secure: useTLS,
 		}))
 	}
-	return grpc.NewClient(r.opts.Endpoint, dialOpts...)
+	return grpc.NewClient(endpoint, dialOpts...)
 }
 
 func (r *Reconciler) register(ctx context.Context, client fleetpb.FleetServiceClient) {
