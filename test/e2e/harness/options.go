@@ -52,6 +52,14 @@ type Options struct {
 	// resolving the {external_url} template reference used by
 	// response-side body rewrites. Empty leaves it unset.
 	ExternalURL string
+
+	// ControlPlane runs the gateway as a control-plane-managed fleet member:
+	// the harness also spawns cmd/api (serving config-dev with the real
+	// mockllm), and the gateway fetches its config from there. The gateway's
+	// own local config points the upstream at a dead address, so a successful
+	// upstream round-trip proves the gateway served the control-plane config,
+	// not its local copy.
+	ControlPlane bool
 }
 
 // BoolPtr returns a pointer to b. Convenience for the Options.ReportingEnabled
