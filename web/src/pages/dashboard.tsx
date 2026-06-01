@@ -7,6 +7,7 @@ import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Segmented } from "@/components/atoms/segmented"
 import { LineChart } from "@/components/atoms/line-chart"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { PageIcon } from "@/components/atoms/page-states"
 import { fmt } from "@/lib/fmt"
 import { providerColor } from "@/lib/provider-color"
 import {
@@ -42,6 +43,7 @@ export function DashboardPage() {
   return (
     <div className="flex flex-col gap-3.5">
       <div className="flex items-start gap-3">
+        <PageIcon className="mt-1" />
         <div className="flex-1 min-w-0">
           <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Last {state.status === "ok" ? state.data.window : "24h"}</h1>
           <Uptime startedAt={startedAt} />

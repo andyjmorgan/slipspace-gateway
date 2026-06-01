@@ -1,39 +1,8 @@
 import { useEffect, useState } from "react"
 import { NavLink, useLocation } from "react-router"
-import {
-  LayoutDashboard,
-  Settings as SettingsIcon,
-  ListTree,
-  Server,
-  SlidersHorizontal,
-  Waypoints,
-  Activity,
-  Shield,
-  KeyRound,
-  Database,
-} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { fetchVersion } from "@/lib/api"
-
-type NavItem = {
-  to: string
-  label: string
-  icon: React.ComponentType<{ size?: number; className?: string }>
-  section?: string
-}
-
-const NAV: NavItem[] = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/messages", label: "Live messages", icon: Activity },
-  { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, section: "Configuration" },
-  { to: "/rules", label: "Rules", icon: ListTree },
-  { to: "/backends", label: "Backends", icon: Server },
-  { to: "/policies", label: "Groups", icon: Shield },
-  { to: "/connectors", label: "Connectors", icon: Database },
-  { to: "/api-keys", label: "API keys", icon: KeyRound },
-  { to: "/bindings", label: "Bindings", icon: Waypoints },
-  { to: "/settings", label: "Settings", icon: SettingsIcon, section: "System" },
-]
+import { NAV } from "@/lib/nav-meta"
 
 // Sidebar is the primary nav rail. On desktop (md+) it renders as a
 // static column always docked to the left. On mobile it renders as a
@@ -112,7 +81,7 @@ export function Sidebar({
                   )
                 }
               >
-                <item.icon size={14} className="opacity-80" />
+                <item.icon size={14} style={{ color: item.color }} className="shrink-0" />
                 <span>{item.label}</span>
               </NavLink>
             </div>

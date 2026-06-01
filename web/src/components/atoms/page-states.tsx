@@ -4,8 +4,9 @@
 // these helpers so the shapes stay identical across every page.
 
 import { useEffect } from "react"
-import { useNavigate } from "react-router"
+import { useLocation, useNavigate } from "react-router"
 import type { ConfigFetchState } from "@/lib/config-api"
+import { navMetaForPath } from "@/lib/nav-meta"
 
 export function PageHeader({
   title,
@@ -18,6 +19,7 @@ export function PageHeader({
 }) {
   return (
     <div className="mb-4 flex items-start gap-3">
+      <PageIcon className="mt-0.5" />
       <div className="flex-1 min-w-0">
         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">{title}</h1>
         {sub && (
@@ -26,6 +28,22 @@ export function PageHeader({
       </div>
       {action && <div className="flex items-center gap-2">{action}</div>}
     </div>
+  )
+}
+
+// PageIcon renders the current route's section icon in its accent colour,
+// matching the sidebar (single source of truth in lib/nav-meta). Renders
+// nothing for routes no section claims. Used by PageHeader and by the few
+// pages (dashboard, live messages) that roll their own header.
+export function PageIcon({ size = 22, className }: { size?: number; className?: string }) {
+  const meta = navMetaForPath(useLocation().pathname)
+  if (!meta) return null
+  return (
+    <meta.icon
+      size={size}
+      style={{ color: meta.color }}
+      className={["shrink-0", className].filter(Boolean).join(" ")}
+    />
   )
 }
 
