@@ -21,6 +21,14 @@ service FleetService {
   // interval. The response is an empty ack in Phase 1; Phase 2 fills it with
   // revocations and stale-config notifications (reserved below).
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // FetchConfig resolves a Sluice api-key to the per-configuration closure the
+  // presenting gateway should serve from. The closure body is opaque bytes (a
+  // self-contained v2 config document) the gateway validates and applies; the
+  // proto never models the config schema (it lives in contracts/config). When
+  // the caller's known_hash matches the current closure, the body is omitted
+  // and not_modified is set.
+  rpc FetchConfig(FetchConfigRequest) returns (FetchConfigResponse);
 }
 
 message RegisterRequest {
@@ -62,4 +70,31 @@ message HeartbeatResponse {
   // Phase 2 control signals land here:
   reserved 1, 2;
   reserved "revocations", "stale_config_ids";
+}
+
+message FetchConfigRequest {
+  // api_key is the Sluice api-key secret a client presented to the gateway;
+  // the control plane resolves it to a configuration. (Eager prefetch by
+  // config_id is a later addition.)
+  string api_key = 1;
+
+  // known_hash is the content hash of the closure the gateway already holds
+  // for this key, if any. A match yields not_modified with no body.
+  string known_hash = 2;
+}
+
+message FetchConfigResponse {
+  // not_modified is true when known_hash matched the current closure; body and
+  // hash are then empty/unchanged.
+  bool not_modified = 1;
+
+  // configuration is the name the api_key resolved to (informational).
+  string configuration = 2;
+
+  // hash is the sha256 content hash of body.
+  string hash = 3;
+
+  // body is the serialized per-configuration closure — opaque bytes the
+  // gateway validates and applies. Empty when not_modified.
+  bytes body = 4;
 }

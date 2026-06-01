@@ -129,7 +129,7 @@ tools-proto:
 # (see tools-proto). goimports normalises the generated import grouping so
 # `make fmt` stays a no-op on the output.
 proto:
-	protoc \
+	PATH="$$PATH:$$($(GO) env GOPATH)/bin" protoc \
 	  --go_out=. --go_opt=module=github.com/andyjmorgan/sluice-gateway \
 	  --go-grpc_out=. --go-grpc_opt=module=github.com/andyjmorgan/sluice-gateway \
 	  proto/controlplane/v1/fleet.proto
