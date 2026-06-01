@@ -90,7 +90,24 @@ type Harness struct {
 	gatewayExitMu  sync.Mutex
 	gatewayExitErr error
 
+	// Control-plane process (Options.ControlPlane). cpHTTPURL is the read API
+	// base; cpGRPCAddr is the fleet channel the gateway dials.
+	cpCmd       *exec.Cmd
+	cpDone      chan struct{}
+	cpHTTPURL   string
+	cpGRPCAddr  string
+	cpConfigDir string
+
 	stopped bool
+}
+
+// ControlPlaneFleetURL returns the control plane's read API for the fleet
+// registry (GET /api/v1/fleet). Empty unless Options.ControlPlane was set.
+func (h *Harness) ControlPlaneFleetURL() string {
+	if h.cpHTTPURL == "" {
+		return ""
+	}
+	return h.cpHTTPURL + "/api/v1/fleet"
 }
 
 // New brings up the in-process webhook capture server, the mockllm binary,
@@ -123,10 +140,69 @@ func NewWithOptions(t *testing.T, opts Options) *Harness {
 		t.Fatalf("harness: start capture server: %v", err)
 	}
 	h.startMockLLM(t, repoRoot)
+	if opts.ControlPlane {
+		h.startControlPlane(t, repoRoot)
+	}
 	h.startGateway(t, repoRoot)
 
 	t.Cleanup(h.Stop)
 	return h
+}
+
+// startControlPlane spawns cmd/api with config distribution enabled, serving
+// the materialized config-dev (pointed at the real mockllm). The CP-managed
+// gateway started afterwards fetches its config from here.
+func (h *Harness) startControlPlane(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	httpPort, err := freePort()
+	if err != nil {
+		t.Fatalf("harness: alloc cp http port: %v", err)
+	}
+	grpcPort, err := freePort()
+	if err != nil {
+		t.Fatalf("harness: alloc cp grpc port: %v", err)
+	}
+
+	cpConfig, err := h.materializeConfig(repoRoot, strings.TrimPrefix(h.MockLLMURL, "http://"))
+	if err != nil {
+		t.Fatalf("harness: materialize cp config: %v", err)
+	}
+	h.cpConfigDir = cpConfig
+	h.cpHTTPURL = fmt.Sprintf("http://127.0.0.1:%d", httpPort)
+	h.cpGRPCAddr = fmt.Sprintf("127.0.0.1:%d", grpcPort)
+
+	cmd := exec.Command("go", "run", "./cmd/api")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(),
+		"SLUICE_CONFIG_DIR="+cpConfig,
+		fmt.Sprintf("SLUICE_CP_HTTP_BIND=127.0.0.1:%d", httpPort),
+		fmt.Sprintf("SLUICE_CP_GRPC_BIND=127.0.0.1:%d", grpcPort),
+		// The materialized config carries the harness's loopback webhook
+		// connector; the CP validates config on load, so it needs the same
+		// private-destination allowance the gateway gets.
+		"SLUICE_WEBHOOK_ALLOW_PRIVATE=1",
+		"LOG_LEVEL=debug",
+	)
+	cmd.Stdout = newTestLogWriter(t, "controlplane")
+	cmd.Stderr = newTestLogWriter(t, "controlplane")
+	setProcessGroup(cmd)
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("harness: start control plane: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	h.cpCmd = cmd
+	h.cpDone = done
+
+	if err := waitForHTTP(h.HTTP, h.cpHTTPURL+"/healthz", startupTimeout, done, exactly(200)); err != nil {
+		stopProcess(cmd, done)
+		t.Fatalf("harness: control plane did not become ready: %v", err)
+	}
 }
 
 // PromURL returns the base URL of the gateway's Prometheus scrape endpoint.
@@ -173,12 +249,16 @@ func (h *Harness) Stop() {
 	h.stopped = true
 
 	stopProcess(h.gatewayCmd, h.gatewayDone)
+	stopProcess(h.cpCmd, h.cpDone)
 	stopProcess(h.mockllmCmd, h.mockllmDone)
 
 	h.shutdownCaptureServer()
 
 	if h.configDir != "" {
 		_ = os.RemoveAll(h.configDir)
+	}
+	if h.cpConfigDir != "" {
+		_ = os.RemoveAll(h.cpConfigDir)
 	}
 	if h.spoolRoot != "" {
 		_ = os.RemoveAll(h.spoolRoot)
@@ -277,7 +357,14 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 	}
 	h.spoolRoot = spoolRoot
 
-	configDir, err := h.materializeConfig(repoRoot)
+	// A CP-managed gateway boots from a local config whose upstream is a dead
+	// address, then fetches the live config from the control plane. A working
+	// upstream round-trip therefore proves the gateway served CP config.
+	gwMockHost := strings.TrimPrefix(h.MockLLMURL, "http://")
+	if h.opts.ControlPlane {
+		gwMockHost = "127.0.0.1:1"
+	}
+	configDir, err := h.materializeConfig(repoRoot, gwMockHost)
 	if err != nil {
 		t.Fatalf("harness: materialize config: %v", err)
 	}
@@ -330,7 +417,7 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 // harness's dynamically-assigned upstream. Server-level configuration is
 // supplied to the gateway via SLUICE_* env vars (see gatewayEnv); the
 // directory contains only policy.yaml + providers.yaml.
-func (h *Harness) materializeConfig(repoRoot string) (string, error) {
+func (h *Harness) materializeConfig(repoRoot, mockHost string) (string, error) {
 	src := filepath.Join(repoRoot, "config-dev")
 	dst, err := os.MkdirTemp("", "sluice-e2e-config-*")
 	if err != nil {
@@ -341,8 +428,6 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read config-dev: %w", err)
 	}
-
-	mockHost := strings.TrimPrefix(h.MockLLMURL, "http://")
 
 	for _, ent := range entries {
 		if ent.IsDir() {
@@ -488,6 +573,15 @@ func (h *Harness) gatewayEnv(configDir string) []string {
 	}
 	if h.opts.ExternalURL != "" {
 		env = append(env, "SLUICE_EXTERNAL_URL="+h.opts.ExternalURL)
+	}
+	if h.opts.ControlPlane {
+		env = append(env,
+			"SLUICE_CONTROL_PLANE_ENDPOINT="+h.cpGRPCAddr,
+			"SLUICE_CP_TLS_ENABLED=false",
+			"SLUICE_CP_BOOTSTRAP_API_KEY="+defaultAPIKey,
+			fmt.Sprintf("SLUICE_GATEWAY_ID=e2e-gw-%d", h.gatewayBindPort),
+			"SLUICE_CP_HEARTBEAT_SECONDS=1",
+		)
 	}
 	return env
 }
