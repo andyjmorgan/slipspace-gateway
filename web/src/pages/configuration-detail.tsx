@@ -1,13 +1,11 @@
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
-import { Eye, EyeOff, Copy, Check } from "lucide-react"
-import { useConfiguration, revealAPIKey, deleteConfiguration, type RedactedSecret, type RuleAttachment, type APIKeySummary, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
+import { useConfiguration, deleteConfiguration, type RedactedSecret, type RuleAttachment, type APIKeySummary, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Button } from "@/components/ui/button"
 import { DeleteDialog } from "@/components/forms/write-atoms"
-import { cn } from "@/lib/utils"
 import {
   PageHeader,
   LoadingPanel,
@@ -91,7 +89,7 @@ export function ConfigurationDetailPage() {
       <CredentialsCard creds={c.credentials} />
       <BindingsCard bindings={c.bindings} passthrough={c.passthrough_bindings} />
       <AttachedRulesCard rules={c.rules} />
-      <APIKeysCard configuration={c.name} keys={c.api_keys} />
+      <APIKeysCard keys={c.api_keys} />
     </div>
   )
 }
@@ -258,15 +256,20 @@ function AttachedRulesCard({ rules }: { rules: RuleAttachment[] }) {
 }
 
 
-function APIKeysCard({ configuration, keys }: { configuration: string; keys: APIKeySummary[] }) {
+function APIKeysCard({ keys }: { keys: APIKeySummary[] }) {
   return (
     <PanelCard>
       <PanelHead
         title="API keys"
-        sub={`${keys.length} key${keys.length === 1 ? "" : "s"} · reveal shows the plaintext`}
+        sub={`${keys.length} key${keys.length === 1 ? "" : "s"} resolve to this configuration`}
+        action={
+          <Link to="/api-keys" className="text-[12px] text-[color:var(--text-3)] hover:underline">
+            manage →
+          </Link>
+        }
       />
       {keys.length === 0 && (
-        <EmptyPanel message="No API keys attached to this configuration." />
+        <EmptyPanel message="No API keys resolve to this configuration." />
       )}
       {keys.length > 0 && (
         <TableScroll>
@@ -274,99 +277,23 @@ function APIKeysCard({ configuration, keys }: { configuration: string; keys: API
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Name</th>
               <th className="text-left font-medium px-4 py-2">Secret</th>
-              <th className="text-right font-medium px-4 py-2">Length</th>
               <th className="text-left font-medium px-4 py-2">Enabled</th>
-              <th className="text-right font-medium px-4 py-2 w-32">Actions</th>
             </tr>
           </thead>
           <tbody>
             {keys.map((k) => (
-              <APIKeyRow key={k.name} configuration={configuration} k={k} />
+              <tr key={k.name} className="border-t border-[color:var(--border)]">
+                <td className="px-4 py-2.5 mono">{k.name}</td>
+                <td className="px-4 py-2.5"><Redacted r={k.secret} /></td>
+                <td className="px-4 py-2.5">
+                  {k.enabled ? <Tag variant="success">enabled</Tag> : <Tag variant="danger">disabled</Tag>}
+                </td>
+              </tr>
             ))}
           </tbody>
         </TableScroll>
       )}
     </PanelCard>
-  )
-}
-
-function APIKeyRow({ configuration, k }: { configuration: string; k: APIKeySummary }) {
-  const [revealed, setRevealed] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-
-  async function toggleReveal() {
-    if (revealed != null) {
-      setRevealed(null)
-      setErr(null)
-      return
-    }
-    setBusy(true)
-    setErr(null)
-    try {
-      const r = await revealAPIKey(configuration, k.name)
-      setRevealed(r.secret)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function copyPlaintext() {
-    if (revealed == null) return
-    try {
-      await navigator.clipboard.writeText(revealed)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // clipboard permission denied or unsupported context — silently ignore
-    }
-  }
-
-  return (
-    <tr className="border-t border-[color:var(--border)]">
-      <td className="px-4 py-2.5 mono">{k.name}</td>
-      <td className="px-4 py-2.5">
-        {revealed != null ? (
-          <span className="mono text-[12px] break-all">{revealed}</span>
-        ) : (
-          <Redacted r={k.secret} />
-        )}
-        {err && (
-          <div className="text-[11px] mt-1" style={{ color: "var(--err)" }}>
-            {err}
-          </div>
-        )}
-      </td>
-      <td className="mono tnum text-right px-4 py-2.5 text-[color:var(--text-3)]">{k.secret.length}</td>
-      <td className="px-4 py-2.5">
-        {k.enabled ? <Tag variant="success">enabled</Tag> : <Tag variant="danger">disabled</Tag>}
-      </td>
-      <td className="px-4 py-2.5">
-        <div className="flex items-center gap-1.5 justify-end">
-          <ChipButton
-            onClick={toggleReveal}
-            disabled={busy}
-            ariaLabel={revealed ? "Hide secret" : "Reveal secret"}
-          >
-            {revealed ? <EyeOff size={11} /> : <Eye size={11} />}
-            <span>{revealed ? "hide" : "reveal"}</span>
-          </ChipButton>
-          {revealed != null && (
-            <ChipButton
-              onClick={copyPlaintext}
-              ariaLabel="Copy secret to clipboard"
-              variant={copied ? "ok" : "default"}
-            >
-              {copied ? <Check size={11} /> : <Copy size={11} />}
-              <span>{copied ? "copied" : "copy"}</span>
-            </ChipButton>
-          )}
-        </div>
-      </td>
-    </tr>
   )
 }
 
@@ -377,43 +304,6 @@ function Redacted({ r }: { r: RedactedSecret }) {
       <span aria-hidden="true">••••</span>
       <span>{r.last4}</span>
     </span>
-  )
-}
-
-// ChipButton is a small, low-contrast button matching the page's Tag
-// aesthetic — reveal/hide/copy live next to redacted secrets so a high-
-// contrast outline button (the shadcn default) read too loud against the
-// dark theme. Same hover affordance as the navbar links.
-function ChipButton({
-  children,
-  onClick,
-  disabled,
-  ariaLabel,
-  variant = "default",
-}: {
-  children: React.ReactNode
-  onClick: () => void
-  disabled?: boolean
-  ariaLabel: string
-  variant?: "default" | "ok"
-}) {
-  const color =
-    variant === "ok"
-      ? "bg-[color:var(--ok-bg)] text-[color:var(--ok)]"
-      : "bg-[color:var(--bg-2)] text-[color:var(--text-2)] hover:bg-[color:var(--hover)] hover:text-[color:var(--text)]"
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={ariaLabel}
-      className={cn(
-        "mono inline-flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[11px] font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none",
-        color,
-      )}
-    >
-      {children}
-    </button>
   )
 }
 
