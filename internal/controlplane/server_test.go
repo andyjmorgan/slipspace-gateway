@@ -65,3 +65,31 @@ func TestNewGRPCServer_TLSBranch(t *testing.T) {
 		t.Fatalf("FleetService not registered: %v", srv.GetServiceInfo())
 	}
 }
+
+func TestNewGRPCServer_FetchConfigEndToEnd(t *testing.T) {
+	srv := NewGRPCServer(NewMemoryRegistry(), nil, GRPCServerOptions{
+		Config: NewStoreConfigProvider(providerTestStore()),
+	})
+	lis := bufconn.Listen(1024 * 1024)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	dialer := func(context.Context, string) (net.Conn, error) { return lis.Dial() }
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(dialer),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := fleetpb.NewFleetServiceClient(conn)
+
+	resp, err := client.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "sk_live_alpha"}) //nolint:gosec // test fixture, not a credential
+	if err != nil {
+		t.Fatalf("FetchConfig: %v", err)
+	}
+	if resp.GetConfiguration() != "alpha" || len(resp.GetBody()) == 0 {
+		t.Fatalf("bad closure over the wire: cfg=%q bodylen=%d", resp.GetConfiguration(), len(resp.GetBody()))
+	}
+}

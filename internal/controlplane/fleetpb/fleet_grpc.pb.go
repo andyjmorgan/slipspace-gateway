@@ -20,8 +20,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	FleetService_Register_FullMethodName  = "/sluice.controlplane.v1.FleetService/Register"
-	FleetService_Heartbeat_FullMethodName = "/sluice.controlplane.v1.FleetService/Heartbeat"
+	FleetService_Register_FullMethodName    = "/sluice.controlplane.v1.FleetService/Register"
+	FleetService_Heartbeat_FullMethodName   = "/sluice.controlplane.v1.FleetService/Heartbeat"
+	FleetService_FetchConfig_FullMethodName = "/sluice.controlplane.v1.FleetService/FetchConfig"
 )
 
 // FleetServiceClient is the client API for FleetService service.
@@ -44,6 +45,13 @@ type FleetServiceClient interface {
 	// interval. The response is an empty ack in Phase 1; Phase 2 fills it with
 	// revocations and stale-config notifications (reserved below).
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	// FetchConfig resolves a Sluice api-key to the per-configuration closure the
+	// presenting gateway should serve from. The closure body is opaque bytes (a
+	// self-contained v2 config document) the gateway validates and applies; the
+	// proto never models the config schema (it lives in contracts/config). When
+	// the caller's known_hash matches the current closure, the body is omitted
+	// and not_modified is set.
+	FetchConfig(ctx context.Context, in *FetchConfigRequest, opts ...grpc.CallOption) (*FetchConfigResponse, error)
 }
 
 type fleetServiceClient struct {
@@ -74,6 +82,16 @@ func (c *fleetServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest
 	return out, nil
 }
 
+func (c *fleetServiceClient) FetchConfig(ctx context.Context, in *FetchConfigRequest, opts ...grpc.CallOption) (*FetchConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchConfigResponse)
+	err := c.cc.Invoke(ctx, FleetService_FetchConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FleetServiceServer is the server API for FleetService service.
 // All implementations must embed UnimplementedFleetServiceServer
 // for forward compatibility.
@@ -94,6 +112,13 @@ type FleetServiceServer interface {
 	// interval. The response is an empty ack in Phase 1; Phase 2 fills it with
 	// revocations and stale-config notifications (reserved below).
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	// FetchConfig resolves a Sluice api-key to the per-configuration closure the
+	// presenting gateway should serve from. The closure body is opaque bytes (a
+	// self-contained v2 config document) the gateway validates and applies; the
+	// proto never models the config schema (it lives in contracts/config). When
+	// the caller's known_hash matches the current closure, the body is omitted
+	// and not_modified is set.
+	FetchConfig(context.Context, *FetchConfigRequest) (*FetchConfigResponse, error)
 	mustEmbedUnimplementedFleetServiceServer()
 }
 
@@ -109,6 +134,9 @@ func (UnimplementedFleetServiceServer) Register(context.Context, *RegisterReques
 }
 func (UnimplementedFleetServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
+}
+func (UnimplementedFleetServiceServer) FetchConfig(context.Context, *FetchConfigRequest) (*FetchConfigResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FetchConfig not implemented")
 }
 func (UnimplementedFleetServiceServer) mustEmbedUnimplementedFleetServiceServer() {}
 func (UnimplementedFleetServiceServer) testEmbeddedByValue()                      {}
@@ -167,6 +195,24 @@ func _FleetService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FleetService_FetchConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServiceServer).FetchConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FleetService_FetchConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServiceServer).FetchConfig(ctx, req.(*FetchConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FleetService_ServiceDesc is the grpc.ServiceDesc for FleetService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -181,6 +227,10 @@ var FleetService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Heartbeat",
 			Handler:    _FleetService_Heartbeat_Handler,
+		},
+		{
+			MethodName: "FetchConfig",
+			Handler:    _FleetService_FetchConfig_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

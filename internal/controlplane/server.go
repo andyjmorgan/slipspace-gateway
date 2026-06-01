@@ -21,6 +21,10 @@ type GRPCServerOptions struct {
 	// secrets (CP-3 revised). The bootstrap defaults TLS on; plaintext is an
 	// explicit, loud opt-out.
 	TLS *tls.Config
+
+	// Config, when non-nil, enables FetchConfig (config distribution). Nil
+	// leaves the CP registration-only (Phase 1).
+	Config ConfigProvider
 }
 
 // NewGRPCServer builds a *grpc.Server with the FleetService registered, the
@@ -34,6 +38,6 @@ func NewGRPCServer(reg Registry, log *slog.Logger, opts GRPCServerOptions) *grpc
 		serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(opts.TLS)))
 	}
 	srv := grpc.NewServer(serverOpts...)
-	fleetpb.RegisterFleetServiceServer(srv, NewFleetServer(reg, log))
+	fleetpb.RegisterFleetServiceServer(srv, NewFleetServer(reg, opts.Config, log))
 	return srv
 }

@@ -243,6 +243,137 @@ func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
 	return file_proto_controlplane_v1_fleet_proto_rawDescGZIP(), []int{3}
 }
 
+type FetchConfigRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// api_key is the Sluice api-key secret a client presented to the gateway;
+	// the control plane resolves it to a configuration. (Eager prefetch by
+	// config_id is a later addition.)
+	ApiKey string `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	// known_hash is the content hash of the closure the gateway already holds
+	// for this key, if any. A match yields not_modified with no body.
+	KnownHash     string `protobuf:"bytes,2,opt,name=known_hash,json=knownHash,proto3" json:"known_hash,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchConfigRequest) Reset() {
+	*x = FetchConfigRequest{}
+	mi := &file_proto_controlplane_v1_fleet_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchConfigRequest) ProtoMessage() {}
+
+func (x *FetchConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_controlplane_v1_fleet_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchConfigRequest.ProtoReflect.Descriptor instead.
+func (*FetchConfigRequest) Descriptor() ([]byte, []int) {
+	return file_proto_controlplane_v1_fleet_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *FetchConfigRequest) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
+func (x *FetchConfigRequest) GetKnownHash() string {
+	if x != nil {
+		return x.KnownHash
+	}
+	return ""
+}
+
+type FetchConfigResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// not_modified is true when known_hash matched the current closure; body and
+	// hash are then empty/unchanged.
+	NotModified bool `protobuf:"varint,1,opt,name=not_modified,json=notModified,proto3" json:"not_modified,omitempty"`
+	// configuration is the name the api_key resolved to (informational).
+	Configuration string `protobuf:"bytes,2,opt,name=configuration,proto3" json:"configuration,omitempty"`
+	// hash is the sha256 content hash of body.
+	Hash string `protobuf:"bytes,3,opt,name=hash,proto3" json:"hash,omitempty"`
+	// body is the serialized per-configuration closure — opaque bytes the
+	// gateway validates and applies. Empty when not_modified.
+	Body          []byte `protobuf:"bytes,4,opt,name=body,proto3" json:"body,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchConfigResponse) Reset() {
+	*x = FetchConfigResponse{}
+	mi := &file_proto_controlplane_v1_fleet_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchConfigResponse) ProtoMessage() {}
+
+func (x *FetchConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_controlplane_v1_fleet_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchConfigResponse.ProtoReflect.Descriptor instead.
+func (*FetchConfigResponse) Descriptor() ([]byte, []int) {
+	return file_proto_controlplane_v1_fleet_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *FetchConfigResponse) GetNotModified() bool {
+	if x != nil {
+		return x.NotModified
+	}
+	return false
+}
+
+func (x *FetchConfigResponse) GetConfiguration() string {
+	if x != nil {
+		return x.Configuration
+	}
+	return ""
+}
+
+func (x *FetchConfigResponse) GetHash() string {
+	if x != nil {
+		return x.Hash
+	}
+	return ""
+}
+
+func (x *FetchConfigResponse) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
 var File_proto_controlplane_v1_fleet_proto protoreflect.FileDescriptor
 
 const file_proto_controlplane_v1_fleet_proto_rawDesc = "" +
@@ -267,10 +398,20 @@ const file_proto_controlplane_v1_fleet_proto_rawDesc = "" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\">\n" +
-	"\x11HeartbeatResponseJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\vrevocationsR\x10stale_config_ids2\xcf\x01\n" +
+	"\x11HeartbeatResponseJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\vrevocationsR\x10stale_config_ids\"L\n" +
+	"\x12FetchConfigRequest\x12\x17\n" +
+	"\aapi_key\x18\x01 \x01(\tR\x06apiKey\x12\x1d\n" +
+	"\n" +
+	"known_hash\x18\x02 \x01(\tR\tknownHash\"\x86\x01\n" +
+	"\x13FetchConfigResponse\x12!\n" +
+	"\fnot_modified\x18\x01 \x01(\bR\vnotModified\x12$\n" +
+	"\rconfiguration\x18\x02 \x01(\tR\rconfiguration\x12\x12\n" +
+	"\x04hash\x18\x03 \x01(\tR\x04hash\x12\x12\n" +
+	"\x04body\x18\x04 \x01(\fR\x04body2\xb7\x02\n" +
 	"\fFleetService\x12]\n" +
 	"\bRegister\x12'.sluice.controlplane.v1.RegisterRequest\x1a(.sluice.controlplane.v1.RegisterResponse\x12`\n" +
-	"\tHeartbeat\x12(.sluice.controlplane.v1.HeartbeatRequest\x1a).sluice.controlplane.v1.HeartbeatResponseBMZKgithub.com/andyjmorgan/sluice-gateway/internal/controlplane/fleetpb;fleetpbb\x06proto3"
+	"\tHeartbeat\x12(.sluice.controlplane.v1.HeartbeatRequest\x1a).sluice.controlplane.v1.HeartbeatResponse\x12f\n" +
+	"\vFetchConfig\x12*.sluice.controlplane.v1.FetchConfigRequest\x1a+.sluice.controlplane.v1.FetchConfigResponseBMZKgithub.com/andyjmorgan/sluice-gateway/internal/controlplane/fleetpb;fleetpbb\x06proto3"
 
 var (
 	file_proto_controlplane_v1_fleet_proto_rawDescOnce sync.Once
@@ -284,24 +425,28 @@ func file_proto_controlplane_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_controlplane_v1_fleet_proto_rawDescData
 }
 
-var file_proto_controlplane_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_proto_controlplane_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_proto_controlplane_v1_fleet_proto_goTypes = []any{
-	(*RegisterRequest)(nil),   // 0: sluice.controlplane.v1.RegisterRequest
-	(*RegisterResponse)(nil),  // 1: sluice.controlplane.v1.RegisterResponse
-	(*HeartbeatRequest)(nil),  // 2: sluice.controlplane.v1.HeartbeatRequest
-	(*HeartbeatResponse)(nil), // 3: sluice.controlplane.v1.HeartbeatResponse
-	nil,                       // 4: sluice.controlplane.v1.RegisterRequest.LabelsEntry
-	nil,                       // 5: sluice.controlplane.v1.HeartbeatRequest.LabelsEntry
+	(*RegisterRequest)(nil),     // 0: sluice.controlplane.v1.RegisterRequest
+	(*RegisterResponse)(nil),    // 1: sluice.controlplane.v1.RegisterResponse
+	(*HeartbeatRequest)(nil),    // 2: sluice.controlplane.v1.HeartbeatRequest
+	(*HeartbeatResponse)(nil),   // 3: sluice.controlplane.v1.HeartbeatResponse
+	(*FetchConfigRequest)(nil),  // 4: sluice.controlplane.v1.FetchConfigRequest
+	(*FetchConfigResponse)(nil), // 5: sluice.controlplane.v1.FetchConfigResponse
+	nil,                         // 6: sluice.controlplane.v1.RegisterRequest.LabelsEntry
+	nil,                         // 7: sluice.controlplane.v1.HeartbeatRequest.LabelsEntry
 }
 var file_proto_controlplane_v1_fleet_proto_depIdxs = []int32{
-	4, // 0: sluice.controlplane.v1.RegisterRequest.labels:type_name -> sluice.controlplane.v1.RegisterRequest.LabelsEntry
-	5, // 1: sluice.controlplane.v1.HeartbeatRequest.labels:type_name -> sluice.controlplane.v1.HeartbeatRequest.LabelsEntry
+	6, // 0: sluice.controlplane.v1.RegisterRequest.labels:type_name -> sluice.controlplane.v1.RegisterRequest.LabelsEntry
+	7, // 1: sluice.controlplane.v1.HeartbeatRequest.labels:type_name -> sluice.controlplane.v1.HeartbeatRequest.LabelsEntry
 	0, // 2: sluice.controlplane.v1.FleetService.Register:input_type -> sluice.controlplane.v1.RegisterRequest
 	2, // 3: sluice.controlplane.v1.FleetService.Heartbeat:input_type -> sluice.controlplane.v1.HeartbeatRequest
-	1, // 4: sluice.controlplane.v1.FleetService.Register:output_type -> sluice.controlplane.v1.RegisterResponse
-	3, // 5: sluice.controlplane.v1.FleetService.Heartbeat:output_type -> sluice.controlplane.v1.HeartbeatResponse
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
+	4, // 4: sluice.controlplane.v1.FleetService.FetchConfig:input_type -> sluice.controlplane.v1.FetchConfigRequest
+	1, // 5: sluice.controlplane.v1.FleetService.Register:output_type -> sluice.controlplane.v1.RegisterResponse
+	3, // 6: sluice.controlplane.v1.FleetService.Heartbeat:output_type -> sluice.controlplane.v1.HeartbeatResponse
+	5, // 7: sluice.controlplane.v1.FleetService.FetchConfig:output_type -> sluice.controlplane.v1.FetchConfigResponse
+	5, // [5:8] is the sub-list for method output_type
+	2, // [2:5] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name
 	2, // [2:2] is the sub-list for extension extendee
 	0, // [0:2] is the sub-list for field type_name
@@ -318,7 +463,7 @@ func file_proto_controlplane_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_controlplane_v1_fleet_proto_rawDesc), len(file_proto_controlplane_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane"
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
@@ -64,6 +65,22 @@ func run(ctx context.Context) error {
 
 	reg := controlplane.NewMemoryRegistry()
 
+	var configProvider controlplane.ConfigProvider
+	if cfg.configDir != "" {
+		resolved, lerr := config.LoadV2(ctx, cfg.configDir)
+		if lerr != nil {
+			return fmt.Errorf("api: load config %q: %w", cfg.configDir, lerr)
+		}
+		configProvider = controlplane.NewStoreConfigProvider(config.NewStore(resolved))
+		logger.Info("config distribution enabled",
+			"config_dir", cfg.configDir,
+			"configurations", len(resolved.Configurations),
+			"api_keys", len(resolved.APIKeys),
+		)
+	} else {
+		logger.Info("config distribution disabled (set SLUICE_CONFIG_DIR to enable)")
+	}
+
 	tlsCfg, err := cfg.tlsConfig()
 	if err != nil {
 		return fmt.Errorf("api: tls: %w", err)
@@ -76,8 +93,9 @@ func run(ctx context.Context) error {
 	}
 
 	grpcSrv := controlplane.NewGRPCServer(reg, logger, controlplane.GRPCServerOptions{
-		Token: cfg.token,
-		TLS:   tlsCfg,
+		Token:  cfg.token,
+		TLS:    tlsCfg,
+		Config: configProvider,
 	})
 	lis, err := net.Listen("tcp", cfg.grpcBind)
 	if err != nil {
@@ -143,6 +161,7 @@ type apiConfig struct {
 	token        string
 	tlsCert      string
 	tlsKey       string
+	configDir    string
 	staleAfter   time.Duration
 	offlineAfter time.Duration
 }
@@ -154,6 +173,7 @@ func loadConfig() apiConfig {
 		token:        os.Getenv("SLUICE_CP_TOKEN"),
 		tlsCert:      os.Getenv("SLUICE_CP_TLS_CERT"),
 		tlsKey:       os.Getenv("SLUICE_CP_TLS_KEY"),
+		configDir:    os.Getenv("SLUICE_CONFIG_DIR"),
 		staleAfter:   envSeconds("SLUICE_CP_STALE_AFTER_SECONDS", 45*time.Second),
 		offlineAfter: envSeconds("SLUICE_CP_OFFLINE_AFTER_SECONDS", 120*time.Second),
 	}

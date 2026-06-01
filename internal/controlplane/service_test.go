@@ -36,13 +36,13 @@ func wantCode(t *testing.T, err error, code codes.Code) {
 
 func TestFleetServer_Register(t *testing.T) {
 	t.Run("empty gateway_id is InvalidArgument", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil)
+		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
 		_, err := s.Register(context.Background(), &fleetpb.RegisterRequest{})
 		wantCode(t, err, codes.InvalidArgument)
 	})
 
 	t.Run("success returns registered_at", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil)
+		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
 		resp, err := s.Register(context.Background(), &fleetpb.RegisterRequest{
 			GatewayId: "gw-1",
 			Version:   "v1.2.0",
@@ -56,7 +56,7 @@ func TestFleetServer_Register(t *testing.T) {
 	})
 
 	t.Run("registry error is Internal", func(t *testing.T) {
-		s := NewFleetServer(errRegistry{err: errors.New("boom")}, nil)
+		s := NewFleetServer(errRegistry{err: errors.New("boom")}, nil, nil)
 		_, err := s.Register(context.Background(), &fleetpb.RegisterRequest{GatewayId: "gw-1"})
 		wantCode(t, err, codes.Internal)
 	})
@@ -64,13 +64,13 @@ func TestFleetServer_Register(t *testing.T) {
 
 func TestFleetServer_Heartbeat(t *testing.T) {
 	t.Run("empty gateway_id is InvalidArgument", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil)
+		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
 		_, err := s.Heartbeat(context.Background(), &fleetpb.HeartbeatRequest{})
 		wantCode(t, err, codes.InvalidArgument)
 	})
 
 	t.Run("success acks", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil)
+		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
 		_, err := s.Heartbeat(context.Background(), &fleetpb.HeartbeatRequest{
 			GatewayId:          "gw-1",
 			Version:            "v1.2.0",
@@ -82,8 +82,78 @@ func TestFleetServer_Heartbeat(t *testing.T) {
 	})
 
 	t.Run("registry error is Internal", func(t *testing.T) {
-		s := NewFleetServer(errRegistry{err: errors.New("boom")}, nil)
+		s := NewFleetServer(errRegistry{err: errors.New("boom")}, nil, nil)
 		_, err := s.Heartbeat(context.Background(), &fleetpb.HeartbeatRequest{GatewayId: "gw-1"})
+		wantCode(t, err, codes.Internal)
+	})
+}
+
+// stubProvider returns a fixed (Closure, error) for the FetchConfig error-mapping branches.
+type stubProvider struct {
+	cl  Closure
+	err error
+}
+
+func (s stubProvider) ClosureForAPIKey(string) (Closure, error) { return s.cl, s.err }
+
+func TestFleetServer_FetchConfig(t *testing.T) {
+	withProvider := func() *FleetServer {
+		return NewFleetServer(NewMemoryRegistry(), NewStoreConfigProvider(providerTestStore()), nil)
+	}
+
+	t.Run("nil provider is Unimplemented", func(t *testing.T) {
+		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
+		_, err := s.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "k"})
+		wantCode(t, err, codes.Unimplemented)
+	})
+
+	t.Run("empty api_key is InvalidArgument", func(t *testing.T) {
+		_, err := withProvider().FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{})
+		wantCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("known key returns closure", func(t *testing.T) {
+		resp, err := withProvider().FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "sk_live_alpha"}) //nolint:gosec // test fixture, not a credential
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.GetNotModified() {
+			t.Fatal("unexpected not_modified on first fetch")
+		}
+		if resp.GetConfiguration() != "alpha" || resp.GetHash() == "" || len(resp.GetBody()) == 0 {
+			t.Fatalf("bad closure: cfg=%q hash=%q bodylen=%d", resp.GetConfiguration(), resp.GetHash(), len(resp.GetBody()))
+		}
+	})
+
+	t.Run("matching known_hash yields not_modified without body", func(t *testing.T) {
+		s := withProvider()
+		first, err := s.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "sk_live_alpha"}) //nolint:gosec // test fixture, not a credential
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := s.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "sk_live_alpha", KnownHash: first.GetHash()}) //nolint:gosec // test fixture, not a credential
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resp.GetNotModified() || len(resp.GetBody()) != 0 {
+			t.Fatalf("want not_modified with empty body, got not_modified=%v bodylen=%d", resp.GetNotModified(), len(resp.GetBody()))
+		}
+	})
+
+	t.Run("unknown key is NotFound", func(t *testing.T) {
+		_, err := withProvider().FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "ghost"})
+		wantCode(t, err, codes.NotFound)
+	})
+
+	t.Run("no-config provider is Unavailable", func(t *testing.T) {
+		s := NewFleetServer(NewMemoryRegistry(), stubProvider{err: ErrNoConfig}, nil)
+		_, err := s.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "k"})
+		wantCode(t, err, codes.Unavailable)
+	})
+
+	t.Run("other provider error is Internal", func(t *testing.T) {
+		s := NewFleetServer(NewMemoryRegistry(), stubProvider{err: errors.New("boom")}, nil)
+		_, err := s.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "k"})
 		wantCode(t, err, codes.Internal)
 	})
 }
