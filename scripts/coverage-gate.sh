@@ -41,6 +41,10 @@ NF == 0 { next }
   # Generated protobuf/gRPC stubs carry no hand-written logic to test; exclude
   # them so a package that is purely generated code is not gated.
   if (file ~ /\.pb\.go$/) next
+  # configdb is pure Postgres glue with no fakeable logic layer (the SQL is the
+  # calls); it is exclusively integration-tested against real Postgres via
+  # testcontainers (test/e2e/configdb), per the real-over-mock policy.
+  if (file ~ /\/internal\/controlplane\/configdb\//) next
   j = length(file)
   while (j > 0 && substr(file, j, 1) != "/") j--
   if (j == 0) next

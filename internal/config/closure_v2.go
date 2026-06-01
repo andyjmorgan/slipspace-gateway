@@ -132,6 +132,42 @@ func closureRefs(resolved *ResolvedConfigV2, cfg contractsconfig.ConfigurationV2
 	return backends, groups, connectors
 }
 
+// MarshalConfig serializes a whole resolved v2 config into one deterministic
+// document — every data-plane block (backends, groups, configurations,
+// api-keys, rules, connectors). Per-instance blocks (admin, telemetry) are
+// excluded: they are not fleet-distributed config. The bytes round-trip through
+// ResolveClosure and are content-addressable, so they are the unit the control
+// plane stores (a versioned config object) and seeds from files.
+func MarshalConfig(resolved *ResolvedConfigV2) ([]byte, error) {
+	if resolved == nil {
+		return nil, fmt.Errorf("config: marshal config: nil resolved config")
+	}
+	root := &yaml.Node{Kind: yaml.MappingNode}
+	if len(resolved.Backends) > 0 {
+		appendBlock(root, keyBackends, resolved.Backends)
+	}
+	if len(resolved.Groups) > 0 {
+		appendBlock(root, keyGroups, resolved.Groups)
+	}
+	if len(resolved.Configurations) > 0 {
+		appendBlock(root, keyConfigurations, resolved.Configurations)
+	}
+	if len(resolved.APIKeys) > 0 {
+		appendBlock(root, keyAPIKeys, resolved.APIKeys)
+	}
+	if len(resolved.Rules) > 0 {
+		appendBlock(root, keyRules, resolved.Rules)
+	}
+	if len(resolved.Connectors) > 0 {
+		appendBlock(root, keyConnectors, resolved.Connectors)
+	}
+	body, err := yaml.Marshal(root)
+	if err != nil {
+		return nil, fmt.Errorf("config: marshal config: %w", err)
+	}
+	return body, nil
+}
+
 // ResolveClosure parses a single per-configuration closure document (as
 // produced by MarshalClosure and served by the control plane's FetchConfig)
 // into a validated ResolvedConfigV2. It is the in-memory counterpart of LoadV2

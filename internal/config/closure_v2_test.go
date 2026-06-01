@@ -158,6 +158,56 @@ func TestResolveClosure_RoundTripFromConfigDev(t *testing.T) {
 	}
 }
 
+func TestMarshalConfig_RoundTrip(t *testing.T) {
+	resolved, err := config.LoadV2(context.Background(), "../../config-dev")
+	if err != nil {
+		t.Skipf("config-dev not loadable: %v", err)
+	}
+
+	body, err := config.MarshalConfig(resolved)
+	if err != nil {
+		t.Fatalf("MarshalConfig: %v", err)
+	}
+
+	rc, err := config.ResolveClosure(body)
+	if err != nil {
+		t.Fatalf("ResolveClosure(MarshalConfig): %v", err)
+	}
+	if len(rc.Configurations) != len(resolved.Configurations) {
+		t.Fatalf("configurations: round-tripped %d, want %d", len(rc.Configurations), len(resolved.Configurations))
+	}
+	if len(rc.Backends) != len(resolved.Backends) {
+		t.Fatalf("backends: round-tripped %d, want %d", len(rc.Backends), len(resolved.Backends))
+	}
+	if len(rc.APIKeys) != len(resolved.APIKeys) {
+		t.Fatalf("api_keys: round-tripped %d, want %d", len(rc.APIKeys), len(resolved.APIKeys))
+	}
+}
+
+func TestMarshalConfig_Deterministic(t *testing.T) {
+	resolved, err := config.LoadV2(context.Background(), "../../config-dev")
+	if err != nil {
+		t.Skipf("config-dev not loadable: %v", err)
+	}
+	a, err := config.MarshalConfig(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := config.MarshalConfig(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(a) != string(b) {
+		t.Fatal("MarshalConfig not deterministic")
+	}
+}
+
+func TestMarshalConfig_NilResolved(t *testing.T) {
+	if _, err := config.MarshalConfig(nil); err == nil {
+		t.Fatal("want error for nil resolved config")
+	}
+}
+
 func TestResolveClosure_MalformedBytes(t *testing.T) {
 	if _, err := config.ResolveClosure([]byte("{{{ not yaml")); err == nil {
 		t.Fatal("want a parse error")
