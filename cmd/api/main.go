@@ -18,6 +18,7 @@ import (
 
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane"
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/configdb"
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
@@ -65,21 +66,11 @@ func run(ctx context.Context) error {
 
 	reg := controlplane.NewMemoryRegistry()
 
-	var configProvider controlplane.ConfigProvider
-	if cfg.configDir != "" {
-		resolved, lerr := config.LoadV2(ctx, cfg.configDir)
-		if lerr != nil {
-			return fmt.Errorf("api: load config %q: %w", cfg.configDir, lerr)
-		}
-		configProvider = controlplane.NewStoreConfigProvider(config.NewStore(resolved))
-		logger.Info("config distribution enabled",
-			"config_dir", cfg.configDir,
-			"configurations", len(resolved.Configurations),
-			"api_keys", len(resolved.APIKeys),
-		)
-	} else {
-		logger.Info("config distribution disabled (set SLUICE_CONFIG_DIR to enable)")
+	configProvider, cpCleanup, err := buildConfigProvider(ctx, cfg, logger)
+	if err != nil {
+		return err
 	}
+	defer cpCleanup()
 
 	tlsCfg, err := cfg.tlsConfig()
 	if err != nil {
@@ -154,6 +145,109 @@ func run(ctx context.Context) error {
 	return nil
 }
 
+// buildConfigProvider selects the config source for distribution:
+//   - SLUICE_CP_DATABASE_URL set -> Postgres-backed (seed from SLUICE_CONFIG_DIR
+//     on first boot, then serve the active published version).
+//   - else SLUICE_CONFIG_DIR set -> file-backed.
+//   - else -> registration-only (nil provider).
+//
+// Returns a cleanup to release any opened resources (the DB pool).
+func buildConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger) (controlplane.ConfigProvider, func(), error) {
+	noop := func() {}
+	switch {
+	case cfg.databaseURL != "":
+		return buildDBConfigProvider(ctx, cfg, logger)
+	case cfg.configDir != "":
+		resolved, err := config.LoadV2(ctx, cfg.configDir)
+		if err != nil {
+			return nil, noop, fmt.Errorf("api: load config %q: %w", cfg.configDir, err)
+		}
+		logger.Info("config distribution enabled (file-backed)",
+			"config_dir", cfg.configDir,
+			"configurations", len(resolved.Configurations),
+			"api_keys", len(resolved.APIKeys),
+		)
+		return controlplane.NewStoreConfigProvider(config.NewStore(resolved)), noop, nil
+	default:
+		logger.Info("config distribution disabled (set SLUICE_CP_DATABASE_URL or SLUICE_CONFIG_DIR to enable)")
+		return nil, noop, nil
+	}
+}
+
+func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger) (controlplane.ConfigProvider, func(), error) {
+	noop := func() {}
+	db, err := configdb.Open(ctx, cfg.databaseURL)
+	if err != nil {
+		return nil, noop, fmt.Errorf("api: open config db: %w", err)
+	}
+
+	_, aerr := db.ActiveVersion(ctx)
+	switch {
+	case errors.Is(aerr, configdb.ErrNoActiveConfig):
+		if cfg.configDir == "" {
+			logger.Warn("config db empty and SLUICE_CONFIG_DIR unset; distribution disabled until a version is published")
+			return nil, db.Close, nil
+		}
+		if serr := seedConfigDB(ctx, db, cfg.configDir, logger); serr != nil {
+			db.Close()
+			return nil, noop, serr
+		}
+	case aerr != nil:
+		db.Close()
+		return nil, noop, fmt.Errorf("api: read active config: %w", aerr)
+	}
+
+	active, err := db.ActiveVersion(ctx)
+	if err != nil {
+		db.Close()
+		return nil, noop, fmt.Errorf("api: load active config: %w", err)
+	}
+	resolved, err := config.ResolveClosure(active.Body)
+	if err != nil {
+		db.Close()
+		return nil, noop, fmt.Errorf("api: resolve active config %s: %w", active.ID, err)
+	}
+	logger.Info("config distribution enabled (postgres-backed)",
+		"version", active.ID,
+		"hash", active.Hash,
+		"configurations", len(resolved.Configurations),
+		"api_keys", len(resolved.APIKeys),
+	)
+	return controlplane.NewStoreConfigProvider(config.NewStore(resolved)), db.Close, nil
+}
+
+// seedConfigDB imports the file config into entities and publishes the first
+// version. Runs only when the store has no active version.
+func seedConfigDB(ctx context.Context, db *configdb.DB, dir string, logger *slog.Logger) error {
+	resolved, err := config.LoadV2(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("api: seed load config %q: %w", dir, err)
+	}
+	entities, err := controlplane.EntityFromConfig(resolved)
+	if err != nil {
+		return fmt.Errorf("api: seed compose entities: %w", err)
+	}
+	for _, e := range entities {
+		if err := db.UpsertEntity(ctx, e.Kind, e.Name, e.Body, "seed"); err != nil {
+			return fmt.Errorf("api: seed upsert %s/%s: %w", e.Kind, e.Name, err)
+		}
+	}
+	body, err := config.MarshalConfig(resolved)
+	if err != nil {
+		return fmt.Errorf("api: seed marshal config: %w", err)
+	}
+	v, err := db.Publish(ctx, body, "seed")
+	if err != nil {
+		return fmt.Errorf("api: seed publish: %w", err)
+	}
+	logger.Info("seeded config db from files",
+		"config_dir", dir,
+		"entities", len(entities),
+		"version", v.ID,
+	)
+	return nil
+}
+
 // apiConfig is the control-plane bootstrap, env-driven to match the gateway's
 // ServerEnv convention (no bootstrap YAML).
 type apiConfig struct {
@@ -163,6 +257,7 @@ type apiConfig struct {
 	tlsCert      string
 	tlsKey       string
 	configDir    string
+	databaseURL  string
 	staleAfter   time.Duration
 	offlineAfter time.Duration
 }
@@ -175,6 +270,7 @@ func loadConfig() apiConfig {
 		tlsCert:      os.Getenv("SLUICE_CP_TLS_CERT"),
 		tlsKey:       os.Getenv("SLUICE_CP_TLS_KEY"),
 		configDir:    os.Getenv("SLUICE_CONFIG_DIR"),
+		databaseURL:  os.Getenv("SLUICE_CP_DATABASE_URL"),
 		staleAfter:   envSeconds("SLUICE_CP_STALE_AFTER_SECONDS", 45*time.Second),
 		offlineAfter: envSeconds("SLUICE_CP_OFFLINE_AFTER_SECONDS", 120*time.Second),
 	}
