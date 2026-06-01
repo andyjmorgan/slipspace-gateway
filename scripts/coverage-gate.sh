@@ -38,6 +38,9 @@ NF == 0 { next }
   i = index(file_part, ":")
   if (i == 0) next
   file = substr(file_part, 1, i - 1)
+  # Generated protobuf/gRPC stubs carry no hand-written logic to test; exclude
+  # them so a package that is purely generated code is not gated.
+  if (file ~ /\.pb\.go$/) next
   j = length(file)
   while (j > 0 && substr(file, j, 1) != "/") j--
   if (j == 0) next

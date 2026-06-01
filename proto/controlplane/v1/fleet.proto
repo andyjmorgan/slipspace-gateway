@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package sluice.controlplane.v1;
+
+option go_package = "github.com/andyjmorgan/sluice-gateway/internal/controlplane/fleetpb;fleetpb";
+
+// FleetService is the gateway <-> control-plane registration channel.
+//
+// Phase 1 (this file) carries registration + heartbeat only — enough to stand
+// up the read-only fleet console. Config distribution (FetchConfig /
+// WatchConfig, returning the per-configuration closure as opaque bytes) lands
+// in Phase 2 and is intentionally absent here so the Phase 1 surface stays
+// small and the inline-secret trade does not bite until distribution exists.
+service FleetService {
+  // Register announces a gateway to the control plane on startup and records
+  // its identity. Idempotent on gateway_id — a re-register refreshes the
+  // existing record rather than duplicating it.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat reports liveness plus the gateway's current state on an
+  // interval. The response is an empty ack in Phase 1; Phase 2 fills it with
+  // revocations and stale-config notifications (reserved below).
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message RegisterRequest {
+  // gateway_id is the stable, operator-assigned identity of the instance.
+  string gateway_id = 1;
+
+  // version is the gateway binary version (e.g. "v1.2.0-33-ga0e761c").
+  string version = 2;
+
+  // labels are arbitrary operator metadata (cluster, role, ...), surfaced in
+  // the fleet console.
+  map<string, string> labels = 3;
+}
+
+message RegisterResponse {
+  // registered_at is the control plane's view of when this gateway first
+  // appeared, RFC3339. Informational.
+  string registered_at = 1;
+}
+
+message HeartbeatRequest {
+  // gateway_id identifies the heartbeating instance.
+  string gateway_id = 1;
+
+  // version is re-reported every heartbeat so a rolling upgrade is visible in
+  // the console without waiting for a re-register.
+  string version = 2;
+
+  // cached_config_hashes are the content hashes of the configuration closures
+  // the gateway currently holds. Phase 1 records them for forward-compat;
+  // Phase 2 diffs them server-side to drive stale-config notifications.
+  repeated string cached_config_hashes = 3;
+
+  // labels may change across a gateway's lifetime; the latest set wins.
+  map<string, string> labels = 4;
+}
+
+message HeartbeatResponse {
+  // Phase 2 control signals land here:
+  reserved 1, 2;
+  reserved "revocations", "stale_config_ids";
+}

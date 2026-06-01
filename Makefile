@@ -16,7 +16,7 @@ DEV_ENV := \
 # checkout so go:embed has something to attach.
 WEB_OUT := internal/admin/webdist/index.html
 
-.PHONY: all build test lint fmt vet coverage dev dev-with-overlay dev-compose dev-compose-down dev-real dev-real-down e2e py-compat smoke clean tools web web-install web-dev
+.PHONY: all build test lint fmt vet coverage dev dev-with-overlay dev-compose dev-compose-down dev-real dev-real-down e2e py-compat smoke clean tools tools-proto proto web web-install web-dev
 
 all: lint vet test
 
@@ -117,3 +117,20 @@ clean:
 
 tools:
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
+# tools-proto installs the protobuf Go plugins. protoc itself comes from the OS
+# package manager (macOS: `brew install protobuf`).
+tools-proto:
+	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# proto regenerates the control-plane gRPC stubs. Generated *.pb.go are
+# committed, so CI builds without protoc — only regeneration needs the toolchain
+# (see tools-proto). goimports normalises the generated import grouping so
+# `make fmt` stays a no-op on the output.
+proto:
+	protoc \
+	  --go_out=. --go_opt=module=github.com/andyjmorgan/sluice-gateway \
+	  --go-grpc_out=. --go-grpc_opt=module=github.com/andyjmorgan/sluice-gateway \
+	  proto/controlplane/v1/fleet.proto
+	$(GO) run golang.org/x/tools/cmd/goimports@latest -w -local github.com/andyjmorgan/sluice-gateway internal/controlplane/fleetpb

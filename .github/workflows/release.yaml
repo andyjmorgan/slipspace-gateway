@@ -33,6 +33,8 @@ jobs:
             dockerfile: deploy/docker/Dockerfile
           - name: sluice-mockllm
             dockerfile: deploy/docker/Dockerfile.mockllm
+          - name: sluice-controlplane
+            dockerfile: deploy/docker/Dockerfile.api
     steps:
       - uses: actions/checkout@v4
         with:
