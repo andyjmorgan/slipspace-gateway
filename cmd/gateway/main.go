@@ -109,6 +109,10 @@ func run(ctx context.Context) error {
 	// the admin write path that calls store.Replace.
 	store := config.NewStore(resolved)
 
+	// When CP-managed, fetch + apply the control-plane config before the data
+	// plane starts serving (and keep it synced after). No-op otherwise.
+	startControlPlaneConfigSync(ctx, env, store, obs, logger)
+
 	resolver := auth.NewResolver(store)
 
 	liveFeed, err := buildLiveFeed(env, logger)
@@ -561,6 +565,40 @@ func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, obs
 	)
 	safego.Go(ctx, "gateway.controlplane.reconciler", logger, obs.Meters, func() {
 		rec.Run(ctx)
+	})
+}
+
+// startControlPlaneConfigSync, when the gateway is CP-managed with a bootstrap
+// api-key, fetches its configuration closure from the control plane and applies
+// it before the data plane begins serving (Bootstrap), then keeps it in sync in
+// the background (Run). No-op without an endpoint + bootstrap key — the gateway
+// then serves its local file-backed config. CP-0 holds: an unreachable control
+// plane leaves the locally-loaded config in place (serve-stale).
+func startControlPlaneConfigSync(ctx context.Context, env *config.ServerEnv, store *config.Store, obs *observability.Provider, logger *slog.Logger) {
+	if !env.ControlPlaneEnabled() || env.ControlPlaneBootstrapAPIKey == "" {
+		return
+	}
+
+	syncer, err := reconciler.NewConfigSyncer(reconciler.ConfigSyncerOptions{
+		Endpoint:  env.ControlPlaneEndpoint,
+		Token:     env.ControlPlaneToken,
+		TLS:       env.ControlPlaneTLSEnabled,
+		APIKey:    env.ControlPlaneBootstrapAPIKey,
+		CachePath: env.ControlPlaneCachePath,
+		Store:     store,
+		Logger:    logger,
+	})
+	if err != nil {
+		logger.WarnContext(ctx, "control-plane config sync not started", "err", err.Error())
+		return
+	}
+
+	logger.InfoContext(ctx, "control-plane config sync: bootstrapping before serve",
+		"endpoint", env.ControlPlaneEndpoint,
+	)
+	syncer.Bootstrap(ctx)
+	safego.Go(ctx, "gateway.controlplane.configsync", logger, obs.Meters, func() {
+		syncer.Run(ctx)
 	})
 }
 

@@ -132,6 +132,31 @@ func closureRefs(resolved *ResolvedConfigV2, cfg contractsconfig.ConfigurationV2
 	return backends, groups, connectors
 }
 
+// ResolveClosure parses a single per-configuration closure document (as
+// produced by MarshalClosure and served by the control plane's FetchConfig)
+// into a validated ResolvedConfigV2. It is the in-memory counterpart of LoadV2
+// for one document: the gateway applies the result via store.Replace, and
+// runs the exact same Validate + buildIndexes the file loader does (CP-2), so
+// a malformed or invalid closure is rejected before it can reach a live
+// snapshot.
+func ResolveClosure(data []byte) (*ResolvedConfigV2, error) {
+	var doc v2Doc
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("config: resolve closure: parse: %w", err)
+	}
+	r := &ResolvedConfigV2{}
+	seen := map[string]string{}
+	if err := r.mergeDoc("<closure>", &doc, seen); err != nil {
+		return nil, err
+	}
+	r.SourceFiles = seen
+	if err := r.Validate(); err != nil {
+		return nil, err
+	}
+	r.buildIndexes()
+	return r, nil
+}
+
 func closureRules(resolved *ResolvedConfigV2, configName string) []rulescontract.RuleContract {
 	ptrs := resolved.PerConfigurationRules[configName]
 	out := make([]rulescontract.RuleContract, 0, len(ptrs))

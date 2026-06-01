@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -123,5 +124,51 @@ func TestMarshalClosure_UnknownConfiguration(t *testing.T) {
 func TestMarshalClosure_NilResolved(t *testing.T) {
 	if _, _, err := config.MarshalClosure(nil, "x"); err == nil {
 		t.Fatal("want error for nil resolved config")
+	}
+}
+
+func TestResolveClosure_RoundTripFromConfigDev(t *testing.T) {
+	resolved, err := config.LoadV2(context.Background(), "../../config-dev")
+	if err != nil {
+		t.Skipf("config-dev not loadable from this path: %v", err)
+	}
+	if len(resolved.APIKeys) == 0 {
+		t.Skip("config-dev has no api keys")
+	}
+	// A configuration that has at least one api-key, so its closure is non-trivial.
+	name := resolved.APIKeys[0].Configuration
+
+	body, hash, err := config.MarshalClosure(resolved, name)
+	if err != nil {
+		t.Fatalf("MarshalClosure(%q): %v", name, err)
+	}
+	if hash == "" {
+		t.Fatal("empty hash")
+	}
+
+	rc, err := config.ResolveClosure(body)
+	if err != nil {
+		t.Fatalf("ResolveClosure: %v", err)
+	}
+	if _, ok := rc.Configurations[name]; !ok {
+		t.Fatalf("round-tripped closure missing configuration %q", name)
+	}
+	if len(rc.SecretIndex) == 0 {
+		t.Error("SecretIndex empty after ResolveClosure — api-keys not rebuilt")
+	}
+}
+
+func TestResolveClosure_MalformedBytes(t *testing.T) {
+	if _, err := config.ResolveClosure([]byte("{{{ not yaml")); err == nil {
+		t.Fatal("want a parse error")
+	}
+}
+
+func TestResolveClosure_ValidationFailure(t *testing.T) {
+	// A binding referencing a backend that does not exist must fail Validate,
+	// so a bad closure never reaches a live snapshot.
+	bad := []byte("configurations:\n  x:\n    bindings:\n      - {protocol: chat, models: [\"a\"], backend: ghost}\n")
+	if _, err := config.ResolveClosure(bad); err == nil {
+		t.Fatal("want a validation error for the dangling backend reference")
 	}
 }
