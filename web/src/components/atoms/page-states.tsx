@@ -18,15 +18,17 @@ export function PageHeader({
   action?: React.ReactNode
 }) {
   return (
-    <div className="mb-4 flex items-start gap-3">
-      <PageIcon className="mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <h1 className="text-[22px] font-semibold tracking-[-0.02em]">{title}</h1>
-        {sub && (
-          <div className="text-[13px] text-[color:var(--text-3)] mt-1">{sub}</div>
-        )}
+    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start">
+      <div className="flex items-start gap-3 flex-1 min-w-0">
+        <PageIcon className="mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <h1 className="text-[22px] font-semibold tracking-[-0.02em]">{title}</h1>
+          {sub && (
+            <div className="text-[13px] text-[color:var(--text-3)] mt-1">{sub}</div>
+          )}
+        </div>
       </div>
-      {action && <div className="flex items-center gap-2">{action}</div>}
+      {action && <div className="flex items-center gap-2 flex-wrap shrink-0">{action}</div>}
     </div>
   )
 }

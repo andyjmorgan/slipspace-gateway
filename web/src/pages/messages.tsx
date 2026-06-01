@@ -160,7 +160,7 @@ export function MessagesPage() {
                 aria-pressed={grouped}
               >
                 <Layers />
-                {grouped ? "Ungroup" : "Group by session"}
+                <span className="hidden sm:inline">{grouped ? "Ungroup" : "Group by session"}</span>
               </Button>
               <Button
                 variant="outline"
@@ -169,11 +169,13 @@ export function MessagesPage() {
                 aria-label={paused ? "Resume" : "Pause"}
               >
                 {paused ? <Play /> : <Pause />}
-                {paused
-                  ? pendingRef.current.length > 0
-                    ? `Resume (+${pendingRef.current.length})`
-                    : "Resume"
-                  : "Pause"}
+                <span className="hidden sm:inline">
+                  {paused
+                    ? pendingRef.current.length > 0
+                      ? `Resume (+${pendingRef.current.length})`
+                      : "Resume"
+                    : "Pause"}
+                </span>
               </Button>
               <Button
                 variant="outline"
@@ -186,7 +188,7 @@ export function MessagesPage() {
                 }}
                 aria-label="Clear table"
               >
-                <Trash2 /> Clear
+                <Trash2 /> <span className="hidden sm:inline">Clear</span>
               </Button>
             </>
           )
