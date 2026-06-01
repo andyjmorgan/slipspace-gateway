@@ -2,9 +2,10 @@ import { Link } from "react-router"
 import { useConfigurations } from "@/lib/config-api"
 import { PanelCard, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
-import { Button } from "@/components/ui/button"
 import {
   PageHeader,
+  NewButton,
+
   LoadingPanel,
   ErrorPanel,
   EmptyPanel,
@@ -21,9 +22,7 @@ export function ConfigurationsPage() {
         title="Configurations"
         sub="Reusable policy bundles — upstream credentials, attached rules, and the API keys that resolve to each. Open one for the breakdown."
         action={
-          <Link to="/configurations/new">
-            <Button size="sm">+ New configuration</Button>
-          </Link>
+          <NewButton to="/configurations/new" label="New configuration" />
         }
       />
       {state.status === "loading" && <LoadingPanel />}

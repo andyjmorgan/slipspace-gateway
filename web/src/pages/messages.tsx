@@ -153,7 +153,7 @@ export function MessagesPage() {
           feed.status === "ok" && (
             <>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => setGrouped((g) => !g)}
                 aria-label="Group by session"
@@ -163,7 +163,7 @@ export function MessagesPage() {
                 <span className="hidden sm:inline">{grouped ? "Ungroup" : "Group by session"}</span>
               </Button>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => setPaused((p) => !p)}
                 aria-label={paused ? "Resume" : "Pause"}
@@ -178,7 +178,7 @@ export function MessagesPage() {
                 </span>
               </Button>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => {
                   setEntries([])
