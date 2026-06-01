@@ -1,0 +1,30 @@
+ARG VERSION=dev
+
+FROM alpine:3 AS certs
+RUN apk add --no-cache ca-certificates
+
+FROM golang:1.25-alpine AS builder
+ARG VERSION
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags "-s -w -X github.com/andyjmorgan/sluice-gateway/internal/version.Version=${VERSION}" \
+    -o /out/controlplane \
+    ./cmd/api
+
+FROM scratch
+ARG VERSION
+LABEL org.opencontainers.image.title="sluice-controlplane" \
+      org.opencontainers.image.description="Central control plane for sluice-gateway: fleet registry (gRPC) + read-only fleet console API." \
+      org.opencontainers.image.source="https://github.com/andyjmorgan/sluice-gateway" \
+      org.opencontainers.image.version="${VERSION}"
+COPY --from=builder /out/controlplane /controlplane
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# 8484: HTTP read API (/healthz, /api/v1/fleet). 8485: gRPC fleet channel.
+EXPOSE 8484 8485
+USER 65532:65532
+ENTRYPOINT ["/controlplane"]
+CMD []
