@@ -108,6 +108,7 @@ func run(ctx context.Context) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
+	mux.Handle("/", controlplane.ConsoleHandler())
 	httpSrv := &http.Server{
 		Addr:              cfg.httpBind,
 		Handler:           mux,
