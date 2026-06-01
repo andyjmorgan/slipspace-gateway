@@ -36,6 +36,11 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 		{"AdminLiveFeedCapacity", env.AdminLiveFeedCapacity, config.DefaultAdminLiveFeedCapacity},
 		{"AdminLiveFeedBodyBytes", env.AdminLiveFeedBodyBytes, config.DefaultAdminLiveFeedBodyBytes},
 		{"AdminLiveFeedBodyMaxBytes", env.AdminLiveFeedBodyMaxBytes, config.DefaultAdminLiveFeedBodyMaxBytes},
+		{"ControlPlaneEndpoint", env.ControlPlaneEndpoint, ""},
+		{"ControlPlaneToken", env.ControlPlaneToken, ""},
+		{"ControlPlaneTLSEnabled", env.ControlPlaneTLSEnabled, true},
+		{"ControlPlaneHeartbeatSeconds", env.ControlPlaneHeartbeatSeconds, config.DefaultControlPlaneHeartbeatSeconds},
+		{"GatewayID", env.GatewayID, ""},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
@@ -48,6 +53,54 @@ func TestLoadEnv_AllDefaults(t *testing.T) {
 	}
 	if env.OTLPEnabled() {
 		t.Error("OTLPEnabled() = true with empty OTLPEndpoint")
+	}
+	if env.ControlPlaneEnabled() {
+		t.Error("ControlPlaneEnabled() = true with empty endpoint")
+	}
+	if env.GatewayLabels != nil {
+		t.Errorf("GatewayLabels = %v, want nil", env.GatewayLabels)
+	}
+}
+
+func TestLoadEnv_ControlPlaneOverrides(t *testing.T) {
+	for _, name := range config.EnvVarNames() {
+		t.Setenv(name, "")
+	}
+	t.Setenv(config.EnvControlPlaneEndpoint, "cp.internal:8485")
+	t.Setenv(config.EnvControlPlaneToken, "boot-token")
+	t.Setenv(config.EnvControlPlaneTLSEnabled, "false")
+	t.Setenv(config.EnvControlPlaneHeartbeatSeconds, "7")
+	t.Setenv(config.EnvGatewayID, "gw-7")
+	t.Setenv(config.EnvGatewayLabels, "cluster=prod, role=edge")
+
+	env, err := config.LoadEnv()
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if err := env.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	if env.ControlPlaneEndpoint != "cp.internal:8485" {
+		t.Errorf("ControlPlaneEndpoint = %q", env.ControlPlaneEndpoint)
+	}
+	if env.ControlPlaneToken != "boot-token" {
+		t.Errorf("ControlPlaneToken = %q", env.ControlPlaneToken)
+	}
+	if env.ControlPlaneTLSEnabled {
+		t.Error("ControlPlaneTLSEnabled = true, want false override")
+	}
+	if env.ControlPlaneHeartbeatSeconds != 7 {
+		t.Errorf("ControlPlaneHeartbeatSeconds = %d", env.ControlPlaneHeartbeatSeconds)
+	}
+	if env.GatewayID != "gw-7" {
+		t.Errorf("GatewayID = %q", env.GatewayID)
+	}
+	if len(env.GatewayLabels) != 2 || env.GatewayLabels[0] != "cluster=prod" || env.GatewayLabels[1] != "role=edge" {
+		t.Errorf("GatewayLabels = %v", env.GatewayLabels)
+	}
+	if !env.ControlPlaneEnabled() {
+		t.Error("ControlPlaneEnabled() = false with endpoint set")
 	}
 }
 
@@ -171,6 +224,7 @@ func TestLoadEnv_BadIntWrapsErrInvalidEnv(t *testing.T) {
 		{"live_feed_capacity", config.EnvAdminLiveFeedCapacity},
 		{"live_feed_body_bytes", config.EnvAdminLiveFeedBodyBytes},
 		{"live_feed_body_max_bytes", config.EnvAdminLiveFeedBodyMaxBytes},
+		{"cp_heartbeat", config.EnvControlPlaneHeartbeatSeconds},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -246,6 +300,10 @@ func TestServerEnv_Validate_NonPositiveInts(t *testing.T) {
 			e.UpstreamResponseHeaderTimeoutSeconds = config.MinUpstreamResponseHeaderTimeoutSeconds - 1
 		}},
 		{"upstream_header_timeout_zero", func(e *config.ServerEnv) { e.UpstreamResponseHeaderTimeoutSeconds = 0 }},
+		{"cp_heartbeat_when_enabled", func(e *config.ServerEnv) {
+			e.ControlPlaneEndpoint = "cp:8485"
+			e.ControlPlaneHeartbeatSeconds = 0
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

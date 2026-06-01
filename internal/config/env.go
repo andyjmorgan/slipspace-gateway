@@ -76,6 +76,12 @@ const (
 	// Beyond this, the cost of authoring + evaluating a tree this deep
 	// outweighs any expressive gain; a flat priority chain is clearer.
 	MaxRulesMaxGroupDepth = 64
+
+	// DefaultControlPlaneHeartbeatSeconds is how often a CP-managed gateway
+	// heartbeats to the control plane. Off the data-plane request path
+	// (invariant CP-0), so the cadence trades console freshness against
+	// chatter; 20s keeps the fleet view live without noise.
+	DefaultControlPlaneHeartbeatSeconds = 20
 )
 
 // SLUICE_* env var names. Exported so callers (CLI validator, tests,
@@ -101,6 +107,15 @@ const (
 	EnvRedactExtraHeaders                   = "SLUICE_REDACT_EXTRA_HEADERS"
 	EnvSessionIDHeaders                     = "SLUICE_SESSION_ID_HEADERS"
 	EnvExternalURL                          = "SLUICE_EXTERNAL_URL"
+
+	// Control-plane reconciler. Empty endpoint = standalone (file-backed) mode;
+	// the gateway never depends on the control plane to serve (invariant CP-0).
+	EnvControlPlaneEndpoint         = "SLUICE_CONTROL_PLANE_ENDPOINT"
+	EnvControlPlaneToken            = "SLUICE_CP_TOKEN" //nolint:gosec // env var name, not a credential value
+	EnvControlPlaneTLSEnabled       = "SLUICE_CP_TLS_ENABLED"
+	EnvControlPlaneHeartbeatSeconds = "SLUICE_CP_HEARTBEAT_SECONDS"
+	EnvGatewayID                    = "SLUICE_GATEWAY_ID"
+	EnvGatewayLabels                = "SLUICE_GATEWAY_LABELS"
 )
 
 // envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
@@ -126,6 +141,12 @@ var envVarNames = []string{
 	EnvRedactExtraHeaders,
 	EnvSessionIDHeaders,
 	EnvExternalURL,
+	EnvControlPlaneEndpoint,
+	EnvControlPlaneToken,
+	EnvControlPlaneTLSEnabled,
+	EnvControlPlaneHeartbeatSeconds,
+	EnvGatewayID,
+	EnvGatewayLabels,
 }
 
 // EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
@@ -244,6 +265,34 @@ type ServerEnv struct {
 	// back through the gateway. Empty leaves {external_url} unresolved,
 	// dropping any rewrite that depends on it.
 	ExternalURL string
+
+	// ControlPlaneEndpoint is the control-plane gRPC target (host:port).
+	// Empty means standalone (file-backed) mode — the gateway runs entirely
+	// from its local config and never contacts a control plane. When set, the
+	// reconciler registers + heartbeats out of band; the request path never
+	// depends on it (invariant CP-0).
+	ControlPlaneEndpoint string
+
+	// ControlPlaneToken is the bootstrap token presented on the gateway->CP
+	// channel. Empty is permitted only on a trusted network where the CP also
+	// runs without token auth.
+	ControlPlaneToken string
+
+	// ControlPlaneTLSEnabled selects TLS on the CP channel. Default true;
+	// set false only on a trusted internal network (the CP serves inline
+	// secrets in Phase 2 — CP-3 revised).
+	ControlPlaneTLSEnabled bool
+
+	// ControlPlaneHeartbeatSeconds is the heartbeat cadence to the CP.
+	ControlPlaneHeartbeatSeconds int
+
+	// GatewayID is this instance's stable identity reported to the CP. Empty
+	// falls back to the hostname at startup.
+	GatewayID string
+
+	// GatewayLabels is operator metadata reported to the CP, parsed from a
+	// "k=v,k=v" list. Surfaced in the fleet console.
+	GatewayLabels []string
 }
 
 // PrometheusEnabled reports whether the Prometheus scrape listener is
@@ -253,6 +302,10 @@ func (e *ServerEnv) PrometheusEnabled() bool { return e.PrometheusBind != "" }
 // OTLPEnabled reports whether the OTLP exporter is configured. False
 // when OTLPEndpoint is empty.
 func (e *ServerEnv) OTLPEnabled() bool { return e.OTLPEndpoint != "" }
+
+// ControlPlaneEnabled reports whether this gateway is CP-managed. False
+// (standalone, file-backed) when ControlPlaneEndpoint is empty.
+func (e *ServerEnv) ControlPlaneEnabled() bool { return e.ControlPlaneEndpoint != "" }
 
 // LiveFeedEnabled reports whether the admin live-messages ring is wired.
 // False when AdminLiveFeedCapacity is zero (or negative, which Validate
@@ -301,6 +354,10 @@ func LoadEnv() (*ServerEnv, error) {
 	if err != nil {
 		return nil, err
 	}
+	cpHeartbeat, err := envInt(EnvControlPlaneHeartbeatSeconds, DefaultControlPlaneHeartbeatSeconds)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ServerEnv{
 		HTTPBind:                             envString(EnvHTTPBind, DefaultHTTPBind),
@@ -322,6 +379,12 @@ func LoadEnv() (*ServerEnv, error) {
 		RedactExtraHeaders:                   envCSVList(EnvRedactExtraHeaders),
 		SessionIDHeaders:                     envCSVList(EnvSessionIDHeaders),
 		ExternalURL:                          envString(EnvExternalURL, ""),
+		ControlPlaneEndpoint:                 envString(EnvControlPlaneEndpoint, ""),
+		ControlPlaneToken:                    envString(EnvControlPlaneToken, ""),
+		ControlPlaneTLSEnabled:               envBool(EnvControlPlaneTLSEnabled, true),
+		ControlPlaneHeartbeatSeconds:         cpHeartbeat,
+		GatewayID:                            envString(EnvGatewayID, ""),
+		GatewayLabels:                        envCSVList(EnvGatewayLabels),
 	}, nil
 }
 
@@ -385,6 +448,9 @@ func (e *ServerEnv) Validate() error {
 	}
 	if e.AdminLiveFeedBodyBytes > 0 && e.AdminLiveFeedBodyMaxBytes == 0 {
 		return fmt.Errorf("%s must be > 0 when %s is non-zero: %w", EnvAdminLiveFeedBodyMaxBytes, EnvAdminLiveFeedBodyBytes, ErrInvalidEnv)
+	}
+	if e.ControlPlaneEnabled() && e.ControlPlaneHeartbeatSeconds <= 0 {
+		return fmt.Errorf("%s=%d: %w: must be positive when %s is set", EnvControlPlaneHeartbeatSeconds, e.ControlPlaneHeartbeatSeconds, ErrInvalidEnv, EnvControlPlaneEndpoint)
 	}
 	switch strings.ToLower(strings.TrimSpace(e.LogLevel)) {
 	case "debug", "info", "warn", "error":

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/factory"
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/reconciler"
 	"github.com/andyjmorgan/sluice-gateway/internal/headers"
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
@@ -192,6 +194,8 @@ func run(ctx context.Context) error {
 	obs.Snapshotter.Start(ctx)
 
 	startAdmin(ctx, store, obs, logger, drain, startedAt, liveFeed, bodyStore, breakerStoreAdapter{store: breakers}, env.ConfigDir)
+
+	startControlPlaneReconciler(ctx, env, obs, logger)
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -514,4 +518,69 @@ func shutdownObservability(p *observability.Provider) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = p.Shutdown(shutdownCtx)
+}
+
+// startControlPlaneReconciler launches the gateway->control-plane registration
+// loop when SLUICE_CONTROL_PLANE_ENDPOINT is set. It runs in a background
+// goroutine bound to ctx and never touches the request path (invariant CP-0):
+// a construction error is logged and the gateway keeps serving from local
+// config. No-op in standalone (file-backed) mode.
+func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, obs *observability.Provider, logger *slog.Logger) {
+	if !env.ControlPlaneEnabled() {
+		return
+	}
+
+	gatewayID := env.GatewayID
+	if gatewayID == "" {
+		if hn, err := os.Hostname(); err == nil && hn != "" {
+			gatewayID = hn
+		} else {
+			gatewayID = binaryName
+		}
+	}
+
+	rec, err := reconciler.New(reconciler.Options{
+		Endpoint:  env.ControlPlaneEndpoint,
+		Token:     env.ControlPlaneToken,
+		TLS:       env.ControlPlaneTLSEnabled,
+		GatewayID: gatewayID,
+		Version:   version.Version,
+		Labels:    parseLabels(env.GatewayLabels),
+		Interval:  time.Duration(env.ControlPlaneHeartbeatSeconds) * time.Second,
+		Logger:    logger,
+	})
+	if err != nil {
+		logger.WarnContext(ctx, "control-plane reconciler not started", "err", err.Error())
+		return
+	}
+
+	logger.InfoContext(ctx, "control-plane reconciler starting",
+		"endpoint", env.ControlPlaneEndpoint,
+		"gateway_id", gatewayID,
+		"tls", env.ControlPlaneTLSEnabled,
+	)
+	safego.Go(ctx, "gateway.controlplane.reconciler", logger, obs.Meters, func() {
+		rec.Run(ctx)
+	})
+}
+
+// parseLabels turns a "k=v" list into a map. Entries without "=" or with an
+// empty key are skipped.
+func parseLabels(pairs []string) map[string]string {
+	if len(pairs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, ok := strings.Cut(p, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			continue
+		}
+		out[k] = strings.TrimSpace(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
