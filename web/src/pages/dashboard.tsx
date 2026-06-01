@@ -57,8 +57,8 @@ export function DashboardPage() {
               { value: "24h", label: "24h" },
             ]}
           />
-          <Button variant="outline" size="sm" onClick={refetch} disabled={refreshing} aria-label="Refresh dashboard">
-            <RefreshCw className={refreshing ? "animate-spin" : undefined} /> Refresh
+          <Button variant="ghost" size="sm" onClick={refetch} disabled={refreshing} aria-label="Refresh dashboard">
+            <RefreshCw className={refreshing ? "animate-spin" : undefined} /> <span className="hidden sm:inline">Refresh</span>
           </Button>
         </div>
       </div>

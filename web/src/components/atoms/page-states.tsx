@@ -4,9 +4,11 @@
 // these helpers so the shapes stay identical across every page.
 
 import { useEffect } from "react"
-import { useLocation, useNavigate } from "react-router"
+import { Link, useLocation, useNavigate } from "react-router"
+import { Plus } from "lucide-react"
 import type { ConfigFetchState } from "@/lib/config-api"
 import { navMetaForPath } from "@/lib/nav-meta"
+import { Button } from "@/components/ui/button"
 
 export function PageHeader({
   title,
@@ -17,19 +19,34 @@ export function PageHeader({
   sub?: React.ReactNode
   action?: React.ReactNode
 }) {
+  // Top row: icon + title + action (the action floats right of the title, on the
+  // same row even on mobile). The description spans the full width below both,
+  // so it never gets crushed by the action's width.
   return (
-    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start">
-      <div className="flex items-start gap-3 flex-1 min-w-0">
+    <div className="mb-4">
+      <div className="flex items-start gap-3">
         <PageIcon className="mt-0.5" />
-        <div className="flex-1 min-w-0">
-          <h1 className="text-[22px] font-semibold tracking-[-0.02em]">{title}</h1>
-          {sub && (
-            <div className="text-[13px] text-[color:var(--text-3)] mt-1">{sub}</div>
-          )}
-        </div>
+        <h1 className="flex-1 min-w-0 text-[22px] font-semibold tracking-[-0.02em]">{title}</h1>
+        {action && <div className="flex items-center gap-2 shrink-0">{action}</div>}
       </div>
-      {action && <div className="flex items-center gap-2 flex-wrap shrink-0">{action}</div>}
+      {sub && (
+        <div className="text-[13px] text-[color:var(--text-3)] mt-1.5">{sub}</div>
+      )}
     </div>
+  )
+}
+
+// NewButton is the shared borderless "create" action for list-page headers: a
+// + icon that stands alone on mobile, with the label appearing from sm up.
+// Linked to the resource's /new route. Unifies the per-page "+ New X" buttons.
+export function NewButton({ to, label }: { to: string; label: string }) {
+  return (
+    <Link to={to}>
+      <Button variant="ghost" size="sm" aria-label={label}>
+        <Plus />
+        <span className="hidden sm:inline">{label}</span>
+      </Button>
+    </Link>
   )
 }
 

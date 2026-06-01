@@ -9,7 +9,7 @@
 // destructive last resort.
 
 import { useState } from "react"
-import { Copy, Check, Eye, EyeOff } from "lucide-react"
+import { Copy, Check, Eye, EyeOff, Plus } from "lucide-react"
 import {
   useAPIKeys,
   useConfigurations,
@@ -57,7 +57,9 @@ export function APIKeysPage() {
         title="API keys"
         sub="Gateway-issued bearer keys. Each resolves to one configuration; enable/disable is the reversible off-switch."
         action={
-          <Button size="sm" onClick={() => setMinting(true)}>+ Mint key</Button>
+          <Button variant="ghost" size="sm" onClick={() => setMinting(true)} aria-label="Mint key">
+            <Plus /> <span className="hidden sm:inline">Mint key</span>
+          </Button>
         }
       />
 

@@ -2,9 +2,10 @@ import { Link } from "react-router"
 import { useConnectors, type Connector } from "@/lib/config-api"
 import { PanelCard, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
-import { Button } from "@/components/ui/button"
 import {
   PageHeader,
+  NewButton,
+
   LoadingPanel,
   ErrorPanel,
   EmptyPanel,
@@ -21,9 +22,7 @@ export function ConnectorsPage() {
         title="Connectors"
         sub="Spool destinations for end-of-pipeline records — S3, Azure Blob, or webhook. A configuration's connector bindings reference these by name."
         action={
-          <Link to="/connectors/new">
-            <Button size="sm">+ New connector</Button>
-          </Link>
+          <NewButton to="/connectors/new" label="New connector" />
         }
       />
       {state.status === "loading" && <LoadingPanel />}

@@ -5,6 +5,8 @@ import { Tag } from "@/components/atoms/tag"
 import { Button } from "@/components/ui/button"
 import {
   PageHeader,
+  NewButton,
+
   LoadingPanel,
   ErrorPanel,
   EmptyPanel,
@@ -21,9 +23,7 @@ export function PoliciesPage() {
         title="Groups"
         sub="Failover and load-balance backend groups with live per-pod circuit-breaker state. Edit the policy + targets; live breaker state shown below."
         action={
-          <Link to="/groups/new">
-            <Button size="sm">+ New group</Button>
-          </Link>
+          <NewButton to="/groups/new" label="New group" />
         }
       />
       {state.status === "loading" && <LoadingPanel />}
