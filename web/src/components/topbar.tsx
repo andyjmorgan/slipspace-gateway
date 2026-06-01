@@ -50,10 +50,14 @@ export function Topbar({ onMenuToggle }: { onMenuToggle: () => void }) {
         aria-label="Toggle theme"
         title="Toggle theme"
       >
-        {theme === "dark" ? <Sun /> : <Moon />}
+        {theme === "dark" ? (
+          <Sun style={{ color: "#f59e0b" }} />
+        ) : (
+          <Moon style={{ color: "#6366f1" }} />
+        )}
       </Button>
       <Button variant="ghost" size="icon" onClick={onLogout} aria-label="Log out" title="Log out">
-        <LogOut />
+        <LogOut style={{ color: "#f87171" }} />
       </Button>
     </div>
   )
