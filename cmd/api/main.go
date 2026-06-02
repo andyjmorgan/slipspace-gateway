@@ -18,12 +18,15 @@ import (
 	"syscall"
 	"time"
 
+	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"golang.org/x/crypto/bcrypt"
 
 	contractsadmin "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane"
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/configdb"
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/otlpingest"
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/receipt"
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
@@ -32,6 +35,7 @@ const (
 	binaryName      = "api"
 	defaultHTTPBind = "0.0.0.0:8484"
 	defaultGRPCBind = "0.0.0.0:8485"
+	receiptKeyID    = "cp-ed25519"
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -95,6 +99,22 @@ func run(ctx context.Context) error {
 		TLS:    tlsCfg,
 		Config: rt.provider,
 	})
+
+	// OTLP trace ingest: gateways push gen_ai spans to the same gRPC channel
+	// (the bootstrap token authenticates them); the receiver stores request
+	// events and signs tamper-evidence receipts.
+	signer, generated, err := receipt.LoadSigner(receiptKeyID, cfg.signingKey)
+	if err != nil {
+		return fmt.Errorf("api: load signing key: %w", err)
+	}
+	if generated {
+		logger.Warn("no SLUICE_CP_SIGNING_KEY — generated an EPHEMERAL receipt signing key (per-replica, lost on restart); set a stable seed for fleet-wide verifiable chains",
+			"public_key", signer.PublicBase64())
+	} else {
+		logger.Info("receipt signing key loaded", "key_id", receiptKeyID, "public_key", signer.PublicBase64())
+	}
+	collectortrace.RegisterTraceServiceServer(grpcSrv, otlpingest.NewReceiver(rt.adminDB, signer, logger))
+
 	lis, err := net.Listen("tcp", cfg.grpcBind)
 	if err != nil {
 		return fmt.Errorf("api: grpc listen %q: %w", cfg.grpcBind, err)
@@ -345,6 +365,7 @@ type apiConfig struct {
 	configDir     string
 	databaseURL   string
 	adminPassword string
+	signingKey    string
 	staleAfter    time.Duration
 	offlineAfter  time.Duration
 }
@@ -359,6 +380,7 @@ func loadConfig() apiConfig {
 		configDir:     os.Getenv("SLUICE_CONFIG_DIR"),
 		databaseURL:   os.Getenv("SLUICE_CP_DATABASE_URL"),
 		adminPassword: os.Getenv("SLUICE_CP_ADMIN_PASSWORD"),
+		signingKey:    os.Getenv("SLUICE_CP_SIGNING_KEY"),
 		staleAfter:    envSeconds("SLUICE_CP_STALE_AFTER_SECONDS", 45*time.Second),
 		offlineAfter:  envSeconds("SLUICE_CP_OFFLINE_AFTER_SECONDS", 120*time.Second),
 	}
