@@ -73,7 +73,7 @@ func (s *FleetServer) Heartbeat(ctx context.Context, req *fleetpb.HeartbeatReque
 // Returns Unimplemented when this control plane has no ConfigProvider (Phase 1
 // deployments), NotFound for an unknown/disabled key, and not_modified when the
 // caller's known_hash already matches.
-func (s *FleetServer) FetchConfig(_ context.Context, req *fleetpb.FetchConfigRequest) (*fleetpb.FetchConfigResponse, error) {
+func (s *FleetServer) FetchConfig(ctx context.Context, req *fleetpb.FetchConfigRequest) (*fleetpb.FetchConfigResponse, error) {
 	if s.config == nil {
 		return nil, status.Error(codes.Unimplemented, "config distribution not enabled")
 	}
@@ -81,7 +81,7 @@ func (s *FleetServer) FetchConfig(_ context.Context, req *fleetpb.FetchConfigReq
 		return nil, status.Error(codes.InvalidArgument, "api_key is required")
 	}
 
-	cl, err := s.config.ClosureForAPIKey(req.GetApiKey())
+	cl, err := s.config.ClosureForAPIKey(ctx, req.GetApiKey())
 	switch {
 	case errors.Is(err, ErrUnknownAPIKey):
 		return nil, status.Error(codes.NotFound, "unknown or disabled api key")

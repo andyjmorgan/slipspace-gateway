@@ -51,15 +51,21 @@ func TestConfigAdmin_EndToEndWithPostgres(t *testing.T) {
 		}
 	}
 
-	live := config.NewStore(&config.ResolvedConfigV2{})
-	h := controlplane.NewConfigAdminHandler(db, live, nil)
+	h := controlplane.NewConfigAdminHandler(db, nil)
 
-	// Publish: composes + validates + activates + live-reloads.
+	// Publish: composes + validates + activates the whole config in Postgres.
 	if rec := adminReq(h, http.MethodPost, "/api/v1/config/publish", ""); rec.Code != http.StatusOK {
 		t.Fatalf("publish = %d: %s", rec.Code, rec.Body)
 	}
-	if snap := live.Snapshot(); snap == nil || len(snap.Configurations) == 0 {
-		t.Fatal("publish did not live-reload the served store")
+	// The Postgres-backed provider now serves the published config to gateways —
+	// no per-replica served-config cache to reload.
+	provider := controlplane.NewDBConfigProvider(db)
+	cl, err := provider.ClosureForAPIKey(ctx, "sk_dev_local_development_only_not_for_production") //nolint:gosec // test fixture
+	if err != nil {
+		t.Fatalf("provider closure after publish: %v", err)
+	}
+	if cl.Configuration == "" || len(cl.Body) == 0 {
+		t.Fatalf("published config not served from Postgres: %+v", cl)
 	}
 
 	// CRUD a fresh entity through the handler.
