@@ -56,21 +56,23 @@ func mainErr() int {
 }
 
 // run brings up the control plane: the gRPC fleet channel (registration +
-// heartbeat) and the HTTP read API the console reads. Phase 1 uses an
-// in-memory registry; config distribution and Postgres persistence land in
-// later phases. Cardinal invariant CP-0 holds — nothing here sits on a
-// gateway's request path.
+// heartbeat) and the HTTP read API the console reads. The CP is Postgres-backed
+// (registry, config, versions) and runs as N stateless replicas; it refuses to
+// start without a database. Cardinal invariant CP-0 holds — nothing here sits
+// on a gateway's request path.
 func run(ctx context.Context) error {
 	logger := slog.Default()
 	cfg := loadConfig()
-
-	reg := controlplane.NewMemoryRegistry()
 
 	rt, err := buildConfigProvider(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
 	defer rt.cleanup()
+
+	// The CP is Postgres-backed and runs as N stateless replicas, so the fleet
+	// registry is the shared database — never per-process memory.
+	reg := controlplane.NewDBRegistry(rt.adminDB)
 
 	tlsCfg, err := cfg.tlsConfig()
 	if err != nil {
@@ -179,34 +181,16 @@ func basicAuthExceptHealth(password string, next http.Handler) http.Handler {
 	})
 }
 
-// buildConfigProvider selects the config source for distribution:
-//   - SLUICE_CP_DATABASE_URL set -> Postgres-backed (seed from SLUICE_CONFIG_DIR
-//     on first boot, serve the active published version, expose the write API).
-//   - else SLUICE_CONFIG_DIR set -> file-backed (read-only).
-//   - else -> registration-only (nil provider).
+// buildConfigProvider builds the Postgres-backed config source. The control
+// plane is Postgres or nothing: there is no in-memory or file-backed mode, so
+// every replica shares one source of truth for fleet and config state. Without
+// SLUICE_CP_DATABASE_URL the CP refuses to start. SLUICE_CONFIG_DIR remains an
+// optional first-boot seed into Postgres (and is the only use of files).
 func buildConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger) (*configRuntime, error) {
-	noop := func() {}
-	switch {
-	case cfg.databaseURL != "":
-		return buildDBConfigProvider(ctx, cfg, logger)
-	case cfg.configDir != "":
-		resolved, err := config.LoadV2(ctx, cfg.configDir)
-		if err != nil {
-			return nil, fmt.Errorf("api: load config %q: %w", cfg.configDir, err)
-		}
-		logger.Info("config distribution enabled (file-backed)",
-			"config_dir", cfg.configDir,
-			"configurations", len(resolved.Configurations),
-			"api_keys", len(resolved.APIKeys),
-		)
-		return &configRuntime{
-			provider: controlplane.NewStoreConfigProvider(config.NewStore(resolved)),
-			cleanup:  noop,
-		}, nil
-	default:
-		logger.Info("config distribution disabled (set SLUICE_CP_DATABASE_URL or SLUICE_CONFIG_DIR to enable)")
-		return &configRuntime{cleanup: noop}, nil
+	if cfg.databaseURL == "" {
+		return nil, errors.New("api: SLUICE_CP_DATABASE_URL is required — the control plane is Postgres-backed (no in-memory or file-backed mode)")
 	}
+	return buildDBConfigProvider(ctx, cfg, logger)
 }
 
 func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger) (*configRuntime, error) {

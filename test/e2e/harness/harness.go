@@ -20,6 +20,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
@@ -172,10 +175,16 @@ func (h *Harness) startControlPlane(t *testing.T, repoRoot string) {
 	h.cpHTTPURL = fmt.Sprintf("http://127.0.0.1:%d", httpPort)
 	h.cpGRPCAddr = fmt.Sprintf("127.0.0.1:%d", grpcPort)
 
+	// The control plane is Postgres-or-crash, so the harness stands up a
+	// throwaway Postgres and seeds it from the materialized config-dev
+	// (SLUICE_CONFIG_DIR is a first-boot seed into the DB).
+	dsn := startControlPlanePostgres(t)
+
 	cmd := exec.Command("go", "run", "./cmd/api")
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(),
 		"SLUICE_CONFIG_DIR="+cpConfig,
+		"SLUICE_CP_DATABASE_URL="+dsn,
 		fmt.Sprintf("SLUICE_CP_HTTP_BIND=127.0.0.1:%d", httpPort),
 		fmt.Sprintf("SLUICE_CP_GRPC_BIND=127.0.0.1:%d", grpcPort),
 		// The materialized config carries the harness's loopback webhook
@@ -645,6 +654,39 @@ func freePort() (int, error) {
 		return 0, err
 	}
 	return port, nil
+}
+
+// startControlPlanePostgres starts a throwaway Postgres for the control plane
+// (which is Postgres-or-crash) and returns its DSN. Terminated on test cleanup.
+func startControlPlanePostgres(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "postgres:16-alpine",
+			ExposedPorts: []string{"5432/tcp"},
+			Env:          map[string]string{"POSTGRES_PASSWORD": "test", "POSTGRES_DB": "cp"},
+			WaitingFor: wait.ForAll(
+				wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
+				wait.ForListeningPort("5432/tcp"),
+			).WithStartupTimeout(90 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		t.Fatalf("harness: start cp postgres: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Terminate(context.Background()) })
+
+	host, err := c.Host(ctx)
+	if err != nil {
+		t.Fatalf("harness: cp postgres host: %v", err)
+	}
+	port, err := c.MappedPort(ctx, "5432/tcp")
+	if err != nil {
+		t.Fatalf("harness: cp postgres port: %v", err)
+	}
+	return fmt.Sprintf("postgres://postgres:test@%s:%s/cp?sslmode=disable", host, port.Port())
 }
 
 // waitForHTTP polls url until the server responds with a status the
