@@ -31,6 +31,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/receipt"
 )
 
 // Sentinel errors.
@@ -88,6 +90,20 @@ CREATE TABLE IF NOT EXISTS cp_admins (
     username      TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS receipts (
+    gateway_id     TEXT NOT NULL,
+    seq            BIGINT NOT NULL,
+    correlation_id TEXT NOT NULL DEFAULT '',
+    prev_hash      BYTEA,
+    hash           BYTEA NOT NULL,
+    signature      BYTEA NOT NULL,
+    key_id         TEXT NOT NULL,
+    body_hash      TEXT NOT NULL DEFAULT '',
+    payload        BYTEA NOT NULL,
+    received_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (gateway_id, seq)
 );
 `
 
@@ -564,6 +580,79 @@ func marshalJSONArray(s []string) ([]byte, error) {
 		return nil, fmt.Errorf("configdb: marshal hashes: %w", err)
 	}
 	return b, nil
+}
+
+const receiptColumns = `gateway_id, seq, correlation_id, prev_hash, hash, signature, key_id, body_hash, payload`
+
+// AppendReceipt extends a gateway's tamper-evidence chain by one record: it
+// reads the chain tail, builds the next signed receipt (receipt.Chain), and
+// inserts it — all under a per-gateway transaction-scoped advisory lock so
+// concurrent appends for the same gateway cannot fork the chain. The caller
+// supplies the record without Seq; AppendReceipt assigns it.
+func (db *DB) AppendReceipt(ctx context.Context, rec receipt.Record, signer receipt.Signer) (receipt.Receipt, error) {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return receipt.Receipt{}, fmt.Errorf("configdb: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Serialize this gateway's chain so two appends can't read the same tail.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, rec.GatewayID); err != nil {
+		return receipt.Receipt{}, fmt.Errorf("configdb: lock chain: %w", err)
+	}
+
+	var (
+		prevHash []byte
+		lastSeq  int64
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT hash, seq FROM receipts WHERE gateway_id=$1 ORDER BY seq DESC LIMIT 1`, rec.GatewayID).
+		Scan(&prevHash, &lastSeq)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		prevHash, lastSeq = nil, 0
+	case err != nil:
+		return receipt.Receipt{}, fmt.Errorf("configdb: read chain tail: %w", err)
+	}
+
+	rec.Seq = uint64(lastSeq + 1) //nolint:gosec // chain seq is app-assigned, always >= 1
+	r := receipt.Chain(prevHash, rec, signer)
+
+	seqArg := int64(r.Seq) //nolint:gosec // chain seq is app-assigned, always >= 1
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO receipts (`+receiptColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		r.GatewayID, seqArg, r.CorrelationID, r.PrevHash, r.Hash, r.Signature, r.KeyID, r.BodyHash, r.Payload); err != nil {
+		return receipt.Receipt{}, fmt.Errorf("configdb: insert receipt: %w", err)
+	}
+	if err := commit(ctx, tx); err != nil {
+		return receipt.Receipt{}, err
+	}
+	return r, nil
+}
+
+// ListReceipts returns a gateway's chain in seq order, ready for
+// receipt.VerifyChain.
+func (db *DB) ListReceipts(ctx context.Context, gatewayID string) ([]receipt.Receipt, error) {
+	rows, err := db.pool.Query(ctx,
+		`SELECT `+receiptColumns+` FROM receipts WHERE gateway_id=$1 ORDER BY seq`, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: list receipts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []receipt.Receipt
+	for rows.Next() {
+		var (
+			r   receipt.Receipt
+			seq int64
+		)
+		if err := rows.Scan(&r.GatewayID, &seq, &r.CorrelationID, &r.PrevHash, &r.Hash, &r.Signature, &r.KeyID, &r.BodyHash, &r.Payload); err != nil {
+			return nil, fmt.Errorf("configdb: scan receipt: %w", err)
+		}
+		r.Seq = uint64(seq) //nolint:gosec // chain seq from BIGINT PK, always >= 1
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // GetAdminHash returns the stored password hash for username, or
