@@ -39,6 +39,10 @@ type ConfigSyncerOptions struct {
 	// Store is the live config store the syncer Replaces on a new closure.
 	Store *config.Store
 
+	// Applied, when set, receives the hash of each applied closure so the
+	// reconciler can report it on heartbeat (control-plane drift detection).
+	Applied *AppliedHash
+
 	// Logger is used for out-of-band status. May be nil.
 	Logger *slog.Logger
 }
@@ -142,6 +146,7 @@ func (s *ConfigSyncer) syncOnce(ctx context.Context, client fleetpb.FleetService
 	}
 	s.opts.Store.Replace(resolved)
 	s.lastHash = resp.GetHash()
+	s.opts.Applied.Set(resp.GetHash())
 	s.persist(resp.GetBody())
 	if s.opts.Logger != nil {
 		s.opts.Logger.Info("applied config from control plane",
