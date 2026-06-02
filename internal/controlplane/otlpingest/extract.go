@@ -62,6 +62,7 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (conf
 		TokensIn:      intAttr(attrs, attrInputTokens),
 		TokensOut:     intAttr(attrs, attrOutputTokens),
 		LatencyMs:     spanLatencyMs(span),
+		GenAIContent:  captureContent(span),
 	}, true
 }
 
