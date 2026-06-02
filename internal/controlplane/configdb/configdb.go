@@ -31,13 +31,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/receipt"
 )
 
 // Sentinel errors.
 var (
-	ErrNoActiveConfig  = errors.New("configdb: no active config version")
-	ErrVersionNotFound = errors.New("configdb: version not found")
-	ErrEntityNotFound  = errors.New("configdb: entity not found")
+	ErrNoActiveConfig       = errors.New("configdb: no active config version")
+	ErrVersionNotFound      = errors.New("configdb: version not found")
+	ErrEntityNotFound       = errors.New("configdb: entity not found")
+	ErrAdminNotFound        = errors.New("configdb: admin user not found")
+	ErrRequestEventNotFound = errors.New("configdb: request event not found")
+	ErrRequestBodyNotFound  = errors.New("configdb: request body not found")
 )
 
 const schemaSQL = `
@@ -82,6 +87,64 @@ CREATE TABLE IF NOT EXISTS fleet_registry (
     registered_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS cp_admins (
+    username      TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS receipts (
+    gateway_id     TEXT NOT NULL,
+    seq            BIGINT NOT NULL,
+    correlation_id TEXT NOT NULL DEFAULT '',
+    prev_hash      BYTEA,
+    hash           BYTEA NOT NULL,
+    signature      BYTEA NOT NULL,
+    key_id         TEXT NOT NULL,
+    body_hash      TEXT NOT NULL DEFAULT '',
+    payload        BYTEA NOT NULL,
+    received_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (gateway_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS request_events (
+    correlation_id TEXT PRIMARY KEY,
+    gateway_id     TEXT NOT NULL DEFAULT '',
+    configuration  TEXT NOT NULL DEFAULT '',
+    backend        TEXT NOT NULL DEFAULT '',
+    model          TEXT NOT NULL DEFAULT '',
+    protocol       TEXT NOT NULL DEFAULT '',
+    status_code    INT NOT NULL DEFAULT 0,
+    latency_ms     BIGINT NOT NULL DEFAULT 0,
+    tokens_in      BIGINT NOT NULL DEFAULT 0,
+    tokens_out     BIGINT NOT NULL DEFAULT 0,
+    gen_ai_content JSONB,
+    observed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS request_events_observed_at ON request_events (observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS metric_points (
+    metric_name TEXT NOT NULL,
+    labels      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    value       DOUBLE PRECISION NOT NULL,
+    observed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS metric_points_name_time ON metric_points (metric_name, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS request_bodies (
+    correlation_id TEXT NOT NULL,
+    instance_id    TEXT NOT NULL DEFAULT '',
+    seq            BIGINT NOT NULL DEFAULT 0,
+    ts_ns          BIGINT NOT NULL DEFAULT 0,
+    body           BYTEA NOT NULL,
+    captured_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (correlation_id, instance_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS request_bodies_correlation ON request_bodies (correlation_id);
 `
 
 // Entity is one editable config entity. Body is the contracts/config type as JSON.
@@ -557,4 +620,318 @@ func marshalJSONArray(s []string) ([]byte, error) {
 		return nil, fmt.Errorf("configdb: marshal hashes: %w", err)
 	}
 	return b, nil
+}
+
+const receiptColumns = `gateway_id, seq, correlation_id, prev_hash, hash, signature, key_id, body_hash, payload`
+
+// AppendReceipt extends a gateway's tamper-evidence chain by one record: it
+// reads the chain tail, builds the next signed receipt (receipt.Chain), and
+// inserts it — all under a per-gateway transaction-scoped advisory lock so
+// concurrent appends for the same gateway cannot fork the chain. The caller
+// supplies the record without Seq; AppendReceipt assigns it.
+func (db *DB) AppendReceipt(ctx context.Context, rec receipt.Record, signer receipt.Signer) (receipt.Receipt, error) {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return receipt.Receipt{}, fmt.Errorf("configdb: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Serialize this gateway's chain so two appends can't read the same tail.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, rec.GatewayID); err != nil {
+		return receipt.Receipt{}, fmt.Errorf("configdb: lock chain: %w", err)
+	}
+
+	var (
+		prevHash []byte
+		lastSeq  int64
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT hash, seq FROM receipts WHERE gateway_id=$1 ORDER BY seq DESC LIMIT 1`, rec.GatewayID).
+		Scan(&prevHash, &lastSeq)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		prevHash, lastSeq = nil, 0
+	case err != nil:
+		return receipt.Receipt{}, fmt.Errorf("configdb: read chain tail: %w", err)
+	}
+
+	rec.Seq = uint64(lastSeq + 1) //nolint:gosec // chain seq is app-assigned, always >= 1
+	r := receipt.Chain(prevHash, rec, signer)
+
+	seqArg := int64(r.Seq) //nolint:gosec // chain seq is app-assigned, always >= 1
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO receipts (`+receiptColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		r.GatewayID, seqArg, r.CorrelationID, r.PrevHash, r.Hash, r.Signature, r.KeyID, r.BodyHash, r.Payload); err != nil {
+		return receipt.Receipt{}, fmt.Errorf("configdb: insert receipt: %w", err)
+	}
+	if err := commit(ctx, tx); err != nil {
+		return receipt.Receipt{}, err
+	}
+	return r, nil
+}
+
+// RequestEvent is one request's lean, queryable telemetry row: post-rule labels,
+// outcome, token counts, and (optionally) bounded gen_ai.* content. It is the
+// drill-down + recent-history surface of the observability store, joined to the
+// full body (request_bodies) and the integrity chain (receipts) by
+// correlation_id.
+type RequestEvent struct {
+	CorrelationID string
+	GatewayID     string
+	Configuration string
+	Backend       string
+	Model         string
+	Protocol      string
+	StatusCode    int
+	LatencyMs     int64
+	TokensIn      int64
+	TokensOut     int64
+	// GenAIContent is bounded gen_ai.* content as JSON, or nil when none was
+	// captured. Stored JSONB (queryable); unlike receipts it need not be
+	// byte-exact.
+	GenAIContent []byte
+	ObservedAt   time.Time
+}
+
+const requestEventColumns = `correlation_id, gateway_id, configuration, backend, model, protocol, status_code, latency_ms, tokens_in, tokens_out, gen_ai_content, observed_at`
+
+// UpsertRequestEvent inserts or refines a request event, keyed by
+// correlation_id, so re-delivered or two-phase (request then response)
+// telemetry converges on one row. Existing gen_ai_content is preserved when an
+// update omits it.
+func (db *DB) UpsertRequestEvent(ctx context.Context, e RequestEvent) error {
+	_, err := db.pool.Exec(ctx, `
+INSERT INTO request_events (correlation_id, gateway_id, configuration, backend, model, protocol, status_code, latency_ms, tokens_in, tokens_out, gen_ai_content)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (correlation_id) DO UPDATE SET
+  gateway_id     = EXCLUDED.gateway_id,
+  configuration  = EXCLUDED.configuration,
+  backend        = EXCLUDED.backend,
+  model          = EXCLUDED.model,
+  protocol       = EXCLUDED.protocol,
+  status_code    = EXCLUDED.status_code,
+  latency_ms     = EXCLUDED.latency_ms,
+  tokens_in      = EXCLUDED.tokens_in,
+  tokens_out     = EXCLUDED.tokens_out,
+  gen_ai_content = COALESCE(EXCLUDED.gen_ai_content, request_events.gen_ai_content)`,
+		e.CorrelationID, e.GatewayID, e.Configuration, e.Backend, e.Model, e.Protocol, e.StatusCode, e.LatencyMs, e.TokensIn, e.TokensOut, e.GenAIContent)
+	if err != nil {
+		return fmt.Errorf("configdb: upsert request event: %w", err)
+	}
+	return nil
+}
+
+// GetRequestEvent returns one event by correlation_id, or ErrRequestEventNotFound.
+func (db *DB) GetRequestEvent(ctx context.Context, correlationID string) (RequestEvent, error) {
+	row := db.pool.QueryRow(ctx,
+		`SELECT `+requestEventColumns+` FROM request_events WHERE correlation_id=$1`, correlationID)
+	e, err := scanRequestEvent(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RequestEvent{}, ErrRequestEventNotFound
+	}
+	return e, err
+}
+
+// ListRecentRequestEvents returns the most recent events, newest first, capped
+// at limit (defaulted to 100 when <= 0).
+func (db *DB) ListRecentRequestEvents(ctx context.Context, limit int) ([]RequestEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := db.pool.Query(ctx,
+		`SELECT `+requestEventColumns+` FROM request_events ORDER BY observed_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: list request events: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RequestEvent
+	for rows.Next() {
+		e, serr := scanRequestEvent(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// RequestBody is one captured full request/response envelope (a connector
+// Record's raw ndjson line), the heavy audit/replay payload joined to a
+// request_event by correlation_id. Keyed (correlation_id, instance_id, seq) so
+// re-delivered spool segments upsert idempotently.
+type RequestBody struct {
+	CorrelationID string
+	InstanceID    string
+	Seq           uint64
+	TsNs          int64
+	Body          []byte
+	CapturedAt    time.Time
+}
+
+// UpsertRequestBody stores one captured body, idempotent on its composite key.
+func (db *DB) UpsertRequestBody(ctx context.Context, b RequestBody) error {
+	_, err := db.pool.Exec(ctx, `
+INSERT INTO request_bodies (correlation_id, instance_id, seq, ts_ns, body)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (correlation_id, instance_id, seq) DO UPDATE SET body = EXCLUDED.body, ts_ns = EXCLUDED.ts_ns`,
+		b.CorrelationID, b.InstanceID, int64(b.Seq), b.TsNs, b.Body) //nolint:gosec // spool seq is small, app-assigned
+	if err != nil {
+		return fmt.Errorf("configdb: upsert request body: %w", err)
+	}
+	return nil
+}
+
+// ListRequestBodies returns all captured bodies for a correlation id, in stable
+// (instance_id, seq) order, or ErrRequestBodyNotFound when there are none.
+func (db *DB) ListRequestBodies(ctx context.Context, correlationID string) ([]RequestBody, error) {
+	rows, err := db.pool.Query(ctx, `
+SELECT correlation_id, instance_id, seq, ts_ns, body, captured_at
+FROM request_bodies WHERE correlation_id=$1 ORDER BY instance_id, seq`, correlationID)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: list request bodies: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RequestBody
+	for rows.Next() {
+		var (
+			b   RequestBody
+			seq int64
+		)
+		if err := rows.Scan(&b.CorrelationID, &b.InstanceID, &seq, &b.TsNs, &b.Body, &b.CapturedAt); err != nil {
+			return nil, fmt.Errorf("configdb: scan request body: %w", err)
+		}
+		b.Seq = uint64(seq) //nolint:gosec // spool seq from BIGINT, always >= 0
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, ErrRequestBodyNotFound
+	}
+	return out, nil
+}
+
+// MetricPoint is one numeric telemetry sample the gateways push via OTLP —
+// a metric name, its label set (as JSON), the value, and when it was observed.
+// It is the raw feed the console aggregates into rate/token/latency panels.
+type MetricPoint struct {
+	Name       string
+	Labels     []byte
+	Value      float64
+	ObservedAt time.Time
+}
+
+// InsertMetricPoints appends a batch of metric samples in one transaction.
+func (db *DB) InsertMetricPoints(ctx context.Context, points []MetricPoint) error {
+	if len(points) == 0 {
+		return nil
+	}
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("configdb: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, p := range points {
+		labels := p.Labels
+		if len(labels) == 0 {
+			labels = []byte("{}")
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO metric_points (metric_name, labels, value, observed_at) VALUES ($1, $2, $3, $4)`,
+			p.Name, labels, p.Value, p.ObservedAt); err != nil {
+			return fmt.Errorf("configdb: insert metric point: %w", err)
+		}
+	}
+	return commit(ctx, tx)
+}
+
+// ListRecentMetricPoints returns the most recent samples, newest first, capped
+// at limit (defaulted to 500 when <= 0).
+func (db *DB) ListRecentMetricPoints(ctx context.Context, limit int) ([]MetricPoint, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := db.pool.Query(ctx,
+		`SELECT metric_name, labels, value, observed_at FROM metric_points ORDER BY observed_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: list metric points: %w", err)
+	}
+	defer rows.Close()
+
+	var out []MetricPoint
+	for rows.Next() {
+		var p MetricPoint
+		if err := rows.Scan(&p.Name, &p.Labels, &p.Value, &p.ObservedAt); err != nil {
+			return nil, fmt.Errorf("configdb: scan metric point: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func scanRequestEvent(s rowScanner) (RequestEvent, error) {
+	var e RequestEvent
+	if err := s.Scan(&e.CorrelationID, &e.GatewayID, &e.Configuration, &e.Backend, &e.Model, &e.Protocol,
+		&e.StatusCode, &e.LatencyMs, &e.TokensIn, &e.TokensOut, &e.GenAIContent, &e.ObservedAt); err != nil {
+		return RequestEvent{}, fmt.Errorf("configdb: scan request event: %w", err)
+	}
+	return e, nil
+}
+
+// ListReceipts returns a gateway's chain in seq order, ready for
+// receipt.VerifyChain.
+func (db *DB) ListReceipts(ctx context.Context, gatewayID string) ([]receipt.Receipt, error) {
+	rows, err := db.pool.Query(ctx,
+		`SELECT `+receiptColumns+` FROM receipts WHERE gateway_id=$1 ORDER BY seq`, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: list receipts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []receipt.Receipt
+	for rows.Next() {
+		var (
+			r   receipt.Receipt
+			seq int64
+		)
+		if err := rows.Scan(&r.GatewayID, &seq, &r.CorrelationID, &r.PrevHash, &r.Hash, &r.Signature, &r.KeyID, &r.BodyHash, &r.Payload); err != nil {
+			return nil, fmt.Errorf("configdb: scan receipt: %w", err)
+		}
+		r.Seq = uint64(seq) //nolint:gosec // chain seq from BIGINT PK, always >= 1
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetAdminHash returns the stored password hash for username, or
+// ErrAdminNotFound if there is no such admin. The hash is the source of truth
+// for console auth, shared across all CP replicas.
+func (db *DB) GetAdminHash(ctx context.Context, username string) (string, error) {
+	var hash string
+	err := db.pool.QueryRow(ctx, `SELECT password_hash FROM cp_admins WHERE username=$1`, username).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrAdminNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("configdb: get admin hash: %w", err)
+	}
+	return hash, nil
+}
+
+// SeedAdmin inserts the admin only if one does not already exist for username,
+// and reports whether it actually seeded. Idempotent and race-safe across
+// replicas: concurrent first-boots resolve to a single winning insert, the
+// rest observe seeded=false and use the existing row.
+func (db *DB) SeedAdmin(ctx context.Context, username, passwordHash string) (bool, error) {
+	tag, err := db.pool.Exec(ctx,
+		`INSERT INTO cp_admins (username, password_hash) VALUES ($1, $2)
+         ON CONFLICT (username) DO NOTHING`, username, passwordHash)
+	if err != nil {
+		return false, fmt.Errorf("configdb: seed admin: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }

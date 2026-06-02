@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,9 +18,16 @@ import (
 	"syscall"
 	"time"
 
+	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"golang.org/x/crypto/bcrypt"
+
+	contractsadmin "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane"
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/configdb"
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/otlpingest"
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/receipt"
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
@@ -27,6 +36,7 @@ const (
 	binaryName      = "api"
 	defaultHTTPBind = "0.0.0.0:8484"
 	defaultGRPCBind = "0.0.0.0:8485"
+	receiptKeyID    = "cp-ed25519"
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -90,6 +100,23 @@ func run(ctx context.Context) error {
 		TLS:    tlsCfg,
 		Config: rt.provider,
 	})
+
+	// OTLP trace ingest: gateways push gen_ai spans to the same gRPC channel
+	// (the bootstrap token authenticates them); the receiver stores request
+	// events and signs tamper-evidence receipts.
+	signer, generated, err := receipt.LoadSigner(receiptKeyID, cfg.signingKey)
+	if err != nil {
+		return fmt.Errorf("api: load signing key: %w", err)
+	}
+	if generated {
+		logger.Warn("no SLUICE_CP_SIGNING_KEY — generated an EPHEMERAL receipt signing key (per-replica, lost on restart); set a stable seed for fleet-wide verifiable chains",
+			"public_key", signer.PublicBase64())
+	} else {
+		logger.Info("receipt signing key loaded", "key_id", receiptKeyID, "public_key", signer.PublicBase64())
+	}
+	collectortrace.RegisterTraceServiceServer(grpcSrv, otlpingest.NewReceiver(rt.adminDB, signer, logger))
+	collectormetrics.RegisterMetricsServiceServer(grpcSrv, otlpingest.NewMetricsReceiver(rt.adminDB, logger))
+
 	lis, err := net.Listen("tcp", cfg.grpcBind)
 	if err != nil {
 		return fmt.Errorf("api: grpc listen %q: %w", cfg.grpcBind, err)
@@ -101,18 +128,20 @@ func run(ctx context.Context) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
-	if rt.adminDB != nil {
-		mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, rt.liveStore, logger))
-		logger.Info("config write API enabled at /api/v1/config")
-	}
+	mux.Handle("/api/v1/fleet/drift", controlplane.NewDriftHandler(reg, rt.adminDB))
+	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, logger))
+	mux.Handle("/api/v1/observability/", controlplane.NewObservabilityHandler(rt.adminDB, rt.adminDB, signer.Public()))
+	mux.Handle("/api/v1/ingest/segment", controlplane.NewSegmentIngestHandler(rt.adminDB, logger))
 	mux.Handle("/", controlplane.ConsoleHandler())
-	var httpHandler http.Handler = mux
-	if cfg.adminPassword != "" {
-		httpHandler = basicAuthExceptHealth(cfg.adminPassword, mux)
-		logger.Info("HTTP API protected by Basic auth (user: admin)")
-	} else {
-		logger.Warn("HTTP API UNAUTHENTICATED — set SLUICE_CP_ADMIN_PASSWORD; serve only on a trusted network (ClusterIP, no public ingress)")
+
+	// Admin credentials live in Postgres (shared across replicas). Seed on
+	// first boot, then authenticate every request against the stored hash.
+	authenticator, err := ensureAdmin(ctx, rt.adminDB, cfg.adminPassword, logger)
+	if err != nil {
+		return err
 	}
+	httpHandler := basicAuthExceptHealth(authenticator.Verify, mux)
+	logger.Info("HTTP API protected by Basic auth (user: admin, credential from Postgres)")
 
 	httpSrv := &http.Server{
 		Addr:              cfg.httpBind,
@@ -159,19 +188,75 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-// configRuntime is the assembled config source. adminDB + liveStore are set
-// only in Postgres-backed mode, which enables the config write API.
+// configRuntime is the assembled config source: a Postgres-backed provider that
+// serves the active version per fetch, plus the DB handle the write API edits.
 type configRuntime struct {
-	provider  controlplane.ConfigProvider
-	adminDB   *configdb.DB
-	liveStore *config.Store
-	cleanup   func()
+	provider controlplane.ConfigProvider
+	adminDB  *configdb.DB
+	cleanup  func()
+}
+
+// ensureAdmin makes the control-plane admin credential exist in Postgres and
+// returns an authenticator over it. On first boot it seeds the admin: with
+// SLUICE_CP_ADMIN_PASSWORD if set, otherwise a generated password logged once
+// for the operator to capture. On later boots the stored hash is the source of
+// truth and the env var is ignored — a password change goes through the DB, not
+// the environment.
+func ensureAdmin(ctx context.Context, db *configdb.DB, envPassword string, logger *slog.Logger) (*controlplane.AdminAuthenticator, error) {
+	username := contractsadmin.Username
+
+	seedPassword := envPassword
+	generated := false
+	if seedPassword == "" {
+		p, err := randomPassword()
+		if err != nil {
+			return nil, err
+		}
+		seedPassword = p
+		generated = true
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(seedPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("api: hash admin password: %w", err)
+	}
+	seeded, err := db.SeedAdmin(ctx, username, string(hash))
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case seeded && generated:
+		logger.Warn("seeded control-plane admin with a GENERATED password — store it now, it is not recoverable",
+			"username", username,
+			"password", seedPassword,
+		)
+	case seeded:
+		logger.Info("seeded control-plane admin from SLUICE_CP_ADMIN_PASSWORD", "username", username)
+	default:
+		logger.Info("control-plane admin already provisioned in Postgres", "username", username)
+	}
+
+	// The seed may have lost a race with another replica; the DB is the source
+	// of truth, so authenticate against whatever hash actually persisted.
+	storedHash, err := db.GetAdminHash(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("api: load admin hash: %w", err)
+	}
+	return controlplane.NewAdminAuthenticator(username, storedHash), nil
+}
+
+// randomPassword returns a URL-safe random password for seeding the admin.
+func randomPassword() (string, error) {
+	b := make([]byte, 18)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("api: generate admin password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // basicAuthExceptHealth wraps next with Basic auth, leaving /healthz open so
 // k8s liveness/readiness probes don't need credentials.
-func basicAuthExceptHealth(password string, next http.Handler) http.Handler {
-	authed := controlplane.BasicAuth(password, next)
+func basicAuthExceptHealth(verify func(username, password string) bool, next http.Handler) http.Handler {
+	authed := controlplane.BasicAuth(verify, next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
@@ -212,9 +297,9 @@ func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logg
 		return nil, fmt.Errorf("api: read active config: %w", aerr)
 	}
 
-	// Build the served store from the active version (empty until first publish
-	// when there is no seed). The write API publishes into the same store.
-	resolved := &config.ResolvedConfigV2{}
+	// Validate + log the active version at boot (fail fast on an unparseable
+	// active config). The provider then reads the active version from Postgres
+	// per fetch, so there is no served-config cache to keep in sync.
 	switch active, err := db.ActiveVersion(ctx); {
 	case err == nil:
 		rc, rerr := config.ResolveClosure(active.Body)
@@ -222,7 +307,6 @@ func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logg
 			db.Close()
 			return nil, fmt.Errorf("api: resolve active config %s: %w", active.ID, rerr)
 		}
-		resolved = rc
 		logger.Info("config distribution enabled (postgres-backed)",
 			"version", active.ID,
 			"hash", active.Hash,
@@ -236,12 +320,10 @@ func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logg
 		return nil, fmt.Errorf("api: load active config: %w", err)
 	}
 
-	store := config.NewStore(resolved)
 	return &configRuntime{
-		provider:  controlplane.NewStoreConfigProvider(store),
-		adminDB:   db,
-		liveStore: store,
-		cleanup:   db.Close,
+		provider: controlplane.NewDBConfigProvider(db),
+		adminDB:  db,
+		cleanup:  db.Close,
 	}, nil
 }
 
@@ -288,6 +370,7 @@ type apiConfig struct {
 	configDir     string
 	databaseURL   string
 	adminPassword string
+	signingKey    string
 	staleAfter    time.Duration
 	offlineAfter  time.Duration
 }
@@ -302,6 +385,7 @@ func loadConfig() apiConfig {
 		configDir:     os.Getenv("SLUICE_CONFIG_DIR"),
 		databaseURL:   os.Getenv("SLUICE_CP_DATABASE_URL"),
 		adminPassword: os.Getenv("SLUICE_CP_ADMIN_PASSWORD"),
+		signingKey:    os.Getenv("SLUICE_CP_SIGNING_KEY"),
 		staleAfter:    envSeconds("SLUICE_CP_STALE_AFTER_SECONDS", 45*time.Second),
 		offlineAfter:  envSeconds("SLUICE_CP_OFFLINE_AFTER_SECONDS", 120*time.Second),
 	}

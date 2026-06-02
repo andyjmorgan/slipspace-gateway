@@ -15,7 +15,10 @@ func TestBasicAuth(t *testing.T) {
 		reached = true
 		w.WriteHeader(http.StatusOK)
 	})
-	h := BasicAuth(pw, next)
+	verify := func(user, pass string) bool {
+		return user == contractsadmin.Username && pass == pw
+	}
+	h := BasicAuth(verify, next)
 
 	call := func(setCreds func(*http.Request)) *httptest.ResponseRecorder {
 		reached = false

@@ -37,24 +37,19 @@ type configStore interface {
 // working state may be temporarily inconsistent — and publish is the gate that
 // validates the composed config before it becomes the active served version.
 //
-// On a successful publish or activate, the served config is live-reloaded into
-// liveStore so gateways pick it up on their next fetch.
-//
-// NOTE: this API is unauthenticated, matching the rest of the CP HTTP surface;
-// it is intended for a trusted cluster network (ClusterIP, no public ingress).
-// Add auth before exposing it.
+// Publish and activate write the new active version row to Postgres; gateways
+// pick it up on their next fetch because the served config (DBConfigProvider)
+// reads the active version straight from Postgres — there is no per-replica
+// served-config cache to reload.
 type ConfigAdminHandler struct {
-	store     configStore
-	liveStore *config.Store
-	logger    *slog.Logger
-	mux       *http.ServeMux
+	store  configStore
+	logger *slog.Logger
+	mux    *http.ServeMux
 }
 
-// NewConfigAdminHandler builds the handler. liveStore is the config.Store the
-// CP serves from (Replaced on publish/activate); may be nil to disable
-// live-reload (the version is still durably published).
-func NewConfigAdminHandler(store configStore, liveStore *config.Store, logger *slog.Logger) *ConfigAdminHandler {
-	h := &ConfigAdminHandler{store: store, liveStore: liveStore, logger: logger}
+// NewConfigAdminHandler builds the handler over the Postgres-backed store.
+func NewConfigAdminHandler(store configStore, logger *slog.Logger) *ConfigAdminHandler {
+	h := &ConfigAdminHandler{store: store, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/config/entities", h.listEntities)
 	mux.HandleFunc("GET /api/v1/config/entities/{kind}/{name}", h.getEntity)
@@ -206,7 +201,6 @@ func (h *ConfigAdminHandler) publish(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "publish", err)
 		return
 	}
-	h.reload(ctx)
 	writeJSON(w, http.StatusOK, map[string]string{"version": v.ID, "hash": v.Hash, "status": "published"})
 }
 
@@ -221,28 +215,7 @@ func (h *ConfigAdminHandler) activate(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "activate version", err)
 		return
 	}
-	h.reload(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"version": id, "status": "active"})
-}
-
-// reload re-loads the active published version into the served store. A failure
-// is logged but not fatal — the version is durably published; the CP picks it
-// up on its next reload/restart.
-func (h *ConfigAdminHandler) reload(ctx context.Context) {
-	if h.liveStore == nil {
-		return
-	}
-	active, err := h.store.ActiveVersion(ctx)
-	if err != nil {
-		h.logWarn("reload: read active version", err)
-		return
-	}
-	resolved, err := config.ResolveClosure(active.Body)
-	if err != nil {
-		h.logWarn("reload: resolve active version", err)
-		return
-	}
-	h.liveStore.Replace(resolved)
 }
 
 func (h *ConfigAdminHandler) serverError(w http.ResponseWriter, what string, err error) {

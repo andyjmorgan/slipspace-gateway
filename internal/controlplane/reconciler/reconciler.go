@@ -55,6 +55,11 @@ type Options struct {
 	// Labels is operator metadata reported to the control plane.
 	Labels map[string]string
 
+	// Applied, when set, supplies the hash of the config closure this gateway is
+	// currently serving, reported on heartbeat so the control plane can detect
+	// config drift. Nil for register-only / standalone gateways.
+	Applied *AppliedHash
+
 	// Interval is the heartbeat cadence. Defaults to 20s when non-positive.
 	Interval time.Duration
 
@@ -158,10 +163,15 @@ func (r *Reconciler) register(ctx context.Context, client fleetpb.FleetServiceCl
 func (r *Reconciler) heartbeat(ctx context.Context, client fleetpb.FleetServiceClient) {
 	callCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
+	var cachedHashes []string
+	if h := r.opts.Applied.Get(); h != "" {
+		cachedHashes = []string{h}
+	}
 	if _, err := client.Heartbeat(callCtx, &fleetpb.HeartbeatRequest{
-		GatewayId: r.opts.GatewayID,
-		Version:   r.opts.Version,
-		Labels:    r.opts.Labels,
+		GatewayId:          r.opts.GatewayID,
+		Version:            r.opts.Version,
+		Labels:             r.opts.Labels,
+		CachedConfigHashes: cachedHashes,
 	}); err != nil {
 		r.logWarn("control-plane heartbeat failed", err)
 	}

@@ -116,9 +116,13 @@ func run(ctx context.Context) error {
 	// the admin write path that calls store.Replace.
 	store := config.NewStore(resolved)
 
+	// Shared between config sync (writes the applied closure hash) and the
+	// reconciler (reports it on heartbeat) so the control plane sees config drift.
+	appliedHash := &reconciler.AppliedHash{}
+
 	// When CP-managed, fetch + apply the control-plane config before the data
 	// plane starts serving (and keep it synced after). No-op otherwise.
-	startControlPlaneConfigSync(ctx, env, store, obs, logger)
+	startControlPlaneConfigSync(ctx, env, store, appliedHash, obs, logger)
 
 	resolver := auth.NewResolver(store)
 
@@ -206,7 +210,7 @@ func run(ctx context.Context) error {
 
 	startAdmin(ctx, store, obs, logger, drain, startedAt, liveFeed, bodyStore, breakerStoreAdapter{store: breakers}, env.ConfigDir)
 
-	startControlPlaneReconciler(ctx, env, obs, logger)
+	startControlPlaneReconciler(ctx, env, appliedHash, obs, logger)
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -536,7 +540,7 @@ func shutdownObservability(p *observability.Provider) {
 // goroutine bound to ctx and never touches the request path (invariant CP-0):
 // a construction error is logged and the gateway keeps serving from local
 // config. No-op in standalone (file-backed) mode.
-func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, obs *observability.Provider, logger *slog.Logger) {
+func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, applied *reconciler.AppliedHash, obs *observability.Provider, logger *slog.Logger) {
 	if !env.ControlPlaneEnabled() {
 		return
 	}
@@ -557,6 +561,7 @@ func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, obs
 		GatewayID: gatewayID,
 		Version:   version.Version,
 		Labels:    parseLabels(env.GatewayLabels),
+		Applied:   applied,
 		Interval:  time.Duration(env.ControlPlaneHeartbeatSeconds) * time.Second,
 		Logger:    logger,
 	})
@@ -581,7 +586,7 @@ func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, obs
 // the background (Run). No-op without an endpoint + bootstrap key — the gateway
 // then serves its local file-backed config. CP-0 holds: an unreachable control
 // plane leaves the locally-loaded config in place (serve-stale).
-func startControlPlaneConfigSync(ctx context.Context, env *config.ServerEnv, store *config.Store, obs *observability.Provider, logger *slog.Logger) {
+func startControlPlaneConfigSync(ctx context.Context, env *config.ServerEnv, store *config.Store, applied *reconciler.AppliedHash, obs *observability.Provider, logger *slog.Logger) {
 	if !env.ControlPlaneEnabled() || env.ControlPlaneBootstrapAPIKey == "" {
 		return
 	}
@@ -593,6 +598,7 @@ func startControlPlaneConfigSync(ctx context.Context, env *config.ServerEnv, sto
 		APIKey:    env.ControlPlaneBootstrapAPIKey,
 		CachePath: env.ControlPlaneCachePath,
 		Store:     store,
+		Applied:   applied,
 		Logger:    logger,
 	})
 	if err != nil {

@@ -172,7 +172,7 @@ func TestConfigSyncer_ApplyCache_NoPathOrMissingOrBad(t *testing.T) {
 // resolve-failure (serve-stale) path.
 type garbageProvider struct{}
 
-func (garbageProvider) ClosureForAPIKey(string) (controlplane.Closure, error) {
+func (garbageProvider) ClosureForAPIKey(context.Context, string) (controlplane.Closure, error) {
 	return controlplane.Closure{Configuration: "x", Hash: "h", Body: []byte("{{{garbage")}, nil
 }
 
