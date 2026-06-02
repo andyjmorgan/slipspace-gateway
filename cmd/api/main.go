@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +18,9 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
+	contractsadmin "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane"
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/configdb"
@@ -101,18 +106,17 @@ func run(ctx context.Context) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
-	if rt.adminDB != nil {
-		mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, rt.liveStore, logger))
-		logger.Info("config write API enabled at /api/v1/config")
-	}
+	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, rt.liveStore, logger))
 	mux.Handle("/", controlplane.ConsoleHandler())
-	var httpHandler http.Handler = mux
-	if cfg.adminPassword != "" {
-		httpHandler = basicAuthExceptHealth(cfg.adminPassword, mux)
-		logger.Info("HTTP API protected by Basic auth (user: admin)")
-	} else {
-		logger.Warn("HTTP API UNAUTHENTICATED — set SLUICE_CP_ADMIN_PASSWORD; serve only on a trusted network (ClusterIP, no public ingress)")
+
+	// Admin credentials live in Postgres (shared across replicas). Seed on
+	// first boot, then authenticate every request against the stored hash.
+	authenticator, err := ensureAdmin(ctx, rt.adminDB, cfg.adminPassword, logger)
+	if err != nil {
+		return err
 	}
+	httpHandler := basicAuthExceptHealth(authenticator.Verify, mux)
+	logger.Info("HTTP API protected by Basic auth (user: admin, credential from Postgres)")
 
 	httpSrv := &http.Server{
 		Addr:              cfg.httpBind,
@@ -168,10 +172,67 @@ type configRuntime struct {
 	cleanup   func()
 }
 
+// ensureAdmin makes the control-plane admin credential exist in Postgres and
+// returns an authenticator over it. On first boot it seeds the admin: with
+// SLUICE_CP_ADMIN_PASSWORD if set, otherwise a generated password logged once
+// for the operator to capture. On later boots the stored hash is the source of
+// truth and the env var is ignored — a password change goes through the DB, not
+// the environment.
+func ensureAdmin(ctx context.Context, db *configdb.DB, envPassword string, logger *slog.Logger) (*controlplane.AdminAuthenticator, error) {
+	username := contractsadmin.Username
+
+	seedPassword := envPassword
+	generated := false
+	if seedPassword == "" {
+		p, err := randomPassword()
+		if err != nil {
+			return nil, err
+		}
+		seedPassword = p
+		generated = true
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(seedPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("api: hash admin password: %w", err)
+	}
+	seeded, err := db.SeedAdmin(ctx, username, string(hash))
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case seeded && generated:
+		logger.Warn("seeded control-plane admin with a GENERATED password — store it now, it is not recoverable",
+			"username", username,
+			"password", seedPassword,
+		)
+	case seeded:
+		logger.Info("seeded control-plane admin from SLUICE_CP_ADMIN_PASSWORD", "username", username)
+	default:
+		logger.Info("control-plane admin already provisioned in Postgres", "username", username)
+	}
+
+	// The seed may have lost a race with another replica; the DB is the source
+	// of truth, so authenticate against whatever hash actually persisted.
+	storedHash, err := db.GetAdminHash(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("api: load admin hash: %w", err)
+	}
+	return controlplane.NewAdminAuthenticator(username, storedHash), nil
+}
+
+// randomPassword returns a URL-safe random password for seeding the admin.
+func randomPassword() (string, error) {
+	b := make([]byte, 18)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("api: generate admin password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
 // basicAuthExceptHealth wraps next with Basic auth, leaving /healthz open so
 // k8s liveness/readiness probes don't need credentials.
-func basicAuthExceptHealth(password string, next http.Handler) http.Handler {
-	authed := controlplane.BasicAuth(password, next)
+func basicAuthExceptHealth(verify func(username, password string) bool, next http.Handler) http.Handler {
+	authed := controlplane.BasicAuth(verify, next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
