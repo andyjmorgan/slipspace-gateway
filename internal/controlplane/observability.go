@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/configdb"
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/receipt"
 )
 
 // eventReader is the read slice of the request_events store the observability
@@ -18,20 +20,30 @@ type eventReader interface {
 	GetRequestEvent(ctx context.Context, correlationID string) (configdb.RequestEvent, error)
 }
 
-// ObservabilityHandler serves read-only request-event telemetry — the recent
-// list and per-request drill-down the fleet console renders. It is mounted
-// under the authenticated CP HTTP surface and reads straight from Postgres.
-type ObservabilityHandler struct {
-	store eventReader
-	mux   *http.ServeMux
+// receiptLister reads a gateway's tamper-evidence chain for verification.
+type receiptLister interface {
+	ListReceipts(ctx context.Context, gatewayID string) ([]receipt.Receipt, error)
 }
 
-// NewObservabilityHandler builds the handler over the request_events store.
-func NewObservabilityHandler(store eventReader) *ObservabilityHandler {
-	h := &ObservabilityHandler{store: store}
+// ObservabilityHandler serves read-only telemetry — the recent request-event
+// list, per-request drill-down, and tamper-evidence chain verification the
+// fleet console renders. It is mounted under the authenticated CP HTTP surface
+// and reads straight from Postgres.
+type ObservabilityHandler struct {
+	store    eventReader
+	receipts receiptLister
+	pub      ed25519.PublicKey
+	mux      *http.ServeMux
+}
+
+// NewObservabilityHandler builds the handler over the request_events store, the
+// receipt chain store, and the receipt-signing public key used to verify chains.
+func NewObservabilityHandler(store eventReader, receipts receiptLister, pub ed25519.PublicKey) *ObservabilityHandler {
+	h := &ObservabilityHandler{store: store, receipts: receipts, pub: pub}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/observability/events", h.listEvents)
 	mux.HandleFunc("GET /api/v1/observability/events/{correlation_id}", h.getEvent)
+	mux.HandleFunc("GET /api/v1/observability/receipts/{gateway_id}/verify", h.verifyChain)
 	h.mux = mux
 	return h
 }
@@ -107,4 +119,31 @@ func (h *ObservabilityHandler) getEvent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, toEventView(e))
+}
+
+// chainVerifyView is the result of verifying a gateway's receipt chain — the
+// "verified ✓" the console renders, with the failure reason when broken.
+type chainVerifyView struct {
+	GatewayID string `json:"gateway_id"`
+	Count     int    `json:"count"`
+	Verified  bool   `json:"verified"`
+	Error     string `json:"error,omitempty"`
+}
+
+// verifyChain loads a gateway's tamper-evidence chain and verifies it under the
+// CP signing key. A broken chain is reported as verified=false with the reason,
+// not as an HTTP error — the verification result is the payload.
+func (h *ObservabilityHandler) verifyChain(w http.ResponseWriter, r *http.Request) {
+	gatewayID := r.PathValue("gateway_id")
+	chain, err := h.receipts.ListReceipts(r.Context(), gatewayID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list receipts")
+		return
+	}
+	result := chainVerifyView{GatewayID: gatewayID, Count: len(chain), Verified: true}
+	if verr := receipt.VerifyChain(chain, h.pub); verr != nil {
+		result.Verified = false
+		result.Error = verr.Error()
+	}
+	writeJSON(w, http.StatusOK, result)
 }
