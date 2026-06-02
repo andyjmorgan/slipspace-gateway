@@ -7,51 +7,10 @@ package configdb_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
-	"time"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/configdb"
 )
-
-func startPostgres(t *testing.T) string {
-	t.Helper()
-	ctx := context.Background()
-
-	req := testcontainers.ContainerRequest{
-		Image:        "postgres:16-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_PASSWORD": "test",
-			"POSTGRES_DB":       "cp",
-		},
-		WaitingFor: wait.ForAll(
-			wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
-			wait.ForListeningPort("5432/tcp"),
-		).WithStartupTimeout(90 * time.Second),
-	}
-	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
-	if err != nil {
-		t.Fatalf("start postgres: %v", err)
-	}
-	t.Cleanup(func() { _ = c.Terminate(context.Background()) })
-
-	host, err := c.Host(ctx)
-	if err != nil {
-		t.Fatalf("host: %v", err)
-	}
-	port, err := c.MappedPort(ctx, "5432/tcp")
-	if err != nil {
-		t.Fatalf("port: %v", err)
-	}
-	return fmt.Sprintf("postgres://postgres:test@%s:%s/cp?sslmode=disable", host, port.Port())
-}
 
 func TestConfigDB_EntityLifecycleAndAudit(t *testing.T) {
 	ctx := context.Background()
