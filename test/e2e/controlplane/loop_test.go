@@ -50,6 +50,36 @@ func TestControlPlane_FullLoop(t *testing.T) {
 	requireFleetMember(t, h)
 }
 
+// TestControlPlane_BootsWithNoLocalConfig proves the CP-managed paradigm's boot
+// path: a gateway with NO local config directory at all (SLUICE_CONFIG_DIR
+// points at a path that does not exist) boots empty and serves config sourced
+// entirely from the control plane. Without the startup tolerance this gateway
+// would die on the missing config directory before ever reaching the CP fetch.
+func TestControlPlane_BootsWithNoLocalConfig(t *testing.T) {
+	h := harness.NewWithOptions(t, harness.Options{ControlPlane: true, ControlPlaneNoLocalConfig: true})
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"cp-noconfig","object":"chat.completion"}`,
+	})
+
+	resp := h.PostJSON("/v1/chat/completions", map[string]any{
+		"model":    "gpt-4o",
+		"messages": []map[string]string{{"role": "user", "content": "."}},
+	}, http.Header{"Authorization": []string{"Bearer " + h.APIKey}})
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("request through no-local-config CP gateway = %d, want 200 — the gateway must boot empty and serve control-plane config. body=%s",
+			resp.StatusCode, resp.Body)
+	}
+	if !strings.Contains(string(resp.Body), "cp-noconfig") {
+		t.Fatalf("response did not carry the canned upstream payload (CP config not served?): %s", resp.Body)
+	}
+
+	requireFleetMember(t, h)
+}
+
 // requireFleetMember polls the control plane's fleet read API until the gateway
 // has registered.
 func requireFleetMember(t *testing.T, h *harness.Harness) {

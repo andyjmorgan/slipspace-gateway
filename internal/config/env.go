@@ -319,9 +319,20 @@ func (e *ServerEnv) PrometheusEnabled() bool { return e.PrometheusBind != "" }
 // when OTLPEndpoint is empty.
 func (e *ServerEnv) OTLPEnabled() bool { return e.OTLPEndpoint != "" }
 
-// ControlPlaneEnabled reports whether this gateway is CP-managed. False
-// (standalone, file-backed) when ControlPlaneEndpoint is empty.
+// ControlPlaneEnabled reports whether this gateway talks to a control plane at
+// all. False (standalone, file-backed) when ControlPlaneEndpoint is empty. True
+// covers both register-only (endpoint set, no bootstrap key — the gateway keeps
+// its local config and only registers/heartbeats) and CP-managed.
 func (e *ServerEnv) ControlPlaneEnabled() bool { return e.ControlPlaneEndpoint != "" }
+
+// ControlPlaneManaged reports whether this gateway sources its config from the
+// control plane: an endpoint to fetch from AND a bootstrap api-key whose
+// closure to fetch. A CP-managed gateway may boot with no local config — the
+// config sync populates the store before the data plane serves — so the
+// startup loader tolerates a missing or empty config directory in this mode.
+func (e *ServerEnv) ControlPlaneManaged() bool {
+	return e.ControlPlaneEnabled() && e.ControlPlaneBootstrapAPIKey != ""
+}
 
 // LiveFeedEnabled reports whether the admin live-messages ring is wired.
 // False when AdminLiveFeedCapacity is zero (or negative, which Validate

@@ -135,6 +135,56 @@ func TestLoadV2_EmptyAndParseErrors(t *testing.T) {
 	}
 }
 
+func TestLoadStartupV2(t *testing.T) {
+	valid := writeV2Dir(t, map[string]string{
+		"backends.yaml": v2Backends,
+		"policy.yaml":   v2Policy,
+	})
+	empty := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	malformed := writeV2Dir(t, map[string]string{"bad.yaml": "backends: {{{not yaml"})
+
+	t.Run("standalone requires local config", func(t *testing.T) {
+		if r, e, err := LoadStartupV2(context.Background(), valid, false); err != nil || e || r == nil {
+			t.Fatalf("valid dir: r=%v emptyBoot=%v err=%v", r != nil, e, err)
+		}
+		if _, _, err := LoadStartupV2(context.Background(), empty, false); !errors.Is(err, ErrEmptyDirectory) {
+			t.Fatalf("empty dir standalone: want ErrEmptyDirectory, got %v", err)
+		}
+		if _, _, err := LoadStartupV2(context.Background(), missing, false); err == nil {
+			t.Fatal("missing dir standalone: want error, got nil")
+		}
+	})
+
+	t.Run("cp-managed tolerates absent or empty config", func(t *testing.T) {
+		for _, dir := range []string{empty, missing} {
+			r, bootedEmpty, err := LoadStartupV2(context.Background(), dir, true)
+			if err != nil || !bootedEmpty || r == nil {
+				t.Fatalf("dir %q: want empty boot, got r=%v emptyBoot=%v err=%v", dir, r != nil, bootedEmpty, err)
+			}
+			if len(r.Configurations) != 0 || len(r.SecretIndex) != 0 {
+				t.Errorf("dir %q: expected empty config, got %+v", dir, r)
+			}
+		}
+	})
+
+	t.Run("cp-managed still loads a present config", func(t *testing.T) {
+		r, bootedEmpty, err := LoadStartupV2(context.Background(), valid, true)
+		if err != nil || bootedEmpty {
+			t.Fatalf("present config: emptyBoot=%v err=%v", bootedEmpty, err)
+		}
+		if r.SecretIndex["sk_live_x"] == nil {
+			t.Errorf("present config not loaded: %+v", r.SecretIndex)
+		}
+	})
+
+	t.Run("cp-managed does NOT swallow a malformed config", func(t *testing.T) {
+		if _, _, err := LoadStartupV2(context.Background(), malformed, true); err == nil {
+			t.Fatal("malformed config under cp-managed: want fatal error, got nil")
+		}
+	})
+}
+
 func TestLoadV2_AdminTelemetryAndValidateError(t *testing.T) {
 	// admin + telemetry blocks merge from a third file.
 	dir := writeV2Dir(t, map[string]string{

@@ -114,6 +114,34 @@ func TestLoadEnv_ControlPlaneOverrides(t *testing.T) {
 	}
 }
 
+func TestServerEnv_ControlPlaneManaged(t *testing.T) {
+	cases := []struct {
+		name      string
+		endpoint  string
+		bootstrap string
+		enabled   bool
+		managed   bool
+	}{
+		{"standalone", "", "", false, false},
+		{"register-only", "cp:8485", "", true, false},
+		{"cp-managed", "cp:8485", "sk_boot", true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := &config.ServerEnv{
+				ControlPlaneEndpoint:        c.endpoint,
+				ControlPlaneBootstrapAPIKey: c.bootstrap,
+			}
+			if got := env.ControlPlaneEnabled(); got != c.enabled {
+				t.Errorf("ControlPlaneEnabled() = %v, want %v", got, c.enabled)
+			}
+			if got := env.ControlPlaneManaged(); got != c.managed {
+				t.Errorf("ControlPlaneManaged() = %v, want %v", got, c.managed)
+			}
+		})
+	}
+}
+
 func TestLoadEnv_OverridesApplied(t *testing.T) {
 	t.Setenv(config.EnvHTTPBind, "127.0.0.1:0")
 	t.Setenv(config.EnvShutdownDrainSeconds, "42")
