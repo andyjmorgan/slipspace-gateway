@@ -37,10 +37,11 @@ import (
 
 // Sentinel errors.
 var (
-	ErrNoActiveConfig  = errors.New("configdb: no active config version")
-	ErrVersionNotFound = errors.New("configdb: version not found")
-	ErrEntityNotFound  = errors.New("configdb: entity not found")
-	ErrAdminNotFound   = errors.New("configdb: admin user not found")
+	ErrNoActiveConfig       = errors.New("configdb: no active config version")
+	ErrVersionNotFound      = errors.New("configdb: version not found")
+	ErrEntityNotFound       = errors.New("configdb: entity not found")
+	ErrAdminNotFound        = errors.New("configdb: admin user not found")
+	ErrRequestEventNotFound = errors.New("configdb: request event not found")
 )
 
 const schemaSQL = `
@@ -105,6 +106,23 @@ CREATE TABLE IF NOT EXISTS receipts (
     received_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (gateway_id, seq)
 );
+
+CREATE TABLE IF NOT EXISTS request_events (
+    correlation_id TEXT PRIMARY KEY,
+    gateway_id     TEXT NOT NULL DEFAULT '',
+    configuration  TEXT NOT NULL DEFAULT '',
+    backend        TEXT NOT NULL DEFAULT '',
+    model          TEXT NOT NULL DEFAULT '',
+    protocol       TEXT NOT NULL DEFAULT '',
+    status_code    INT NOT NULL DEFAULT 0,
+    latency_ms     BIGINT NOT NULL DEFAULT 0,
+    tokens_in      BIGINT NOT NULL DEFAULT 0,
+    tokens_out     BIGINT NOT NULL DEFAULT 0,
+    gen_ai_content JSONB,
+    observed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS request_events_observed_at ON request_events (observed_at DESC);
 `
 
 // Entity is one editable config entity. Body is the contracts/config type as JSON.
@@ -628,6 +646,101 @@ func (db *DB) AppendReceipt(ctx context.Context, rec receipt.Record, signer rece
 		return receipt.Receipt{}, err
 	}
 	return r, nil
+}
+
+// RequestEvent is one request's lean, queryable telemetry row: post-rule labels,
+// outcome, token counts, and (optionally) bounded gen_ai.* content. It is the
+// drill-down + recent-history surface of the observability store, joined to the
+// full body (request_bodies) and the integrity chain (receipts) by
+// correlation_id.
+type RequestEvent struct {
+	CorrelationID string
+	GatewayID     string
+	Configuration string
+	Backend       string
+	Model         string
+	Protocol      string
+	StatusCode    int
+	LatencyMs     int64
+	TokensIn      int64
+	TokensOut     int64
+	// GenAIContent is bounded gen_ai.* content as JSON, or nil when none was
+	// captured. Stored JSONB (queryable); unlike receipts it need not be
+	// byte-exact.
+	GenAIContent []byte
+	ObservedAt   time.Time
+}
+
+const requestEventColumns = `correlation_id, gateway_id, configuration, backend, model, protocol, status_code, latency_ms, tokens_in, tokens_out, gen_ai_content, observed_at`
+
+// UpsertRequestEvent inserts or refines a request event, keyed by
+// correlation_id, so re-delivered or two-phase (request then response)
+// telemetry converges on one row. Existing gen_ai_content is preserved when an
+// update omits it.
+func (db *DB) UpsertRequestEvent(ctx context.Context, e RequestEvent) error {
+	_, err := db.pool.Exec(ctx, `
+INSERT INTO request_events (correlation_id, gateway_id, configuration, backend, model, protocol, status_code, latency_ms, tokens_in, tokens_out, gen_ai_content)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (correlation_id) DO UPDATE SET
+  gateway_id     = EXCLUDED.gateway_id,
+  configuration  = EXCLUDED.configuration,
+  backend        = EXCLUDED.backend,
+  model          = EXCLUDED.model,
+  protocol       = EXCLUDED.protocol,
+  status_code    = EXCLUDED.status_code,
+  latency_ms     = EXCLUDED.latency_ms,
+  tokens_in      = EXCLUDED.tokens_in,
+  tokens_out     = EXCLUDED.tokens_out,
+  gen_ai_content = COALESCE(EXCLUDED.gen_ai_content, request_events.gen_ai_content)`,
+		e.CorrelationID, e.GatewayID, e.Configuration, e.Backend, e.Model, e.Protocol, e.StatusCode, e.LatencyMs, e.TokensIn, e.TokensOut, e.GenAIContent)
+	if err != nil {
+		return fmt.Errorf("configdb: upsert request event: %w", err)
+	}
+	return nil
+}
+
+// GetRequestEvent returns one event by correlation_id, or ErrRequestEventNotFound.
+func (db *DB) GetRequestEvent(ctx context.Context, correlationID string) (RequestEvent, error) {
+	row := db.pool.QueryRow(ctx,
+		`SELECT `+requestEventColumns+` FROM request_events WHERE correlation_id=$1`, correlationID)
+	e, err := scanRequestEvent(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RequestEvent{}, ErrRequestEventNotFound
+	}
+	return e, err
+}
+
+// ListRecentRequestEvents returns the most recent events, newest first, capped
+// at limit (defaulted to 100 when <= 0).
+func (db *DB) ListRecentRequestEvents(ctx context.Context, limit int) ([]RequestEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := db.pool.Query(ctx,
+		`SELECT `+requestEventColumns+` FROM request_events ORDER BY observed_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: list request events: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RequestEvent
+	for rows.Next() {
+		e, serr := scanRequestEvent(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func scanRequestEvent(s rowScanner) (RequestEvent, error) {
+	var e RequestEvent
+	if err := s.Scan(&e.CorrelationID, &e.GatewayID, &e.Configuration, &e.Backend, &e.Model, &e.Protocol,
+		&e.StatusCode, &e.LatencyMs, &e.TokensIn, &e.TokensOut, &e.GenAIContent, &e.ObservedAt); err != nil {
+		return RequestEvent{}, fmt.Errorf("configdb: scan request event: %w", err)
+	}
+	return e, nil
 }
 
 // ListReceipts returns a gateway's chain in seq order, ready for
