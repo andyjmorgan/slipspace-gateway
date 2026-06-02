@@ -66,11 +66,11 @@ func run(ctx context.Context) error {
 
 	reg := controlplane.NewMemoryRegistry()
 
-	configProvider, cpCleanup, err := buildConfigProvider(ctx, cfg, logger)
+	rt, err := buildConfigProvider(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
-	defer cpCleanup()
+	defer rt.cleanup()
 
 	tlsCfg, err := cfg.tlsConfig()
 	if err != nil {
@@ -86,7 +86,7 @@ func run(ctx context.Context) error {
 	grpcSrv := controlplane.NewGRPCServer(reg, logger, controlplane.GRPCServerOptions{
 		Token:  cfg.token,
 		TLS:    tlsCfg,
-		Config: configProvider,
+		Config: rt.provider,
 	})
 	lis, err := net.Listen("tcp", cfg.grpcBind)
 	if err != nil {
@@ -99,6 +99,10 @@ func run(ctx context.Context) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
+	if rt.adminDB != nil {
+		mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, rt.liveStore, logger))
+		logger.Info("config write API enabled at /api/v1/config")
+	}
 	mux.Handle("/", controlplane.ConsoleHandler())
 	httpSrv := &http.Server{
 		Addr:              cfg.httpBind,
@@ -145,14 +149,21 @@ func run(ctx context.Context) error {
 	return nil
 }
 
+// configRuntime is the assembled config source. adminDB + liveStore are set
+// only in Postgres-backed mode, which enables the config write API.
+type configRuntime struct {
+	provider  controlplane.ConfigProvider
+	adminDB   *configdb.DB
+	liveStore *config.Store
+	cleanup   func()
+}
+
 // buildConfigProvider selects the config source for distribution:
 //   - SLUICE_CP_DATABASE_URL set -> Postgres-backed (seed from SLUICE_CONFIG_DIR
-//     on first boot, then serve the active published version).
-//   - else SLUICE_CONFIG_DIR set -> file-backed.
+//     on first boot, serve the active published version, expose the write API).
+//   - else SLUICE_CONFIG_DIR set -> file-backed (read-only).
 //   - else -> registration-only (nil provider).
-//
-// Returns a cleanup to release any opened resources (the DB pool).
-func buildConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger) (controlplane.ConfigProvider, func(), error) {
+func buildConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger) (*configRuntime, error) {
 	noop := func() {}
 	switch {
 	case cfg.databaseURL != "":
@@ -160,60 +171,73 @@ func buildConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger
 	case cfg.configDir != "":
 		resolved, err := config.LoadV2(ctx, cfg.configDir)
 		if err != nil {
-			return nil, noop, fmt.Errorf("api: load config %q: %w", cfg.configDir, err)
+			return nil, fmt.Errorf("api: load config %q: %w", cfg.configDir, err)
 		}
 		logger.Info("config distribution enabled (file-backed)",
 			"config_dir", cfg.configDir,
 			"configurations", len(resolved.Configurations),
 			"api_keys", len(resolved.APIKeys),
 		)
-		return controlplane.NewStoreConfigProvider(config.NewStore(resolved)), noop, nil
+		return &configRuntime{
+			provider: controlplane.NewStoreConfigProvider(config.NewStore(resolved)),
+			cleanup:  noop,
+		}, nil
 	default:
 		logger.Info("config distribution disabled (set SLUICE_CP_DATABASE_URL or SLUICE_CONFIG_DIR to enable)")
-		return nil, noop, nil
+		return &configRuntime{cleanup: noop}, nil
 	}
 }
 
-func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger) (controlplane.ConfigProvider, func(), error) {
-	noop := func() {}
+func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logger) (*configRuntime, error) {
 	db, err := configdb.Open(ctx, cfg.databaseURL)
 	if err != nil {
-		return nil, noop, fmt.Errorf("api: open config db: %w", err)
+		return nil, fmt.Errorf("api: open config db: %w", err)
 	}
 
-	_, aerr := db.ActiveVersion(ctx)
-	switch {
-	case errors.Is(aerr, configdb.ErrNoActiveConfig):
-		if cfg.configDir == "" {
-			logger.Warn("config db empty and SLUICE_CONFIG_DIR unset; distribution disabled until a version is published")
-			return nil, db.Close, nil
+	// Seed from files on first boot (no active version yet).
+	if _, aerr := db.ActiveVersion(ctx); errors.Is(aerr, configdb.ErrNoActiveConfig) {
+		if cfg.configDir != "" {
+			if serr := seedConfigDB(ctx, db, cfg.configDir, logger); serr != nil {
+				db.Close()
+				return nil, serr
+			}
 		}
-		if serr := seedConfigDB(ctx, db, cfg.configDir, logger); serr != nil {
+	} else if aerr != nil {
+		db.Close()
+		return nil, fmt.Errorf("api: read active config: %w", aerr)
+	}
+
+	// Build the served store from the active version (empty until first publish
+	// when there is no seed). The write API publishes into the same store.
+	resolved := &config.ResolvedConfigV2{}
+	switch active, err := db.ActiveVersion(ctx); {
+	case err == nil:
+		rc, rerr := config.ResolveClosure(active.Body)
+		if rerr != nil {
 			db.Close()
-			return nil, noop, serr
+			return nil, fmt.Errorf("api: resolve active config %s: %w", active.ID, rerr)
 		}
-	case aerr != nil:
+		resolved = rc
+		logger.Info("config distribution enabled (postgres-backed)",
+			"version", active.ID,
+			"hash", active.Hash,
+			"configurations", len(rc.Configurations),
+			"api_keys", len(rc.APIKeys),
+		)
+	case errors.Is(err, configdb.ErrNoActiveConfig):
+		logger.Warn("config db has no active version; serving empty until a version is published")
+	default:
 		db.Close()
-		return nil, noop, fmt.Errorf("api: read active config: %w", aerr)
+		return nil, fmt.Errorf("api: load active config: %w", err)
 	}
 
-	active, err := db.ActiveVersion(ctx)
-	if err != nil {
-		db.Close()
-		return nil, noop, fmt.Errorf("api: load active config: %w", err)
-	}
-	resolved, err := config.ResolveClosure(active.Body)
-	if err != nil {
-		db.Close()
-		return nil, noop, fmt.Errorf("api: resolve active config %s: %w", active.ID, err)
-	}
-	logger.Info("config distribution enabled (postgres-backed)",
-		"version", active.ID,
-		"hash", active.Hash,
-		"configurations", len(resolved.Configurations),
-		"api_keys", len(resolved.APIKeys),
-	)
-	return controlplane.NewStoreConfigProvider(config.NewStore(resolved)), db.Close, nil
+	store := config.NewStore(resolved)
+	return &configRuntime{
+		provider:  controlplane.NewStoreConfigProvider(store),
+		adminDB:   db,
+		liveStore: store,
+		cleanup:   db.Close,
+	}, nil
 }
 
 // seedConfigDB imports the file config into entities and publishes the first
