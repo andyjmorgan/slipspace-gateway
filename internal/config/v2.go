@@ -2,7 +2,9 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,6 +89,31 @@ type v2Doc struct {
 	Rules          []rulescontract.RuleContract               `yaml:"rules"`
 	Admin          *admin.Config                              `yaml:"admin"`
 	Telemetry      *contractsconfig.Telemetry                 `yaml:"telemetry"`
+}
+
+// LoadStartupV2 loads a gateway's initial config at boot. A standalone gateway
+// requires a populated config directory, so any LoadV2 error is fatal. A
+// CP-managed gateway (cpManaged) may legitimately have no local config — it
+// boots empty and the control-plane config sync populates the store before the
+// data plane serves — so an absent or empty directory is tolerated and returns
+// an empty config with bootedEmpty=true. A malformed config file is still fatal
+// even when CP-managed: a real config error must not be silently swallowed.
+func LoadStartupV2(ctx context.Context, dir string, cpManaged bool) (rc *ResolvedConfigV2, bootedEmpty bool, err error) {
+	resolved, lerr := LoadV2(ctx, dir)
+	if lerr == nil {
+		return resolved, false, nil
+	}
+	if cpManaged && isNoLocalConfig(lerr) {
+		return &ResolvedConfigV2{}, true, nil
+	}
+	return nil, false, lerr
+}
+
+// isNoLocalConfig reports whether err means the config directory is simply
+// absent or contains no yaml — as opposed to a malformed config file, which
+// must stay fatal.
+func isNoLocalConfig(err error) bool {
+	return errors.Is(err, ErrEmptyDirectory) || errors.Is(err, fs.ErrNotExist)
 }
 
 // LoadV2 reads the v2 YAML configuration directory at dir and returns the

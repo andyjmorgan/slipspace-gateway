@@ -75,7 +75,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("gateway: validate env: %w", err)
 	}
 
-	resolved, err := config.LoadV2(ctx, env.ConfigDir)
+	resolved, bootedEmpty, err := config.LoadStartupV2(ctx, env.ConfigDir, env.ControlPlaneManaged())
 	if err != nil {
 		return fmt.Errorf("gateway: load config %q: %w", env.ConfigDir, err)
 	}
@@ -95,6 +95,13 @@ func run(ctx context.Context) error {
 	defer shutdownObservability(obs) //nolint:contextcheck // detached on purpose; see shutdownObservability
 
 	logger := obs.Logger
+
+	if bootedEmpty {
+		logger.Warn("no local config; booting empty and fetching from control plane",
+			"config_dir", env.ConfigDir,
+			"control_plane_endpoint", env.ControlPlaneEndpoint,
+		)
+	}
 
 	spoolInst, spoolCleanup, err := setupSpool(ctx, env, resolved, logger)
 	if err != nil {

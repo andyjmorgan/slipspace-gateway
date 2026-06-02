@@ -60,6 +60,12 @@ type Options struct {
 	// upstream round-trip proves the gateway served the control-plane config,
 	// not its local copy.
 	ControlPlane bool
+
+	// ControlPlaneNoLocalConfig (with ControlPlane) gives the gateway NO local
+	// config directory at all — its SLUICE_CONFIG_DIR points at a path that
+	// does not exist. A successful round-trip then proves the gateway booted
+	// empty and sourced its entire config from the control plane.
+	ControlPlaneNoLocalConfig bool
 }
 
 // BoolPtr returns a pointer to b. Convenience for the Options.ReportingEnabled

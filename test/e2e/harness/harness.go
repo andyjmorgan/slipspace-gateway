@@ -364,11 +364,20 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 	if h.opts.ControlPlane {
 		gwMockHost = "127.0.0.1:1"
 	}
-	configDir, err := h.materializeConfig(repoRoot, gwMockHost)
-	if err != nil {
-		t.Fatalf("harness: materialize config: %v", err)
+	var configDir string
+	if h.opts.ControlPlaneNoLocalConfig {
+		// No local config at all: SLUICE_CONFIG_DIR points at a path that does
+		// not exist, so the gateway must boot empty and source everything from
+		// the control plane.
+		configDir = filepath.Join(t.TempDir(), "no-local-config")
+	} else {
+		var err error
+		configDir, err = h.materializeConfig(repoRoot, gwMockHost)
+		if err != nil {
+			t.Fatalf("harness: materialize config: %v", err)
+		}
+		h.configDir = configDir
 	}
-	h.configDir = configDir
 
 	cmd := exec.Command("go", "run", "./cmd/gateway")
 	cmd.Dir = repoRoot
