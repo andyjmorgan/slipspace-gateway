@@ -104,9 +104,17 @@ func run(ctx context.Context) error {
 		logger.Info("config write API enabled at /api/v1/config")
 	}
 	mux.Handle("/", controlplane.ConsoleHandler())
+	var httpHandler http.Handler = mux
+	if cfg.adminPassword != "" {
+		httpHandler = basicAuthExceptHealth(cfg.adminPassword, mux)
+		logger.Info("HTTP API protected by Basic auth (user: admin)")
+	} else {
+		logger.Warn("HTTP API UNAUTHENTICATED — set SLUICE_CP_ADMIN_PASSWORD; serve only on a trusted network (ClusterIP, no public ingress)")
+	}
+
 	httpSrv := &http.Server{
 		Addr:              cfg.httpBind,
-		Handler:           mux,
+		Handler:           httpHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -156,6 +164,19 @@ type configRuntime struct {
 	adminDB   *configdb.DB
 	liveStore *config.Store
 	cleanup   func()
+}
+
+// basicAuthExceptHealth wraps next with Basic auth, leaving /healthz open so
+// k8s liveness/readiness probes don't need credentials.
+func basicAuthExceptHealth(password string, next http.Handler) http.Handler {
+	authed := controlplane.BasicAuth(password, next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		authed.ServeHTTP(w, r)
+	})
 }
 
 // buildConfigProvider selects the config source for distribution:
@@ -275,28 +296,30 @@ func seedConfigDB(ctx context.Context, db *configdb.DB, dir string, logger *slog
 // apiConfig is the control-plane bootstrap, env-driven to match the gateway's
 // ServerEnv convention (no bootstrap YAML).
 type apiConfig struct {
-	httpBind     string
-	grpcBind     string
-	token        string
-	tlsCert      string
-	tlsKey       string
-	configDir    string
-	databaseURL  string
-	staleAfter   time.Duration
-	offlineAfter time.Duration
+	httpBind      string
+	grpcBind      string
+	token         string
+	tlsCert       string
+	tlsKey        string
+	configDir     string
+	databaseURL   string
+	adminPassword string
+	staleAfter    time.Duration
+	offlineAfter  time.Duration
 }
 
 func loadConfig() apiConfig {
 	return apiConfig{
-		httpBind:     envOr("SLUICE_CP_HTTP_BIND", defaultHTTPBind),
-		grpcBind:     envOr("SLUICE_CP_GRPC_BIND", defaultGRPCBind),
-		token:        os.Getenv("SLUICE_CP_TOKEN"),
-		tlsCert:      os.Getenv("SLUICE_CP_TLS_CERT"),
-		tlsKey:       os.Getenv("SLUICE_CP_TLS_KEY"),
-		configDir:    os.Getenv("SLUICE_CONFIG_DIR"),
-		databaseURL:  os.Getenv("SLUICE_CP_DATABASE_URL"),
-		staleAfter:   envSeconds("SLUICE_CP_STALE_AFTER_SECONDS", 45*time.Second),
-		offlineAfter: envSeconds("SLUICE_CP_OFFLINE_AFTER_SECONDS", 120*time.Second),
+		httpBind:      envOr("SLUICE_CP_HTTP_BIND", defaultHTTPBind),
+		grpcBind:      envOr("SLUICE_CP_GRPC_BIND", defaultGRPCBind),
+		token:         os.Getenv("SLUICE_CP_TOKEN"),
+		tlsCert:       os.Getenv("SLUICE_CP_TLS_CERT"),
+		tlsKey:        os.Getenv("SLUICE_CP_TLS_KEY"),
+		configDir:     os.Getenv("SLUICE_CONFIG_DIR"),
+		databaseURL:   os.Getenv("SLUICE_CP_DATABASE_URL"),
+		adminPassword: os.Getenv("SLUICE_CP_ADMIN_PASSWORD"),
+		staleAfter:    envSeconds("SLUICE_CP_STALE_AFTER_SECONDS", 45*time.Second),
+		offlineAfter:  envSeconds("SLUICE_CP_OFFLINE_AFTER_SECONDS", 120*time.Second),
 	}
 }
 
