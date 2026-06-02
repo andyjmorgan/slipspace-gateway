@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"golang.org/x/crypto/bcrypt"
 
@@ -114,6 +115,7 @@ func run(ctx context.Context) error {
 		logger.Info("receipt signing key loaded", "key_id", receiptKeyID, "public_key", signer.PublicBase64())
 	}
 	collectortrace.RegisterTraceServiceServer(grpcSrv, otlpingest.NewReceiver(rt.adminDB, signer, logger))
+	collectormetrics.RegisterMetricsServiceServer(grpcSrv, otlpingest.NewMetricsReceiver(rt.adminDB, logger))
 
 	lis, err := net.Listen("tcp", cfg.grpcBind)
 	if err != nil {
