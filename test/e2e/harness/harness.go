@@ -31,6 +31,11 @@ const (
 	// purpose so the E2E harness has a known-good handshake.
 	defaultAPIKey = "sk_dev_local_development_only_not_for_production" //nolint:gosec // test fixture
 
+	// controlPlaneAdminPassword seeds the spawned control plane's admin so the
+	// fleet read API is reachable from tests. Not a secret — a fixed test
+	// fixture for the Postgres-backed admin auth.
+	controlPlaneAdminPassword = "cp-e2e-admin-not-a-secret" //nolint:gosec // test fixture
+
 	startupTimeout = 60 * time.Second
 	healthInterval = 100 * time.Millisecond
 	stopTimeout    = 10 * time.Second
@@ -113,6 +118,12 @@ func (h *Harness) ControlPlaneFleetURL() string {
 	return h.cpHTTPURL + "/api/v1/fleet"
 }
 
+// ControlPlaneAdminUser and ControlPlaneAdminPassword are the Basic-auth
+// credentials the spawned control plane was seeded with, for tests hitting its
+// authenticated HTTP API.
+func (h *Harness) ControlPlaneAdminUser() string     { return "admin" }
+func (h *Harness) ControlPlaneAdminPassword() string { return controlPlaneAdminPassword }
+
 // New brings up the in-process webhook capture server, the mockllm binary,
 // and the gateway binary, waits for each to be reachable, and registers
 // cleanups. It calls t.Fatalf on any startup failure.
@@ -185,6 +196,7 @@ func (h *Harness) startControlPlane(t *testing.T, repoRoot string) {
 	cmd.Env = append(os.Environ(),
 		"SLUICE_CONFIG_DIR="+cpConfig,
 		"SLUICE_CP_DATABASE_URL="+dsn,
+		"SLUICE_CP_ADMIN_PASSWORD="+controlPlaneAdminPassword,
 		fmt.Sprintf("SLUICE_CP_HTTP_BIND=127.0.0.1:%d", httpPort),
 		fmt.Sprintf("SLUICE_CP_GRPC_BIND=127.0.0.1:%d", grpcPort),
 		// The materialized config carries the harness's loopback webhook

@@ -1,36 +1,21 @@
 package controlplane
 
 import (
-	"crypto/subtle"
 	"net/http"
-
-	contractsadmin "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 )
 
-// BasicAuth wraps next with HTTP Basic authentication, mirroring the gateway
-// admin console (internal/admin.BasicAuth) so the control plane and the
-// appliance share one credential convention. The username is the shared
-// contractsadmin.Username ("admin"); the password is supplied by the operator.
+// BasicAuth wraps next with HTTP Basic authentication. verify decides whether a
+// presented (username, password) pair is valid — production passes
+// AdminAuthenticator.Verify, which checks a bcrypt hash sourced from Postgres.
 //
-// Both fields are compared in constant time, and a failed check returns a bare
-// 401 with NO WWW-Authenticate header — that header would make a browser pop
-// its native auth dialog over the console. (Re-implemented here rather than
-// importing internal/admin, which embeds the gateway SPA and would bloat the
-// control-plane binary.)
-func BasicAuth(password string, next http.Handler) http.Handler {
-	expectedUser := []byte(contractsadmin.Username)
-	expectedPass := []byte(password)
+// A failed check returns a bare 401 with NO WWW-Authenticate header — that
+// header would make a browser pop its native auth dialog over the console.
+// (Re-implemented here rather than importing internal/admin, which embeds the
+// gateway SPA and would bloat the control-plane binary.)
+func BasicAuth(verify func(username, password string) bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
-		if !ok {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		// Run both comparisons regardless so timing is flat across the
-		// wrong-username and wrong-password branches.
-		userOK := subtle.ConstantTimeCompare([]byte(user), expectedUser) == 1
-		passOK := subtle.ConstantTimeCompare([]byte(pass), expectedPass) == 1
-		if !userOK || !passOK {
+		if !ok || !verify(user, pass) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

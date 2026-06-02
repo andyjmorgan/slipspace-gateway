@@ -102,6 +102,7 @@ func fetchFleet(t *testing.T, h *harness.Harness) []map[string]any {
 	if err != nil {
 		t.Fatalf("build fleet request: %v", err)
 	}
+	req.SetBasicAuth(h.ControlPlaneAdminUser(), h.ControlPlaneAdminPassword())
 	res, err := h.HTTP.Do(req)
 	if err != nil {
 		return nil

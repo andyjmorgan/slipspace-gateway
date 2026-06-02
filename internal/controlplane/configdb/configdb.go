@@ -38,6 +38,7 @@ var (
 	ErrNoActiveConfig  = errors.New("configdb: no active config version")
 	ErrVersionNotFound = errors.New("configdb: version not found")
 	ErrEntityNotFound  = errors.New("configdb: entity not found")
+	ErrAdminNotFound   = errors.New("configdb: admin user not found")
 )
 
 const schemaSQL = `
@@ -81,6 +82,12 @@ CREATE TABLE IF NOT EXISTS fleet_registry (
     cached_config_hashes JSONB NOT NULL DEFAULT '[]'::jsonb,
     registered_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS cp_admins (
+    username      TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `
 
@@ -557,4 +564,33 @@ func marshalJSONArray(s []string) ([]byte, error) {
 		return nil, fmt.Errorf("configdb: marshal hashes: %w", err)
 	}
 	return b, nil
+}
+
+// GetAdminHash returns the stored password hash for username, or
+// ErrAdminNotFound if there is no such admin. The hash is the source of truth
+// for console auth, shared across all CP replicas.
+func (db *DB) GetAdminHash(ctx context.Context, username string) (string, error) {
+	var hash string
+	err := db.pool.QueryRow(ctx, `SELECT password_hash FROM cp_admins WHERE username=$1`, username).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrAdminNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("configdb: get admin hash: %w", err)
+	}
+	return hash, nil
+}
+
+// SeedAdmin inserts the admin only if one does not already exist for username,
+// and reports whether it actually seeded. Idempotent and race-safe across
+// replicas: concurrent first-boots resolve to a single winning insert, the
+// rest observe seeded=false and use the existing row.
+func (db *DB) SeedAdmin(ctx context.Context, username, passwordHash string) (bool, error) {
+	tag, err := db.pool.Exec(ctx,
+		`INSERT INTO cp_admins (username, password_hash) VALUES ($1, $2)
+         ON CONFLICT (username) DO NOTHING`, username, passwordHash)
+	if err != nil {
+		return false, fmt.Errorf("configdb: seed admin: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
