@@ -126,6 +126,7 @@ func run(ctx context.Context) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
+	mux.Handle("/api/v1/fleet/drift", controlplane.NewDriftHandler(reg, rt.adminDB))
 	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, logger))
 	mux.Handle("/api/v1/observability/", controlplane.NewObservabilityHandler(rt.adminDB, rt.adminDB, signer.Public()))
 	mux.Handle("/", controlplane.ConsoleHandler())
