@@ -94,7 +94,9 @@ type stubProvider struct {
 	err error
 }
 
-func (s stubProvider) ClosureForAPIKey(string) (Closure, error) { return s.cl, s.err }
+func (s stubProvider) ClosureForAPIKey(context.Context, string) (Closure, error) {
+	return s.cl, s.err
+}
 
 func TestFleetServer_FetchConfig(t *testing.T) {
 	withProvider := func() *FleetServer {

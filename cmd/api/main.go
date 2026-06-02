@@ -106,7 +106,7 @@ func run(ctx context.Context) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
-	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, rt.liveStore, logger))
+	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, logger))
 	mux.Handle("/", controlplane.ConsoleHandler())
 
 	// Admin credentials live in Postgres (shared across replicas). Seed on
@@ -163,13 +163,12 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-// configRuntime is the assembled config source. adminDB + liveStore are set
-// only in Postgres-backed mode, which enables the config write API.
+// configRuntime is the assembled config source: a Postgres-backed provider that
+// serves the active version per fetch, plus the DB handle the write API edits.
 type configRuntime struct {
-	provider  controlplane.ConfigProvider
-	adminDB   *configdb.DB
-	liveStore *config.Store
-	cleanup   func()
+	provider controlplane.ConfigProvider
+	adminDB  *configdb.DB
+	cleanup  func()
 }
 
 // ensureAdmin makes the control-plane admin credential exist in Postgres and
@@ -273,9 +272,9 @@ func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logg
 		return nil, fmt.Errorf("api: read active config: %w", aerr)
 	}
 
-	// Build the served store from the active version (empty until first publish
-	// when there is no seed). The write API publishes into the same store.
-	resolved := &config.ResolvedConfigV2{}
+	// Validate + log the active version at boot (fail fast on an unparseable
+	// active config). The provider then reads the active version from Postgres
+	// per fetch, so there is no served-config cache to keep in sync.
 	switch active, err := db.ActiveVersion(ctx); {
 	case err == nil:
 		rc, rerr := config.ResolveClosure(active.Body)
@@ -283,7 +282,6 @@ func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logg
 			db.Close()
 			return nil, fmt.Errorf("api: resolve active config %s: %w", active.ID, rerr)
 		}
-		resolved = rc
 		logger.Info("config distribution enabled (postgres-backed)",
 			"version", active.ID,
 			"hash", active.Hash,
@@ -297,12 +295,10 @@ func buildDBConfigProvider(ctx context.Context, cfg apiConfig, logger *slog.Logg
 		return nil, fmt.Errorf("api: load active config: %w", err)
 	}
 
-	store := config.NewStore(resolved)
 	return &configRuntime{
-		provider:  controlplane.NewStoreConfigProvider(store),
-		adminDB:   db,
-		liveStore: store,
-		cleanup:   db.Close,
+		provider: controlplane.NewDBConfigProvider(db),
+		adminDB:  db,
+		cleanup:  db.Close,
 	}, nil
 }
 

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -143,10 +141,9 @@ func (f *fakeStore) ListVersions(context.Context) ([]configdb.VersionMeta, error
 	return out, nil
 }
 
-func newAdmin(t *testing.T, store configStore) (*ConfigAdminHandler, *config.Store) {
+func newAdmin(t *testing.T, store configStore) *ConfigAdminHandler {
 	t.Helper()
-	live := config.NewStore(&config.ResolvedConfigV2{})
-	return NewConfigAdminHandler(store, live, nil), live
+	return NewConfigAdminHandler(store, nil)
 }
 
 func do(h *ConfigAdminHandler, method, path, body string) *httptest.ResponseRecorder {
@@ -179,7 +176,7 @@ func seedConfigDevEntities(t *testing.T, f *fakeStore) {
 }
 
 func TestConfigAdmin_EntityCRUD(t *testing.T) {
-	h, _ := newAdmin(t, newFakeStore())
+	h := newAdmin(t, newFakeStore())
 
 	// Create.
 	if rec := do(h, http.MethodPut, "/api/v1/config/entities/backend/openai", `{"base_url":"https://api.openai.com"}`); rec.Code != http.StatusOK {
@@ -208,7 +205,7 @@ func TestConfigAdmin_EntityCRUD(t *testing.T) {
 }
 
 func TestConfigAdmin_PutValidation(t *testing.T) {
-	h, _ := newAdmin(t, newFakeStore())
+	h := newAdmin(t, newFakeStore())
 
 	if rec := do(h, http.MethodPut, "/api/v1/config/entities/backend/x", `{{{not json`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad json = %d, want 400", rec.Code)
@@ -222,18 +219,20 @@ func TestConfigAdmin_PutValidation(t *testing.T) {
 	}
 }
 
-func TestConfigAdmin_PublishValidatesAndReloads(t *testing.T) {
+func TestConfigAdmin_PublishValidatesAndPersists(t *testing.T) {
 	f := newFakeStore()
 	seedConfigDevEntities(t, f)
-	h, live := newAdmin(t, f)
+	h := newAdmin(t, f)
 
 	rec := do(h, http.MethodPost, "/api/v1/config/publish", "")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "published") {
 		t.Fatalf("publish = %d: %s", rec.Code, rec.Body)
 	}
-	// Live-reloaded: the served store now holds config-dev's configurations.
-	if snap := live.Snapshot(); snap == nil || len(snap.Configurations) == 0 {
-		t.Fatal("publish did not live-reload the served config")
+	// The published version is now active and queryable. The served config is
+	// read from Postgres by DBConfigProvider, not a per-handler cache, so there
+	// is nothing to "reload" here.
+	if vrec := do(h, http.MethodGet, "/api/v1/config/versions", ""); vrec.Code != http.StatusOK || !strings.Contains(vrec.Body.String(), `"active":true`) {
+		t.Fatalf("versions = %d: %s", vrec.Code, vrec.Body)
 	}
 }
 
@@ -243,7 +242,7 @@ func TestConfigAdmin_PublishRejectsInvalidComposite(t *testing.T) {
 	// composes structurally but fails validation.
 	_ = f.UpsertEntity(context.Background(), KindConfiguration, "bad",
 		[]byte(`{"bindings":[{"protocol":"chat","models":["x"],"backend":"ghost"}]}`), "t")
-	h, _ := newAdmin(t, f)
+	h := newAdmin(t, f)
 
 	rec := do(h, http.MethodPost, "/api/v1/config/publish", "")
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid") {
@@ -254,7 +253,7 @@ func TestConfigAdmin_PublishRejectsInvalidComposite(t *testing.T) {
 func TestConfigAdmin_VersionsAndRollback(t *testing.T) {
 	f := newFakeStore()
 	seedConfigDevEntities(t, f)
-	h, _ := newAdmin(t, f)
+	h := newAdmin(t, f)
 
 	do(h, http.MethodPost, "/api/v1/config/publish", "")
 	do(h, http.MethodPost, "/api/v1/config/publish", "") // dedup-less fake: second version
@@ -274,7 +273,7 @@ func TestConfigAdmin_Changes(t *testing.T) {
 	f := newFakeStore()
 	_ = f.UpsertEntity(context.Background(), KindBackend, "a", []byte("{}"), "t")
 	_ = f.UpsertEntity(context.Background(), KindBackend, "b", []byte("{}"), "t")
-	h, _ := newAdmin(t, f)
+	h := newAdmin(t, f)
 
 	if rec := do(h, http.MethodGet, "/api/v1/config/changes", ""); rec.Code != http.StatusOK {
 		t.Fatalf("changes = %d", rec.Code)
@@ -288,26 +287,26 @@ func TestConfigAdmin_ErrorMapping(t *testing.T) {
 	boom := errors.New("boom")
 
 	t.Run("list 500", func(t *testing.T) {
-		h, _ := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errList: boom})
+		h := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errList: boom})
 		if rec := do(h, http.MethodGet, "/api/v1/config/entities", ""); rec.Code != http.StatusInternalServerError {
 			t.Fatalf("= %d, want 500", rec.Code)
 		}
 	})
 	t.Run("get 500", func(t *testing.T) {
-		h, _ := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errGet: boom})
+		h := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errGet: boom})
 		if rec := do(h, http.MethodGet, "/api/v1/config/entities/backend/x", ""); rec.Code != http.StatusInternalServerError {
 			t.Fatalf("= %d, want 500", rec.Code)
 		}
 	})
 	t.Run("upsert 500", func(t *testing.T) {
-		h, _ := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errUpsert: boom})
+		h := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errUpsert: boom})
 		if rec := do(h, http.MethodPut, "/api/v1/config/entities/backend/x", `{"base_url":"u"}`); rec.Code != http.StatusInternalServerError {
 			t.Fatalf("= %d, want 500", rec.Code)
 		}
 	})
 	t.Run("delete 500", func(t *testing.T) {
 		f := &fakeStore{entities: map[string]configdb.Entity{"backend/x": {Kind: "backend", Name: "x"}}, errDelete: boom}
-		h, _ := newAdmin(t, f)
+		h := newAdmin(t, f)
 		if rec := do(h, http.MethodDelete, "/api/v1/config/entities/backend/x", ""); rec.Code != http.StatusInternalServerError {
 			t.Fatalf("= %d, want 500", rec.Code)
 		}
@@ -316,39 +315,30 @@ func TestConfigAdmin_ErrorMapping(t *testing.T) {
 		f := newFakeStore()
 		seedConfigDevEntities(t, f)
 		f.errPublish = boom
-		h, _ := newAdmin(t, f)
+		h := newAdmin(t, f)
 		if rec := do(h, http.MethodPost, "/api/v1/config/publish", ""); rec.Code != http.StatusInternalServerError {
 			t.Fatalf("= %d, want 500", rec.Code)
 		}
 	})
 }
 
-func TestConfigAdmin_NilLiveStoreSkipsReload(t *testing.T) {
-	f := newFakeStore()
-	seedConfigDevEntities(t, f)
-	h := NewConfigAdminHandler(f, nil, nil) // nil liveStore
-	if rec := do(h, http.MethodPost, "/api/v1/config/publish", ""); rec.Code != http.StatusOK {
-		t.Fatalf("publish with nil liveStore = %d: %s", rec.Code, rec.Body)
-	}
-}
-
 func TestConfigAdmin_MoreErrorPaths(t *testing.T) {
 	boom := errors.New("boom")
 
 	t.Run("versions 500", func(t *testing.T) {
-		h, _ := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errVersions: boom})
+		h := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errVersions: boom})
 		if rec := do(h, http.MethodGet, "/api/v1/config/versions", ""); rec.Code != http.StatusInternalServerError {
 			t.Fatalf("= %d, want 500", rec.Code)
 		}
 	})
 	t.Run("activate 500", func(t *testing.T) {
-		h, _ := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errActivate: boom})
+		h := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errActivate: boom})
 		if rec := do(h, http.MethodPost, "/api/v1/config/versions/v1/activate", ""); rec.Code != http.StatusInternalServerError {
 			t.Fatalf("= %d, want 500", rec.Code)
 		}
 	})
 	t.Run("publish list 500", func(t *testing.T) {
-		h, _ := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errList: boom})
+		h := newAdmin(t, &fakeStore{entities: map[string]configdb.Entity{}, errList: boom})
 		if rec := do(h, http.MethodPost, "/api/v1/config/publish", ""); rec.Code != http.StatusInternalServerError {
 			t.Fatalf("= %d, want 500", rec.Code)
 		}
@@ -357,13 +347,13 @@ func TestConfigAdmin_MoreErrorPaths(t *testing.T) {
 		f := newFakeStore()
 		// A stored entity with a malformed body fails composition.
 		_ = f.UpsertEntity(context.Background(), KindBackend, "x", []byte("{{{"), "t")
-		h, _ := newAdmin(t, f)
+		h := newAdmin(t, f)
 		if rec := do(h, http.MethodPost, "/api/v1/config/publish", ""); rec.Code != http.StatusBadRequest {
 			t.Fatalf("= %d, want 400", rec.Code)
 		}
 	})
 	t.Run("put read error 400", func(t *testing.T) {
-		h, _ := newAdmin(t, newFakeStore())
+		h := newAdmin(t, newFakeStore())
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/config/entities/backend/x", errReader{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -373,24 +363,14 @@ func TestConfigAdmin_MoreErrorPaths(t *testing.T) {
 	})
 }
 
-func TestConfigAdmin_ActorHeaderAndReloadLogging(t *testing.T) {
+func TestConfigAdmin_ActorHeader(t *testing.T) {
 	// X-Sluice-Actor header drives the actor branch.
-	h, _ := newAdmin(t, newFakeStore())
+	h := newAdmin(t, newFakeStore())
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/config/entities/backend/x", strings.NewReader(`{"base_url":"u"}`))
 	req.Header.Set("X-Sluice-Actor", "alice")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("put with actor = %d", rec.Code)
-	}
-
-	// A non-nil logger + a reload that can't read the active version exercises
-	// the reload error path and logWarn body — publish still succeeds.
-	f := newFakeStore()
-	seedConfigDevEntities(t, f)
-	f.errActive = errors.New("boom")
-	logged := NewConfigAdminHandler(f, config.NewStore(&config.ResolvedConfigV2{}), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if rec := do(logged, http.MethodPost, "/api/v1/config/publish", ""); rec.Code != http.StatusOK {
-		t.Fatalf("publish (reload fails) = %d: %s", rec.Code, rec.Body)
 	}
 }
