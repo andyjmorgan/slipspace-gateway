@@ -15,7 +15,9 @@ package receipt
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -92,6 +94,36 @@ func (s *Ed25519Signer) Sign(digest []byte) ([]byte, string) {
 // Public returns the verifying key.
 func (s *Ed25519Signer) Public() ed25519.PublicKey {
 	return s.priv.Public().(ed25519.PublicKey)
+}
+
+// PublicBase64 returns the verifying key as standard base64, for operators to
+// record and later verify chains against.
+func (s *Ed25519Signer) PublicBase64() string {
+	return base64.StdEncoding.EncodeToString(s.Public())
+}
+
+// LoadSigner returns the receipt signer. A non-empty seedB64 must decode to a
+// 32-byte Ed25519 seed — a stable key (set SLUICE_CP_SIGNING_KEY from a Secret)
+// so every replica signs under the same identity and chains survive restarts.
+// An empty seedB64 generates a fresh key and reports generated=true so the
+// caller can log the public key; a generated key is per-replica and does not
+// survive restart, so production should always supply a seed.
+func LoadSigner(keyID, seedB64 string) (signer *Ed25519Signer, generated bool, err error) {
+	if seedB64 == "" {
+		_, priv, gerr := ed25519.GenerateKey(rand.Reader)
+		if gerr != nil {
+			return nil, false, fmt.Errorf("receipt: generate signing key: %w", gerr)
+		}
+		return &Ed25519Signer{keyID: keyID, priv: priv}, true, nil
+	}
+	seed, derr := base64.StdEncoding.DecodeString(seedB64)
+	if derr != nil {
+		return nil, false, fmt.Errorf("receipt: decode signing seed: %w", derr)
+	}
+	if len(seed) != ed25519.SeedSize {
+		return nil, false, fmt.Errorf("receipt: signing seed is %d bytes, want %d", len(seed), ed25519.SeedSize)
+	}
+	return &Ed25519Signer{keyID: keyID, priv: ed25519.NewKeyFromSeed(seed)}, false, nil
 }
 
 // Chain builds the next receipt: it computes the chain digest over prevHash and
