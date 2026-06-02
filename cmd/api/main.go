@@ -131,6 +131,7 @@ func run(ctx context.Context) error {
 	mux.Handle("/api/v1/fleet/drift", controlplane.NewDriftHandler(reg, rt.adminDB))
 	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, logger))
 	mux.Handle("/api/v1/observability/", controlplane.NewObservabilityHandler(rt.adminDB, rt.adminDB, signer.Public()))
+	mux.Handle("/api/v1/ingest/segment", controlplane.NewSegmentIngestHandler(rt.adminDB, logger))
 	mux.Handle("/", controlplane.ConsoleHandler())
 
 	// Admin credentials live in Postgres (shared across replicas). Seed on

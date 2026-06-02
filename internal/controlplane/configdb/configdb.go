@@ -42,6 +42,7 @@ var (
 	ErrEntityNotFound       = errors.New("configdb: entity not found")
 	ErrAdminNotFound        = errors.New("configdb: admin user not found")
 	ErrRequestEventNotFound = errors.New("configdb: request event not found")
+	ErrRequestBodyNotFound  = errors.New("configdb: request body not found")
 )
 
 const schemaSQL = `
@@ -132,6 +133,18 @@ CREATE TABLE IF NOT EXISTS metric_points (
 );
 
 CREATE INDEX IF NOT EXISTS metric_points_name_time ON metric_points (metric_name, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS request_bodies (
+    correlation_id TEXT NOT NULL,
+    instance_id    TEXT NOT NULL DEFAULT '',
+    seq            BIGINT NOT NULL DEFAULT 0,
+    ts_ns          BIGINT NOT NULL DEFAULT 0,
+    body           BYTEA NOT NULL,
+    captured_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (correlation_id, instance_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS request_bodies_correlation ON request_bodies (correlation_id);
 `
 
 // Entity is one editable config entity. Body is the contracts/config type as JSON.
@@ -741,6 +754,64 @@ func (db *DB) ListRecentRequestEvents(ctx context.Context, limit int) ([]Request
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// RequestBody is one captured full request/response envelope (a connector
+// Record's raw ndjson line), the heavy audit/replay payload joined to a
+// request_event by correlation_id. Keyed (correlation_id, instance_id, seq) so
+// re-delivered spool segments upsert idempotently.
+type RequestBody struct {
+	CorrelationID string
+	InstanceID    string
+	Seq           uint64
+	TsNs          int64
+	Body          []byte
+	CapturedAt    time.Time
+}
+
+// UpsertRequestBody stores one captured body, idempotent on its composite key.
+func (db *DB) UpsertRequestBody(ctx context.Context, b RequestBody) error {
+	_, err := db.pool.Exec(ctx, `
+INSERT INTO request_bodies (correlation_id, instance_id, seq, ts_ns, body)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (correlation_id, instance_id, seq) DO UPDATE SET body = EXCLUDED.body, ts_ns = EXCLUDED.ts_ns`,
+		b.CorrelationID, b.InstanceID, int64(b.Seq), b.TsNs, b.Body) //nolint:gosec // spool seq is small, app-assigned
+	if err != nil {
+		return fmt.Errorf("configdb: upsert request body: %w", err)
+	}
+	return nil
+}
+
+// ListRequestBodies returns all captured bodies for a correlation id, in stable
+// (instance_id, seq) order, or ErrRequestBodyNotFound when there are none.
+func (db *DB) ListRequestBodies(ctx context.Context, correlationID string) ([]RequestBody, error) {
+	rows, err := db.pool.Query(ctx, `
+SELECT correlation_id, instance_id, seq, ts_ns, body, captured_at
+FROM request_bodies WHERE correlation_id=$1 ORDER BY instance_id, seq`, correlationID)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: list request bodies: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RequestBody
+	for rows.Next() {
+		var (
+			b   RequestBody
+			seq int64
+		)
+		if err := rows.Scan(&b.CorrelationID, &b.InstanceID, &seq, &b.TsNs, &b.Body, &b.CapturedAt); err != nil {
+			return nil, fmt.Errorf("configdb: scan request body: %w", err)
+		}
+		b.Seq = uint64(seq) //nolint:gosec // spool seq from BIGINT, always >= 0
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, ErrRequestBodyNotFound
+	}
+	return out, nil
 }
 
 // MetricPoint is one numeric telemetry sample the gateways push via OTLP —
