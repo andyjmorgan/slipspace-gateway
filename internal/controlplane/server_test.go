@@ -17,7 +17,7 @@ import (
 )
 
 func TestNewGRPCServer_EndToEnd(t *testing.T) {
-	reg := NewMemoryRegistry()
+	reg := newStubRegistry()
 	srv := NewGRPCServer(reg, nil, GRPCServerOptions{Token: "s3cret"})
 	lis := bufconn.Listen(1024 * 1024)
 	go func() { _ = srv.Serve(lis) }()
@@ -57,7 +57,7 @@ func TestNewGRPCServer_EndToEnd(t *testing.T) {
 }
 
 func TestNewGRPCServer_TLSBranch(t *testing.T) {
-	srv := NewGRPCServer(NewMemoryRegistry(), nil, GRPCServerOptions{
+	srv := NewGRPCServer(newStubRegistry(), nil, GRPCServerOptions{
 		TLS: &tls.Config{MinVersion: tls.VersionTLS12},
 	})
 	t.Cleanup(srv.Stop)
@@ -67,7 +67,7 @@ func TestNewGRPCServer_TLSBranch(t *testing.T) {
 }
 
 func TestNewGRPCServer_FetchConfigEndToEnd(t *testing.T) {
-	srv := NewGRPCServer(NewMemoryRegistry(), nil, GRPCServerOptions{
+	srv := NewGRPCServer(newStubRegistry(), nil, GRPCServerOptions{
 		Config: NewStoreConfigProvider(providerTestStore()),
 	})
 	lis := bufconn.Listen(1024 * 1024)

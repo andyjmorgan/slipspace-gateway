@@ -11,7 +11,7 @@ import (
 )
 
 func TestFleetHTTPHandler_StatusDerivation(t *testing.T) {
-	reg := NewMemoryRegistry()
+	reg := newStubRegistry()
 	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	// Three gateways last seen at different ages relative to "now".
@@ -61,7 +61,7 @@ func TestFleetHTTPHandler_StatusDerivation(t *testing.T) {
 }
 
 func TestFleetHTTPHandler_MethodNotAllowed(t *testing.T) {
-	h := NewFleetHTTPHandler(NewMemoryRegistry(), time.Second, time.Minute)
+	h := NewFleetHTTPHandler(newStubRegistry(), time.Second, time.Minute)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/fleet", nil))
 	if rec.Code != http.StatusMethodNotAllowed {

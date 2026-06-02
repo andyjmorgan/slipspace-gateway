@@ -36,13 +36,13 @@ func wantCode(t *testing.T, err error, code codes.Code) {
 
 func TestFleetServer_Register(t *testing.T) {
 	t.Run("empty gateway_id is InvalidArgument", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
+		s := NewFleetServer(newStubRegistry(), nil, nil)
 		_, err := s.Register(context.Background(), &fleetpb.RegisterRequest{})
 		wantCode(t, err, codes.InvalidArgument)
 	})
 
 	t.Run("success returns registered_at", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
+		s := NewFleetServer(newStubRegistry(), nil, nil)
 		resp, err := s.Register(context.Background(), &fleetpb.RegisterRequest{
 			GatewayId: "gw-1",
 			Version:   "v1.2.0",
@@ -64,13 +64,13 @@ func TestFleetServer_Register(t *testing.T) {
 
 func TestFleetServer_Heartbeat(t *testing.T) {
 	t.Run("empty gateway_id is InvalidArgument", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
+		s := NewFleetServer(newStubRegistry(), nil, nil)
 		_, err := s.Heartbeat(context.Background(), &fleetpb.HeartbeatRequest{})
 		wantCode(t, err, codes.InvalidArgument)
 	})
 
 	t.Run("success acks", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
+		s := NewFleetServer(newStubRegistry(), nil, nil)
 		_, err := s.Heartbeat(context.Background(), &fleetpb.HeartbeatRequest{
 			GatewayId:          "gw-1",
 			Version:            "v1.2.0",
@@ -98,11 +98,11 @@ func (s stubProvider) ClosureForAPIKey(string) (Closure, error) { return s.cl, s
 
 func TestFleetServer_FetchConfig(t *testing.T) {
 	withProvider := func() *FleetServer {
-		return NewFleetServer(NewMemoryRegistry(), NewStoreConfigProvider(providerTestStore()), nil)
+		return NewFleetServer(newStubRegistry(), NewStoreConfigProvider(providerTestStore()), nil)
 	}
 
 	t.Run("nil provider is Unimplemented", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), nil, nil)
+		s := NewFleetServer(newStubRegistry(), nil, nil)
 		_, err := s.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "k"})
 		wantCode(t, err, codes.Unimplemented)
 	})
@@ -146,13 +146,13 @@ func TestFleetServer_FetchConfig(t *testing.T) {
 	})
 
 	t.Run("no-config provider is Unavailable", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), stubProvider{err: ErrNoConfig}, nil)
+		s := NewFleetServer(newStubRegistry(), stubProvider{err: ErrNoConfig}, nil)
 		_, err := s.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "k"})
 		wantCode(t, err, codes.Unavailable)
 	})
 
 	t.Run("other provider error is Internal", func(t *testing.T) {
-		s := NewFleetServer(NewMemoryRegistry(), stubProvider{err: errors.New("boom")}, nil)
+		s := NewFleetServer(newStubRegistry(), stubProvider{err: errors.New("boom")}, nil)
 		_, err := s.FetchConfig(context.Background(), &fleetpb.FetchConfigRequest{ApiKey: "k"})
 		wantCode(t, err, codes.Internal)
 	})

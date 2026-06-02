@@ -22,6 +22,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -72,6 +73,15 @@ CREATE TABLE IF NOT EXISTS published_versions (
 
 CREATE UNIQUE INDEX IF NOT EXISTS published_versions_single_active
     ON published_versions (active) WHERE active;
+
+CREATE TABLE IF NOT EXISTS fleet_registry (
+    gateway_id           TEXT PRIMARY KEY,
+    version              TEXT NOT NULL DEFAULT '',
+    labels               JSONB NOT NULL DEFAULT '{}'::jsonb,
+    cached_config_hashes JSONB NOT NULL DEFAULT '[]'::jsonb,
+    registered_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `
 
 // Entity is one editable config entity. Body is the contracts/config type as JSON.
@@ -424,4 +434,127 @@ func commit(ctx context.Context, tx pgx.Tx) error {
 		return fmt.Errorf("configdb: commit: %w", err)
 	}
 	return nil
+}
+
+// FleetGateway is one fleet member's persisted state in fleet_registry. It is
+// the shared, replica-independent source of truth for the fleet, replacing the
+// per-process in-memory registry so every CP replica sees one consistent view.
+type FleetGateway struct {
+	ID                 string
+	Version            string
+	Labels             map[string]string
+	CachedConfigHashes []string
+	RegisteredAt       time.Time
+	LastSeen           time.Time
+}
+
+const fleetReturning = `gateway_id, version, labels, cached_config_hashes, registered_at, last_seen`
+
+// RegisterGateway records a gateway's first appearance or refreshes an existing
+// one (idempotent on gateway_id). registered_at is preserved across refreshes;
+// last_seen is stamped server-side so every replica shares one clock. A
+// register does not touch cached_config_hashes (only heartbeats carry those).
+func (db *DB) RegisterGateway(ctx context.Context, id, version string, labels map[string]string) (FleetGateway, error) {
+	labelsJSON, err := marshalJSONObject(labels)
+	if err != nil {
+		return FleetGateway{}, err
+	}
+	row := db.pool.QueryRow(ctx, `
+INSERT INTO fleet_registry (gateway_id, version, labels, last_seen, registered_at)
+VALUES ($1, $2, $3, now(), now())
+ON CONFLICT (gateway_id) DO UPDATE
+  SET version = EXCLUDED.version,
+      labels  = EXCLUDED.labels,
+      last_seen = now()
+RETURNING `+fleetReturning, id, version, labelsJSON)
+	return scanFleetGateway(row)
+}
+
+// HeartbeatGateway updates liveness plus mutable state, self-registering an
+// unknown gateway so a replica that never saw the original Register still
+// converges on the next heartbeat round.
+func (db *DB) HeartbeatGateway(ctx context.Context, id, version string, labels map[string]string, hashes []string) (FleetGateway, error) {
+	labelsJSON, err := marshalJSONObject(labels)
+	if err != nil {
+		return FleetGateway{}, err
+	}
+	hashesJSON, err := marshalJSONArray(hashes)
+	if err != nil {
+		return FleetGateway{}, err
+	}
+	row := db.pool.QueryRow(ctx, `
+INSERT INTO fleet_registry (gateway_id, version, labels, cached_config_hashes, last_seen, registered_at)
+VALUES ($1, $2, $3, $4, now(), now())
+ON CONFLICT (gateway_id) DO UPDATE
+  SET version = EXCLUDED.version,
+      labels  = EXCLUDED.labels,
+      cached_config_hashes = EXCLUDED.cached_config_hashes,
+      last_seen = now()
+RETURNING `+fleetReturning, id, version, labelsJSON, hashesJSON)
+	return scanFleetGateway(row)
+}
+
+// ListGateways returns every known gateway ordered by id, for stable rendering.
+func (db *DB) ListGateways(ctx context.Context) ([]FleetGateway, error) {
+	rows, err := db.pool.Query(ctx, `SELECT `+fleetReturning+` FROM fleet_registry ORDER BY gateway_id`)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: list gateways: %w", err)
+	}
+	defer rows.Close()
+
+	var out []FleetGateway
+	for rows.Next() {
+		g, serr := scanFleetGateway(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// rowScanner is satisfied by both pgx.Row and pgx.Rows, so one scan helper
+// serves the single-row upserts and the List query.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanFleetGateway(s rowScanner) (FleetGateway, error) {
+	var (
+		g          FleetGateway
+		labelsJSON []byte
+		hashesJSON []byte
+	)
+	if err := s.Scan(&g.ID, &g.Version, &labelsJSON, &hashesJSON, &g.RegisteredAt, &g.LastSeen); err != nil {
+		return FleetGateway{}, fmt.Errorf("configdb: scan gateway: %w", err)
+	}
+	if err := json.Unmarshal(labelsJSON, &g.Labels); err != nil {
+		return FleetGateway{}, fmt.Errorf("configdb: unmarshal labels: %w", err)
+	}
+	if err := json.Unmarshal(hashesJSON, &g.CachedConfigHashes); err != nil {
+		return FleetGateway{}, fmt.Errorf("configdb: unmarshal hashes: %w", err)
+	}
+	return g, nil
+}
+
+func marshalJSONObject(m map[string]string) ([]byte, error) {
+	if m == nil {
+		return []byte("{}"), nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: marshal labels: %w", err)
+	}
+	return b, nil
+}
+
+func marshalJSONArray(s []string) ([]byte, error) {
+	if s == nil {
+		return []byte("[]"), nil
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: marshal hashes: %w", err)
+	}
+	return b, nil
 }

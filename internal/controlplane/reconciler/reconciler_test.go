@@ -90,9 +90,9 @@ func TestLogHelpers_NilLoggerSafe(t *testing.T) {
 	r.logError("error", errTest)
 }
 
-func startCP(t *testing.T, token string) (*controlplane.MemoryRegistry, string) {
+func startCP(t *testing.T, token string) (*stubRegistry, string) {
 	t.Helper()
-	reg := controlplane.NewMemoryRegistry()
+	reg := newStubRegistry()
 	srv := controlplane.NewGRPCServer(reg, nil, controlplane.GRPCServerOptions{Token: token})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -185,7 +185,7 @@ func TestRun_AuthFailureIsNonFatal(t *testing.T) {
 	}
 }
 
-func waitForGateway(t *testing.T, reg *controlplane.MemoryRegistry, id string) controlplane.Gateway {
+func waitForGateway(t *testing.T, reg *stubRegistry, id string) controlplane.Gateway {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {

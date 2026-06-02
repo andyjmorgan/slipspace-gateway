@@ -15,7 +15,7 @@ import (
 
 func startCPWithConfig(t *testing.T, provider controlplane.ConfigProvider) string {
 	t.Helper()
-	srv := controlplane.NewGRPCServer(controlplane.NewMemoryRegistry(), nil, controlplane.GRPCServerOptions{Config: provider})
+	srv := controlplane.NewGRPCServer(newStubRegistry(), nil, controlplane.GRPCServerOptions{Config: provider})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
