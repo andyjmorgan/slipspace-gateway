@@ -11,8 +11,8 @@ import { VersionsPage } from "./pages/versions"
 import { BindingsPage } from "./pages/bindings"
 import { ObservabilityPage } from "./pages/observability"
 import { CpEntityListPage } from "./pages/entity-list"
-import { EntityEditorPage } from "./pages/entity-editor"
 import { CpBackendEditorPage } from "./pages/backend-editor"
+import { CpConnectorEditor, CpGroupEditor, CpApiKeyEditor, CpRuleEditor, CpConfigurationEditor } from "./pages/cp-editors"
 
 const CP_TITLES: TopbarTitles = {
   "/fleet": { t: "Fleet", s: "registered gateways · liveness · drift" },
@@ -50,24 +50,24 @@ export default function App() {
         <Route path="/backends/:name" element={<CpBackendEditorPage mode="edit" />} />
 
         <Route path="/configurations" element={<CpEntityListPage kind="configuration" />} />
-        <Route path="/configurations/new" element={<EntityEditorPage mode="create" kind="configuration" />} />
-        <Route path="/configurations/:name" element={<EntityEditorPage mode="edit" kind="configuration" />} />
+        <Route path="/configurations/new" element={<CpConfigurationEditor mode="create" />} />
+        <Route path="/configurations/:name" element={<CpConfigurationEditor mode="edit" />} />
 
         <Route path="/rules" element={<CpEntityListPage kind="rule" />} />
-        <Route path="/rules/new" element={<EntityEditorPage mode="create" kind="rule" />} />
-        <Route path="/rules/:name" element={<EntityEditorPage mode="edit" kind="rule" />} />
+        <Route path="/rules/new" element={<CpRuleEditor mode="create" />} />
+        <Route path="/rules/:name" element={<CpRuleEditor mode="edit" />} />
 
         <Route path="/groups" element={<CpEntityListPage kind="group" />} />
-        <Route path="/groups/new" element={<EntityEditorPage mode="create" kind="group" />} />
-        <Route path="/groups/:name" element={<EntityEditorPage mode="edit" kind="group" />} />
+        <Route path="/groups/new" element={<CpGroupEditor mode="create" />} />
+        <Route path="/groups/:name" element={<CpGroupEditor mode="edit" />} />
 
         <Route path="/connectors" element={<CpEntityListPage kind="connector" />} />
-        <Route path="/connectors/new" element={<EntityEditorPage mode="create" kind="connector" />} />
-        <Route path="/connectors/:name" element={<EntityEditorPage mode="edit" kind="connector" />} />
+        <Route path="/connectors/new" element={<CpConnectorEditor mode="create" />} />
+        <Route path="/connectors/:name" element={<CpConnectorEditor mode="edit" />} />
 
         <Route path="/api-keys" element={<CpEntityListPage kind="api_key" />} />
-        <Route path="/api-keys/new" element={<EntityEditorPage mode="create" kind="api_key" />} />
-        <Route path="/api-keys/:name" element={<EntityEditorPage mode="edit" kind="api_key" />} />
+        <Route path="/api-keys/new" element={<CpApiKeyEditor mode="create" />} />
+        <Route path="/api-keys/:name" element={<CpApiKeyEditor mode="edit" />} />
 
         <Route path="/bindings" element={<BindingsPage />} />
         <Route path="/observability" element={<ObservabilityPage />} />
