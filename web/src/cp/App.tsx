@@ -13,6 +13,7 @@ import { ObservabilityPage } from "./pages/observability"
 import { EventDetailPage } from "./pages/event-detail"
 import { CpEntityListPage } from "./pages/entity-list"
 import { CpBackendListPage } from "./pages/backend-list"
+import { CpApiKeyListPage } from "./pages/api-key-list"
 import { CpBackendDetailPage } from "./pages/backend-detail"
 import { CpBackendEditorPage } from "./pages/backend-editor"
 import { CpConnectorListPage } from "./pages/connector-list"
@@ -70,7 +71,7 @@ export default function App() {
         <Route path="/connectors/new" element={<CpConnectorEditor mode="create" />} />
         <Route path="/connectors/:name" element={<CpConnectorEditor mode="edit" />} />
 
-        <Route path="/api-keys" element={<CpEntityListPage kind="api_key" />} />
+        <Route path="/api-keys" element={<CpApiKeyListPage />} />
         <Route path="/api-keys/new" element={<CpApiKeyEditor mode="create" />} />
         <Route path="/api-keys/:name" element={<CpApiKeyEditor mode="edit" />} />
 

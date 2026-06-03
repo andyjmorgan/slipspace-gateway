@@ -24,9 +24,8 @@ import {
   type RedactedSecret,
   type ConfigurationSummary,
 } from "@/lib/config-api"
-import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
-import { Tag } from "@/components/atoms/tag"
 import { Button } from "@/components/ui/button"
+import { ApiKeyListTable } from "@/components/config-views/api-key-views"
 import { SelectField, CheckboxField, TextField, type SelectOption } from "@/components/forms/field-atoms"
 import { ErrorBanner, DeleteDialog } from "@/components/forms/write-atoms"
 import { classifyWriteError, type EditorError } from "@/lib/write-error"
@@ -69,31 +68,25 @@ export function APIKeysPage() {
         <EmptyPanel message="No API keys. Mint one to authenticate a client against a configuration." />
       )}
       {state.status === "ok" && state.data.length > 0 && (
-        <PanelCard>
-          <PanelHead title="Keys" sub={`${state.data.length} · secret shown only once, at mint`} />
-          <TableScroll>
-            <thead>
-              <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-                <th className="text-left font-medium px-4 py-2">Name</th>
-                <th className="text-left font-medium px-4 py-2">Configuration</th>
-                <th className="text-left font-medium px-4 py-2">Secret</th>
-                <th className="text-left font-medium px-4 py-2">Enabled</th>
-                <th className="text-right font-medium px-4 py-2 w-48">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.data.map((k) => (
-                <APIKeyRow
-                  key={apiKeyRef(k)}
-                  k={k}
-                  onChanged={refetch}
-                  onEdit={() => setEditing(k)}
-                  onDelete={() => setDeleting(k)}
-                />
-              ))}
-            </tbody>
-          </TableScroll>
-        </PanelCard>
+        <ApiKeyListTable
+          rows={state.data}
+          sub={`${state.data.length} · secret shown only once, at mint`}
+          rowKey={(k) => apiKeyRef(k)}
+          extraHead={
+            <>
+              <th className="text-left font-medium px-4 py-2">Secret</th>
+              <th className="text-right font-medium px-4 py-2 w-48">Actions</th>
+            </>
+          }
+          renderTrailing={(k) => (
+            <APIKeyRowActions
+              k={k}
+              onChanged={refetch}
+              onEdit={() => setEditing(k)}
+              onDelete={() => setDeleting(k)}
+            />
+          )}
+        />
       )}
 
       {minting && (
@@ -140,7 +133,13 @@ export function APIKeysPage() {
   )
 }
 
-function APIKeyRow({
+// APIKeyRowActions renders the gateway-only trailing cells of a key row — the
+// per-key secret reveal and the lifecycle actions (enable/disable, edit,
+// delete). These are injected into the shared ApiKeyListTable via its trailing
+// slot and never cross into the control-plane console. Returns the Secret + the
+// Actions <td> cells; the shared table owns the name / configuration / enabled
+// cells ahead of them.
+function APIKeyRowActions({
   k,
   onChanged,
   onEdit,
@@ -200,9 +199,7 @@ function APIKeyRow({
   }
 
   return (
-    <tr className="border-t border-[color:var(--border)]">
-      <td className="px-4 py-2.5 mono">{k.name}</td>
-      <td className="px-4 py-2.5 mono text-[color:var(--text-2)]">{k.configuration}</td>
+    <>
       <td className="px-4 py-2.5">
         {revealed != null ? (
           <span className="inline-flex items-center gap-1.5">
@@ -243,10 +240,6 @@ function APIKeyRow({
         )}
       </td>
       <td className="px-4 py-2.5">
-        {k.enabled ? <Tag variant="success">enabled</Tag> : <Tag variant="danger">disabled</Tag>}
-        {err && <div className="text-[11px] mt-1" style={{ color: "var(--err)" }}>{err}</div>}
-      </td>
-      <td className="px-4 py-2.5">
         <div className="flex items-center gap-1.5 justify-end">
           <Button type="button" size="xs" variant={k.enabled ? "outline" : "default"} onClick={toggle} disabled={busy}>
             {busy ? "…" : k.enabled ? "Disable" : "Enable"}
@@ -262,8 +255,9 @@ function APIKeyRow({
             Delete
           </Button>
         </div>
+        {err && <div className="text-[11px] mt-1 text-right" style={{ color: "var(--err)" }}>{err}</div>}
       </td>
-    </tr>
+    </>
   )
 }
 
