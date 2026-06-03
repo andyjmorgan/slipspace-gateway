@@ -118,26 +118,47 @@ func run(ctx context.Context) error {
 		)
 	}
 
-	spoolInst, spoolCleanup, err := setupSpool(ctx, env, resolved, logger)
-	if err != nil {
-		return fmt.Errorf("gateway: spool setup: %w", err)
-	}
-	defer spoolCleanup()
-
 	// The Store owns the live ResolvedConfig and brokers swaps via
 	// subscribers. Consumers that pre-derive state (routing.Router)
 	// subscribe; hot-readers (auth.Resolver, rules.Evaluator, admin
 	// handlers, reporter) call Snapshot per operation. Phase 2 adds
 	// the admin write path that calls store.Replace.
+	//
+	// Created before the spool deliberately: on a CP-managed gateway the
+	// connectors arrive in the control-plane closure, not in the (often
+	// empty) bootstrap config, so the spool must be initialized from the
+	// post-bootstrap snapshot — see the config-sync bootstrap below.
 	store := config.NewStore(resolved)
 
 	// Shared between config sync (writes the applied closure hash) and the
 	// reconciler (reports it on heartbeat) so the control plane sees config drift.
 	appliedHash := &reconciler.AppliedHash{}
 
-	// When CP-managed, fetch + apply the control-plane config before the data
-	// plane starts serving (and keep it synced after). No-op otherwise.
-	startControlPlaneConfigSync(ctx, env, store, appliedHash, obs, logger)
+	// When CP-managed, fetch + apply the control-plane config BEFORE the spool
+	// is wired so connectors distributed by the control plane enable body
+	// capture. The returned syncer (nil unless CP-managed) starts its ongoing
+	// resync loop after the data plane is assembled. No-op otherwise — a
+	// file-backed gateway keeps serving its locally-loaded config.
+	configSyncer := bootstrapControlPlaneConfigSync(ctx, env, store, appliedHash, logger)
+
+	// Spool tracks are registered once before Start (the Spool is not
+	// runtime-reconfigurable), so it must see the post-bootstrap config: on a
+	// CP-managed gateway this is the snapshot the control plane just applied,
+	// carrying the distributed connectors. On a file-backed gateway it is the
+	// same config that was loaded from disk.
+	spoolConfig := store.Snapshot()
+	spoolInst, spoolCleanup, err := setupSpool(ctx, env, spoolConfig, logger)
+	if err != nil {
+		return fmt.Errorf("gateway: spool setup: %w", err)
+	}
+	defer spoolCleanup()
+	logBodyCaptureState(ctx, env, spoolConfig, spoolInst, logger)
+
+	// The ongoing resync loop runs in the background once the spool and the
+	// rest of the data plane are wired. A new closure applied here swaps the
+	// live config atomically through the store, but the spool's tracks are
+	// fixed at boot — a connector added post-boot needs a restart to capture.
+	startControlPlaneConfigSyncRun(ctx, configSyncer, obs, logger)
 
 	resolver := auth.NewResolver(store)
 
@@ -151,7 +172,10 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("gateway: body store: %w", err)
 	}
 
-	contentCaps := resolved.Telemetry.ContentCapture.Resolve()
+	// Read from the post-bootstrap snapshot, not the pre-bootstrap
+	// resolved: on a CP-managed gateway the telemetry content-capture
+	// policy arrives in the control-plane closure.
+	contentCaps := spoolConfig.Telemetry.ContentCapture.Resolve()
 	reporter := newReporterFactory(spoolInst, store, logger, obs.Meters, liveFeed, bodyStore, obs.Tracer(), obs.EventLogger(), env.OTelCaptureContent, contentCaps)
 	observerFactory := reporter.Factory()
 	// One Redactor for the whole process — the built-in substring
@@ -227,13 +251,15 @@ func run(ctx context.Context) error {
 
 	startControlPlaneReconciler(ctx, env, gatewayID, appliedHash, obs, logger)
 
+	// Counts reflect the post-bootstrap snapshot so a CP-managed gateway
+	// logs the control-plane closure it serves, not the empty bootstrap.
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
 		"config_dir", env.ConfigDir,
-		"backends", len(resolved.Backends),
-		"configurations", len(resolved.Configurations),
-		"api_keys", len(resolved.APIKeys),
-		"admin_enabled", resolved.Admin != nil && resolved.Admin.Enabled,
+		"backends", len(spoolConfig.Backends),
+		"configurations", len(spoolConfig.Configurations),
+		"api_keys", len(spoolConfig.APIKeys),
+		"admin_enabled", spoolConfig.Admin != nil && spoolConfig.Admin.Enabled,
 	)
 
 	if err := srv.Run(ctx); err != nil {
@@ -600,15 +626,21 @@ func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, gat
 	})
 }
 
-// startControlPlaneConfigSync, when the gateway is CP-managed with a bootstrap
-// api-key, fetches its configuration closure from the control plane and applies
-// it before the data plane begins serving (Bootstrap), then keeps it in sync in
-// the background (Run). No-op without an endpoint + bootstrap key — the gateway
-// then serves its local file-backed config. CP-0 holds: an unreachable control
-// plane leaves the locally-loaded config in place (serve-stale).
-func startControlPlaneConfigSync(ctx context.Context, env *config.ServerEnv, store *config.Store, applied *reconciler.AppliedHash, obs *observability.Provider, logger *slog.Logger) {
+// bootstrapControlPlaneConfigSync, when the gateway is CP-managed with a
+// bootstrap api-key, fetches its configuration closure from the control plane
+// and applies it to the store BEFORE the data plane is assembled (the blocking
+// Bootstrap). It returns the constructed syncer so the caller can start the
+// ongoing resync loop after the spool and the rest of the data plane are wired
+// — the spool must be initialized from the post-bootstrap snapshot so
+// CP-distributed connectors enable body capture.
+//
+// Returns nil without an endpoint + bootstrap key (file-backed gateway: the
+// store keeps its locally-loaded config) or on a syncer construction error.
+// CP-0 holds: an unreachable control plane leaves the locally-loaded config in
+// place (serve-stale) and the gateway still starts.
+func bootstrapControlPlaneConfigSync(ctx context.Context, env *config.ServerEnv, store *config.Store, applied *reconciler.AppliedHash, logger *slog.Logger) *reconciler.ConfigSyncer {
 	if !env.ControlPlaneEnabled() || env.ControlPlaneBootstrapAPIKey == "" {
-		return
+		return nil
 	}
 
 	syncer, err := reconciler.NewConfigSyncer(reconciler.ConfigSyncerOptions{
@@ -623,16 +655,60 @@ func startControlPlaneConfigSync(ctx context.Context, env *config.ServerEnv, sto
 	})
 	if err != nil {
 		logger.WarnContext(ctx, "control-plane config sync not started", "err", err.Error())
-		return
+		return nil
 	}
 
 	logger.InfoContext(ctx, "control-plane config sync: bootstrapping before serve",
 		"endpoint", env.ControlPlaneEndpoint,
 	)
 	syncer.Bootstrap(ctx)
+	return syncer
+}
+
+// startControlPlaneConfigSyncRun launches the ongoing resync loop in a
+// background goroutine bound to ctx. No-op when syncer is nil (file-backed
+// gateway or a bootstrap construction error). Split from the bootstrap so the
+// blocking initial fetch lands before the spool is wired.
+func startControlPlaneConfigSyncRun(ctx context.Context, syncer *reconciler.ConfigSyncer, obs *observability.Provider, logger *slog.Logger) {
+	if syncer == nil {
+		return
+	}
 	safego.Go(ctx, "gateway.controlplane.configsync", logger, obs.Meters, func() {
 		syncer.Run(ctx)
 	})
+}
+
+// logBodyCaptureState makes the capture decision honest in the logs: it states
+// whether request/response body capture is on (spool wired) or off, and why.
+// The load-bearing case is a CP-managed gateway whose post-bootstrap config
+// carries connectors but whose spool is nil — after the bootstrap-before-spool
+// reorder that should never happen, so it is logged at WARN as a regression
+// signal. A CP-managed gateway with no connectors in the post-bootstrap config
+// (e.g. the control plane was unreachable at boot and no cache existed) logs an
+// honest WARN that capture is off until a restart with the CP reachable.
+func logBodyCaptureState(ctx context.Context, env *config.ServerEnv, resolved *config.ResolvedConfigV2, spoolInst *spool.Spool, logger *slog.Logger) {
+	if spoolInst != nil {
+		logger.InfoContext(ctx, "body capture enabled (connector spool wired)",
+			"connectors", len(resolved.Connectors),
+		)
+		return
+	}
+	if !env.ControlPlaneManaged() {
+		// File-backed gateway with no connectors: capture-off is the
+		// operator's explicit configuration, not a surprise.
+		return
+	}
+	if len(resolved.Connectors) > 0 {
+		// Should be unreachable after the reorder — connectors present but
+		// the spool gave up. Surfaced loudly so it is not silent.
+		logger.WarnContext(ctx, "body capture OFF despite connectors in post-bootstrap config; spool was not wired — this is a startup-ordering regression",
+			"connectors", len(resolved.Connectors),
+		)
+		return
+	}
+	logger.WarnContext(ctx, "body capture OFF: CP-managed gateway has no connectors in its post-bootstrap config; capture stays off until a restart with the control plane reachable (the spool is fixed at boot)",
+		"control_plane_endpoint", env.ControlPlaneEndpoint,
+	)
 }
 
 // parseLabels turns a "k=v" list into a map. Entries without "=" or with an
