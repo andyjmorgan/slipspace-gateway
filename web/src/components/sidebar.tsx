@@ -1,25 +1,42 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { NavLink, useLocation } from "react-router"
 import { cn } from "@/lib/utils"
-import { fetchVersion } from "@/lib/api"
-import { NAV } from "@/lib/nav-meta"
+import { fetchVersion as gatewayFetchVersion } from "@/lib/api"
+import { NAV, type NavMeta } from "@/lib/nav-meta"
 
-// Sidebar is the primary nav rail. On desktop (md+) it renders as a
-// static column always docked to the left. On mobile it renders as a
-// fixed overlay drawer that slides in when isOpen is true and dims the
-// rest of the screen via the backdrop in AppLayout. Tapping a nav link
-// closes the drawer so a touch user lands on the new route in the main
-// pane instead of stranded behind the rail.
+// Sidebar is the primary nav rail, shared by both consoles. On desktop (md+)
+// it renders as a static column docked left; on mobile a fixed overlay drawer
+// that slides in when isOpen and dims the rest via the AppLayout backdrop.
+//
+// The rail is parameterised by its nav list, a version fetcher, and a footer
+// node so the gateway admin SPA and the control-plane console render the
+// identical component with their own contents. Defaults are the gateway's, so
+// existing gateway callsites are unchanged.
 export function Sidebar({
   isOpen,
   onClose,
+  nav = NAV,
+  versionFetch = gatewayFetchVersion,
+  footer = <GatewayFooter />,
 }: {
   isOpen: boolean
   onClose: () => void
+  nav?: NavMeta[]
+  versionFetch?: () => Promise<string>
+  footer?: ReactNode
 }) {
-  const version = useGatewayVersion()
+  const version = useVersion(versionFetch)
   const loc = useLocation()
-  let lastSection: string | undefined
+
+  // Precompute, per nav item, the section header to show above it (only when
+  // the section changes from the last section-bearing item). Done in a plain
+  // loop rather than mutating during the JSX map.
+  const sectionHeaders: (string | undefined)[] = []
+  let carried: string | undefined
+  for (const item of nav) {
+    sectionHeaders.push(item.section && item.section !== carried ? item.section : undefined)
+    if (item.section) carried = item.section
+  }
 
   // Close the drawer whenever the route changes (mobile interaction).
   useEffect(() => {
@@ -32,7 +49,6 @@ export function Sidebar({
     <aside
       className={cn(
         "flex flex-col bg-[color:var(--bg-1)] border-r border-[color:var(--border)]",
-        // Mobile: fixed overlay that slides in. Desktop: static column.
         "fixed inset-y-0 left-0 z-40 transform transition-transform duration-200",
         "md:static md:translate-x-0 md:transition-none",
         isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
@@ -50,24 +66,20 @@ export function Sidebar({
         />
         <div className="flex flex-col min-w-0">
           <span className="font-semibold tracking-tight text-[15px] leading-tight">sluice</span>
-          <span
-            className="mono text-[10.5px] text-[color:var(--text-4)] truncate"
-            title={version ?? ""}
-          >
+          <span className="mono text-[10.5px] text-[color:var(--text-4)] truncate" title={version ?? ""}>
             {version ?? "…"}
           </span>
         </div>
       </div>
 
       <nav className="flex-1 py-2 overflow-y-auto">
-        {NAV.map((item) => {
-          const isNew = item.section && item.section !== lastSection
-          lastSection = item.section ?? lastSection
+        {nav.map((item, i) => {
+          const header = sectionHeaders[i]
           return (
             <div key={item.to}>
-              {isNew && (
+              {header && (
                 <div className="px-3.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[color:var(--text-4)]">
-                  {item.section}
+                  {header}
                 </div>
               )}
               <NavLink
@@ -89,36 +101,47 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="flex items-center gap-2 px-3.5 py-3 border-t border-[color:var(--border)] text-[11.5px] text-[color:var(--text-3)]">
-        <span
-          className="inline-block size-1.5 rounded-full"
-          style={{ background: "var(--ok)" }}
-        />
-        <span>gateway healthy</span>
-        <span className="mono ml-auto text-[color:var(--text-4)]">:8081</span>
-      </div>
+      {footer}
     </aside>
   )
 }
 
-// useGatewayVersion fetches the binary's build-time version from the
-// unauthenticated /api/v1/version endpoint once on mount. Returns null
-// while in flight or on error — the sidebar renders "…" in either
-// case rather than blocking the layout on it.
-function useGatewayVersion(): string | null {
+function GatewayFooter() {
+  return (
+    <div className="flex items-center gap-2 px-3.5 py-3 border-t border-[color:var(--border)] text-[11.5px] text-[color:var(--text-3)]">
+      <span className="inline-block size-1.5 rounded-full" style={{ background: "var(--ok)" }} />
+      <span>gateway healthy</span>
+      <span className="mono ml-auto text-[color:var(--text-4)]">:8081</span>
+    </div>
+  )
+}
+
+// SidebarFooter is the shared footer shape (status dot + label + meta), exported
+// so the control-plane console can render a matching footer with its own text.
+export function SidebarFooter({ label, meta }: { label: string; meta: string }) {
+  return (
+    <div className="flex items-center gap-2 px-3.5 py-3 border-t border-[color:var(--border)] text-[11.5px] text-[color:var(--text-3)]">
+      <span className="inline-block size-1.5 rounded-full" style={{ background: "var(--ok)" }} />
+      <span>{label}</span>
+      <span className="mono ml-auto text-[color:var(--text-4)]">{meta}</span>
+    </div>
+  )
+}
+
+function useVersion(fetcher: () => Promise<string>): string | null {
   const [version, setVersion] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
-    fetchVersion()
+    fetcher()
       .then((v) => {
         if (!cancelled) setVersion(v)
       })
       .catch(() => {
-        // /version is best-effort cosmetic; swallow.
+        // best-effort cosmetic; swallow.
       })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [fetcher])
   return version
 }

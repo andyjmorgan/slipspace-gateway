@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { apiErrorText, UnauthorizedError } from "../lib/api"
 import { getEntity, putEntity } from "../lib/config-api"
+import { KIND_META, routeFor } from "../lib/kinds"
 import { ENTITY_KINDS, type EntityKind } from "../lib/types"
 
 // Minimal valid skeletons so a freshly-created entity starts from a shape
@@ -43,13 +44,18 @@ const SKELETON: Record<EntityKind, string> = {
 }`,
 }
 
-export function EntityEditorPage({ mode }: { mode: "create" | "edit" }) {
+// EntityEditorPage is the generic JSON editor for entity kinds that don't yet
+// have a structured form. `kind` is fixed when reached from a per-type route
+// (/configurations/new, /rules/:name, …); the kind dropdown only appears on the
+// generic create path.
+export function EntityEditorPage({ mode, kind: fixedKind }: { mode: "create" | "edit"; kind?: EntityKind }) {
   const nav = useNavigate()
   const params = useParams()
   const [searchParams] = useSearchParams()
   const editing = mode === "edit"
 
-  const initialKind = ((params.kind as EntityKind) ??
+  const initialKind = (fixedKind ??
+    (params.kind as EntityKind) ??
     (searchParams.get("kind") as EntityKind) ??
     "backend") as EntityKind
   const [kind, setKind] = useState<EntityKind>(initialKind)
@@ -59,9 +65,12 @@ export function EntityEditorPage({ mode }: { mode: "create" | "edit" }) {
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(!editing)
 
+  const backTo = `/${routeFor(initialKind)}`
+  const kindFixed = fixedKind != null
+
   useEffect(() => {
     if (!editing) return
-    getEntity(params.kind!, params.name!)
+    getEntity(initialKind, params.name!)
       .then((e) => {
         setBody(JSON.stringify(e.body, null, 2))
         setLoaded(true)
@@ -70,7 +79,7 @@ export function EntityEditorPage({ mode }: { mode: "create" | "edit" }) {
         if (e instanceof UnauthorizedError) return nav("/login", { replace: true })
         setError(e instanceof Error ? e.message : "Failed to load entity")
       })
-  }, [editing, params.kind, params.name, nav])
+  }, [editing, initialKind, params.name, nav])
 
   const save = async () => {
     setError(null)
@@ -88,7 +97,7 @@ export function EntityEditorPage({ mode }: { mode: "create" | "edit" }) {
     setBusy(true)
     try {
       await putEntity(kind, name.trim(), parsed)
-      nav("/config")
+      nav(backTo)
     } catch (e) {
       if (e instanceof UnauthorizedError) return nav("/login", { replace: true })
       setError(apiErrorText(e))
@@ -103,13 +112,13 @@ export function EntityEditorPage({ mode }: { mode: "create" | "edit" }) {
   return (
     <div className="max-w-[820px]">
       <button
-        onClick={() => nav("/config")}
+        onClick={() => nav(backTo)}
         className="flex items-center gap-1.5 text-[13px] text-[color:var(--text-3)] hover:text-[color:var(--text)] mb-3"
       >
-        <ArrowLeft size={14} /> Config
+        <ArrowLeft size={14} /> {KIND_META[initialKind].title}
       </button>
       <h1 className="text-[22px] font-semibold tracking-[-0.02em] mb-4">
-        {editing ? `Edit ${kind}/${name}` : "New entity"}
+        {editing ? `Edit ${kind} · ${name}` : `New ${kind}`}
       </h1>
 
       <div className="flex flex-col gap-4">
@@ -118,7 +127,7 @@ export function EntityEditorPage({ mode }: { mode: "create" | "edit" }) {
             <Label className="text-[11px] font-medium uppercase tracking-[0.07em] text-[color:var(--text-3)]">Kind</Label>
             <select
               value={kind}
-              disabled={editing}
+              disabled={editing || kindFixed}
               onChange={(e) => {
                 const k = e.target.value as EntityKind
                 setKind(k)
@@ -166,7 +175,7 @@ export function EntityEditorPage({ mode }: { mode: "create" | "edit" }) {
             <Save />
             {busy ? "Saving…" : "Save"}
           </Button>
-          <Button variant="ghost" onClick={() => nav("/config")}>
+          <Button variant="ghost" onClick={() => nav(backTo)}>
             Cancel
           </Button>
         </div>

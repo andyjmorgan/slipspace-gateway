@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
 
-const TITLES: Record<string, { t: string; s: string }> = {
+export type TopbarTitles = Record<string, { t: string; s: string }>
+
+const GATEWAY_TITLES: TopbarTitles = {
   "/dashboard": { t: "Dashboard", s: "metrics over the last 24h" },
   "/configurations": { t: "Configurations", s: "policy bundles · rule chains" },
   "/apikeys": { t: "API Keys", s: "internal services holding sluice secrets" },
@@ -14,11 +16,19 @@ const TITLES: Record<string, { t: string; s: string }> = {
   "/settings": { t: "Settings", s: "gateway config & telemetry destinations" },
 }
 
-export function Topbar({ onMenuToggle }: { onMenuToggle: () => void }) {
+// Topbar is shared by both consoles; titles defaults to the gateway map so its
+// callsites stay unchanged, and the control-plane console passes its own.
+export function Topbar({
+  onMenuToggle,
+  titles = GATEWAY_TITLES,
+}: {
+  onMenuToggle: () => void
+  titles?: TopbarTitles
+}) {
   const loc = useLocation()
   const nav = useNavigate()
   const [theme, , toggle] = useTheme()
-  const cur = TITLES[loc.pathname] ?? { t: "", s: "" }
+  const cur = titles[loc.pathname] ?? { t: "", s: "" }
   const onLogout = () => {
     auth.clear()
     nav("/login", { replace: true })
