@@ -9,6 +9,7 @@ import (
 	"time"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
@@ -205,6 +206,81 @@ func TestSetup_BothExportersCoexist(t *testing.T) {
 	if prov.PromHandler == nil {
 		t.Errorf("expected PromHandler when Prometheus enabled")
 	}
+}
+
+func TestSetup_ControlPlaneOnlyBuildsSDKProviders(t *testing.T) {
+	t.Parallel()
+
+	// A fleet gateway with no external collector still gets SDK trace + metric
+	// providers because the control plane is a span/metric sink. Spans feed the
+	// CP's request_events; metrics feed metric_points.
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		CPEndpoint: "127.0.0.1:18485",
+		CPToken:    "test-token",
+		LogFormat:  "json",
+		LogLevel:   "info",
+	}, build())
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	t.Cleanup(func() { shutdownProv(prov) })
+
+	if prov.PromHandler != nil {
+		t.Errorf("expected nil PromHandler when only the control plane is enabled")
+	}
+	if _, ok := prov.MeterProvider.(*sdkmetric.MeterProvider); !ok {
+		t.Errorf("expected SDK MeterProvider, got %T", prov.MeterProvider)
+	}
+	if _, ok := prov.TracerProvider.(*sdktrace.TracerProvider); !ok {
+		t.Errorf("expected SDK TracerProvider when CP enabled, got %T", prov.TracerProvider)
+	}
+}
+
+func TestSetup_ControlPlaneAndExternalCoexist(t *testing.T) {
+	t.Parallel()
+
+	// Both an external collector and the control plane: the same spans/metrics
+	// fan out to both batchers/readers. Setup must build cleanly with both.
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		OTLPEndpoint: "127.0.0.1:14317",
+		OTLPProtocol: "grpc",
+		CPEndpoint:   "127.0.0.1:18485",
+		CPToken:      "test-token",
+		LogFormat:    "json",
+		LogLevel:     "info",
+	}, build())
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	t.Cleanup(func() { shutdownProv(prov) })
+
+	if _, ok := prov.TracerProvider.(*sdktrace.TracerProvider); !ok {
+		t.Errorf("expected SDK TracerProvider with external+CP, got %T", prov.TracerProvider)
+	}
+}
+
+func TestCPAuthHeader(t *testing.T) {
+	t.Parallel()
+
+	if got := observability.CPAuthHeaderForTest(""); got != nil {
+		t.Errorf("empty token: want nil header map, got %v", got)
+	}
+	got := observability.CPAuthHeaderForTest("abc123")
+	if got["authorization"] != "Bearer abc123" {
+		t.Errorf("authorization header = %q, want %q", got["authorization"], "Bearer abc123")
+	}
+}
+
+func TestNewCPSpanExporter(t *testing.T) {
+	t.Parallel()
+
+	exp, err := observability.NewCPSpanExporterForTest(context.Background(), "127.0.0.1:18485", "test-token")
+	if err != nil {
+		t.Fatalf("NewCPSpanExporterForTest: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_ = exp.Shutdown(ctx)
 }
 
 func TestSetup_LoggingErrorPropagates(t *testing.T) {

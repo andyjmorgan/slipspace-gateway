@@ -135,6 +135,15 @@ func TestSessionContext_EmptyAndNil(t *testing.T) {
 	if got := observability.SessionIDFromContext(context.TODO()); got != "" {
 		t.Errorf("id from empty ctx = %q, want empty", got)
 	}
+	// A literal nil context hits the explicit guard in both getters.
+	//nolint:staticcheck // SA1012: deliberately passing nil to exercise the nil-ctx guard
+	if got := observability.SessionIDFromContext(nil); got != "" {
+		t.Errorf("id from nil ctx = %q, want empty", got)
+	}
+	//nolint:staticcheck // SA1012: deliberately passing nil to exercise the nil-ctx guard
+	if got := observability.SessionIDSourceFromContext(nil); got != "" {
+		t.Errorf("source from nil ctx = %q, want empty", got)
+	}
 }
 
 func TestSessionContext_IDWithoutSource(t *testing.T) {

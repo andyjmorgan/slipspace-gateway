@@ -81,10 +81,20 @@ func run(ctx context.Context) error {
 	}
 
 	build := observability.BuildInfo{Service: binaryName, Version: version.Version}
+	// A fleet gateway also pushes its traces + metrics to the control plane so
+	// the self-contained fleet console is fed without an external collector.
+	// CP-0 still holds: telemetry export is out of band, never on the request
+	// path, and an unreachable CP only drops buffered telemetry.
+	var cpTelemetryEndpoint string
+	if env.ControlPlaneEnabled() {
+		cpTelemetryEndpoint = env.ControlPlaneEndpoint
+	}
 	obs, err := observability.Setup(ctx, observability.Config{
 		PrometheusBind:   env.PrometheusBind,
 		OTLPEndpoint:     env.OTLPEndpoint,
 		OTLPProtocol:     env.OTLPProtocol,
+		CPEndpoint:       cpTelemetryEndpoint,
+		CPToken:          env.ControlPlaneToken,
 		LogFormat:        env.LogFormat,
 		LogLevel:         env.LogLevel,
 		SnapshotInterval: time.Duration(env.AdminSnapshotIntervalMs) * time.Millisecond,
