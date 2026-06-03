@@ -12,6 +12,8 @@ import { BindingsPage } from "./pages/bindings"
 import { ObservabilityPage } from "./pages/observability"
 import { EventDetailPage } from "./pages/event-detail"
 import { CpEntityListPage } from "./pages/entity-list"
+import { CpBackendListPage } from "./pages/backend-list"
+import { CpBackendDetailPage } from "./pages/backend-detail"
 import { CpBackendEditorPage } from "./pages/backend-editor"
 import { CpConnectorEditor, CpGroupEditor, CpApiKeyEditor, CpRuleEditor, CpConfigurationEditor } from "./pages/cp-editors"
 
@@ -44,11 +46,11 @@ export default function App() {
         <Route path="/" element={<Navigate to="/fleet" replace />} />
         <Route path="/fleet" element={<FleetPage />} />
 
-        {/* Backends have a structured editor; the rest use the generic JSON
-            editor until their parity slices land. */}
-        <Route path="/backends" element={<CpEntityListPage kind="backend" />} />
+        {/* Backends: list → detail → edit, mirroring the gateway console. */}
+        <Route path="/backends" element={<CpBackendListPage />} />
         <Route path="/backends/new" element={<CpBackendEditorPage mode="create" />} />
-        <Route path="/backends/:name" element={<CpBackendEditorPage mode="edit" />} />
+        <Route path="/backends/:name" element={<CpBackendDetailPage />} />
+        <Route path="/backends/:name/edit" element={<CpBackendEditorPage mode="edit" />} />
 
         <Route path="/configurations" element={<CpEntityListPage kind="configuration" />} />
         <Route path="/configurations/new" element={<CpConfigurationEditor mode="create" />} />

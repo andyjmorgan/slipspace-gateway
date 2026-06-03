@@ -46,7 +46,7 @@ export function CpBackendEditorPage({ mode }: { mode: "create" | "edit" }) {
     setBusy(true)
     try {
       await putEntity("backend", name, backendFormToContract(form))
-      nav("/backends")
+      nav(`/backends/${encodeURIComponent(name)}`)
     } catch (e) {
       if (e instanceof UnauthorizedError) return nav("/login", { replace: true })
       setError(apiErrorText(e))
