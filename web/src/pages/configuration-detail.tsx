@@ -1,17 +1,16 @@
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
-import { useConfiguration, deleteConfiguration, type RedactedSecret, type RuleAttachment, type APIKeySummary, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
-import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { useConfiguration, deleteConfiguration } from "@/lib/config-api"
 import { Tag } from "@/components/atoms/tag"
-import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Button } from "@/components/ui/button"
 import { DeleteDialog } from "@/components/forms/write-atoms"
+import { ConfigurationDetailView } from "@/components/config-views/configuration-views"
+import { configurationDetailFromGateway } from "@/components/config-views/configuration-views-model"
 import {
   PageHeader,
   LoadingPanel,
   ErrorPanel,
   NotFoundPanel,
-  EmptyPanel,
   useUnauthorizedRedirect,
 } from "@/components/atoms/page-states"
 
@@ -49,6 +48,7 @@ export function ConfigurationDetailPage() {
   if (state.status !== "ok") return null
 
   const c = state.data
+  const view = configurationDetailFromGateway(c)
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
@@ -86,229 +86,7 @@ export function ConfigurationDetailPage() {
         onClose={() => setConfirmDelete(false)}
       />
 
-      <CredentialsCard creds={c.credentials} />
-      <BindingsCard bindings={c.bindings} passthrough={c.passthrough_bindings} />
-      <AttachedRulesCard rules={c.rules} />
-      <APIKeysCard keys={c.api_keys} />
+      <ConfigurationDetailView config={view} />
     </div>
   )
-}
-
-function CredentialsCard({ creds }: { creds: Record<string, RedactedSecret> }) {
-  const entries = Object.entries(creds)
-  return (
-    <PanelCard>
-      <PanelHead title="Credentials" sub="redacted · managed mode swaps these onto the upstream request, keyed by backend" />
-      {entries.length === 0 && (
-        <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">
-          No managed-mode credentials. Passthrough-only configuration.
-        </div>
-      )}
-      {entries.length > 0 && (
-        <TableScroll>
-          <thead>
-            <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Backend</th>
-              <th className="text-left font-medium px-4 py-2">Redacted</th>
-              <th className="text-right font-medium px-4 py-2">Length</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map(([backend, redacted]) => (
-              <tr key={backend} className="border-t border-[color:var(--border)]">
-                <td className="px-4 py-2.5">
-                  <Link to={`/backends/${encodeURIComponent(backend)}`}><ProviderChip name={backend} /></Link>
-                </td>
-                <td className="px-4 py-2.5"><Redacted r={redacted} /></td>
-                <td className="mono tnum text-right px-4 py-2.5 text-[color:var(--text-3)]">{redacted.length}</td>
-              </tr>
-            ))}
-          </tbody>
-        </TableScroll>
-      )}
-    </PanelCard>
-  )
-}
-
-function BindingsCard({
-  bindings,
-  passthrough,
-}: {
-  bindings: BindingRow[]
-  passthrough: PassthroughBindingRow[]
-}) {
-  const total = bindings.length + passthrough.length
-  return (
-    <PanelCard>
-      <PanelHead title="Bindings" sub={`how this configuration maps models to backends · ${total}`} />
-      {total === 0 && (
-        <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No bindings configured.</div>
-      )}
-      {bindings.length > 0 && (
-        <TableScroll>
-          <thead>
-            <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Protocol</th>
-              <th className="text-left font-medium px-4 py-2">Models</th>
-              <th className="text-left font-medium px-4 py-2">Target</th>
-              <th className="text-left font-medium px-4 py-2">Alias</th>
-            </tr>
-          </thead>
-          <tbody>
-            {bindings.map((b, i) => (
-              <tr key={`${b.protocol}::${i}`} className="border-t border-[color:var(--border)]">
-                <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">{b.protocol}</td>
-                <td className="px-4 py-2.5">
-                  <div className="flex gap-1 flex-wrap">
-                    {b.models.length === 0 ? (
-                      <Tag variant="ghost">any</Tag>
-                    ) : (
-                      b.models.map((m) => (
-                        <Tag key={m} variant="default"><span className="mono">{m}</span></Tag>
-                      ))
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-2.5">
-                  {b.backend ? (
-                    <Link to={`/backends/${encodeURIComponent(b.backend)}`}><ProviderChip name={b.backend} /></Link>
-                  ) : b.group ? (
-                    <Tag variant="violet"><span className="mono">group {b.group}</span></Tag>
-                  ) : (
-                    <span className="text-[color:var(--text-4)]">—</span>
-                  )}
-                </td>
-                <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">
-                  {b.alias ?? <span className="text-[color:var(--text-4)]">—</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </TableScroll>
-      )}
-      {passthrough.length > 0 && (
-        <TableScroll className="border-t border-[color:var(--border)]">
-          <thead>
-            <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Passthrough family</th>
-              <th className="text-left font-medium px-4 py-2">Backend</th>
-            </tr>
-          </thead>
-          <tbody>
-            {passthrough.map((b, i) => (
-              <tr key={`${b.family}::${i}`} className="border-t border-[color:var(--border)]">
-                <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">{b.family}</td>
-                <td className="px-4 py-2.5">
-                  <Link to={`/backends/${encodeURIComponent(b.backend)}`}><ProviderChip name={b.backend} /></Link>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </TableScroll>
-      )}
-    </PanelCard>
-  )
-}
-
-function AttachedRulesCard({ rules }: { rules: RuleAttachment[] }) {
-  return (
-    <PanelCard>
-      <PanelHead title="Attached rules" sub={`evaluated in order, top to bottom · ${rules.length}`} />
-      {rules.length === 0 && (
-        <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No rules attached.</div>
-      )}
-      {rules.length > 0 && (
-        <TableScroll>
-          <thead>
-            <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Name</th>
-              <th className="text-left font-medium px-4 py-2">Condition</th>
-              <th className="text-left font-medium px-4 py-2">Actions</th>
-              <th className="text-left font-medium px-4 py-2">Behavior</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rules.map((r) => (
-              <tr key={r.name} className="border-t border-[color:var(--border)] hover:bg-[color:var(--hover)]">
-                <td className="px-4 py-2.5">
-                  <Link to={`/rules/${encodeURIComponent(r.name)}`} className="mono hover:underline">{r.name}</Link>
-                </td>
-                <td className="mono text-[12px] px-4 py-2.5 text-[color:var(--text-2)]">{r.condition_summary}</td>
-                <td className="px-4 py-2.5">
-                  <div className="flex gap-1.5 flex-wrap">
-                    {r.action_types.map((t, i) => (
-                      <Tag key={i} variant={t.startsWith("change") ? "violet" : "default"}>
-                        <span className="mono">{t}</span>
-                      </Tag>
-                    ))}
-                  </div>
-                </td>
-                <td className="px-4 py-2.5">
-                  <BehaviorBadge behavior={r.behavior} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </TableScroll>
-      )}
-    </PanelCard>
-  )
-}
-
-
-function APIKeysCard({ keys }: { keys: APIKeySummary[] }) {
-  return (
-    <PanelCard>
-      <PanelHead
-        title="API keys"
-        sub={`${keys.length} key${keys.length === 1 ? "" : "s"} resolve to this configuration`}
-        action={
-          <Link to="/api-keys" className="text-[12px] text-[color:var(--text-3)] hover:underline">
-            manage →
-          </Link>
-        }
-      />
-      {keys.length === 0 && (
-        <EmptyPanel message="No API keys resolve to this configuration." />
-      )}
-      {keys.length > 0 && (
-        <TableScroll>
-          <thead>
-            <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Name</th>
-              <th className="text-left font-medium px-4 py-2">Secret</th>
-              <th className="text-left font-medium px-4 py-2">Enabled</th>
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map((k) => (
-              <tr key={k.name} className="border-t border-[color:var(--border)]">
-                <td className="px-4 py-2.5 mono">{k.name}</td>
-                <td className="px-4 py-2.5"><Redacted r={k.secret} /></td>
-                <td className="px-4 py-2.5">
-                  {k.enabled ? <Tag variant="success">enabled</Tag> : <Tag variant="danger">disabled</Tag>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </TableScroll>
-      )}
-    </PanelCard>
-  )
-}
-
-function Redacted({ r }: { r: RedactedSecret }) {
-  if (r.length === 0) return <span className="text-[color:var(--text-4)]">—</span>
-  return (
-    <span className="mono text-[12px]">
-      <span aria-hidden="true">••••</span>
-      <span>{r.last4}</span>
-    </span>
-  )
-}
-
-function BehaviorBadge({ behavior }: { behavior?: string }) {
-  if (!behavior || behavior === "continue") return <Tag variant="default">continue</Tag>
-  if (behavior === "exit") return <Tag variant="warn">exit</Tag>
-  return <Tag variant="ghost">{behavior}</Tag>
 }

@@ -20,6 +20,8 @@ import { CpConnectorListPage } from "./pages/connector-list"
 import { CpGroupListPage } from "./pages/group-list"
 import { CpRuleListPage } from "./pages/rule-list"
 import { CpRuleDetailPage } from "./pages/rule-detail"
+import { CpConfigurationListPage } from "./pages/configuration-list"
+import { CpConfigurationDetailPage } from "./pages/configuration-detail"
 import { CpConnectorEditor, CpGroupEditor, CpApiKeyEditor, CpRuleEditor, CpConfigurationEditor } from "./pages/cp-editors"
 
 const CP_TITLES: TopbarTitles = {
@@ -57,9 +59,11 @@ export default function App() {
         <Route path="/backends/:name" element={<CpBackendDetailPage />} />
         <Route path="/backends/:name/edit" element={<CpBackendEditorPage mode="edit" />} />
 
-        <Route path="/configurations" element={<CpEntityListPage kind="configuration" />} />
+        {/* Configurations: list → detail → edit, mirroring the gateway console. */}
+        <Route path="/configurations" element={<CpConfigurationListPage />} />
         <Route path="/configurations/new" element={<CpConfigurationEditor mode="create" />} />
-        <Route path="/configurations/:name" element={<CpConfigurationEditor mode="edit" />} />
+        <Route path="/configurations/:name" element={<CpConfigurationDetailPage />} />
+        <Route path="/configurations/:name/edit" element={<CpConfigurationEditor mode="edit" />} />
 
         {/* Rules: list → detail → edit, mirroring the gateway console. */}
         <Route path="/rules" element={<CpRuleListPage />} />

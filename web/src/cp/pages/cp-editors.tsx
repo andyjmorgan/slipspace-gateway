@@ -106,6 +106,7 @@ export function CpConfigurationEditor({ mode }: { mode: "create" | "edit" }) {
       toContract={configFormToContract}
       nameOf={(f) => f.name}
       sub="A policy bundle — credentials, bindings, attached rules, and tags distributed to the fleet."
+      afterSaveTo={(name) => `/configurations/${encodeURIComponent(name)}`}
     />
   )
 }
