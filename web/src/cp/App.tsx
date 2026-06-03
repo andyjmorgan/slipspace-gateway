@@ -16,6 +16,7 @@ import { CpBackendListPage } from "./pages/backend-list"
 import { CpBackendDetailPage } from "./pages/backend-detail"
 import { CpBackendEditorPage } from "./pages/backend-editor"
 import { CpConnectorListPage } from "./pages/connector-list"
+import { CpGroupListPage } from "./pages/group-list"
 import { CpConnectorEditor, CpGroupEditor, CpApiKeyEditor, CpRuleEditor, CpConfigurationEditor } from "./pages/cp-editors"
 
 const CP_TITLES: TopbarTitles = {
@@ -61,7 +62,7 @@ export default function App() {
         <Route path="/rules/new" element={<CpRuleEditor mode="create" />} />
         <Route path="/rules/:name" element={<CpRuleEditor mode="edit" />} />
 
-        <Route path="/groups" element={<CpEntityListPage kind="group" />} />
+        <Route path="/groups" element={<CpGroupListPage />} />
         <Route path="/groups/new" element={<CpGroupEditor mode="create" />} />
         <Route path="/groups/:name" element={<CpGroupEditor mode="edit" />} />
 
