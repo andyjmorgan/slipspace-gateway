@@ -44,15 +44,29 @@ type ObservabilityHandler struct {
 	store    eventReader
 	bodies   bodyReader
 	receipts receiptLister
-	pub      ed25519.PublicKey
-	mux      *http.ServeMux
+	// rich serves the gateway-shaped fleet dashboard + message-inspector
+	// surfaces from the same Postgres store. Nil disables those routes.
+	rich richReader
+	// records serves the message-inspector body drill-in (one connector Record
+	// per correlation id). Nil disables the /messages/{id}/body route.
+	records recordReader
+	pub     ed25519.PublicKey
+	mux     *http.ServeMux
 }
 
 // NewObservabilityHandler builds the handler over the request_events store, the
 // request_bodies store, the receipt chain store, and the receipt-signing public
-// key used to verify chains.
+// key used to verify chains. When store also satisfies richReader (and bodies
+// satisfies recordReader) the rich fleet-dashboard + message-inspector routes
+// are mounted too — the *configdb.DB passed in production satisfies both.
 func NewObservabilityHandler(store eventReader, bodies bodyReader, receipts receiptLister, pub ed25519.PublicKey) *ObservabilityHandler {
 	h := &ObservabilityHandler{store: store, bodies: bodies, receipts: receipts, pub: pub}
+	if rich, ok := store.(richReader); ok {
+		h.rich = rich
+	}
+	if rec, ok := bodies.(recordReader); ok {
+		h.records = rec
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/observability/stats", h.stats)
 	mux.HandleFunc("GET /api/v1/observability/events", h.listEvents)
@@ -60,6 +74,7 @@ func NewObservabilityHandler(store eventReader, bodies bodyReader, receipts rece
 	mux.HandleFunc("GET /api/v1/observability/bodies/{correlation_id}", h.getBodies)
 	mux.HandleFunc("GET /api/v1/observability/receipts/{gateway_id}/verify", h.verifyChain)
 	h.mux = mux
+	h.registerRichRoutes()
 	return h
 }
 
