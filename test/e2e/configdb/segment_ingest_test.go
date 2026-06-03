@@ -121,8 +121,11 @@ func TestSegmentIngest_WrongTokenRejected(t *testing.T) {
 		t.Fatalf("wrong token: want Permanent (401), got %v", err)
 	}
 
+	// Nothing was ingested, so the store has no rows for this correlation id —
+	// ListRequestBodies signals that with ErrRequestBodyNotFound, which is the
+	// expected outcome here, not a failure.
 	bodies, err := db.ListRequestBodies(ctx, "corr-seg-2")
-	if err != nil {
+	if err != nil && !errors.Is(err, configdb.ErrRequestBodyNotFound) {
 		t.Fatalf("list bodies: %v", err)
 	}
 	if len(bodies) != 0 {
