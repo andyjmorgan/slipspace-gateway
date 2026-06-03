@@ -80,6 +80,51 @@ func TestControlPlane_BootsWithNoLocalConfig(t *testing.T) {
 	requireFleetMember(t, h)
 }
 
+// TestControlPlane_DistributedConnectorEnablesCapture is the regression proof
+// for the spool boot-ordering bug: a CP-managed gateway with NO local config
+// (so its bootstrap config carries no connectors) must still enable body
+// capture when the control-plane closure it fetches carries a connector
+// binding. Before the fix, setupSpool ran against the empty bootstrap config
+// and gave up before the CP sync delivered the connector, so capture stayed
+// off for CP-managed gateways forever.
+//
+// ControlPlaneNoLocalConfig isolates the bug: with a local config dir the
+// gateway's own materialized config-dev would carry the harness webhook
+// connector and wire the spool independently of the CP closure, masking the
+// ordering defect. With no local config the ONLY source of the connector is
+// the control plane.
+func TestControlPlane_DistributedConnectorEnablesCapture(t *testing.T) {
+	h := harness.NewWithOptions(t, harness.Options{
+		ControlPlane:              true,
+		ControlPlaneNoLocalConfig: true,
+	})
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"cp-capture","object":"chat.completion"}`,
+	})
+
+	const correlationID = "cp-distributed-capture"
+	resp := h.PostJSON("/v1/chat/completions", map[string]any{
+		"model":    "gpt-4o",
+		"messages": []map[string]string{{"role": "user", "content": "."}},
+	}, http.Header{
+		"Authorization":           {"Bearer " + h.APIKey},
+		"X-Sluice-Correlation-Id": {correlationID},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("request through CP-managed gateway = %d, want 200. body=%s", resp.StatusCode, resp.Body)
+	}
+
+	// A captured event can only arrive if the spool was wired from the
+	// CP-distributed connector — the gateway has no local config.
+	env := h.ExpectEvent("gateway.request", 8*time.Second)
+	if env.EventType != "request" {
+		t.Fatalf("EventType=%q want request — spool did not capture the CP-distributed connector", env.EventType)
+	}
+}
+
 // requireFleetMember polls the control plane's fleet read API until the gateway
 // has registered.
 func requireFleetMember(t *testing.T, h *harness.Harness) {
