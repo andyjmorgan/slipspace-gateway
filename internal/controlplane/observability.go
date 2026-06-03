@@ -20,6 +20,13 @@ type eventReader interface {
 	GetRequestEvent(ctx context.Context, correlationID string) (configdb.RequestEvent, error)
 }
 
+// bodyReader is the read slice of the request_bodies store — the heavy
+// audit/replay payloads the spool ships to the CP, joined to events by
+// correlation_id.
+type bodyReader interface {
+	ListRequestBodies(ctx context.Context, correlationID string) ([]configdb.RequestBody, error)
+}
+
 // receiptLister reads a gateway's tamper-evidence chain for verification.
 type receiptLister interface {
 	ListReceipts(ctx context.Context, gatewayID string) ([]receipt.Receipt, error)
@@ -31,18 +38,21 @@ type receiptLister interface {
 // and reads straight from Postgres.
 type ObservabilityHandler struct {
 	store    eventReader
+	bodies   bodyReader
 	receipts receiptLister
 	pub      ed25519.PublicKey
 	mux      *http.ServeMux
 }
 
 // NewObservabilityHandler builds the handler over the request_events store, the
-// receipt chain store, and the receipt-signing public key used to verify chains.
-func NewObservabilityHandler(store eventReader, receipts receiptLister, pub ed25519.PublicKey) *ObservabilityHandler {
-	h := &ObservabilityHandler{store: store, receipts: receipts, pub: pub}
+// request_bodies store, the receipt chain store, and the receipt-signing public
+// key used to verify chains.
+func NewObservabilityHandler(store eventReader, bodies bodyReader, receipts receiptLister, pub ed25519.PublicKey) *ObservabilityHandler {
+	h := &ObservabilityHandler{store: store, bodies: bodies, receipts: receipts, pub: pub}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/observability/events", h.listEvents)
 	mux.HandleFunc("GET /api/v1/observability/events/{correlation_id}", h.getEvent)
+	mux.HandleFunc("GET /api/v1/observability/bodies/{correlation_id}", h.getBodies)
 	mux.HandleFunc("GET /api/v1/observability/receipts/{gateway_id}/verify", h.verifyChain)
 	h.mux = mux
 	return h
@@ -119,6 +129,48 @@ func (h *ObservabilityHandler) getEvent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, toEventView(e))
+}
+
+// bodyView is the JSON projection of a captured request body. Body is the raw
+// record line the spool shipped, surfaced verbatim as embedded JSON.
+type bodyView struct {
+	CorrelationID string          `json:"correlation_id"`
+	InstanceID    string          `json:"instance_id"`
+	Seq           uint64          `json:"seq"`
+	TsNs          int64           `json:"ts_ns"`
+	Body          json.RawMessage `json:"body"`
+	CapturedAt    time.Time       `json:"captured_at"`
+}
+
+func toBodyView(b configdb.RequestBody) bodyView {
+	return bodyView{
+		CorrelationID: b.CorrelationID,
+		InstanceID:    b.InstanceID,
+		Seq:           b.Seq,
+		TsNs:          b.TsNs,
+		Body:          json.RawMessage(b.Body),
+		CapturedAt:    b.CapturedAt,
+	}
+}
+
+// getBodies returns every captured body for a correlation id, ordered stably by
+// (instance_id, seq) — the full audit/replay payload for one request. 404 when
+// none was captured (no connector binding, sampled out, or not yet ingested).
+func (h *ObservabilityHandler) getBodies(w http.ResponseWriter, r *http.Request) {
+	bodies, err := h.bodies.ListRequestBodies(r.Context(), r.PathValue("correlation_id"))
+	if errors.Is(err, configdb.ErrRequestBodyNotFound) {
+		writeError(w, http.StatusNotFound, "no captured bodies for correlation id")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list bodies")
+		return
+	}
+	views := make([]bodyView, 0, len(bodies))
+	for _, b := range bodies {
+		views = append(views, toBodyView(b))
+	}
+	writeJSON(w, http.StatusOK, views)
 }
 
 // chainVerifyView is the result of verifying a gateway's receipt chain — the

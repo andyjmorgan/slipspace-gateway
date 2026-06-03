@@ -130,7 +130,7 @@ func run(ctx context.Context) error {
 	mux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
 	mux.Handle("/api/v1/fleet/drift", controlplane.NewDriftHandler(reg, rt.adminDB))
 	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, logger))
-	mux.Handle("/api/v1/observability/", controlplane.NewObservabilityHandler(rt.adminDB, rt.adminDB, signer.Public()))
+	mux.Handle("/api/v1/observability/", controlplane.NewObservabilityHandler(rt.adminDB, rt.adminDB, rt.adminDB, signer.Public()))
 	// Segment ingest is a gateway-facing endpoint: it authenticates with the
 	// bootstrap token (BearerAuth), the same credential the fleet gRPC channel
 	// uses, so a gateway never holds the admin console password. It is exempted
