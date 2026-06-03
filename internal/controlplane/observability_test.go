@@ -42,7 +42,7 @@ func TestObservabilityHandler_ListEvents(t *testing.T) {
 	store := &fakeEventReader{recent: []configdb.RequestEvent{
 		{CorrelationID: "c1", Model: "gpt-4o", TokensIn: 7, GenAIContent: []byte(`{"p":"hi"}`)},
 	}}
-	h := NewObservabilityHandler(store, nil, nil)
+	h := NewObservabilityHandler(store, nil, nil, nil)
 
 	rec := obsReq(h, "/api/v1/observability/events?limit=25")
 	if rec.Code != http.StatusOK {
@@ -66,7 +66,7 @@ func TestObservabilityHandler_ListEvents(t *testing.T) {
 
 func TestObservabilityHandler_ListEvents_BadLimitIgnored(t *testing.T) {
 	store := &fakeEventReader{}
-	h := NewObservabilityHandler(store, nil, nil)
+	h := NewObservabilityHandler(store, nil, nil, nil)
 	if rec := obsReq(h, "/api/v1/observability/events?limit=notanumber"); rec.Code != http.StatusOK {
 		t.Fatalf("= %d, want 200", rec.Code)
 	}
@@ -76,7 +76,7 @@ func TestObservabilityHandler_ListEvents_BadLimitIgnored(t *testing.T) {
 }
 
 func TestObservabilityHandler_ListEvents_StoreError(t *testing.T) {
-	h := NewObservabilityHandler(&fakeEventReader{getErr: errors.New("db down")}, nil, nil)
+	h := NewObservabilityHandler(&fakeEventReader{getErr: errors.New("db down")}, nil, nil, nil)
 	if rec := obsReq(h, "/api/v1/observability/events"); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("= %d, want 500", rec.Code)
 	}
@@ -84,7 +84,7 @@ func TestObservabilityHandler_ListEvents_StoreError(t *testing.T) {
 
 func TestObservabilityHandler_GetEvent(t *testing.T) {
 	store := &fakeEventReader{one: configdb.RequestEvent{CorrelationID: "c9", Backend: "openai"}}
-	h := NewObservabilityHandler(store, nil, nil)
+	h := NewObservabilityHandler(store, nil, nil, nil)
 
 	rec := obsReq(h, "/api/v1/observability/events/c9")
 	if rec.Code != http.StatusOK {
@@ -100,15 +100,62 @@ func TestObservabilityHandler_GetEvent(t *testing.T) {
 }
 
 func TestObservabilityHandler_GetEvent_NotFound(t *testing.T) {
-	h := NewObservabilityHandler(&fakeEventReader{getErr: configdb.ErrRequestEventNotFound}, nil, nil)
+	h := NewObservabilityHandler(&fakeEventReader{getErr: configdb.ErrRequestEventNotFound}, nil, nil, nil)
 	if rec := obsReq(h, "/api/v1/observability/events/ghost"); rec.Code != http.StatusNotFound {
 		t.Fatalf("= %d, want 404", rec.Code)
 	}
 }
 
 func TestObservabilityHandler_GetEvent_StoreError(t *testing.T) {
-	h := NewObservabilityHandler(&fakeEventReader{getErr: errors.New("boom")}, nil, nil)
+	h := NewObservabilityHandler(&fakeEventReader{getErr: errors.New("boom")}, nil, nil, nil)
 	if rec := obsReq(h, "/api/v1/observability/events/x"); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("= %d, want 500", rec.Code)
+	}
+}
+
+type fakeBodyReader struct {
+	bodies []configdb.RequestBody
+	err    error
+}
+
+func (f *fakeBodyReader) ListRequestBodies(context.Context, string) ([]configdb.RequestBody, error) {
+	return f.bodies, f.err
+}
+
+func TestObservabilityHandler_GetBodies(t *testing.T) {
+	bodies := &fakeBodyReader{bodies: []configdb.RequestBody{
+		{CorrelationID: "c1", InstanceID: "gw-1", Seq: 1, TsNs: 100, Body: []byte(`{"k":"v"}`)},
+		{CorrelationID: "c1", InstanceID: "gw-1", Seq: 2, TsNs: 200, Body: []byte(`{"k":"w"}`)},
+	}}
+	h := NewObservabilityHandler(nil, bodies, nil, nil)
+
+	rec := obsReq(h, "/api/v1/observability/bodies/c1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var views []bodyView
+	if err := json.NewDecoder(rec.Body).Decode(&views); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(views) != 2 || views[0].Seq != 1 || views[1].Seq != 2 {
+		t.Fatalf("views = %+v", views)
+	}
+	// The captured body embeds as JSON, not a base64 blob.
+	if string(views[0].Body) != `{"k":"v"}` {
+		t.Errorf("body[0] = %s", views[0].Body)
+	}
+}
+
+func TestObservabilityHandler_GetBodies_NotFound(t *testing.T) {
+	h := NewObservabilityHandler(nil, &fakeBodyReader{err: configdb.ErrRequestBodyNotFound}, nil, nil)
+	if rec := obsReq(h, "/api/v1/observability/bodies/ghost"); rec.Code != http.StatusNotFound {
+		t.Fatalf("= %d, want 404", rec.Code)
+	}
+}
+
+func TestObservabilityHandler_GetBodies_StoreError(t *testing.T) {
+	h := NewObservabilityHandler(nil, &fakeBodyReader{err: errors.New("db down")}, nil, nil)
+	if rec := obsReq(h, "/api/v1/observability/bodies/x"); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("= %d, want 500", rec.Code)
 	}
 }
@@ -136,7 +183,7 @@ func TestObservabilityHandler_VerifyChain_Valid(t *testing.T) {
 		chain = append(chain, rc)
 		prev = rc.Hash
 	}
-	h := NewObservabilityHandler(nil, &fakeReceiptLister{chain: chain}, signer.Public())
+	h := NewObservabilityHandler(nil, nil, &fakeReceiptLister{chain: chain}, signer.Public())
 
 	rec := obsReq(h, "/api/v1/observability/receipts/gw-1/verify")
 	if rec.Code != http.StatusOK {
@@ -155,7 +202,7 @@ func TestObservabilityHandler_VerifyChain_Tampered(t *testing.T) {
 	signer := obsVerifySigner()
 	rc := receipt.Chain(nil, receipt.Record{GatewayID: "gw-1", Seq: 1, Payload: []byte("x")}, signer)
 	rc.Payload = []byte("tampered")
-	h := NewObservabilityHandler(nil, &fakeReceiptLister{chain: []receipt.Receipt{rc}}, signer.Public())
+	h := NewObservabilityHandler(nil, nil, &fakeReceiptLister{chain: []receipt.Receipt{rc}}, signer.Public())
 
 	rec := obsReq(h, "/api/v1/observability/receipts/gw-1/verify")
 	var v chainVerifyView
@@ -166,7 +213,7 @@ func TestObservabilityHandler_VerifyChain_Tampered(t *testing.T) {
 }
 
 func TestObservabilityHandler_VerifyChain_StoreError(t *testing.T) {
-	h := NewObservabilityHandler(nil, &fakeReceiptLister{err: errors.New("db down")}, obsVerifySigner().Public())
+	h := NewObservabilityHandler(nil, nil, &fakeReceiptLister{err: errors.New("db down")}, obsVerifySigner().Public())
 	if rec := obsReq(h, "/api/v1/observability/receipts/gw-1/verify"); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("= %d, want 500", rec.Code)
 	}
