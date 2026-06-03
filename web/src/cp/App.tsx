@@ -11,7 +11,6 @@ import { CpDashboardPage } from "./pages/dashboard"
 import { VersionsPage } from "./pages/versions"
 import { BindingsPage } from "./pages/bindings"
 import { ObservabilityPage } from "./pages/observability"
-import { EventDetailPage } from "./pages/event-detail"
 import { CpBackendListPage } from "./pages/backend-list"
 import { CpApiKeyListPage } from "./pages/api-key-list"
 import { CpBackendDetailPage } from "./pages/backend-detail"
@@ -87,7 +86,6 @@ export default function App() {
 
         <Route path="/bindings" element={<BindingsPage />} />
         <Route path="/observability" element={<ObservabilityPage />} />
-        <Route path="/observability/:correlation_id" element={<EventDetailPage />} />
         <Route path="/versions" element={<VersionsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/fleet" replace />} />

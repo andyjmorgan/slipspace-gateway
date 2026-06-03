@@ -1,26 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { createPortal } from "react-dom"
 import { useNavigate } from "react-router"
-import { ChevronDown, ChevronRight, ChevronUp, Layers, Pause, Play, Trash2, X } from "lucide-react"
+import { Layers, Pause, Play, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PanelCard } from "@/components/atoms/card"
-import { StatusPill } from "@/components/atoms/status-pill"
-import { ProviderChip } from "@/components/atoms/provider-chip"
-import { fmt } from "@/lib/fmt"
 import { LoadingPanel, ErrorPanel, PageHeader } from "@/components/atoms/page-states"
-import { JsonViewer } from "@/components/atoms/json-viewer"
-import {
-  fetchMessageBody,
-  fetchRecentMessages,
-  openMessageStream,
-  type MessageBodyDetail,
-  type MessageEntry,
-  type AttemptHit,
-  type RuleHit,
-} from "@/lib/messages"
+import { MessagesTable, MessageInspectorModal } from "@/components/observability/messages-view"
+import { fetchMessageBody, fetchRecentMessages, openMessageStream, type MessageEntry } from "@/lib/messages"
 import { UnauthorizedError } from "@/lib/api"
-import { cn } from "@/lib/utils"
 
 type FeedState =
   | { status: "loading" }
@@ -29,9 +15,9 @@ type FeedState =
   | { status: "ok"; capacity: number }
 
 // MAX_ROWS_IN_MEMORY caps the visible table and the paused buffer so a
-// long-running pane doesn't OOM the browser. Bodies are fetched
-// on-demand into the modal, but row metadata + the SSE event objects
-// still accumulate — bound both ends.
+// long-running pane doesn't OOM the browser. Bodies are fetched on-demand
+// into the modal, but row metadata + the SSE event objects still
+// accumulate — bound both ends.
 const MAX_ROWS_IN_MEMORY = 100
 
 export function MessagesPage() {
@@ -123,11 +109,7 @@ export function MessagesPage() {
   }, [paused])
 
   const ordered = useMemo(() => entries.slice().reverse(), [entries])
-  const selected = useMemo(
-    () => entries.find((e) => e.event_id === selectedId) ?? null,
-    [entries, selectedId],
-  )
-  const bundles = useMemo(() => (grouped ? bundleBySession(ordered) : []), [grouped, ordered])
+  const selected = useMemo(() => entries.find((e) => e.event_id === selectedId) ?? null, [entries, selectedId])
   const toggleBundle = useCallback((key: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -136,6 +118,7 @@ export function MessagesPage() {
       return next
     })
   }, [])
+  const onSelect = useCallback((eid: string) => setSelectedId((cur) => (cur === eid ? null : eid)), [])
 
   if (feed.status === "loading") return <LoadingPanel label="Loading messages…" />
   if (feed.status === "error") return <ErrorPanel message={feed.message} />
@@ -162,12 +145,7 @@ export function MessagesPage() {
                 <Layers />
                 <span className="hidden sm:inline">{grouped ? "Ungroup" : "Group by session"}</span>
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPaused((p) => !p)}
-                aria-label={paused ? "Resume" : "Pause"}
-              >
+              <Button variant="ghost" size="sm" onClick={() => setPaused((p) => !p)} aria-label={paused ? "Resume" : "Pause"}>
                 {paused ? <Play /> : <Pause />}
                 <span className="hidden sm:inline">
                   {paused
@@ -197,80 +175,32 @@ export function MessagesPage() {
 
       {feed.status === "disabled" && (
         <PanelCard className="p-6 text-[13px] text-[color:var(--text-3)]">
-          The gateway is running with the live messages ring turned off. The pane
-          stays here so operators can confirm the feature gate; nothing else to
-          show until it&apos;s re-enabled.
+          The gateway is running with the live messages ring turned off. The pane stays here so operators can confirm
+          the feature gate; nothing else to show until it&apos;s re-enabled.
         </PanelCard>
       )}
 
       {feed.status === "ok" && (
         <>
-          <FeedStatusLine
-            streaming={streaming}
-            paused={paused}
-            dropped={dropped}
-            shown={entries.length}
-            capacity={feed.capacity}
+          <FeedStatusLine streaming={streaming} paused={paused} dropped={dropped} shown={entries.length} capacity={feed.capacity} />
+          <MessagesTable
+            ordered={ordered}
+            grouped={grouped}
+            collapsed={collapsed}
+            onToggleBundle={toggleBundle}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            emptyLabel="Waiting for traffic…"
           />
-          <PanelCard className="overflow-hidden">
-            <table className="w-full text-[12.5px]">
-              <thead className="bg-[color:var(--bg-2)] text-[11px] uppercase tracking-[0.05em] text-[color:var(--text-4)]">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Time</th>
-                  <th className="px-3 py-2 text-left font-medium">Status</th>
-                  <th className="px-3 py-2 text-left font-medium">Provider</th>
-                  <th className="px-3 py-2 text-left font-medium">Endpoint</th>
-                  <th className="px-3 py-2 text-left font-medium">Model</th>
-                  <th className="px-3 py-2 text-left font-medium">Configuration</th>
-                  <th className="px-3 py-2 text-right font-medium">Duration</th>
-                  <th className="px-3 py-2 text-right font-medium">Tokens in</th>
-                  <th className="px-3 py-2 text-right font-medium">Tokens out</th>
-                  <th className="px-3 py-2 text-left font-medium">Rules</th>
-                  <th className="px-3 py-2 text-left font-medium">Tags</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ordered.length === 0 && (
-                  <tr>
-                    <td colSpan={11} className="px-3 py-8 text-center text-[color:var(--text-3)]">
-                      Waiting for traffic…
-                    </td>
-                  </tr>
-                )}
-                {grouped
-                  ? bundles.map((b) => (
-                      <BundleGroup
-                        key={b.key}
-                        bundle={b}
-                        collapsed={collapsed.has(b.key)}
-                        onToggle={() => toggleBundle(b.key)}
-                        selectedId={selectedId}
-                        onSelectRow={(eid) =>
-                          setSelectedId((cur) => (cur === eid ? null : eid))
-                        }
-                      />
-                    ))
-                  : ordered.map((e) => (
-                      <Row
-                        key={e.event_id}
-                        entry={e}
-                        selected={e.event_id === selectedId}
-                        onClick={() =>
-                          setSelectedId((cur) => (cur === e.event_id ? null : e.event_id))
-                        }
-                      />
-                    ))}
-              </tbody>
-            </table>
-          </PanelCard>
         </>
       )}
       {selected && (
-        <MessageModal
+        <MessageInspectorModal
           entries={ordered}
           selectedId={selected.event_id}
           onSelect={setSelectedId}
           onClose={() => setSelectedId(null)}
+          fetchBody={fetchMessageBody}
         />
       )}
     </div>
@@ -294,17 +224,9 @@ function FeedStatusLine({
     <div className="flex items-center gap-3 text-[11.5px] text-[color:var(--text-3)]">
       <span
         className="inline-block size-1.5 rounded-full"
-        style={{
-          background: streaming
-            ? paused
-              ? "var(--warn)"
-              : "var(--ok)"
-            : "var(--err)",
-        }}
+        style={{ background: streaming ? (paused ? "var(--warn)" : "var(--ok)") : "var(--err)" }}
       />
-      <span>
-        {streaming ? (paused ? "paused" : "streaming") : "disconnected"}
-      </span>
+      <span>{streaming ? (paused ? "paused" : "streaming") : "disconnected"}</span>
       <span className="text-[color:var(--text-4)]">·</span>
       <span className="mono">
         {shown} / {capacity}
@@ -317,731 +239,4 @@ function FeedStatusLine({
       )}
     </div>
   )
-}
-
-function Row({
-  entry,
-  selected,
-  onClick,
-}: {
-  entry: MessageEntry
-  selected: boolean
-  onClick: () => void
-}) {
-  return (
-    <tr
-      onClick={onClick}
-      className={cn(
-        "cursor-pointer border-t border-[color:var(--border)] hover:bg-[color:var(--hover)]",
-        selected && "bg-[color:var(--hover)]",
-      )}
-    >
-      <td className="mono px-3 py-1.5 whitespace-nowrap text-[color:var(--text-3)]">
-        {formatClock(entry.at)}
-      </td>
-      <td className="px-3 py-1.5">
-        <StatusPill code={entry.status_code} />
-      </td>
-      <td className="px-3 py-1.5">
-        {entry.provider ? <ProviderChip name={entry.provider} /> : <span className="text-[color:var(--text-4)]">—</span>}
-      </td>
-      <td className="px-3 py-1.5">
-        <div className="flex items-center gap-1.5">
-          {entry.method && (
-            <span className="mono rounded-[3px] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-1 py-px text-[10px] font-medium uppercase text-[color:var(--text-3)]">
-              {entry.method}
-            </span>
-          )}
-          <span className="mono text-[color:var(--text-3)]">{entry.endpoint ?? "—"}</span>
-          {entry.streaming && (
-            <span className="mono text-[10px] uppercase text-[color:var(--text-4)]">
-              sse
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="mono px-3 py-1.5 text-[color:var(--text-2)]">
-        {entry.model ?? "—"}
-      </td>
-      <td className="mono px-3 py-1.5 text-[color:var(--text-2)]">
-        {entry.configuration ?? "—"}
-      </td>
-      <td className="mono px-3 py-1.5 text-right tnum text-[color:var(--text-2)]">
-        {entry.duration_ms} ms
-      </td>
-      <td className="mono px-3 py-1.5 text-right tnum text-[color:var(--text-2)]">
-        {entry.tokens_in ? fmt.compact(entry.tokens_in) : "—"}
-      </td>
-      <td className="mono px-3 py-1.5 text-right tnum text-[color:var(--text-2)]">
-        {entry.tokens_out ? fmt.compact(entry.tokens_out) : "—"}
-      </td>
-      <td className="px-3 py-1.5 text-[color:var(--text-3)]">
-        {entry.rules_matched && entry.rules_matched.length > 0
-          ? `${entry.rules_matched.length}`
-          : "—"}
-      </td>
-      <td className="px-3 py-1.5">
-        {entry.tags && entry.tags.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {entry.tags.map((t) => (
-              <span
-                key={t}
-                className="inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[10.5px] mono uppercase tracking-[0.04em] border border-[color:var(--border)] text-[color:var(--text-2)] bg-[color:var(--bg-2)]"
-              >
-                {t}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <span className="text-[color:var(--text-4)]">—</span>
-        )}
-      </td>
-    </tr>
-  )
-}
-
-type Bundle = {
-  key: string
-  sessionId: string
-  source?: string
-  configuration?: string
-  entries: MessageEntry[]
-  tokensIn: number
-  tokensOut: number
-  spanMs: number
-}
-
-// bundleBySession groups newest-first entries into (configuration,
-// session_id) bundles — the same tuple the connector records bundle on —
-// preserving newest-bundle-first order by first appearance. Entries with
-// no session id collect under one "no session" bundle that always renders
-// after every real group, so grouped sessions never sort below loose
-// ungrouped traffic even when the newest entry has no session.
-function bundleBySession(ordered: MessageEntry[]): Bundle[] {
-  const byKey = new Map<string, Bundle>()
-  const order: string[] = []
-  for (const e of ordered) {
-    const sid = e.session_id ?? ""
-    const key = sid === "" ? " nosession" : `${e.configuration ?? ""} ${sid}`
-    let b = byKey.get(key)
-    if (!b) {
-      b = {
-        key,
-        sessionId: sid,
-        source: e.session_id_source,
-        configuration: e.configuration,
-        entries: [],
-        tokensIn: 0,
-        tokensOut: 0,
-        spanMs: 0,
-      }
-      byKey.set(key, b)
-      order.push(key)
-    }
-    b.entries.push(e)
-    b.tokensIn += e.tokens_in ?? 0
-    b.tokensOut += e.tokens_out ?? 0
-  }
-  for (const b of byKey.values()) {
-    const ts = b.entries
-      .map((e) => new Date(e.at).getTime())
-      .filter((n) => !Number.isNaN(n))
-    if (ts.length > 0) b.spanMs = Math.max(...ts) - Math.min(...ts)
-  }
-  // Force the no-session bundle (sessionId === "") to render after every
-  // real session group. Array sort is stable, so the 0/1 partition key
-  // preserves newest-first first-appearance order within each side.
-  return order
-    .map((k) => byKey.get(k)!)
-    .sort((a, b) => Number(a.sessionId === "") - Number(b.sessionId === ""))
-}
-
-// BundleGroup renders a collapsible session header row spanning the table
-// plus its member request rows. The header carries the turn count, summed
-// tokens, and time span — the conversation-level rollup the flat pane
-// can't show.
-function BundleGroup({
-  bundle,
-  collapsed,
-  onToggle,
-  selectedId,
-  onSelectRow,
-}: {
-  bundle: Bundle
-  collapsed: boolean
-  onToggle: () => void
-  selectedId: string | null
-  onSelectRow: (eventId: string) => void
-}) {
-  const noSession = bundle.sessionId === ""
-  return (
-    <>
-      <tr
-        onClick={onToggle}
-        className="cursor-pointer border-t border-[color:var(--border)] bg-[color:var(--bg-2)] hover:bg-[color:var(--hover)]"
-      >
-        <td colSpan={11} className="px-3 py-1.5">
-          <div className="flex items-center gap-2 text-[12px]">
-            <span className="inline-flex items-center text-[color:var(--text-4)]">
-              {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-            </span>
-            {noSession ? (
-              <span className="italic text-[color:var(--text-4)]">no session</span>
-            ) : (
-              <>
-                <span
-                  className="mono max-w-[22rem] truncate text-[color:var(--text-2)]"
-                  title={bundle.sessionId}
-                >
-                  {bundle.sessionId}
-                </span>
-                {bundle.source && (
-                  <span className="mono rounded-[3px] border border-[color:var(--border)] bg-[color:var(--bg-1)] px-1 py-px text-[10px] text-[color:var(--text-3)]">
-                    {bundle.source}
-                  </span>
-                )}
-                {bundle.configuration && (
-                  <span className="mono text-[10.5px] text-[color:var(--text-4)]">
-                    {bundle.configuration}
-                  </span>
-                )}
-              </>
-            )}
-            <span className="ml-auto flex items-center gap-3 text-[11px] text-[color:var(--text-3)]">
-              <span className="mono">
-                {bundle.entries.length} turn{bundle.entries.length === 1 ? "" : "s"}
-              </span>
-              {(bundle.tokensIn > 0 || bundle.tokensOut > 0) && (
-                <span className="mono tnum">
-                  {fmt.compact(bundle.tokensIn)}↑ / {fmt.compact(bundle.tokensOut)}↓ tok
-                </span>
-              )}
-              {bundle.spanMs > 0 && <span className="mono tnum">{formatSpan(bundle.spanMs)}</span>}
-            </span>
-          </div>
-        </td>
-      </tr>
-      {!collapsed &&
-        bundle.entries.map((e) => (
-          <Row
-            key={e.event_id}
-            entry={e}
-            selected={e.event_id === selectedId}
-            onClick={() => onSelectRow(e.event_id)}
-          />
-        ))}
-    </>
-  )
-}
-
-function formatSpan(ms: number): string {
-  if (ms < 1000) return `${ms} ms`
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(1)} s`
-  const m = Math.floor(s / 60)
-  return `${m}m ${Math.round(s % 60)}s`
-}
-
-// MessageModal renders the per-request detail in a centered overlay
-// instead of pushed below the table — keeps the detail visible while
-// new rows stream in. Up / Down buttons (and ArrowUp / ArrowDown keys)
-// scan through entries without re-clicking from the table; Up = newer
-// (lower index in `entries`, which is reversed-newest-first), Down =
-// older. Esc + backdrop click + X close.
-function MessageModal({
-  entries,
-  selectedId,
-  onSelect,
-  onClose,
-}: {
-  entries: MessageEntry[]
-  selectedId: string
-  onSelect: (id: string) => void
-  onClose: () => void
-}) {
-  const index = useMemo(
-    () => entries.findIndex((e) => e.event_id === selectedId),
-    [entries, selectedId],
-  )
-  const entry = index >= 0 ? entries[index] : null
-
-  const goNewer = useCallback(() => {
-    if (index > 0) onSelect(entries[index - 1].event_id)
-  }, [entries, index, onSelect])
-  const goOlder = useCallback(() => {
-    if (index >= 0 && index < entries.length - 1) onSelect(entries[index + 1].event_id)
-  }, [entries, index, onSelect])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose()
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault()
-        goNewer()
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault()
-        goOlder()
-      }
-    }
-    document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
-  }, [goNewer, goOlder, onClose])
-
-  // If the selected entry rolled off the ring while the modal was
-  // open, close rather than render nothing — keeps the SPA honest
-  // about why the detail disappeared.
-  useEffect(() => {
-    if (index < 0) onClose()
-  }, [index, onClose])
-
-  if (!entry) return null
-
-  const canNewer = index > 0
-  const canOlder = index >= 0 && index < entries.length - 1
-
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Request detail"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="relative flex w-[92vw] max-w-7xl h-[92vh] flex-col rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex flex-none items-start gap-2">
-          <div className="flex-1 min-w-0">
-            <div className="text-[13px] font-medium">Request detail</div>
-            <div className="mono text-[11.5px] text-[color:var(--text-3)] truncate">
-              {entry.correlation_id ?? entry.event_id}
-            </div>
-            <div className="mono mt-0.5 text-[10.5px] text-[color:var(--text-4)]">
-              {index + 1} of {entries.length}
-            </div>
-          </div>
-          <div className="flex flex-none items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={goNewer}
-              disabled={!canNewer}
-              aria-label="Newer entry (Arrow Up)"
-              title="Newer (↑)"
-            >
-              <ChevronUp />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={goOlder}
-              disabled={!canOlder}
-              aria-label="Older entry (Arrow Down)"
-              title="Older (↓)"
-            >
-              <ChevronDown />
-            </Button>
-            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close" title="Close (Esc)">
-              <X />
-            </Button>
-          </div>
-        </div>
-
-        <dl className="grid flex-none grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-3">
-          <Field label="Status" value={String(entry.status_code)} />
-          <Field label="Duration" value={`${entry.duration_ms} ms`} />
-          <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
-          <Field label="Provider" value={entry.provider ?? "—"} />
-          <Field label="Method" value={entry.method ?? "—"} />
-          <Field label="Endpoint" value={entry.endpoint ?? "—"} />
-          <Field label="Model" value={entry.model ?? "—"} />
-          <Field label="Configuration" value={entry.configuration ?? "—"} />
-          <Field label="Session" value={entry.session_id ?? "—"} />
-          <Field label="Session source" value={entry.session_id_source ?? "—"} />
-          <Field label="At" value={entry.at} />
-        </dl>
-        {entry.upstream_error && (
-          <div className="mt-3 flex-none rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
-            <div className="mono text-[11px] uppercase text-[color:var(--err)]">upstream error</div>
-            <div className="mono mt-1 text-[color:var(--text-2)]">{entry.upstream_error}</div>
-          </div>
-        )}
-        {entry.rules_matched && entry.rules_matched.length > 0 && (
-          <div className="flex-none">
-            <RulesList rules={entry.rules_matched} />
-          </div>
-        )}
-        {entry.attempts && entry.attempts.length > 0 && (
-          <div className="flex-none">
-            <AttemptsList policy={entry.policy_ref} attempts={entry.attempts} />
-          </div>
-        )}
-        <BodyDetail eventId={entry.event_id} streaming={!!entry.streaming} />
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
-// BodyDetail lazy-loads /messages/{event_id}/body when the modal
-// opens for a specific entry. Reloads when selectedId changes (i.e.
-// the operator hits the up/down chevron). Renders separately when
-// the body store is disabled (returns null from fetch), missing, or
-// loading.
-function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolean }) {
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "missing" }
-    | { status: "ok"; body: MessageBodyDetail }
-    | { status: "error"; message: string }
-  >({ status: "loading" })
-
-  useEffect(() => {
-    let cancelled = false
-    setState({ status: "loading" })
-    fetchMessageBody(eventId)
-      .then((body) => {
-        if (cancelled) return
-        if (!body) {
-          setState({ status: "missing" })
-          return
-        }
-        setState({ status: "ok", body })
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setState({ status: "error", message: String((err as Error).message ?? err) })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [eventId])
-
-  if (state.status === "loading") {
-    return (
-      <div className="mt-3 flex-1 text-[11.5px] text-[color:var(--text-3)]">Loading bodies…</div>
-    )
-  }
-  if (state.status === "missing") {
-    return (
-      <div className="mt-3 flex-1 rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11.5px] text-[color:var(--text-3)]">
-        Bodies for this request are not available — either body capture is disabled
-        (<span className="mono">SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0</span>) or this
-        event rolled out of the body cache.
-      </div>
-    )
-  }
-  if (state.status === "error") {
-    return (
-      <div className="mt-3 flex-1 rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[11.5px] text-[color:var(--err)]">
-        {state.message}
-      </div>
-    )
-  }
-  const body = state.body
-  // For streaming responses, the assembled JSON is the "Response" tab
-  // and the unprocessed SSE bytes live on a third tab so operators can
-  // eyeball both independently. For non-streaming, there's no raw
-  // distinction — Response is the only response tab.
-  return (
-    <Tabs defaultValue="request" className="mt-3 flex min-h-0 flex-1 flex-col">
-      <TabsList variant="line" className="flex-none">
-        <TabsTrigger value="request">Request</TabsTrigger>
-        <TabsTrigger value="response">Response</TabsTrigger>
-        {streaming && <TabsTrigger value="raw">Raw stream</TabsTrigger>}
-      </TabsList>
-      <TabsContent value="request" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
-        <BodySection
-          label="Request body"
-          text={body.request}
-          totalBytes={body.request_total_bytes}
-          truncated={body.request_truncated}
-        />
-        <HeadersSection label="Request headers" headers={body.request_headers} />
-      </TabsContent>
-      <TabsContent value="response" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
-        {streaming ? (
-          body.response_assembled !== undefined ? (
-            <BodySection
-              label="Response (assembled)"
-              text={body.response_assembled}
-              totalBytes={body.response_total_bytes}
-              truncated={body.response_truncated}
-              headerExtras={
-                body.assembly_partial && (
-                  <span className="mono text-[10px] uppercase text-[color:var(--warn)]">
-                    partial
-                  </span>
-                )
-              }
-            />
-          ) : (
-            <NoAssemblyPlaceholder />
-          )
-        ) : (
-          <BodySection
-            label="Response body"
-            text={body.response}
-            totalBytes={body.response_total_bytes}
-            truncated={body.response_truncated}
-          />
-        )}
-        <HeadersSection label="Response headers" headers={body.response_headers} />
-      </TabsContent>
-      {streaming && (
-        <TabsContent value="raw" className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
-          <BodySection
-            label="Raw SSE bytes"
-            text={body.response}
-            totalBytes={body.response_total_bytes}
-            truncated={body.response_truncated}
-          />
-        </TabsContent>
-      )}
-    </Tabs>
-  )
-}
-
-// NoAssemblyPlaceholder fills the Response tab when streaming is on
-// but the per-endpoint accumulator did not produce an assembled JSON.
-// Happens when the endpoint (e.g. `responses`) is not in the
-// accumulator registry, when the stream errored before any chunk
-// parsed, or when the body was empty. The raw bytes are still
-// available on the Raw stream tab — surface that explicitly so the
-// operator does not assume the gateway lost the response.
-function NoAssemblyPlaceholder() {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mb-1 flex flex-none items-center gap-2">
-        <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
-          Response (assembled)
-        </div>
-      </div>
-      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-3 text-[12.5px] text-[color:var(--text-3)]">
-        <div>No accumulated response.</div>
-        <div className="mt-1 text-[11.5px] text-[color:var(--text-4)]">
-          The per-endpoint accumulator did not produce a reconstructed
-          response — usually because the endpoint is not modelled
-          (e.g. <span className="mono">/responses</span>). Raw SSE
-          bytes are on the <span className="mono">Raw stream</span> tab.
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function HeadersSection({
-  label,
-  headers,
-}: {
-  label: string
-  headers?: Record<string, string[]>
-}) {
-  const [open, setOpen] = useState(false)
-  const entries = useMemo(() => {
-    if (!headers) return []
-    return Object.entries(headers)
-      .map(([k, vs]) => [k, vs.join(", ")] as const)
-      .sort(([a], [b]) => a.localeCompare(b))
-  }, [headers])
-  if (entries.length === 0) return null
-  return (
-    <div className="flex flex-none flex-col">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 py-0.5 text-left hover:text-[color:var(--text-2)]"
-      >
-        <span className="inline-flex items-center text-[color:var(--text-4)]">
-          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </span>
-        <span className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
-          {label}
-        </span>
-        <span className="mono text-[10.5px] text-[color:var(--text-4)]">
-          {entries.length}
-        </span>
-      </button>
-      {open && (
-        <div className="mt-1 max-h-56 overflow-auto rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
-          <dl className="mono grid grid-cols-[minmax(140px,_max-content)_1fr] gap-x-3 gap-y-1 text-[11.5px] text-[color:var(--text-2)]">
-            {entries.map(([k, v]) => (
-              <div key={k} className="contents">
-                <dt className="truncate text-[color:var(--text-3)]" title={k}>
-                  {k}
-                </dt>
-                <dd className="break-all whitespace-pre-wrap">{v}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function BodySection({
-  label,
-  text,
-  totalBytes,
-  truncated,
-  headerExtras,
-}: {
-  label: string
-  text?: string
-  totalBytes: number
-  truncated?: boolean
-  headerExtras?: React.ReactNode
-}) {
-  const isEmpty = !text || text.length === 0
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mb-1 flex flex-none items-center gap-2">
-        <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
-          {label}
-        </div>
-        <div className="mono text-[10.5px] text-[color:var(--text-4)]">
-          {formatBytes(totalBytes)}
-        </div>
-        {truncated && (
-          <span className="mono text-[10px] uppercase text-[color:var(--warn)]">truncated</span>
-        )}
-        <div className="ml-auto flex items-center gap-1">{headerExtras}</div>
-      </div>
-      {isEmpty ? (
-        <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
-      ) : (
-        <JsonViewer
-          text={text ?? ""}
-          className="min-h-0 flex-1"
-          maxHeightClassName=""
-        />
-      )}
-    </div>
-  )
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col">
-      <dt className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">
-        {label}
-      </dt>
-      <dd className="mono text-[color:var(--text-2)]">{value}</dd>
-    </div>
-  )
-}
-
-function AttemptsList({ policy, attempts }: { policy?: string; attempts: AttemptHit[] }) {
-  return (
-    <div className="mt-3">
-      <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)] mb-1 flex items-center gap-1.5">
-        <span>Resilience attempts</span>
-        {policy && (
-          <span className="mono text-[color:var(--text-3)] normal-case tracking-normal">
-            · {policy}
-          </span>
-        )}
-      </div>
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="text-[10px] uppercase tracking-[0.07em] text-[color:var(--text-4)]">
-            <th className="text-left font-medium pr-3 pb-1">#</th>
-            <th className="text-left font-medium pr-3 pb-1">Target</th>
-            <th className="text-right font-medium pr-3 pb-1">Status</th>
-            <th className="text-right font-medium pr-3 pb-1">Duration</th>
-            <th className="text-left font-medium pb-1">Outcome</th>
-          </tr>
-        </thead>
-        <tbody>
-          {attempts.map((a, i) => (
-            <tr key={i} className="border-t border-[color:var(--border)]">
-              <td className="mono tnum pr-3 py-1.5 text-[color:var(--text-3)]">{i + 1}</td>
-              <td className="mono py-1.5 pr-3">{a.target}</td>
-              <td className="mono tnum text-right pr-3 py-1.5">
-                {a.status_code ? a.status_code : <span className="text-[color:var(--text-4)]">—</span>}
-              </td>
-              <td className="mono tnum text-right pr-3 py-1.5">
-                {a.duration_ms !== undefined ? `${a.duration_ms} ms` : <span className="text-[color:var(--text-4)]">—</span>}
-              </td>
-              <td className="py-1.5">
-                <AttemptOutcomeChip outcome={a.outcome} />
-                {a.error && (
-                  <span className="ml-2 mono text-[10.5px]" style={{ color: "var(--err)" }}>
-                    {a.error}
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function AttemptOutcomeChip({ outcome }: { outcome: string }) {
-  const colour =
-    outcome === "success"
-      ? "var(--ok)"
-      : outcome === "cb_blocked"
-        ? "var(--text-3)"
-        : "var(--err)"
-  return (
-    <span className="mono text-[10.5px]" style={{ color: colour }}>
-      {outcome}
-    </span>
-  )
-}
-
-function RulesList({ rules }: { rules: RuleHit[] }) {
-  return (
-    <div className="mt-3">
-      <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)] mb-1">
-        Rules matched
-      </div>
-      <ul className="flex flex-col gap-1">
-        {rules.map((r, i) => (
-          <li
-            key={`${r.rule_name}-${i}`}
-            className="flex flex-wrap items-center gap-2 rounded-[var(--radius)] border border-[color:var(--border)] px-2 py-1.5 text-[12.5px]"
-          >
-            <span className="mono">{r.rule_name}</span>
-            {r.actions_applied && r.actions_applied.length > 0 && (
-              <span className="mono text-[11px] text-[color:var(--text-3)]">
-                → {r.actions_applied.join(", ")}
-              </span>
-            )}
-            {r.terminated && (
-              <span
-                className="mono text-[10px] uppercase"
-                style={{ color: "var(--violet)" }}
-              >
-                terminated
-              </span>
-            )}
-            {r.error_message && (
-              <span className="mono text-[11px]" style={{ color: "var(--err)" }}>
-                {r.error_message}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function formatClock(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleTimeString([], { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0")
 }
