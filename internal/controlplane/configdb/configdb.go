@@ -109,19 +109,46 @@ CREATE TABLE IF NOT EXISTS receipts (
 );
 
 CREATE TABLE IF NOT EXISTS request_events (
-    correlation_id TEXT PRIMARY KEY,
-    gateway_id     TEXT NOT NULL DEFAULT '',
-    configuration  TEXT NOT NULL DEFAULT '',
-    backend        TEXT NOT NULL DEFAULT '',
-    model          TEXT NOT NULL DEFAULT '',
-    protocol       TEXT NOT NULL DEFAULT '',
-    status_code    INT NOT NULL DEFAULT 0,
-    latency_ms     BIGINT NOT NULL DEFAULT 0,
-    tokens_in      BIGINT NOT NULL DEFAULT 0,
-    tokens_out     BIGINT NOT NULL DEFAULT 0,
-    gen_ai_content JSONB,
-    observed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    correlation_id        TEXT PRIMARY KEY,
+    gateway_id            TEXT NOT NULL DEFAULT '',
+    configuration         TEXT NOT NULL DEFAULT '',
+    backend               TEXT NOT NULL DEFAULT '',
+    model                 TEXT NOT NULL DEFAULT '',
+    protocol              TEXT NOT NULL DEFAULT '',
+    method                TEXT NOT NULL DEFAULT '',
+    status_code           INT NOT NULL DEFAULT 0,
+    upstream_status       INT NOT NULL DEFAULT 0,
+    latency_ms            BIGINT NOT NULL DEFAULT 0,
+    tokens_in             BIGINT NOT NULL DEFAULT 0,
+    tokens_out            BIGINT NOT NULL DEFAULT 0,
+    tokens_cached         BIGINT NOT NULL DEFAULT 0,
+    tokens_cache_creation BIGINT NOT NULL DEFAULT 0,
+    session_id            TEXT NOT NULL DEFAULT '',
+    session_id_source     TEXT NOT NULL DEFAULT '',
+    api_key_name          TEXT NOT NULL DEFAULT '',
+    policy_ref            TEXT NOT NULL DEFAULT '',
+    streaming             BOOLEAN NOT NULL DEFAULT FALSE,
+    gen_ai_content        JSONB,
+    detail                JSONB,
+    observed_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Fleet-enrichment columns added after the initial request_events shape. Each
+-- ADD COLUMN IF NOT EXISTS is idempotent, so a database created before these
+-- columns existed picks them up on the next Open without a separate migration
+-- step (the CREATE TABLE above already carries them for fresh databases). detail
+-- is a JSONB envelope ({tags:[], rules_fired:[]}) with room for resilience
+-- attempts in a later phase.
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS method                TEXT NOT NULL DEFAULT '';
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS upstream_status       INT NOT NULL DEFAULT 0;
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_cached         BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_cache_creation BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS session_id            TEXT NOT NULL DEFAULT '';
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS session_id_source     TEXT NOT NULL DEFAULT '';
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS api_key_name          TEXT NOT NULL DEFAULT '';
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS policy_ref            TEXT NOT NULL DEFAULT '';
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS streaming             BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS detail                JSONB;
 
 CREATE INDEX IF NOT EXISTS request_events_observed_at ON request_events (observed_at DESC);
 
@@ -694,18 +721,56 @@ type RequestEvent struct {
 	Backend       string
 	Model         string
 	Protocol      string
-	StatusCode    int
-	LatencyMs     int64
-	TokensIn      int64
-	TokensOut     int64
+	// Method is the inbound client HTTP verb (GET, POST, DELETE), so the
+	// message view can tell a model-list GET from a completion POST.
+	Method     string
+	StatusCode int
+	// UpstreamStatus is the provider-reported HTTP status, retained alongside
+	// StatusCode so a rule-overridden/synthetic client status stays
+	// distinguishable from what the upstream actually returned. Zero when the
+	// upstream reported no status.
+	UpstreamStatus int
+	LatencyMs      int64
+	TokensIn       int64
+	TokensOut      int64
+	// TokensCached and TokensCacheCreation are the prompt-cache read/write token
+	// counts the provider billed, mirroring the connector Record's Tokens block.
+	TokensCached        int64
+	TokensCacheCreation int64
+	// SessionID is the resolved session/conversation bundle id; SessionIDSource
+	// names the header it was bundled from.
+	SessionID       string
+	SessionIDSource string
+	// APIKeyName is the resolved Sluice API-key name (managed mode), empty in
+	// passthrough.
+	APIKeyName string
+	// PolicyRef is the resilience policy the rules engine bound, empty for
+	// single-shot requests.
+	PolicyRef string
+	// Streaming is true iff the upstream response was an SSE stream.
+	Streaming bool
 	// GenAIContent is bounded gen_ai.* content as JSON, or nil when none was
 	// captured. Stored JSONB (queryable); unlike receipts it need not be
 	// byte-exact.
 	GenAIContent []byte
-	ObservedAt   time.Time
+	// Detail is the JSONB envelope of structured fleet detail — the post-rule
+	// tags and fired-rule names ({tags:[], rules_fired:[]}), with room for
+	// resilience attempts in a later phase — or nil when none was captured.
+	Detail     []byte
+	ObservedAt time.Time
 }
 
-const requestEventColumns = `correlation_id, gateway_id, configuration, backend, model, protocol, status_code, latency_ms, tokens_in, tokens_out, gen_ai_content, observed_at`
+// EventDetail is the structured envelope stored in request_events.detail: the
+// post-rule tags and the names of the rules that fired, parsed back out of the
+// comma-joined span attributes so the message view can render them as lists.
+// Attempts is reserved for a later phase and omitted while empty.
+type EventDetail struct {
+	Tags []string `json:"tags,omitempty"`
+
+	RulesFired []string `json:"rules_fired,omitempty"`
+}
+
+const requestEventColumns = `correlation_id, gateway_id, configuration, backend, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at`
 
 // UpsertRequestEvent inserts or refines a request event, keyed by
 // correlation_id, so re-delivered or two-phase (request then response)
@@ -716,20 +781,32 @@ const requestEventColumns = `correlation_id, gateway_id, configuration, backend,
 func (db *DB) UpsertRequestEvent(ctx context.Context, e RequestEvent) error {
 	observedAt := nullTime(e.ObservedAt)
 	_, err := db.pool.Exec(ctx, `
-INSERT INTO request_events (correlation_id, gateway_id, configuration, backend, model, protocol, status_code, latency_ms, tokens_in, tokens_out, gen_ai_content, observed_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, now()))
+INSERT INTO request_events (correlation_id, gateway_id, configuration, backend, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,COALESCE($22, now()))
 ON CONFLICT (correlation_id) DO UPDATE SET
-  gateway_id     = EXCLUDED.gateway_id,
-  configuration  = EXCLUDED.configuration,
-  backend        = EXCLUDED.backend,
-  model          = EXCLUDED.model,
-  protocol       = EXCLUDED.protocol,
-  status_code    = EXCLUDED.status_code,
-  latency_ms     = EXCLUDED.latency_ms,
-  tokens_in      = EXCLUDED.tokens_in,
-  tokens_out     = EXCLUDED.tokens_out,
-  gen_ai_content = COALESCE(EXCLUDED.gen_ai_content, request_events.gen_ai_content)`,
-		e.CorrelationID, e.GatewayID, e.Configuration, e.Backend, e.Model, e.Protocol, e.StatusCode, e.LatencyMs, e.TokensIn, e.TokensOut, e.GenAIContent, observedAt)
+  gateway_id            = EXCLUDED.gateway_id,
+  configuration         = EXCLUDED.configuration,
+  backend               = EXCLUDED.backend,
+  model                 = EXCLUDED.model,
+  protocol              = EXCLUDED.protocol,
+  method                = EXCLUDED.method,
+  status_code           = EXCLUDED.status_code,
+  upstream_status       = EXCLUDED.upstream_status,
+  latency_ms            = EXCLUDED.latency_ms,
+  tokens_in             = EXCLUDED.tokens_in,
+  tokens_out            = EXCLUDED.tokens_out,
+  tokens_cached         = EXCLUDED.tokens_cached,
+  tokens_cache_creation = EXCLUDED.tokens_cache_creation,
+  session_id            = EXCLUDED.session_id,
+  session_id_source     = EXCLUDED.session_id_source,
+  api_key_name          = EXCLUDED.api_key_name,
+  policy_ref            = EXCLUDED.policy_ref,
+  streaming             = EXCLUDED.streaming,
+  gen_ai_content        = COALESCE(EXCLUDED.gen_ai_content, request_events.gen_ai_content),
+  detail                = COALESCE(EXCLUDED.detail, request_events.detail)`,
+		e.CorrelationID, e.GatewayID, e.Configuration, e.Backend, e.Model, e.Protocol, e.Method,
+		e.StatusCode, e.UpstreamStatus, e.LatencyMs, e.TokensIn, e.TokensOut, e.TokensCached, e.TokensCacheCreation,
+		e.SessionID, e.SessionIDSource, e.APIKeyName, e.PolicyRef, e.Streaming, e.GenAIContent, nullJSON(e.Detail), observedAt)
 	if err != nil {
 		return fmt.Errorf("configdb: upsert request event: %w", err)
 	}
@@ -899,8 +976,9 @@ func (db *DB) ListRecentMetricPoints(ctx context.Context, limit int) ([]MetricPo
 
 func scanRequestEvent(s rowScanner) (RequestEvent, error) {
 	var e RequestEvent
-	if err := s.Scan(&e.CorrelationID, &e.GatewayID, &e.Configuration, &e.Backend, &e.Model, &e.Protocol,
-		&e.StatusCode, &e.LatencyMs, &e.TokensIn, &e.TokensOut, &e.GenAIContent, &e.ObservedAt); err != nil {
+	if err := s.Scan(&e.CorrelationID, &e.GatewayID, &e.Configuration, &e.Backend, &e.Model, &e.Protocol, &e.Method,
+		&e.StatusCode, &e.UpstreamStatus, &e.LatencyMs, &e.TokensIn, &e.TokensOut, &e.TokensCached, &e.TokensCacheCreation,
+		&e.SessionID, &e.SessionIDSource, &e.APIKeyName, &e.PolicyRef, &e.Streaming, &e.GenAIContent, &e.Detail, &e.ObservedAt); err != nil {
 		return RequestEvent{}, fmt.Errorf("configdb: scan request event: %w", err)
 	}
 	return e, nil

@@ -10,7 +10,9 @@
 package otlpingest
 
 import (
+	"encoding/json"
 	"strconv"
+	"strings"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -30,6 +32,25 @@ const (
 	attrInputTokens   = "gen_ai.usage.input_tokens"  //nolint:gosec // OTLP attribute key, not a credential
 	attrOutputTokens  = "gen_ai.usage.output_tokens" //nolint:gosec // OTLP attribute key, not a credential
 	attrStatusCode    = "http.response.status_code"
+
+	// Cache-token + session + streaming attributes the gateway already emits
+	// (gen_ai.* span attrs from observability/genai.go) — captured here so the
+	// CP event mirrors the connector Record's token + session detail.
+	attrCacheReadTokens     = "gen_ai.usage.cache_read.input_tokens"     //nolint:gosec // OTLP attribute key, not a credential
+	attrCacheCreationTokens = "gen_ai.usage.cache_creation.input_tokens" //nolint:gosec // OTLP attribute key, not a credential
+	attrConversationID      = "gen_ai.conversation.id"
+	attrRequestStream       = "gen_ai.request.stream"
+
+	// Additive sluice.* fleet dimensions emitted by the gateway's emitTrace —
+	// the post-rule tags, fired-rule names, policy ref, api-key name, upstream
+	// status, session-id source, and inbound method.
+	attrTags            = "sluice.tags"
+	attrRulesFired      = "sluice.rules_fired"
+	attrPolicyRef       = "sluice.policy_ref"
+	attrAPIKeyName      = "sluice.api_key_name" //nolint:gosec // OTLP attribute key naming the key, not a credential
+	attrUpstreamStatus  = "sluice.upstream_status"
+	attrSessionIDSource = "sluice.session_id_source"
+	attrMethod          = "sluice.method"
 )
 
 // EventFromSpan extracts a request event from a span and its resource
@@ -58,18 +79,55 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (conf
 	}
 
 	return configdb.RequestEvent{
-		CorrelationID: corr,
-		GatewayID:     strAttr(attrs, attrGatewayID),
-		Configuration: strAttr(attrs, attrConfiguration),
-		Backend:       backend,
-		Model:         strAttr(attrs, attrModel),
-		Protocol:      protocol,
-		StatusCode:    int(intAttr(attrs, attrStatusCode)),
-		TokensIn:      intAttr(attrs, attrInputTokens),
-		TokensOut:     intAttr(attrs, attrOutputTokens),
-		LatencyMs:     spanLatencyMs(span),
-		GenAIContent:  captureContent(span),
+		CorrelationID:       corr,
+		GatewayID:           strAttr(attrs, attrGatewayID),
+		Configuration:       strAttr(attrs, attrConfiguration),
+		Backend:             backend,
+		Model:               strAttr(attrs, attrModel),
+		Protocol:            protocol,
+		Method:              strAttr(attrs, attrMethod),
+		StatusCode:          int(intAttr(attrs, attrStatusCode)),
+		UpstreamStatus:      int(intAttr(attrs, attrUpstreamStatus)),
+		LatencyMs:           spanLatencyMs(span),
+		TokensIn:            intAttr(attrs, attrInputTokens),
+		TokensOut:           intAttr(attrs, attrOutputTokens),
+		TokensCached:        intAttr(attrs, attrCacheReadTokens),
+		TokensCacheCreation: intAttr(attrs, attrCacheCreationTokens),
+		SessionID:           strAttr(attrs, attrConversationID),
+		SessionIDSource:     strAttr(attrs, attrSessionIDSource),
+		APIKeyName:          strAttr(attrs, attrAPIKeyName),
+		PolicyRef:           strAttr(attrs, attrPolicyRef),
+		Streaming:           boolAttr(attrs, attrRequestStream),
+		Detail:              eventDetail(attrs),
+		GenAIContent:        captureContent(span),
 	}, true
+}
+
+// eventDetail packs the post-rule tags and fired-rule names — comma-joined in
+// the span attributes — back into the request_event's JSONB detail column, so
+// the message view can render them as structured lists. Returns nil when
+// neither is present, leaving the column SQL NULL rather than an empty object.
+func eventDetail(attrs map[string]*commonpb.AnyValue) []byte {
+	tags := splitCSV(strAttr(attrs, attrTags))
+	rules := splitCSV(strAttr(attrs, attrRulesFired))
+	if len(tags) == 0 && len(rules) == 0 {
+		return nil
+	}
+	d := configdb.EventDetail{Tags: tags, RulesFired: rules}
+	b, err := json.Marshal(d)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// splitCSV splits a comma-joined attribute value into its parts, returning nil
+// for an empty string so an absent attribute yields no slice rather than [""].
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
 }
 
 func mergeAttrs(resource, span []*commonpb.KeyValue) map[string]*commonpb.AnyValue {
@@ -117,6 +175,23 @@ func intAttr(attrs map[string]*commonpb.AnyValue, key string) int64 {
 		return n
 	default:
 		return 0
+	}
+}
+
+// boolAttr reads a bool-valued attribute. A string "true" is also accepted —
+// some SDKs serialise booleans as strings — but any other kind is false.
+func boolAttr(attrs map[string]*commonpb.AnyValue, key string) bool {
+	v := attrs[key]
+	if v == nil {
+		return false
+	}
+	switch x := v.GetValue().(type) {
+	case *commonpb.AnyValue_BoolValue:
+		return x.BoolValue
+	case *commonpb.AnyValue_StringValue:
+		return x.StringValue == "true"
+	default:
+		return false
 	}
 }
 

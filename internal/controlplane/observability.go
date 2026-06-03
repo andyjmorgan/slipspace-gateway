@@ -70,34 +70,75 @@ func (h *ObservabilityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 // eventView is the JSON projection of a request event (configdb types carry no
 // json tags, so the API shape is pinned here).
 type eventView struct {
-	CorrelationID string          `json:"correlation_id"`
-	GatewayID     string          `json:"gateway_id"`
-	Configuration string          `json:"configuration"`
-	Backend       string          `json:"backend"`
-	Model         string          `json:"model"`
-	Protocol      string          `json:"protocol"`
-	StatusCode    int             `json:"status_code"`
-	LatencyMs     int64           `json:"latency_ms"`
-	TokensIn      int64           `json:"tokens_in"`
-	TokensOut     int64           `json:"tokens_out"`
-	GenAIContent  json.RawMessage `json:"gen_ai_content,omitempty"`
-	ObservedAt    time.Time       `json:"observed_at"`
+	CorrelationID string `json:"correlation_id"`
+
+	GatewayID string `json:"gateway_id"`
+
+	Configuration string `json:"configuration"`
+
+	Backend string `json:"backend"`
+
+	Model string `json:"model"`
+
+	Protocol string `json:"protocol"`
+
+	Method string `json:"method,omitempty"`
+
+	StatusCode int `json:"status_code"`
+
+	UpstreamStatus int `json:"upstream_status,omitempty"`
+
+	LatencyMs int64 `json:"latency_ms"`
+
+	TokensIn int64 `json:"tokens_in"`
+
+	TokensOut int64 `json:"tokens_out"`
+
+	TokensCached int64 `json:"tokens_cached,omitempty"`
+
+	TokensCacheCreation int64 `json:"tokens_cache_creation,omitempty"`
+
+	SessionID string `json:"session_id,omitempty"`
+
+	SessionIDSource string `json:"session_id_source,omitempty"`
+
+	APIKeyName string `json:"api_key_name,omitempty"`
+
+	PolicyRef string `json:"policy_ref,omitempty"`
+
+	Streaming bool `json:"streaming,omitempty"`
+
+	GenAIContent json.RawMessage `json:"gen_ai_content,omitempty"`
+
+	Detail json.RawMessage `json:"detail,omitempty"`
+
+	ObservedAt time.Time `json:"observed_at"`
 }
 
 func toEventView(e configdb.RequestEvent) eventView {
 	return eventView{
-		CorrelationID: e.CorrelationID,
-		GatewayID:     e.GatewayID,
-		Configuration: e.Configuration,
-		Backend:       e.Backend,
-		Model:         e.Model,
-		Protocol:      e.Protocol,
-		StatusCode:    e.StatusCode,
-		LatencyMs:     e.LatencyMs,
-		TokensIn:      e.TokensIn,
-		TokensOut:     e.TokensOut,
-		GenAIContent:  json.RawMessage(e.GenAIContent),
-		ObservedAt:    e.ObservedAt,
+		CorrelationID:       e.CorrelationID,
+		GatewayID:           e.GatewayID,
+		Configuration:       e.Configuration,
+		Backend:             e.Backend,
+		Model:               e.Model,
+		Protocol:            e.Protocol,
+		Method:              e.Method,
+		StatusCode:          e.StatusCode,
+		UpstreamStatus:      e.UpstreamStatus,
+		LatencyMs:           e.LatencyMs,
+		TokensIn:            e.TokensIn,
+		TokensOut:           e.TokensOut,
+		TokensCached:        e.TokensCached,
+		TokensCacheCreation: e.TokensCacheCreation,
+		SessionID:           e.SessionID,
+		SessionIDSource:     e.SessionIDSource,
+		APIKeyName:          e.APIKeyName,
+		PolicyRef:           e.PolicyRef,
+		Streaming:           e.Streaming,
+		GenAIContent:        json.RawMessage(e.GenAIContent),
+		Detail:              json.RawMessage(e.Detail),
+		ObservedAt:          e.ObservedAt,
 	}
 }
 

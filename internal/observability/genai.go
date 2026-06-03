@@ -206,6 +206,46 @@ const (
 	// AttrSluiceUnmappedDirection is "request" or "response", marking which
 	// side of the exchange carried the unmapped field.
 	AttrSluiceUnmappedDirection = "sluice.unmapped_direction"
+
+	// The following Sluice extras carry the post-rule fleet dimensions the
+	// control plane stores on a request_event for the message view and
+	// dashboards. They mirror fields the connector Record already carries
+	// (Tags, RulesFired, PolicyRef, APIKeyName, UpstreamStatus,
+	// SessionIDSource, Method). They are additive span attributes — the
+	// gen_ai.* namespace stays spec-conformant for the external OTel/Langfuse
+	// stack, so every Sluice-only dimension rides sluice.*.
+
+	// AttrSluiceTags is the comma-joined set of tags the rules engine
+	// attached to the request (AddTagAction). Emitted only when non-empty.
+	AttrSluiceTags = "sluice.tags"
+
+	// AttrSluiceRulesFired is the comma-joined names of the rules that fired
+	// for the request, in match order. Emitted only when at least one fired.
+	AttrSluiceRulesFired = "sluice.rules_fired"
+
+	// AttrSluicePolicyRef is the resilience policy the rules engine bound via
+	// the useResiliencePolicy action. Empty for single-shot requests.
+	AttrSluicePolicyRef = "sluice.policy_ref"
+
+	// AttrSluiceAPIKeyName is the resolved Sluice API-key name (managed mode)
+	// the request authenticated as. Empty in passthrough mode.
+	AttrSluiceAPIKeyName = "sluice.api_key_name" //nolint:gosec // G101 false positive: attribute key naming the key, not a credential
+
+	// AttrSluiceUpstreamStatus is the upstream-reported HTTP status, retained
+	// alongside http.response.status_code so a synthetic/rule-overridden client
+	// status stays distinguishable from what the provider actually returned.
+	// Emitted only when the upstream reported a status.
+	AttrSluiceUpstreamStatus = "sluice.upstream_status"
+
+	// AttrSluiceSessionIDSource is the provenance header the session/conversation
+	// id was bundled from (the configured session-id header). The id itself rides
+	// gen_ai.conversation.id; this names where it came from.
+	AttrSluiceSessionIDSource = "sluice.session_id_source"
+
+	// AttrSluiceMethod is the inbound client HTTP verb (GET, POST, DELETE),
+	// captured pre-rule so a model-list GET is distinguishable from a
+	// completion POST in the fleet message view.
+	AttrSluiceMethod = "sluice.method"
 )
 
 // gen_ai.operation.name values (spec-defined).
