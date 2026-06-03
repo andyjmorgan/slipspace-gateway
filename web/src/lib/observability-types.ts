@@ -149,6 +149,48 @@ export type MessagesRecentResponse = {
   entries: MessageEntry[]
 }
 
+// A single part of a GenAI message — text, a model-issued tool call, a
+// tool-call result, or a reasoning trace. Mirrors the gateway's emitPart JSON
+// (cmd/gateway/reporter.go::jsonMap): tool calls carry name + arguments,
+// tool-call responses carry a result, everything else carries content.
+export type GenAIMessagePart = {
+  type: string
+  content?: string
+  id?: string
+  name?: string
+  arguments?: unknown
+  result?: unknown
+}
+
+// One role-tagged turn: [{role, parts}]. The gateway emits input as the latest
+// user turn and output as the assistant turn (incl. tool_call parts).
+export type GenAIMessage = {
+  role: string
+  parts?: GenAIMessagePart[]
+}
+
+// One available tool the request advertised to the model. Mirrors the gateway's
+// jsonToolDefsString output.
+export type GenAIToolDefinition = {
+  type?: string
+  name?: string
+  description?: string
+  parameters?: unknown
+}
+
+// The telemetry-native GenAI content the control plane captured from the
+// request span (SLUICE_OTEL_CAPTURE_CONTENT). Each field is the gateway's
+// [{role, parts}] / tool-defs JSON. A {"truncated":...} marker replaces the
+// object when the captured content exceeded the CP's content cap.
+export type GenAIContent = {
+  input_messages?: GenAIMessage[]
+  output_messages?: GenAIMessage[]
+  tool_definitions?: GenAIToolDefinition[]
+  system_instructions?: GenAIMessagePart[]
+  truncated?: boolean
+  original_bytes?: number
+}
+
 export type MessageBodyDetail = {
   event_id: string
   request?: string
@@ -161,4 +203,5 @@ export type MessageBodyDetail = {
   assembly_partial?: boolean
   request_headers?: Record<string, string[]>
   response_headers?: Record<string, string[]>
+  gen_ai_content?: GenAIContent
 }

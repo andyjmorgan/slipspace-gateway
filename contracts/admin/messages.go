@@ -1,6 +1,9 @@
 package admin
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // MessageEntry is the wire shape of one completed-request record served
 // by the admin /api/v1/messages endpoints. Mirrors the
@@ -215,4 +218,15 @@ type MessageBodyDetail struct {
 	// before the gateway wrote the response status, redacted with the
 	// same rules as RequestHeaders.
 	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
+
+	// GenAIContent is the bounded, telemetry-native GenAI request/response
+	// content the gateway captured on the request span (input/output messages
+	// incl. tool calls + results, the available tool definitions, and the
+	// system instructions), surfaced verbatim as the raw JSON object the
+	// control plane stored. Present only when the gateway ran with
+	// SLUICE_OTEL_CAPTURE_CONTENT enabled; empty otherwise. This is the
+	// telemetry channel, distinct from the spool-sourced Request/Response
+	// bodies above (CLAUDE.md invariant #4) — either may be present without
+	// the other.
+	GenAIContent json.RawMessage `json:"gen_ai_content,omitempty"`
 }

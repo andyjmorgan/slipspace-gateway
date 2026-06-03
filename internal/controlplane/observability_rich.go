@@ -55,7 +55,12 @@ func (h *ObservabilityHandler) registerRichRoutes() {
 	h.mux.HandleFunc("GET /api/v1/observability/dashboard/summary", h.dashboardSummary)
 	h.mux.HandleFunc("GET /api/v1/observability/dashboard/timeseries", h.dashboardTimeseries)
 	h.mux.HandleFunc("GET /api/v1/observability/messages/recent", h.messagesRecent)
-	if h.records != nil {
+	// The body route serves two independent sources: the spool-captured
+	// connector Record (h.records) and the telemetry-native gen_ai_content on
+	// the request_event (h.store). Register it whenever either can supply
+	// content, so a telemetry-only deployment (SLUICE_OTEL_CAPTURE_CONTENT, no
+	// connector spool) still surfaces the inspector content.
+	if h.records != nil || h.store != nil {
 		h.mux.HandleFunc("GET /api/v1/observability/messages/{event_id}/body", h.messageBody)
 	}
 }
@@ -400,23 +405,68 @@ func toMessageEntry(e configdb.RequestEvent) adminc.MessageEntry {
 	return out
 }
 
+// messageBody serves the inspector's per-request drill-in. It draws from two
+// independent sources keyed on the same correlation id: the spool-captured
+// connector Record (the request/response body envelope) and the
+// telemetry-native gen_ai_content on the request_event (bounded prompt/response
+// + tool content the gateway put on the span). Either may be absent; the
+// response is the merge of whatever is present. 404 only when neither source
+// has anything for the id.
 func (h *ObservabilityHandler) messageBody(w http.ResponseWriter, r *http.Request) {
 	eventID := r.PathValue("event_id")
-	raw, err := h.records.GetRequestRecord(r.Context(), eventID)
-	if errors.Is(err, configdb.ErrRequestBodyNotFound) {
+
+	var detail adminc.MessageBodyDetail
+	detail.EventID = eventID
+	haveBody := false
+
+	if h.records != nil {
+		raw, err := h.records.GetRequestRecord(r.Context(), eventID)
+		switch {
+		case errors.Is(err, configdb.ErrRequestBodyNotFound):
+			// No spool record — fall through to telemetry-only content.
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "get message body")
+			return
+		default:
+			d, perr := recordToBodyDetail(eventID, raw)
+			if perr != nil {
+				writeError(w, http.StatusInternalServerError, "decode captured record")
+				return
+			}
+			detail = d
+			haveBody = true
+		}
+	}
+
+	genAIContent := h.genAIContent(r.Context(), eventID)
+	if len(genAIContent) > 0 {
+		detail.GenAIContent = genAIContent
+	}
+
+	if !haveBody && len(detail.GenAIContent) == 0 {
 		writeError(w, http.StatusNotFound, "no captured body for event id")
 		return
 	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "get message body")
-		return
-	}
-	detail, perr := recordToBodyDetail(eventID, raw)
-	if perr != nil {
-		writeError(w, http.StatusInternalServerError, "decode captured record")
-		return
-	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+// genAIContent returns the bounded gen_ai content the gateway captured on the
+// request span for one correlation id, or nil when the event is absent, carries
+// no content, or the store is unavailable. A missing event is not an error here
+// — the connector Record may still carry bodies — so lookup failures degrade to
+// nil rather than failing the request.
+func (h *ObservabilityHandler) genAIContent(ctx context.Context, eventID string) json.RawMessage {
+	if h.store == nil {
+		return nil
+	}
+	e, err := h.store.GetRequestEvent(ctx, eventID)
+	if err != nil {
+		return nil
+	}
+	if len(e.GenAIContent) == 0 {
+		return nil
+	}
+	return json.RawMessage(e.GenAIContent)
 }
 
 // recordToBodyDetail maps a captured connector Record onto the gateway's
