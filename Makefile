@@ -16,7 +16,7 @@ DEV_ENV := \
 # checkout so go:embed has something to attach.
 WEB_OUT := internal/admin/webdist/index.html
 
-.PHONY: all build test lint fmt vet coverage dev dev-with-overlay dev-compose dev-compose-down dev-real dev-real-down e2e py-compat smoke clean tools tools-proto proto web web-install web-dev
+.PHONY: all build test lint fmt vet coverage dev dev-with-overlay dev-compose dev-compose-down dev-real dev-real-down e2e py-compat smoke clean tools tools-proto proto web web-install web-dev web-cp
 
 all: lint vet test
 
@@ -45,6 +45,20 @@ web-install:
 
 web-dev: web-install
 	cd web && $(NPM) run dev
+
+# web-cp builds the control-plane console (second Vite delivery) into
+# internal/controlplane/webdist, embedded by cmd/api. Vite names the output
+# after the entry (index.cp.html); rename it to index.html for the Go static
+# handler. Same emptyOutDir-off + clear-generated-artefacts contract as `web`.
+web-cp: web-install
+	rm -rf internal/controlplane/webdist/index.html \
+		internal/controlplane/webdist/index.cp.html \
+		internal/controlplane/webdist/assets \
+		internal/controlplane/webdist/favicon.ico \
+		internal/controlplane/webdist/sluice.png \
+		internal/controlplane/webdist/sluice.svg
+	cd web && $(NPM) run build:cp
+	mv internal/controlplane/webdist/index.cp.html internal/controlplane/webdist/index.html
 
 vet:
 	$(GO) vet ./...
