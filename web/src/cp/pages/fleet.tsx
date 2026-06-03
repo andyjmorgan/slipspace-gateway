@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router"
 import { Server } from "lucide-react"
+import { DotPill } from "@/components/atoms/dot-pill"
+import { EmptyPanel, ErrorPanel, LoadingPanel } from "@/components/atoms/page-states"
+import { fmt } from "@/lib/fmt"
 import { apiFetch, UnauthorizedError } from "../lib/api"
 import type { DriftRow, FleetGateway, FleetStatus, DriftStatus } from "../lib/types"
 
@@ -61,29 +64,10 @@ export function FleetPage() {
         </div>
       </div>
 
-      {error && (
-        <div
-          className="rounded-[var(--radius-lg)] border p-5 text-[13px]"
-          style={{
-            color: "var(--err)",
-            background: "var(--err-bg)",
-            borderColor: "color-mix(in oklab, var(--err) 30%, var(--border))",
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {!error && rows === null && (
-        <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-8 text-center text-[13px] text-[color:var(--text-3)]">
-          Loading…
-        </div>
-      )}
-
+      {error && <ErrorPanel message={error} />}
+      {!error && rows === null && <LoadingPanel />}
       {!error && rows !== null && rows.length === 0 && (
-        <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-8 text-center text-[13px] text-[color:var(--text-3)]">
-          No gateways have registered yet.
-        </div>
+        <EmptyPanel message="No gateways have registered yet." />
       )}
 
       {!error && rows !== null && rows.length > 0 && (
@@ -112,18 +96,18 @@ export function FleetPage() {
                     )}
                   </td>
                   <td className="px-4 py-2.5">
-                    <Pill color={STATUS_COLOR[g.status]} label={g.status} />
+                    <DotPill color={STATUS_COLOR[g.status]} label={g.status} />
                   </td>
                   <td className="px-4 py-2.5 mono text-[12px] text-[color:var(--text-2)]">{g.version || "—"}</td>
                   <td className="px-4 py-2.5">
                     {g.drift ? (
-                      <Pill color={DRIFT_COLOR[g.drift]} label={g.drift} />
+                      <DotPill color={DRIFT_COLOR[g.drift]} label={g.drift} />
                     ) : (
                       <span className="text-[color:var(--text-4)]">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 mono text-[12px] text-[color:var(--text-3)]">
-                    {fmtTime(g.last_seen)}
+                  <td className="px-4 py-2.5 mono text-[12px] text-[color:var(--text-3)]" title={fmt.fullTime(g.last_seen)}>
+                    {fmt.ago(g.last_seen)}
                   </td>
                 </tr>
               ))}
@@ -135,20 +119,3 @@ export function FleetPage() {
   )
 }
 
-function Pill({ color, label }: { color: string; label: string }) {
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 text-[12px] capitalize"
-      style={{ color }}
-    >
-      <span className="inline-block size-1.5 rounded-full" style={{ background: color }} />
-      {label}
-    </span>
-  )
-}
-
-function fmtTime(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString()
-}

@@ -62,6 +62,18 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return res.json() as Promise<T>
 }
 
+/**
+ * Human-readable text for a failed apiFetch. The CP error envelope is a flat
+ * {"error": "..."} (e.g. publish validation failures, bad entity bodies), so
+ * prefer that field; fall back to the error message.
+ */
+export function apiErrorText(e: unknown): string {
+  if (e instanceof APIError && e.body && typeof e.body === "object" && "error" in e.body) {
+    return String((e.body as { error: unknown }).error)
+  }
+  return e instanceof Error ? e.message : String(e)
+}
+
 /** Validate cached credentials against the authenticated /api/v1/auth/me. */
 export async function validateSession(): Promise<boolean> {
   try {

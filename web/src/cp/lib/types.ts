@@ -25,3 +25,50 @@ export interface DriftRow {
   status: DriftStatus
   cached_hashes: string[] | null
 }
+
+/** Config entity kinds the CP stores (compose.go KindX constants). */
+export const ENTITY_KINDS = [
+  "backend",
+  "group",
+  "configuration",
+  "api_key",
+  "rule",
+  "connector",
+] as const
+export type EntityKind = (typeof ENTITY_KINDS)[number]
+
+/** One editable config entity. Body is the contract type as JSON. */
+export interface ConfigEntity {
+  kind: string
+  name: string
+  body: unknown
+  updated_at: string
+  updated_by: string
+}
+
+/** A published, immutable config version. */
+export interface ConfigVersion {
+  id: string
+  hash: string
+  published_at: string
+  published_by: string
+  active: boolean
+}
+
+/** One entry in the change audit log. */
+export interface ConfigChange {
+  kind: string
+  name: string
+  op: string
+  old_body?: unknown
+  new_body?: unknown
+  changed_by: string
+  changed_at: string
+}
+
+/** Result of a successful publish. */
+export interface PublishResult {
+  version: string
+  hash: string
+  status: string
+}
