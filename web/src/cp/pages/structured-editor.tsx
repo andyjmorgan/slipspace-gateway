@@ -26,6 +26,7 @@ export function CpStructuredEditor<F>({
   toContract,
   nameOf,
   sub,
+  successNav,
 }: {
   mode: "create" | "edit"
   kind: EntityKind
@@ -37,6 +38,10 @@ export function CpStructuredEditor<F>({
   toContract: (form: F) => { name: string }
   nameOf: (form: F) => string
   sub: string
+  // successNav, when set, computes the route to land on after a successful save
+  // from the saved name. Defaults to the list (back) route; the configuration
+  // editor overrides it to land on the detail page.
+  successNav?: (name: string) => string
 }) {
   const nav = useNavigate()
   const params = useParams()
@@ -69,8 +74,9 @@ export function CpStructuredEditor<F>({
     }
     setBusy(true)
     try {
-      await putEntity(kind, body.name.trim(), body)
-      nav(backTo)
+      const saved = body.name.trim()
+      await putEntity(kind, saved, body)
+      nav(successNav ? successNav(saved) : backTo)
     } catch (e) {
       if (e instanceof UnauthorizedError) return nav("/login", { replace: true })
       setError(apiErrorText(e))
