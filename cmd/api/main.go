@@ -131,7 +131,12 @@ func run(ctx context.Context) error {
 	mux.Handle("/api/v1/fleet/drift", controlplane.NewDriftHandler(reg, rt.adminDB))
 	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, logger))
 	mux.Handle("/api/v1/observability/", controlplane.NewObservabilityHandler(rt.adminDB, rt.adminDB, signer.Public()))
-	mux.Handle("/api/v1/ingest/segment", controlplane.NewSegmentIngestHandler(rt.adminDB, logger))
+	// Segment ingest is a gateway-facing endpoint: it authenticates with the
+	// bootstrap token (BearerAuth), the same credential the fleet gRPC channel
+	// uses, so a gateway never holds the admin console password. It is exempted
+	// from the admin Basic-auth wrapper below precisely because it carries its
+	// own token gate.
+	mux.Handle("/api/v1/ingest/segment", controlplane.BearerAuth(cfg.token, controlplane.NewSegmentIngestHandler(rt.adminDB, logger)))
 	mux.Handle("/", controlplane.ConsoleHandler())
 
 	// Admin credentials live in Postgres (shared across replicas). Seed on
@@ -140,7 +145,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	httpHandler := basicAuthExceptHealth(authenticator.Verify, mux)
+	httpHandler := basicAuthExceptOpen(authenticator.Verify, mux)
 	logger.Info("HTTP API protected by Basic auth (user: admin, credential from Postgres)")
 
 	httpSrv := &http.Server{
@@ -253,12 +258,14 @@ func randomPassword() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// basicAuthExceptHealth wraps next with Basic auth, leaving /healthz open so
-// k8s liveness/readiness probes don't need credentials.
-func basicAuthExceptHealth(verify func(username, password string) bool, next http.Handler) http.Handler {
+// basicAuthExceptOpen wraps next with admin Basic auth, leaving two paths to
+// pass through unwrapped: /healthz (k8s probes need no credentials) and the
+// segment-ingest endpoint (it carries its own BearerAuth token gate, so the
+// admin password must not be required there — gateways don't have it).
+func basicAuthExceptOpen(verify func(username, password string) bool, next http.Handler) http.Handler {
 	authed := controlplane.BasicAuth(verify, next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/api/v1/ingest/segment" {
 			next.ServeHTTP(w, r)
 			return
 		}

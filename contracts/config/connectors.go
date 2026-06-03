@@ -11,6 +11,16 @@ const (
 	ConnectorTypeS3        = "s3"
 	ConnectorTypeAzureBlob = "azure_blob"
 	ConnectorTypeWebhook   = "webhook"
+
+	// ConnectorTypeControlPlane ships sealed segments to this gateway's own
+	// control plane (the CP acting as a spool destination). It reuses the
+	// webhook transport fields — URL (the CP's /api/v1/ingest/segment
+	// endpoint), SecretRef (the bootstrap token, conventionally
+	// env:SLUICE_CP_TOKEN so the published config stays gateway-agnostic), and
+	// TimeoutMS — but authenticates with a Bearer token rather than an HMAC
+	// signature and applies no SSRF guard, since it deliberately targets an
+	// internal control-plane service.
+	ConnectorTypeControlPlane = "controlplane"
 )
 
 // WebhookDefaultMaxBodyBytes caps webhook deliveries when the binding

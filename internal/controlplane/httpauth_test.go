@@ -63,3 +63,57 @@ func TestBasicAuth(t *testing.T) {
 		}
 	})
 }
+
+func TestBearerAuth(t *testing.T) {
+	const token = "fleet-bootstrap-token"
+	reached := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	call := func(h http.Handler, auth string) *httptest.ResponseRecorder {
+		reached = false
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/ingest/segment", nil)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	h := BearerAuth(token, next)
+
+	t.Run("correct bearer passes", func(t *testing.T) {
+		if rec := call(h, "Bearer "+token); rec.Code != http.StatusOK || !reached {
+			t.Fatalf("= %d reached=%v, want 200 + reached", rec.Code, reached)
+		}
+	})
+	t.Run("wrong token is 401", func(t *testing.T) {
+		if rec := call(h, "Bearer nope"); rec.Code != http.StatusUnauthorized || reached {
+			t.Fatalf("= %d reached=%v, want 401", rec.Code, reached)
+		}
+	})
+	t.Run("missing header is 401", func(t *testing.T) {
+		if rec := call(h, ""); rec.Code != http.StatusUnauthorized || reached {
+			t.Fatalf("= %d reached=%v, want 401", rec.Code, reached)
+		}
+	})
+	t.Run("admin basic creds do not satisfy bearer", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/ingest/segment", nil)
+		req.SetBasicAuth("admin", token)
+		rec := httptest.NewRecorder()
+		reached = false
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || reached {
+			t.Fatalf("= %d reached=%v, want 401 (basic auth is not a bearer)", rec.Code, reached)
+		}
+	})
+	t.Run("empty token disables the gate", func(t *testing.T) {
+		open := BearerAuth("", next)
+		if rec := call(open, ""); rec.Code != http.StatusOK || !reached {
+			t.Fatalf("= %d reached=%v, want 200 (empty token = open)", rec.Code, reached)
+		}
+	})
+}

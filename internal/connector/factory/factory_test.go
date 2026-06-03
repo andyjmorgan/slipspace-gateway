@@ -46,6 +46,20 @@ func TestBuild_Webhook(t *testing.T) {
 	}
 }
 
+func TestBuild_ControlPlane(t *testing.T) {
+	t.Setenv("FAC_CP_TOKEN", "tok")
+	c, err := Build(context.Background(), contractsconfig.Connector{ //nolint:gosec // G101: fixture
+		Type: "controlplane", Name: "cp-audit", URL: "http://cp:8484/api/v1/ingest/segment",
+		SecretRef: "env:FAC_CP_TOKEN", TimeoutMS: 1000,
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if c.Type() != "controlplane" {
+		t.Errorf("Type = %q", c.Type())
+	}
+}
+
 func TestBuild_UnknownType(t *testing.T) {
 	_, err := Build(context.Background(), contractsconfig.Connector{
 		Type: "carrier-pigeon", Name: "x",
