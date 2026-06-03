@@ -1,5 +1,6 @@
 import {
   Server as ServerIcon,
+  LayoutDashboard,
   SlidersHorizontal,
   ListTree,
   Server,
@@ -13,11 +14,13 @@ import {
 import type { NavMeta } from "@/lib/nav-meta"
 
 // CP_NAV is the control-plane console's sidebar. It mirrors the gateway's
-// configuration items (same icons/labels/colours) minus Dashboard + Settings,
-// and adds the CP-only sections: Fleet at the top, Observability + Versions
-// below. Shared with the gateway via the parameterised Sidebar component.
+// configuration items (same icons/labels/colours) minus Settings, and adds the
+// CP-only sections: Fleet + a fleet-wide Dashboard at the top, Observability +
+// Versions below. Shared with the gateway via the parameterised Sidebar
+// component.
 export const CP_NAV: NavMeta[] = [
   { to: "/fleet", label: "Fleet", icon: ServerIcon, color: "#60a5fa", section: "Fleet" },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, color: "#60a5fa" },
 
   { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, color: "#a78bfa", section: "Configuration" },
   { to: "/rules", label: "Rules", icon: ListTree, color: "#f97316" },

@@ -7,6 +7,7 @@ import { CP_NAV } from "./lib/nav-meta"
 import { fetchVersion } from "./lib/api"
 import { LoginPage } from "./pages/login"
 import { FleetPage } from "./pages/fleet"
+import { CpDashboardPage } from "./pages/dashboard"
 import { VersionsPage } from "./pages/versions"
 import { BindingsPage } from "./pages/bindings"
 import { ObservabilityPage } from "./pages/observability"
@@ -25,6 +26,7 @@ import { CpConnectorEditor, CpGroupEditor, CpApiKeyEditor, CpRuleEditor, CpConfi
 
 const CP_TITLES: TopbarTitles = {
   "/fleet": { t: "Fleet", s: "registered gateways · liveness · drift" },
+  "/dashboard": { t: "Dashboard", s: "fleet-wide telemetry over a time range" },
   "/configurations": { t: "Configurations", s: "policy bundles distributed to the fleet" },
   "/rules": { t: "Rules", s: "shared transform library" },
   "/backends": { t: "Backends", s: "upstream connections" },
@@ -51,6 +53,7 @@ export default function App() {
       >
         <Route path="/" element={<Navigate to="/fleet" replace />} />
         <Route path="/fleet" element={<FleetPage />} />
+        <Route path="/dashboard" element={<CpDashboardPage />} />
 
         {/* Backends: list → detail → edit, mirroring the gateway console. */}
         <Route path="/backends" element={<CpBackendListPage />} />
