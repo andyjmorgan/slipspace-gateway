@@ -109,6 +109,29 @@ func TestEventFromSpan_BackendFallsBackToProvider(t *testing.T) {
 	}
 }
 
+func TestEventFromSpan_ProtocolFallsBackToEndpoint(t *testing.T) {
+	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
+		kvStr(attrCorrelationID, "c"),
+		kvStr(attrEndpoint, "chat_completions"), // no sluice.protocol
+	}}
+	e, ok := EventFromSpan(nil, span)
+	if !ok || e.Protocol != "chat_completions" {
+		t.Errorf("protocol fallback to endpoint failed: ok=%v protocol=%q", ok, e.Protocol)
+	}
+}
+
+func TestEventFromSpan_ProtocolWinsOverEndpoint(t *testing.T) {
+	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
+		kvStr(attrCorrelationID, "c"),
+		kvStr(attrProtocol, "chat"),
+		kvStr(attrEndpoint, "chat_completions"),
+	}}
+	e, ok := EventFromSpan(nil, span)
+	if !ok || e.Protocol != "chat" {
+		t.Errorf("sluice.protocol should win over sluice.endpoint: ok=%v protocol=%q", ok, e.Protocol)
+	}
+}
+
 func TestEventFromSpan_TokenAttrAsString(t *testing.T) {
 	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
 		kvStr(attrCorrelationID, "c"),

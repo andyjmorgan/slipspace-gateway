@@ -179,6 +179,12 @@ const (
 	// AttrSluiceConfiguration is the resolved Sluice configuration name.
 	AttrSluiceConfiguration = "sluice.configuration"
 
+	// AttrSluiceGatewayID identifies the emitting gateway instance. Carried
+	// as a resource attribute so every span the control plane ingests is
+	// tagged with its origin; the CP reads the identical key to populate
+	// request_events.gateway_id.
+	AttrSluiceGatewayID = "sluice.gateway_id"
+
 	// AttrSluiceCorrelationID carries the request correlation id on the
 	// span so a trace can be cross-referenced to logs and captured
 	// records (which key on the same id).

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
@@ -307,6 +308,35 @@ func TestSetup_DeploymentEnvironmentAttribute(t *testing.T) {
 		t.Fatalf("Setup: %v", err)
 	}
 	t.Cleanup(func() { shutdownProv(prov) })
+}
+
+func TestBuildResource_GatewayIDAttribute(t *testing.T) {
+	res, err := observability.BuildResourceForTest(context.Background(), build(), "beta-sluice")
+	if err != nil {
+		t.Fatalf("BuildResourceForTest: %v", err)
+	}
+	if got, ok := resourceAttr(res, observability.AttrSluiceGatewayID); !ok || got != "beta-sluice" {
+		t.Errorf("sluice.gateway_id = %q (present=%v), want %q", got, ok, "beta-sluice")
+	}
+}
+
+func TestBuildResource_OmitsGatewayIDWhenEmpty(t *testing.T) {
+	res, err := observability.BuildResourceForTest(context.Background(), build(), "")
+	if err != nil {
+		t.Fatalf("BuildResourceForTest: %v", err)
+	}
+	if _, ok := resourceAttr(res, observability.AttrSluiceGatewayID); ok {
+		t.Error("sluice.gateway_id should be absent when GatewayID is empty")
+	}
+}
+
+func resourceAttr(res *resource.Resource, key string) (string, bool) {
+	for _, kv := range res.Attributes() {
+		if string(kv.Key) == key {
+			return kv.Value.AsString(), true
+		}
+	}
+	return "", false
 }
 
 func TestProvider_ShutdownIsIdempotent(t *testing.T) {
