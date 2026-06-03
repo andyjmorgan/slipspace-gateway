@@ -5,6 +5,7 @@ import { CpLayout } from "./components/cp-layout"
 import { FleetPage } from "./pages/fleet"
 import { ConfigPage } from "./pages/config"
 import { EntityEditorPage } from "./pages/entity-editor"
+import { CpBackendEditorPage } from "./pages/backend-editor"
 import { VersionsPage } from "./pages/versions"
 
 export default function App() {
@@ -22,6 +23,10 @@ export default function App() {
         <Route path="/fleet" element={<FleetPage />} />
         <Route path="/config" element={<ConfigPage />} />
         <Route path="/config/new" element={<EntityEditorPage mode="create" />} />
+        {/* Structured per-type editors take precedence over the generic JSON
+            editor; remaining kinds fall through to /config/:kind/:name. */}
+        <Route path="/config/backend/new" element={<CpBackendEditorPage mode="create" />} />
+        <Route path="/config/backend/:name" element={<CpBackendEditorPage mode="edit" />} />
         <Route path="/config/:kind/:name" element={<EntityEditorPage mode="edit" />} />
         <Route path="/versions" element={<VersionsPage />} />
       </Route>

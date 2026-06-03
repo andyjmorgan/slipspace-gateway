@@ -114,6 +114,12 @@ export function ConfigPage() {
                   {KIND_LABEL[kind]}
                 </h2>
                 <span className="mono text-[11px] text-[color:var(--text-4)]">{rows.length}</span>
+                <Link
+                  to={newPath(kind)}
+                  className="ml-auto text-[12px] text-[color:var(--text-3)] hover:text-[color:var(--text)]"
+                >
+                  + New
+                </Link>
               </div>
               {rows.length === 0 ? (
                 <div className="text-[12.5px] text-[color:var(--text-4)] px-1">None.</div>
@@ -147,4 +153,11 @@ export function ConfigPage() {
         })}
     </div>
   )
+}
+
+// newPath routes "+ New" to the structured editor for kinds that have one, and
+// the generic JSON editor (preselected to the kind) for the rest.
+function newPath(kind: EntityKind): string {
+  if (kind === "backend") return "/config/backend/new"
+  return `/config/new?kind=${kind}`
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useNavigate, useParams } from "react-router"
+import { useNavigate, useParams, useSearchParams } from "react-router"
 import { ArrowLeft, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -46,11 +46,15 @@ const SKELETON: Record<EntityKind, string> = {
 export function EntityEditorPage({ mode }: { mode: "create" | "edit" }) {
   const nav = useNavigate()
   const params = useParams()
+  const [searchParams] = useSearchParams()
   const editing = mode === "edit"
 
-  const [kind, setKind] = useState<EntityKind>((params.kind as EntityKind) ?? "backend")
+  const initialKind = ((params.kind as EntityKind) ??
+    (searchParams.get("kind") as EntityKind) ??
+    "backend") as EntityKind
+  const [kind, setKind] = useState<EntityKind>(initialKind)
   const [name, setName] = useState(params.name ?? "")
-  const [body, setBody] = useState<string>(editing ? "" : SKELETON.backend)
+  const [body, setBody] = useState<string>(editing ? "" : SKELETON[initialKind])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(!editing)
