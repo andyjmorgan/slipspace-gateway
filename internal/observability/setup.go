@@ -85,6 +85,12 @@ type Config struct {
 	// consulted when CPEndpoint is non-empty.
 	CPToken string
 
+	// GatewayID identifies this gateway instance. When non-empty it is
+	// emitted as the sluice.gateway_id resource attribute on every span, so
+	// the control plane can populate request_events.gateway_id. Empty omits
+	// the attribute entirely rather than tagging events with a blank id.
+	GatewayID string
+
 	// LogFormat selects the slog handler ("json" or "text").
 	LogFormat string
 
@@ -184,7 +190,7 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 	otlpEnabled := cfg.OTLPEndpoint != ""
 	cpEnabled := cfg.CPEndpoint != ""
 
-	res, err := buildResource(ctx, build)
+	res, err := buildResource(ctx, build, cfg.GatewayID)
 	if err != nil {
 		return nil, err
 	}
@@ -341,13 +347,16 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 	}, nil
 }
 
-func buildResource(ctx context.Context, build BuildInfo) (*resource.Resource, error) {
+func buildResource(ctx context.Context, build BuildInfo, gatewayID string) (*resource.Resource, error) {
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(build.Service),
 		semconv.ServiceVersion(build.Version),
 	}
 	if env := strings.TrimSpace(os.Getenv(EnvDeploymentEnvironment)); env != "" {
 		attrs = append(attrs, attribute.String("deployment.environment", env))
+	}
+	if gatewayID != "" {
+		attrs = append(attrs, attribute.String(AttrSluiceGatewayID, gatewayID))
 	}
 	res, err := resource.New(ctx,
 		resource.WithSchemaURL(semconv.SchemaURL),

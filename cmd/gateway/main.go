@@ -81,6 +81,10 @@ func run(ctx context.Context) error {
 	}
 
 	build := observability.BuildInfo{Service: binaryName, Version: version.Version}
+	// Resolved once here so telemetry (the sluice.gateway_id resource
+	// attribute) and CP registration (reconciler.Options.GatewayID) tag
+	// events with the identical id.
+	gatewayID := resolveGatewayID(env)
 	// A fleet gateway also pushes its traces + metrics to the control plane so
 	// the self-contained fleet console is fed without an external collector.
 	// CP-0 still holds: telemetry export is out of band, never on the request
@@ -95,6 +99,7 @@ func run(ctx context.Context) error {
 		OTLPProtocol:     env.OTLPProtocol,
 		CPEndpoint:       cpTelemetryEndpoint,
 		CPToken:          env.ControlPlaneToken,
+		GatewayID:        gatewayID,
 		LogFormat:        env.LogFormat,
 		LogLevel:         env.LogLevel,
 		SnapshotInterval: time.Duration(env.AdminSnapshotIntervalMs) * time.Millisecond,
@@ -220,7 +225,7 @@ func run(ctx context.Context) error {
 
 	startAdmin(ctx, store, obs, logger, drain, startedAt, liveFeed, bodyStore, breakerStoreAdapter{store: breakers}, env.ConfigDir)
 
-	startControlPlaneReconciler(ctx, env, appliedHash, obs, logger)
+	startControlPlaneReconciler(ctx, env, gatewayID, appliedHash, obs, logger)
 
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
@@ -545,23 +550,28 @@ func shutdownObservability(p *observability.Provider) {
 	_ = p.Shutdown(shutdownCtx)
 }
 
+// resolveGatewayID picks this instance's identity: the explicit
+// SLUICE_GATEWAY_ID when set, else the hostname, else the binary name. Used by
+// both the telemetry resource attribute and CP registration so the two never
+// diverge.
+func resolveGatewayID(env *config.ServerEnv) string {
+	if env.GatewayID != "" {
+		return env.GatewayID
+	}
+	if hn, err := os.Hostname(); err == nil && hn != "" {
+		return hn
+	}
+	return binaryName
+}
+
 // startControlPlaneReconciler launches the gateway->control-plane registration
 // loop when SLUICE_CONTROL_PLANE_ENDPOINT is set. It runs in a background
 // goroutine bound to ctx and never touches the request path (invariant CP-0):
 // a construction error is logged and the gateway keeps serving from local
 // config. No-op in standalone (file-backed) mode.
-func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, applied *reconciler.AppliedHash, obs *observability.Provider, logger *slog.Logger) {
+func startControlPlaneReconciler(ctx context.Context, env *config.ServerEnv, gatewayID string, applied *reconciler.AppliedHash, obs *observability.Provider, logger *slog.Logger) {
 	if !env.ControlPlaneEnabled() {
 		return
-	}
-
-	gatewayID := env.GatewayID
-	if gatewayID == "" {
-		if hn, err := os.Hostname(); err == nil && hn != "" {
-			gatewayID = hn
-		} else {
-			gatewayID = binaryName
-		}
 	}
 
 	rec, err := reconciler.New(reconciler.Options{

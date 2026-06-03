@@ -24,6 +24,7 @@ const (
 	attrConfiguration = "sluice.configuration"
 	attrBackend       = "sluice.backend"
 	attrProtocol      = "sluice.protocol"
+	attrEndpoint      = "sluice.endpoint"
 	attrModel         = "gen_ai.request.model"
 	attrProvider      = "gen_ai.provider.name"
 	attrInputTokens   = "gen_ai.usage.input_tokens"  //nolint:gosec // OTLP attribute key, not a credential
@@ -51,13 +52,18 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (conf
 		backend = strAttr(attrs, attrProvider)
 	}
 
+	protocol := strAttr(attrs, attrProtocol)
+	if protocol == "" {
+		protocol = strAttr(attrs, attrEndpoint)
+	}
+
 	return configdb.RequestEvent{
 		CorrelationID: corr,
 		GatewayID:     strAttr(attrs, attrGatewayID),
 		Configuration: strAttr(attrs, attrConfiguration),
 		Backend:       backend,
 		Model:         strAttr(attrs, attrModel),
-		Protocol:      strAttr(attrs, attrProtocol),
+		Protocol:      protocol,
 		StatusCode:    int(intAttr(attrs, attrStatusCode)),
 		TokensIn:      intAttr(attrs, attrInputTokens),
 		TokensOut:     intAttr(attrs, attrOutputTokens),
