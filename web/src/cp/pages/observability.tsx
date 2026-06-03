@@ -1,117 +1,146 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
-import { StatusPill } from "@/components/atoms/status-pill"
+import { Layers } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { PageHeader, LoadingPanel, ErrorPanel, EmptyPanel } from "@/components/atoms/page-states"
-import { fmt } from "@/lib/fmt"
-import { apiFetch, apiErrorText, UnauthorizedError } from "../lib/api"
+import { MessagesTable, MessageInspectorModal } from "@/components/observability/messages-view"
+import type { MessageEntry } from "@/lib/observability-types"
+import { apiErrorText, UnauthorizedError } from "../lib/api"
 import { EventFilterBar } from "../components/event-filter-bar"
-import { DEFAULT_FILTERS, buildQuery, type EventFilters } from "../lib/event-filters"
+import { DEFAULT_FILTERS, PAGE_SIZE, type EventFilters } from "../lib/event-filters"
+import { fetchCpRecentMessages, fetchCpMessageBody, type CpRecentMessagesQuery } from "../lib/observability"
 
-interface EventRow {
-  correlation_id: string
-  gateway_id: string
-  configuration: string
-  backend: string
-  model: string
-  protocol: string
-  status_code: number
-  latency_ms: number
-  tokens_in: number
-  tokens_out: number
-  observed_at: string
+const RANGE_MS: Record<"1h" | "24h" | "7d", number> = {
+  "1h": 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
 }
 
-// EventsEnvelope is the paginated events response: a newest-first page of
-// rows plus an opaque cursor. An empty next_cursor means the last page.
-interface EventsEnvelope {
-  events: EventRow[]
-  next_cursor: string
+// filtersToQuery maps the observability filter bar's state onto the CP
+// recent-messages query. Preset ranges resolve to a rolling from=now-window;
+// custom ranges pass the datetime-local inputs through as ISO instants.
+// limit grows as the operator pages so the table accumulates rather than
+// scrolling a fixed window.
+function filtersToQuery(f: EventFilters, limit: number): CpRecentMessagesQuery {
+  const q: CpRecentMessagesQuery = { limit }
+  if (f.range === "custom") {
+    if (f.from) q.from = new Date(f.from).toISOString()
+    if (f.to) q.to = new Date(f.to).toISOString()
+  } else {
+    q.from = new Date(Date.now() - RANGE_MS[f.range]).toISOString()
+  }
+  if (f.configuration.trim()) q.configuration = f.configuration.trim()
+  if (f.gateway.trim()) q.gateway = f.gateway.trim()
+  if (f.model.trim()) q.model = f.model.trim()
+  if (f.backend.trim()) q.backend = f.backend.trim()
+  if (f.protocol.trim()) q.protocol = f.protocol.trim()
+  if (f.statusClass !== "all") q.status_class = f.statusClass
+  return q
 }
 
 interface PageState {
-  rows: EventRow[]
-  cursor: string
+  entries: MessageEntry[]
+  limit: number
+  // hitLimit is true when the last page came back full — there may be more
+  // history past the current limit, so the "Load more" affordance shows.
+  hitLimit: boolean
   error: string | null
   loading: boolean
 }
 
-const INITIAL: PageState = { rows: [], cursor: "", error: null, loading: true }
+const INITIAL: PageState = { entries: [], limit: PAGE_SIZE, hitLimit: false, error: null, loading: true }
 
-// ObservabilityPage is the fleet's historical request browser: a time range
-// + dimension filters drive a paginated query over the slim per-request
-// telemetry the gateways push over OTLP. Rows drill into the per-request
-// detail view (captured bodies + receipt verification). The cursor pages
-// older newest-first; an empty next_cursor ends the list.
+// ObservabilityPage is the fleet's historical request inspector: the
+// filter bar (time range + dimension filters) drives a query over the slim
+// per-request telemetry the gateways push, and the rich shared inspector
+// (table + per-request detail modal with captured bodies) renders the
+// result. The CP has more history than the gateway's in-memory ring, so the
+// filter bar + a limit-grow "Load more" replace the gateway's live-tail
+// controls. `attempts` is unset on CP entries today; the inspector degrades
+// gracefully.
 export function ObservabilityPage() {
   const nav = useNavigate()
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS)
-  const [state, setState] = useState<PageState>(INITIAL)
-
-  // applied is the filter set the current results were fetched with. The
-  // filter bar mutates `filters` freely; the query only re-runs on Apply,
-  // which copies `filters` here and triggers the initial-page effect.
   const [applied, setApplied] = useState<EventFilters>(DEFAULT_FILTERS)
+  const [state, setState] = useState<PageState>(INITIAL)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [grouped, setGrouped] = useState(false)
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
 
-  // apply swaps in a new filter set and clears the current page to its
-  // loading state — both in the handler so the load-on-`applied` effect
-  // never has to setState synchronously.
+  // apply swaps in a new filter set, resets the limit, and clears to the
+  // loading state — all in the handler so the load effect never has to
+  // setState synchronously.
   const apply = useCallback((next: EventFilters) => {
-    setState({ rows: [], cursor: "", error: null, loading: true })
+    setState({ entries: [], limit: PAGE_SIZE, hitLimit: false, error: null, loading: true })
+    setSelectedId(null)
     setApplied(next)
   }, [])
 
-  // reqSeq guards against out-of-order responses: a stale page (older Apply,
-  // or a Load-more that lost a race with a re-Apply) is discarded.
+  // reqSeq guards against out-of-order responses: a stale page (older Apply
+  // or a load-more that lost a race with a re-Apply) is discarded.
   const reqSeq = useRef(0)
 
   useEffect(() => {
     const seq = ++reqSeq.current
     let cancelled = false
-    apiFetch<EventsEnvelope>(`/api/v1/observability/events?${buildQuery(applied, "")}`)
-      .then((env) => {
+    fetchCpRecentMessages(filtersToQuery(applied, state.limit))
+      .then((resp) => {
         if (cancelled || seq !== reqSeq.current) return
-        setState({ rows: env.events ?? [], cursor: env.next_cursor ?? "", error: null, loading: false })
-      })
-      .catch((e) => {
-        if (cancelled || seq !== reqSeq.current) return
-        if (e instanceof UnauthorizedError) return nav("/login", { replace: true })
-        setState({ rows: [], cursor: "", error: apiErrorText(e), loading: false })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [applied, nav])
-
-  const loadMore = useCallback(() => {
-    if (!state.cursor || state.loading) return
-    const seq = reqSeq.current
-    setState((s) => ({ ...s, loading: true, error: null }))
-    apiFetch<EventsEnvelope>(`/api/v1/observability/events?${buildQuery(applied, state.cursor)}`)
-      .then((env) => {
-        if (seq !== reqSeq.current) return
+        const entries = resp.entries ?? []
         setState((s) => ({
-          rows: [...s.rows, ...(env.events ?? [])],
-          cursor: env.next_cursor ?? "",
+          ...s,
+          entries,
+          hitLimit: entries.length >= s.limit,
           error: null,
           loading: false,
         }))
       })
       .catch((e) => {
-        if (seq !== reqSeq.current) return
+        if (cancelled || seq !== reqSeq.current) return
         if (e instanceof UnauthorizedError) return nav("/login", { replace: true })
-        setState((s) => ({ ...s, loading: false, error: apiErrorText(e) }))
+        setState((s) => ({ ...s, entries: [], hitLimit: false, error: apiErrorText(e), loading: false }))
       })
-  }, [applied, state.cursor, state.loading, nav])
+    return () => {
+      cancelled = true
+    }
+  }, [applied, state.limit, nav])
 
-  const isInitialLoad = state.loading && state.rows.length === 0
-  const isEmpty = !state.loading && !state.error && state.rows.length === 0
+  const loadMore = useCallback(() => {
+    setState((s) => (s.loading ? s : { ...s, limit: s.limit + PAGE_SIZE, loading: true, error: null }))
+  }, [])
+
+  // The recent endpoint returns oldest-first (like the gateway ring); the
+  // inspector wants newest-first, and the modal navigation is keyed off
+  // this order.
+  const ordered = useMemo(() => state.entries.slice().reverse(), [state.entries])
+  const selected = useMemo(
+    () => state.entries.find((e) => e.event_id === selectedId) ?? null,
+    [state.entries, selectedId],
+  )
+  const toggleBundle = useCallback((key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+  const onSelect = useCallback((eid: string) => setSelectedId((cur) => (cur === eid ? null : eid)), [])
+
+  const isInitialLoad = state.loading && state.entries.length === 0
+  const isEmpty = !state.loading && !state.error && state.entries.length === 0
 
   return (
-    <div>
+    <div className="flex flex-col gap-3.5">
       <PageHeader
         title="Observability"
-        sub="Historical request events across the fleet — filter by time range, configuration, gateway, model, backend, protocol, and status. Pushed by gateways over OTLP."
+        sub="Historical request events across the fleet — filter by time range, configuration, gateway, model, backend, protocol, and status. Click a row for the captured request/response bodies."
+        action={
+          <Button variant="ghost" size="sm" onClick={() => setGrouped((g) => !g)} aria-label="Group by session" aria-pressed={grouped}>
+            <Layers />
+            <span className="hidden sm:inline">{grouped ? "Ungroup" : "Group by session"}</span>
+          </Button>
+        }
       />
 
       <EventFilterBar
@@ -131,50 +160,28 @@ export function ObservabilityPage() {
         <EmptyPanel message="No request events match these filters in the selected range. Widen the range or clear filters." />
       )}
 
-      {!state.error && state.rows.length > 0 && (
-        <PanelCard>
-          <PanelHead
-            title="Events"
-            sub={`${state.rows.length} shown${state.cursor ? " · more available" : ""}`}
+      {!state.error && state.entries.length > 0 && (
+        <>
+          <div className="flex items-center gap-3 text-[11.5px] text-[color:var(--text-3)]">
+            <span className="mono">{state.entries.length} shown</span>
+            {state.hitLimit && (
+              <>
+                <span className="text-[color:var(--text-4)]">·</span>
+                <span>more history available</span>
+              </>
+            )}
+          </div>
+          <MessagesTable
+            ordered={ordered}
+            grouped={grouped}
+            collapsed={collapsed}
+            onToggleBundle={toggleBundle}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            emptyLabel="No events match these filters."
           />
-          <TableScroll>
-            <thead>
-              <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-                <th className="text-left font-medium px-4 py-2">When</th>
-                <th className="text-left font-medium px-4 py-2">Gateway</th>
-                <th className="text-left font-medium px-4 py-2">Configuration</th>
-                <th className="text-left font-medium px-4 py-2">Model</th>
-                <th className="text-left font-medium px-4 py-2">Backend</th>
-                <th className="text-left font-medium px-4 py-2">Status</th>
-                <th className="text-right font-medium px-4 py-2">Tokens</th>
-                <th className="text-right font-medium px-4 py-2">Latency</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.rows.map((e) => (
-                <tr
-                  key={e.correlation_id}
-                  onClick={() => nav(`/observability/${encodeURIComponent(e.correlation_id)}`)}
-                  className="border-t border-[color:var(--border)] hover:bg-[color:var(--hover)] cursor-pointer"
-                >
-                  <td className="px-4 py-2.5 text-[12px] text-[color:var(--text-3)]" title={fmt.fullTime(e.observed_at)}>
-                    {fmt.ago(e.observed_at)}
-                  </td>
-                  <td className="px-4 py-2.5 mono text-[12px]">{e.gateway_id}</td>
-                  <td className="px-4 py-2.5 mono text-[12px] text-[color:var(--text-2)]">{e.configuration || "—"}</td>
-                  <td className="px-4 py-2.5 mono text-[12px] text-[color:var(--text-2)]">{e.model || "—"}</td>
-                  <td className="px-4 py-2.5 mono text-[12px] text-[color:var(--text-3)]">{e.backend || "—"}</td>
-                  <td className="px-4 py-2.5"><StatusPill code={e.status_code} /></td>
-                  <td className="px-4 py-2.5 text-right mono text-[12px] text-[color:var(--text-3)]">
-                    {fmt.compact(e.tokens_in)} / {fmt.compact(e.tokens_out)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right mono text-[12px] text-[color:var(--text-3)]">{fmt.ms(e.latency_ms)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </TableScroll>
-          <div className="border-t border-[color:var(--border)] px-4 py-3 flex items-center justify-center">
-            {state.cursor ? (
+          <div className="flex items-center justify-center">
+            {state.hitLimit ? (
               <button
                 type="button"
                 onClick={loadMore}
@@ -187,7 +194,17 @@ export function ObservabilityPage() {
               <span className="text-[11.5px] text-[color:var(--text-3)]">End of results</span>
             )}
           </div>
-        </PanelCard>
+        </>
+      )}
+
+      {selected && (
+        <MessageInspectorModal
+          entries={ordered}
+          selectedId={selected.event_id}
+          onSelect={setSelectedId}
+          onClose={() => setSelectedId(null)}
+          fetchBody={fetchCpMessageBody}
+        />
       )}
     </div>
   )

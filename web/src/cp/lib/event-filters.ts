@@ -40,33 +40,9 @@ export const DEFAULT_FILTERS: EventFilters = {
   statusClass: "all",
 }
 
+// PAGE_SIZE is the message-list page increment: the observability inspector
+// fetches this many recent messages and grows the limit by it on "Load
+// more". Range resolution + the filter→query mapping live in the page
+// (observability.tsx) since the CP recent-messages endpoint is limit-based,
+// not cursor-based.
 export const PAGE_SIZE = 100
-
-const RANGE_MS: Record<Exclude<RangePreset, "custom">, number> = {
-  "1h": 60 * 60 * 1000,
-  "24h": 24 * 60 * 60 * 1000,
-  "7d": 7 * 24 * 60 * 60 * 1000,
-}
-
-// buildQuery turns the filter state + an optional cursor into the events
-// query string. Preset ranges resolve to a rolling from=now-window; custom
-// ranges pass the datetime-local inputs through as ISO instants. Empty text
-// filters and "all" status are omitted so the backend sees no param.
-export function buildQuery(filters: EventFilters, cursor: string): string {
-  const params = new URLSearchParams()
-  if (filters.range === "custom") {
-    if (filters.from) params.set("from", new Date(filters.from).toISOString())
-    if (filters.to) params.set("to", new Date(filters.to).toISOString())
-  } else {
-    params.set("from", new Date(Date.now() - RANGE_MS[filters.range]).toISOString())
-  }
-  if (filters.configuration.trim()) params.set("configuration", filters.configuration.trim())
-  if (filters.gateway.trim()) params.set("gateway", filters.gateway.trim())
-  if (filters.model.trim()) params.set("model", filters.model.trim())
-  if (filters.backend.trim()) params.set("backend", filters.backend.trim())
-  if (filters.protocol.trim()) params.set("protocol", filters.protocol.trim())
-  if (filters.statusClass !== "all") params.set("status_class", filters.statusClass)
-  if (cursor) params.set("cursor", cursor)
-  params.set("limit", String(PAGE_SIZE))
-  return params.toString()
-}

@@ -13,71 +13,20 @@
 
 import { apiFetch } from "@/lib/api"
 import { auth } from "@/lib/auth"
+import type { MessageBodyDetail, MessageEntry, MessagesRecentResponse } from "@/lib/observability-types"
 
-export type RuleHit = {
-  rule_name: string
-  actions_applied?: string[]
-  terminated?: boolean
-  error_message?: string
-}
-
-export type AttemptHit = {
-  target: string
-  started_at: string
-  duration_ms?: number
-  status_code?: number
-  error?: string
-  outcome: string
-}
-
-export type MessageEntry = {
-  event_id: string
-  at: string
-  correlation_id?: string
-  session_id?: string
-  session_id_source?: string
-  provider?: string
-  endpoint?: string
-  model?: string
-  method?: string
-  configuration?: string
-  status_code: number
-  duration_ms: number
-  streaming?: boolean
-  upstream_error?: string
-  tokens_in?: number
-  tokens_out?: number
-  tokens_cached?: number
-  tokens_cache_creation?: number
-  tags?: string[]
-  rules_matched?: RuleHit[]
-  policy_ref?: string
-  attempts?: AttemptHit[]
-}
-
-export type MessagesRecentResponse = {
-  capacity: number
-  entries: MessageEntry[]
-}
+export type {
+  RuleHit,
+  AttemptHit,
+  MessageEntry,
+  MessagesRecentResponse,
+  MessageBodyDetail,
+} from "@/lib/observability-types"
 
 /** Fetches the current ring contents (oldest-first). */
 export async function fetchRecentMessages(limit?: number): Promise<MessagesRecentResponse> {
   const qs = limit && limit > 0 ? `?limit=${limit}` : ""
   return apiFetch<MessagesRecentResponse>(`/api/v1/messages/recent${qs}`)
-}
-
-export type MessageBodyDetail = {
-  event_id: string
-  request?: string
-  request_total_bytes: number
-  request_truncated?: boolean
-  response?: string
-  response_total_bytes: number
-  response_truncated?: boolean
-  response_assembled?: string
-  assembly_partial?: boolean
-  request_headers?: Record<string, string[]>
-  response_headers?: Record<string, string[]>
 }
 
 /**

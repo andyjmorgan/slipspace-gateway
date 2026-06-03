@@ -1,100 +1,28 @@
 // Dashboard data hooks — fetches /api/v1/dashboard/{summary,timeseries},
-// mirrors the Go contracts in contracts/admin/dashboard.go.
+// mirrors the Go contracts in contracts/admin/dashboard.go. The data
+// shapes themselves live in lib/observability-types (shared with the
+// control-plane console); this module owns only the gateway-side fetch
+// hooks + polling envelope.
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { apiFetch, UnauthorizedError } from "@/lib/api"
 
-export type DashboardProviderRow = {
-  provider: string
-  requests: number
-  p95_latency_ms: number
-  error_rate: number
-}
+export type {
+  DashboardProviderRow,
+  DashboardModelRow,
+  DashboardEndpointRow,
+  DashboardConfigurationRow,
+  DashboardRuleFiredRow,
+  DashboardTagFiredRow,
+  DashboardProviderHealth,
+  DashboardSummary,
+  DashboardPoint,
+  DashboardSeries,
+  DashboardTimeseries,
+  DashboardWindow,
+} from "@/lib/observability-types"
 
-export type DashboardModelRow = {
-  model: string
-  provider: string
-  requests: number
-  tokens_in: number
-  tokens_out: number
-}
-
-export type DashboardEndpointRow = {
-  provider: string
-  endpoint: string
-  requests: number
-  p95_latency_ms: number
-  error_rate: number
-}
-
-export type DashboardConfigurationRow = {
-  configuration: string
-  requests: number
-  p95_latency_ms: number
-  error_rate: number
-}
-
-export type DashboardRuleFiredRow = {
-  rule_name: string
-  fire_count: number
-  used_by_configurations: string[]
-}
-
-export type DashboardTagFiredRow = {
-  tag: string
-  apply_count: number
-  used_by_configurations: string[]
-}
-
-export type DashboardProviderHealth = {
-  provider: string
-  healthy: boolean
-  error_rate_5m: number
-  requests_5m: number
-}
-
-export type DashboardSummary = {
-  window: string
-  generated_at: string
-  gateway_started_at: string
-  totals: {
-    requests: number
-    requests_success: number
-    requests_errored: number
-    tokens_in: number
-    tokens_out: number
-    tokens_cached: number
-    tokens_cache_creation: number
-  }
-  rates: {
-    requests_per_second: number
-    error_rate: number
-  }
-  latency_ms: { p50: number; p95: number; p99: number }
-  by_provider: DashboardProviderRow[]
-  by_endpoint: DashboardEndpointRow[]
-  by_configuration: DashboardConfigurationRow[]
-  by_model: DashboardModelRow[]
-  rules_fired: DashboardRuleFiredRow[]
-  tags_fired: DashboardTagFiredRow[]
-  provider_health: DashboardProviderHealth[]
-}
-
-export type DashboardPoint = {
-  timestamp: string
-  value: number
-}
-
-export type DashboardSeries = {
-  name: string
-  unit?: string
-  labels?: Record<string, string>
-  points: DashboardPoint[]
-}
-
-export type DashboardTimeseries = {
-  series: DashboardSeries[]
-}
+import type { DashboardSummary, DashboardTimeseries, DashboardWindow } from "@/lib/observability-types"
 
 export type FetchState<T> =
   | { status: "loading" }
@@ -168,9 +96,6 @@ function useFetch<T>(path: string, pollMs = DEFAULT_POLL_MS): FetchHandle<T> {
 
   return { state, refetch }
 }
-
-/** The set of windows the dashboard server accepts on ?window=. */
-export type DashboardWindow = "1h" | "24h"
 
 export function useDashboardSummary(window: DashboardWindow, pollMs?: number): FetchHandle<DashboardSummary> {
   return useFetch<DashboardSummary>(`/api/v1/dashboard/summary?window=${window}`, pollMs)
