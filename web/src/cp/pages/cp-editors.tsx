@@ -89,6 +89,7 @@ export function CpRuleEditor({ mode }: { mode: "create" | "edit" }) {
       fromContract={ruleFormFromContract}
       toContract={ruleFormToContract}
       nameOf={(f) => f.name}
+      afterSaveTo={(name) => `/rules/${encodeURIComponent(name)}`}
       sub="A transform rule — a condition and ordered actions, attached to configurations."
     />
   )
