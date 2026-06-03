@@ -20,3 +20,15 @@ func NewOTLPSpanExporterForTest(ctx context.Context, endpoint, protocol string) 
 func NewOTLPLogExporterForTest(ctx context.Context, endpoint, protocol string) (sdklog.Exporter, error) {
 	return newOTLPLogExporter(ctx, endpoint, protocol)
 }
+
+// CPAuthHeaderForTest exposes cpAuthHeader so the bearer-vs-empty metadata
+// mapping can be asserted in isolation.
+func CPAuthHeaderForTest(token string) map[string]string {
+	return cpAuthHeader(token)
+}
+
+// NewCPSpanExporterForTest exposes newCPSpanExporter so its success path is
+// covered the same way the external span exporter is.
+func NewCPSpanExporterForTest(ctx context.Context, endpoint, token string) (sdktrace.SpanExporter, error) {
+	return newCPSpanExporter(ctx, endpoint, token)
+}

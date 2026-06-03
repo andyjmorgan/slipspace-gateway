@@ -72,6 +72,19 @@ type Config struct {
 	// Only consulted when OTLPEndpoint is non-empty.
 	OTLPProtocol string
 
+	// CPEndpoint, when non-empty, is the control-plane gRPC OTLP target
+	// (host:port). A fleet gateway dual-exports its traces and metrics here in
+	// addition to any external OTLPEndpoint, so the self-contained fleet
+	// console (request_events + metric_points) is fed without an external
+	// collector. Always gRPC; the CP receiver shares the fleet channel server.
+	CPEndpoint string
+
+	// CPToken is the bootstrap token presented to the CP OTLP receiver as
+	// "authorization: Bearer <token>" gRPC metadata. Matches SLUICE_CP_TOKEN —
+	// the same credential the reconciler presents on the fleet channel. Only
+	// consulted when CPEndpoint is non-empty.
+	CPToken string
+
 	// LogFormat selects the slog handler ("json" or "text").
 	LogFormat string
 
@@ -169,6 +182,7 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 
 	promEnabled := cfg.PrometheusBind != ""
 	otlpEnabled := cfg.OTLPEndpoint != ""
+	cpEnabled := cfg.CPEndpoint != ""
 
 	res, err := buildResource(ctx, build)
 	if err != nil {
@@ -211,6 +225,15 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 		shutdownFns = append(shutdownFns, exp.Shutdown)
 	}
 
+	if cpEnabled {
+		cpReader, cerr := newCPMetricReader(ctx, cfg.CPEndpoint, cfg.CPToken)
+		if cerr != nil {
+			return nil, cerr
+		}
+		readers = append(readers, cpReader)
+		shutdownFns = append(shutdownFns, cpReader.Shutdown)
+	}
+
 	// Always attach a ManualReader. The snapshotter (and the admin
 	// dashboard handler downstream of it) pulls from this; it does
 	// nothing externally without a Collect call so the cost when neither
@@ -251,23 +274,36 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 		return nil, fmt.Errorf("observability: snapshotter: %w", err)
 	}
 
-	// TracerProvider is always non-nil. With OTLP disabled it is a no-op
-	// so callers start spans unconditionally; with OTLP enabled it is an
-	// SDK provider registered globally and drained on Shutdown.
+	// TracerProvider is always non-nil. With no span sink it is a no-op so
+	// callers start spans unconditionally; with an external collector and/or
+	// the control plane enabled it is an SDK provider that fans the same spans
+	// out to every configured batcher, registered globally and drained on
+	// Shutdown.
 	var tp oteltrace.TracerProvider = tracenoop.NewTracerProvider()
-	if otlpEnabled {
-		spanExp, terr := newOTLPSpanExporter(ctx, cfg.OTLPEndpoint, cfg.OTLPProtocol)
-		if terr != nil {
-			_ = mp.Shutdown(ctx)
-			return nil, terr
-		}
+	if otlpEnabled || cpEnabled {
 		// TODO(v1.5+): per-configuration sampling. AlwaysSample for now —
 		// the request path attaches no sampler-influencing attributes yet.
-		sdkTP := sdktrace.NewTracerProvider(
+		tpOpts := []sdktrace.TracerProviderOption{
 			sdktrace.WithResource(res),
-			sdktrace.WithBatcher(spanExp),
 			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
-		)
+		}
+		if otlpEnabled {
+			spanExp, terr := newOTLPSpanExporter(ctx, cfg.OTLPEndpoint, cfg.OTLPProtocol)
+			if terr != nil {
+				_ = mp.Shutdown(ctx)
+				return nil, terr
+			}
+			tpOpts = append(tpOpts, sdktrace.WithBatcher(spanExp))
+		}
+		if cpEnabled {
+			cpSpanExp, terr := newCPSpanExporter(ctx, cfg.CPEndpoint, cfg.CPToken)
+			if terr != nil {
+				_ = mp.Shutdown(ctx)
+				return nil, terr
+			}
+			tpOpts = append(tpOpts, sdktrace.WithBatcher(cpSpanExp))
+		}
+		sdkTP := sdktrace.NewTracerProvider(tpOpts...)
 		otel.SetTracerProvider(sdkTP)
 		shutdownFns = append(shutdownFns, sdkTP.Shutdown)
 		tp = sdkTP
