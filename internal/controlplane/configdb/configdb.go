@@ -125,6 +125,18 @@ CREATE TABLE IF NOT EXISTS request_events (
 
 CREATE INDEX IF NOT EXISTS request_events_observed_at ON request_events (observed_at DESC);
 
+-- Keyset pagination and the dashboard time-range scans both order by
+-- (observed_at DESC, correlation_id DESC); the composite serves the page seek
+-- and the stats range scan without a separate sort.
+CREATE INDEX IF NOT EXISTS request_events_observed_corr
+    ON request_events (observed_at DESC, correlation_id DESC);
+
+-- The dashboard filters (configuration / backend / model / gateway / protocol)
+-- almost always pair with a time range, so put observed_at first to keep the
+-- range bound index-driven and let the equality filters narrow within it.
+CREATE INDEX IF NOT EXISTS request_events_filter
+    ON request_events (observed_at DESC, configuration, backend, model, gateway_id, protocol);
+
 CREATE TABLE IF NOT EXISTS metric_points (
     metric_name TEXT NOT NULL,
     labels      JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -698,11 +710,14 @@ const requestEventColumns = `correlation_id, gateway_id, configuration, backend,
 // UpsertRequestEvent inserts or refines a request event, keyed by
 // correlation_id, so re-delivered or two-phase (request then response)
 // telemetry converges on one row. Existing gen_ai_content is preserved when an
-// update omits it.
+// update omits it. A zero ObservedAt defaults to now() server-side so every CP
+// replica shares one clock; a non-zero ObservedAt is honored verbatim (the
+// segment ingester replays a captured event's original observation time).
 func (db *DB) UpsertRequestEvent(ctx context.Context, e RequestEvent) error {
+	observedAt := nullTime(e.ObservedAt)
 	_, err := db.pool.Exec(ctx, `
-INSERT INTO request_events (correlation_id, gateway_id, configuration, backend, model, protocol, status_code, latency_ms, tokens_in, tokens_out, gen_ai_content)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+INSERT INTO request_events (correlation_id, gateway_id, configuration, backend, model, protocol, status_code, latency_ms, tokens_in, tokens_out, gen_ai_content, observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, now()))
 ON CONFLICT (correlation_id) DO UPDATE SET
   gateway_id     = EXCLUDED.gateway_id,
   configuration  = EXCLUDED.configuration,
@@ -714,11 +729,20 @@ ON CONFLICT (correlation_id) DO UPDATE SET
   tokens_in      = EXCLUDED.tokens_in,
   tokens_out     = EXCLUDED.tokens_out,
   gen_ai_content = COALESCE(EXCLUDED.gen_ai_content, request_events.gen_ai_content)`,
-		e.CorrelationID, e.GatewayID, e.Configuration, e.Backend, e.Model, e.Protocol, e.StatusCode, e.LatencyMs, e.TokensIn, e.TokensOut, e.GenAIContent)
+		e.CorrelationID, e.GatewayID, e.Configuration, e.Backend, e.Model, e.Protocol, e.StatusCode, e.LatencyMs, e.TokensIn, e.TokensOut, e.GenAIContent, observedAt)
 	if err != nil {
 		return fmt.Errorf("configdb: upsert request event: %w", err)
 	}
 	return nil
+}
+
+// nullTime returns nil for the zero time so it lands as SQL NULL (letting a
+// COALESCE default apply), otherwise the time itself.
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 // GetRequestEvent returns one event by correlation_id, or ErrRequestEventNotFound.

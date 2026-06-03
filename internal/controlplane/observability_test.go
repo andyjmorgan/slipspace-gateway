@@ -18,6 +18,15 @@ type fakeEventReader struct {
 	one    configdb.RequestEvent
 	getErr error
 	limit  int // captured from the last ListRecentRequestEvents call
+
+	filtered   []configdb.RequestEvent
+	nextCursor string
+	filterErr  error
+	lastList   configdb.EventListParams // captured from the last ListEventsFiltered call
+
+	stats     configdb.EventStats
+	statsErr  error
+	lastStats configdb.EventStatsParams // captured from the last QueryEventStats call
 }
 
 func (f *fakeEventReader) ListRecentRequestEvents(_ context.Context, limit int) ([]configdb.RequestEvent, error) {
@@ -32,6 +41,22 @@ func (f *fakeEventReader) GetRequestEvent(_ context.Context, _ string) (configdb
 	return f.one, f.getErr
 }
 
+func (f *fakeEventReader) ListEventsFiltered(_ context.Context, p configdb.EventListParams) ([]configdb.RequestEvent, string, error) {
+	f.lastList = p
+	if f.filterErr != nil {
+		return nil, "", f.filterErr
+	}
+	return f.filtered, f.nextCursor, nil
+}
+
+func (f *fakeEventReader) QueryEventStats(_ context.Context, p configdb.EventStatsParams) (configdb.EventStats, error) {
+	f.lastStats = p
+	if f.statsErr != nil {
+		return configdb.EventStats{}, f.statsErr
+	}
+	return f.stats, nil
+}
+
 func obsReq(h http.Handler, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
@@ -39,28 +64,60 @@ func obsReq(h http.Handler, path string) *httptest.ResponseRecorder {
 }
 
 func TestObservabilityHandler_ListEvents(t *testing.T) {
-	store := &fakeEventReader{recent: []configdb.RequestEvent{
-		{CorrelationID: "c1", Model: "gpt-4o", TokensIn: 7, GenAIContent: []byte(`{"p":"hi"}`)},
-	}}
+	store := &fakeEventReader{
+		filtered: []configdb.RequestEvent{
+			{CorrelationID: "c1", Model: "gpt-4o", TokensIn: 7, GenAIContent: []byte(`{"p":"hi"}`)},
+		},
+		nextCursor: "CURSOR2",
+	}
 	h := NewObservabilityHandler(store, nil, nil, nil)
 
-	rec := obsReq(h, "/api/v1/observability/events?limit=25")
+	rec := obsReq(h, "/api/v1/observability/events?limit=25&configuration=production&status_class=2xx&from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z&cursor=C1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("= %d, want 200: %s", rec.Code, rec.Body)
 	}
-	if store.limit != 25 {
-		t.Errorf("limit not parsed: got %d, want 25", store.limit)
+	if store.lastList.Limit != 25 {
+		t.Errorf("limit not parsed: got %d, want 25", store.lastList.Limit)
 	}
-	var views []eventView
-	if err := json.NewDecoder(rec.Body).Decode(&views); err != nil {
+	if store.lastList.Filter.Configuration != "production" || store.lastList.Filter.StatusClass != "2xx" {
+		t.Errorf("filter not parsed: %+v", store.lastList.Filter)
+	}
+	if store.lastList.Cursor != "C1" {
+		t.Errorf("cursor not parsed: %q", store.lastList.Cursor)
+	}
+	if store.lastList.From.IsZero() || store.lastList.To.IsZero() {
+		t.Errorf("time range not parsed: %+v / %+v", store.lastList.From, store.lastList.To)
+	}
+
+	var env eventsEnvelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(views) != 1 || views[0].CorrelationID != "c1" || views[0].Model != "gpt-4o" {
-		t.Fatalf("views = %+v", views)
+	if len(env.Events) != 1 || env.Events[0].CorrelationID != "c1" || env.Events[0].Model != "gpt-4o" {
+		t.Fatalf("events = %+v", env.Events)
+	}
+	if env.NextCursor != "CURSOR2" {
+		t.Errorf("next_cursor = %q, want CURSOR2", env.NextCursor)
 	}
 	// gen_ai content embeds as JSON, not a base64 blob.
-	if string(views[0].GenAIContent) != `{"p":"hi"}` {
-		t.Errorf("gen_ai_content = %s", views[0].GenAIContent)
+	if string(env.Events[0].GenAIContent) != `{"p":"hi"}` {
+		t.Errorf("gen_ai_content = %s", env.Events[0].GenAIContent)
+	}
+}
+
+func TestObservabilityHandler_ListEvents_EmptyPage(t *testing.T) {
+	h := NewObservabilityHandler(&fakeEventReader{}, nil, nil, nil)
+	rec := obsReq(h, "/api/v1/observability/events")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d, want 200", rec.Code)
+	}
+	var env eventsEnvelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Empty page serializes events as [] (not null) and an empty cursor.
+	if env.Events == nil || len(env.Events) != 0 || env.NextCursor != "" {
+		t.Fatalf("env = %+v", env)
 	}
 }
 
@@ -70,14 +127,94 @@ func TestObservabilityHandler_ListEvents_BadLimitIgnored(t *testing.T) {
 	if rec := obsReq(h, "/api/v1/observability/events?limit=notanumber"); rec.Code != http.StatusOK {
 		t.Fatalf("= %d, want 200", rec.Code)
 	}
-	if store.limit != 0 {
-		t.Errorf("bad limit should fall through to the store default (0), got %d", store.limit)
+	if store.lastList.Limit != 0 {
+		t.Errorf("bad limit should fall through to the store default (0), got %d", store.lastList.Limit)
+	}
+}
+
+func TestObservabilityHandler_ListEvents_BadTimeRange(t *testing.T) {
+	h := NewObservabilityHandler(&fakeEventReader{}, nil, nil, nil)
+	for _, path := range []string{
+		"/api/v1/observability/events?from=not-a-time",
+		"/api/v1/observability/events?to=not-a-time",
+	} {
+		if rec := obsReq(h, path); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s = %d, want 400", path, rec.Code)
+		}
+	}
+}
+
+func TestObservabilityHandler_ListEvents_InvalidCursor(t *testing.T) {
+	h := NewObservabilityHandler(&fakeEventReader{filterErr: configdb.ErrInvalidCursor}, nil, nil, nil)
+	if rec := obsReq(h, "/api/v1/observability/events?cursor=garbage"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("= %d, want 400", rec.Code)
 	}
 }
 
 func TestObservabilityHandler_ListEvents_StoreError(t *testing.T) {
-	h := NewObservabilityHandler(&fakeEventReader{getErr: errors.New("db down")}, nil, nil, nil)
+	h := NewObservabilityHandler(&fakeEventReader{filterErr: errors.New("db down")}, nil, nil, nil)
 	if rec := obsReq(h, "/api/v1/observability/events"); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("= %d, want 500", rec.Code)
+	}
+}
+
+func TestObservabilityHandler_Stats(t *testing.T) {
+	store := &fakeEventReader{stats: configdb.EventStats{
+		Totals: configdb.StatTotals{Requests: 10, Errors: 2, ErrorRate: 0.2, AvgLatencyMs: 100, P95LatencyMs: 180, TokensIn: 50, TokensOut: 70},
+		Series: []configdb.StatBucket{{Requests: 10, Status2xx: 8, Status4xx: 1, Status5xx: 1}},
+		Top:    []configdb.StatGroup{{Key: "gpt-4o", Requests: 10, ErrorRate: 0.2}},
+	}}
+	h := NewObservabilityHandler(store, nil, nil, nil)
+
+	rec := obsReq(h, "/api/v1/observability/stats?from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z&bucket=300&group_by=model&model=gpt-4o&status_class=5xx")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if store.lastStats.BucketSeconds != 300 || store.lastStats.GroupBy != "model" {
+		t.Errorf("params not parsed: %+v", store.lastStats)
+	}
+	if store.lastStats.Filter.Model != "gpt-4o" || store.lastStats.Filter.StatusClass != "5xx" {
+		t.Errorf("filter not parsed: %+v", store.lastStats.Filter)
+	}
+
+	var resp statsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.BucketSeconds != 300 || resp.Totals.Requests != 10 || resp.Totals.ErrorRate != 0.2 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(resp.Series) != 1 || resp.Series[0].Status2xx != 8 {
+		t.Fatalf("series = %+v", resp.Series)
+	}
+	if len(resp.Top) != 1 || resp.Top[0].Key != "gpt-4o" {
+		t.Fatalf("top = %+v", resp.Top)
+	}
+}
+
+func TestObservabilityHandler_Stats_BadParams(t *testing.T) {
+	h := NewObservabilityHandler(&fakeEventReader{}, nil, nil, nil)
+	for name, path := range map[string]string{
+		"missing from/to":  "/api/v1/observability/stats?bucket=300",
+		"missing bucket":   "/api/v1/observability/stats?from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z",
+		"zero bucket":      "/api/v1/observability/stats?from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z&bucket=0",
+		"bad bucket":       "/api/v1/observability/stats?from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z&bucket=abc",
+		"to before from":   "/api/v1/observability/stats?from=2026-06-02T00:00:00Z&to=2026-06-01T00:00:00Z&bucket=300",
+		"bad status_class": "/api/v1/observability/stats?from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z&bucket=300&status_class=6xx",
+		"bad group_by":     "/api/v1/observability/stats?from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z&bucket=300&group_by=region",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if rec := obsReq(h, path); rec.Code != http.StatusBadRequest {
+				t.Fatalf("= %d, want 400", rec.Code)
+			}
+		})
+	}
+}
+
+func TestObservabilityHandler_Stats_StoreError(t *testing.T) {
+	h := NewObservabilityHandler(&fakeEventReader{statsErr: errors.New("db down")}, nil, nil, nil)
+	path := "/api/v1/observability/stats?from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z&bucket=300"
+	if rec := obsReq(h, path); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("= %d, want 500", rec.Code)
 	}
 }
