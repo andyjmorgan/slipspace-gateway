@@ -220,7 +220,20 @@ func TestObservabilityHandler_Stats_StoreError(t *testing.T) {
 }
 
 func TestObservabilityHandler_GetEvent(t *testing.T) {
-	store := &fakeEventReader{one: configdb.RequestEvent{CorrelationID: "c9", Backend: "openai"}}
+	store := &fakeEventReader{one: configdb.RequestEvent{
+		CorrelationID:       "c9",
+		Backend:             "openai",
+		Method:              "POST",
+		UpstreamStatus:      502,
+		TokensCached:        64,
+		TokensCacheCreation: 8,
+		SessionID:           "bundle-9",
+		SessionIDSource:     "X-Agentling-Task-Id",
+		APIKeyName:          "internal-svc",
+		PolicyRef:           "failover-pool",
+		Streaming:           true,
+		Detail:              []byte(`{"tags":["env:prod"],"rules_fired":["redirect-claude"]}`),
+	}}
 	h := NewObservabilityHandler(store, nil, nil, nil)
 
 	rec := obsReq(h, "/api/v1/observability/events/c9")
@@ -233,6 +246,22 @@ func TestObservabilityHandler_GetEvent(t *testing.T) {
 	}
 	if v.CorrelationID != "c9" || v.Backend != "openai" {
 		t.Errorf("view = %+v", v)
+	}
+	if v.Method != "POST" || v.UpstreamStatus != 502 || !v.Streaming {
+		t.Errorf("enrichment scalars = %+v", v)
+	}
+	if v.TokensCached != 64 || v.TokensCacheCreation != 8 {
+		t.Errorf("cache tokens = (%d,%d)", v.TokensCached, v.TokensCacheCreation)
+	}
+	if v.SessionID != "bundle-9" || v.SessionIDSource != "X-Agentling-Task-Id" {
+		t.Errorf("session = (%q,%q)", v.SessionID, v.SessionIDSource)
+	}
+	if v.APIKeyName != "internal-svc" || v.PolicyRef != "failover-pool" {
+		t.Errorf("apikey/policy = (%q,%q)", v.APIKeyName, v.PolicyRef)
+	}
+	// detail embeds as JSON, not a base64 blob.
+	if string(v.Detail) != `{"tags":["env:prod"],"rules_fired":["redirect-claude"]}` {
+		t.Errorf("detail = %s", v.Detail)
 	}
 }
 

@@ -28,3 +28,4 @@ config-dev.real/
 
 # Load test harness — local-only, not committed
 test/loadtest/
+/gateway

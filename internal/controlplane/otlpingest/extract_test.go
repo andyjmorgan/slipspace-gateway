@@ -1,10 +1,13 @@
 package otlpingest
 
 import (
+	"encoding/json"
 	"testing"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/controlplane/configdb"
 )
 
 func kvStr(k, v string) *commonpb.KeyValue {
@@ -151,5 +154,90 @@ func TestEventFromSpan_ZeroLatencyWhenEndBeforeStart(t *testing.T) {
 	}
 	if e, _ := EventFromSpan(nil, span); e.LatencyMs != 0 {
 		t.Errorf("latency = %d, want 0 when end <= start", e.LatencyMs)
+	}
+}
+
+// TestEventFromSpan_EnrichmentAttrs covers the fleet-enrichment fields: the
+// gen_ai.* cache/session/streaming attrs the gateway already emits plus the
+// additive sluice.* dimensions, including the tags + rules_fired detail JSONB.
+func TestEventFromSpan_EnrichmentAttrs(t *testing.T) {
+	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
+		kvStr(attrCorrelationID, "corr-1"),
+		// gen_ai.* the gateway already emits.
+		kvInt(attrCacheReadTokens, 64),
+		kvInt(attrCacheCreationTokens, 8),
+		kvStr(attrConversationID, "bundle-9"),
+		kvBool(attrRequestStream, true),
+		// additive sluice.* fleet dimensions.
+		kvStr(attrMethod, "POST"),
+		kvInt(attrUpstreamStatus, 502),
+		kvStr(attrSessionIDSource, "X-Agentling-Task-Id"),
+		kvStr(attrAPIKeyName, "internal-svc"),
+		kvStr(attrPolicyRef, "failover-pool"),
+		kvStr(attrTags, "team:platform,env:prod"),
+		kvStr(attrRulesFired, "redirect-claude,add-team-tag"),
+	}}
+
+	e, ok := EventFromSpan(nil, span)
+	if !ok {
+		t.Fatal("want ok=true")
+	}
+	if e.TokensCached != 64 || e.TokensCacheCreation != 8 {
+		t.Errorf("cache tokens = (%d,%d), want (64,8)", e.TokensCached, e.TokensCacheCreation)
+	}
+	if e.SessionID != "bundle-9" || e.SessionIDSource != "X-Agentling-Task-Id" {
+		t.Errorf("session = (%q,%q)", e.SessionID, e.SessionIDSource)
+	}
+	if !e.Streaming {
+		t.Error("streaming = false, want true")
+	}
+	if e.Method != "POST" || e.UpstreamStatus != 502 {
+		t.Errorf("method/upstream = (%q,%d)", e.Method, e.UpstreamStatus)
+	}
+	if e.APIKeyName != "internal-svc" || e.PolicyRef != "failover-pool" {
+		t.Errorf("apikey/policy = (%q,%q)", e.APIKeyName, e.PolicyRef)
+	}
+	var d configdb.EventDetail
+	if err := json.Unmarshal(e.Detail, &d); err != nil {
+		t.Fatalf("detail not valid JSON: %v (raw %s)", err, e.Detail)
+	}
+	if got := d.Tags; len(got) != 2 || got[0] != "team:platform" || got[1] != "env:prod" {
+		t.Errorf("detail.tags = %v", got)
+	}
+	if got := d.RulesFired; len(got) != 2 || got[0] != "redirect-claude" || got[1] != "add-team-tag" {
+		t.Errorf("detail.rules_fired = %v", got)
+	}
+}
+
+// TestEventFromSpan_NoDetailWhenNoTagsOrRules leaves detail nil so the JSONB
+// column stays SQL NULL on a lean single-shot request.
+func TestEventFromSpan_NoDetailWhenNoTagsOrRules(t *testing.T) {
+	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{kvStr(attrCorrelationID, "c")}}
+	e, _ := EventFromSpan(nil, span)
+	if e.Detail != nil {
+		t.Errorf("detail = %s, want nil when no tags/rules", e.Detail)
+	}
+	if e.Streaming || e.UpstreamStatus != 0 || e.TokensCached != 0 {
+		t.Errorf("lean event picked up phantom values: %+v", e)
+	}
+}
+
+// TestEventFromSpan_RequestStreamAsString covers an SDK that serialises the
+// boolean stream flag as the string "true".
+func TestEventFromSpan_RequestStreamAsString(t *testing.T) {
+	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
+		kvStr(attrCorrelationID, "c"),
+		kvStr(attrRequestStream, "true"),
+	}}
+	if e, _ := EventFromSpan(nil, span); !e.Streaming {
+		t.Error("string-valued stream attr not parsed as true")
+	}
+	// A non-bool, non-"true" string is false.
+	span2 := &tracepb.Span{Attributes: []*commonpb.KeyValue{
+		kvStr(attrCorrelationID, "c"),
+		kvInt(attrRequestStream, 1),
+	}}
+	if e, _ := EventFromSpan(nil, span2); e.Streaming {
+		t.Error("int-valued stream attr should not parse as true")
 	}
 }

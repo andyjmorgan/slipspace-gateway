@@ -4,6 +4,7 @@ package configdb_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -82,5 +83,87 @@ func TestConfigDB_RequestEvents(t *testing.T) {
 	}
 	if len(recent) != 2 {
 		t.Fatalf("recent len = %d, want 2", len(recent))
+	}
+}
+
+// TestConfigDB_RequestEvents_Enrichment exercises the fleet-enrichment columns
+// (cache tokens, session, api-key, method, policy, upstream status, streaming,
+// and the detail JSONB) through real Postgres, including the two-phase upsert
+// preserving captured detail across a metric-only refine (COALESCE).
+func TestConfigDB_RequestEvents_Enrichment(t *testing.T) {
+	ctx := context.Background()
+	db, err := configdb.Open(ctx, startPostgres(t))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(db.Close)
+
+	full := configdb.RequestEvent{
+		CorrelationID:       "enrich-1",
+		GatewayID:           "beta-sluice",
+		Configuration:       "production",
+		Backend:             "anthropic",
+		Model:               "claude-sonnet",
+		Protocol:            "messages",
+		Method:              "POST",
+		StatusCode:          200,
+		UpstreamStatus:      502,
+		LatencyMs:           42,
+		TokensIn:            100,
+		TokensOut:           20,
+		TokensCached:        64,
+		TokensCacheCreation: 8,
+		SessionID:           "bundle-9",
+		SessionIDSource:     "X-Agentling-Task-Id",
+		APIKeyName:          "internal-svc",
+		PolicyRef:           "failover-pool",
+		Streaming:           true,
+		Detail:              []byte(`{"tags":["env:prod"],"rules_fired":["redirect-claude"]}`),
+	}
+	if err := db.UpsertRequestEvent(ctx, full); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, err := db.GetRequestEvent(ctx, "enrich-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Method != "POST" || got.UpstreamStatus != 502 || !got.Streaming {
+		t.Errorf("scalars = %+v", got)
+	}
+	if got.TokensCached != 64 || got.TokensCacheCreation != 8 {
+		t.Errorf("cache tokens = (%d,%d)", got.TokensCached, got.TokensCacheCreation)
+	}
+	if got.SessionID != "bundle-9" || got.SessionIDSource != "X-Agentling-Task-Id" {
+		t.Errorf("session = (%q,%q)", got.SessionID, got.SessionIDSource)
+	}
+	if got.APIKeyName != "internal-svc" || got.PolicyRef != "failover-pool" {
+		t.Errorf("apikey/policy = (%q,%q)", got.APIKeyName, got.PolicyRef)
+	}
+	var d configdb.EventDetail
+	if err := json.Unmarshal(got.Detail, &d); err != nil {
+		t.Fatalf("detail unmarshal: %v (raw %s)", err, got.Detail)
+	}
+	if len(d.Tags) != 1 || d.Tags[0] != "env:prod" || len(d.RulesFired) != 1 || d.RulesFired[0] != "redirect-claude" {
+		t.Errorf("detail = %+v", d)
+	}
+
+	// Two-phase: a metric-only refine omitting detail must preserve it (COALESCE).
+	if err := db.UpsertRequestEvent(ctx, configdb.RequestEvent{
+		CorrelationID: "enrich-1",
+		Backend:       "anthropic",
+		Model:         "claude-sonnet",
+		StatusCode:    200,
+		TokensOut:     99,
+		// Detail omitted (nil)
+	}); err != nil {
+		t.Fatalf("two-phase upsert: %v", err)
+	}
+	refined, _ := db.GetRequestEvent(ctx, "enrich-1")
+	if refined.TokensOut != 99 {
+		t.Errorf("refined tokens_out = %d, want 99", refined.TokensOut)
+	}
+	if len(refined.Detail) == 0 {
+		t.Error("detail lost on metric-only update — COALESCE not preserving it")
 	}
 }

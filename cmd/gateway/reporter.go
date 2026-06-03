@@ -496,7 +496,7 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 	entryID := r.appendLiveFeed(ev, matches)
 	r.captureBody(ctx, entryID, ev)
 	r.enqueueRecord(ctx, ev, matches)
-	traceCtx := r.emitTrace(ctx, ev)
+	traceCtx := r.emitTrace(ctx, ev, matches)
 	r.emitEvents(traceCtx, ev)
 
 	logger := observability.FromContext(ctx)
@@ -952,7 +952,7 @@ func (r *reporterRun) serverAttrs() []attribute.KeyValue {
 // events within it — the log records then pick up the span's trace_id/span_id
 // for native trace↔logs correlation. Returns the original ctx unchanged when
 // no span is recorded.
-func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.Context {
+func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches []events.RuleMatched) context.Context {
 	if r.factory.tracer == nil || r.started.IsZero() {
 		return ctx
 	}
@@ -983,6 +983,7 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 	if r.sessionID != "" {
 		attrs = append(attrs, attribute.String(observability.AttrGenAIConversationID, r.sessionID))
 	}
+	attrs = r.appendSluiceFleetAttrs(attrs, ev, matches)
 	if ev.TokensIn > 0 {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageInputTokens, ev.TokensIn))
 	}
@@ -1034,6 +1035,55 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 	// The SpanContext remains valid in parentCtx after End; emitting the log
 	// events with it attaches trace_id/span_id to the records.
 	return parentCtx
+}
+
+// appendSluiceFleetAttrs adds the additive sluice.* fleet dimensions the
+// control plane lifts onto a request_event for the message view and
+// dashboards — the post-rule tags, fired-rule names, policy ref, api-key
+// name, upstream status, session-id source, and inbound method. Each is
+// emitted only when present so single-shot, untagged, passthrough requests
+// keep the lean span shape. These mirror the connector Record's fields; they
+// ride sluice.* rather than gen_ai.* to keep the external OTel/Langfuse stack
+// spec-conformant.
+func (r *reporterRun) appendSluiceFleetAttrs(attrs []attribute.KeyValue, ev events.Request, matches []events.RuleMatched) []attribute.KeyValue {
+	if len(ev.Tags) > 0 {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceTags, strings.Join(ev.Tags, ",")))
+	}
+	if names := ruleNames(matches); names != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceRulesFired, names))
+	}
+	if ev.PolicyRef != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluicePolicyRef, ev.PolicyRef))
+	}
+	if r.apiKeyName != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceAPIKeyName, r.apiKeyName))
+	}
+	// r.statusCode is the upstream-reported status (OnResponseHeaders); ev.StatusCode
+	// may be a rule-overridden client status. Emit the upstream status whenever the
+	// upstream reported one, so the CP can tell the two apart.
+	if r.statusCode != 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrSluiceUpstreamStatus, r.statusCode))
+	}
+	if r.sessionIDSource != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceSessionIDSource, r.sessionIDSource))
+	}
+	if ev.Method != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceMethod, ev.Method))
+	}
+	return attrs
+}
+
+// ruleNames comma-joins the names of the rules that fired, in match order.
+// Returns "" when none fired.
+func ruleNames(matches []events.RuleMatched) string {
+	if len(matches) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		names = append(names, m.RuleName)
+	}
+	return strings.Join(names, ",")
 }
 
 // emitAttemptSpan synthesises one child span for a resilience attempt,
