@@ -379,6 +379,86 @@ func TestMessageBody_TotalBytesFallback(t *testing.T) {
 	}
 }
 
+func TestMessageBody_MergesGenAIContent(t *testing.T) {
+	// Both a connector Record and telemetry-native gen_ai_content are present:
+	// the response carries the spool body fields and the gen_ai_content object.
+	record := connc.Record{
+		Request:  connc.RequestPart{Body: json.RawMessage(`{"model":"gpt-4o"}`)},
+		Response: connc.ResponsePart{Body: json.RawMessage(`{"id":"x"}`)},
+	}
+	raw, _ := json.Marshal(record)
+	content := json.RawMessage(`{"input_messages":[{"role":"user","parts":[{"type":"text","content":"hi"}]}],"output_messages":[{"role":"assistant","parts":[{"type":"tool_call","name":"get_weather"}]}]}`)
+	store := &fakeRichReader{}
+	store.one = configdb.RequestEvent{GenAIContent: content}
+	h := NewObservabilityHandler(store, &fakeRecordReader{record: raw}, nil, nil)
+
+	rec := obsReq(h, "/api/v1/observability/messages/c1/body")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var d adminc.MessageBodyDetail
+	if err := json.NewDecoder(rec.Body).Decode(&d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if d.Request != `{"model":"gpt-4o"}` {
+		t.Errorf("body lost: %+v", d)
+	}
+	if len(d.GenAIContent) == 0 {
+		t.Fatal("gen_ai_content missing")
+	}
+	var gc map[string]json.RawMessage
+	if err := json.Unmarshal(d.GenAIContent, &gc); err != nil {
+		t.Fatalf("gen_ai_content not an object: %v", err)
+	}
+	if _, ok := gc["output_messages"]; !ok {
+		t.Errorf("output_messages absent: %s", d.GenAIContent)
+	}
+}
+
+func TestMessageBody_GenAIContentOnlyNoRecord(t *testing.T) {
+	// Telemetry-only deployment: no connector Record, but the event carries
+	// gen_ai_content. The body endpoint serves the content rather than 404ing.
+	content := json.RawMessage(`{"input_messages":[{"role":"user","parts":[{"type":"text","content":"hi"}]}]}`)
+	store := &fakeRichReader{}
+	store.one = configdb.RequestEvent{GenAIContent: content}
+	h := NewObservabilityHandler(store, &fakeRecordReader{recordErr: configdb.ErrRequestBodyNotFound}, nil, nil)
+
+	rec := obsReq(h, "/api/v1/observability/messages/c1/body")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var d adminc.MessageBodyDetail
+	if err := json.NewDecoder(rec.Body).Decode(&d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if d.Request != "" {
+		t.Errorf("want no body, got %q", d.Request)
+	}
+	if len(d.GenAIContent) == 0 {
+		t.Error("gen_ai_content missing")
+	}
+}
+
+func TestMessageBody_GenAIContentLookupErrorIgnored(t *testing.T) {
+	// A gen_ai_content lookup failure must not fail the request when the
+	// connector Record still supplies bodies.
+	record := connc.Record{Request: connc.RequestPart{Body: json.RawMessage(`{}`)}}
+	raw, _ := json.Marshal(record)
+	store := &fakeRichReader{}
+	store.getErr = errors.New("event lookup down")
+	h := NewObservabilityHandler(store, &fakeRecordReader{record: raw}, nil, nil)
+
+	rec := obsReq(h, "/api/v1/observability/messages/c1/body")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var d adminc.MessageBodyDetail
+	_ = json.NewDecoder(rec.Body).Decode(&d)
+	if len(d.GenAIContent) != 0 {
+		t.Errorf("want no content on lookup error, got %s", d.GenAIContent)
+	}
+}
+
 func TestRateHelpers_ZeroGuards(t *testing.T) {
 	if perSecond(10, 0) != 0 {
 		t.Errorf("perSecond zero window = %v, want 0", perSecond(10, 0))
