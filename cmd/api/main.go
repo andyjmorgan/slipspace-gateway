@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -122,31 +123,44 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("api: grpc listen %q: %w", cfg.grpcBind, err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok\n"))
-	})
-	mux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
-	mux.Handle("/api/v1/fleet/drift", controlplane.NewDriftHandler(reg, rt.adminDB))
-	mux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, logger))
-	mux.Handle("/api/v1/observability/", controlplane.NewObservabilityHandler(rt.adminDB, rt.adminDB, rt.adminDB, signer.Public()))
-	// Segment ingest is a gateway-facing endpoint: it authenticates with the
-	// bootstrap token (BearerAuth), the same credential the fleet gRPC channel
-	// uses, so a gateway never holds the admin console password. It is exempted
-	// from the admin Basic-auth wrapper below precisely because it carries its
-	// own token gate.
-	mux.Handle("/api/v1/ingest/segment", controlplane.BearerAuth(cfg.token, controlplane.NewSegmentIngestHandler(rt.adminDB, logger)))
-	mux.Handle("/", controlplane.ConsoleHandler())
-
 	// Admin credentials live in Postgres (shared across replicas). Seed on
 	// first boot, then authenticate every request against the stored hash.
 	authenticator, err := ensureAdmin(ctx, rt.adminDB, cfg.adminPassword, logger)
 	if err != nil {
 		return err
 	}
-	httpHandler := basicAuthExceptOpen(authenticator.Verify, mux)
-	logger.Info("HTTP API protected by Basic auth (user: admin, credential from Postgres)")
+
+	// The read/write data APIs sit behind admin Basic auth. /api/v1/auth/me
+	// lets the console validate cached credentials post-login.
+	apiMux := http.NewServeMux()
+	apiMux.Handle("/api/v1/fleet", controlplane.NewFleetHTTPHandler(reg, cfg.staleAfter, cfg.offlineAfter))
+	apiMux.Handle("/api/v1/fleet/drift", controlplane.NewDriftHandler(reg, rt.adminDB))
+	apiMux.Handle("/api/v1/config/", controlplane.NewConfigAdminHandler(rt.adminDB, logger))
+	apiMux.Handle("/api/v1/observability/", controlplane.NewObservabilityHandler(rt.adminDB, rt.adminDB, rt.adminDB, signer.Public()))
+	apiMux.HandleFunc("GET /api/v1/auth/me", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]string{"username": contractsadmin.Username})
+	})
+
+	// Auth tiers by path (http.ServeMux picks the most specific):
+	//   - /healthz, /api/v1/version, and the SPA (/) are OPEN so the console
+	//     can load and render its login screen pre-credential.
+	//   - /api/v1/ingest/segment authenticates with the gateway bootstrap
+	//     token (a gateway never holds the admin password).
+	//   - everything else under /api/v1/ requires admin Basic auth.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("GET /api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]string{"version": version.Version})
+	})
+	mux.Handle("/api/v1/ingest/segment", controlplane.BearerAuth(cfg.token, controlplane.NewSegmentIngestHandler(rt.adminDB, logger)))
+	mux.Handle("/api/v1/", controlplane.BasicAuth(authenticator.Verify, apiMux))
+	mux.Handle("/", controlplane.SPAHandler())
+
+	httpHandler := mux
+	logger.Info("control-plane HTTP: data APIs behind admin Basic auth; console + /healthz + /api/v1/version open; segment ingest behind bootstrap token")
 
 	httpSrv := &http.Server{
 		Addr:              cfg.httpBind,
@@ -258,19 +272,10 @@ func randomPassword() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// basicAuthExceptOpen wraps next with admin Basic auth, leaving two paths to
-// pass through unwrapped: /healthz (k8s probes need no credentials) and the
-// segment-ingest endpoint (it carries its own BearerAuth token gate, so the
-// admin password must not be required there — gateways don't have it).
-func basicAuthExceptOpen(verify func(username, password string) bool, next http.Handler) http.Handler {
-	authed := controlplane.BasicAuth(verify, next)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/api/v1/ingest/segment" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		authed.ServeHTTP(w, r)
-	})
+// writeJSON encodes v as a JSON response body with a 200 status.
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // buildConfigProvider builds the Postgres-backed config source. The control
