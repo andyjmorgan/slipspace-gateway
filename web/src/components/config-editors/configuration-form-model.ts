@@ -13,13 +13,15 @@ import {
 } from "@/components/forms/field-helpers"
 import type { SelectOption } from "@/components/forms/field-atoms"
 
-export const CONFIG_PROTOCOL_OPTIONS: SelectOption[] = [
-  { value: "chat", label: "chat" },
-  { value: "responses", label: "responses" },
-  { value: "messages", label: "messages" },
-  { value: "generate_content", label: "generate_content" },
-  { value: "embeddings", label: "embeddings" },
-]
+// PROTOCOLS is the closed set of generative protocol names — the entire allowed
+// value space for a binding's protocol and a backend's protocols-map key. Source
+// of truth: the ProtocolX consts in contracts/config/model_v2.go.
+export const PROTOCOLS = ["chat", "responses", "messages", "generate_content", "embeddings"] as const
+
+export type Protocol = (typeof PROTOCOLS)[number]
+
+// PROTOCOL_OPTIONS adapts PROTOCOLS to the SelectField option shape.
+export const PROTOCOL_OPTIONS: SelectOption[] = PROTOCOLS.map((p) => ({ value: p, label: p }))
 
 // existing carries the gateway's redacted projection (last4) when editing a
 // pre-existing credential; null when there's nothing stored (or on the CP,

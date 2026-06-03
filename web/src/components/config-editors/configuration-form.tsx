@@ -3,7 +3,7 @@ import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { TextField, SelectField, KeyValueEditor, StringListEditor } from "@/components/forms/field-atoms"
 import {
-  CONFIG_PROTOCOL_OPTIONS,
+  PROTOCOL_OPTIONS,
   type BindingDraft,
   type ConfigFormState,
   type CredentialDraft,
@@ -292,7 +292,7 @@ function BindingCard({
       </div>
       <div className="px-3 py-3 flex flex-col gap-3">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <SelectField label="Protocol" value={draft.protocol} options={CONFIG_PROTOCOL_OPTIONS} onChange={(v) => onChange({ ...draft, protocol: v })} />
+          <SelectField label="Protocol" value={draft.protocol} options={PROTOCOL_OPTIONS} onChange={(v) => onChange({ ...draft, protocol: v })} />
           <SelectField
             label="Destination"
             value={draft.destinationKind}
