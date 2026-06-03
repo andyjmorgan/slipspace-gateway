@@ -64,7 +64,11 @@ export function ObservabilityPage() {
             </thead>
             <tbody>
               {rows.map((e) => (
-                <tr key={e.correlation_id} className="border-t border-[color:var(--border)] hover:bg-[color:var(--hover)]">
+                <tr
+                  key={e.correlation_id}
+                  onClick={() => nav(`/observability/${encodeURIComponent(e.correlation_id)}`)}
+                  className="border-t border-[color:var(--border)] hover:bg-[color:var(--hover)] cursor-pointer"
+                >
                   <td className="px-4 py-2.5 text-[12px] text-[color:var(--text-3)]" title={fmt.fullTime(e.observed_at)}>
                     {fmt.ago(e.observed_at)}
                   </td>

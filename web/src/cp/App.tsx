@@ -10,6 +10,7 @@ import { FleetPage } from "./pages/fleet"
 import { VersionsPage } from "./pages/versions"
 import { BindingsPage } from "./pages/bindings"
 import { ObservabilityPage } from "./pages/observability"
+import { EventDetailPage } from "./pages/event-detail"
 import { CpEntityListPage } from "./pages/entity-list"
 import { CpBackendEditorPage } from "./pages/backend-editor"
 import { CpConnectorEditor, CpGroupEditor, CpApiKeyEditor, CpRuleEditor, CpConfigurationEditor } from "./pages/cp-editors"
@@ -71,6 +72,7 @@ export default function App() {
 
         <Route path="/bindings" element={<BindingsPage />} />
         <Route path="/observability" element={<ObservabilityPage />} />
+        <Route path="/observability/:correlation_id" element={<EventDetailPage />} />
         <Route path="/versions" element={<VersionsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/fleet" replace />} />
