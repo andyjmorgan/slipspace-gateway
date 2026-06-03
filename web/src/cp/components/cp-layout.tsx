@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router"
-import { LogOut, Moon, Server, Sun } from "lucide-react"
+import { Boxes, History, LogOut, Moon, Server, Sun } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
 import { Button } from "@/components/ui/button"
 import { fetchVersion } from "../lib/api"
 
-const NAV = [{ to: "/fleet", label: "Fleet", icon: Server }]
+const NAV = [
+  { to: "/fleet", label: "Fleet", icon: Server },
+  { to: "/config", label: "Config", icon: Boxes },
+  { to: "/versions", label: "Versions", icon: History },
+]
 
 export function CpLayout() {
   const [theme, , toggleTheme] = useTheme()
