@@ -12,7 +12,16 @@ import { BindingsPage } from "./pages/bindings"
 import { ObservabilityPage } from "./pages/observability"
 import { EventDetailPage } from "./pages/event-detail"
 import { CpEntityListPage } from "./pages/entity-list"
+import { CpBackendListPage } from "./pages/backend-list"
+import { CpApiKeyListPage } from "./pages/api-key-list"
+import { CpBackendDetailPage } from "./pages/backend-detail"
 import { CpBackendEditorPage } from "./pages/backend-editor"
+import { CpConnectorListPage } from "./pages/connector-list"
+import { CpGroupListPage } from "./pages/group-list"
+import { CpRuleListPage } from "./pages/rule-list"
+import { CpRuleDetailPage } from "./pages/rule-detail"
+import { CpConfigurationListPage } from "./pages/configuration-list"
+import { CpConfigurationDetailPage } from "./pages/configuration-detail"
 import { CpConnectorEditor, CpGroupEditor, CpApiKeyEditor, CpRuleEditor, CpConfigurationEditor } from "./pages/cp-editors"
 
 const CP_TITLES: TopbarTitles = {
@@ -44,29 +53,33 @@ export default function App() {
         <Route path="/" element={<Navigate to="/fleet" replace />} />
         <Route path="/fleet" element={<FleetPage />} />
 
-        {/* Backends have a structured editor; the rest use the generic JSON
-            editor until their parity slices land. */}
-        <Route path="/backends" element={<CpEntityListPage kind="backend" />} />
+        {/* Backends: list → detail → edit, mirroring the gateway console. */}
+        <Route path="/backends" element={<CpBackendListPage />} />
         <Route path="/backends/new" element={<CpBackendEditorPage mode="create" />} />
-        <Route path="/backends/:name" element={<CpBackendEditorPage mode="edit" />} />
+        <Route path="/backends/:name" element={<CpBackendDetailPage />} />
+        <Route path="/backends/:name/edit" element={<CpBackendEditorPage mode="edit" />} />
 
-        <Route path="/configurations" element={<CpEntityListPage kind="configuration" />} />
+        {/* Configurations: list → detail → edit, mirroring the gateway console. */}
+        <Route path="/configurations" element={<CpConfigurationListPage />} />
         <Route path="/configurations/new" element={<CpConfigurationEditor mode="create" />} />
-        <Route path="/configurations/:name" element={<CpConfigurationEditor mode="edit" />} />
+        <Route path="/configurations/:name" element={<CpConfigurationDetailPage />} />
+        <Route path="/configurations/:name/edit" element={<CpConfigurationEditor mode="edit" />} />
 
-        <Route path="/rules" element={<CpEntityListPage kind="rule" />} />
+        {/* Rules: list → detail → edit, mirroring the gateway console. */}
+        <Route path="/rules" element={<CpRuleListPage />} />
         <Route path="/rules/new" element={<CpRuleEditor mode="create" />} />
-        <Route path="/rules/:name" element={<CpRuleEditor mode="edit" />} />
+        <Route path="/rules/:name" element={<CpRuleDetailPage />} />
+        <Route path="/rules/:name/edit" element={<CpRuleEditor mode="edit" />} />
 
-        <Route path="/groups" element={<CpEntityListPage kind="group" />} />
+        <Route path="/groups" element={<CpGroupListPage />} />
         <Route path="/groups/new" element={<CpGroupEditor mode="create" />} />
         <Route path="/groups/:name" element={<CpGroupEditor mode="edit" />} />
 
-        <Route path="/connectors" element={<CpEntityListPage kind="connector" />} />
+        <Route path="/connectors" element={<CpConnectorListPage />} />
         <Route path="/connectors/new" element={<CpConnectorEditor mode="create" />} />
         <Route path="/connectors/:name" element={<CpConnectorEditor mode="edit" />} />
 
-        <Route path="/api-keys" element={<CpEntityListPage kind="api_key" />} />
+        <Route path="/api-keys" element={<CpApiKeyListPage />} />
         <Route path="/api-keys/new" element={<CpApiKeyEditor mode="create" />} />
         <Route path="/api-keys/:name" element={<CpApiKeyEditor mode="edit" />} />
 

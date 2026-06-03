@@ -1,12 +1,9 @@
-import { Link } from "react-router"
-import { usePolicies, type PolicySummary, type PolicyTarget } from "@/lib/config-api"
-import { PanelCard, TableScroll } from "@/components/atoms/card"
-import { Tag } from "@/components/atoms/tag"
-import { Button } from "@/components/ui/button"
+import { usePolicies, type PolicySummary } from "@/lib/config-api"
+import { GroupListTable } from "@/components/config-views/group-views"
+import type { GroupListRow } from "@/components/config-views/group-views-model"
 import {
   PageHeader,
   NewButton,
-
   LoadingPanel,
   ErrorPanel,
   EmptyPanel,
@@ -33,9 +30,7 @@ export function PoliciesPage() {
       )}
       {state.status === "ok" && state.data.policies.length > 0 && (
         <div className="space-y-3">
-          {state.data.policies.map((p) => (
-            <PolicyCard key={p.name} pol={p} />
-          ))}
+          <GroupListTable rows={state.data.policies.map(groupListRowFromPolicy)} />
           <div className="text-[11px] text-[color:var(--text-4)] mono pl-2">
             pod {state.data.pod}
           </div>
@@ -45,55 +40,21 @@ export function PoliciesPage() {
   )
 }
 
-function PolicyCard({ pol }: { pol: PolicySummary }) {
-  return (
-    <PanelCard>
-      <div className="px-4 py-3 border-b border-[color:var(--border)] flex items-center gap-2">
-        <span className="font-semibold text-[13.5px]">{pol.name}</span>
-        <Tag variant="violet">{pol.mode}</Tag>
-        {pol.strict_weights && <Tag variant="warn">strict_weights</Tag>}
-        {pol.circuit_breaker_enabled && <Tag variant="violet">cb enabled</Tag>}
-        {pol.failure_status_codes && pol.failure_status_codes.length > 0 && (
-          <span className="mono text-[11px] text-[color:var(--text-3)]">
-            retry on {pol.failure_status_codes.join(", ")}
-          </span>
-        )}
-        <Link to={`/groups/${encodeURIComponent(pol.name)}/edit`} className="ml-auto">
-          <Button type="button" size="xs" variant="outline">Edit</Button>
-        </Link>
-      </div>
-      <TableScroll>
-        <thead>
-          <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-            <th className="text-left font-medium px-4 py-2">Target</th>
-            <th className="text-left font-medium px-4 py-2">Backend</th>
-            <th className="text-right font-medium px-4 py-2">Order</th>
-            <th className="text-right font-medium px-4 py-2">Weight</th>
-            <th className="text-left font-medium px-4 py-2">Circuit state</th>
-          </tr>
-        </thead>
-        <tbody>
-          {pol.targets.map((t) => (
-            <tr key={t.name} className="border-t border-[color:var(--border)]">
-              <td className="px-4 py-2.5 font-medium">{t.name}</td>
-              <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">
-                {t.provider ?? <span className="text-[color:var(--text-4)]">—</span>}
-              </td>
-              <td className="mono tnum text-right px-4 py-2.5">{t.order ?? "—"}</td>
-              <td className="mono tnum text-right px-4 py-2.5">{t.weight ?? "—"}</td>
-              <td className="px-4 py-2.5">
-                <CircuitStateBadge state={t.circuit_state} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </TableScroll>
-    </PanelCard>
-  )
-}
-
-function CircuitStateBadge({ state }: { state: PolicyTarget["circuit_state"] }) {
-  const variant: "danger" | "warn" | "success" | "ghost" =
-    state === "open" ? "danger" : state === "half_open" ? "warn" : state === "closed" ? "success" : "ghost"
-  return <Tag variant={variant}>{state}</Tag>
+// groupListRowFromPolicy adapts the gateway's live /policies summary into the
+// shared list-row shape — the live per-target circuit state carries through.
+function groupListRowFromPolicy(p: PolicySummary): GroupListRow {
+  return {
+    name: p.name,
+    mode: p.mode,
+    strict_weights: p.strict_weights,
+    circuit_breaker_enabled: p.circuit_breaker_enabled,
+    failure_status_codes: p.failure_status_codes,
+    targets: p.targets.map((t) => ({
+      name: t.name,
+      backend: t.provider,
+      order: t.order,
+      weight: t.weight,
+      circuit_state: t.circuit_state,
+    })),
+  }
 }

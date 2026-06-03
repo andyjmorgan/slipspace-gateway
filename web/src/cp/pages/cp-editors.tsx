@@ -89,6 +89,7 @@ export function CpRuleEditor({ mode }: { mode: "create" | "edit" }) {
       fromContract={ruleFormFromContract}
       toContract={ruleFormToContract}
       nameOf={(f) => f.name}
+      afterSaveTo={(name) => `/rules/${encodeURIComponent(name)}`}
       sub="A transform rule — a condition and ordered actions, attached to configurations."
     />
   )
@@ -105,6 +106,7 @@ export function CpConfigurationEditor({ mode }: { mode: "create" | "edit" }) {
       toContract={configFormToContract}
       nameOf={(f) => f.name}
       sub="A policy bundle — credentials, bindings, attached rules, and tags distributed to the fleet."
+      afterSaveTo={(name) => `/configurations/${encodeURIComponent(name)}`}
     />
   )
 }

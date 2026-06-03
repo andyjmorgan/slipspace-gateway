@@ -98,6 +98,7 @@ export function DeleteDialog({
   resourceKind,
   resourceName,
   requireConfirmName,
+  description,
   onConfirm,
   onClose,
 }: {
@@ -105,6 +106,10 @@ export function DeleteDialog({
   resourceKind: string
   resourceName: string
   requireConfirmName?: boolean
+  // description overrides the default consequence copy. The gateway deletes
+  // live (default copy); the control-plane console edits the working set and
+  // passes staged-semantics copy instead.
+  description?: React.ReactNode
   onConfirm: () => Promise<void>
   onClose: () => void
 }) {
@@ -155,9 +160,13 @@ export function DeleteDialog({
             Delete {resourceKind}
           </h2>
           <p className="text-[12.5px] text-[color:var(--text-3)] mt-1">
-            This permanently removes <span className="mono text-[color:var(--text)]">{resourceName}</span> and rewrites
-            <span className="mono"> policy.yaml</span>. In-flight requests finish on the pre-delete config; new requests
-            see the change immediately. This cannot be undone.
+            {description ?? (
+              <>
+                This permanently removes <span className="mono text-[color:var(--text)]">{resourceName}</span> and rewrites
+                <span className="mono"> policy.yaml</span>. In-flight requests finish on the pre-delete config; new requests
+                see the change immediately. This cannot be undone.
+              </>
+            )}
           </p>
         </div>
 
