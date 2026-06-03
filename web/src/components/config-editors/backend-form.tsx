@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { TextField, KeyValueEditor, StringListEditor } from "@/components/forms/field-atoms"
+import { PROTOCOLS } from "./configuration-form-model"
 import type {
   BackendFormState,
   ProtocolDraft,
@@ -74,14 +75,10 @@ export function BackendFormFields({
           title="Protocols"
           sub="generative wire shapes this backend serves; each with an upstream path + optional per-protocol auth override"
           action={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onChange({ ...form, protocols: [...form.protocols, { name: "", path: "", authHeader: "", authFormat: "" }] })}
-            >
-              + Add protocol
-            </Button>
+            <AddProtocolControl
+              present={form.protocols.map((p) => p.name)}
+              onAdd={(name) => onChange({ ...form, protocols: [...form.protocols, { name, path: "", authHeader: "", authFormat: "" }] })}
+            />
           }
         />
         <div className="px-4 py-4 flex flex-col gap-3">
@@ -148,6 +145,29 @@ export function BackendFormFields({
   )
 }
 
+// AddProtocolControl offers only the protocols not already on the backend, so a
+// duplicate or invalid key can't be added. It hides once all are present.
+function AddProtocolControl({ present, onAdd }: { present: string[]; onAdd: (name: string) => void }) {
+  const available = PROTOCOLS.filter((p) => !present.includes(p))
+  if (available.length === 0) return null
+  return (
+    <select
+      value=""
+      onChange={(e) => {
+        if (e.target.value) onAdd(e.target.value)
+      }}
+      className="rounded-[5px] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-2 py-1 pr-6 text-[12.5px] text-[color:var(--text)] outline-none focus:border-[color:var(--text-3)]"
+    >
+      <option value="">+ Add protocol</option>
+      {available.map((p) => (
+        <option key={p} value={p}>
+          {p}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 function ProtocolCard({ draft, onChange, onRemove }: { draft: ProtocolDraft; onChange: (next: ProtocolDraft) => void; onRemove: () => void }) {
   return (
     <div className="rounded-[var(--radius)] border border-[color:var(--border)] overflow-hidden">
@@ -158,7 +178,6 @@ function ProtocolCard({ draft, onChange, onRemove }: { draft: ProtocolDraft; onC
         </button>
       </div>
       <div className="px-3 py-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <TextField label="Protocol name" value={draft.name} onChange={(v) => onChange({ ...draft, name: v })} placeholder="chat" mono />
         <TextField label="Upstream path" value={draft.path} onChange={(v) => onChange({ ...draft, path: v })} placeholder="/v1/chat/completions" mono />
         <TextField label="Auth header (override)" value={draft.authHeader} onChange={(v) => onChange({ ...draft, authHeader: v })} placeholder="Authorization" mono hint="Leave blank to use the provider-native default." />
         <TextField label="Auth format (override)" value={draft.authFormat} onChange={(v) => onChange({ ...draft, authFormat: v })} placeholder="Bearer {key}" mono />
