@@ -46,7 +46,7 @@ export function CpBackendEditorPage({ mode }: { mode: "create" | "edit" }) {
     setBusy(true)
     try {
       await putEntity("backend", name, backendFormToContract(form))
-      nav("/config")
+      nav("/backends")
     } catch (e) {
       if (e instanceof UnauthorizedError) return nav("/login", { replace: true })
       setError(apiErrorText(e))
@@ -62,10 +62,10 @@ export function CpBackendEditorPage({ mode }: { mode: "create" | "edit" }) {
     <div className="flex flex-col gap-4 max-w-[860px]">
       <div>
         <button
-          onClick={() => nav("/config")}
+          onClick={() => nav("/backends")}
           className="flex items-center gap-1.5 text-[13px] text-[color:var(--text-3)] hover:text-[color:var(--text)] mb-3"
         >
-          <ArrowLeft size={14} /> Config
+          <ArrowLeft size={14} /> Backends
         </button>
         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">
           {editing ? `Edit backend · ${form.name}` : "New backend"}
@@ -88,7 +88,7 @@ export function CpBackendEditorPage({ mode }: { mode: "create" | "edit" }) {
       <BackendFormFields value={form} onChange={setForm} nameEditable={!editing} />
 
       <div className="flex items-center gap-2 justify-end">
-        <Button type="button" variant="ghost" onClick={() => nav("/config")}>
+        <Button type="button" variant="ghost" onClick={() => nav("/backends")}>
           Cancel
         </Button>
         <Button type="button" onClick={save} disabled={busy || form.name.trim() === ""}>
