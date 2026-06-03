@@ -44,12 +44,49 @@ func (c *Connector) Validate() error {
 		return c.validateAzureBlob()
 	case ConnectorTypeWebhook:
 		return c.validateWebhook()
+	case ConnectorTypeControlPlane:
+		return c.validateControlPlane()
 	case "":
 		return fmt.Errorf("%w: %q: type is required", ErrConnectorValidation, c.Name)
 	default:
-		return fmt.Errorf("%w: %q: unknown type %q (want s3 | azure_blob | webhook)",
+		return fmt.Errorf("%w: %q: unknown type %q (want s3 | azure_blob | webhook | controlplane)",
 			ErrConnectorValidation, c.Name, c.Type)
 	}
+}
+
+// validateControlPlane enforces the control-plane connector's shape. It reuses
+// the webhook transport fields (url, secret_ref, timeout_ms) but, unlike
+// webhook, it does NOT run the SSRF guard: it targets the operator's own
+// control-plane service, which is exactly the internal/private address an SSRF
+// guard would reject.
+func (c *Connector) validateControlPlane() error {
+	if c.URL == "" {
+		return c.errf("url is required (the control plane's /api/v1/ingest/segment endpoint)")
+	}
+	parsed, err := url.Parse(c.URL)
+	if err != nil {
+		return c.errf("url is not a valid URL: %v", err)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return c.errf("url scheme must be http or https, got %q", parsed.Scheme)
+	}
+	if c.SecretRef == "" {
+		return c.errf("secret_ref is required (the control-plane bootstrap token, e.g. env:SLUICE_CP_TOKEN)")
+	}
+	if err := validateSecretRef(c.SecretRef); err != nil {
+		return c.errf("secret_ref: %v", err)
+	}
+	if c.TimeoutMS <= 0 || c.TimeoutMS > 60_000 {
+		return c.errf("timeout_ms must be in (0, 60000], got %d", c.TimeoutMS)
+	}
+	if c.Bucket != "" || c.Region != "" || c.EndpointURL != "" || c.UsePathStyle ||
+		c.Account != "" || c.Container != "" {
+		return c.errf("cloud-storage fields not allowed on controlplane")
+	}
+	if c.Auth != nil {
+		return c.errf("auth block does not apply to controlplane (use secret_ref for the token)")
+	}
+	return nil
 }
 
 func (c *Connector) validateS3() error {

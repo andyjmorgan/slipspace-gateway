@@ -13,6 +13,7 @@ import (
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/azureblob"
+	"github.com/andyjmorgan/sluice-gateway/internal/connector/controlplane"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/s3"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/webhook"
 )
@@ -63,6 +64,10 @@ func Build(ctx context.Context, cfg contractsconfig.Connector, opts Options) (co
 		})
 	case contractsconfig.ConnectorTypeWebhook:
 		return webhook.New(ctx, webhook.Options{
+			Config: cfg,
+		})
+	case contractsconfig.ConnectorTypeControlPlane:
+		return controlplane.New(ctx, controlplane.Options{
 			Config: cfg,
 		})
 	default:

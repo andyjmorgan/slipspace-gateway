@@ -83,6 +83,28 @@ func TestConnector_Validate_WebhookHappy(t *testing.T) {
 	}
 }
 
+func TestConnector_Validate_ControlPlaneHappy(t *testing.T) {
+	// Unlike webhook, the control-plane connector deliberately accepts an
+	// internal/private URL (a ClusterIP, http, loopback) — that is its target.
+	t.Setenv(envWebhookAllowPrivate, "")
+	for _, u := range []string{
+		"http://sluice-controlplane.sluice-gateway.svc.cluster.local:8484/api/v1/ingest/segment",
+		"http://127.0.0.1:8484/api/v1/ingest/segment",
+		"https://cp.internal/api/v1/ingest/segment",
+	} {
+		c := &Connector{ //nolint:gosec // G101: SecretRef is an env: indirection, not a literal credential
+			Name:      "cp-audit",
+			Type:      ConnectorTypeControlPlane,
+			URL:       u,
+			SecretRef: "env:SLUICE_CP_TOKEN",
+			TimeoutMS: 5000,
+		}
+		if err := c.Validate(); err != nil {
+			t.Errorf("controlplane happy %q: %v", u, err)
+		}
+	}
+}
+
 func TestConnector_Validate_Rejections(t *testing.T) {
 	// The webhook SSRF-rejection cases below rely on the
 	// allow-private escape hatch being off. If a developer set it
@@ -150,6 +172,16 @@ func TestConnector_Validate_Rejections(t *testing.T) {
 		{"webhook link-local 169.254 url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://169.254.169.254/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
 		{"webhook 0.0.0.0 url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://0.0.0.0/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
 		{"webhook IPv6 loopback url", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://[::1]/hook", SecretRef: "env:s", TimeoutMS: 1000}, "denied address"},
+
+		{"controlplane missing url", Connector{Name: "x", Type: ConnectorTypeControlPlane, SecretRef: "env:s", TimeoutMS: 1000}, "url is required"},
+		{"controlplane bad url", Connector{Name: "x", Type: ConnectorTypeControlPlane, URL: "::%", SecretRef: "env:s", TimeoutMS: 1000}, "valid URL"},
+		{"controlplane unsupported scheme", Connector{Name: "x", Type: ConnectorTypeControlPlane, URL: "ftp://x", SecretRef: "env:s", TimeoutMS: 1000}, "url scheme"},
+		{"controlplane missing secret", Connector{Name: "x", Type: ConnectorTypeControlPlane, URL: "http://cp/ingest", TimeoutMS: 1000}, "secret_ref is required"},
+		{"controlplane bad secret ref", Connector{Name: "x", Type: ConnectorTypeControlPlane, URL: "http://cp/ingest", SecretRef: "plain", TimeoutMS: 1000}, `must start with "env:"`},
+		{"controlplane zero timeout", Connector{Name: "x", Type: ConnectorTypeControlPlane, URL: "http://cp/ingest", SecretRef: "env:s"}, "timeout_ms"},
+		{"controlplane has bucket", Connector{Name: "x", Type: ConnectorTypeControlPlane, URL: "http://cp/ingest", SecretRef: "env:s", TimeoutMS: 1000, Bucket: "b"}, "cloud-storage fields"},
+		{"controlplane with auth block", Connector{Name: "x", Type: ConnectorTypeControlPlane, URL: "http://cp/ingest", SecretRef: "env:s", TimeoutMS: 1000,
+			Auth: &ConnectorAuth{Mode: AuthModeWorkloadIdentity}}, "auth block"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
