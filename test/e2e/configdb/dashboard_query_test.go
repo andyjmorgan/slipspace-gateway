@@ -270,6 +270,82 @@ func TestConfigDB_QueryDashboardSeries_BadBucket(t *testing.T) {
 	}
 }
 
+// TestConfigDB_QueryDashboardSeriesByProvider groups the per-bucket request /
+// error scan by backend, emitting one row per (bucket, provider) pair that saw
+// traffic. Buckets with no traffic for a provider are absent (the handler
+// zero-fills them), and the empty-backend event is excluded.
+func TestConfigDB_QueryDashboardSeriesByProvider(t *testing.T) {
+	ctx := context.Background()
+	db, err := configdb.Open(ctx, startPostgres(t))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(db.Close)
+
+	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	seedEvents(t, db, []configdb.RequestEvent{
+		// Bucket 0 [12:00,12:05): openai 2 req / 1 err, anthropic 1 req / 0 err.
+		{CorrelationID: "p0-1", Backend: "openai", StatusCode: 200, ObservedAt: base.Add(1 * time.Minute)},
+		{CorrelationID: "p0-2", Backend: "openai", StatusCode: 500, ObservedAt: base.Add(2 * time.Minute)},
+		{CorrelationID: "p0-3", Backend: "anthropic", StatusCode: 200, ObservedAt: base.Add(3 * time.Minute)},
+		// Bucket 2 [12:10,12:15): openai only.
+		{CorrelationID: "p2-1", Backend: "openai", StatusCode: 429, ObservedAt: base.Add(11 * time.Minute)},
+		// Empty backend is excluded from the per-provider scan.
+		{CorrelationID: "nob", Backend: "", StatusCode: 200, ObservedAt: base.Add(1 * time.Minute)},
+	})
+
+	buckets, err := db.QueryDashboardSeriesByProvider(ctx, configdb.DashboardSeriesParams{
+		From:          base,
+		To:            base.Add(15 * time.Minute),
+		BucketSeconds: 300,
+	})
+	if err != nil {
+		t.Fatalf("series by provider: %v", err)
+	}
+	// 3 rows: (bucket0,openai), (bucket0,anthropic), (bucket2,openai).
+	if len(buckets) != 3 {
+		t.Fatalf("rows = %d, want 3: %+v", len(buckets), buckets)
+	}
+	type key struct {
+		unix int64
+		prov string
+	}
+	mk := func(ts time.Time, prov string) key { return key{ts.Unix(), prov} }
+	got := map[key]configdb.DashboardProviderSeriesBucket{}
+	for _, b := range buckets {
+		got[mk(b.Ts, b.Provider)] = b
+	}
+	if b := got[mk(base, "openai")]; b.Requests != 2 || b.Errored != 1 {
+		t.Errorf("bucket0 openai = %+v, want req=2 err=1", b)
+	}
+	if b := got[mk(base, "anthropic")]; b.Requests != 1 || b.Errored != 0 {
+		t.Errorf("bucket0 anthropic = %+v, want req=1 err=0", b)
+	}
+	if b := got[mk(base.Add(10*time.Minute), "openai")]; b.Requests != 1 || b.Errored != 1 {
+		t.Errorf("bucket2 openai = %+v, want req=1 err=1 (429)", b)
+	}
+	if _, ok := got[mk(base.Add(10*time.Minute), "anthropic")]; ok {
+		t.Error("bucket2 anthropic present, want absent (no traffic)")
+	}
+}
+
+// TestConfigDB_QueryDashboardSeriesByProvider_BadBucket rejects a non-positive
+// bucket.
+func TestConfigDB_QueryDashboardSeriesByProvider_BadBucket(t *testing.T) {
+	ctx := context.Background()
+	db, err := configdb.Open(ctx, startPostgres(t))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(db.Close)
+
+	if _, err := db.QueryDashboardSeriesByProvider(ctx, configdb.DashboardSeriesParams{
+		From: time.Now(), To: time.Now().Add(time.Hour), BucketSeconds: 0,
+	}); err == nil {
+		t.Fatal("want error for zero bucket")
+	}
+}
+
 // TestConfigDB_GetRequestRecord_LatestWins confirms the body drill-in returns
 // the highest-(ts_ns,seq) captured Record for a correlation id, and 404s when
 // none exist.
