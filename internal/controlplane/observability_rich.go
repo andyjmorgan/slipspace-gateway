@@ -473,10 +473,11 @@ func (h *ObservabilityHandler) genAIContent(ctx context.Context, eventID string)
 // MessageBodyDetail. The Record's inline Request/Response bodies are raw JSON;
 // they surface verbatim as the request/response strings. Headers carry over as
 // single-value-per-key maps widened to the wire's multi-value shape. Truncation
-// flags derive from comparing the captured length against the recorded total
-// byte size; the assembled-response / partial-assembly fields have no Record
-// analog and stay empty (the CP stores the raw envelope, not a stream
-// reconstruction).
+// is driven off the Record's explicit BodyOmitted / BodyTruncated signals — not
+// a len(Body) < BodyBytes comparison, which falsely fires for a complete body
+// whose inline JSON is compacted relative to the raw wire bytes BodyBytes
+// counts. The assembled-response / partial-assembly fields have no Record analog
+// and stay empty (the CP stores the raw envelope, not a stream reconstruction).
 func recordToBodyDetail(eventID string, raw json.RawMessage) (adminc.MessageBodyDetail, error) {
 	var rec connc.Record
 	if err := json.Unmarshal(raw, &rec); err != nil {
@@ -486,10 +487,10 @@ func recordToBodyDetail(eventID string, raw json.RawMessage) (adminc.MessageBody
 		EventID:            eventID,
 		Request:            string(rec.Request.Body),
 		RequestTotalBytes:  int64(rec.Request.BodyBytes),
-		RequestTruncated:   rec.Request.BodyOmitted || (rec.Request.BodyBytes > 0 && len(rec.Request.Body) < rec.Request.BodyBytes),
+		RequestTruncated:   rec.Request.BodyOmitted || rec.Request.BodyTruncated,
 		Response:           string(rec.Response.Body),
 		ResponseTotalBytes: int64(rec.Response.BodyBytes),
-		ResponseTruncated:  rec.Response.BodyOmitted || (rec.Response.BodyBytes > 0 && len(rec.Response.Body) < rec.Response.BodyBytes),
+		ResponseTruncated:  rec.Response.BodyOmitted || rec.Response.BodyTruncated,
 		RequestHeaders:     widenHeaders(rec.Request.Headers),
 		ResponseHeaders:    widenHeaders(rec.Response.Headers),
 	}

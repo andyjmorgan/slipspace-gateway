@@ -145,6 +145,13 @@ type RequestPart struct {
 	// binding's oversize_behaviour is metadata_only. Body and BodyRef are
 	// both empty in this case.
 	BodyOmitted bool `json:"body_omitted,omitempty"`
+
+	// BodyTruncated is true when Body holds only a head prefix because the
+	// captured bytes hit the per-body capture cap. This is the authoritative
+	// truncation signal: consumers must not infer truncation from
+	// len(Body) < BodyBytes, since the inline Body may be re-encoded
+	// (compacted JSON) relative to the raw wire bytes BodyBytes counts.
+	BodyTruncated bool `json:"body_truncated,omitempty"`
 }
 
 // ResponsePart is the response half of a [Record].
@@ -163,6 +170,13 @@ type ResponsePart struct {
 	BodyRef string `json:"body_ref,omitempty"`
 
 	BodyOmitted bool `json:"body_omitted,omitempty"`
+
+	// BodyTruncated is true when Body holds only a head prefix because the
+	// captured bytes hit the per-body capture cap. This is the authoritative
+	// truncation signal: consumers must not infer truncation from
+	// len(Body) < BodyBytes, since the inline Body may be re-encoded
+	// (compacted JSON) relative to the raw wire bytes BodyBytes counts.
+	BodyTruncated bool `json:"body_truncated,omitempty"`
 
 	// FirstByteNs is the wall-clock time the first response byte was
 	// written to the client. For non-streaming responses, equals the time
