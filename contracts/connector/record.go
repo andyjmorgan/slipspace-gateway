@@ -189,6 +189,20 @@ type ResponsePart struct {
 	// StreamChunks counts the number of SSE chunks observed. Zero for
 	// non-streaming responses.
 	StreamChunks int `json:"stream_chunks,omitempty"`
+
+	// Assembled is the JSON-encoded reconstruction of the non-streaming
+	// response the provider would have returned, rebuilt from the streamed
+	// chunks by the per-provider accumulator. Shape matches the provider's
+	// non-streaming response type (OpenAI ChatCompletion, Anthropic
+	// MessagesResponse, Gemini GenerateContentResponse). Empty for
+	// non-streaming responses and for streams the accumulator could not
+	// parse — Body still holds the raw SSE bytes in every case.
+	Assembled string `json:"assembled,omitempty"`
+
+	// AssemblyPartial is true when the accumulator hit a malformed chunk or
+	// an unknown delta type mid-stream and stopped before EOF. Assembled
+	// holds whatever was parseable up to that point.
+	AssemblyPartial bool `json:"assembly_partial,omitempty"`
 }
 
 // Tokens carries usage-style accounting parsed from the upstream response.

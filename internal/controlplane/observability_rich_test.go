@@ -542,6 +542,52 @@ func TestRecordToBodyDetail_Truncation(t *testing.T) {
 	}
 }
 
+func TestRecordToBodyDetail_Assembled(t *testing.T) {
+	t.Run("streamed response surfaces assembled + partial", func(t *testing.T) {
+		rec := connc.Record{
+			Response: connc.ResponsePart{
+				Body:            json.RawMessage(`"data: {...}\n\n"`),
+				StreamChunks:    3,
+				Assembled:       `{"id":"x","object":"chat.completion"}`,
+				AssemblyPartial: true,
+			},
+		}
+		raw, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatalf("marshal record: %v", err)
+		}
+		d, err := recordToBodyDetail("c1", raw)
+		if err != nil {
+			t.Fatalf("recordToBodyDetail: %v", err)
+		}
+		if d.ResponseAssembled != rec.Response.Assembled {
+			t.Errorf("ResponseAssembled = %q, want %q", d.ResponseAssembled, rec.Response.Assembled)
+		}
+		if !d.AssemblyPartial {
+			t.Errorf("AssemblyPartial = false, want true")
+		}
+	})
+	t.Run("non-streamed response leaves assembled empty", func(t *testing.T) {
+		rec := connc.Record{
+			Response: connc.ResponsePart{Body: json.RawMessage(`{"id":"x"}`)},
+		}
+		raw, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatalf("marshal record: %v", err)
+		}
+		d, err := recordToBodyDetail("c1", raw)
+		if err != nil {
+			t.Fatalf("recordToBodyDetail: %v", err)
+		}
+		if d.ResponseAssembled != "" {
+			t.Errorf("ResponseAssembled = %q, want empty", d.ResponseAssembled)
+		}
+		if d.AssemblyPartial {
+			t.Errorf("AssemblyPartial = true, want false")
+		}
+	})
+}
+
 func TestMessageBody_TotalBytesFallback(t *testing.T) {
 	// A record that omits body_bytes still reports a total from the captured
 	// length, on both the request and response side.

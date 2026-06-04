@@ -617,8 +617,10 @@ func (h *ObservabilityHandler) genAIContent(ctx context.Context, eventID string)
 // is driven off the Record's explicit BodyOmitted / BodyTruncated signals — not
 // a len(Body) < BodyBytes comparison, which falsely fires for a complete body
 // whose inline JSON is compacted relative to the raw wire bytes BodyBytes
-// counts. The assembled-response / partial-assembly fields have no Record analog
-// and stay empty (the CP stores the raw envelope, not a stream reconstruction).
+// counts. For a streamed response the Record also carries the accumulator's
+// reassembly (ResponsePart.Assembled), which surfaces as ResponseAssembled so
+// the inspector's rollup view renders the non-streaming JSON while Response
+// keeps the raw SSE bytes.
 func recordToBodyDetail(eventID string, raw json.RawMessage) (adminc.MessageBodyDetail, error) {
 	var rec connc.Record
 	if err := json.Unmarshal(raw, &rec); err != nil {
@@ -632,6 +634,8 @@ func recordToBodyDetail(eventID string, raw json.RawMessage) (adminc.MessageBody
 		Response:           string(rec.Response.Body),
 		ResponseTotalBytes: int64(rec.Response.BodyBytes),
 		ResponseTruncated:  rec.Response.BodyOmitted || rec.Response.BodyTruncated,
+		ResponseAssembled:  rec.Response.Assembled,
+		AssemblyPartial:    rec.Response.AssemblyPartial,
 		RequestHeaders:     widenHeaders(rec.Request.Headers),
 		ResponseHeaders:    widenHeaders(rec.Response.Headers),
 	}

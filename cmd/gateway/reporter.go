@@ -659,6 +659,15 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 			rec.Response.BodyTruncated = buf.Truncated()
 			sum := sha256.Sum256(body)
 			rec.Response.BodySha256 = hex.EncodeToString(sum[:])
+			// Ship the SSE reassembly alongside the raw bytes so the CP
+			// inspector's rollup view has the non-streaming JSON it can
+			// render; Body keeps the raw chunks for the "raw stream" tab.
+			if ev.Streaming {
+				if res := accumulator.Accumulate(ev.Provider, ev.Endpoint, body); res.Recognised && len(res.Assembled) > 0 {
+					rec.Response.Assembled = string(res.Assembled)
+					rec.Response.AssemblyPartial = res.Partial
+				}
+			}
 		}
 		if h := buf.Headers(); len(h) > 0 {
 			rec.Response.Headers = map[string]string{}

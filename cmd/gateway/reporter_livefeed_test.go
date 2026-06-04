@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -199,6 +200,53 @@ func TestReporter_BuildRecordResponseTruncationFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReporter_BuildRecordStreamAssembled(t *testing.T) {
+	t.Parallel()
+	sse := []byte(
+		`data: {"choices":[{"delta":{"content":"Hello"},"index":0}]}` + "\n\n" +
+			`data: {"choices":[{"delta":{"content":" world"},"index":0}]}` + "\n\n" +
+			"data: [DONE]\n\n")
+
+	t.Run("streamed response populates Assembled, keeps raw Body", func(t *testing.T) {
+		r := newTestReporter(t, nil)
+		r.streaming = true
+		buf := livefeed.NewResponseBuffer(8 * 1024)
+		buf.Append(sse)
+		ctx := livefeed.WithResponseBuffer(context.Background(), buf)
+
+		ev := events.Request{StatusCode: 200, Streaming: true, Provider: "openai", Endpoint: "chat_completions"}
+		rec := r.buildRecord(ctx, ev, nil)
+
+		if !strings.Contains(rec.Response.Assembled, `"content":"Hello world"`) {
+			t.Errorf("Assembled = %q, expected assembled chat content", rec.Response.Assembled)
+		}
+		if rec.Response.AssemblyPartial {
+			t.Errorf("AssemblyPartial = true, want false for a clean stream")
+		}
+		// Raw SSE bytes survive on Body for the "raw stream" tab.
+		if !bytes.Contains(rec.Response.Body, []byte("data: ")) {
+			t.Errorf("Body = %q, expected to retain raw SSE bytes", rec.Response.Body)
+		}
+	})
+
+	t.Run("non-streamed response leaves Assembled empty", func(t *testing.T) {
+		r := newTestReporter(t, nil)
+		buf := livefeed.NewResponseBuffer(8 * 1024)
+		buf.Append([]byte(`{"id":"x","object":"chat.completion"}`))
+		ctx := livefeed.WithResponseBuffer(context.Background(), buf)
+
+		ev := events.Request{StatusCode: 200, Provider: "openai", Endpoint: "chat_completions"}
+		rec := r.buildRecord(ctx, ev, nil)
+
+		if rec.Response.Assembled != "" {
+			t.Errorf("Assembled = %q, want empty for non-streamed response", rec.Response.Assembled)
+		}
+		if rec.Response.AssemblyPartial {
+			t.Errorf("AssemblyPartial = true, want false")
+		}
+	})
 }
 
 func TestReporter_StreamingResponseAccumulated(t *testing.T) {
