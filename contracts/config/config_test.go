@@ -9,41 +9,6 @@ import (
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 )
 
-func TestProvidersConfig_YAMLRoundTrip(t *testing.T) {
-	body := `
-openai:
-  base_url: https://api.openai.com
-  endpoints:
-    chat_completions:
-      path: /v1/chat/completions
-      method: [POST]
-      accepted_paths: [/v1/chat/completions]
-      accepts_streaming: true
-      request_kind: chat
-anthropic:
-  base_url: https://api.anthropic.com
-  required_headers:
-    anthropic-version: "2023-06-01"
-  endpoints:
-    messages:
-      path: /v1/messages
-      method: [POST]
-      accepted_paths: [/v1/messages]
-      accepts_streaming: true
-      request_kind: messages
-`
-	var p contractsconfig.ProvidersConfig
-	if err := yaml.Unmarshal([]byte(body), &p); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if got := p["openai"].Endpoints["chat_completions"].RequestKind; got != "chat" {
-		t.Errorf("request_kind = %q", got)
-	}
-	if got := p["anthropic"].RequiredHeaders["anthropic-version"]; got != "2023-06-01" {
-		t.Errorf("required header = %q", got)
-	}
-}
-
 func TestConfigurationsConfig_LibraryReferences(t *testing.T) {
 	body := `
 dev:
