@@ -81,7 +81,7 @@ type AuthResult struct {
 	// Configuration is the resolved v2 policy bundle (backends credentials +
 	// bindings + rules). Nil only when resolution failed before configuration
 	// lookup.
-	Configuration *contractsconfig.ConfigurationV2
+	Configuration *contractsconfig.Configuration
 
 	// ConfigurationName is the name the policy was looked up by — the
 	// X-Sluice-Configuration value (legacy passthrough) or
@@ -163,7 +163,7 @@ func (r *Resolver) Resolve(headers http.Header) (AuthResult, error) {
 // substituting upstream credentials. Unknown or disabled keys fail with
 // ErrUnauthorized so attackers cannot probe configuration names by
 // presenting random identity values.
-func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfigV2, token string, legacyAlsoPresent bool) (AuthResult, error) {
+func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfig, token string, legacyAlsoPresent bool) (AuthResult, error) {
 	key, ok := snap.SecretIndex[token]
 	if !ok || key == nil {
 		return AuthResult{Mode: ModePassthrough, DropHeaders: passthroughDropHeaders()}, ErrUnauthorized
@@ -197,7 +197,7 @@ func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfigV2, tok
 // resolveLegacyPassthrough is the original X-Sluice-Configuration path.
 // Marked legacy because the configuration name is human-readable and
 // guessable; X-Sluice-Identity supersedes it.
-func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfigV2, configName string) (AuthResult, error) {
+func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfig, configName string) (AuthResult, error) {
 	cfg, ok := snap.ConfigurationIndex[configName]
 	if !ok {
 		return AuthResult{LegacyConfigurationHeader: true}, ErrUnknownConfiguration
@@ -254,7 +254,7 @@ func (r *Resolver) discoverManagedKey(headers http.Header) (managedKeySource, bo
 	return managedKeySource{}, false
 }
 
-func (r *Resolver) resolveManaged(snap *config.ResolvedConfigV2, headers http.Header) (AuthResult, error) {
+func (r *Resolver) resolveManaged(snap *config.ResolvedConfig, headers http.Header) (AuthResult, error) {
 	src, ok := r.discoverManagedKey(headers)
 	if !ok {
 		return AuthResult{Mode: ModeManaged}, ErrUnauthorized

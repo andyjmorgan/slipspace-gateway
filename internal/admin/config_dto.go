@@ -337,7 +337,7 @@ func backendDetailFromContract(name string, b contractsconfig.Backend) BackendDe
 // bindingRowsFromConfiguration flattens a configuration's bindings into wire
 // rows. configName is stamped on each row when non-empty so the global
 // bindings view can attribute each row to its owning configuration.
-func bindingRowsFromConfiguration(configName string, cfg contractsconfig.ConfigurationV2) ([]BindingRow, []PassthroughBindingRow) {
+func bindingRowsFromConfiguration(configName string, cfg contractsconfig.Configuration) ([]BindingRow, []PassthroughBindingRow) {
 	gen := make([]BindingRow, 0, len(cfg.Bindings))
 	for _, b := range cfg.Bindings {
 		gen = append(gen, BindingRow{

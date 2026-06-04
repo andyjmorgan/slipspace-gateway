@@ -11,9 +11,9 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/selection"
 )
 
-// goldenV2 is the live prod config expressed in the v2 model — the fixture the
+// golden is the live prod config expressed in the v2 model — the fixture the
 // selection engine is validated against.
-const goldenV2 = `
+const golden = `
 backends:
   openai:
     base_url: https://api.openai.com
@@ -75,10 +75,10 @@ configurations:
       - { family: messages_batches, backend: anthropic }
 `
 
-func loadGolden(t *testing.T) contractsconfig.ModelV2 {
+func loadGolden(t *testing.T) contractsconfig.Model {
 	t.Helper()
-	var m contractsconfig.ModelV2
-	if err := yaml.Unmarshal([]byte(goldenV2), &m); err != nil {
+	var m contractsconfig.Model
+	if err := yaml.Unmarshal([]byte(golden), &m); err != nil {
 		t.Fatalf("load golden: %v", err)
 	}
 	return m
@@ -244,23 +244,23 @@ func TestSelect_ResolutionErrors(t *testing.T) {
 	}
 	cases := []struct {
 		name string
-		cfg  contractsconfig.ConfigurationV2
+		cfg  contractsconfig.Configuration
 		grp  contractsconfig.GroupsConfig
 		want string
 	}{
 		{
 			name: "unknown group",
-			cfg:  contractsconfig.ConfigurationV2{Bindings: []contractsconfig.Binding{{Protocol: "chat", Group: "ghost"}}},
+			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "chat", Group: "ghost"}}},
 			want: "unknown group",
 		},
 		{
 			name: "unknown backend",
-			cfg:  contractsconfig.ConfigurationV2{Bindings: []contractsconfig.Binding{{Protocol: "chat", Backend: "ghost"}}},
+			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "chat", Backend: "ghost"}}},
 			want: "unknown backend",
 		},
 		{
 			name: "backend does not serve protocol",
-			cfg: contractsconfig.ConfigurationV2{
+			cfg: contractsconfig.Configuration{
 				Credentials: map[string]string{"only-responses": "k"},
 				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Backend: "only-responses"}},
 			},
@@ -268,12 +268,12 @@ func TestSelect_ResolutionErrors(t *testing.T) {
 		},
 		{
 			name: "no credential entry",
-			cfg:  contractsconfig.ConfigurationV2{Bindings: []contractsconfig.Binding{{Protocol: "responses", Backend: "only-responses"}}},
+			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "responses", Backend: "only-responses"}}},
 			want: "no credential entry",
 		},
 		{
 			name: "group target unknown backend",
-			cfg:  contractsconfig.ConfigurationV2{Bindings: []contractsconfig.Binding{{Protocol: "chat", Group: "g"}}},
+			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "chat", Group: "g"}}},
 			grp:  contractsconfig.GroupsConfig{"g": {Targets: []contractsconfig.Target{{Backend: "ghost"}}}},
 			want: "unknown backend",
 		},
@@ -297,11 +297,11 @@ func TestMatchPassthrough_ResolutionErrors(t *testing.T) {
 			"batches": {Paths: []contractsconfig.PassthroughPath{{Match: "/b", Methods: []string{"GET"}}}},
 		}},
 	}
-	cfgUnknownBackend := contractsconfig.ConfigurationV2{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Backend: "ghost"}}}
+	cfgUnknownBackend := contractsconfig.Configuration{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Backend: "ghost"}}}
 	if _, err := selection.MatchPassthrough("GET", "/b", cfgUnknownBackend, backends); err == nil || !strings.Contains(err.Error(), "unknown backend") {
 		t.Fatalf("unknown backend: %v", err)
 	}
-	cfgUnknownFamily := contractsconfig.ConfigurationV2{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "ghost", Backend: "anthropic"}}}
+	cfgUnknownFamily := contractsconfig.Configuration{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "ghost", Backend: "anthropic"}}}
 	if _, err := selection.MatchPassthrough("GET", "/b", cfgUnknownFamily, backends); err == nil || !strings.Contains(err.Error(), "no passthrough family") {
 		t.Fatalf("unknown family: %v", err)
 	}

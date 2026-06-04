@@ -76,7 +76,7 @@ func backendSwitchActions(backend, alias string) []contractsrules.Action {
 	return acts
 }
 
-// buildDestinationV2 resolves the upstream destination for a v2 request from
+// buildDestination resolves the upstream destination for a v2 request from
 // the selected target plus the auth decision. It is the single credential mint
 // site under v2 — the resolved selection.Target already carries the backend's
 // base URL, protocol path, auth convention, default query, and the
@@ -97,7 +97,7 @@ func backendSwitchActions(backend, alias string) []contractsrules.Action {
 // it is the target alias when set, else the path-derived model. Body-model
 // aliasing for the body-keyed protocols is handled by the body-rewrite stage,
 // not here.
-func buildDestinationV2(
+func buildDestination(
 	target selection.Target,
 	pathParams map[string]string,
 	mode auth.Mode,

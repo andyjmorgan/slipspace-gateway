@@ -36,7 +36,7 @@ func writableFixture(t *testing.T) (string, *config.Store) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	resolved, err := config.LoadV2(context.Background(), dir)
+	resolved, err := config.Load(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestRulesCreate_HappyPath(t *testing.T) {
 	}
 	// Disk persistence: re-load the dir and confirm the rule survives
 	// a fresh decode.
-	reloaded, err := config.LoadV2(context.Background(), dir)
+	reloaded, err := config.Load(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("re-Load: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestRulesDelete_Referenced_Returns409WithUsedBy(t *testing.T) {
 		t.Errorf("UsedBy=%v, want to include dev", body.UsedBy)
 	}
 	// Rule must still be present on disk after the rejected delete.
-	reloaded, err := config.LoadV2(context.Background(), dir)
+	reloaded, err := config.Load(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("re-Load: %v", err)
 	}

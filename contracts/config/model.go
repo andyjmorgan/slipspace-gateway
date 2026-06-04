@@ -254,12 +254,12 @@ type PassthroughBinding struct {
 	Tags []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 }
 
-// ConfigurationV2 is the v2 policy bundle. It selects backends (with the
+// Configuration is the v2 policy bundle. It selects backends (with the
 // credentials this configuration holds) and declares the bindings that route
 // (protocol, model) to them, plus the surviving transform rules, tags, and
 // connector bindings. The generative request path is identical to v1 — only
 // the source of routing/credential data changes.
-type ConfigurationV2 struct {
+type Configuration struct {
 	// Credentials maps backend name to the upstream credential this
 	// configuration holds for it ({key} resolves from here). An empty string
 	// means a no-credential backend (strip and forward).
@@ -288,10 +288,10 @@ type ConfigurationV2 struct {
 	ConnectorBindings []ConnectorBinding `yaml:"connector_bindings,omitempty" json:"connector_bindings,omitempty"`
 }
 
-// ModelV2 is the top-level v2 configuration document: the shared backend and
+// Model is the top-level v2 configuration document: the shared backend and
 // group catalogues plus the per-name configurations. Connectors and API keys
 // carry over from v1 unchanged.
-type ModelV2 struct {
+type Model struct {
 	// Backends is the shared connection catalogue.
 	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
 
@@ -299,7 +299,7 @@ type ModelV2 struct {
 	Groups GroupsConfig `yaml:"groups,omitempty" json:"groups,omitempty"`
 
 	// Configurations is the per-name policy bundles.
-	Configurations map[string]ConfigurationV2 `yaml:"configurations,omitempty" json:"configurations,omitempty"`
+	Configurations map[string]Configuration `yaml:"configurations,omitempty" json:"configurations,omitempty"`
 
 	// Connectors carries over from v1 unchanged.
 	Connectors ConnectorsConfig `yaml:"connectors,omitempty" json:"connectors,omitempty"`

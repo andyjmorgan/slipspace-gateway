@@ -79,7 +79,7 @@ func ConfigurationDetailHandler(store *config.Store) http.Handler {
 // attachments and api-key summaries resolved. Shared by the GET detail handler
 // and the create/replace write handlers so a write response is byte-identical to
 // a follow-up GET.
-func configurationDetailView(name string, resolved *config.ResolvedConfigV2) ConfigurationDetail {
+func configurationDetailView(name string, resolved *config.ResolvedConfig) ConfigurationDetail {
 	cfg := resolved.Configurations[name]
 	gen, pass := bindingRowsFromConfiguration("", cfg)
 	return ConfigurationDetail{
@@ -282,7 +282,7 @@ func BindingsHandler(store *config.Store) http.Handler {
 // every handler calls at the top of the request. Returns nil when the
 // store is nil or its current snapshot is nil; handlers translate that
 // to a 503.
-func snapshot(store *config.Store) *config.ResolvedConfigV2 {
+func snapshot(store *config.Store) *config.ResolvedConfig {
 	if store == nil {
 		return nil
 	}
@@ -319,7 +319,7 @@ func buildAPIKeySummaries(configName string, keys []contractsconfig.APIKey) []AP
 // runtime priority order. Falls back to the configuration's RuleNames
 // ordering if the indexes have not been built (defensive — Validate
 // builds them, but the handlers do not require that).
-func buildRuleAttachments(configName string, resolved *config.ResolvedConfigV2) []RuleAttachment {
+func buildRuleAttachments(configName string, resolved *config.ResolvedConfig) []RuleAttachment {
 	cfg, ok := resolved.Configurations[configName]
 	if !ok {
 		return nil
@@ -350,7 +350,7 @@ func buildRuleAttachments(configName string, resolved *config.ResolvedConfigV2) 
 // invertRuleUsage maps rule name → configurations that reference it.
 // Configuration order matches insertion order from the map; callers sort
 // for stable rendering.
-func invertRuleUsage(resolved *config.ResolvedConfigV2) map[string][]string {
+func invertRuleUsage(resolved *config.ResolvedConfig) map[string][]string {
 	out := make(map[string][]string)
 	for name, cfg := range resolved.Configurations {
 		for _, ruleName := range cfg.RuleNames {

@@ -45,7 +45,7 @@ func isDryRun(r *http.Request) bool {
 //
 // commitClone, the validate -> persist -> Store.Replace tail, lives in
 // rules_write.go and is already block-agnostic — it takes a whole
-// *ResolvedConfigV2 clone, so every resource reuses it unchanged.
+// *ResolvedConfig clone, so every resource reuses it unchanged.
 
 // PreviewResult is the validation half of a diff-preview: whether a candidate
 // mutation would pass RevalidateAndIndex, and the underlying error when not.
@@ -64,7 +64,7 @@ type PreviewResult struct {
 // the dry-run a topology edit (backends/groups/configurations) runs so the
 // operator sees "this would be rejected" before committing, and the safety
 // floor for the console's diff-preview.
-func previewMutation(snap *config.ResolvedConfigV2, mutate func(*config.ResolvedConfigV2)) PreviewResult {
+func previewMutation(snap *config.ResolvedConfig, mutate func(*config.ResolvedConfig)) PreviewResult {
 	clone := snap.Clone()
 	mutate(clone)
 	if err := clone.RevalidateAndIndex(); err != nil {
@@ -92,7 +92,7 @@ func mergeSecret(incoming *string, existing string) string {
 // credential entries, and group targets. A backend with referrers cannot be
 // deleted (RevalidateAndIndex would reject the resulting config); the handler
 // surfaces this list in the 409 so the operator knows what to unbind first.
-func referrersToBackend(snap *config.ResolvedConfigV2, name string) []string {
+func referrersToBackend(snap *config.ResolvedConfig, name string) []string {
 	var out []string
 	for cfgName, cfg := range snap.Configurations {
 		if _, ok := cfg.Credentials[name]; ok {
@@ -124,7 +124,7 @@ func referrersToBackend(snap *config.ResolvedConfigV2, name string) []string {
 
 // referrersToGroup returns the sorted configuration bindings that target group
 // name.
-func referrersToGroup(snap *config.ResolvedConfigV2, name string) []string {
+func referrersToGroup(snap *config.ResolvedConfig, name string) []string {
 	var out []string
 	for cfgName, cfg := range snap.Configurations {
 		for _, b := range cfg.Bindings {
@@ -141,7 +141,7 @@ func referrersToGroup(snap *config.ResolvedConfigV2, name string) []string {
 // configuration name. An api_key referencing a missing configuration fails
 // validation, so a referenced configuration cannot be deleted until its keys
 // are reassigned or removed.
-func referrersToConfiguration(snap *config.ResolvedConfigV2, name string) []string {
+func referrersToConfiguration(snap *config.ResolvedConfig, name string) []string {
 	var out []string
 	for i := range snap.APIKeys {
 		k := &snap.APIKeys[i]
@@ -158,7 +158,7 @@ func referrersToConfiguration(snap *config.ResolvedConfigV2, name string) []stri
 
 // referrersToConnector returns the sorted configurations whose connector
 // bindings reference connector name.
-func referrersToConnector(snap *config.ResolvedConfigV2, name string) []string {
+func referrersToConnector(snap *config.ResolvedConfig, name string) []string {
 	var out []string
 	for cfgName, cfg := range snap.Configurations {
 		for _, cb := range cfg.ConnectorBindings {

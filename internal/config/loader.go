@@ -9,7 +9,7 @@ import (
 
 // Top-level block keys the v2 writer emits. Kept here (rather than in the
 // writer) because they double as the canonical block-name vocabulary — the same
-// strings ResolvedConfigV2.SourceFiles is keyed by.
+// strings ResolvedConfig.SourceFiles is keyed by.
 const (
 	keyBackends       = "backends"
 	keyGroups         = "groups"

@@ -61,16 +61,16 @@ func readFile(t *testing.T, dir, name string) []byte {
 	return b
 }
 
-func loadDir(t *testing.T, dir string) *ResolvedConfigV2 {
+func loadDir(t *testing.T, dir string) *ResolvedConfig {
 	t.Helper()
-	rc, err := LoadV2(context.Background(), dir)
+	rc, err := Load(context.Background(), dir)
 	if err != nil {
-		t.Fatalf("LoadV2: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	return rc
 }
 
-func TestLoadV2_SourceFiles(t *testing.T) {
+func TestLoad_SourceFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
 		"backends.yaml": fxBackends,
@@ -96,7 +96,7 @@ func TestLoadV2_SourceFiles(t *testing.T) {
 	}
 }
 
-func TestWriteConfigV2_RoundTripInPlace(t *testing.T) {
+func TestWriteConfig_RoundTripInPlace(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
 		"backends.yaml": fxBackends,
@@ -106,8 +106,8 @@ func TestWriteConfigV2_RoundTripInPlace(t *testing.T) {
 	adminBefore := readFile(t, dir, "admin.yaml")
 
 	rc := loadDir(t, dir)
-	if err := WriteConfigV2(dir, rc); err != nil {
-		t.Fatalf("WriteConfigV2: %v", err)
+	if err := WriteConfig(dir, rc); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
 	}
 
 	got := loadDir(t, dir)
@@ -134,7 +134,7 @@ func TestWriteConfigV2_RoundTripInPlace(t *testing.T) {
 	}
 }
 
-func TestWriteConfigV2_BackendEditLandsInBackendsFile(t *testing.T) {
+func TestWriteConfig_BackendEditLandsInBackendsFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
 		"backends.yaml": fxBackends,
@@ -149,8 +149,8 @@ func TestWriteConfigV2_BackendEditLandsInBackendsFile(t *testing.T) {
 	if err := clone.RevalidateAndIndex(); err != nil {
 		t.Fatalf("revalidate: %v", err)
 	}
-	if err := WriteConfigV2(dir, clone); err != nil {
-		t.Fatalf("WriteConfigV2: %v", err)
+	if err := WriteConfig(dir, clone); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
 	}
 
 	backendsBytes := readFile(t, dir, "backends.yaml")
@@ -166,7 +166,7 @@ func TestWriteConfigV2_BackendEditLandsInBackendsFile(t *testing.T) {
 	}
 }
 
-func TestWriteConfigV2_ClearRemovedBlock(t *testing.T) {
+func TestWriteConfig_ClearRemovedBlock(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
 		"backends.yaml": fxBackends,
@@ -179,8 +179,8 @@ func TestWriteConfigV2_ClearRemovedBlock(t *testing.T) {
 	if err := clone.RevalidateAndIndex(); err != nil {
 		t.Fatalf("revalidate: %v", err)
 	}
-	if err := WriteConfigV2(dir, clone); err != nil {
-		t.Fatalf("WriteConfigV2: %v", err)
+	if err := WriteConfig(dir, clone); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
 	}
 
 	got := loadDir(t, dir)
@@ -192,7 +192,7 @@ func TestWriteConfigV2_ClearRemovedBlock(t *testing.T) {
 	}
 }
 
-func TestWriteConfigV2_NewBlockDefaultFile(t *testing.T) {
+func TestWriteConfig_NewBlockDefaultFile(t *testing.T) {
 	dir := t.TempDir()
 	// backends.yaml carries only backends — no groups block, so "groups" has
 	// no recorded source file.
@@ -218,8 +218,8 @@ func TestWriteConfigV2_NewBlockDefaultFile(t *testing.T) {
 	if err := clone.RevalidateAndIndex(); err != nil {
 		t.Fatalf("revalidate: %v", err)
 	}
-	if err := WriteConfigV2(dir, clone); err != nil {
-		t.Fatalf("WriteConfigV2: %v", err)
+	if err := WriteConfig(dir, clone); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
 	}
 
 	// groups had no origin -> defaults to backends.yaml.

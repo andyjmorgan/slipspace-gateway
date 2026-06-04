@@ -49,8 +49,8 @@ var defaultBlockFile = map[string]string{
 	keyTelemetry:      filenamePolicy,
 }
 
-// WriteConfigV2 persists every editable block of a v2 resolved config back to
-// the file it was loaded from (ResolvedConfigV2.SourceFiles), falling back to a
+// WriteConfig persists every editable block of a v2 resolved config back to
+// the file it was loaded from (ResolvedConfig.SourceFiles), falling back to a
 // canonical default for a block with no recorded origin. Each affected file is
 // rewritten atomically (temp-file + rename) with the full set of blocks that
 // belong to it, in a stable order, so the operator's file layout survives the
@@ -58,11 +58,11 @@ var defaultBlockFile = map[string]string{
 // emptied (its last entry deleted) is cleared from its file.
 //
 // Used by the admin write path: clone snapshot -> mutate clone ->
-// RevalidateAndIndex -> WriteConfigV2 -> Store.Replace. A failure here aborts
+// RevalidateAndIndex -> WriteConfig -> Store.Replace. A failure here aborts
 // before Replace, so the in-memory snapshot stays consistent with disk. To keep
 // the swap close to all-or-nothing, every target file is marshalled up front;
 // only once all marshal successfully are the renames performed.
-func WriteConfigV2(dir string, resolved *ResolvedConfigV2) error {
+func WriteConfig(dir string, resolved *ResolvedConfig) error {
 	if resolved == nil {
 		return fmt.Errorf("config: write v2: nil resolved config")
 	}
@@ -134,18 +134,18 @@ func WriteConfigV2(dir string, resolved *ResolvedConfigV2) error {
 	return nil
 }
 
-// WritePolicyYAMLV2 is retained for callers that predate the multi-file router.
-// It is now a thin alias for WriteConfigV2, which routes every block (not just
+// WritePolicyYAML is retained for callers that predate the multi-file router.
+// It is now a thin alias for WriteConfig, which routes every block (not just
 // the policy.yaml-owned ones) to its source file.
-func WritePolicyYAMLV2(dir string, resolved *ResolvedConfigV2) error {
-	return WriteConfigV2(dir, resolved)
+func WritePolicyYAML(dir string, resolved *ResolvedConfig) error {
+	return WriteConfig(dir, resolved)
 }
 
 // blockPresence reports which top-level blocks have content worth emitting.
 // telemetry is a value type with no natural "absent" state, so it is treated as
 // present only when the operator authored it (it appears in SourceFiles) —
 // otherwise the writer would emit a defaults block that was never on disk.
-func blockPresence(r *ResolvedConfigV2) map[string]bool {
+func blockPresence(r *ResolvedConfig) map[string]bool {
 	_, telemetryAuthored := r.SourceFiles[keyTelemetry]
 	return map[string]bool{
 		keyBackends:       len(r.Backends) > 0,
@@ -160,7 +160,7 @@ func blockPresence(r *ResolvedConfigV2) map[string]bool {
 }
 
 // appendResolvedBlock attaches one named block of resolved onto root.
-func appendResolvedBlock(root *yaml.Node, block string, r *ResolvedConfigV2) {
+func appendResolvedBlock(root *yaml.Node, block string, r *ResolvedConfig) {
 	switch block {
 	case keyBackends:
 		appendBlock(root, keyBackends, r.Backends)

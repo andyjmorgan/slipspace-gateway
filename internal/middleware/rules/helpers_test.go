@@ -11,7 +11,7 @@ import (
 // is populated — because the rules evaluator never touches the other
 // fields.
 func testStore(perConfigRules map[string][]*contractsrules.RuleContract) *config.Store {
-	return config.NewStore(&config.ResolvedConfigV2{
+	return config.NewStore(&config.ResolvedConfig{
 		PerConfigurationRules: perConfigRules,
 	})
 }

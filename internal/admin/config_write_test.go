@@ -33,8 +33,8 @@ func TestMergeSecret(t *testing.T) {
 }
 
 // validSnapshot returns a minimal config that passes RevalidateAndIndex.
-func validSnapshot() *config.ResolvedConfigV2 {
-	rc := &config.ResolvedConfigV2{
+func validSnapshot() *config.ResolvedConfig {
+	rc := &config.ResolvedConfig{
 		Backends: contractsconfig.BackendsConfig{
 			"openai": {
 				BaseURL:   "https://api.openai.com",
@@ -44,7 +44,7 @@ func validSnapshot() *config.ResolvedConfigV2 {
 		Groups: contractsconfig.GroupsConfig{
 			"g1": {Mode: "failover", Targets: []contractsconfig.Target{{Backend: "openai"}}},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials:         map[string]string{"openai": "sk"},
 				Bindings:            []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"}},
@@ -64,12 +64,12 @@ func validSnapshot() *config.ResolvedConfigV2 {
 func TestPreviewMutation(t *testing.T) {
 	snap := validSnapshot()
 
-	noop := previewMutation(snap, func(*config.ResolvedConfigV2) {})
+	noop := previewMutation(snap, func(*config.ResolvedConfig) {})
 	if !noop.Valid || noop.Error != "" {
 		t.Errorf("noop preview should be valid, got %+v", noop)
 	}
 
-	bad := previewMutation(snap, func(c *config.ResolvedConfigV2) {
+	bad := previewMutation(snap, func(c *config.ResolvedConfig) {
 		cfg := c.Configurations["prod"]
 		cfg.Bindings = append(cfg.Bindings, contractsconfig.Binding{Protocol: "chat", Models: []string{"x"}, Backend: "ghost"})
 		c.Configurations["prod"] = cfg

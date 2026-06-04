@@ -128,7 +128,7 @@ type Group struct {
 // validation rejects before runtime, surfaced here defensively.
 func Select(
 	protocol, model string,
-	cfg contractsconfig.ConfigurationV2,
+	cfg contractsconfig.Configuration,
 	backends contractsconfig.BackendsConfig,
 	groups contractsconfig.GroupsConfig,
 ) (Destination, error) {
@@ -187,7 +187,7 @@ func Select(
 // orchestrator picks the backend and the pipeline re-resolves its transport.
 func ResolveTarget(
 	protocol, backend, alias string,
-	cfg contractsconfig.ConfigurationV2,
+	cfg contractsconfig.Configuration,
 	backends contractsconfig.BackendsConfig,
 ) (Target, error) {
 	return resolveTarget(protocol, cfg, backends, contractsconfig.Target{Backend: backend, Alias: alias})
@@ -197,7 +197,7 @@ func ResolveTarget(
 // configuration's credentials into a fully resolved Target for one protocol.
 func resolveTarget(
 	protocol string,
-	cfg contractsconfig.ConfigurationV2,
+	cfg contractsconfig.Configuration,
 	backends contractsconfig.BackendsConfig,
 	tgt contractsconfig.Target,
 ) (Target, error) {
@@ -309,7 +309,7 @@ type PassthroughMatch struct {
 // claims the path but not the method.
 func MatchPassthrough(
 	method, path string,
-	cfg contractsconfig.ConfigurationV2,
+	cfg contractsconfig.Configuration,
 	backends contractsconfig.BackendsConfig,
 ) (PassthroughMatch, error) {
 	up := strings.ToUpper(method)

@@ -8,7 +8,7 @@ import (
 // yaml.v3 Encode does not fail for the schema types the policy writer feeds it
 // (rules, configurations, api_keys, connectors) — the error is unwrapped here
 // without a check because every input type passes yaml.Marshal in the
-// WritePolicyYAMLV2 round-trip tests.
+// WritePolicyYAML round-trip tests.
 func appendBlock(root *yaml.Node, key string, value any) {
 	var valNode yaml.Node
 	_ = valNode.Encode(value)

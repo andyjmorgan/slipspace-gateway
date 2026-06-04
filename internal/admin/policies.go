@@ -45,7 +45,7 @@ func PoliciesHandler(store *config.Store, cb CircuitBreakerStateSource) http.Han
 // buildPoliciesResponse projects resolved + cb into the wire DTO. Kept
 // pure so the unit tests can exercise it without spinning up an HTTP
 // recorder.
-func buildPoliciesResponse(resolved *config.ResolvedConfigV2, cb CircuitBreakerStateSource) adminc.PoliciesResponse {
+func buildPoliciesResponse(resolved *config.ResolvedConfig, cb CircuitBreakerStateSource) adminc.PoliciesResponse {
 	host, _ := os.Hostname()
 	if host == "" {
 		host = "unknown"

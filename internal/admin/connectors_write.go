@@ -84,7 +84,7 @@ func ConnectorsCreateHandler(store *config.Store, configDir string) http.Handler
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) { c.Connectors = append(c.Connectors, conn) }
+		mutate := func(c *config.ResolvedConfig) { c.Connectors = append(c.Connectors, conn) }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return
@@ -132,7 +132,7 @@ func ConnectorsReplaceHandler(store *config.Store, configDir string) http.Handle
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) { c.Connectors[idx] = conn }
+		mutate := func(c *config.ResolvedConfig) { c.Connectors[idx] = conn }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return

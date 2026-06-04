@@ -13,12 +13,12 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
-// fixtureResolved builds a small but representative v2 ResolvedConfigV2 with the
+// fixtureResolved builds a small but representative v2 ResolvedConfig with the
 // indexes populated. Used by every handler test below to avoid duplicating the
 // wiring.
-func fixtureResolved(t *testing.T) *config.ResolvedConfigV2 {
+func fixtureResolved(t *testing.T) *config.ResolvedConfig {
 	t.Helper()
-	rc := &config.ResolvedConfigV2{
+	rc := &config.ResolvedConfig{
 		Backends: contractsconfig.BackendsConfig{
 			"openai": contractsconfig.Backend{
 				BaseURL: "https://api.openai.com",
@@ -51,7 +51,7 @@ func fixtureResolved(t *testing.T) *config.ResolvedConfigV2 {
 				},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"dev": {
 				Credentials: map[string]string{
 					"openai":    "sk-very-secret-openai-key-abcd1234",
@@ -103,12 +103,12 @@ func fixtureResolved(t *testing.T) *config.ResolvedConfigV2 {
 // populateIndexes mirrors config.buildIndexes for the handful of indexes the
 // admin handlers read. Kept local to the test so a future loader refactor does
 // not break these tests through the back door.
-func populateIndexes(rc *config.ResolvedConfigV2) {
+func populateIndexes(rc *config.ResolvedConfig) {
 	rc.SecretIndex = make(map[string]*contractsconfig.APIKey, len(rc.APIKeys))
 	for i := range rc.APIKeys {
 		rc.SecretIndex[rc.APIKeys[i].Secret] = &rc.APIKeys[i]
 	}
-	rc.ConfigurationIndex = make(map[string]*contractsconfig.ConfigurationV2, len(rc.Configurations))
+	rc.ConfigurationIndex = make(map[string]*contractsconfig.Configuration, len(rc.Configurations))
 	for name, cfg := range rc.Configurations {
 		entry := cfg
 		rc.ConfigurationIndex[name] = &entry

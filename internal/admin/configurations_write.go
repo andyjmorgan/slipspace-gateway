@@ -37,11 +37,11 @@ type configurationWriteBody struct {
 	ConnectorBindings []contractsconfig.ConnectorBinding `json:"connector_bindings,omitempty"`
 }
 
-// buildConfigurationV2 assembles the contract configuration from the write body,
+// buildConfiguration assembles the contract configuration from the write body,
 // merging each credential against the existing stored value (mergeSecret) so a
 // masked round-trip never wipes a secret.
-func buildConfigurationV2(body configurationWriteBody, existing contractsconfig.ConfigurationV2) contractsconfig.ConfigurationV2 {
-	out := contractsconfig.ConfigurationV2{
+func buildConfiguration(body configurationWriteBody, existing contractsconfig.Configuration) contractsconfig.Configuration {
+	out := contractsconfig.Configuration{
 		Bindings:            body.Bindings,
 		PassthroughBindings: body.PassthroughBindings,
 		RuleNames:           body.RuleNames,
@@ -84,10 +84,10 @@ func ConfigurationsCreateHandler(store *config.Store, configDir string) http.Han
 			return
 		}
 
-		cfg := buildConfigurationV2(body, contractsconfig.ConfigurationV2{})
-		mutate := func(c *config.ResolvedConfigV2) {
+		cfg := buildConfiguration(body, contractsconfig.Configuration{})
+		mutate := func(c *config.ResolvedConfig) {
 			if c.Configurations == nil {
-				c.Configurations = map[string]contractsconfig.ConfigurationV2{}
+				c.Configurations = map[string]contractsconfig.Configuration{}
 			}
 			c.Configurations[body.Name] = cfg
 		}
@@ -139,8 +139,8 @@ func ConfigurationsReplaceHandler(store *config.Store, configDir string) http.Ha
 			return
 		}
 
-		cfg := buildConfigurationV2(body, existing)
-		mutate := func(c *config.ResolvedConfigV2) { c.Configurations[urlName] = cfg }
+		cfg := buildConfiguration(body, existing)
+		mutate := func(c *config.ResolvedConfig) { c.Configurations[urlName] = cfg }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return

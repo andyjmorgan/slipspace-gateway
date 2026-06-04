@@ -11,8 +11,8 @@ import (
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
 
-func v2Fixture() *ResolvedConfigV2 {
-	r := &ResolvedConfigV2{
+func v2Fixture() *ResolvedConfig {
+	r := &ResolvedConfig{
 		Backends: contractsconfig.BackendsConfig{
 			"openai": {
 				BaseURL:         "https://api.openai.com",
@@ -37,7 +37,7 @@ func v2Fixture() *ResolvedConfigV2 {
 				Targets:            []contractsconfig.Target{{Backend: "openai", Query: map[string]string{"q": "1"}}},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"dev": {
 				Credentials:         map[string]string{"openai": "sk-dev"},
 				Bindings:            []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai", Tags: []string{"t"}}},
@@ -66,7 +66,7 @@ func v2Fixture() *ResolvedConfigV2 {
 	return r
 }
 
-func TestResolvedConfigV2_CloneIndependence(t *testing.T) {
+func TestResolvedConfig_CloneIndependence(t *testing.T) {
 	orig := v2Fixture()
 	clone := orig.Clone()
 
@@ -93,14 +93,14 @@ func TestResolvedConfigV2_CloneIndependence(t *testing.T) {
 	}
 }
 
-func TestResolvedConfigV2_CloneNil(t *testing.T) {
-	var r *ResolvedConfigV2
+func TestResolvedConfig_CloneNil(t *testing.T) {
+	var r *ResolvedConfig
 	if r.Clone() != nil {
 		t.Errorf("nil.Clone() should be nil")
 	}
 }
 
-func TestResolvedConfigV2_RevalidateAndIndex(t *testing.T) {
+func TestResolvedConfig_RevalidateAndIndex(t *testing.T) {
 	r := v2Fixture()
 	clone := r.Clone()
 	if err := clone.RevalidateAndIndex(); err != nil {
@@ -123,21 +123,21 @@ func TestResolvedConfigV2_RevalidateAndIndex(t *testing.T) {
 	}
 }
 
-func TestWritePolicyYAMLV2_RoundTrip(t *testing.T) {
+func TestWritePolicyYAML_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	// backends + groups live in their own file; the writer only owns policy.yaml.
 	r := v2Fixture()
 	writeFile(t, dir, "backends.yaml", backendsYAMLForRoundTrip)
-	if err := WritePolicyYAMLV2(dir, r); err != nil {
-		t.Fatalf("WritePolicyYAMLV2: %v", err)
+	if err := WritePolicyYAML(dir, r); err != nil {
+		t.Fatalf("WritePolicyYAML: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "policy.yaml")); err != nil {
 		t.Fatalf("policy.yaml not written: %v", err)
 	}
 
-	reloaded, err := LoadV2(context.Background(), dir)
+	reloaded, err := Load(context.Background(), dir)
 	if err != nil {
-		t.Fatalf("LoadV2 round-trip: %v", err)
+		t.Fatalf("Load round-trip: %v", err)
 	}
 	if _, ok := reloaded.RuleIndex["r1"]; !ok {
 		t.Errorf("rule r1 lost in round-trip")
@@ -147,11 +147,11 @@ func TestWritePolicyYAMLV2_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestWritePolicyYAMLV2_Guards(t *testing.T) {
-	if err := WritePolicyYAMLV2("", v2Fixture()); err == nil {
+func TestWritePolicyYAML_Guards(t *testing.T) {
+	if err := WritePolicyYAML("", v2Fixture()); err == nil {
 		t.Errorf("empty dir should error")
 	}
-	if err := WritePolicyYAMLV2(t.TempDir(), nil); err == nil {
+	if err := WritePolicyYAML(t.TempDir(), nil); err == nil {
 		t.Errorf("nil resolved should error")
 	}
 }
@@ -202,12 +202,12 @@ const backendsYAMLForRoundTrip = `backends:
           - { match: /v1/batches, methods: [POST] }
 `
 
-func TestLoadV2_MultiFileMergeAndErrors(t *testing.T) {
+func TestLoad_MultiFileMergeAndErrors(t *testing.T) {
 	// Empty / missing dir.
-	if _, err := LoadV2(context.Background(), filepath.Join(t.TempDir(), "nope")); err == nil {
+	if _, err := Load(context.Background(), filepath.Join(t.TempDir(), "nope")); err == nil {
 		t.Errorf("missing dir should error")
 	}
-	if _, err := LoadV2(context.Background(), t.TempDir()); err == nil {
+	if _, err := Load(context.Background(), t.TempDir()); err == nil {
 		t.Errorf("empty dir should error")
 	}
 
@@ -215,7 +215,7 @@ func TestLoadV2_MultiFileMergeAndErrors(t *testing.T) {
 	dup := t.TempDir()
 	writeFile(t, dup, "a.yaml", "backends: {openai: {base_url: http://x, protocols: {chat: {path: /v1/chat/completions}}}}\n")
 	writeFile(t, dup, "b.yaml", "backends: {anthropic: {base_url: http://y, protocols: {messages: {path: /v1/messages}}}}\n")
-	if _, err := LoadV2(context.Background(), dup); err == nil {
+	if _, err := Load(context.Background(), dup); err == nil {
 		t.Errorf("duplicate backends block should error")
 	}
 
@@ -235,9 +235,9 @@ connectors:
   - { name: artifacts, type: webhook, url: http://sink, secret_ref: "env:WH", timeout_ms: 5000 }
 `)
 	writeFile(t, full, "admin.yaml", "admin:\n  enabled: true\n  password: pw\ntelemetry:\n  content_capture: {}\n")
-	r, err := LoadV2(context.Background(), full)
+	r, err := Load(context.Background(), full)
 	if err != nil {
-		t.Fatalf("multi-file LoadV2: %v", err)
+		t.Fatalf("multi-file Load: %v", err)
 	}
 	if r.Admin == nil || !r.Admin.Enabled {
 		t.Errorf("admin block not merged")

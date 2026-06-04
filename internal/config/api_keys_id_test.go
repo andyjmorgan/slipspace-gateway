@@ -13,14 +13,14 @@ import (
 // for the read-write surface: two keys sharing a non-nil ID must be rejected.
 func TestValidate_DuplicateAPIKeyID(t *testing.T) {
 	id := uuid.New()
-	rc := &ResolvedConfigV2{
+	rc := &ResolvedConfig{
 		Backends: contractsconfig.BackendsConfig{
 			"openai": {
 				BaseURL:   "https://api.openai.com",
 				Protocols: map[string]contractsconfig.BackendProtocol{"chat": {Path: "/v1/chat/completions"}},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials: map[string]string{"openai": "sk"},
 				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"}},
@@ -32,22 +32,22 @@ func TestValidate_DuplicateAPIKeyID(t *testing.T) {
 		},
 	}
 	err := rc.Validate()
-	if !errors.Is(err, ErrV2Validation) {
-		t.Fatalf("duplicate api-key id: got %v, want ErrV2Validation", err)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("duplicate api-key id: got %v, want ErrValidation", err)
 	}
 }
 
 // TestValidate_DistinctAPIKeyIDsOK confirms distinct (and nil) ids validate.
 func TestValidate_DistinctAPIKeyIDsOK(t *testing.T) {
 	id := uuid.New()
-	rc := &ResolvedConfigV2{
+	rc := &ResolvedConfig{
 		Backends: contractsconfig.BackendsConfig{
 			"openai": {
 				BaseURL:   "https://api.openai.com",
 				Protocols: map[string]contractsconfig.BackendProtocol{"chat": {Path: "/v1/chat/completions"}},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials: map[string]string{"openai": "sk"},
 				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"}},

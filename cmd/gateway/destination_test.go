@@ -8,11 +8,11 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/selection"
 )
 
-// TestBuildDestinationV2_CredentialModes covers the three credential branches
+// TestBuildDestination_CredentialModes covers the three credential branches
 // of the v2 single mint site: passthrough forwards the inbound Authorization,
 // managed with a credential sets the backend's auth header and strips the
 // others, and managed with an empty credential strips everything.
-func TestBuildDestinationV2_CredentialModes(t *testing.T) {
+func TestBuildDestination_CredentialModes(t *testing.T) {
 	target := selection.Target{ //nolint:gosec // synthetic test fixture, not a real credential
 		Backend:    "anthropic",
 		BaseURL:    "https://api.anthropic.com",
@@ -22,9 +22,9 @@ func TestBuildDestinationV2_CredentialModes(t *testing.T) {
 	}
 
 	t.Run("passthrough forwards inbound authorization", func(t *testing.T) {
-		dest, err := buildDestinationV2(target, nil, auth.ModePassthrough, nil, "Bearer client-token")
+		dest, err := buildDestination(target, nil, auth.ModePassthrough, nil, "Bearer client-token")
 		if err != nil {
-			t.Fatalf("buildDestinationV2: %v", err)
+			t.Fatalf("buildDestination: %v", err)
 		}
 		if got := dest.OutgoingHeaders.Get("Authorization"); got != "Bearer client-token" {
 			t.Errorf("Authorization = %q, want forwarded inbound", got)
@@ -35,9 +35,9 @@ func TestBuildDestinationV2_CredentialModes(t *testing.T) {
 	})
 
 	t.Run("managed sets backend auth header and drops the others", func(t *testing.T) {
-		dest, err := buildDestinationV2(target, nil, auth.ModeManaged, nil, "Bearer client-token")
+		dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "Bearer client-token")
 		if err != nil {
-			t.Fatalf("buildDestinationV2: %v", err)
+			t.Fatalf("buildDestination: %v", err)
 		}
 		if got := dest.OutgoingHeaders.Get("x-api-key"); got != "sk-upstream-anthropic" {
 			t.Errorf("x-api-key = %q, want minted credential", got)
@@ -52,9 +52,9 @@ func TestBuildDestinationV2_CredentialModes(t *testing.T) {
 	t.Run("managed empty credential strips all credential headers", func(t *testing.T) {
 		noCred := target
 		noCred.Credential = ""
-		dest, err := buildDestinationV2(noCred, nil, auth.ModeManaged, nil, "Bearer client-token")
+		dest, err := buildDestination(noCred, nil, auth.ModeManaged, nil, "Bearer client-token")
 		if err != nil {
-			t.Fatalf("buildDestinationV2: %v", err)
+			t.Fatalf("buildDestination: %v", err)
 		}
 		for _, h := range credentialHeaderNames {
 			if !contains(dest.DropHeaders, h) {
@@ -67,9 +67,9 @@ func TestBuildDestinationV2_CredentialModes(t *testing.T) {
 	})
 }
 
-// TestBuildDestinationV2_PathAndQuery verifies path-param substitution (Gemini
+// TestBuildDestination_PathAndQuery verifies path-param substitution (Gemini
 // {model}) and that the backend's default query is applied.
-func TestBuildDestinationV2_PathAndQuery(t *testing.T) {
+func TestBuildDestination_PathAndQuery(t *testing.T) {
 	target := selection.Target{
 		Backend:    "gemini",
 		BaseURL:    "https://generativelanguage.googleapis.com",
@@ -80,9 +80,9 @@ func TestBuildDestinationV2_PathAndQuery(t *testing.T) {
 	}
 	params := map[string]string{"model": "gemini-2.5-pro", "op": "streamGenerateContent"}
 
-	dest, err := buildDestinationV2(target, params, auth.ModeManaged, nil, "")
+	dest, err := buildDestination(target, params, auth.ModeManaged, nil, "")
 	if err != nil {
-		t.Fatalf("buildDestinationV2: %v", err)
+		t.Fatalf("buildDestination: %v", err)
 	}
 	if dest.UpstreamURL.Path != "/v1beta/models/gemini-2.5-pro:streamGenerateContent" {
 		t.Errorf("path = %q, want substituted", dest.UpstreamURL.Path)

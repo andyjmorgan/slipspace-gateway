@@ -92,7 +92,7 @@ func GroupsCreateHandler(store *config.Store, configDir string) http.Handler {
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) {
+		mutate := func(c *config.ResolvedConfig) {
 			if c.Groups == nil {
 				c.Groups = contractsconfig.GroupsConfig{}
 			}
@@ -143,7 +143,7 @@ func GroupsReplaceHandler(store *config.Store, configDir string) http.Handler {
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) { c.Groups[urlName] = g }
+		mutate := func(c *config.ResolvedConfig) { c.Groups[urlName] = g }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return

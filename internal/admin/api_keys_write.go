@@ -152,7 +152,7 @@ func APIKeysCreateHandler(store *config.Store, configDir string) http.Handler {
 			Configuration: body.Configuration,
 			Enabled:       enabled,
 		}
-		mutate := func(c *config.ResolvedConfigV2) { c.APIKeys = append(c.APIKeys, key) }
+		mutate := func(c *config.ResolvedConfig) { c.APIKeys = append(c.APIKeys, key) }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return
@@ -222,7 +222,7 @@ func APIKeysReplaceHandler(store *config.Store, configDir string) http.Handler {
 		updated.Configuration = body.Configuration
 		updated.Enabled = body.Enabled
 
-		mutate := func(c *config.ResolvedConfigV2) { c.APIKeys[idx] = updated }
+		mutate := func(c *config.ResolvedConfig) { c.APIKeys[idx] = updated }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return
@@ -291,7 +291,7 @@ func APIKeysPatchHandler(store *config.Store, configDir string) http.Handler {
 			updated.Enabled = *body.Enabled
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) { c.APIKeys[idx] = updated }
+		mutate := func(c *config.ResolvedConfig) { c.APIKeys[idx] = updated }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return

@@ -56,9 +56,9 @@ func newGroupsFixture(t *testing.T) (*config.Store, string) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	rc, err := config.LoadV2(context.Background(), dir)
+	rc, err := config.Load(context.Background(), dir)
 	if err != nil {
-		t.Fatalf("LoadV2: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	return config.NewStore(rc), dir
 }
@@ -98,7 +98,7 @@ func TestGroupsCreate(t *testing.T) {
 	if _, ok := store.Snapshot().Groups["newg"]; !ok {
 		t.Errorf("group not in store")
 	}
-	reloaded, _ := config.LoadV2(context.Background(), dir)
+	reloaded, _ := config.Load(context.Background(), dir)
 	if _, ok := reloaded.Groups["newg"]; !ok {
 		t.Errorf("group not persisted to disk")
 	}
@@ -205,7 +205,7 @@ func TestGroupsDelete(t *testing.T) {
 
 // TestGroupsWrite_PersistError drives the commitClone disk-write failure path
 // (500): a configDir that is non-empty (so the write surface is enabled) but
-// whose directory does not exist, so WriteConfigV2's file write fails after
+// whose directory does not exist, so WriteConfig's file write fails after
 // validation passes.
 func TestGroupsRead_Unavailable(t *testing.T) {
 	// A nil store yields a nil snapshot -> 503 from the read handlers.

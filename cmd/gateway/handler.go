@@ -127,7 +127,7 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 			Configuration: authResult.ConfigurationName,
 		})
 
-		dest, err := buildDestinationV2(target, state.PathParams, authResult.Mode, authResult.DropHeaders, inboundAuthorization)
+		dest, err := buildDestination(target, state.PathParams, authResult.Mode, authResult.DropHeaders, inboundAuthorization)
 		if err != nil {
 			log.ErrorContext(ctx, "forwarder: destination", "err", err.Error())
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")

@@ -16,8 +16,8 @@ import (
 // (configuration, protocol) differing only by models (the models tie-break),
 // differing protocols, differing configurations, and passthrough bindings
 // across two configurations.
-func twoConfigStore() *config.ResolvedConfigV2 {
-	rc := &config.ResolvedConfigV2{
+func twoConfigStore() *config.ResolvedConfig {
+	rc := &config.ResolvedConfig{
 		Backends: contractsconfig.BackendsConfig{
 			"openai": contractsconfig.Backend{
 				BaseURL: "https://api.openai.com",
@@ -36,7 +36,7 @@ func twoConfigStore() *config.ResolvedConfigV2 {
 				},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"alpha": {
 				Credentials: map[string]string{"openai": "sk-a", "anthropic": "ak-a"},
 				Bindings: []contractsconfig.Binding{

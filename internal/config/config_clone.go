@@ -10,11 +10,11 @@ import (
 // rebuilds them via RevalidateAndIndex after mutating, so a clone always passes
 // through validation before it is published. The Admin/Telemetry blocks are
 // shared by pointer/value as read-only.
-func (r *ResolvedConfigV2) Clone() *ResolvedConfigV2 {
+func (r *ResolvedConfig) Clone() *ResolvedConfig {
 	if r == nil {
 		return nil
 	}
-	out := &ResolvedConfigV2{
+	out := &ResolvedConfig{
 		Admin:       r.Admin,
 		Telemetry:   r.Telemetry,
 		SourceFiles: cloneStringMap(r.SourceFiles),
@@ -33,9 +33,9 @@ func (r *ResolvedConfigV2) Clone() *ResolvedConfigV2 {
 		}
 	}
 	if r.Configurations != nil {
-		out.Configurations = make(map[string]contractsconfig.ConfigurationV2, len(r.Configurations))
+		out.Configurations = make(map[string]contractsconfig.Configuration, len(r.Configurations))
 		for name, cfg := range r.Configurations {
-			out.Configurations[name] = cloneConfigurationV2(cfg)
+			out.Configurations[name] = cloneConfiguration(cfg)
 		}
 	}
 	out.APIKeys = cloneAPIKeys(r.APIKeys)
@@ -50,7 +50,7 @@ func (r *ResolvedConfigV2) Clone() *ResolvedConfigV2 {
 // RevalidateAndIndex re-runs validation against the (possibly mutated) clone
 // and rebuilds the lookup indexes. The admin write path calls this after
 // mutating a clone and before store.Replace.
-func (r *ResolvedConfigV2) RevalidateAndIndex() error {
+func (r *ResolvedConfig) RevalidateAndIndex() error {
 	if err := r.Validate(); err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func cloneGroup(in contractsconfig.Group) contractsconfig.Group {
 	return out
 }
 
-func cloneConfigurationV2(in contractsconfig.ConfigurationV2) contractsconfig.ConfigurationV2 {
+func cloneConfiguration(in contractsconfig.Configuration) contractsconfig.Configuration {
 	out := in
 	out.Credentials = cloneStringMap(in.Credentials)
 	out.RuleNames = cloneStringSlice(in.RuleNames)

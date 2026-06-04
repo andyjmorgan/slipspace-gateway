@@ -56,7 +56,7 @@ func BackendsCreateHandler(store *config.Store, configDir string) http.Handler {
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) {
+		mutate := func(c *config.ResolvedConfig) {
 			if c.Backends == nil {
 				c.Backends = contractsconfig.BackendsConfig{}
 			}
@@ -114,7 +114,7 @@ func BackendsReplaceHandler(store *config.Store, configDir string) http.Handler 
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) { c.Backends[urlName] = be }
+		mutate := func(c *config.ResolvedConfig) { c.Backends[urlName] = be }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return

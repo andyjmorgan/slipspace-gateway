@@ -55,9 +55,9 @@ func newBackendsFixture(t *testing.T) (*config.Store, string) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	rc, err := config.LoadV2(context.Background(), dir)
+	rc, err := config.Load(context.Background(), dir)
 	if err != nil {
-		t.Fatalf("LoadV2: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	return config.NewStore(rc), dir
 }
@@ -88,7 +88,7 @@ func TestBackendsCreate(t *testing.T) {
 	if _, ok := store.Snapshot().Backends["newbe"]; !ok {
 		t.Errorf("new backend not in store snapshot")
 	}
-	reloaded, err := config.LoadV2(context.Background(), dir)
+	reloaded, err := config.Load(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestBackendsDelete(t *testing.T) {
 	if _, ok := store.Snapshot().Backends["spare"]; ok {
 		t.Errorf("backend not deleted from store")
 	}
-	reloaded, _ := config.LoadV2(context.Background(), dir)
+	reloaded, _ := config.Load(context.Background(), dir)
 	if _, ok := reloaded.Backends["spare"]; ok {
 		t.Errorf("backend not deleted from disk")
 	}

@@ -46,7 +46,7 @@ func runConfigValidate(ctx context.Context, args []string, stdout, _ io.Writer) 
 		resolvedDir = *dir
 	}
 
-	resolved, err := config.LoadV2(ctx, resolvedDir)
+	resolved, err := config.Load(ctx, resolvedDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(stdout, "FAIL: %s: %s\n", classifyConfigErr(err), err.Error())
 		return errHandled

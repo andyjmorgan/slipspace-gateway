@@ -61,9 +61,9 @@ func newConnectorsFixture(t *testing.T) (*config.Store, string) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	rc, err := config.LoadV2(context.Background(), dir)
+	rc, err := config.Load(context.Background(), dir)
 	if err != nil {
-		t.Fatalf("LoadV2: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	return config.NewStore(rc), dir
 }
@@ -108,7 +108,7 @@ func TestConnectorsCreate(t *testing.T) {
 	if _, ok := indexOfConnector(store.Snapshot().Connectors, "newc"); !ok {
 		t.Errorf("connector not in store")
 	}
-	reloaded, _ := config.LoadV2(context.Background(), dir)
+	reloaded, _ := config.Load(context.Background(), dir)
 	if _, ok := indexOfConnector(reloaded.Connectors, "newc"); !ok {
 		t.Errorf("connector not persisted to disk")
 	}

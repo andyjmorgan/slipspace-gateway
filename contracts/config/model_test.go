@@ -10,7 +10,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 )
 
-func TestModelV2_YAMLRoundTrip(t *testing.T) {
+func TestModel_YAMLRoundTrip(t *testing.T) {
 	body := `
 backends:
   openai:
@@ -63,7 +63,7 @@ configurations:
     rule_names: [force-openai-streaming-usage]
     tags: { tier: production }
 `
-	var m contractsconfig.ModelV2
+	var m contractsconfig.Model
 	if err := yaml.Unmarshal([]byte(body), &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -132,8 +132,8 @@ configurations:
 	}
 }
 
-func TestModelV2_JSONRoundTrip(t *testing.T) {
-	in := contractsconfig.ModelV2{
+func TestModel_JSONRoundTrip(t *testing.T) {
+	in := contractsconfig.Model{
 		Backends: contractsconfig.BackendsConfig{
 			"openai": {
 				BaseURL: "https://api.openai.com",
@@ -154,7 +154,7 @@ func TestModelV2_JSONRoundTrip(t *testing.T) {
 				Targets:            []contractsconfig.Target{{Backend: "openai", Alias: "gpt-4o", Path: "/openai/responses"}},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials:         map[string]string{"openai": "ref:openai"},
 				Bindings:            []contractsconfig.Binding{{Protocol: contractsconfig.ProtocolChat, Models: []string{"gpt-*"}, Backend: "openai", Tags: []string{"t"}}},
@@ -169,7 +169,7 @@ func TestModelV2_JSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out contractsconfig.ModelV2
+	var out contractsconfig.Model
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

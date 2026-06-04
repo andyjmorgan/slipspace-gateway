@@ -209,11 +209,11 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 	dir := writeTestConfig(t, upstream.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	resolved, err := config.LoadV2(ctx, dir)
+	resolved, err := config.Load(ctx, dir)
 	if err != nil {
 		upstream.Close()
 		cancel()
-		t.Fatalf("config.LoadV2: %v", err)
+		t.Fatalf("config.Load: %v", err)
 	}
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
