@@ -58,7 +58,9 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/v1/ingest/payload", s.webhook)
 	}
 	s.registerQueryRoutes(mux)
-	mux.Handle("GET /", s.basicAuth(http.HandlerFunc(s.handleConsole)))
+	// The SPA + its assets are public (the API it calls is Basic-auth gated);
+	// this catch-all sits behind the API + probe routes.
+	mux.Handle("GET /", spaHandler())
 	return mux
 }
 
@@ -85,12 +87,6 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writePlain(w, http.StatusOK, "ready\n")
-}
-
-// handleConsole serves the operator console. T1 placeholder until the SPA
-// bundle is embedded in T5.
-func (s *Server) handleConsole(w http.ResponseWriter, _ *http.Request) {
-	writePlain(w, http.StatusOK, "sluice telemetry console — coming soon\n")
 }
 
 // basicAuth guards a handler with the configured console credentials. The

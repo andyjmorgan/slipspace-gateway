@@ -69,19 +69,28 @@ func TestReadyz_StoreDown(t *testing.T) {
 	}
 }
 
-func TestConsole_RequiresAuth(t *testing.T) {
+func TestConsoleSPA_Public(t *testing.T) {
+	// The SPA shell + assets are public (no Basic prompt); auth is on the API.
 	h := newTestServer(t, nil).Handler()
-	resp := doRequest(t, h, http.MethodGet, "/", nil)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	// Root serves the SPA entry (placeholder in the test binary — built assets
+	// are gitignored and not embedded).
+	if resp := doRequest(t, h, http.MethodGet, "/", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200", resp.StatusCode)
 	}
-	if resp.Header.Get("WWW-Authenticate") == "" {
-		t.Error("missing WWW-Authenticate challenge")
+	// An unknown deep link falls back to the SPA entry (client-side routing).
+	if resp := doRequest(t, h, http.MethodGet, "/messages", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("SPA fallback status = %d, want 200", resp.StatusCode)
+	}
+	// A real embedded file is served directly.
+	if resp := doRequest(t, h, http.MethodGet, "/placeholder.html", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("static file status = %d, want 200", resp.StatusCode)
 	}
 }
 
-func TestConsole_AuthMatrix(t *testing.T) {
-	h := newTestServer(t, nil).Handler()
+// TestAPIAuthMatrix exercises the Basic-auth guard on a gated API route (the
+// SPA shell is public, so the guard is verified on the API instead).
+func TestAPIAuthMatrix(t *testing.T) {
+	h := newQueryServer(t, &fakeQueries{})
 	cases := []struct {
 		name string
 		user string
@@ -95,7 +104,7 @@ func TestConsole_AuthMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := doRequest(t, h, http.MethodGet, "/", &[2]string{tc.user, tc.pass})
+			resp := doRequest(t, h, http.MethodGet, "/api/v1/dashboard/summary", &[2]string{tc.user, tc.pass})
 			if resp.StatusCode != tc.want {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
 			}
