@@ -1,7 +1,7 @@
 # FAQ — how do I … ?
 
 Task-oriented answers for the things operators actually reach for: routing a model
-to a backend, rewriting request/response bodies, proxying Anthropic message
+to a provider, rewriting request/response bodies, proxying Anthropic message
 batches, wiring Azure OpenAI, load-balancing, and applying rule changes live.
 
 Every example below is taken from a real test fixture or the live cluster policy,
@@ -10,29 +10,29 @@ fullest single example is the selection engine's golden fixture
 (`internal/selection/selection_test.go`, `goldenV2`), which is the production
 config expressed in the current model.
 
-> **Config model note.** Sluice routes on the **v2 model**: a shared `backends`
+> **Config model note.** Sluice routes on the **v2 model**: a shared `providers`
 > catalogue (connections) plus per-configuration `bindings` (the router as data)
 > and `credentials`. Routing is config, not rule actions — there is no
 > `changeProvider`/`changeUrl`/`changeApiKey`/`useResiliencePolicy`. Rules are
 > now pure request/response **transforms** (tags, headers, body rewrites,
 > short-circuits). A few older pages under `docs/` still describe the previous
 > single-`providers.yaml` shape; where they disagree with this page and with
-> `contracts/config/model_v2.go`, the code (and this page) win.
+> `contracts/config/model.go`, the code (and this page) win.
 
 ---
 
 ## Contents
 
 - [The 60-second mental model](#the-60-second-mental-model)
-- [How do I route a model to a backend?](#how-do-i-route-a-model-to-a-backend)
-- [How do I send one model to several backends with failover or load-balancing?](#how-do-i-send-one-model-to-several-backends-with-failover-or-load-balancing)
+- [How do I route a model to a provider?](#how-do-i-route-a-model-to-a-provider)
+- [How do I send one model to several providers with failover or load-balancing?](#how-do-i-send-one-model-to-several-providers-with-failover-or-load-balancing)
 - [How do I rewrite a field in the request body?](#how-do-i-rewrite-a-field-in-the-request-body)
 - [How do I delete or append to a body field?](#how-do-i-delete-or-append-to-a-body-field)
 - [How do I rewrite the *response* body?](#how-do-i-rewrite-the-response-body)
 - [What tokens can a rewrite value reference?](#what-tokens-can-a-rewrite-value-reference)
 - [How do I gate a rewrite on the body content?](#how-do-i-gate-a-rewrite-on-the-body-content)
 - [How do I support Anthropic message batches (and other passthrough surfaces)?](#how-do-i-support-anthropic-message-batches-and-other-passthrough-surfaces)
-- [How do I add Azure OpenAI as a backend?](#how-do-i-add-azure-openai-as-a-backend)
+- [How do I add Azure OpenAI as a provider?](#how-do-i-add-azure-openai-as-a-provider)
 - [How do I pin a query parameter like `api-version` on every request?](#how-do-i-pin-a-query-parameter-like-api-version-on-every-request)
 - [How do I rename the model the upstream sees?](#how-do-i-rename-the-model-the-upstream-sees)
 - [How do I tag requests for telemetry?](#how-do-i-tag-requests-for-telemetry)
@@ -52,7 +52,7 @@ A request flows through four decisions:
    `X-Sluice-Configuration` header (passthrough). See [auth.md](auth.md).
 3. **Binding** — the configuration's `bindings` are scanned in order;
    the first whose `protocol` matches and whose `models` glob matches the
-   body's `model` wins. It names a single `backend` or a resilience `group`.
+   body's `model` wins. It names a single `provider` or a resilience `group`.
 4. **Rules** — the configuration's `rule_names` run as transforms over the
    chosen request (and, on the way back, the response).
 
@@ -61,33 +61,33 @@ Three top-level blocks carry it (any number of `*.yaml` files in
 
 | Block | Holds | Type |
 |---|---|---|
-| `backends` | connections: `base_url`, per-protocol `path` + `auth`, `required_headers`, `query`, `passthrough` families | `contracts/config/model_v2.go` → `Backend` |
-| `groups` | resilience units: `mode`, `targets`, `circuit_breaker` | `model_v2.go` → `Group` |
-| `configurations` | per-name `credentials`, `bindings`, `passthrough_bindings`, `rule_names`, `tags` | `model_v2.go` → `ConfigurationV2` |
+| `providers` | connections: `base_url`, per-protocol `path` + `auth`, `required_headers`, `query`, `passthrough` families | `contracts/config/model.go` → `Provider` |
+| `groups` | resilience units: `mode`, `targets`, `circuit_breaker` | `model.go` → `Group` |
+| `configurations` | per-name `credentials`, `bindings`, `passthrough_bindings`, `rule_names`, `tags` | `model.go` → `Configuration` |
 
-Backends hold **no** credentials — the configuration supplies the key per
-backend, substituted into the auth `format`'s `{key}` placeholder.
+Providers hold **no** credentials — the configuration supplies the key per
+provider, substituted into the auth `format`'s `{key}` placeholder.
 
 ```mermaid
 flowchart LR
   C[client request] -->|path| P{protocol}
   P -->|api key / header| CFG[configuration]
-  CFG -->|bindings: first match| D{backend or group}
+  CFG -->|bindings: first match| D{provider or group}
   D --> R[rules: tag / header / body rewrite]
   R --> U[(upstream)]
 ```
 
 ---
 
-## How do I route a model to a backend?
+## How do I route a model to a provider?
 
-Declare the backend once, then add a binding on the configuration. Bindings are
+Declare the provider once, then add a binding on the configuration. Bindings are
 ordered; first match wins, and an empty `models` list is a catch-all for the
 protocol.
 
 ```yaml
-# backends.yaml
-backends:
+# providers.yaml
+providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -109,23 +109,23 @@ configurations:
       openai: sk-openai
       anthropic: sk-anthropic
     bindings:
-      - { protocol: chat,     models: ["gpt-*", "o3*"], backend: openai }
-      - { protocol: chat,     models: ["claude-*"],     backend: anthropic }
-      - { protocol: messages, models: ["claude-*"],     backend: anthropic }
+      - { protocol: chat,     models: ["gpt-*", "o3*"], provider: openai }
+      - { protocol: chat,     models: ["claude-*"],     provider: anthropic }
+      - { protocol: messages, models: ["claude-*"],     provider: anthropic }
 ```
 
 Source: `internal/selection/selection_test.go` (`goldenV2`). Model globs use a
-trailing-`*` wildcard (`gpt-*`, `o3*`). The same backend can serve more than one
+trailing-`*` wildcard (`gpt-*`, `o3*`). The same provider can serve more than one
 protocol with **different** auth conventions per protocol — that's how
 Anthropic's native `messages` (`x-api-key`) and its OpenAI-compat `chat` surface
-(`Authorization: Bearer`) coexist on one backend (invariant #6).
+(`Authorization: Bearer`) coexist on one provider (invariant #6).
 
 ---
 
-## How do I send one model to several backends with failover or load-balancing?
+## How do I send one model to several providers with failover or load-balancing?
 
-Define a `group` and point the binding at it with `group:` instead of `backend:`.
-A group cuts across backends; every target must serve the binding's protocol (no
+Define a `group` and point the binding at it with `group:` instead of `provider:`.
+A group cuts across providers; every target must serve the binding's protocol (no
 mid-failover translation).
 
 ```yaml
@@ -135,8 +135,8 @@ groups:
     failure_status_codes: [502, 503, 504]
     circuit_breaker: { enabled: true, failure_threshold: 3, cooldown_seconds: 60 }
     targets:
-      - { backend: qwen-ollama,     alias: "qwen2.5-coder:7b" }
-      - { backend: qwen-standalone, alias: "qwen-coder" }
+      - { provider: qwen-ollama,     alias: "qwen2.5-coder:7b" }
+      - { provider: qwen-standalone, alias: "qwen-coder" }
 
 configurations:
   production:
@@ -146,7 +146,7 @@ configurations:
 
 Source: `internal/selection/selection_test.go` (`goldenV2`). Per-target `alias`
 rewrites the body's model name when *that* target is picked, so one logical model
-maps to a different upstream id per backend. For weighted load-balance use
+maps to a different upstream id per provider. For weighted load-balance use
 `weight:` on targets; for ordered failover use `mode: failover` (declaration
 order is the sequence). Full semantics: [resilience.md](resilience.md).
 
@@ -182,9 +182,9 @@ rules:
 
 Source: `test/e2e/rules/rewrite_test.go`. Notes that bite:
 
-- **In v2, `provider` means the resolved backend name and `endpoint` means the
+- **In v2, `provider` means the resolved provider name and `endpoint` means the
   protocol** (`chat`/`messages`/…) or passthrough family. The condition above
-  reads "OpenAI backend, chat protocol".
+  reads "OpenAI provider, chat protocol".
 - **Value typing follows YAML.** An unquoted scalar is emitted with its JSON type
   (`value: true` → boolean `true`, `value: 42` → number). A **quoted** string is a
   template that may contain `{…}` refs (`value: "t1"` → string `"t1"`). A YAML
@@ -271,7 +271,7 @@ A **quoted** `value` (or a `setHeader` value) is a template. Supported tokens
 | `{request.body.<path>}` | a field of the request body | gjson path; the working body on the request phase |
 | `{response.body.<path>}` | a field of the response body | response phase only |
 | `{path_params.<name>}` | a URL path placeholder | e.g. `{path_params.id}` from `/v1/messages/batches/{id}` |
-| `{state.provider}` | the resolved backend name | |
+| `{state.provider}` | the resolved provider name | |
 | `{state.endpoint}` | the resolved protocol / family | |
 | `{external_url}` | the gateway's external base URL | from the `ExternalURL` setting |
 
@@ -304,11 +304,11 @@ conditions (they evaluate before the upstream replies).
 
 Batches, file uploads, and other stateful/opaque families aren't model-keyed —
 they're matched by **path pattern**, not by parsing a body. Declare a
-`passthrough` family on the backend, then expose it with a `passthrough_binding`.
+`passthrough` family on the provider, then expose it with a `passthrough_binding`.
 
 ```yaml
-# backends.yaml — on the anthropic backend
-backends:
+# providers.yaml — on the anthropic provider
+providers:
   anthropic:
     base_url: https://api.anthropic.com
     required_headers: { anthropic-version: "2023-06-01" }
@@ -328,10 +328,10 @@ backends:
 configurations:
   production:
     passthrough_bindings:
-      - { family: messages_batches, backend: anthropic }
+      - { family: messages_batches, provider: anthropic }
 ```
 
-Source: `config-dev/backends.yaml` + `internal/selection/selection_test.go`.
+Source: `config-dev/providers.yaml` + `internal/selection/selection_test.go`.
 
 A passthrough family differs from a normal binding in three ways:
 
@@ -344,14 +344,14 @@ A passthrough family differs from a normal binding in three ways:
 
 ---
 
-## How do I add Azure OpenAI as a backend?
+## How do I add Azure OpenAI as a provider?
 
-Azure OpenAI is just another backend, with three Azure-isms: the `api-version`
+Azure OpenAI is just another provider, with three Azure-isms: the `api-version`
 query parameter, the `api-key` auth header (not `Authorization: Bearer`), and a
 deployment-shaped path.
 
 ```yaml
-backends:
+providers:
   azure-foundry:
     base_url: https://res.cognitiveservices.azure.com
     query: { api-version: 2025-04-01-preview }
@@ -363,13 +363,13 @@ configurations:
     credentials:
       azure-foundry: az-key
     bindings:
-      - { protocol: responses, models: ["foundry-model-name"], backend: azure-foundry, alias: gpt-5.2-chat, tags: [foundry] }
+      - { protocol: responses, models: ["foundry-model-name"], provider: azure-foundry, alias: gpt-5.2-chat, tags: [foundry] }
 ```
 
 Source: `internal/selection/selection_test.go` (`goldenV2`). Here the client asks
-for `foundry-model-name`; the binding routes it to the Azure backend and `alias`
+for `foundry-model-name`; the binding routes it to the Azure provider and `alias`
 rewrites the body's model to the deployment id `gpt-5.2-chat` the upstream
-expects. The `api-version` rides as a backend-level default query param (next
+expects. The `api-version` rides as a provider-level default query param (next
 question), and `api-key: {key}` injects the `az-key` credential.
 
 > **Don't** confuse this with the **`azure_blob` connector**
@@ -380,23 +380,23 @@ question), and `api-key: {key}` injects the `az-key` credential.
 
 ## How do I pin a query parameter like `api-version` on every request?
 
-Put it on the backend's `query` map — it's appended to every forwarded request to
-that backend:
+Put it on the provider's `query` map — it's appended to every forwarded request to
+that provider:
 
 ```yaml
-backends:
+providers:
   azure-foundry:
     base_url: https://res.cognitiveservices.azure.com
     query: { api-version: 2025-04-01-preview }
 ```
 
 A binding or group target can add or override entries with its own `query:`; the
-effective set is backend ∪ override, override winning (`model_v2.go` →
-`Backend.Query` / `Target.Query`). This replaces the old per-rule
-"append query string" action — the pin is now backend data.
+effective set is provider ∪ override, override winning (`model.go` →
+`Provider.Query` / `Target.Query`). This replaces the old per-rule
+"append query string" action — the pin is now provider data.
 
 For static **headers** (e.g. `anthropic-version`), use `required_headers` on the
-backend instead; those are injected on every request and overwrite any inbound
+provider instead; those are injected on every request and overwrite any inbound
 header of the same name.
 
 ---
@@ -405,13 +405,13 @@ header of the same name.
 
 Use `alias`:
 
-- on a **binding** (single backend) — `{ …, backend: azure-foundry, alias: gpt-5.2-chat }`
-- on a **group target** — `{ backend: qwen-ollama, alias: "qwen2.5-coder:7b" }`
+- on a **binding** (single provider) — `{ …, provider: azure-foundry, alias: gpt-5.2-chat }`
+- on a **group target** — `{ provider: qwen-ollama, alias: "qwen2.5-coder:7b" }`
 
 `alias` rewrites the request body's `model` field when that destination is
 selected. Putting it on the target (not the binding) lets one logical model map
-to a different upstream id per backend in a group. Source:
-`internal/selection/selection_test.go`, `contracts/config/model_v2.go` →
+to a different upstream id per provider in a group. Source:
+`internal/selection/selection_test.go`, `contracts/config/model.go` →
 `Target.Alias` / `Binding.Alias`.
 
 ---
@@ -459,7 +459,7 @@ DELETE /admin/api/v1/config/rules/{name}
 ```
 
 The visual editor in the [admin console](admin-console.md) drives these. **Only
-rules** are live-editable today; edits to `backends`, `configurations`,
+rules** are live-editable today; edits to `providers`, `configurations`,
 `api_keys`, `connectors`, and `groups` are still YAML-on-disk and need a process
 restart (hot reload for those is a v1.2+ item). Validate a bundle before deploy
 with `sluice-cli config validate` ([auxiliary-binaries.md](auxiliary-binaries.md)).
@@ -473,7 +473,7 @@ Walk these in order:
 1. **Is the rule listed?** A rule only runs if its `name` is in the
    configuration's `rule_names`. Defining it in the `rules` block is not enough.
 2. **Does the condition match the v2 vocabulary?** `provider` = resolved
-   **backend name** (e.g. `anthropic`, `azure-foundry`), `endpoint` = the
+   **provider name** (e.g. `anthropic`, `azure-foundry`), `endpoint` = the
    **protocol** (`chat`/`messages`/`responses`/`generate_content`) or passthrough
    **family** (`messages_batches`). A condition expecting an old provider/endpoint
    name silently never matches.

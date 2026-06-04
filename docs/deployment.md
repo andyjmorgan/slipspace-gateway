@@ -358,7 +358,7 @@ Several pieces of Sluice state are per-pod, in-memory, and not synchronised acro
 
 ### Circuit-breaker state is per-pod
 
-The breaker counters live in-process per (policy, target) pair. Two replicas observing the same backend will trip independently — three failures on Pod A do not contribute to Pod B's window. Restart wipes the state. The `gateway.cb.state` gauge labels by `pod` so dashboards can disambiguate.
+The breaker counters live in-process per (policy, target) pair. Two replicas observing the same provider will trip independently — three failures on Pod A do not contribute to Pod B's window. Restart wipes the state. The `gateway.cb.state` gauge labels by `pod` so dashboards can disambiguate.
 
 This is documented intentionally in [`docs/resilience.md`](resilience.md#known-limitations) (item 4). The Redis-backed `BreakerStore` swap behind the existing interface is a v1.3+ task. Until then, size your trip thresholds with the per-pod sample rate in mind, not the cluster-aggregate rate.
 

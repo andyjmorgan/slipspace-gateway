@@ -14,9 +14,9 @@ import (
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
 
-// ResolvedConfig is the merged, validated, indexed runtime view of a v2
-// configuration directory (providers + bindings). It is the v2 analogue of
-// ResolvedConfig; the data plane reads it through config.Store the same way.
+// ResolvedConfig is the merged, validated, indexed runtime view of a
+// configuration directory (providers + bindings). The data plane reads it
+// through config.Store.
 //
 // Routing is config data here: a request resolves its destination by selecting
 // a binding on the owning configuration (see internal/selection), so there is
@@ -72,13 +72,13 @@ type ResolvedConfig struct {
 	// from rather than a fixed filename, so an operator's chosen layout
 	// survives a round-trip and a co-located block is never dropped. Blocks
 	// introduced through the API with no recorded origin fall back to a
-	// canonical default file (see writer_v2.go).
+	// canonical default file (see config_writer.go).
 	SourceFiles map[string]string
 }
 
-// v2Doc is the decode target for one YAML file's top-level blocks. Files are
+// configDoc is the decode target for one YAML file's top-level blocks. Files are
 // merged by top-level key; a key set by two files is a duplicate-key error.
-type v2Doc struct {
+type configDoc struct {
 	Providers      contractsconfig.ProvidersConfig          `yaml:"providers"`
 	Groups         contractsconfig.GroupsConfig             `yaml:"groups"`
 	Configurations map[string]contractsconfig.Configuration `yaml:"configurations"`
@@ -100,12 +100,12 @@ type v2Doc struct {
 // top-level blocks are merged by key and a key set by two files is rejected.
 func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("config: loadv2 %q: %w", dir, err)
+		return nil, fmt.Errorf("config: load %q: %w", dir, err)
 	}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("config: loadv2 read dir %q: %w", dir, err)
+		return nil, fmt.Errorf("config: load read dir %q: %w", dir, err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -115,7 +115,7 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 		names = append(names, e.Name())
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("config: loadv2 %q: %w", dir, ErrEmptyDirectory)
+		return nil, fmt.Errorf("config: load %q: %w", dir, ErrEmptyDirectory)
 	}
 	sort.Strings(names)
 
@@ -124,14 +124,14 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 	for _, name := range names {
 		raw, rerr := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // dir is operator-trusted config root
 		if rerr != nil {
-			return nil, fmt.Errorf("config: loadv2 read %q: %w", name, rerr)
+			return nil, fmt.Errorf("config: load read %q: %w", name, rerr)
 		}
-		var doc v2Doc
+		var doc configDoc
 		if uerr := yaml.Unmarshal(raw, &doc); uerr != nil {
-			return nil, fmt.Errorf("config: loadv2 parse %q: %w", name, uerr)
+			return nil, fmt.Errorf("config: load parse %q: %w", name, uerr)
 		}
 		if doc.LegacyBackends.Kind != 0 {
-			return nil, fmt.Errorf("config: loadv2 %q: %w", name, ErrLegacyProvidersKey)
+			return nil, fmt.Errorf("config: load %q: %w", name, ErrLegacyProvidersKey)
 		}
 		if merr := r.mergeDoc(name, &doc, seen); merr != nil {
 			return nil, merr
@@ -149,13 +149,13 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 
 // mergeDoc folds one file's blocks into r, rejecting a top-level block set by
 // more than one file.
-func (r *ResolvedConfig) mergeDoc(file string, doc *v2Doc, seen map[string]string) error {
+func (r *ResolvedConfig) mergeDoc(file string, doc *configDoc, seen map[string]string) error {
 	claim := func(block string, set bool) error {
 		if !set {
 			return nil
 		}
 		if prev, dup := seen[block]; dup {
-			return fmt.Errorf("config: loadv2 %q sets %q already set by %q: %w", file, block, prev, ErrDuplicateKey)
+			return fmt.Errorf("config: load %q sets %q already set by %q: %w", file, block, prev, ErrDuplicateKey)
 		}
 		seen[block] = file
 		return nil
