@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import {
@@ -333,173 +334,196 @@ function EditorBody({
         </div>
       )}
 
-      <PanelCard>
-        <PanelHead title="Identity" sub="configuration name and telemetry tags" />
-        <div className="px-4 py-4 flex flex-col gap-3">
-          <TextField
-            label="Name"
-            value={form.name}
-            onChange={(v) => setForm({ ...form, name: v })}
-            placeholder="production"
-            mono
-            hint={nameEditable ? "Unique. Named by use-case (production, internal-dev). API keys resolve to this." : "Names are immutable post-create."}
-          />
-          <KeyValueEditor
-            label="Tags"
-            pairs={form.tags}
-            onChange={(p) => setForm({ ...form, tags: p })}
-            keyPlaceholder="client"
-            valuePlaceholder="k3s-agentling"
-            addLabel="+ Add tag"
-            hint="Propagated to telemetry for every request under this configuration."
-          />
-        </div>
-      </PanelCard>
+      <Tabs defaultValue="identity" className="gap-4">
+        <TabsList variant="line" className="flex-wrap">
+          <TabsTrigger value="identity">Identity</TabsTrigger>
+          <TabsTrigger value="credentials">
+            Credentials{form.credentials.length > 0 ? ` · ${form.credentials.length}` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="bindings">
+            Bindings{form.bindings.length + form.passthroughBindings.length > 0 ? ` · ${form.bindings.length + form.passthroughBindings.length}` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="rules">
+            Rules{form.ruleNames.length > 0 ? ` · ${form.ruleNames.length}` : ""}
+          </TabsTrigger>
+        </TabsList>
 
-      <PanelCard>
-        <PanelHead
-          title="Credentials"
-          sub="per-backend upstream credential (managed mode). Existing secrets are masked — leave a row untouched to keep it."
-          action={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setForm({ ...form, credentials: [...form.credentials, { backend: "", existing: null, value: "", dirty: true }] })}
-            >
-              + Add credential
-            </Button>
-          }
-        />
-        <div className="px-4 py-4 flex flex-col gap-3">
-          {form.credentials.length === 0 && (
-            <div className="text-[12.5px] text-[color:var(--text-4)]">No managed credentials — passthrough-only configuration.</div>
-          )}
-          {form.credentials.map((c, i) => (
-            <CredentialRow
-              key={i}
-              draft={c}
-              onChange={(next) => {
-                const copy = form.credentials.slice()
-                copy[i] = next
-                setForm({ ...form, credentials: copy })
-              }}
-              onRemove={() => {
-                const copy = form.credentials.slice()
-                copy.splice(i, 1)
-                setForm({ ...form, credentials: copy })
-              }}
-            />
-          ))}
-        </div>
-      </PanelCard>
-
-      <PanelCard>
-        <PanelHead
-          title="Bindings"
-          sub="map (protocol, model) to a backend or group · evaluated in order, first match wins"
-          action={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setForm({ ...form, bindings: [...form.bindings, { protocol: "chat", models: [], destinationKind: "backend", destination: "", alias: "" }] })}
-            >
-              + Add binding
-            </Button>
-          }
-        />
-        <div className="px-4 py-4 flex flex-col gap-3">
-          {form.bindings.length === 0 && (
-            <div className="text-[12.5px] text-[color:var(--text-4)]">No bindings — this configuration routes no generative traffic.</div>
-          )}
-          {form.bindings.map((b, i) => (
-            <BindingCard
-              key={i}
-              index={i}
-              total={form.bindings.length}
-              draft={b}
-              onChange={(next) => {
-                const copy = form.bindings.slice()
-                copy[i] = next
-                setForm({ ...form, bindings: copy })
-              }}
-              onRemove={() => {
-                const copy = form.bindings.slice()
-                copy.splice(i, 1)
-                setForm({ ...form, bindings: copy })
-              }}
-              onMoveUp={() => {
-                if (i === 0) return
-                const copy = form.bindings.slice()
-                ;[copy[i - 1], copy[i]] = [copy[i], copy[i - 1]]
-                setForm({ ...form, bindings: copy })
-              }}
-              onMoveDown={() => {
-                if (i === form.bindings.length - 1) return
-                const copy = form.bindings.slice()
-                ;[copy[i], copy[i + 1]] = [copy[i + 1], copy[i]]
-                setForm({ ...form, bindings: copy })
-              }}
-            />
-          ))}
-        </div>
-      </PanelCard>
-
-      <PanelCard>
-        <PanelHead
-          title="Passthrough bindings"
-          sub="expose a backend's passthrough family on this configuration"
-          action={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setForm({ ...form, passthroughBindings: [...form.passthroughBindings, { family: "", backend: "" }] })}
-            >
-              + Add passthrough
-            </Button>
-          }
-        />
-        <div className="px-4 py-4 flex flex-col gap-3">
-          {form.passthroughBindings.length === 0 && (
-            <div className="text-[12.5px] text-[color:var(--text-4)]">No passthrough bindings.</div>
-          )}
-          {form.passthroughBindings.map((p, i) => (
-            <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] px-3 py-3 grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
-              <TextField label="Family" value={p.family} onChange={(v) => {
-                const copy = form.passthroughBindings.slice()
-                copy[i] = { ...copy[i], family: v }
-                setForm({ ...form, passthroughBindings: copy })
-              }} placeholder="message_batches" mono />
-              <TextField label="Backend" value={p.backend} onChange={(v) => {
-                const copy = form.passthroughBindings.slice()
-                copy[i] = { ...copy[i], backend: v }
-                setForm({ ...form, passthroughBindings: copy })
-              }} placeholder="anthropic" mono />
-              <Button type="button" variant="ghost" size="sm" className="text-[color:var(--text-3)] hover:text-[color:var(--err)]" onClick={() => {
-                const copy = form.passthroughBindings.slice()
-                copy.splice(i, 1)
-                setForm({ ...form, passthroughBindings: copy })
-              }}>Remove</Button>
+        <TabsContent value="identity">
+          <PanelCard>
+            <PanelHead title="Identity" sub="configuration name and telemetry tags" />
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <TextField
+                label="Name"
+                value={form.name}
+                onChange={(v) => setForm({ ...form, name: v })}
+                placeholder="production"
+                mono
+                hint={nameEditable ? "Unique. Named by use-case (production, internal-dev). API keys resolve to this." : "Names are immutable post-create."}
+              />
+              <KeyValueEditor
+                label="Tags"
+                pairs={form.tags}
+                onChange={(p) => setForm({ ...form, tags: p })}
+                keyPlaceholder="client"
+                valuePlaceholder="k3s-agentling"
+                addLabel="+ Add tag"
+                hint="Propagated to telemetry for every request under this configuration."
+              />
             </div>
-          ))}
-        </div>
-      </PanelCard>
+          </PanelCard>
+        </TabsContent>
 
-      <PanelCard>
-        <PanelHead title="Attached rules" sub="transform rules from the shared library, applied in order" />
-        <div className="px-4 py-4">
-          <StringListEditor
-            label="Rule names"
-            values={form.ruleNames}
-            onChange={(v) => setForm({ ...form, ruleNames: v })}
-            placeholder="force-openai-streaming-usage"
-            addLabel="+ Attach rule"
-            hint="Must match a rule in the shared rules library."
-          />
-        </div>
-      </PanelCard>
+        <TabsContent value="credentials">
+          <PanelCard>
+            <PanelHead
+              title="Credentials"
+              sub="per-backend upstream credential (managed mode). Existing secrets are masked — leave a row untouched to keep it."
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setForm({ ...form, credentials: [...form.credentials, { backend: "", existing: null, value: "", dirty: true }] })}
+                >
+                  + Add credential
+                </Button>
+              }
+            />
+            <div className="px-4 py-4 flex flex-col gap-3">
+              {form.credentials.length === 0 && (
+                <div className="text-[12.5px] text-[color:var(--text-4)]">No managed credentials — passthrough-only configuration.</div>
+              )}
+              {form.credentials.map((c, i) => (
+                <CredentialRow
+                  key={i}
+                  draft={c}
+                  onChange={(next) => {
+                    const copy = form.credentials.slice()
+                    copy[i] = next
+                    setForm({ ...form, credentials: copy })
+                  }}
+                  onRemove={() => {
+                    const copy = form.credentials.slice()
+                    copy.splice(i, 1)
+                    setForm({ ...form, credentials: copy })
+                  }}
+                />
+              ))}
+            </div>
+          </PanelCard>
+        </TabsContent>
+
+        <TabsContent value="bindings" className="flex flex-col gap-4">
+          <PanelCard>
+            <PanelHead
+              title="Bindings"
+              sub="map (protocol, model) to a backend or group · evaluated in order, first match wins"
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setForm({ ...form, bindings: [...form.bindings, { protocol: "chat", models: [], destinationKind: "backend", destination: "", alias: "" }] })}
+                >
+                  + Add binding
+                </Button>
+              }
+            />
+            <div className="px-4 py-4 flex flex-col gap-3">
+              {form.bindings.length === 0 && (
+                <div className="text-[12.5px] text-[color:var(--text-4)]">No bindings — this configuration routes no generative traffic.</div>
+              )}
+              {form.bindings.map((b, i) => (
+                <BindingCard
+                  key={i}
+                  index={i}
+                  total={form.bindings.length}
+                  draft={b}
+                  onChange={(next) => {
+                    const copy = form.bindings.slice()
+                    copy[i] = next
+                    setForm({ ...form, bindings: copy })
+                  }}
+                  onRemove={() => {
+                    const copy = form.bindings.slice()
+                    copy.splice(i, 1)
+                    setForm({ ...form, bindings: copy })
+                  }}
+                  onMoveUp={() => {
+                    if (i === 0) return
+                    const copy = form.bindings.slice()
+                    ;[copy[i - 1], copy[i]] = [copy[i], copy[i - 1]]
+                    setForm({ ...form, bindings: copy })
+                  }}
+                  onMoveDown={() => {
+                    if (i === form.bindings.length - 1) return
+                    const copy = form.bindings.slice()
+                    ;[copy[i], copy[i + 1]] = [copy[i + 1], copy[i]]
+                    setForm({ ...form, bindings: copy })
+                  }}
+                />
+              ))}
+            </div>
+          </PanelCard>
+
+          <PanelCard>
+            <PanelHead
+              title="Passthrough bindings"
+              sub="expose a backend's passthrough family on this configuration"
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setForm({ ...form, passthroughBindings: [...form.passthroughBindings, { family: "", backend: "" }] })}
+                >
+                  + Add passthrough
+                </Button>
+              }
+            />
+            <div className="px-4 py-4 flex flex-col gap-3">
+              {form.passthroughBindings.length === 0 && (
+                <div className="text-[12.5px] text-[color:var(--text-4)]">No passthrough bindings.</div>
+              )}
+              {form.passthroughBindings.map((p, i) => (
+                <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] px-3 py-3 grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
+                  <TextField label="Family" value={p.family} onChange={(v) => {
+                    const copy = form.passthroughBindings.slice()
+                    copy[i] = { ...copy[i], family: v }
+                    setForm({ ...form, passthroughBindings: copy })
+                  }} placeholder="message_batches" mono />
+                  <TextField label="Backend" value={p.backend} onChange={(v) => {
+                    const copy = form.passthroughBindings.slice()
+                    copy[i] = { ...copy[i], backend: v }
+                    setForm({ ...form, passthroughBindings: copy })
+                  }} placeholder="anthropic" mono />
+                  <Button type="button" variant="ghost" size="sm" className="text-[color:var(--text-3)] hover:text-[color:var(--err)]" onClick={() => {
+                    const copy = form.passthroughBindings.slice()
+                    copy.splice(i, 1)
+                    setForm({ ...form, passthroughBindings: copy })
+                  }}>Remove</Button>
+                </div>
+              ))}
+            </div>
+          </PanelCard>
+        </TabsContent>
+
+        <TabsContent value="rules">
+          <PanelCard>
+            <PanelHead title="Attached rules" sub="transform rules from the shared library, applied in order" />
+            <div className="px-4 py-4">
+              <StringListEditor
+                label="Rule names"
+                values={form.ruleNames}
+                onChange={(v) => setForm({ ...form, ruleNames: v })}
+                placeholder="force-openai-streaming-usage"
+                addLabel="+ Attach rule"
+                hint="Must match a rule in the shared rules library."
+              />
+            </div>
+          </PanelCard>
+        </TabsContent>
+      </Tabs>
 
       <div className="flex items-center gap-2 justify-end">
         <Link to={cancelTo}>
