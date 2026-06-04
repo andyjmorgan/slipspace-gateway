@@ -13,17 +13,17 @@ import (
 
 func v2Fixture() *ResolvedConfig {
 	r := &ResolvedConfig{
-		Backends: contractsconfig.BackendsConfig{
+		Providers: contractsconfig.ProvidersConfig{
 			"openai": {
 				BaseURL:         "https://api.openai.com",
 				RequiredHeaders: map[string]string{"x-org": "acme"},
 				Query:           map[string]string{"api-version": "2025-01"},
-				Protocols: map[string]contractsconfig.BackendProtocol{
-					"chat": {Path: "/v1/chat/completions", Auth: &contractsconfig.BackendAuth{Header: "Authorization", Format: "Bearer {key}"}},
+				Protocols: map[string]contractsconfig.ProviderProtocol{
+					"chat": {Path: "/v1/chat/completions", Auth: &contractsconfig.ProviderAuth{Header: "Authorization", Format: "Bearer {key}"}},
 				},
 				Passthrough: map[string]contractsconfig.PassthroughFamily{
 					"batches": {
-						Auth:  &contractsconfig.BackendAuth{Header: "x-api-key", Format: "{key}"},
+						Auth:  &contractsconfig.ProviderAuth{Header: "x-api-key", Format: "{key}"},
 						Paths: []contractsconfig.PassthroughPath{{Match: "/v1/batches", Methods: []string{"POST"}}},
 					},
 				},
@@ -34,14 +34,14 @@ func v2Fixture() *ResolvedConfig {
 				Mode:               contractsres.ModeFailover,
 				FailureStatusCodes: []int{503},
 				CircuitBreaker:     &contractsres.CircuitBreakerConfig{Enabled: true, FailureThreshold: 3, SamplingDurationSeconds: 30, CooldownSeconds: 60, HalfOpenSuccessThreshold: 2},
-				Targets:            []contractsconfig.Target{{Backend: "openai", Query: map[string]string{"q": "1"}}},
+				Targets:            []contractsconfig.Target{{Provider: "openai", Query: map[string]string{"q": "1"}}},
 			},
 		},
 		Configurations: map[string]contractsconfig.Configuration{
 			"dev": {
 				Credentials:         map[string]string{"openai": "sk-dev"},
-				Bindings:            []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai", Tags: []string{"t"}}},
-				PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Backend: "openai"}},
+				Bindings:            []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "openai", Tags: []string{"t"}}},
+				PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Provider: "openai"}},
 				RuleNames:           []string{"r1"},
 				Tags:                map[string]string{"tier": "dev"},
 				ConnectorBindings:   []contractsconfig.ConnectorBinding{{Connector: "artifacts", Sampling: 1.0}},
@@ -85,11 +85,11 @@ func TestResolvedConfig_CloneIndependence(t *testing.T) {
 	if orig.Configurations["dev"].Credentials["openai"] != "sk-dev" {
 		t.Errorf("orig credentials mutated: %q", orig.Configurations["dev"].Credentials["openai"])
 	}
-	// Backend deep copy: mutating clone's protocol auth must not touch orig.
-	be := clone.Backends["openai"]
+	// Provider deep copy: mutating clone's protocol auth must not touch orig.
+	be := clone.Providers["openai"]
 	be.Protocols["chat"].Auth.Header = "X-Changed"
-	if orig.Backends["openai"].Protocols["chat"].Auth.Header != "Authorization" {
-		t.Errorf("orig backend auth mutated")
+	if orig.Providers["openai"].Protocols["chat"].Auth.Header != "Authorization" {
+		t.Errorf("orig provider auth mutated")
 	}
 }
 
@@ -116,18 +116,18 @@ func TestResolvedConfig_RevalidateAndIndex(t *testing.T) {
 	// A clone mutated into an invalid state must fail revalidation.
 	bad := r.Clone()
 	cfg := bad.Configurations["dev"]
-	cfg.Bindings = []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "ghost"}}
+	cfg.Bindings = []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "ghost"}}
 	bad.Configurations["dev"] = cfg
 	if err := bad.RevalidateAndIndex(); err == nil {
-		t.Errorf("expected validation error for unknown backend")
+		t.Errorf("expected validation error for unknown provider")
 	}
 }
 
 func TestWritePolicyYAML_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	// backends + groups live in their own file; the writer only owns policy.yaml.
+	// providers + groups live in their own file; the writer only owns policy.yaml.
 	r := v2Fixture()
-	writeFile(t, dir, "backends.yaml", backendsYAMLForRoundTrip)
+	writeFile(t, dir, "providers.yaml", providersYAMLForRoundTrip)
 	if err := WritePolicyYAML(dir, r); err != nil {
 		t.Fatalf("WritePolicyYAML: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestWritePolicyYAML_Guards(t *testing.T) {
 func TestListConfigFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "policy.yaml", "configurations: {}\n")
-	writeFile(t, dir, "backends.yaml", "backends: {}\n")
+	writeFile(t, dir, "providers.yaml", "providers: {}\n")
 	writeFile(t, dir, "notes.txt", "ignored")
 	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o750); err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func writeFile(t *testing.T, dir, name, body string) {
 	}
 }
 
-const backendsYAMLForRoundTrip = `backends:
+const providersYAMLForRoundTrip = `providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -213,20 +213,20 @@ func TestLoad_MultiFileMergeAndErrors(t *testing.T) {
 
 	// Duplicate top-level block across two files.
 	dup := t.TempDir()
-	writeFile(t, dup, "a.yaml", "backends: {openai: {base_url: http://x, protocols: {chat: {path: /v1/chat/completions}}}}\n")
-	writeFile(t, dup, "b.yaml", "backends: {anthropic: {base_url: http://y, protocols: {messages: {path: /v1/messages}}}}\n")
+	writeFile(t, dup, "a.yaml", "providers: {openai: {base_url: http://x, protocols: {chat: {path: /v1/chat/completions}}}}\n")
+	writeFile(t, dup, "b.yaml", "providers: {anthropic: {base_url: http://y, protocols: {messages: {path: /v1/messages}}}}\n")
 	if _, err := Load(context.Background(), dup); err == nil {
-		t.Errorf("duplicate backends block should error")
+		t.Errorf("duplicate providers block should error")
 	}
 
-	// Full multi-file load: backends + policy + admin + telemetry + connectors.
+	// Full multi-file load: providers + policy + admin + telemetry + connectors.
 	full := t.TempDir()
-	writeFile(t, full, "backends.yaml", backendsYAMLForRoundTrip)
+	writeFile(t, full, "providers.yaml", providersYAMLForRoundTrip)
 	writeFile(t, full, "policy.yaml", `configurations:
   dev:
     credentials: { openai: sk-dev }
     bindings:
-      - { protocol: chat, models: ["gpt-*"], backend: openai }
+      - { protocol: chat, models: ["gpt-*"], provider: openai }
     connector_bindings:
       - { connector: artifacts, sampling: 1.0 }
 api_keys:

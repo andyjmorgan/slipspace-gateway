@@ -229,7 +229,7 @@ func TestConfigValidate_HappyPath(t *testing.T) {
 	expectedFragments := []string{
 		"configuration(s)",
 		"api_keys",
-		"backends",
+		"providers",
 		"bindings",
 	}
 	for _, f := range expectedFragments {

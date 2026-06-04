@@ -12,11 +12,11 @@ import (
 
 // configurationWriteBody is the POST/PUT decode target for a configuration.
 //
-// Credentials is map[backend]*secret with write-back-if-delivered semantics: a
+// Credentials is map[provider]*secret with write-back-if-delivered semantics: a
 // nil value (JSON null, the form for an unchanged masked secret) keeps the
-// stored credential for that backend; a non-nil value sets it, including "" for
-// a no-credential backend. A backend absent from the map is dropped (full
-// replace of which backends carry a credential).
+// stored credential for that provider; a non-nil value sets it, including "" for
+// a no-credential provider. A provider absent from the map is dropped (full
+// replace of which providers carry a credential).
 //
 // There is deliberately no api_keys field — keys are managed solely through the
 // dedicated /api-keys endpoints and are never accepted in a configuration
@@ -50,8 +50,8 @@ func buildConfiguration(body configurationWriteBody, existing contractsconfig.Co
 	}
 	if len(body.Credentials) > 0 {
 		out.Credentials = make(map[string]string, len(body.Credentials))
-		for backend, incoming := range body.Credentials {
-			out.Credentials[backend] = mergeSecret(incoming, existing.Credentials[backend])
+		for provider, incoming := range body.Credentials {
+			out.Credentials[provider] = mergeSecret(incoming, existing.Credentials[provider])
 		}
 	}
 	return out
@@ -62,7 +62,7 @@ func buildConfiguration(body configurationWriteBody, existing contractsconfig.Co
 //   - 201 Created (body = redacted ConfigurationDetail) / 200 dry-run
 //   - 400 parse / empty name / empty body
 //   - 409 when the configuration name already exists
-//   - 422 on validation failure (unknown backend credential, bad binding, …)
+//   - 422 on validation failure (unknown provider credential, bad binding, …)
 //   - 500 / 503
 func ConfigurationsCreateHandler(store *config.Store, configDir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

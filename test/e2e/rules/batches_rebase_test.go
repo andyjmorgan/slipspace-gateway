@@ -22,7 +22,7 @@ configurations:
     credentials:
       anthropic: sk-ant-dev-mock
     passthrough_bindings:
-      - { family: messages_batches, backend: anthropic }
+      - { family: messages_batches, provider: anthropic }
     rule_names:
       - rebase-batches-results-url
     tags:

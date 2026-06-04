@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	grpFixtureBackends = `backends:
+	grpFixtureProviders = `providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -23,11 +23,11 @@ groups:
   bound:
     mode: failover
     targets:
-      - backend: openai
+      - provider: openai
   spare:
     mode: failover
     targets:
-      - backend: openai
+      - provider: openai
 `
 	grpFixturePolicy = `configurations:
   prod:
@@ -49,8 +49,8 @@ func newGroupsFixture(t *testing.T) (*config.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range map[string]string{
-		"backends.yaml": grpFixtureBackends,
-		"policy.yaml":   grpFixturePolicy,
+		"providers.yaml": grpFixtureProviders,
+		"policy.yaml":    grpFixturePolicy,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)
@@ -91,7 +91,7 @@ func TestGroupsCreate(t *testing.T) {
 	store, dir := newGroupsFixture(t)
 	h := GroupsCreateHandler(store, dir)
 	rec := do(t, h, http.MethodPost, "/api/v1/config/groups",
-		`{"name":"newg","mode":"load_balance","targets":[{"backend":"openai"}]}`)
+		`{"name":"newg","mode":"load_balance","targets":[{"provider":"openai"}]}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (body=%s)", rec.Code, rec.Body)
 	}
@@ -107,7 +107,7 @@ func TestGroupsCreate(t *testing.T) {
 func TestGroupsCreate_Conflict(t *testing.T) {
 	store, dir := newGroupsFixture(t)
 	rec := do(t, GroupsCreateHandler(store, dir), http.MethodPost, "/api/v1/config/groups",
-		`{"name":"bound","mode":"failover","targets":[{"backend":"openai"}]}`)
+		`{"name":"bound","mode":"failover","targets":[{"provider":"openai"}]}`)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409", rec.Code)
 	}
@@ -122,23 +122,23 @@ func TestGroupsCreate_BadAndInvalid(t *testing.T) {
 	if rec := do(t, h, http.MethodPost, "/api/v1/config/groups", `{bad`); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad json = %d, want 400", rec.Code)
 	}
-	if rec := do(t, h, http.MethodPost, "/api/v1/config/groups", `{"mode":"failover","targets":[{"backend":"openai"}]}`); rec.Code != http.StatusBadRequest {
+	if rec := do(t, h, http.MethodPost, "/api/v1/config/groups", `{"mode":"failover","targets":[{"provider":"openai"}]}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("missing name = %d, want 400", rec.Code)
 	}
 	// No targets -> validateGroups rejects -> 422.
 	if rec := do(t, h, http.MethodPost, "/api/v1/config/groups", `{"name":"empty","mode":"failover"}`); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("no targets = %d, want 422", rec.Code)
 	}
-	// Target backend that does not exist -> 422.
-	if rec := do(t, h, http.MethodPost, "/api/v1/config/groups", `{"name":"ghosttarget","mode":"failover","targets":[{"backend":"nope"}]}`); rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("unknown target backend = %d, want 422", rec.Code)
+	// Target provider that does not exist -> 422.
+	if rec := do(t, h, http.MethodPost, "/api/v1/config/groups", `{"name":"ghosttarget","mode":"failover","targets":[{"provider":"nope"}]}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("unknown target provider = %d, want 422", rec.Code)
 	}
 }
 
 func TestGroupsCreate_DryRun(t *testing.T) {
 	store, dir := newGroupsFixture(t)
 	rec := do(t, GroupsCreateHandler(store, dir), http.MethodPost, "/api/v1/config/groups?dry_run=true",
-		`{"name":"dry","mode":"failover","targets":[{"backend":"openai"}]}`)
+		`{"name":"dry","mode":"failover","targets":[{"provider":"openai"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dry-run status = %d", rec.Code)
 	}
@@ -156,7 +156,7 @@ func TestGroupsReplace(t *testing.T) {
 	store, dir := newGroupsFixture(t)
 	h := GroupsReplaceHandler(store, dir)
 	rec := do(t, h, http.MethodPut, "/api/v1/config/groups/spare",
-		`{"mode":"load_balance","targets":[{"backend":"openai","weight":5}]}`)
+		`{"mode":"load_balance","targets":[{"provider":"openai","weight":5}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
 	}
@@ -164,13 +164,13 @@ func TestGroupsReplace(t *testing.T) {
 		t.Errorf("replace not applied")
 	}
 
-	if rec := do(t, h, http.MethodPut, "/api/v1/config/groups/ghost", `{"mode":"failover","targets":[{"backend":"openai"}]}`); rec.Code != http.StatusNotFound {
+	if rec := do(t, h, http.MethodPut, "/api/v1/config/groups/ghost", `{"mode":"failover","targets":[{"provider":"openai"}]}`); rec.Code != http.StatusNotFound {
 		t.Errorf("404 expected, got %d", rec.Code)
 	}
-	if rec := do(t, h, http.MethodPut, "/api/v1/config/groups/spare", `{"name":"renamed","mode":"failover","targets":[{"backend":"openai"}]}`); rec.Code != http.StatusConflict {
+	if rec := do(t, h, http.MethodPut, "/api/v1/config/groups/spare", `{"name":"renamed","mode":"failover","targets":[{"provider":"openai"}]}`); rec.Code != http.StatusConflict {
 		t.Errorf("rename should be 409, got %d", rec.Code)
 	}
-	if rec := do(t, h, http.MethodPut, "/api/v1/config/groups/", `{"mode":"failover","targets":[{"backend":"openai"}]}`); rec.Code != http.StatusNotFound {
+	if rec := do(t, h, http.MethodPut, "/api/v1/config/groups/", `{"mode":"failover","targets":[{"provider":"openai"}]}`); rec.Code != http.StatusNotFound {
 		t.Errorf("empty name should be 404, got %d", rec.Code)
 	}
 }
@@ -222,11 +222,11 @@ func TestGroupsWrite_PersistError(t *testing.T) {
 	badDir := filepath.Join(t.TempDir(), "does-not-exist")
 
 	if rec := do(t, GroupsCreateHandler(store, badDir), http.MethodPost, "/api/v1/config/groups",
-		`{"name":"x","mode":"failover","targets":[{"backend":"openai"}]}`); rec.Code != http.StatusInternalServerError {
+		`{"name":"x","mode":"failover","targets":[{"provider":"openai"}]}`); rec.Code != http.StatusInternalServerError {
 		t.Errorf("create persist error = %d, want 500", rec.Code)
 	}
 	if rec := do(t, GroupsReplaceHandler(store, badDir), http.MethodPut, "/api/v1/config/groups/spare",
-		`{"mode":"failover","targets":[{"backend":"openai"}]}`); rec.Code != http.StatusInternalServerError {
+		`{"mode":"failover","targets":[{"provider":"openai"}]}`); rec.Code != http.StatusInternalServerError {
 		t.Errorf("replace persist error = %d, want 500", rec.Code)
 	}
 	if rec := do(t, GroupsDeleteHandler(store, badDir), http.MethodDelete, "/api/v1/config/groups/spare", ""); rec.Code != http.StatusInternalServerError {
@@ -236,7 +236,7 @@ func TestGroupsWrite_PersistError(t *testing.T) {
 
 func TestGroupsCreate_TooLarge(t *testing.T) {
 	store, dir := newGroupsFixture(t)
-	big := `{"name":"big","mode":"failover","targets":[{"backend":"openai"}],"pad":"` +
+	big := `{"name":"big","mode":"failover","targets":[{"provider":"openai"}],"pad":"` +
 		strings.Repeat("a", 300*1024) + `"}`
 	rec := do(t, GroupsCreateHandler(store, dir), http.MethodPost, "/api/v1/config/groups", big)
 	if rec.Code != http.StatusBadRequest {
@@ -247,7 +247,7 @@ func TestGroupsCreate_TooLarge(t *testing.T) {
 func TestGroupsReplace_DryRun(t *testing.T) {
 	store, dir := newGroupsFixture(t)
 	rec := do(t, GroupsReplaceHandler(store, dir), http.MethodPut, "/api/v1/config/groups/spare?dry_run=true",
-		`{"mode":"load_balance","targets":[{"backend":"openai"}]}`)
+		`{"mode":"load_balance","targets":[{"provider":"openai"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dry-run status = %d", rec.Code)
 	}
@@ -258,10 +258,10 @@ func TestGroupsReplace_DryRun(t *testing.T) {
 
 func TestGroupsWrite_Disabled(t *testing.T) {
 	store, _ := newGroupsFixture(t)
-	if rec := do(t, GroupsCreateHandler(store, ""), http.MethodPost, "/api/v1/config/groups", `{"name":"x","mode":"failover","targets":[{"backend":"openai"}]}`); rec.Code != http.StatusServiceUnavailable {
+	if rec := do(t, GroupsCreateHandler(store, ""), http.MethodPost, "/api/v1/config/groups", `{"name":"x","mode":"failover","targets":[{"provider":"openai"}]}`); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("create disabled = %d, want 503", rec.Code)
 	}
-	if rec := do(t, GroupsReplaceHandler(store, ""), http.MethodPut, "/api/v1/config/groups/spare", `{"mode":"failover","targets":[{"backend":"openai"}]}`); rec.Code != http.StatusServiceUnavailable {
+	if rec := do(t, GroupsReplaceHandler(store, ""), http.MethodPut, "/api/v1/config/groups/spare", `{"mode":"failover","targets":[{"provider":"openai"}]}`); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("replace disabled = %d, want 503", rec.Code)
 	}
 	if rec := do(t, GroupsDeleteHandler(store, ""), http.MethodDelete, "/api/v1/config/groups/spare", ""); rec.Code != http.StatusServiceUnavailable {

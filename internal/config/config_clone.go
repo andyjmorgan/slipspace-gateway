@@ -20,10 +20,10 @@ func (r *ResolvedConfig) Clone() *ResolvedConfig {
 		SourceFiles: cloneStringMap(r.SourceFiles),
 	}
 
-	if r.Backends != nil {
-		out.Backends = make(contractsconfig.BackendsConfig, len(r.Backends))
-		for name, be := range r.Backends {
-			out.Backends[name] = cloneBackend(be)
+	if r.Providers != nil {
+		out.Providers = make(contractsconfig.ProvidersConfig, len(r.Providers))
+		for name, be := range r.Providers {
+			out.Providers[name] = cloneProvider(be)
 		}
 	}
 	if r.Groups != nil {
@@ -58,12 +58,12 @@ func (r *ResolvedConfig) RevalidateAndIndex() error {
 	return nil
 }
 
-func cloneBackend(in contractsconfig.Backend) contractsconfig.Backend {
+func cloneProvider(in contractsconfig.Provider) contractsconfig.Provider {
 	out := in
 	out.RequiredHeaders = cloneStringMap(in.RequiredHeaders)
 	out.Query = cloneStringMap(in.Query)
 	if in.Protocols != nil {
-		out.Protocols = make(map[string]contractsconfig.BackendProtocol, len(in.Protocols))
+		out.Protocols = make(map[string]contractsconfig.ProviderProtocol, len(in.Protocols))
 		for k, p := range in.Protocols {
 			cp := p
 			if p.Auth != nil {

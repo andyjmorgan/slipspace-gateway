@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	akFixtureBackends = `backends:
+	akFixtureProviders = `providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -27,7 +27,7 @@ const (
     bindings:
       - protocol: chat
         models: ["gpt-*"]
-        backend: openai
+        provider: openai
 api_keys:
   - secret: sk_live_existing
     name: k1
@@ -40,8 +40,8 @@ func newAPIKeysFixture(t *testing.T) (*config.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range map[string]string{
-		"backends.yaml": akFixtureBackends,
-		"policy.yaml":   akFixturePolicy,
+		"providers.yaml": akFixtureProviders,
+		"policy.yaml":    akFixturePolicy,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)

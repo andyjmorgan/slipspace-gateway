@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	fxBackends = `backends:
+	fxProviders = `providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -21,7 +21,7 @@ groups:
   g1:
     mode: failover
     targets:
-      - backend: openai
+      - provider: openai
 `
 	fxPolicy = `configurations:
   prod:
@@ -30,7 +30,7 @@ groups:
     bindings:
       - protocol: chat
         models: ["gpt-*"]
-        backend: openai
+        provider: openai
 api_keys:
   - secret: sk_live_x
     name: k1
@@ -73,15 +73,15 @@ func loadDir(t *testing.T, dir string) *ResolvedConfig {
 func TestLoad_SourceFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"backends.yaml": fxBackends,
-		"policy.yaml":   fxPolicy,
-		"admin.yaml":    fxAdmin,
+		"providers.yaml": fxProviders,
+		"policy.yaml":    fxPolicy,
+		"admin.yaml":     fxAdmin,
 	})
 	rc := loadDir(t, dir)
 
 	want := map[string]string{
-		"backends":       "backends.yaml",
-		"groups":         "backends.yaml",
+		"providers":      "providers.yaml",
+		"groups":         "providers.yaml",
 		"configurations": "policy.yaml",
 		"api_keys":       "policy.yaml",
 		"admin":          "admin.yaml",
@@ -99,9 +99,9 @@ func TestLoad_SourceFiles(t *testing.T) {
 func TestWriteConfig_RoundTripInPlace(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"backends.yaml": fxBackends,
-		"policy.yaml":   fxPolicy,
-		"admin.yaml":    fxAdmin,
+		"providers.yaml": fxProviders,
+		"policy.yaml":    fxPolicy,
+		"admin.yaml":     fxAdmin,
 	})
 	adminBefore := readFile(t, dir, "admin.yaml")
 
@@ -111,8 +111,8 @@ func TestWriteConfig_RoundTripInPlace(t *testing.T) {
 	}
 
 	got := loadDir(t, dir)
-	if got.Backends["openai"].BaseURL != "https://api.openai.com" {
-		t.Errorf("backend base_url lost on round-trip: %q", got.Backends["openai"].BaseURL)
+	if got.Providers["openai"].BaseURL != "https://api.openai.com" {
+		t.Errorf("provider base_url lost on round-trip: %q", got.Providers["openai"].BaseURL)
 	}
 	if len(got.Groups) != 1 {
 		t.Errorf("groups = %d, want 1", len(got.Groups))
@@ -134,18 +134,18 @@ func TestWriteConfig_RoundTripInPlace(t *testing.T) {
 	}
 }
 
-func TestWriteConfig_BackendEditLandsInBackendsFile(t *testing.T) {
+func TestWriteConfig_ProviderEditLandsInProvidersFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"backends.yaml": fxBackends,
-		"policy.yaml":   fxPolicy,
+		"providers.yaml": fxProviders,
+		"policy.yaml":    fxPolicy,
 	})
 	rc := loadDir(t, dir)
 
 	clone := rc.Clone()
-	be := clone.Backends["openai"]
+	be := clone.Providers["openai"]
 	be.BaseURL = "https://moved.example.com"
-	clone.Backends["openai"] = be
+	clone.Providers["openai"] = be
 	if err := clone.RevalidateAndIndex(); err != nil {
 		t.Fatalf("revalidate: %v", err)
 	}
@@ -153,15 +153,15 @@ func TestWriteConfig_BackendEditLandsInBackendsFile(t *testing.T) {
 		t.Fatalf("WriteConfig: %v", err)
 	}
 
-	backendsBytes := readFile(t, dir, "backends.yaml")
+	providersBytes := readFile(t, dir, "providers.yaml")
 	policyBytes := readFile(t, dir, "policy.yaml")
-	if !strings.Contains(string(backendsBytes), "moved.example.com") {
-		t.Errorf("edited backend did not land in backends.yaml")
+	if !strings.Contains(string(providersBytes), "moved.example.com") {
+		t.Errorf("edited provider did not land in providers.yaml")
 	}
 	if strings.Contains(string(policyBytes), "moved.example.com") {
-		t.Errorf("backend leaked into policy.yaml")
+		t.Errorf("provider leaked into policy.yaml")
 	}
-	if got := loadDir(t, dir).Backends["openai"].BaseURL; got != "https://moved.example.com" {
+	if got := loadDir(t, dir).Providers["openai"].BaseURL; got != "https://moved.example.com" {
 		t.Errorf("reloaded base_url = %q, want moved", got)
 	}
 }
@@ -169,8 +169,8 @@ func TestWriteConfig_BackendEditLandsInBackendsFile(t *testing.T) {
 func TestWriteConfig_ClearRemovedBlock(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"backends.yaml": fxBackends,
-		"policy.yaml":   fxPolicy,
+		"providers.yaml": fxProviders,
+		"policy.yaml":    fxPolicy,
 	})
 	rc := loadDir(t, dir)
 
@@ -187,17 +187,17 @@ func TestWriteConfig_ClearRemovedBlock(t *testing.T) {
 	if len(got.Groups) != 0 {
 		t.Errorf("groups not cleared: %d", len(got.Groups))
 	}
-	if got.Backends["openai"].BaseURL == "" {
-		t.Errorf("backends dropped when clearing groups from the same file")
+	if got.Providers["openai"].BaseURL == "" {
+		t.Errorf("providers dropped when clearing groups from the same file")
 	}
 }
 
 func TestWriteConfig_NewBlockDefaultFile(t *testing.T) {
 	dir := t.TempDir()
-	// backends.yaml carries only backends — no groups block, so "groups" has
+	// providers.yaml carries only providers — no groups block, so "groups" has
 	// no recorded source file.
 	writeFiles(t, dir, map[string]string{
-		"backends.yaml": `backends:
+		"providers.yaml": `providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -213,7 +213,7 @@ func TestWriteConfig_NewBlockDefaultFile(t *testing.T) {
 
 	clone := rc.Clone()
 	clone.Groups = contractsconfig.GroupsConfig{
-		"g2": {Mode: "failover", Targets: []contractsconfig.Target{{Backend: "openai"}}},
+		"g2": {Mode: "failover", Targets: []contractsconfig.Target{{Provider: "openai"}}},
 	}
 	if err := clone.RevalidateAndIndex(); err != nil {
 		t.Fatalf("revalidate: %v", err)
@@ -222,10 +222,10 @@ func TestWriteConfig_NewBlockDefaultFile(t *testing.T) {
 		t.Fatalf("WriteConfig: %v", err)
 	}
 
-	// groups had no origin -> defaults to backends.yaml.
-	backendsBytes := readFile(t, dir, "backends.yaml")
-	if !strings.Contains(string(backendsBytes), "g2") {
-		t.Errorf("new group did not default into backends.yaml")
+	// groups had no origin -> defaults to providers.yaml.
+	providersBytes := readFile(t, dir, "providers.yaml")
+	if !strings.Contains(string(providersBytes), "g2") {
+		t.Errorf("new group did not default into providers.yaml")
 	}
 	if len(loadDir(t, dir).Groups) != 1 {
 		t.Errorf("new group did not reload")

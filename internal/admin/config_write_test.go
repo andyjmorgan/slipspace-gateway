@@ -20,7 +20,7 @@ func TestMergeSecret(t *testing.T) {
 	}{
 		{"nil keeps existing", nil, "stored", "stored"},
 		{"explicit value overwrites", &newVal, "stored", "fresh"},
-		{"explicit empty clears (no-cred backend)", &empty, "stored", ""},
+		{"explicit empty clears (no-cred provider)", &empty, "stored", ""},
 		{"nil keeps empty", nil, "", ""},
 	}
 	for _, tc := range cases {
@@ -35,19 +35,19 @@ func TestMergeSecret(t *testing.T) {
 // validSnapshot returns a minimal config that passes RevalidateAndIndex.
 func validSnapshot() *config.ResolvedConfig {
 	rc := &config.ResolvedConfig{
-		Backends: contractsconfig.BackendsConfig{
+		Providers: contractsconfig.ProvidersConfig{
 			"openai": {
 				BaseURL:   "https://api.openai.com",
-				Protocols: map[string]contractsconfig.BackendProtocol{"chat": {Path: "/v1/chat/completions"}},
+				Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Path: "/v1/chat/completions"}},
 			},
 		},
 		Groups: contractsconfig.GroupsConfig{
-			"g1": {Mode: "failover", Targets: []contractsconfig.Target{{Backend: "openai"}}},
+			"g1": {Mode: "failover", Targets: []contractsconfig.Target{{Provider: "openai"}}},
 		},
 		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials:         map[string]string{"openai": "sk"},
-				Bindings:            []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"}},
+				Bindings:            []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "openai"}},
 				PassthroughBindings: nil,
 			},
 		},
@@ -71,11 +71,11 @@ func TestPreviewMutation(t *testing.T) {
 
 	bad := previewMutation(snap, func(c *config.ResolvedConfig) {
 		cfg := c.Configurations["prod"]
-		cfg.Bindings = append(cfg.Bindings, contractsconfig.Binding{Protocol: "chat", Models: []string{"x"}, Backend: "ghost"})
+		cfg.Bindings = append(cfg.Bindings, contractsconfig.Binding{Protocol: "chat", Models: []string{"x"}, Provider: "ghost"})
 		c.Configurations["prod"] = cfg
 	})
 	if bad.Valid || bad.Error == "" {
-		t.Errorf("binding to unknown backend should be invalid, got %+v", bad)
+		t.Errorf("binding to unknown provider should be invalid, got %+v", bad)
 	}
 
 	// previewMutation must not mutate the live snapshot.
@@ -84,15 +84,15 @@ func TestPreviewMutation(t *testing.T) {
 	}
 }
 
-func TestReferrersToBackend(t *testing.T) {
+func TestReferrersToProvider(t *testing.T) {
 	snap := validSnapshot()
-	got := referrersToBackend(snap, "openai")
+	got := referrersToProvider(snap, "openai")
 	want := []string{"configuration:prod binding", "configuration:prod credentials", "group:g1"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("referrersToBackend = %v, want %v", got, want)
+		t.Errorf("referrersToProvider = %v, want %v", got, want)
 	}
-	if got := referrersToBackend(snap, "absent"); len(got) != 0 {
-		t.Errorf("referrersToBackend(absent) = %v, want []", got)
+	if got := referrersToProvider(snap, "absent"); len(got) != 0 {
+		t.Errorf("referrersToProvider(absent) = %v, want []", got)
 	}
 }
 
@@ -112,13 +112,13 @@ func TestReferrersToGroup(t *testing.T) {
 	}
 }
 
-func TestReferrersToBackend_Passthrough(t *testing.T) {
+func TestReferrersToProvider_Passthrough(t *testing.T) {
 	snap := validSnapshot()
 	cfg := snap.Configurations["prod"]
-	cfg.PassthroughBindings = []contractsconfig.PassthroughBinding{{Family: "batches", Backend: "openai"}}
+	cfg.PassthroughBindings = []contractsconfig.PassthroughBinding{{Family: "batches", Provider: "openai"}}
 	snap.Configurations["prod"] = cfg
 
-	got := referrersToBackend(snap, "openai")
+	got := referrersToProvider(snap, "openai")
 	found := false
 	for _, r := range got {
 		if strings.Contains(r, "passthrough") {

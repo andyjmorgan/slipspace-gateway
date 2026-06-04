@@ -16,7 +16,7 @@ import (
 const (
 	pathConfigurations = "/api/v1/config/configurations/"
 	pathRules          = "/api/v1/config/rules/"
-	pathBackends       = "/api/v1/config/backends/"
+	pathProviders      = "/api/v1/config/providers/"
 )
 
 // ConfigurationsListHandler returns the sorted summary list of every
@@ -153,46 +153,46 @@ func RuleDetailHandler(store *config.Store) http.Handler {
 	})
 }
 
-// BackendsListHandler returns the sorted summary list of every backend
+// ProvidersListHandler returns the sorted summary list of every provider
 // connection loaded from the v2 config (was the providers list).
-func BackendsListHandler(store *config.Store) http.Handler {
+func ProvidersListHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		out := make([]BackendSummary, 0, len(resolved.Backends))
-		for name, b := range resolved.Backends {
-			out = append(out, backendSummaryFromContract(name, b))
+		out := make([]ProviderSummary, 0, len(resolved.Providers))
+		for name, b := range resolved.Providers {
+			out = append(out, providerSummaryFromContract(name, b))
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		writeJSON(w, out)
 	})
 }
 
-// BackendDetailHandler returns a backend's full protocol catalogue, including
+// ProviderDetailHandler returns a provider's full protocol catalogue, including
 // per-protocol auth conventions + passthrough families — the load-bearing data
 // for debugging the OpenAI-compat surfaces on Anthropic and Gemini.
-func BackendDetailHandler(store *config.Store) http.Handler {
+func ProviderDetailHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		name := strings.TrimPrefix(r.URL.Path, pathBackends)
+		name := strings.TrimPrefix(r.URL.Path, pathProviders)
 		name = strings.TrimSuffix(name, "/")
 		if name == "" {
 			http.NotFound(w, r)
 			return
 		}
-		b, ok := resolved.Backends[name]
+		b, ok := resolved.Providers[name]
 		if !ok {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, backendDetailFromContract(name, b))
+		writeJSON(w, providerDetailFromContract(name, b))
 	})
 }
 
@@ -237,7 +237,7 @@ func APIKeysRevealHandler(store *config.Store) http.Handler {
 
 // BindingsHandler returns the flattened binding table across every
 // configuration — the v2 analogue of the route table. A binding is
-// (protocol, models) → backend|group; this is the data selection reads on
+// (protocol, models) → provider|group; this is the data selection reads on
 // every request, so surfacing it is the highest-value page for routing
 // debugging. Passthrough bindings are returned as a separate list.
 func BindingsHandler(store *config.Store) http.Handler {

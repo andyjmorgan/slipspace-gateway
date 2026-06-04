@@ -15,7 +15,7 @@ import (
 )
 
 // ResolvedConfig is the merged, validated, indexed runtime view of a v2
-// configuration directory (backends + bindings). It is the v2 analogue of
+// configuration directory (providers + bindings). It is the v2 analogue of
 // ResolvedConfig; the data plane reads it through config.Store the same way.
 //
 // Routing is config data here: a request resolves its destination by selecting
@@ -23,8 +23,8 @@ import (
 // no RouteIndex — the inbound path maps to a protocol and the configuration's
 // bindings do the rest.
 type ResolvedConfig struct {
-	// Backends is the shared connection catalogue keyed by backend name.
-	Backends contractsconfig.BackendsConfig
+	// Providers is the shared connection catalogue keyed by provider name.
+	Providers contractsconfig.ProvidersConfig
 
 	// Groups is the shared resilience-group catalogue keyed by group name.
 	Groups contractsconfig.GroupsConfig
@@ -37,7 +37,7 @@ type ResolvedConfig struct {
 	APIKeys contractsconfig.APIKeysConfig
 
 	// Rules is the top-level transform-rule library (routing actions have been
-	// retired into bindings/backends/groups).
+	// retired into bindings/providers/groups).
 	Rules []rulescontract.RuleContract
 
 	// Connectors is the top-level connector catalogue (unchanged from v1).
@@ -67,7 +67,7 @@ type ResolvedConfig struct {
 	ConnectorIndex map[string]*contractsconfig.Connector
 
 	// SourceFiles records which file each top-level block was loaded from
-	// (block name -> filename, e.g. "backends" -> "backends.yaml"). The admin
+	// (block name -> filename, e.g. "providers" -> "providers.yaml"). The admin
 	// write path uses it to persist a mutated block back to the file it came
 	// from rather than a fixed filename, so an operator's chosen layout
 	// survives a round-trip and a co-located block is never dropped. Blocks
@@ -79,7 +79,7 @@ type ResolvedConfig struct {
 // v2Doc is the decode target for one YAML file's top-level blocks. Files are
 // merged by top-level key; a key set by two files is a duplicate-key error.
 type v2Doc struct {
-	Backends       contractsconfig.BackendsConfig           `yaml:"backends"`
+	Providers      contractsconfig.ProvidersConfig          `yaml:"providers"`
 	Groups         contractsconfig.GroupsConfig             `yaml:"groups"`
 	Configurations map[string]contractsconfig.Configuration `yaml:"configurations"`
 	APIKeys        contractsconfig.APIKeysConfig            `yaml:"api_keys"`
@@ -151,7 +151,7 @@ func (r *ResolvedConfig) mergeDoc(file string, doc *v2Doc, seen map[string]strin
 		seen[block] = file
 		return nil
 	}
-	if err := claim("backends", len(doc.Backends) > 0); err != nil {
+	if err := claim("providers", len(doc.Providers) > 0); err != nil {
 		return err
 	}
 	if err := claim("groups", len(doc.Groups) > 0); err != nil {
@@ -176,8 +176,8 @@ func (r *ResolvedConfig) mergeDoc(file string, doc *v2Doc, seen map[string]strin
 		return err
 	}
 
-	if len(doc.Backends) > 0 {
-		r.Backends = doc.Backends
+	if len(doc.Providers) > 0 {
+		r.Providers = doc.Providers
 	}
 	if len(doc.Groups) > 0 {
 		r.Groups = doc.Groups

@@ -34,8 +34,8 @@ groups:
     mode: load_balance
     failure_status_codes: [503]
     targets:
-      - { backend: openai, weight: 50 }
-      - { backend: anthropic, weight: 50 }
+      - { provider: openai, weight: 50 }
+      - { provider: anthropic, weight: 50 }
 `
 
 // TestLoadBalance_FirstAttemptCommits — a healthy target gets
@@ -129,8 +129,8 @@ groups:
     strict_weights: true
     failure_status_codes: [503]
     targets:
-      - { backend: openai, weight: 50 }
-      - { backend: anthropic, weight: 50 }
+      - { provider: openai, weight: 50 }
+      - { provider: anthropic, weight: 50 }
 `
 	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: strictYAML})
 	sess := h.NewSession(t)

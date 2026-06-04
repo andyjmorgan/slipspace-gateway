@@ -63,8 +63,8 @@ func TestPoliciesHandler_ProjectsTargetsAndCircuitState(t *testing.T) {
 		Mode:               contractsres.ModeFailover,
 		FailureStatusCodes: []int{503},
 		Targets: []contractsconfig.Target{
-			{Backend: "primary"},
-			{Backend: "backup"},
+			{Provider: "primary"},
+			{Provider: "backup"},
 		},
 	}
 	resolved := &config.ResolvedConfig{Groups: contractsconfig.GroupsConfig{"ha": grp}}
@@ -107,7 +107,7 @@ func TestPoliciesHandler_NilBreakerSource_AllUnknown(t *testing.T) {
 	grp := contractsconfig.Group{
 		Mode: contractsres.ModeFailover,
 		Targets: []contractsconfig.Target{
-			{Backend: "primary"},
+			{Provider: "primary"},
 		},
 	}
 	resolved := &config.ResolvedConfig{Groups: contractsconfig.GroupsConfig{"ha": grp}}
@@ -137,7 +137,7 @@ func TestPoliciesHandler_PolicyCBEnabledFlag(t *testing.T) {
 			HalfOpenSuccessThreshold: 2,
 		},
 		Targets: []contractsconfig.Target{
-			{Backend: "primary"},
+			{Provider: "primary"},
 		},
 	}
 	resolved := &config.ResolvedConfig{Groups: contractsconfig.GroupsConfig{"ha": grp}}

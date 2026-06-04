@@ -389,7 +389,7 @@ func TestEmitTrace_SpanContextReachesEvents(t *testing.T) {
 		t.Fatal("no event emitted")
 	}
 	// The log record's ctx carries the same trace as the recorded span, so a
-	// backend correlates the event to the span natively.
+	// provider correlates the event to the span natively.
 	logTID := trace.SpanContextFromContext(rl.lastCtx).TraceID()
 	if logTID != sr.Ended()[0].SpanContext().TraceID() {
 		t.Errorf("event trace id %v != span trace id %v", logTID, sr.Ended()[0].SpanContext().TraceID())

@@ -122,7 +122,7 @@ const (
 // operations. service_tier is Conditionally Required (request: present and
 // not "auto"; response: present); system_fingerprint and api.type are
 // Recommended. Span-only — system_fingerprint changes with the serving
-// backend and is too high-cardinality for a metric label, so the openai.*
+// provider and is too high-cardinality for a metric label, so the openai.*
 // set rides the span, not the meters.
 const (
 	AttrOpenAIRequestServiceTier        = "openai.request.service_tier"

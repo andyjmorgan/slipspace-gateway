@@ -7,7 +7,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
-// maxConfigBodyBytes caps an inbound config-write JSON body. A backend with a
+// maxConfigBodyBytes caps an inbound config-write JSON body. A provider with a
 // dozen protocols or a configuration with many bindings is still a few KiB;
 // 256 KiB is generous headroom against a runaway client forcing the gateway to
 // buffer arbitrary memory.
@@ -32,7 +32,7 @@ func isDryRun(r *http.Request) bool {
 }
 
 // This file holds the shared scaffolding every per-resource config-write
-// handler (backends, groups, configurations, connectors, api_keys) builds on,
+// handler (providers, groups, configurations, connectors, api_keys) builds on,
 // alongside the commitClone tail in rules_write.go:
 //
 //   - referential-integrity pre-checks (referrersTo*) so a DELETE that would
@@ -61,7 +61,7 @@ type PreviewResult struct {
 
 // previewMutation applies mutate to a clone of snap and reports whether the
 // result validates — without persisting or swapping the live snapshot. It is
-// the dry-run a topology edit (backends/groups/configurations) runs so the
+// the dry-run a topology edit (providers/groups/configurations) runs so the
 // operator sees "this would be rejected" before committing, and the safety
 // floor for the console's diff-preview.
 func previewMutation(snap *config.ResolvedConfig, mutate func(*config.ResolvedConfig)) PreviewResult {
@@ -77,7 +77,7 @@ func previewMutation(snap *config.ResolvedConfig, mutate func(*config.ResolvedCo
 // secrets (see redact), so a console round-trip that did not touch a secret
 // sends back no new value — modelled as a nil incoming pointer. nil means "keep
 // the stored value"; a non-nil pointer is an explicit set, including to the
-// empty string (a no-credential backend legitimately stores ""). This is why
+// empty string (a no-credential provider legitimately stores ""). This is why
 // the marker is a pointer and not the empty string: "" is a real value, not an
 // "unchanged" signal.
 func mergeSecret(incoming *string, existing string) string {
@@ -87,25 +87,25 @@ func mergeSecret(incoming *string, existing string) string {
 	return *incoming
 }
 
-// referrersToBackend returns the sorted, de-duplicated list of things that
-// reference backend name — configuration bindings, passthrough bindings,
-// credential entries, and group targets. A backend with referrers cannot be
+// referrersToProvider returns the sorted, de-duplicated list of things that
+// reference provider name — configuration bindings, passthrough bindings,
+// credential entries, and group targets. A provider with referrers cannot be
 // deleted (RevalidateAndIndex would reject the resulting config); the handler
 // surfaces this list in the 409 so the operator knows what to unbind first.
-func referrersToBackend(snap *config.ResolvedConfig, name string) []string {
+func referrersToProvider(snap *config.ResolvedConfig, name string) []string {
 	var out []string
 	for cfgName, cfg := range snap.Configurations {
 		if _, ok := cfg.Credentials[name]; ok {
 			out = append(out, "configuration:"+cfgName+" credentials")
 		}
 		for _, b := range cfg.Bindings {
-			if b.Backend == name {
+			if b.Provider == name {
 				out = append(out, "configuration:"+cfgName+" binding")
 				break
 			}
 		}
 		for _, pb := range cfg.PassthroughBindings {
-			if pb.Backend == name {
+			if pb.Provider == name {
 				out = append(out, "configuration:"+cfgName+" passthrough")
 				break
 			}
@@ -113,7 +113,7 @@ func referrersToBackend(snap *config.ResolvedConfig, name string) []string {
 	}
 	for grpName, g := range snap.Groups {
 		for _, t := range g.Targets {
-			if t.Backend == name {
+			if t.Provider == name {
 				out = append(out, "group:"+grpName)
 				break
 			}

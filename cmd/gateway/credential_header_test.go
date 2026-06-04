@@ -9,7 +9,7 @@ import (
 
 // TestCredentialHeaderFor exercises the v2 single credential mint site: the
 // resolved target's per-protocol auth convention wins, falling back to the
-// per-backend-name default when the target declares none.
+// per-provider-name default when the target declares none.
 func TestCredentialHeaderFor(t *testing.T) {
 	const cred = "sk-secret-1234"
 	cases := []struct {
@@ -20,28 +20,28 @@ func TestCredentialHeaderFor(t *testing.T) {
 	}{
 		{
 			name:      "nil auth falls back to openai default (Bearer)",
-			target:    selection.Target{Backend: "openai", Credential: cred},
+			target:    selection.Target{Provider: "openai", Credential: cred},
 			wantName:  "Authorization",
 			wantValue: "Bearer " + cred,
 		},
 		{
 			name:      "nil auth falls back to anthropic default (x-api-key)",
-			target:    selection.Target{Backend: "anthropic", Credential: cred},
+			target:    selection.Target{Provider: "anthropic", Credential: cred},
 			wantName:  "x-api-key",
 			wantValue: cred,
 		},
 		{
 			name:      "nil auth falls back to gemini default (x-goog-api-key)",
-			target:    selection.Target{Backend: "gemini", Credential: cred},
+			target:    selection.Target{Provider: "gemini", Credential: cred},
 			wantName:  "x-goog-api-key",
 			wantValue: cred,
 		},
 		{
 			name: "explicit header, no format → raw credential",
 			target: selection.Target{
-				Backend:    "azure-foundry",
+				Provider:   "azure-foundry",
 				Credential: cred,
-				Auth:       &contractsconfig.BackendAuth{Header: "api-key"},
+				Auth:       &contractsconfig.ProviderAuth{Header: "api-key"},
 			},
 			wantName:  "api-key",
 			wantValue: cred,
@@ -49,9 +49,9 @@ func TestCredentialHeaderFor(t *testing.T) {
 		{
 			name: "explicit header + format → placeholder substituted",
 			target: selection.Target{
-				Backend:    "anthropic",
+				Provider:   "anthropic",
 				Credential: cred,
-				Auth:       &contractsconfig.BackendAuth{Header: "Authorization", Format: "Bearer {key}"},
+				Auth:       &contractsconfig.ProviderAuth{Header: "Authorization", Format: "Bearer {key}"},
 			},
 			wantName:  "Authorization",
 			wantValue: "Bearer " + cred,

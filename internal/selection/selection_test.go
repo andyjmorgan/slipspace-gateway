@@ -14,7 +14,7 @@ import (
 // golden is the live prod config expressed in the v2 model — the fixture the
 // selection engine is validated against.
 const golden = `
-backends:
+providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -54,8 +54,8 @@ groups:
     failure_status_codes: [502, 503, 504]
     circuit_breaker: { enabled: true, failure_threshold: 3, cooldown_seconds: 60 }
     targets:
-      - { backend: qwen-ollama,     alias: "qwen2.5-coder:7b" }
-      - { backend: qwen-standalone, alias: "qwen-coder" }
+      - { provider: qwen-ollama,     alias: "qwen2.5-coder:7b" }
+      - { provider: qwen-standalone, alias: "qwen-coder" }
 
 configurations:
   production:
@@ -66,13 +66,13 @@ configurations:
       qwen-ollama: ""
       qwen-standalone: ""
     bindings:
-      - { protocol: chat,      models: ["gpt-*","o3*"],          backend: openai }
-      - { protocol: responses, models: ["gpt-*","o3*"],          backend: openai }
-      - { protocol: chat,      models: ["claude-*"],             backend: anthropic }
+      - { protocol: chat,      models: ["gpt-*","o3*"],          provider: openai }
+      - { protocol: responses, models: ["gpt-*","o3*"],          provider: openai }
+      - { protocol: chat,      models: ["claude-*"],             provider: anthropic }
       - { protocol: chat,      models: ["qwen2.5-coder:7b"],     group: qwen-load-balance }
-      - { protocol: responses, models: ["foundry-model-name"],   backend: azure-foundry, alias: gpt-5.2-chat, tags: [foundry] }
+      - { protocol: responses, models: ["foundry-model-name"],   provider: azure-foundry, alias: gpt-5.2-chat, tags: [foundry] }
     passthrough_bindings:
-      - { family: messages_batches, backend: anthropic }
+      - { family: messages_batches, provider: anthropic }
 `
 
 func loadGolden(t *testing.T) contractsconfig.Model {
@@ -84,17 +84,17 @@ func loadGolden(t *testing.T) contractsconfig.Model {
 	return m
 }
 
-func TestSelect_SingleBackend(t *testing.T) {
+func TestSelect_SingleProvider(t *testing.T) {
 	m := loadGolden(t)
-	d, err := selection.Select("chat", "gpt-4o-mini", m.Configurations["production"], m.Backends, m.Groups)
+	d, err := selection.Select("chat", "gpt-4o-mini", m.Configurations["production"], m.Providers, m.Groups)
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
 	if d.Single == nil {
 		t.Fatalf("expected single target, got %+v", d)
 	}
-	if d.Single.Backend != "openai" || d.Single.BaseURL != "https://api.openai.com" {
-		t.Errorf("backend = %+v", d.Single)
+	if d.Single.Provider != "openai" || d.Single.BaseURL != "https://api.openai.com" {
+		t.Errorf("provider = %+v", d.Single)
 	}
 	if d.Single.Path != "/v1/chat/completions" {
 		t.Errorf("path = %q", d.Single.Path)
@@ -106,13 +106,13 @@ func TestSelect_SingleBackend(t *testing.T) {
 
 func TestSelect_CrossProviderCompatChat(t *testing.T) {
 	m := loadGolden(t)
-	d, err := selection.Select("chat", "claude-3-5-sonnet", m.Configurations["production"], m.Backends, m.Groups)
+	d, err := selection.Select("chat", "claude-3-5-sonnet", m.Configurations["production"], m.Providers, m.Groups)
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
 	// claude on the chat protocol lands on anthropic's compat-chat surface —
 	// Bearer auth, not the native x-api-key.
-	if d.Single == nil || d.Single.Backend != "anthropic" {
+	if d.Single == nil || d.Single.Provider != "anthropic" {
 		t.Fatalf("expected anthropic, got %+v", d)
 	}
 	if d.Single.Auth.Header != "Authorization" || d.Single.Auth.Format != "Bearer {key}" {
@@ -125,7 +125,7 @@ func TestSelect_CrossProviderCompatChat(t *testing.T) {
 
 func TestSelect_Group_PerTargetAlias(t *testing.T) {
 	m := loadGolden(t)
-	d, err := selection.Select("chat", "qwen2.5-coder:7b", m.Configurations["production"], m.Backends, m.Groups)
+	d, err := selection.Select("chat", "qwen2.5-coder:7b", m.Configurations["production"], m.Providers, m.Groups)
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -148,11 +148,11 @@ func TestSelect_Group_PerTargetAlias(t *testing.T) {
 
 func TestSelect_AzureAliasQueryTags(t *testing.T) {
 	m := loadGolden(t)
-	d, err := selection.Select("responses", "foundry-model-name", m.Configurations["production"], m.Backends, m.Groups)
+	d, err := selection.Select("responses", "foundry-model-name", m.Configurations["production"], m.Providers, m.Groups)
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
-	if d.Single == nil || d.Single.Backend != "azure-foundry" {
+	if d.Single == nil || d.Single.Provider != "azure-foundry" {
 		t.Fatalf("expected azure-foundry, got %+v", d)
 	}
 	if d.Single.Alias != "gpt-5.2-chat" {
@@ -171,24 +171,24 @@ func TestSelect_AzureAliasQueryTags(t *testing.T) {
 
 func TestSelect_NoBindingIs404(t *testing.T) {
 	m := loadGolden(t)
-	_, err := selection.Select("chat", "nomatch-internal", m.Configurations["production"], m.Backends, m.Groups)
+	_, err := selection.Select("chat", "nomatch-internal", m.Configurations["production"], m.Providers, m.Groups)
 	if !errors.Is(err, selection.ErrNoBinding) {
 		t.Fatalf("want ErrNoBinding, got %v", err)
 	}
 	// responses-only-style: a model bound on chat is not served on responses.
-	_, err = selection.Select("responses", "claude-3-5-sonnet", m.Configurations["production"], m.Backends, m.Groups)
+	_, err = selection.Select("responses", "claude-3-5-sonnet", m.Configurations["production"], m.Providers, m.Groups)
 	if !errors.Is(err, selection.ErrNoBinding) {
 		t.Fatalf("cross-protocol miss: want ErrNoBinding, got %v", err)
 	}
 }
 
-func TestSelect_NoCredBackendResolves(t *testing.T) {
+func TestSelect_NoCredProviderResolves(t *testing.T) {
 	m := loadGolden(t)
-	d, err := selection.Select("chat", "qwen2.5-coder:7b", m.Configurations["production"], m.Backends, m.Groups)
+	d, err := selection.Select("chat", "qwen2.5-coder:7b", m.Configurations["production"], m.Providers, m.Groups)
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
-	// qwen backends carry an explicit empty credential ("") — resolves to a
+	// qwen providers carry an explicit empty credential ("") — resolves to a
 	// no-credential target, not an error.
 	if d.Group.Targets[0].Credential != "" {
 		t.Errorf("expected empty credential, got %q", d.Group.Targets[0].Credential)
@@ -198,16 +198,16 @@ func TestSelect_NoCredBackendResolves(t *testing.T) {
 func TestResolveTarget(t *testing.T) {
 	m := loadGolden(t)
 	cfg := m.Configurations["production"]
-	// Per-attempt re-resolution of a group backend with its alias.
-	tgt, err := selection.ResolveTarget("chat", "qwen-standalone", "qwen-coder", cfg, m.Backends)
+	// Per-attempt re-resolution of a group provider with its alias.
+	tgt, err := selection.ResolveTarget("chat", "qwen-standalone", "qwen-coder", cfg, m.Providers)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 	if tgt.BaseURL != "http://192.168.69.21:11434" || tgt.Alias != "qwen-coder" {
 		t.Errorf("resolved = %+v", tgt)
 	}
-	if _, err := selection.ResolveTarget("chat", "ghost", "", cfg, m.Backends); err == nil {
-		t.Fatal("unknown backend: want error")
+	if _, err := selection.ResolveTarget("chat", "ghost", "", cfg, m.Providers); err == nil {
+		t.Fatal("unknown provider: want error")
 	}
 }
 
@@ -215,18 +215,18 @@ func TestMatchPassthrough_ExactAndParams(t *testing.T) {
 	m := loadGolden(t)
 	cfg := m.Configurations["production"]
 
-	pm, err := selection.MatchPassthrough("POST", "/v1/messages/batches", cfg, m.Backends)
+	pm, err := selection.MatchPassthrough("POST", "/v1/messages/batches", cfg, m.Providers)
 	if err != nil {
 		t.Fatalf("passthrough: %v", err)
 	}
-	if pm.Backend != "anthropic" || pm.Family != "messages_batches" {
+	if pm.Provider != "anthropic" || pm.Family != "messages_batches" {
 		t.Errorf("match = %+v", pm)
 	}
 	if pm.Auth.Header != "x-api-key" || pm.Credential != "sk-anthropic" {
 		t.Errorf("auth/cred = %+v %q", pm.Auth, pm.Credential)
 	}
 
-	pm, err = selection.MatchPassthrough("GET", "/v1/messages/batches/batch_123/results", cfg, m.Backends)
+	pm, err = selection.MatchPassthrough("GET", "/v1/messages/batches/batch_123/results", cfg, m.Providers)
 	if err != nil {
 		t.Fatalf("passthrough params: %v", err)
 	}
@@ -236,10 +236,10 @@ func TestMatchPassthrough_ExactAndParams(t *testing.T) {
 }
 
 func TestSelect_ResolutionErrors(t *testing.T) {
-	backends := contractsconfig.BackendsConfig{
+	providers := contractsconfig.ProvidersConfig{
 		"only-responses": {
 			BaseURL:   "http://x",
-			Protocols: map[string]contractsconfig.BackendProtocol{"responses": {Path: "/r"}},
+			Protocols: map[string]contractsconfig.ProviderProtocol{"responses": {Path: "/r"}},
 		},
 	}
 	cases := []struct {
@@ -254,35 +254,35 @@ func TestSelect_ResolutionErrors(t *testing.T) {
 			want: "unknown group",
 		},
 		{
-			name: "unknown backend",
-			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "chat", Backend: "ghost"}}},
-			want: "unknown backend",
+			name: "unknown provider",
+			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "chat", Provider: "ghost"}}},
+			want: "unknown provider",
 		},
 		{
-			name: "backend does not serve protocol",
+			name: "provider does not serve protocol",
 			cfg: contractsconfig.Configuration{
 				Credentials: map[string]string{"only-responses": "k"},
-				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Backend: "only-responses"}},
+				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Provider: "only-responses"}},
 			},
 			want: "does not serve protocol",
 		},
 		{
 			name: "no credential entry",
-			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "responses", Backend: "only-responses"}}},
+			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "responses", Provider: "only-responses"}}},
 			want: "no credential entry",
 		},
 		{
-			name: "group target unknown backend",
+			name: "group target unknown provider",
 			cfg:  contractsconfig.Configuration{Bindings: []contractsconfig.Binding{{Protocol: "chat", Group: "g"}}},
-			grp:  contractsconfig.GroupsConfig{"g": {Targets: []contractsconfig.Target{{Backend: "ghost"}}}},
-			want: "unknown backend",
+			grp:  contractsconfig.GroupsConfig{"g": {Targets: []contractsconfig.Target{{Provider: "ghost"}}}},
+			want: "unknown provider",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := selection.Select("chat", "m", tc.cfg, backends, tc.grp)
+			_, err := selection.Select("chat", "m", tc.cfg, providers, tc.grp)
 			if tc.name == "no credential entry" {
-				_, err = selection.Select("responses", "m", tc.cfg, backends, tc.grp)
+				_, err = selection.Select("responses", "m", tc.cfg, providers, tc.grp)
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want error containing %q, got %v", tc.want, err)
@@ -292,17 +292,17 @@ func TestSelect_ResolutionErrors(t *testing.T) {
 }
 
 func TestMatchPassthrough_ResolutionErrors(t *testing.T) {
-	backends := contractsconfig.BackendsConfig{
+	providers := contractsconfig.ProvidersConfig{
 		"anthropic": {BaseURL: "http://x", Passthrough: map[string]contractsconfig.PassthroughFamily{
 			"batches": {Paths: []contractsconfig.PassthroughPath{{Match: "/b", Methods: []string{"GET"}}}},
 		}},
 	}
-	cfgUnknownBackend := contractsconfig.Configuration{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Backend: "ghost"}}}
-	if _, err := selection.MatchPassthrough("GET", "/b", cfgUnknownBackend, backends); err == nil || !strings.Contains(err.Error(), "unknown backend") {
-		t.Fatalf("unknown backend: %v", err)
+	cfgUnknownProvider := contractsconfig.Configuration{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Provider: "ghost"}}}
+	if _, err := selection.MatchPassthrough("GET", "/b", cfgUnknownProvider, providers); err == nil || !strings.Contains(err.Error(), "unknown provider") {
+		t.Fatalf("unknown provider: %v", err)
 	}
-	cfgUnknownFamily := contractsconfig.Configuration{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "ghost", Backend: "anthropic"}}}
-	if _, err := selection.MatchPassthrough("GET", "/b", cfgUnknownFamily, backends); err == nil || !strings.Contains(err.Error(), "no passthrough family") {
+	cfgUnknownFamily := contractsconfig.Configuration{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "ghost", Provider: "anthropic"}}}
+	if _, err := selection.MatchPassthrough("GET", "/b", cfgUnknownFamily, providers); err == nil || !strings.Contains(err.Error(), "no passthrough family") {
 		t.Fatalf("unknown family: %v", err)
 	}
 }
@@ -312,12 +312,12 @@ func TestMatchPassthrough_MethodAndMiss(t *testing.T) {
 	cfg := m.Configurations["production"]
 
 	// results path is GET-only.
-	_, err := selection.MatchPassthrough("POST", "/v1/messages/batches/b1/results", cfg, m.Backends)
+	_, err := selection.MatchPassthrough("POST", "/v1/messages/batches/b1/results", cfg, m.Providers)
 	if !errors.Is(err, selection.ErrMethodNotAllowed) {
 		t.Fatalf("want ErrMethodNotAllowed, got %v", err)
 	}
 	// unknown path.
-	_, err = selection.MatchPassthrough("GET", "/v1/files", cfg, m.Backends)
+	_, err = selection.MatchPassthrough("GET", "/v1/files", cfg, m.Providers)
 	if !errors.Is(err, selection.ErrNoPassthrough) {
 		t.Fatalf("want ErrNoPassthrough, got %v", err)
 	}

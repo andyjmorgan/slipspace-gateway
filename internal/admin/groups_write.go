@@ -70,7 +70,7 @@ func GroupDetailHandler(store *config.Store) http.Handler {
 //   - 201 Created (body = groupView) / 200 dry-run (PreviewResult)
 //   - 400 parse / empty name / empty body
 //   - 409 when the group name already exists
-//   - 422 on validation failure (e.g. no targets, target backend unknown)
+//   - 422 on validation failure (e.g. no targets, target provider unknown)
 //   - 500 / 503
 func GroupsCreateHandler(store *config.Store, configDir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

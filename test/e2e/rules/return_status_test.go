@@ -23,7 +23,7 @@ configurations:
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
     bindings:
-      - { protocol: chat, models: ["gpt-*"], backend: openai }
+      - { protocol: chat, models: ["gpt-*"], provider: openai }
     rule_names:
       - rate-limit-openai
 

@@ -63,7 +63,7 @@ type RuleAttachment struct {
 
 // ConfigurationDetail is the full read-only view of a single configuration,
 // with every secret redacted at the boundary. Under v2 it carries the
-// per-backend credentials the configuration holds plus its bindings (the
+// per-provider credentials the configuration holds plus its bindings (the
 // router, as data) — generative and passthrough.
 type ConfigurationDetail struct {
 	Name string `json:"name"`
@@ -119,8 +119,8 @@ type RuleDetail struct {
 	UsedBy []string `json:"used_by"`
 }
 
-// ProtocolRow is one row in a BackendDetail's protocol table: the wire shape
-// the backend serves, its upstream path, and the per-protocol auth convention
+// ProtocolRow is one row in a ProviderDetail's protocol table: the wire shape
+// the provider serves, its upstream path, and the per-protocol auth convention
 // (the load-bearing data for debugging the OpenAI-compat surfaces).
 type ProtocolRow struct {
 	Name string `json:"name"`
@@ -132,7 +132,7 @@ type ProtocolRow struct {
 	AuthFormat string `json:"auth_format,omitempty"`
 }
 
-// PassthroughFamilyRow is one opaque passthrough family exposed by a backend:
+// PassthroughFamilyRow is one opaque passthrough family exposed by a provider:
 // a named set of path patterns + methods proxied verbatim, with no GenAI
 // telemetry or body inspection.
 type PassthroughFamilyRow struct {
@@ -151,8 +151,8 @@ type PassthroughPathRow struct {
 	Methods []string `json:"methods"`
 }
 
-// BackendSummary is the row shape returned by the backends list endpoint.
-type BackendSummary struct {
+// ProviderSummary is the row shape returned by the providers list endpoint.
+type ProviderSummary struct {
 	Name string `json:"name"`
 
 	BaseURL string `json:"base_url"`
@@ -162,9 +162,9 @@ type BackendSummary struct {
 	HasPassthrough bool `json:"has_passthrough"`
 }
 
-// BackendDetail is the full read-only view of one backend connection: base URL,
+// ProviderDetail is the full read-only view of one provider connection: base URL,
 // required headers, default query, per-protocol auth, and passthrough families.
-type BackendDetail struct {
+type ProviderDetail struct {
 	Name string `json:"name"`
 
 	BaseURL string `json:"base_url"`
@@ -178,7 +178,7 @@ type BackendDetail struct {
 	Passthrough []PassthroughFamilyRow `json:"passthrough,omitempty"`
 }
 
-// BindingRow is one generative binding: (protocol, models) → backend|group,
+// BindingRow is one generative binding: (protocol, models) → provider|group,
 // with optional per-binding alias/tags. It is the v2 analogue of a route row —
 // the router expressed as configuration data.
 type BindingRow struct {
@@ -188,7 +188,7 @@ type BindingRow struct {
 
 	Models []string `json:"models"`
 
-	Backend string `json:"backend,omitempty"`
+	Provider string `json:"provider,omitempty"`
 
 	Group string `json:"group,omitempty"`
 
@@ -198,13 +198,13 @@ type BindingRow struct {
 }
 
 // PassthroughBindingRow is one passthrough binding: an opaque family exposed on
-// a backend by a configuration.
+// a provider by a configuration.
 type PassthroughBindingRow struct {
 	Configuration string `json:"configuration,omitempty"`
 
 	Family string `json:"family"`
 
-	Backend string `json:"backend"`
+	Provider string `json:"provider"`
 
 	Tags []string `json:"tags,omitempty"`
 }
@@ -277,15 +277,15 @@ func pluralChildren(n int) string {
 	return itoa(n) + " children"
 }
 
-// backendSummaryFromContract folds a loaded backend into the wire summary,
+// providerSummaryFromContract folds a loaded provider into the wire summary,
 // listing its protocol names and whether it exposes any passthrough family.
-func backendSummaryFromContract(name string, b contractsconfig.Backend) BackendSummary {
+func providerSummaryFromContract(name string, b contractsconfig.Provider) ProviderSummary {
 	protos := make([]string, 0, len(b.Protocols))
 	for p := range b.Protocols {
 		protos = append(protos, p)
 	}
 	sort.Strings(protos)
-	return BackendSummary{
+	return ProviderSummary{
 		Name:           name,
 		BaseURL:        b.BaseURL,
 		Protocols:      protos,
@@ -293,10 +293,10 @@ func backendSummaryFromContract(name string, b contractsconfig.Backend) BackendS
 	}
 }
 
-// backendDetailFromContract projects a backend onto the full detail DTO:
+// providerDetailFromContract projects a provider onto the full detail DTO:
 // per-protocol auth conventions + passthrough families, sorted for stable
 // rendering.
-func backendDetailFromContract(name string, b contractsconfig.Backend) BackendDetail {
+func providerDetailFromContract(name string, b contractsconfig.Provider) ProviderDetail {
 	protos := make([]ProtocolRow, 0, len(b.Protocols))
 	for pname, p := range b.Protocols {
 		row := ProtocolRow{Name: pname, Path: p.Path}
@@ -324,7 +324,7 @@ func backendDetailFromContract(name string, b contractsconfig.Backend) BackendDe
 	}
 	sort.Slice(families, func(i, j int) bool { return families[i].Name < families[j].Name })
 
-	return BackendDetail{
+	return ProviderDetail{
 		Name:            name,
 		BaseURL:         b.BaseURL,
 		RequiredHeaders: b.RequiredHeaders,
@@ -344,7 +344,7 @@ func bindingRowsFromConfiguration(configName string, cfg contractsconfig.Configu
 			Configuration: configName,
 			Protocol:      b.Protocol,
 			Models:        append([]string(nil), b.Models...),
-			Backend:       b.Backend,
+			Provider:      b.Provider,
 			Group:         b.Group,
 			Alias:         b.Alias,
 			Tags:          append([]string(nil), b.Tags...),
@@ -355,7 +355,7 @@ func bindingRowsFromConfiguration(configName string, cfg contractsconfig.Configu
 		pass = append(pass, PassthroughBindingRow{
 			Configuration: configName,
 			Family:        pb.Family,
-			Backend:       pb.Backend,
+			Provider:      pb.Provider,
 			Tags:          append([]string(nil), pb.Tags...),
 		})
 	}

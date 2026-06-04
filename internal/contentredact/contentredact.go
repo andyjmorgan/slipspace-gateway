@@ -7,7 +7,7 @@
 // the primary guard on content remains the opt-in flag (default off) and
 // the connector spool being the system of record. This is defence in depth
 // for the opt-in case so an obvious secret pasted into a prompt does not
-// land verbatim on a span/log backend.
+// land verbatim on a span/log provider.
 package contentredact
 
 import "regexp"

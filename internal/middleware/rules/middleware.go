@@ -53,7 +53,7 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 		ar, _ := auth.FromContext(ctx)
 		captured, _ := bodycapture.FromContext(ctx)
 
-		// v2: the selection middleware seeds the MutableState (backend,
+		// v2: the selection middleware seeds the MutableState (provider,
 		// protocol, path params, resilience PolicyRef) before rules run, so
 		// reuse it. The matchFrom fallback covers callers that drive the
 		// middleware without a pre-seeded state (legacy tests).

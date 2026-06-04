@@ -18,7 +18,7 @@ const pathConnectors = "/api/v1/config/connectors/"
 // secret_ref indirections (env:NAME / file:/path) resolved at runtime, so the
 // contract type serialises directly on read and decodes directly on write —
 // no mask/write-back is needed. ConnectorsConfig is a slice (each entry carries
-// its own Name), unlike the map-keyed backends/groups.
+// its own Name), unlike the map-keyed providers/groups.
 
 // ConnectorsListHandler serves GET /api/v1/config/connectors in name order.
 func ConnectorsListHandler(store *config.Store) http.Handler {

@@ -14,16 +14,16 @@ import (
 func TestValidate_DuplicateAPIKeyID(t *testing.T) {
 	id := uuid.New()
 	rc := &ResolvedConfig{
-		Backends: contractsconfig.BackendsConfig{
+		Providers: contractsconfig.ProvidersConfig{
 			"openai": {
 				BaseURL:   "https://api.openai.com",
-				Protocols: map[string]contractsconfig.BackendProtocol{"chat": {Path: "/v1/chat/completions"}},
+				Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Path: "/v1/chat/completions"}},
 			},
 		},
 		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials: map[string]string{"openai": "sk"},
-				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"}},
+				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "openai"}},
 			},
 		},
 		APIKeys: contractsconfig.APIKeysConfig{
@@ -41,16 +41,16 @@ func TestValidate_DuplicateAPIKeyID(t *testing.T) {
 func TestValidate_DistinctAPIKeyIDsOK(t *testing.T) {
 	id := uuid.New()
 	rc := &ResolvedConfig{
-		Backends: contractsconfig.BackendsConfig{
+		Providers: contractsconfig.ProvidersConfig{
 			"openai": {
 				BaseURL:   "https://api.openai.com",
-				Protocols: map[string]contractsconfig.BackendProtocol{"chat": {Path: "/v1/chat/completions"}},
+				Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Path: "/v1/chat/completions"}},
 			},
 		},
 		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials: map[string]string{"openai": "sk"},
-				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"}},
+				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "openai"}},
 			},
 		},
 		APIKeys: contractsconfig.APIKeysConfig{

@@ -41,8 +41,8 @@ groups:
       half_open_success_threshold: 2
       minimum_throughput: 2
     targets:
-      - { backend: openai }
-      - { backend: anthropic }
+      - { provider: openai }
+      - { provider: anthropic }
 `
 
 // TestCircuitBreaker_TripsAndSkipsAfterFailures — fire 2 requests

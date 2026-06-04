@@ -196,7 +196,7 @@ func run(ctx context.Context) error {
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
 		"config_dir", env.ConfigDir,
-		"backends", len(resolved.Backends),
+		"providers", len(resolved.Providers),
 		"configurations", len(resolved.Configurations),
 		"api_keys", len(resolved.APIKeys),
 		"admin_enabled", resolved.Admin != nil && resolved.Admin.Enabled,
@@ -388,8 +388,8 @@ func startAdmin(ctx context.Context, store *config.Store, obs *observability.Pro
 		return
 	}
 
-	providers := make([]string, 0, len(resolved.Backends))
-	for name := range resolved.Backends {
+	providers := make([]string, 0, len(resolved.Providers))
+	for name := range resolved.Providers {
 		providers = append(providers, name)
 	}
 

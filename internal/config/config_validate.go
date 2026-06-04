@@ -10,7 +10,7 @@ import (
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
 
-// knownProtocols is the set of generative protocol names a backend may serve
+// knownProtocols is the set of generative protocol names a provider may serve
 // and a binding may target. Passthrough families are validated separately.
 var knownProtocols = map[string]struct{}{
 	contractsconfig.ProtocolChat:            {},
@@ -20,8 +20,8 @@ var knownProtocols = map[string]struct{}{
 	contractsconfig.ProtocolEmbeddings:      {},
 }
 
-// Validate checks every cross-block invariant of the v2 config: backend and
-// group definitions, binding references (backend/group exist and serve the
+// Validate checks every cross-block invariant of the v2 config: provider and
+// group definitions, binding references (provider/group exist and serve the
 // protocol — protocol-preserving), model-pattern sanity, passthrough family
 // references, rule/connector references, and api-key integrity. It runs before
 // buildIndexes so the indexes are only ever built over a valid tree.
@@ -29,7 +29,7 @@ func (r *ResolvedConfig) Validate() error {
 	if len(r.Configurations) == 0 {
 		return ErrNoConfigurations
 	}
-	if err := r.validateBackends(); err != nil {
+	if err := r.validateProviders(); err != nil {
 		return err
 	}
 	if err := r.validateGroups(); err != nil {
@@ -41,36 +41,36 @@ func (r *ResolvedConfig) Validate() error {
 	return r.validateConfigurations()
 }
 
-func (r *ResolvedConfig) validateBackends() error {
-	for name, be := range r.Backends {
+func (r *ResolvedConfig) validateProviders() error {
+	for name, be := range r.Providers {
 		if be.BaseURL == "" {
-			return fmt.Errorf("%w: backend %q: base_url is required", ErrValidation, name)
+			return fmt.Errorf("%w: provider %q: base_url is required", ErrValidation, name)
 		}
 		if len(be.Protocols) == 0 && len(be.Passthrough) == 0 {
-			return fmt.Errorf("%w: backend %q: declares no protocols or passthrough families", ErrValidation, name)
+			return fmt.Errorf("%w: provider %q: declares no protocols or passthrough families", ErrValidation, name)
 		}
 		for proto, def := range be.Protocols {
 			if _, ok := knownProtocols[proto]; !ok {
-				return fmt.Errorf("%w: backend %q: unknown protocol %q", ErrValidation, name, proto)
+				return fmt.Errorf("%w: provider %q: unknown protocol %q", ErrValidation, name, proto)
 			}
 			if err := validateAuth(def.Auth); err != nil {
-				return fmt.Errorf("%w: backend %q protocol %q: %v", ErrValidation, name, proto, err)
+				return fmt.Errorf("%w: provider %q protocol %q: %v", ErrValidation, name, proto, err)
 			}
 		}
 		for fam, def := range be.Passthrough {
 			if len(def.Paths) == 0 {
-				return fmt.Errorf("%w: backend %q passthrough %q: declares no paths", ErrValidation, name, fam)
+				return fmt.Errorf("%w: provider %q passthrough %q: declares no paths", ErrValidation, name, fam)
 			}
 			for i, p := range def.Paths {
 				if p.Match == "" {
-					return fmt.Errorf("%w: backend %q passthrough %q paths[%d]: match is required", ErrValidation, name, fam, i)
+					return fmt.Errorf("%w: provider %q passthrough %q paths[%d]: match is required", ErrValidation, name, fam, i)
 				}
 				if len(p.Methods) == 0 {
-					return fmt.Errorf("%w: backend %q passthrough %q paths[%d]: methods is required", ErrValidation, name, fam, i)
+					return fmt.Errorf("%w: provider %q passthrough %q paths[%d]: methods is required", ErrValidation, name, fam, i)
 				}
 			}
 			if err := validateAuth(def.Auth); err != nil {
-				return fmt.Errorf("%w: backend %q passthrough %q: %v", ErrValidation, name, fam, err)
+				return fmt.Errorf("%w: provider %q passthrough %q: %v", ErrValidation, name, fam, err)
 			}
 		}
 	}
@@ -79,7 +79,7 @@ func (r *ResolvedConfig) validateBackends() error {
 
 // validateAuth enforces the same auth_format invariant as v1: a format string
 // must carry exactly one {key} placeholder, and a format requires a header.
-func validateAuth(a *contractsconfig.BackendAuth) error {
+func validateAuth(a *contractsconfig.ProviderAuth) error {
 	if a == nil {
 		return nil
 	}
@@ -100,11 +100,11 @@ func (r *ResolvedConfig) validateGroups() error {
 			return fmt.Errorf("%w: group %q: declares no targets", ErrValidation, name)
 		}
 		for i, t := range g.Targets {
-			if t.Backend == "" {
-				return fmt.Errorf("%w: group %q targets[%d]: backend is required", ErrValidation, name, i)
+			if t.Provider == "" {
+				return fmt.Errorf("%w: group %q targets[%d]: provider is required", ErrValidation, name, i)
 			}
-			if _, ok := r.Backends[t.Backend]; !ok {
-				return fmt.Errorf("%w: group %q targets[%d]: unknown backend %q", ErrValidation, name, i, t.Backend)
+			if _, ok := r.Providers[t.Provider]; !ok {
+				return fmt.Errorf("%w: group %q targets[%d]: unknown provider %q", ErrValidation, name, i, t.Provider)
 			}
 		}
 	}
@@ -165,21 +165,21 @@ func (r *ResolvedConfig) validateConfigurations() error {
 	}
 
 	for name, cfg := range r.Configurations {
-		for backend := range cfg.Credentials {
-			if _, ok := r.Backends[backend]; !ok {
-				return fmt.Errorf("%w: configuration %q credentials reference unknown backend %q", ErrValidation, name, backend)
+		for provider := range cfg.Credentials {
+			if _, ok := r.Providers[provider]; !ok {
+				return fmt.Errorf("%w: configuration %q credentials reference unknown provider %q", ErrValidation, name, provider)
 			}
 		}
 		if err := r.validateBindings(name, cfg); err != nil {
 			return err
 		}
 		for i, pb := range cfg.PassthroughBindings {
-			be, ok := r.Backends[pb.Backend]
+			be, ok := r.Providers[pb.Provider]
 			if !ok {
-				return fmt.Errorf("%w: configuration %q passthrough_bindings[%d]: unknown backend %q", ErrValidation, name, i, pb.Backend)
+				return fmt.Errorf("%w: configuration %q passthrough_bindings[%d]: unknown provider %q", ErrValidation, name, i, pb.Provider)
 			}
 			if _, ok := be.Passthrough[pb.Family]; !ok {
-				return fmt.Errorf("%w: configuration %q passthrough_bindings[%d]: backend %q has no passthrough family %q", ErrValidation, name, i, pb.Backend, pb.Family)
+				return fmt.Errorf("%w: configuration %q passthrough_bindings[%d]: provider %q has no passthrough family %q", ErrValidation, name, i, pb.Provider, pb.Family)
 			}
 		}
 		for _, ruleName := range cfg.RuleNames {
@@ -197,7 +197,7 @@ func (r *ResolvedConfig) validateConfigurations() error {
 }
 
 // validateBindings checks one configuration's generative bindings: each
-// targets exactly one of backend/group, references resolve, the destination
+// targets exactly one of provider/group, references resolve, the destination
 // serves the binding's protocol (protocol-preserving), model patterns are
 // well-formed, and no two bindings on the same protocol collide on an exact
 // model or a duplicate catch-all.
@@ -208,18 +208,18 @@ func (r *ResolvedConfig) validateBindings(name string, cfg contractsconfig.Confi
 		if _, ok := knownProtocols[b.Protocol]; !ok {
 			return fmt.Errorf("%w: configuration %q bindings[%d]: unknown protocol %q", ErrValidation, name, i, b.Protocol)
 		}
-		hasBackend := b.Backend != ""
+		hasProvider := b.Provider != ""
 		hasGroup := b.Group != ""
-		if hasBackend == hasGroup {
-			return fmt.Errorf("%w: configuration %q bindings[%d]: set exactly one of backend or group", ErrValidation, name, i)
+		if hasProvider == hasGroup {
+			return fmt.Errorf("%w: configuration %q bindings[%d]: set exactly one of provider or group", ErrValidation, name, i)
 		}
-		if hasBackend {
-			be, ok := r.Backends[b.Backend]
+		if hasProvider {
+			be, ok := r.Providers[b.Provider]
 			if !ok {
-				return fmt.Errorf("%w: configuration %q bindings[%d]: unknown backend %q", ErrValidation, name, i, b.Backend)
+				return fmt.Errorf("%w: configuration %q bindings[%d]: unknown provider %q", ErrValidation, name, i, b.Provider)
 			}
 			if _, ok := be.Protocols[b.Protocol]; !ok {
-				return fmt.Errorf("%w: configuration %q bindings[%d]: backend %q does not serve protocol %q", ErrValidation, name, i, b.Backend, b.Protocol)
+				return fmt.Errorf("%w: configuration %q bindings[%d]: provider %q does not serve protocol %q", ErrValidation, name, i, b.Provider, b.Protocol)
 			}
 		} else {
 			g, ok := r.Groups[b.Group]
@@ -227,9 +227,9 @@ func (r *ResolvedConfig) validateBindings(name string, cfg contractsconfig.Confi
 				return fmt.Errorf("%w: configuration %q bindings[%d]: unknown group %q", ErrValidation, name, i, b.Group)
 			}
 			for _, t := range g.Targets {
-				be := r.Backends[t.Backend] // existence already checked in validateGroups
+				be := r.Providers[t.Provider] // existence already checked in validateGroups
 				if _, ok := be.Protocols[b.Protocol]; !ok {
-					return fmt.Errorf("%w: configuration %q bindings[%d]: group %q target %q does not serve protocol %q (groups are protocol-preserving)", ErrValidation, name, i, b.Group, t.Backend, b.Protocol)
+					return fmt.Errorf("%w: configuration %q bindings[%d]: group %q target %q does not serve protocol %q (groups are protocol-preserving)", ErrValidation, name, i, b.Group, t.Provider, b.Protocol)
 				}
 			}
 		}

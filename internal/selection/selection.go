@@ -1,5 +1,5 @@
 // Package selection resolves a request to its upstream destination under the
-// v2 config model (backends + bindings). It replaces v1's path→(provider,
+// v2 config model (providers + bindings). It replaces v1's path→(provider,
 // endpoint) route table and the changeProvider/changeUrl/changeApiKey/
 // useResiliencePolicy rule actions: routing is now config data.
 //
@@ -8,7 +8,7 @@
 //   - Select — generative protocols. Given (protocol, model, configuration) it
 //     walks the configuration's bindings and returns the resolved Destination
 //     (a single target or a resilience group), with effective transport
-//     composed from backend ∪ per-target overrides.
+//     composed from provider ∪ per-target overrides.
 //   - MatchPassthrough — opaque/stateful families (batches, files). Path-pattern
 //     matched, not model-keyed; the request is proxied verbatim with rewrites.
 //
@@ -50,41 +50,41 @@ type Destination struct {
 	// Tags are the binding's tags, applied to the request for telemetry.
 	Tags []string
 
-	// Single is the resolved single-backend target (nil when Group is set).
+	// Single is the resolved single-provider target (nil when Group is set).
 	Single *Target
 
 	// Group is the resolved resilience group (nil when Single is set).
 	Group *Group
 }
 
-// Target is a fully resolved upstream destination: a backend connection with
+// Target is a fully resolved upstream destination: a provider connection with
 // the effective transport for one protocol, the model alias to apply, and the
-// credential the configuration holds for the backend. Everything the forwarder
+// credential the configuration holds for the provider. Everything the forwarder
 // needs to mint the request, with no further config lookups.
 type Target struct {
-	// Backend is the backend name (telemetry label / diagnostics).
-	Backend string
+	// Provider is the provider name (telemetry label / diagnostics).
+	Provider string
 
-	// BaseURL is the backend connection root.
+	// BaseURL is the provider connection root.
 	BaseURL string
 
 	// Path is the effective upstream path for the protocol (target override
-	// wins over the backend protocol path).
+	// wins over the provider protocol path).
 	Path string
 
 	// Auth is the effective credential convention for the protocol; nil means
 	// "provider-native default" (resolved downstream at the single mint site).
-	Auth *contractsconfig.BackendAuth
+	Auth *contractsconfig.ProviderAuth
 
-	// RequiredHeaders are the backend's always-injected headers.
+	// RequiredHeaders are the provider's always-injected headers.
 	RequiredHeaders map[string]string
 
-	// Query is the effective query params (backend ∪ target override, target
+	// Query is the effective query params (provider ∪ target override, target
 	// wins).
 	Query map[string]string
 
 	// Credential is the upstream credential the configuration holds for this
-	// backend ("" = no-credential backend: strip and forward).
+	// provider ("" = no-credential provider: strip and forward).
 	Credential string
 
 	// Alias, when non-empty, is the model name to rewrite the request body to
@@ -108,7 +108,7 @@ type Group struct {
 	FailureStatusCodes []int
 
 	// CircuitBreaker is the group-wide breaker config (breaker state is keyed
-	// per backend downstream).
+	// per provider downstream).
 	CircuitBreaker *resilience.CircuitBreakerConfig
 
 	// StrictWeights, in load_balance mode, makes the first weighted pick final.
@@ -123,13 +123,13 @@ type Group struct {
 }
 
 // Select resolves the destination for a generative request. It returns
-// ErrNoBinding when no binding matches; resolution errors (unknown backend /
+// ErrNoBinding when no binding matches; resolution errors (unknown provider /
 // group / protocol-not-served) are programming/validation errors that config
 // validation rejects before runtime, surfaced here defensively.
 func Select(
 	protocol, model string,
 	cfg contractsconfig.Configuration,
-	backends contractsconfig.BackendsConfig,
+	providers contractsconfig.ProvidersConfig,
 	groups contractsconfig.GroupsConfig,
 ) (Destination, error) {
 	for _, b := range cfg.Bindings {
@@ -156,7 +156,7 @@ func Select(
 				Targets:                      make([]Target, 0, len(grp.Targets)),
 			}
 			for _, gt := range grp.Targets {
-				t, err := resolveTarget(protocol, cfg, backends, gt)
+				t, err := resolveTarget(protocol, cfg, providers, gt)
 				if err != nil {
 					return Destination{}, err
 				}
@@ -165,11 +165,11 @@ func Select(
 			return Destination{Protocol: protocol, Tags: b.Tags, Group: &resolved}, nil
 
 		default:
-			t, err := resolveTarget(protocol, cfg, backends, contractsconfig.Target{
-				Backend: b.Backend,
-				Alias:   b.Alias,
-				Query:   b.Query,
-				Path:    b.Path,
+			t, err := resolveTarget(protocol, cfg, providers, contractsconfig.Target{
+				Provider: b.Provider,
+				Alias:    b.Alias,
+				Query:    b.Query,
+				Path:     b.Path,
 			})
 			if err != nil {
 				return Destination{}, err
@@ -180,34 +180,34 @@ func Select(
 	return Destination{}, ErrNoBinding
 }
 
-// ResolveTarget resolves a single backend into a fully resolved Target for the
+// ResolveTarget resolves a single provider into a fully resolved Target for the
 // protocol, using the configuration's credentials and the given model alias.
 // The request pipeline calls it to (re)resolve the destination for a chosen
-// backend — including per-attempt during group orchestration, where the
-// orchestrator picks the backend and the pipeline re-resolves its transport.
+// provider — including per-attempt during group orchestration, where the
+// orchestrator picks the provider and the pipeline re-resolves its transport.
 func ResolveTarget(
-	protocol, backend, alias string,
+	protocol, provider, alias string,
 	cfg contractsconfig.Configuration,
-	backends contractsconfig.BackendsConfig,
+	providers contractsconfig.ProvidersConfig,
 ) (Target, error) {
-	return resolveTarget(protocol, cfg, backends, contractsconfig.Target{Backend: backend, Alias: alias})
+	return resolveTarget(protocol, cfg, providers, contractsconfig.Target{Provider: provider, Alias: alias})
 }
 
-// resolveTarget composes a contracts Target against its backend and the
+// resolveTarget composes a contracts Target against its provider and the
 // configuration's credentials into a fully resolved Target for one protocol.
 func resolveTarget(
 	protocol string,
 	cfg contractsconfig.Configuration,
-	backends contractsconfig.BackendsConfig,
+	providers contractsconfig.ProvidersConfig,
 	tgt contractsconfig.Target,
 ) (Target, error) {
-	be, ok := backends[tgt.Backend]
+	be, ok := providers[tgt.Provider]
 	if !ok {
-		return Target{}, fmt.Errorf("selection: target references unknown backend %q", tgt.Backend)
+		return Target{}, fmt.Errorf("selection: target references unknown provider %q", tgt.Provider)
 	}
 	proto, ok := be.Protocols[protocol]
 	if !ok {
-		return Target{}, fmt.Errorf("selection: backend %q does not serve protocol %q", tgt.Backend, protocol)
+		return Target{}, fmt.Errorf("selection: provider %q does not serve protocol %q", tgt.Provider, protocol)
 	}
 
 	path := proto.Path
@@ -215,13 +215,13 @@ func resolveTarget(
 		path = tgt.Path
 	}
 
-	cred, hasCred := cfg.Credentials[tgt.Backend]
+	cred, hasCred := cfg.Credentials[tgt.Provider]
 	if !hasCred {
-		return Target{}, fmt.Errorf("selection: configuration holds no credential entry for backend %q", tgt.Backend)
+		return Target{}, fmt.Errorf("selection: configuration holds no credential entry for provider %q", tgt.Provider)
 	}
 
 	return Target{
-		Backend:         tgt.Backend,
+		Provider:        tgt.Provider,
 		BaseURL:         be.BaseURL,
 		Path:            path,
 		Auth:            proto.Auth,
@@ -271,28 +271,28 @@ func matchesModelPatterns(model string, patterns []string) bool {
 }
 
 // PassthroughMatch is the resolved outcome of an opaque passthrough family
-// match. The request is proxied verbatim to Backend with the family's auth and
+// match. The request is proxied verbatim to Provider with the family's auth and
 // any captured path params; no typed parsing, no GenAI telemetry, no capture.
 type PassthroughMatch struct {
 	// Family is the passthrough family name (telemetry / diagnostics).
 	Family string
 
-	// Backend is the backend name the family is bound to.
-	Backend string
+	// Provider is the provider name the family is bound to.
+	Provider string
 
-	// BaseURL is the backend connection root.
+	// BaseURL is the provider connection root.
 	BaseURL string
 
 	// Auth is the family's credential convention; nil = provider-native.
-	Auth *contractsconfig.BackendAuth
+	Auth *contractsconfig.ProviderAuth
 
-	// RequiredHeaders are the backend's always-injected headers.
+	// RequiredHeaders are the provider's always-injected headers.
 	RequiredHeaders map[string]string
 
-	// Query is the backend's default query params.
+	// Query is the provider's default query params.
 	Query map[string]string
 
-	// Credential is the configuration's credential for the backend.
+	// Credential is the configuration's credential for the provider.
 	Credential string
 
 	// Tags are the passthrough binding's tags.
@@ -310,19 +310,19 @@ type PassthroughMatch struct {
 func MatchPassthrough(
 	method, path string,
 	cfg contractsconfig.Configuration,
-	backends contractsconfig.BackendsConfig,
+	providers contractsconfig.ProvidersConfig,
 ) (PassthroughMatch, error) {
 	up := strings.ToUpper(method)
 	methodSeen := false
 
 	for _, pb := range cfg.PassthroughBindings {
-		be, ok := backends[pb.Backend]
+		be, ok := providers[pb.Provider]
 		if !ok {
-			return PassthroughMatch{}, fmt.Errorf("selection: passthrough binding references unknown backend %q", pb.Backend)
+			return PassthroughMatch{}, fmt.Errorf("selection: passthrough binding references unknown provider %q", pb.Provider)
 		}
 		fam, ok := be.Passthrough[pb.Family]
 		if !ok {
-			return PassthroughMatch{}, fmt.Errorf("selection: backend %q has no passthrough family %q", pb.Backend, pb.Family)
+			return PassthroughMatch{}, fmt.Errorf("selection: provider %q has no passthrough family %q", pb.Provider, pb.Family)
 		}
 		for _, pp := range fam.Paths {
 			params, matched := matchPath(pp.Match, path)
@@ -333,10 +333,10 @@ func MatchPassthrough(
 				methodSeen = true
 				continue
 			}
-			cred := cfg.Credentials[pb.Backend]
+			cred := cfg.Credentials[pb.Provider]
 			return PassthroughMatch{
 				Family:          pb.Family,
-				Backend:         pb.Backend,
+				Provider:        pb.Provider,
 				BaseURL:         be.BaseURL,
 				Auth:            fam.Auth,
 				RequiredHeaders: be.RequiredHeaders,

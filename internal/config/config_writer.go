@@ -12,7 +12,7 @@ import (
 // writableBlockOrder is the stable order blocks are emitted within a file, so a
 // rewrite is deterministic (same content -> same bytes).
 var writableBlockOrder = []string{
-	keyBackends,
+	keyProviders,
 	keyGroups,
 	keyConfigurations,
 	keyAPIKeys,
@@ -28,7 +28,7 @@ var writableBlockOrder = []string{
 // preserved). admin/telemetry are still re-emitted when they share a file with
 // an editable block, so a rewrite never drops them.
 var editableBlocks = map[string]bool{
-	keyBackends:       true,
+	keyProviders:      true,
 	keyGroups:         true,
 	keyConfigurations: true,
 	keyAPIKeys:        true,
@@ -39,8 +39,8 @@ var editableBlocks = map[string]bool{
 // defaultBlockFile routes a block with no recorded SourceFiles origin (e.g. one
 // first introduced through the admin API) to a canonical file.
 var defaultBlockFile = map[string]string{
-	keyBackends:       filenameBackends,
-	keyGroups:         filenameBackends,
+	keyProviders:      filenameProviders,
+	keyGroups:         filenameProviders,
 	keyConfigurations: filenamePolicy,
 	keyAPIKeys:        filenamePolicy,
 	keyRules:          filenamePolicy,
@@ -148,7 +148,7 @@ func WritePolicyYAML(dir string, resolved *ResolvedConfig) error {
 func blockPresence(r *ResolvedConfig) map[string]bool {
 	_, telemetryAuthored := r.SourceFiles[keyTelemetry]
 	return map[string]bool{
-		keyBackends:       len(r.Backends) > 0,
+		keyProviders:      len(r.Providers) > 0,
 		keyGroups:         len(r.Groups) > 0,
 		keyConfigurations: len(r.Configurations) > 0,
 		keyAPIKeys:        len(r.APIKeys) > 0,
@@ -162,8 +162,8 @@ func blockPresence(r *ResolvedConfig) map[string]bool {
 // appendResolvedBlock attaches one named block of resolved onto root.
 func appendResolvedBlock(root *yaml.Node, block string, r *ResolvedConfig) {
 	switch block {
-	case keyBackends:
-		appendBlock(root, keyBackends, r.Backends)
+	case keyProviders:
+		appendBlock(root, keyProviders, r.Providers)
 	case keyGroups:
 		appendBlock(root, keyGroups, r.Groups)
 	case keyConfigurations:

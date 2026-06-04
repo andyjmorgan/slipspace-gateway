@@ -10,14 +10,14 @@ import (
 
 // TestBuildDestination_CredentialModes covers the three credential branches
 // of the v2 single mint site: passthrough forwards the inbound Authorization,
-// managed with a credential sets the backend's auth header and strips the
+// managed with a credential sets the provider's auth header and strips the
 // others, and managed with an empty credential strips everything.
 func TestBuildDestination_CredentialModes(t *testing.T) {
 	target := selection.Target{ //nolint:gosec // synthetic test fixture, not a real credential
-		Backend:    "anthropic",
+		Provider:   "anthropic",
 		BaseURL:    "https://api.anthropic.com",
 		Path:       "/v1/messages",
-		Auth:       &contractsconfig.BackendAuth{Header: "x-api-key", Format: "{key}"},
+		Auth:       &contractsconfig.ProviderAuth{Header: "x-api-key", Format: "{key}"},
 		Credential: "sk-upstream-anthropic",
 	}
 
@@ -34,7 +34,7 @@ func TestBuildDestination_CredentialModes(t *testing.T) {
 		}
 	})
 
-	t.Run("managed sets backend auth header and drops the others", func(t *testing.T) {
+	t.Run("managed sets provider auth header and drops the others", func(t *testing.T) {
 		dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "Bearer client-token")
 		if err != nil {
 			t.Fatalf("buildDestination: %v", err)
@@ -43,7 +43,7 @@ func TestBuildDestination_CredentialModes(t *testing.T) {
 			t.Errorf("x-api-key = %q, want minted credential", got)
 		}
 		// Authorization must be on the drop list so the inbound Bearer never
-		// leaks to a backend that authenticates via x-api-key.
+		// leaks to a provider that authenticates via x-api-key.
 		if !contains(dest.DropHeaders, "Authorization") {
 			t.Errorf("DropHeaders = %v, want Authorization dropped", dest.DropHeaders)
 		}
@@ -61,20 +61,20 @@ func TestBuildDestination_CredentialModes(t *testing.T) {
 				t.Errorf("DropHeaders = %v, want %q dropped", dest.DropHeaders, h)
 			}
 			if v := dest.OutgoingHeaders.Get(h); v != "" {
-				t.Errorf("%s = %q, want unset for no-credential backend", h, v)
+				t.Errorf("%s = %q, want unset for no-credential provider", h, v)
 			}
 		}
 	})
 }
 
 // TestBuildDestination_PathAndQuery verifies path-param substitution (Gemini
-// {model}) and that the backend's default query is applied.
+// {model}) and that the provider's default query is applied.
 func TestBuildDestination_PathAndQuery(t *testing.T) {
 	target := selection.Target{
-		Backend:    "gemini",
+		Provider:   "gemini",
 		BaseURL:    "https://generativelanguage.googleapis.com",
 		Path:       "/v1beta/models/{model}:{op}",
-		Auth:       &contractsconfig.BackendAuth{Header: "x-goog-api-key", Format: "{key}"},
+		Auth:       &contractsconfig.ProviderAuth{Header: "x-goog-api-key", Format: "{key}"},
 		Query:      map[string]string{"alt": "sse"},
 		Credential: "gm-key",
 	}

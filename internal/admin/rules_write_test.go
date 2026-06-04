@@ -16,7 +16,7 @@ import (
 )
 
 // writableFixture loads the config-dev tree into a fresh tmp dir so
-// each test gets its own writable policy.yaml + the backends.yaml +
+// each test gets its own writable policy.yaml + the providers.yaml +
 // admin.yaml siblings the loader needs. Returns the dir and the
 // loaded Store, ready for the mutation pipeline to run end-to-end.
 func writableFixture(t *testing.T) (string, *config.Store) {
@@ -27,7 +27,7 @@ func writableFixture(t *testing.T) (string, *config.Store) {
 		t.Fatalf("abs: %v", err)
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"policy.yaml", "backends.yaml", "admin.yaml"} {
+	for _, name := range []string{"policy.yaml", "providers.yaml", "admin.yaml"} {
 		body, err := os.ReadFile(filepath.Join(src, name)) //nolint:gosec // path is the test fixture under config-dev
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

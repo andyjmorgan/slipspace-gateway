@@ -12,8 +12,8 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 )
 
-const v2Backends = `
-backends:
+const v2Providers = `
+providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -34,8 +34,8 @@ groups:
   lb:
     mode: load_balance
     targets:
-      - { backend: qwen-a, alias: m-a }
-      - { backend: qwen-b, alias: m-b }
+      - { provider: qwen-a, alias: m-a }
+      - { provider: qwen-b, alias: m-b }
 `
 
 const v2Policy = `
@@ -47,11 +47,11 @@ configurations:
       qwen-a: ""
       qwen-b: ""
     bindings:
-      - { protocol: chat, models: ["gpt-*"],     backend: openai }
-      - { protocol: chat, models: ["claude-*"],  backend: anthropic }
+      - { protocol: chat, models: ["gpt-*"],     provider: openai }
+      - { protocol: chat, models: ["claude-*"],  provider: anthropic }
       - { protocol: chat, models: ["qwen-coder"], group: lb }
     passthrough_bindings:
-      - { family: messages_batches, backend: anthropic }
+      - { family: messages_batches, provider: anthropic }
     rule_names: [tag-codex]
     tags: { tier: production }
     connector_bindings:
@@ -80,8 +80,8 @@ func writeDir(t *testing.T, files map[string]string) string {
 
 func TestLoad_HappyPath(t *testing.T) {
 	dir := writeDir(t, map[string]string{
-		"backends.yaml": v2Backends,
-		"policy.yaml":   v2Policy,
+		"providers.yaml": v2Providers,
+		"policy.yaml":    v2Policy,
 	})
 	r, err := Load(context.Background(), dir)
 	if err != nil {
@@ -97,8 +97,8 @@ func TestLoad_HappyPath(t *testing.T) {
 	if r.Groups["lb"].Targets[0].Alias != "m-a" {
 		t.Errorf("group = %+v", r.Groups["lb"])
 	}
-	if r.Backends["anthropic"].Passthrough["messages_batches"].Paths[0].Match != "/v1/messages/batches" {
-		t.Errorf("passthrough = %+v", r.Backends["anthropic"].Passthrough)
+	if r.Providers["anthropic"].Passthrough["messages_batches"].Paths[0].Match != "/v1/messages/batches" {
+		t.Errorf("passthrough = %+v", r.Providers["anthropic"].Passthrough)
 	}
 	if r.RuleIndex["tag-codex"] == nil || len(r.PerConfigurationRules["production"]) != 1 {
 		t.Errorf("rule index / per-config = %+v / %+v", r.RuleIndex, r.PerConfigurationRules)
@@ -110,8 +110,8 @@ func TestLoad_HappyPath(t *testing.T) {
 
 func TestLoad_DuplicateKeyAcrossFiles(t *testing.T) {
 	dir := writeDir(t, map[string]string{
-		"a.yaml":      v2Backends,
-		"b.yaml":      "backends:\n  x: { base_url: http://x, protocols: { chat: {} } }\n",
+		"a.yaml":      v2Providers,
+		"b.yaml":      "providers:\n  x: { base_url: http://x, protocols: { chat: {} } }\n",
 		"policy.yaml": v2Policy,
 	})
 	_, err := Load(context.Background(), dir)
@@ -124,7 +124,7 @@ func TestLoad_EmptyAndParseErrors(t *testing.T) {
 	if _, err := Load(context.Background(), t.TempDir()); !errors.Is(err, ErrEmptyDirectory) {
 		t.Fatalf("empty dir: want ErrEmptyDirectory, got %v", err)
 	}
-	dir := writeDir(t, map[string]string{"bad.yaml": "backends: {{{not yaml"})
+	dir := writeDir(t, map[string]string{"bad.yaml": "providers: {{{not yaml"})
 	if _, err := Load(context.Background(), dir); err == nil {
 		t.Fatal("parse error: want error, got nil")
 	}
@@ -138,9 +138,9 @@ func TestLoad_EmptyAndParseErrors(t *testing.T) {
 func TestLoad_AdminTelemetryAndValidateError(t *testing.T) {
 	// admin + telemetry blocks merge from a third file.
 	dir := writeDir(t, map[string]string{
-		"backends.yaml": v2Backends,
-		"policy.yaml":   v2Policy,
-		"admin.yaml":    "admin:\n  enabled: true\n  bind_addr: \"127.0.0.1:8099\"\n  password: pw\ntelemetry:\n  capture_content: false\n",
+		"providers.yaml": v2Providers,
+		"policy.yaml":    v2Policy,
+		"admin.yaml":     "admin:\n  enabled: true\n  bind_addr: \"127.0.0.1:8099\"\n  password: pw\ntelemetry:\n  capture_content: false\n",
 	})
 	r, err := Load(context.Background(), dir)
 	if err != nil {
@@ -152,7 +152,7 @@ func TestLoad_AdminTelemetryAndValidateError(t *testing.T) {
 
 	// A config that fails Validate surfaces the error through Load.
 	bad := writeDir(t, map[string]string{
-		"c.yaml": "configurations:\n  p:\n    bindings:\n      - { protocol: chat, backend: ghost }\n",
+		"c.yaml": "configurations:\n  p:\n    bindings:\n      - { protocol: chat, provider: ghost }\n",
 	})
 	if _, err := Load(context.Background(), bad); err == nil {
 		t.Fatal("validate error: want error, got nil")
@@ -162,17 +162,17 @@ func TestLoad_AdminTelemetryAndValidateError(t *testing.T) {
 // validBase returns a minimal valid v2 config the failure-case mutators tweak.
 func validBase() *ResolvedConfig {
 	return &ResolvedConfig{
-		Backends: contractsconfig.BackendsConfig{
-			"openai": {BaseURL: "http://o", Protocols: map[string]contractsconfig.BackendProtocol{"chat": {Path: "/c"}}},
-			"resp":   {BaseURL: "http://r", Protocols: map[string]contractsconfig.BackendProtocol{"responses": {Path: "/r"}}},
+		Providers: contractsconfig.ProvidersConfig{
+			"openai": {BaseURL: "http://o", Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Path: "/c"}}},
+			"resp":   {BaseURL: "http://r", Protocols: map[string]contractsconfig.ProviderProtocol{"responses": {Path: "/r"}}},
 		},
 		Groups: contractsconfig.GroupsConfig{
-			"lb": {Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Backend: "openai"}}},
+			"lb": {Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: "openai"}}},
 		},
 		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials: map[string]string{"openai": "k", "resp": "k"},
-				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"}},
+				Bindings:    []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "openai"}},
 			},
 		},
 		APIKeys: contractsconfig.APIKeysConfig{{Secret: "s", Name: "n", Configuration: "prod", Enabled: true}},
@@ -186,55 +186,55 @@ func TestValidate_Failures(t *testing.T) {
 		want   string
 	}{
 		{"no configurations", func(r *ResolvedConfig) { r.Configurations = nil }, "at least one configuration"},
-		{"backend no base_url", func(r *ResolvedConfig) {
-			r.Backends["openai"] = contractsconfig.Backend{Protocols: map[string]contractsconfig.BackendProtocol{"chat": {}}}
+		{"provider no base_url", func(r *ResolvedConfig) {
+			r.Providers["openai"] = contractsconfig.Provider{Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {}}}
 		}, "base_url is required"},
-		{"backend unknown protocol", func(r *ResolvedConfig) {
-			r.Backends["openai"] = contractsconfig.Backend{BaseURL: "http://o", Protocols: map[string]contractsconfig.BackendProtocol{"weird": {}}}
+		{"provider unknown protocol", func(r *ResolvedConfig) {
+			r.Providers["openai"] = contractsconfig.Provider{BaseURL: "http://o", Protocols: map[string]contractsconfig.ProviderProtocol{"weird": {}}}
 		}, "unknown protocol"},
-		{"backend no protocols", func(r *ResolvedConfig) {
-			r.Backends["openai"] = contractsconfig.Backend{BaseURL: "http://o"}
+		{"provider no protocols", func(r *ResolvedConfig) {
+			r.Providers["openai"] = contractsconfig.Provider{BaseURL: "http://o"}
 		}, "no protocols or passthrough"},
 		{"auth format without header", func(r *ResolvedConfig) {
-			r.Backends["openai"] = contractsconfig.Backend{BaseURL: "http://o", Protocols: map[string]contractsconfig.BackendProtocol{"chat": {Auth: &contractsconfig.BackendAuth{Format: "Bearer {key}"}}}}
+			r.Providers["openai"] = contractsconfig.Provider{BaseURL: "http://o", Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Auth: &contractsconfig.ProviderAuth{Format: "Bearer {key}"}}}}
 		}, "auth_format requires"},
 		{"auth format bad placeholder", func(r *ResolvedConfig) {
-			r.Backends["openai"] = contractsconfig.Backend{BaseURL: "http://o", Protocols: map[string]contractsconfig.BackendProtocol{"chat": {Auth: &contractsconfig.BackendAuth{Header: "H", Format: "no-placeholder"}}}}
+			r.Providers["openai"] = contractsconfig.Provider{BaseURL: "http://o", Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Auth: &contractsconfig.ProviderAuth{Header: "H", Format: "no-placeholder"}}}}
 		}, "{key} exactly once"},
 		{"group no targets", func(r *ResolvedConfig) {
 			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance}
 		}, "no targets"},
-		{"group unknown backend", func(r *ResolvedConfig) {
-			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Backend: "ghost"}}}
-		}, "unknown backend"},
-		{"credentials unknown backend", func(r *ResolvedConfig) {
+		{"group unknown provider", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: "ghost"}}}
+		}, "unknown provider"},
+		{"credentials unknown provider", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
 			c.Credentials = map[string]string{"ghost": "k"}
 			r.Configurations["prod"] = c
-		}, "credentials reference unknown backend"},
-		{"binding both backend and group", func(r *ResolvedConfig) {
+		}, "credentials reference unknown provider"},
+		{"binding both provider and group", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
-			c.Bindings = []contractsconfig.Binding{{Protocol: "chat", Backend: "openai", Group: "lb"}}
+			c.Bindings = []contractsconfig.Binding{{Protocol: "chat", Provider: "openai", Group: "lb"}}
 			r.Configurations["prod"] = c
-		}, "exactly one of backend or group"},
+		}, "exactly one of provider or group"},
 		{"binding neither", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
 			c.Bindings = []contractsconfig.Binding{{Protocol: "chat"}}
 			r.Configurations["prod"] = c
-		}, "exactly one of backend or group"},
+		}, "exactly one of provider or group"},
 		{"binding unknown protocol", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
-			c.Bindings = []contractsconfig.Binding{{Protocol: "weird", Backend: "openai"}}
+			c.Bindings = []contractsconfig.Binding{{Protocol: "weird", Provider: "openai"}}
 			r.Configurations["prod"] = c
 		}, "unknown protocol"},
-		{"binding unknown backend", func(r *ResolvedConfig) {
+		{"binding unknown provider", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
-			c.Bindings = []contractsconfig.Binding{{Protocol: "chat", Backend: "ghost"}}
+			c.Bindings = []contractsconfig.Binding{{Protocol: "chat", Provider: "ghost"}}
 			r.Configurations["prod"] = c
-		}, "unknown backend"},
-		{"binding backend wrong protocol", func(r *ResolvedConfig) {
+		}, "unknown provider"},
+		{"binding provider wrong protocol", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
-			c.Bindings = []contractsconfig.Binding{{Protocol: "responses", Backend: "openai"}}
+			c.Bindings = []contractsconfig.Binding{{Protocol: "responses", Provider: "openai"}}
 			r.Configurations["prod"] = c
 		}, "does not serve protocol"},
 		{"binding unknown group", func(r *ResolvedConfig) {
@@ -243,40 +243,40 @@ func TestValidate_Failures(t *testing.T) {
 			r.Configurations["prod"] = c
 		}, "unknown group"},
 		{"group not protocol-preserving", func(r *ResolvedConfig) {
-			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Backend: "resp"}}}
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: "resp"}}}
 			c := r.Configurations["prod"]
 			c.Bindings = []contractsconfig.Binding{{Protocol: "chat", Group: "lb"}}
 			r.Configurations["prod"] = c
 		}, "protocol-preserving"},
 		{"bad model pattern", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
-			c.Bindings = []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*-mini"}, Backend: "openai"}}
+			c.Bindings = []contractsconfig.Binding{{Protocol: "chat", Models: []string{"gpt-*-mini"}, Provider: "openai"}}
 			r.Configurations["prod"] = c
 		}, "trailing '*'"},
 		{"duplicate exact model", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
 			c.Bindings = []contractsconfig.Binding{
-				{Protocol: "chat", Models: []string{"gpt-4o"}, Backend: "openai"},
-				{Protocol: "chat", Models: []string{"gpt-4o"}, Backend: "openai"},
+				{Protocol: "chat", Models: []string{"gpt-4o"}, Provider: "openai"},
+				{Protocol: "chat", Models: []string{"gpt-4o"}, Provider: "openai"},
 			}
 			r.Configurations["prod"] = c
 		}, "already bound"},
 		{"two catch-alls", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
 			c.Bindings = []contractsconfig.Binding{
-				{Protocol: "chat", Backend: "openai"},
-				{Protocol: "chat", Backend: "openai"},
+				{Protocol: "chat", Provider: "openai"},
+				{Protocol: "chat", Provider: "openai"},
 			}
 			r.Configurations["prod"] = c
 		}, "two catch-all"},
-		{"passthrough unknown backend", func(r *ResolvedConfig) {
+		{"passthrough unknown provider", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
-			c.PassthroughBindings = []contractsconfig.PassthroughBinding{{Family: "f", Backend: "ghost"}}
+			c.PassthroughBindings = []contractsconfig.PassthroughBinding{{Family: "f", Provider: "ghost"}}
 			r.Configurations["prod"] = c
-		}, "unknown backend"},
+		}, "unknown provider"},
 		{"passthrough unknown family", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
-			c.PassthroughBindings = []contractsconfig.PassthroughBinding{{Family: "ghost", Backend: "openai"}}
+			c.PassthroughBindings = []contractsconfig.PassthroughBinding{{Family: "ghost", Provider: "openai"}}
 			r.Configurations["prod"] = c
 		}, "no passthrough family"},
 		{"unknown rule name", func(r *ResolvedConfig) {
@@ -302,23 +302,23 @@ func TestValidate_Failures(t *testing.T) {
 			}
 		}, "duplicate secret"},
 		{"passthrough no paths", func(r *ResolvedConfig) {
-			r.Backends["pt"] = contractsconfig.Backend{BaseURL: "http://pt", Passthrough: map[string]contractsconfig.PassthroughFamily{"f": {}}}
+			r.Providers["pt"] = contractsconfig.Provider{BaseURL: "http://pt", Passthrough: map[string]contractsconfig.PassthroughFamily{"f": {}}}
 		}, "no paths"},
 		{"passthrough path no match", func(r *ResolvedConfig) {
-			r.Backends["pt"] = contractsconfig.Backend{BaseURL: "http://pt", Passthrough: map[string]contractsconfig.PassthroughFamily{
+			r.Providers["pt"] = contractsconfig.Provider{BaseURL: "http://pt", Passthrough: map[string]contractsconfig.PassthroughFamily{
 				"f": {Paths: []contractsconfig.PassthroughPath{{Methods: []string{"GET"}}}}}}
 		}, "match is required"},
 		{"passthrough path no methods", func(r *ResolvedConfig) {
-			r.Backends["pt"] = contractsconfig.Backend{BaseURL: "http://pt", Passthrough: map[string]contractsconfig.PassthroughFamily{
+			r.Providers["pt"] = contractsconfig.Provider{BaseURL: "http://pt", Passthrough: map[string]contractsconfig.PassthroughFamily{
 				"f": {Paths: []contractsconfig.PassthroughPath{{Match: "/x"}}}}}
 		}, "methods is required"},
 		{"passthrough auth bad", func(r *ResolvedConfig) {
-			r.Backends["pt"] = contractsconfig.Backend{BaseURL: "http://pt", Passthrough: map[string]contractsconfig.PassthroughFamily{
-				"f": {Auth: &contractsconfig.BackendAuth{Format: "x"}, Paths: []contractsconfig.PassthroughPath{{Match: "/x", Methods: []string{"GET"}}}}}}
+			r.Providers["pt"] = contractsconfig.Provider{BaseURL: "http://pt", Passthrough: map[string]contractsconfig.PassthroughFamily{
+				"f": {Auth: &contractsconfig.ProviderAuth{Format: "x"}, Paths: []contractsconfig.PassthroughPath{{Match: "/x", Methods: []string{"GET"}}}}}}
 		}, "auth_format requires"},
-		{"group target empty backend", func(r *ResolvedConfig) {
-			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Backend: ""}}}
-		}, "backend is required"},
+		{"group target empty provider", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: ""}}}
+		}, "provider is required"},
 		{"connector validate error", func(r *ResolvedConfig) {
 			r.Connectors = contractsconfig.ConnectorsConfig{{Name: "c", Type: "webhook"}}
 		}, "url is required"},

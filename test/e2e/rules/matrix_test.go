@@ -24,8 +24,8 @@ func matrixPolicy(rulesYAML string, ruleNames ...string) string {
 	for _, n := range ruleNames {
 		names += "      - " + n + "\n"
 	}
-	// v2: the dev configuration carries credentials + bindings (backends come
-	// from config-dev/backends.yaml, which the harness copies alongside). The
+	// v2: the dev configuration carries credentials + bindings (providers come
+	// from config-dev/providers.yaml, which the harness copies alongside). The
 	// gpt-* chat binding routes chatBody() to openai; the rule library under
 	// test is inlined verbatim.
 	return `
@@ -36,9 +36,9 @@ configurations:
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
     bindings:
-      - { protocol: chat, models: ["gpt-*"], backend: openai }
-      - { protocol: responses, models: ["gpt-*"], backend: openai }
-      - { protocol: chat, models: ["claude-*"], backend: anthropic }
+      - { protocol: chat, models: ["gpt-*"], provider: openai }
+      - { protocol: responses, models: ["gpt-*"], provider: openai }
+      - { protocol: chat, models: ["claude-*"], provider: anthropic }
     rule_names:
 ` + names + `
 api_keys:

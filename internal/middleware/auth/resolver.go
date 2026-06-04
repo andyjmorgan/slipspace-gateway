@@ -78,7 +78,7 @@ type AuthResult struct {
 	// has no key to attribute). Downstream code must nil-check.
 	APIKey *contractsconfig.APIKey
 
-	// Configuration is the resolved v2 policy bundle (backends credentials +
+	// Configuration is the resolved v2 policy bundle (providers credentials +
 	// bindings + rules). Nil only when resolution failed before configuration
 	// lookup.
 	Configuration *contractsconfig.Configuration
