@@ -551,7 +551,7 @@ function CredentialRow({
 }) {
   const masked = draft.existing && !draft.dirty
   return (
-    <div className="rounded-[var(--radius)] border border-[color:var(--border)] px-3 py-3 grid grid-cols-1 sm:grid-cols-[1fr_1.4fr_auto] gap-3 items-end">
+    <div className="rounded-[var(--radius)] border border-[color:var(--border)] px-3 py-3 grid grid-cols-1 sm:grid-cols-[1fr_1.4fr_auto] gap-3 items-start">
       <TextField
         label="Backend"
         value={draft.backend}
@@ -598,14 +598,19 @@ function CredentialRow({
           {masked ? "Stored secret kept on save unless you change it." : "Typed value will be set. Leave blank for a no-credential backend."}
         </span>
       </div>
-      <button
-        type="button"
-        aria-label="Remove credential"
-        onClick={onRemove}
-        className="text-[color:var(--text-3)] hover:text-[color:var(--err)] text-[12px] px-1 pb-2"
-      >
-        ✕
-      </button>
+      <div className="flex flex-col gap-1.5">
+        {/* Spacer mirrors FieldRow's label height so the ✕ aligns with the
+            inputs, not the labels, now that the row is top-aligned. */}
+        <span aria-hidden="true" className="text-[10px] tracking-[0.07em] select-none invisible">.</span>
+        <button
+          type="button"
+          aria-label="Remove credential"
+          onClick={onRemove}
+          className="text-[color:var(--text-3)] hover:text-[color:var(--err)] text-[12px] px-1 py-1"
+        >
+          ✕
+        </button>
+      </div>
     </div>
   )
 }
