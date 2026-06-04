@@ -380,8 +380,8 @@ func TestRecordToBodyDetail_Truncation(t *testing.T) {
 		},
 		{
 			name:      "actually cap-truncated body, flag set",
-			req:       connc.RequestPart{Body: json.RawMessage(`{"model":"gpt-4o"`), BodyBytes: 4096, BodyTruncated: true},
-			resp:      connc.ResponsePart{Body: json.RawMessage(`{"id":"x"`), BodyBytes: 8192, BodyTruncated: true},
+			req:       connc.RequestPart{Body: json.RawMessage(`"{\"model\":\"gpt-4o"`), BodyBytes: 4096, BodyTruncated: true},
+			resp:      connc.ResponsePart{Body: json.RawMessage(`"{\"id\":\"x"`), BodyBytes: 8192, BodyTruncated: true},
 			wantReqTr: true,
 			wantResTr: true,
 		},
