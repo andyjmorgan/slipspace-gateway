@@ -1,0 +1,25 @@
+# Telemetry service config used by docker-compose.telemetry.yaml. Mounted at
+# /etc/sluice/telemetry.yaml. File contents are trusted (no ${VAR} interpolation
+# inside the YAML — only the file path is configurable).
+
+# Console + HMAC-webhook ingest listener.
+http_bind: "0.0.0.0:8686"
+# OTLP gRPC listener for the gen_ai + sluice telemetry feeds.
+otlp_bind: "0.0.0.0:8687"
+
+postgres:
+  # Matches the telemetry-db service in docker-compose.telemetry.yaml.
+  dsn: "postgres://telemetry:telemetry@telemetry-db:5432/telemetry?sslmode=disable"
+
+console:
+  username: "admin"
+  # bcrypt hash of the console password. REPLACE THIS — the placeholder below is
+  # not a usable credential. Generate with:
+  #   htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'
+  password_hash: "REPLACE_WITH_BCRYPT_HASH"
+
+# Registered gateways permitted to push large payloads. A webhook is trusted iff
+# its X-Sluice-Signature verifies against the matching gateway's hmac_secret.
+gateways:
+  - id: "gw-1"
+    hmac_secret: "REPLACE_WITH_SHARED_SECRET"

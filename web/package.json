@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:telemetry": "vite --config vite.telemetry.config.ts",
+    "build:telemetry": "tsc -b && vite build --config vite.telemetry.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",

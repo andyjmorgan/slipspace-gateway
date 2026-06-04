@@ -40,6 +40,16 @@ web: web-install
 		internal/admin/webdist/sluice.svg
 	cd web && $(NPM) run build
 
+web-telemetry: web-install
+	# Second build target — the telemetry console SPA. Same emptyOutDir-off
+	# convention: clear only generated artefacts, preserve placeholder + ignore.
+	rm -rf internal/telemetry/server/webdist/index.telemetry.html \
+		internal/telemetry/server/webdist/assets \
+		internal/telemetry/server/webdist/favicon.ico \
+		internal/telemetry/server/webdist/sluice.png \
+		internal/telemetry/server/webdist/sluice.svg
+	cd web && $(NPM) run build:telemetry
+
 web-install:
 	cd web && $(NPM) install --silent
 
