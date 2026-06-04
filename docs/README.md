@@ -4,6 +4,8 @@ Operator and developer reference for sluice-gateway. Each page is self-contained
 
 If you're new to the project, the suggested reading order is **Configuration → Providers → Routing → Auth → Rules → Actions → Resilience → Observability → Connectors → Spool → Admin console → Deployment**. The local-dev and auxiliary-binaries pages are useful any time you're running things by hand.
 
+In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a model, rewriting request/response bodies, Anthropic batches, Azure OpenAI, load-balancing, live rule edits — each answer grounded in a real config example.
+
 ---
 
 ## Map by audience
@@ -42,6 +44,9 @@ If you're new to the project, the suggested reading order is **Configuration →
 
 | Goal | Start here |
 |---|---|
+| Rewrite a field in the request or response body | [FAQ → Rewrite a request field](faq.md#how-do-i-rewrite-a-field-in-the-request-body), [FAQ → Rewrite the response body](faq.md#how-do-i-rewrite-the-response-body) |
+| Proxy Anthropic message batches | [FAQ → Passthrough surfaces](faq.md#how-do-i-support-anthropic-message-batches-and-other-passthrough-surfaces) |
+| Add Azure OpenAI as a backend | [FAQ → Azure OpenAI](faq.md#how-do-i-add-azure-openai-as-a-backend) |
 | Boot a gateway against a local mock LLM | [Local development → Quickest path](local-development.md#quickest-path-to-a-running-gateway) |
 | Wire a new upstream provider | [Providers → Schema](providers.md#yaml-schema), [Configuration model → providers block](configuration-model.md#providers-block) |
 | Route requests to a different provider by model name | [Rules → modelName condition](rules.md#modelname), [Actions → changeProvider](actions.md#changeprovider) |
