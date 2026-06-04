@@ -31,7 +31,7 @@ func newTestServer(t *testing.T, ping error) *Server {
 		t.Fatalf("bcrypt: %v", err)
 	}
 	console := config.Console{Username: "admin", PasswordHash: string(hash)}
-	return New(console, stubPinger{err: ping}, discardLogger())
+	return New(console, stubPinger{err: ping}, nil, discardLogger())
 }
 
 func doRequest(t *testing.T, h http.Handler, method, path string, auth *[2]string) *http.Response {

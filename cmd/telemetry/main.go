@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,6 +25,8 @@ import (
 
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/config"
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/ingest"
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/registry"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/server"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
@@ -85,12 +88,34 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		log.Info("store ready", "schema_version", v)
 	}
 
-	srv := server.New(cfg.Console, st, log).HTTPServer(cfg.HTTPBind)
+	// Ingest surfaces: HMAC webhook (HTTP) for large payloads, OTLP gRPC for
+	// the gen_ai + sluice telemetry feeds.
+	reg := registry.New(cfg.Gateways)
+	webhook := ingest.NewWebhookHandler(reg, st, log)
+	otlp := ingest.NewOTLPServer(
+		ingest.NewTraceReceiver(st, log),
+		ingest.NewMetricsReceiver(st, log),
+	)
+
+	httpSrv := server.New(cfg.Console, st, webhook, log).HTTPServer(cfg.HTTPBind)
 
 	errCh := make(chan error, 1)
-	safego.Go(ctx, "telemetry.serve", log, nil, func() {
-		log.Info("listening", "addr", cfg.HTTPBind)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	safego.Go(ctx, "telemetry.serve.http", log, nil, func() {
+		log.Info("http listening", "addr", cfg.HTTPBind)
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	})
+
+	lis, err := net.Listen("tcp", cfg.OTLPBind)
+	if err != nil {
+		return fmt.Errorf("telemetry: otlp listen: %w", err)
+	}
+	safego.Go(ctx, "telemetry.serve.otlp", log, nil, func() {
+		log.Info("otlp listening", "addr", cfg.OTLPBind)
+		if err := otlp.Serve(lis); err != nil {
 			errCh <- err
 			return
 		}
@@ -102,17 +127,20 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		log.Info("shutting down", "signal", ctx.Err())
 	case err := <-errCh:
 		if err != nil {
+			otlp.GracefulStop()
 			return fmt.Errorf("telemetry: serve: %w", err)
 		}
 		return nil
 	}
+
+	otlp.GracefulStop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	// Detached from the cancelled signal context on purpose — the shutdown
 	// budget must outlive the SIGTERM that triggered it.
-	if err := srv.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck
 		return fmt.Errorf("telemetry: shutdown: %w", err)
 	}
 	return nil

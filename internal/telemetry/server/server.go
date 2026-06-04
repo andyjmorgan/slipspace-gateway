@@ -33,20 +33,28 @@ type Pinger interface {
 type Server struct {
 	console config.Console
 	store   Pinger
+	webhook http.Handler
 	log     *slog.Logger
 }
 
-// New builds the console server. store is used only by the readiness probe.
-func New(console config.Console, st Pinger, log *slog.Logger) *Server {
-	return &Server{console: console, store: st, log: log}
+// New builds the console server. store is used only by the readiness probe;
+// webhook is the HMAC-trusted large-payload ingest handler (may be nil to
+// disable the route, e.g. in tests that don't exercise ingest).
+func New(console config.Console, st Pinger, webhook http.Handler, log *slog.Logger) *Server {
+	return &Server{console: console, store: st, webhook: webhook, log: log}
 }
 
-// Handler returns the routed HTTP handler. Probes are open; everything else is
+// Handler returns the routed HTTP handler. Probes and the HMAC-authed webhook
+// are open (the webhook authenticates itself via signature); everything else is
 // behind Basic auth.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	if s.webhook != nil {
+		// Open path: the webhook's own HMAC check is its auth, not Basic.
+		mux.Handle("POST /api/v1/ingest/payload", s.webhook)
+	}
 	mux.Handle("GET /", s.basicAuth(http.HandlerFunc(s.handleConsole)))
 	return mux
 }

@@ -1,6 +1,11 @@
-//go:build integration
+//go:build e2e
 
-package store
+// Package telemetry_test holds the through-Postgres e2e tests for the telemetry
+// service's store. They live here (not next to internal/telemetry/store) so the
+// store package carries no in-package test files and is gated via `make e2e`
+// rather than the unit-coverage profile — the same split the scrapped CP used
+// for configdb.
+package telemetry_test
 
 import (
 	"context"
@@ -11,11 +16,12 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
 // sharedDSN points at a Postgres container started once for the whole package.
-// startErr is recorded when Docker is unavailable so tests Skip cleanly rather
-// than fail on a machine without a daemon.
+// startErr is recorded when Docker is unavailable so tests Skip cleanly.
 var (
 	sharedDSN string
 	startErr  error
@@ -64,14 +70,15 @@ func startPostgres() (dsn string, terminate func(), err error) {
 		func() { _ = c.Terminate(context.Background()) }, nil
 }
 
-func openStore(t *testing.T) *Store {
+// openStore opens the shared Postgres, skipping when Docker is unavailable.
+func openStore(t *testing.T) *store.Store {
 	t.Helper()
 	if startErr != nil {
 		t.Skipf("postgres container unavailable: %v", startErr)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	st, err := Open(ctx, sharedDSN)
+	st, err := store.Open(ctx, sharedDSN)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -79,49 +86,12 @@ func openStore(t *testing.T) *Store {
 	return st
 }
 
-func TestOpenAndPing(t *testing.T) {
+// migratedStore opens the shared Postgres and applies migrations.
+func migratedStore(t *testing.T) *store.Store {
+	t.Helper()
 	st := openStore(t)
-	if err := st.Ping(context.Background()); err != nil {
-		t.Fatalf("Ping: %v", err)
-	}
-}
-
-func TestOpen_BadDSN(t *testing.T) {
-	if startErr != nil {
-		t.Skipf("postgres container unavailable: %v", startErr)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Open(ctx, "postgres://nope:nope@127.0.0.1:1/none?sslmode=disable"); err == nil {
-		t.Fatal("Open with unreachable DSN: want error")
-	}
-}
-
-func TestMigrate_AppliesAndIsIdempotent(t *testing.T) {
-	st := openStore(t)
-	ctx := context.Background()
-
-	if err := st.Migrate(ctx); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	v, err := st.SchemaVersion(ctx)
-	if err != nil {
-		t.Fatalf("SchemaVersion: %v", err)
-	}
-	want := migrations[len(migrations)-1].version
-	if v != want {
-		t.Fatalf("schema version = %d, want %d", v, want)
-	}
-
-	// Second run must be a no-op and leave the version unchanged.
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatalf("Migrate (second): %v", err)
-	}
-	v2, err := st.SchemaVersion(ctx)
-	if err != nil {
-		t.Fatalf("SchemaVersion (second): %v", err)
-	}
-	if v2 != want {
-		t.Fatalf("schema version after re-run = %d, want %d", v2, want)
-	}
+	return st
 }
