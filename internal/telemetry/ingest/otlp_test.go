@@ -65,7 +65,7 @@ func TestEventFromSpan_FullAttributes(t *testing.T) {
 			strKV(attrCorrelationID, "corr-1"),
 			strKV(attrGatewayID, "gw-a"),
 			strKV(attrConfiguration, "default"),
-			strKV(attrBackend, "anthropic"),
+			strKV(attrProvider, "anthropic"),
 			strKV(attrModel, "claude-x"),
 			strKV(attrProtocol, "messages"),
 			strKV(attrMethod, "POST"),
@@ -88,7 +88,7 @@ func TestEventFromSpan_FullAttributes(t *testing.T) {
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
-	if e.CorrelationID != "corr-1" || e.GatewayID != "gw-a" || e.Backend != "anthropic" {
+	if e.CorrelationID != "corr-1" || e.GatewayID != "gw-a" || e.Provider != "anthropic" {
 		t.Errorf("labels = %+v", e)
 	}
 	if e.LatencyMs != 500 {
@@ -122,7 +122,7 @@ func TestEventFromSpan_NilSpan(t *testing.T) {
 }
 
 func TestEventFromSpan_ResourceFallbacks(t *testing.T) {
-	// backend falls back to provider; protocol falls back to endpoint; resource
+	// provider falls back to provider; protocol falls back to endpoint; resource
 	// attrs are merged under span attrs.
 	resource := []*commonpb.KeyValue{strKV(attrProvider, "openai"), strKV(attrEndpoint, "chat_completions")}
 	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrCorrelationID, "c")}}
@@ -130,8 +130,8 @@ func TestEventFromSpan_ResourceFallbacks(t *testing.T) {
 	if !ok {
 		t.Fatal("ok = false")
 	}
-	if e.Backend != "openai" {
-		t.Errorf("backend = %q, want openai (provider fallback)", e.Backend)
+	if e.Provider != "openai" {
+		t.Errorf("provider = %q, want openai (provider fallback)", e.Provider)
 	}
 	if e.Protocol != "chat_completions" {
 		t.Errorf("protocol = %q, want chat_completions (endpoint fallback)", e.Protocol)

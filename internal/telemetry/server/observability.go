@@ -232,7 +232,7 @@ func mapEntry(e store.RequestEvent) adminc.MessageEntry {
 		CorrelationID:       e.CorrelationID,
 		SessionID:           e.SessionID,
 		SessionIDSource:     e.SessionIDSource,
-		Provider:            e.Backend,
+		Provider:            e.Provider,
 		Endpoint:            e.Protocol,
 		Model:               e.Model,
 		Method:              e.Method,

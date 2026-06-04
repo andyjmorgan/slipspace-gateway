@@ -102,4 +102,15 @@ CREATE TABLE IF NOT EXISTS metric_points (
 
 CREATE INDEX IF NOT EXISTS metric_points_name_time ON metric_points (metric_name, observed_at DESC);`,
 	},
+	{
+		version: 2,
+		name:    "rename_backend_to_provider",
+		// Vocabulary unification: the configured upstream is "provider"
+		// everywhere else (config schema, admin API, gen_ai OTel label), so the
+		// telemetry dimension follows. Hard cut — no dual-read window; the
+		// gateway emits sluice.provider and ingest reads provider after this.
+		// Postgres rewrites the request_events_filter index definition to the
+		// new column name automatically, so only the rename is needed.
+		sql: `ALTER TABLE request_events RENAME COLUMN backend TO provider;`,
+	},
 }

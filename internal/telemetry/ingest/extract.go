@@ -4,7 +4,7 @@
 // attributes) becomes a store.RequestEvent.
 //
 // Attribute conventions: OTel GenAI semconv (gen_ai.*) for model/provider/usage,
-// plus sluice.* for the post-rule fleet labels (gateway, configuration, backend,
+// plus sluice.* for the post-rule fleet labels (gateway, configuration, provider,
 // protocol) and the correlation id that joins an event to its payloads.
 package ingest
 
@@ -23,11 +23,11 @@ const (
 	attrCorrelationID = "sluice.correlation_id"
 	attrGatewayID     = "sluice.gateway_id"
 	attrConfiguration = "sluice.configuration"
-	attrBackend       = "sluice.backend"
+	attrProvider      = "sluice.provider"
 	attrProtocol      = "sluice.protocol"
 	attrEndpoint      = "sluice.endpoint"
 	attrModel         = "gen_ai.request.model"
-	attrProvider      = "gen_ai.provider.name"
+	attrGenAIProvider = "gen_ai.provider.name"
 	attrInputTokens   = "gen_ai.usage.input_tokens"  //nolint:gosec // OTLP attribute key, not a credential
 	attrOutputTokens  = "gen_ai.usage.output_tokens" //nolint:gosec // OTLP attribute key, not a credential
 	attrStatusCode    = "http.response.status_code"
@@ -67,9 +67,9 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (stor
 		return store.RequestEvent{}, false
 	}
 
-	backend := strAttr(attrs, attrBackend)
-	if backend == "" {
-		backend = strAttr(attrs, attrProvider)
+	provider := strAttr(attrs, attrProvider)
+	if provider == "" {
+		provider = strAttr(attrs, attrGenAIProvider)
 	}
 
 	protocol := strAttr(attrs, attrProtocol)
@@ -81,7 +81,7 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (stor
 		CorrelationID:       corr,
 		GatewayID:           strAttr(attrs, attrGatewayID),
 		Configuration:       strAttr(attrs, attrConfiguration),
-		Backend:             backend,
+		Provider:            provider,
 		Model:               strAttr(attrs, attrModel),
 		Protocol:            protocol,
 		Method:              strAttr(attrs, attrMethod),

@@ -21,7 +21,7 @@ type EventFilter struct {
 	Configuration string
 	Gateway       string
 	Model         string
-	Backend       string
+	Provider      string
 	Protocol      string
 	StatusClass   string
 }
@@ -35,7 +35,7 @@ func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 		{"configuration", f.Configuration},
 		{"gateway_id", f.Gateway},
 		{"model", f.Model},
-		{"backend", f.Backend},
+		{"provider", f.Provider},
 		{"protocol", f.Protocol},
 	}
 	for _, e := range eq {

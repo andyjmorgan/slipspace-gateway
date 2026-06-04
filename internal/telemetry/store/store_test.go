@@ -192,9 +192,15 @@ func TestMigrate_Success(t *testing.T) {
 	if err := newStore(q).Migrate(ctx()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	// fakeRow scans version=1; all migrations are <=1, so none re-applied.
-	if q.beginCalls != 0 {
-		t.Errorf("expected no migration applied at version 1, begins=%d", q.beginCalls)
+	// fakeRow scans version=1, so every migration with version > 1 (re)applies.
+	want := 0
+	for _, m := range migrations {
+		if m.version > 1 {
+			want++
+		}
+	}
+	if q.beginCalls != want {
+		t.Errorf("begins = %d, want %d", q.beginCalls, want)
 	}
 }
 

@@ -271,7 +271,7 @@ func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 	svc.sendSpan(t,
 		strKV("sluice.correlation_id", "otlp-1"),
 		strKV("sluice.gateway_id", testGatewayID),
-		strKV("sluice.backend", "anthropic"),
+		strKV("sluice.provider", "anthropic"),
 		strKV("gen_ai.request.model", "claude-x"),
 		strKV("sluice.protocol", "messages"),
 		intKV("http.response.status_code", 200),
@@ -336,7 +336,7 @@ func TestE2E_SessionRollup(t *testing.T) {
 		svc.sendSpan(t,
 			strKV("sluice.correlation_id", id),
 			strKV("gen_ai.conversation.id", "session-1"),
-			strKV("sluice.backend", "openai"),
+			strKV("sluice.provider", "openai"),
 			intKV("http.response.status_code", 200),
 			intKV("gen_ai.usage.input_tokens", 5),
 		)
