@@ -8,6 +8,7 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -33,20 +34,21 @@ type Pinger interface {
 type Server struct {
 	console config.Console
 	store   Pinger
+	queries Queries
 	webhook http.Handler
 	log     *slog.Logger
 }
 
-// New builds the console server. store is used only by the readiness probe;
-// webhook is the HMAC-trusted large-payload ingest handler (may be nil to
-// disable the route, e.g. in tests that don't exercise ingest).
-func New(console config.Console, st Pinger, webhook http.Handler, log *slog.Logger) *Server {
-	return &Server{console: console, store: st, webhook: webhook, log: log}
+// New builds the console server. store backs the readiness probe; queries backs
+// the DB-backed console API (may be nil to disable those routes); webhook is the
+// HMAC-trusted large-payload ingest handler (may be nil to disable the route).
+func New(console config.Console, st Pinger, queries Queries, webhook http.Handler, log *slog.Logger) *Server {
+	return &Server{console: console, store: st, queries: queries, webhook: webhook, log: log}
 }
 
 // Handler returns the routed HTTP handler. Probes and the HMAC-authed webhook
-// are open (the webhook authenticates itself via signature); everything else is
-// behind Basic auth.
+// are open (the webhook authenticates itself via signature); the console API and
+// shell are behind Basic auth.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -55,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 		// Open path: the webhook's own HMAC check is its auth, not Basic.
 		mux.Handle("POST /api/v1/ingest/payload", s.webhook)
 	}
+	s.registerQueryRoutes(mux)
 	mux.Handle("GET /", s.basicAuth(http.HandlerFunc(s.handleConsole)))
 	return mux
 }
@@ -120,4 +123,16 @@ func writePlain(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(body))
+}
+
+// writeJSON writes v as a JSON response with the given status.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeError writes a JSON {"error":msg} body with the given status.
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
 }

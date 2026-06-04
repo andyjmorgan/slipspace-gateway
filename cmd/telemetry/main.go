@@ -97,7 +97,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		ingest.NewMetricsReceiver(st, log),
 	)
 
-	httpSrv := server.New(cfg.Console, st, webhook, log).HTTPServer(cfg.HTTPBind)
+	httpSrv := server.New(cfg.Console, st, st, webhook, log).HTTPServer(cfg.HTTPBind)
 
 	errCh := make(chan error, 1)
 	safego.Go(ctx, "telemetry.serve.http", log, nil, func() {

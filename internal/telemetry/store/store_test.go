@@ -70,16 +70,23 @@ func (t *fakeTx) Commit(context.Context) error   { return t.commitErr }
 func (t *fakeTx) Rollback(context.Context) error { t.rolledBack = true; return nil }
 
 type fakeQuerier struct {
-	execErr    error
-	query      *fakeRows
-	queryErr   error
-	row        rowScanner
-	beginTx    txn
-	beginErr   error
-	pingErr    error
-	closed     bool
-	execCalls  int
-	beginCalls int
+	execErr error
+	query   *fakeRows // when set, returned by every Query call (shared, advances)
+	// freshRows, when >0 and query==nil, makes Query return a fresh rows of this
+	// many on every call (so each sub-query scans real rows).
+	freshRows   int
+	queryErr    error
+	queryFailAt int // fail the Nth Query call (1-based); 0 = never
+	queryCalls  int
+	row         rowScanner
+	rowFailAt   int // QueryRow returns an erroring row on the Nth call; 0 = never
+	rowCalls    int
+	beginTx     txn
+	beginErr    error
+	pingErr     error
+	closed      bool
+	execCalls   int
+	beginCalls  int
 }
 
 func (q *fakeQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -87,12 +94,31 @@ func (q *fakeQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, 
 	return pgconn.CommandTag{}, q.execErr
 }
 func (q *fakeQuerier) Query(context.Context, string, ...any) (rows, error) {
+	q.queryCalls++
+	if q.queryFailAt != 0 && q.queryCalls == q.queryFailAt {
+		return nil, errors.New("query failed")
+	}
 	if q.queryErr != nil {
 		return nil, q.queryErr
 	}
-	return q.query, nil
+	if q.query != nil {
+		return q.query, nil
+	}
+	if q.freshRows > 0 {
+		return &fakeRows{scanErrs: make([]error, q.freshRows)}, nil
+	}
+	return &fakeRows{}, nil
 }
-func (q *fakeQuerier) QueryRow(context.Context, string, ...any) rowScanner { return q.row }
+func (q *fakeQuerier) QueryRow(context.Context, string, ...any) rowScanner {
+	q.rowCalls++
+	if q.rowFailAt != 0 && q.rowCalls == q.rowFailAt {
+		return fakeRow{err: errors.New("row failed")}
+	}
+	if q.row != nil {
+		return q.row
+	}
+	return fakeRow{}
+}
 func (q *fakeQuerier) Begin(context.Context) (txn, error) {
 	q.beginCalls++
 	return q.beginTx, q.beginErr
