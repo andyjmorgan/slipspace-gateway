@@ -490,6 +490,64 @@ ORDER BY b.ts`, widthIdx, widthIdx, widthIdx, strings.Join(where, " AND "))
 	return out, rows.Err()
 }
 
+// DashboardProviderSeriesBucket is one (bucket, provider) cell of the
+// per-provider timeseries scan: the provider's request volume and errored
+// count inside one BucketSeconds-wide slot. The scan only emits rows for
+// (bucket, provider) pairs that saw traffic — the handler ranks providers
+// top-N and zero-fills each chosen provider's missing buckets, so SQL does not
+// enumerate the full bucket × provider cross product.
+type DashboardProviderSeriesBucket struct {
+	Ts       time.Time
+	Provider string
+	Requests int64
+	Errored  int64
+}
+
+// QueryDashboardSeriesByProvider computes a per-provider, per-bucket request /
+// error scan over [From, To), grouped by (bucket, backend). It backs the
+// per-provider top-N timeseries panels (rps_by_provider_top5,
+// error_rate_by_provider_top5): the handler selects the busiest providers and
+// emits one line per provider, so the scan returns every (bucket, provider)
+// pair with traffic and leaves ranking + zero-fill to the caller. Buckets are
+// floored to BucketSeconds-wide epoch slots so they align with the zero-filled
+// bucket grid the all-provider QueryDashboardSeries produces.
+func (db *DB) QueryDashboardSeriesByProvider(ctx context.Context, p DashboardSeriesParams) ([]DashboardProviderSeriesBucket, error) {
+	if p.BucketSeconds <= 0 {
+		return nil, fmt.Errorf("configdb: bucket_seconds must be positive")
+	}
+	where := []string{"observed_at >= $1", "observed_at < $2", "backend <> ''"}
+	args := []any{p.From, p.To}
+	where, args = appendFilter(where, args, p.Filter)
+	args = append(args, p.BucketSeconds)
+	widthIdx := len(args)
+	q := fmt.Sprintf(`
+SELECT
+  to_timestamp(floor(extract(epoch FROM observed_at) / $%d) * $%d) AS bucket_ts,
+  backend,
+  COUNT(*),
+  COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
+FROM request_events
+WHERE %s
+GROUP BY bucket_ts, backend
+ORDER BY bucket_ts, backend`, widthIdx, widthIdx, strings.Join(where, " AND "))
+
+	rows, err := db.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("configdb: dashboard series by provider: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DashboardProviderSeriesBucket
+	for rows.Next() {
+		var b DashboardProviderSeriesBucket
+		if err := rows.Scan(&b.Ts, &b.Provider, &b.Requests, &b.Errored); err != nil {
+			return nil, fmt.Errorf("configdb: scan dashboard series by provider: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // GetRequestRecord returns the latest captured connector Record for a
 // correlation id — the body envelope the message-inspector drill-in renders.
 // When multiple bodies exist (retries, request+response phases), the one with

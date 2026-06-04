@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 type richReader interface {
 	QueryDashboardSummary(ctx context.Context, p configdb.DashboardParams) (configdb.DashboardSummary, error)
 	QueryDashboardSeries(ctx context.Context, p configdb.DashboardSeriesParams) ([]configdb.DashboardSeriesBucket, error)
+	QueryDashboardSeriesByProvider(ctx context.Context, p configdb.DashboardSeriesParams) ([]configdb.DashboardProviderSeriesBucket, error)
 	ListEventsFiltered(ctx context.Context, p configdb.EventListParams) ([]configdb.RequestEvent, string, error)
 }
 
@@ -227,7 +229,7 @@ func (h *ObservabilityHandler) dashboardTimeseries(w http.ResponseWriter, r *htt
 		series = q.Get("metric")
 	}
 	if !validSeries[series] {
-		writeError(w, http.StatusBadRequest, "series must be one of rps/error_rate/latency/tokens_per_second")
+		writeError(w, http.StatusBadRequest, "series must be one of rps/error_rate/latency/tokens_per_second/rps_by_provider_top5/error_rate_by_provider_top5")
 		return
 	}
 
@@ -237,13 +239,24 @@ func (h *ObservabilityHandler) dashboardTimeseries(w http.ResponseWriter, r *htt
 	if bucketSeconds < 1 {
 		bucketSeconds = 1
 	}
-
-	buckets, err := h.rich.QueryDashboardSeries(r.Context(), configdb.DashboardSeriesParams{
+	params := configdb.DashboardSeriesParams{
 		From:          from,
 		To:            to,
 		BucketSeconds: bucketSeconds,
 		Filter:        parseFilter(q),
-	})
+	}
+
+	if perProviderSeries[series] {
+		buckets, err := h.rich.QueryDashboardSeriesByProvider(r.Context(), params)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query dashboard timeseries")
+			return
+		}
+		writeJSON(w, http.StatusOK, toProviderTimeseries(series, bucketSeconds, buckets))
+		return
+	}
+
+	buckets, err := h.rich.QueryDashboardSeries(r.Context(), params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query dashboard timeseries")
 		return
@@ -251,15 +264,42 @@ func (h *ObservabilityHandler) dashboardTimeseries(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, toTimeseries(series, bucketSeconds, buckets))
 }
 
+// Series names the DB-backed endpoint serves. They match the gateway admin
+// dashboard's contract so the shared SPA component's ?series= queries resolve
+// against either backend identically.
+const (
+	seriesRPS                     = "rps"
+	seriesErrorRate               = "error_rate"
+	seriesLatency                 = "latency"
+	seriesTokensPerSecond         = "tokens_per_second" //nolint:gosec // series name (gateway.tokens.*), not a credential
+	seriesRPSByProviderTop5       = "rps_by_provider_top5"
+	seriesErrorRateByProviderTop5 = "error_rate_by_provider_top5"
+)
+
+// topNProviders caps the per-provider timeseries panels at the five busiest
+// providers over the window — matching the gateway admin handler's cap so both
+// backends render the same legend.
+const topNProviders = 5
+
 // validSeries is the allowlist of timeseries names the DB-backed endpoint
-// serves. The names match the gateway's contract so the lifted SPA's
-// ?series= queries resolve. latency carries p50/p95/p99 as three curves;
-// tokens_per_second carries input/output as two curves.
+// serves. latency carries p50/p95/p99 as three curves; tokens_per_second
+// carries input/output as two curves; the *_by_provider_top5 series carry one
+// curve per top-N provider.
 var validSeries = map[string]bool{
-	"rps":               true,
-	"error_rate":        true,
-	"latency":           true,
-	"tokens_per_second": true,
+	seriesRPS:                     true,
+	seriesErrorRate:               true,
+	seriesLatency:                 true,
+	seriesTokensPerSecond:         true,
+	seriesRPSByProviderTop5:       true,
+	seriesErrorRateByProviderTop5: true,
+}
+
+// perProviderSeries marks the series that resolve to one curve per top-N
+// provider and so read from the by-provider scan rather than the all-provider
+// bucket scan.
+var perProviderSeries = map[string]bool{
+	seriesRPSByProviderTop5:       true,
+	seriesErrorRateByProviderTop5: true,
 }
 
 // toTimeseries derives the requested curve set from the per-bucket scan. Each
@@ -315,6 +355,107 @@ func toTimeseries(series string, bucketSeconds int, buckets []configdb.Dashboard
 
 func single(name, unit string, pts []adminc.DashboardPoint) adminc.DashboardTimeseries {
 	return adminc.DashboardTimeseries{Series: []adminc.DashboardSeries{{Name: name, Unit: unit, Points: pts}}}
+}
+
+// toProviderTimeseries builds one curve per top-N provider from the
+// (bucket, provider) scan. Providers are ranked by total request volume over
+// the window (matching the gateway admin handler), then each chosen provider
+// gets a zero-filled point at every bucket so the lines share an x-axis. The
+// per-curve Name/Labels/Unit mirror the gateway exactly so the shared SPA
+// component colours the legend the same way against either backend.
+func toProviderTimeseries(series string, bucketSeconds int, buckets []configdb.DashboardProviderSeriesBucket) adminc.DashboardTimeseries {
+	secs := float64(bucketSeconds)
+	cells, bucketTimes, totals := indexProviderBuckets(buckets)
+	providers := topProvidersByTotal(totals, topNProviders)
+
+	out := adminc.DashboardTimeseries{Series: make([]adminc.DashboardSeries, 0, len(providers))}
+	for _, provider := range providers {
+		unit := "req/s"
+		if series == seriesErrorRateByProviderTop5 {
+			unit = "%"
+		}
+		s := adminc.DashboardSeries{
+			Name:   provider,
+			Unit:   unit,
+			Labels: map[string]string{"provider": provider},
+			Points: make([]adminc.DashboardPoint, 0, len(bucketTimes)),
+		}
+		for _, ts := range bucketTimes {
+			cell := cells[provider][ts]
+			var value float64
+			if series == seriesErrorRateByProviderTop5 {
+				if cell.Requests > 0 {
+					value = float64(cell.Errored) / float64(cell.Requests) * 100
+				}
+			} else {
+				value = float64(cell.Requests) / secs
+			}
+			s.Points = append(s.Points, adminc.DashboardPoint{Timestamp: ts, Value: value})
+		}
+		out.Series = append(out.Series, s)
+	}
+	return out
+}
+
+// providerCell is one provider's request/error counts inside one bucket.
+type providerCell struct {
+	Requests int64
+	Errored  int64
+}
+
+// indexProviderBuckets pivots the flat (bucket, provider) scan into a
+// provider→bucket→cell lookup, the sorted distinct bucket timestamps, and each
+// provider's window-total request count for top-N ranking. Bucket timestamps
+// come only from buckets that saw traffic; an empty window yields no curves,
+// matching the gateway's "awaiting data" empty-series behaviour.
+func indexProviderBuckets(buckets []configdb.DashboardProviderSeriesBucket) (cells map[string]map[time.Time]providerCell, bucketTimes []time.Time, totals map[string]int64) {
+	cells = map[string]map[time.Time]providerCell{}
+	totals = map[string]int64{}
+	seenBucket := map[time.Time]struct{}{}
+	for _, b := range buckets {
+		if cells[b.Provider] == nil {
+			cells[b.Provider] = map[time.Time]providerCell{}
+		}
+		cells[b.Provider][b.Ts] = providerCell{Requests: b.Requests, Errored: b.Errored}
+		totals[b.Provider] += b.Requests
+		if _, ok := seenBucket[b.Ts]; !ok {
+			seenBucket[b.Ts] = struct{}{}
+			bucketTimes = append(bucketTimes, b.Ts)
+		}
+	}
+	sort.Slice(bucketTimes, func(i, j int) bool { return bucketTimes[i].Before(bucketTimes[j]) })
+	return cells, bucketTimes, totals
+}
+
+// topProvidersByTotal returns at most n provider names ranked by descending
+// window-total request count, ties broken by name for determinism. Providers
+// with no requests are dropped. Mirrors the gateway admin handler's ranking.
+func topProvidersByTotal(totals map[string]int64, n int) []string {
+	type entry struct {
+		name  string
+		total int64
+	}
+	entries := make([]entry, 0, len(totals))
+	for name, total := range totals {
+		if total <= 0 {
+			continue
+		}
+		entries = append(entries, entry{name: name, total: total})
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].total != entries[j].total {
+			return entries[i].total > entries[j].total
+		}
+		return entries[i].name < entries[j].name
+	})
+	if len(entries) > n {
+		entries = entries[:n]
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.name)
+	}
+	return out
 }
 
 // messagesRecentLimitDefault / Max bound the ?limit= of /messages/recent. The

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	connc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
@@ -24,6 +25,10 @@ type fakeRichReader struct {
 	buckets     []configdb.DashboardSeriesBucket
 	bucketsErr  error
 	lastSeriesP configdb.DashboardSeriesParams
+
+	provBuckets    []configdb.DashboardProviderSeriesBucket
+	provBucketsErr error
+	lastProvP      configdb.DashboardSeriesParams
 }
 
 func (f *fakeRichReader) QueryDashboardSummary(_ context.Context, p configdb.DashboardParams) (configdb.DashboardSummary, error) {
@@ -34,6 +39,11 @@ func (f *fakeRichReader) QueryDashboardSummary(_ context.Context, p configdb.Das
 func (f *fakeRichReader) QueryDashboardSeries(_ context.Context, p configdb.DashboardSeriesParams) ([]configdb.DashboardSeriesBucket, error) {
 	f.lastSeriesP = p
 	return f.buckets, f.bucketsErr
+}
+
+func (f *fakeRichReader) QueryDashboardSeriesByProvider(_ context.Context, p configdb.DashboardSeriesParams) ([]configdb.DashboardProviderSeriesBucket, error) {
+	f.lastProvP = p
+	return f.provBuckets, f.provBucketsErr
 }
 
 // fakeRecordReader satisfies both bodyReader and recordReader.
@@ -198,6 +208,125 @@ func TestDashboardTimeseries_Metrics(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDashboardTimeseries_PerProvider(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Minute)
+	// openai is busiest overall; anthropic only appears in the second bucket.
+	provBuckets := []configdb.DashboardProviderSeriesBucket{
+		{Ts: t0, Provider: "openai", Requests: 120, Errored: 12},
+		{Ts: t1, Provider: "openai", Requests: 60, Errored: 0},
+		{Ts: t1, Provider: "anthropic", Requests: 30, Errored: 15},
+	}
+	store := &fakeRichReader{provBuckets: provBuckets}
+	h := NewObservabilityHandler(store, nil, nil, nil)
+
+	t.Run("rps_by_provider_top5", func(t *testing.T) {
+		ts := decodeTimeseries(t, h, "rps_by_provider_top5")
+		if len(ts.Series) != 2 {
+			t.Fatalf("series len = %d, want 2", len(ts.Series))
+		}
+		// Ranked by total requests: openai (180) before anthropic (30).
+		if ts.Series[0].Name != "openai" || ts.Series[1].Name != "anthropic" {
+			t.Fatalf("order = %q,%q, want openai,anthropic", ts.Series[0].Name, ts.Series[1].Name)
+		}
+		for _, s := range ts.Series {
+			if s.Unit != "req/s" {
+				t.Errorf("%s unit = %q, want req/s", s.Name, s.Unit)
+			}
+			if s.Labels["provider"] != s.Name {
+				t.Errorf("%s label provider = %q, want %q", s.Name, s.Labels["provider"], s.Name)
+			}
+			// Both lines zero-filled across the same two distinct buckets.
+			if len(s.Points) != 2 {
+				t.Errorf("%s points = %d, want 2", s.Name, len(s.Points))
+			}
+		}
+		// 1h window over 60 buckets = 60s buckets; 120 req / 60s = 2 req/s.
+		if got := ts.Series[0].Points[0].Value; got != 2 {
+			t.Errorf("openai bucket0 = %v, want 2", got)
+		}
+		// anthropic absent in bucket0 → zero-filled.
+		if got := ts.Series[1].Points[0].Value; got != 0 {
+			t.Errorf("anthropic bucket0 = %v, want 0", got)
+		}
+	})
+
+	t.Run("error_rate_by_provider_top5", func(t *testing.T) {
+		ts := decodeTimeseries(t, h, "error_rate_by_provider_top5")
+		if len(ts.Series) != 2 {
+			t.Fatalf("series len = %d, want 2", len(ts.Series))
+		}
+		for _, s := range ts.Series {
+			if s.Unit != "%" {
+				t.Errorf("%s unit = %q, want %%", s.Name, s.Unit)
+			}
+		}
+		// openai bucket0: 12/120 = 10%.
+		if got := ts.Series[0].Points[0].Value; got != 10 {
+			t.Errorf("openai bucket0 err rate = %v, want 10", got)
+		}
+		// anthropic bucket1: 15/30 = 50%.
+		if got := ts.Series[1].Points[1].Value; got != 50 {
+			t.Errorf("anthropic bucket1 err rate = %v, want 50", got)
+		}
+	})
+}
+
+func TestDashboardTimeseries_PerProviderTopNCap(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Seven providers in one bucket; only the five busiest should surface, and
+	// the zero-request provider is dropped entirely.
+	provBuckets := []configdb.DashboardProviderSeriesBucket{
+		{Ts: t0, Provider: "p1", Requests: 70},
+		{Ts: t0, Provider: "p2", Requests: 60},
+		{Ts: t0, Provider: "p3", Requests: 50},
+		{Ts: t0, Provider: "p4", Requests: 40},
+		{Ts: t0, Provider: "p5", Requests: 30},
+		{Ts: t0, Provider: "p6", Requests: 20},
+		{Ts: t0, Provider: "p0", Requests: 0},
+	}
+	store := &fakeRichReader{provBuckets: provBuckets}
+	h := NewObservabilityHandler(store, nil, nil, nil)
+	ts := decodeTimeseries(t, h, "rps_by_provider_top5")
+	if len(ts.Series) != 5 {
+		t.Fatalf("series len = %d, want 5 (top-N cap)", len(ts.Series))
+	}
+	want := []string{"p1", "p2", "p3", "p4", "p5"}
+	for i, s := range ts.Series {
+		if s.Name != want[i] {
+			t.Errorf("series[%d] = %q, want %q", i, s.Name, want[i])
+		}
+	}
+}
+
+func TestDashboardTimeseries_PerProviderEmpty(t *testing.T) {
+	h := NewObservabilityHandler(&fakeRichReader{}, nil, nil, nil)
+	ts := decodeTimeseries(t, h, "rps_by_provider_top5")
+	if len(ts.Series) != 0 {
+		t.Fatalf("series len = %d, want 0 for empty window", len(ts.Series))
+	}
+}
+
+func TestDashboardTimeseries_PerProviderStoreError(t *testing.T) {
+	h := NewObservabilityHandler(&fakeRichReader{provBucketsErr: errors.New("boom")}, nil, nil, nil)
+	if rec := obsReq(h, "/api/v1/observability/dashboard/timeseries?window=1h&series=rps_by_provider_top5"); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("= %d, want 500", rec.Code)
+	}
+}
+
+func decodeTimeseries(t *testing.T, h http.Handler, series string) adminc.DashboardTimeseries {
+	t.Helper()
+	rec := obsReq(h, "/api/v1/observability/dashboard/timeseries?window=1h&series="+series)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s = %d, want 200: %s", series, rec.Code, rec.Body)
+	}
+	var ts adminc.DashboardTimeseries
+	if err := json.NewDecoder(rec.Body).Decode(&ts); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return ts
 }
 
 func TestDashboardTimeseries_MetricAlias(t *testing.T) {
