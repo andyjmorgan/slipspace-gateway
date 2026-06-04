@@ -65,6 +65,18 @@ func TestAdmin_Providers_FullLifecycle(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
+// TestAdmin_LegacyBackendsRoute_404 proves the hard cut on the admin surface:
+// the pre-rename /api/v1/config/backends route no longer exists (renamed to
+// /providers), so it 404s with no alias.
+func TestAdmin_LegacyBackendsRoute_404(t *testing.T) {
+	t.Parallel()
+	h := harness.NewWithOptions(t, harness.Options{AdminEnabled: true})
+
+	resp := authedJSON(t, h, "GET", "/api/v1/config/backends", nil)
+	wantStatus(t, resp, http.StatusNotFound, "GET legacy /backends")
+	_ = resp.Body.Close()
+}
+
 func TestAdmin_Providers_DeleteReferenced_409(t *testing.T) {
 	t.Parallel()
 	h := harness.NewWithOptions(t, harness.Options{AdminEnabled: true})

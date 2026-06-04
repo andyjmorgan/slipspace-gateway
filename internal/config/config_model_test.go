@@ -120,6 +120,20 @@ func TestLoad_DuplicateKeyAcrossFiles(t *testing.T) {
 	}
 }
 
+// TestLoad_LegacyBackendsKeyRejected proves the hard cut: a pre-rename
+// `backends:` block is rejected with a clear error rather than silently
+// ignored. No back-compat alias.
+func TestLoad_LegacyBackendsKeyRejected(t *testing.T) {
+	dir := writeDir(t, map[string]string{
+		"backends.yaml": "backends:\n  openai: { base_url: https://api.openai.com, protocols: { chat: {} } }\n",
+		"policy.yaml":   v2Policy,
+	})
+	_, err := Load(context.Background(), dir)
+	if !errors.Is(err, ErrLegacyProvidersKey) {
+		t.Fatalf("want ErrLegacyProvidersKey, got %v", err)
+	}
+}
+
 func TestLoad_EmptyAndParseErrors(t *testing.T) {
 	if _, err := Load(context.Background(), t.TempDir()); !errors.Is(err, ErrEmptyDirectory) {
 		t.Fatalf("empty dir: want ErrEmptyDirectory, got %v", err)

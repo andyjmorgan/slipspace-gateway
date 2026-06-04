@@ -116,6 +116,14 @@ var ErrUnknownConnectorReference = errors.New("config: configuration references 
 // directory. Each block must have a single authoring home.
 var ErrDuplicateKey = errors.New("config: top-level block set by more than one file")
 
+// ErrLegacyProvidersKey is returned by Load when a YAML file carries the
+// pre-rename top-level `backends:` key. The block was renamed to `providers:`
+// in the Vocabulary Refactor and the cut is hard — there is no alias — so the
+// loader rejects the old key with a clear message rather than silently ignoring
+// it (which would surface only as a confusing "at least one configuration"
+// downstream).
+var ErrLegacyProvidersKey = errors.New(`config: top-level "backends:" was renamed to "providers:" — rename the block (no back-compat alias)`)
+
 // ErrValidation is the umbrella sentinel for v2 config validation failures
 // (unknown provider/group/protocol reference, malformed binding, model-pattern
 // collision, …). Wrapped with a specific message at each call site.

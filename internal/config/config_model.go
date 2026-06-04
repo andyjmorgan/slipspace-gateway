@@ -87,6 +87,12 @@ type v2Doc struct {
 	Rules          []rulescontract.RuleContract             `yaml:"rules"`
 	Admin          *admin.Config                            `yaml:"admin"`
 	Telemetry      *contractsconfig.Telemetry               `yaml:"telemetry"`
+
+	// LegacyBackends captures the pre-rename `backends:` key solely so Load can
+	// reject it with a clear message — the block is `providers:` now and the cut
+	// is hard. A present key decodes to a non-zero Node (Kind != 0); an absent
+	// one stays zero. Exported because yaml.v3 only populates exported fields.
+	LegacyBackends yaml.Node `yaml:"backends"`
 }
 
 // Load reads the v2 YAML configuration directory at dir and returns the
@@ -123,6 +129,9 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 		var doc v2Doc
 		if uerr := yaml.Unmarshal(raw, &doc); uerr != nil {
 			return nil, fmt.Errorf("config: loadv2 parse %q: %w", name, uerr)
+		}
+		if doc.LegacyBackends.Kind != 0 {
+			return nil, fmt.Errorf("config: loadv2 %q: %w", name, ErrLegacyProvidersKey)
 		}
 		if merr := r.mergeDoc(name, &doc, seen); merr != nil {
 			return nil, merr
