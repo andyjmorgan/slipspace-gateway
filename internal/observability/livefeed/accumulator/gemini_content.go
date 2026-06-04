@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	geminicontent "github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
+	geminicontent "github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
 )
 
 // accumulateGeminiContent walks a Gemini streamGenerateContent SSE

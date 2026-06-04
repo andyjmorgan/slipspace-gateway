@@ -22,9 +22,9 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
-	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
+	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
 )
 
 func TestOutboundModel(t *testing.T) {

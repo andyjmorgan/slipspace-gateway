@@ -10,7 +10,7 @@ import (
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
 )
 
 // newGC builds the GatewayContext most evaluator tests need. The

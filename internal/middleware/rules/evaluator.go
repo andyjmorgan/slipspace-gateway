@@ -19,10 +19,10 @@ import (
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
-	"github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
+	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
 )
 
 // Evaluator runs the rule engine for a single request.

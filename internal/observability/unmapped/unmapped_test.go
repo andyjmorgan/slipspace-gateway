@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	anthropicmessages "github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
+	anthropicmessages "github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
 )
 
 func TestRequestFields_NilBody(t *testing.T) {
