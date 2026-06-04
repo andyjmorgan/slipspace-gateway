@@ -35,13 +35,25 @@ func parseWindow(r *http.Request) (string, time.Duration) {
 	return "24h", 24 * time.Hour
 }
 
+// clockSkewMargin pads the window's upper bound. observed_at is assigned by
+// Postgres (now()) while the window's `to` is the service's clock; when the DB
+// runs slightly ahead, a just-arrived event would otherwise fall after `to` and
+// vanish from "recent" views. A small forward margin keeps such events visible.
+const clockSkewMargin = time.Minute
+
+// windowBounds returns the [from, to) the dashboard queries over, applying the
+// clock-skew margin to the upper bound.
+func windowBounds(now time.Time, dur time.Duration) (from, to time.Time) {
+	return now.Add(-dur), now.Add(clockSkewMargin)
+}
+
 // handleObsSummary emits contracts/admin.DashboardSummary mapped from the store.
 func (s *Server) handleObsSummary(w http.ResponseWriter, r *http.Request) {
 	tok, dur := parseWindow(r)
 	now := time.Now()
-	from := now.Add(-dur)
+	from, to := windowBounds(now, dur)
 	summary, err := s.queries.QueryDashboardSummary(r.Context(), store.DashboardParams{
-		From: from, To: now, RecentFrom: now.Add(-5 * time.Minute), Filter: filterFromQuery(r),
+		From: from, To: to, RecentFrom: now.Add(-5 * time.Minute), Filter: filterFromQuery(r),
 	})
 	if err != nil {
 		s.queryError(w, "dashboard summary", err)
@@ -55,10 +67,10 @@ func (s *Server) handleObsSummary(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleObsTimeseries(w http.ResponseWriter, r *http.Request) {
 	_, dur := parseWindow(r)
 	now := time.Now()
-	from := now.Add(-dur)
+	from, to := windowBounds(now, dur)
 	bucket := bucketFor(dur)
 	buckets, err := s.queries.QueryDashboardSeries(r.Context(), store.DashboardSeriesParams{
-		From: from, To: now, BucketSeconds: bucket, Filter: filterFromQuery(r),
+		From: from, To: to, BucketSeconds: bucket, Filter: filterFromQuery(r),
 	})
 	if err != nil {
 		s.queryError(w, "dashboard timeseries", err)
