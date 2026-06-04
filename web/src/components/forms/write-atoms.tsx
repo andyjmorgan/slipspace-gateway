@@ -1,5 +1,5 @@
 // Shared write-flow primitives for the read-write config editors
-// (backends, groups, configurations, connectors, api_keys). The rules
+// (providers, groups, configurations, connectors, api_keys). The rules
 // editor predates these and rolls its own; everything added in the
 // read-write surface funnels through here so the destructive-action
 // warning, the dry-run preview banner, and the structured error banner
@@ -89,7 +89,7 @@ function DismissX({ onClick }: { onClick: () => void }) {
 }
 
 // DeleteDialog is the destructive-action warning. requireConfirmName turns
-// on type-to-confirm (high-blast-radius resources: backends, configurations,
+// on type-to-confirm (high-blast-radius resources: providers, configurations,
 // api_keys); the operator must type the resource name to enable Delete.
 // A 409 ConflictError surfaces the used_by list inline so the operator knows
 // what references the resource before they can remove it.

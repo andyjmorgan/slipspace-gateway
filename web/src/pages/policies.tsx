@@ -21,7 +21,7 @@ export function PoliciesPage() {
     <div>
       <PageHeader
         title="Groups"
-        sub="Failover and load-balance backend groups with live per-pod circuit-breaker state. Edit the policy + targets; live breaker state shown below."
+        sub="Failover and load-balance provider groups with live per-pod circuit-breaker state. Edit the policy + targets; live breaker state shown below."
         action={
           <NewButton to="/groups/new" label="New group" />
         }
@@ -66,7 +66,7 @@ function PolicyCard({ pol }: { pol: PolicySummary }) {
         <thead>
           <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
             <th className="text-left font-medium px-4 py-2">Target</th>
-            <th className="text-left font-medium px-4 py-2">Backend</th>
+            <th className="text-left font-medium px-4 py-2">Provider</th>
             <th className="text-right font-medium px-4 py-2">Order</th>
             <th className="text-right font-medium px-4 py-2">Weight</th>
             <th className="text-left font-medium px-4 py-2">Circuit state</th>

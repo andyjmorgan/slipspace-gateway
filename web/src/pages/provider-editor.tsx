@@ -1,10 +1,10 @@
-// BackendEditorPage handles creating a new backend (/backends/new) and
-// replacing an existing one (/backends/:name/edit). The read detail
-// endpoint returns BackendDetail (protocols/passthrough as arrays); the
-// write body is the contract Backend (protocols/passthrough as maps). The
+// ProviderEditorPage handles creating a new provider (/providers/new) and
+// replacing an existing one (/providers/:name/edit). The read detail
+// endpoint returns ProviderDetail (protocols/passthrough as arrays); the
+// write body is the contract Provider (protocols/passthrough as maps). The
 // form models the array shape and serialises to the map shape on submit.
 //
-// Backends are a high-blast-radius topology resource: the editor runs a
+// Providers are a high-blast-radius topology resource: the editor runs a
 // dry-run preview before the real save, and delete is type-to-confirm.
 
 import { useEffect, useState } from "react"
@@ -33,12 +33,12 @@ import {
 import { ErrorBanner, PreviewBanner } from "@/components/forms/write-atoms"
 import { classifyWriteError, type EditorError } from "@/lib/write-error"
 import {
-  createBackend,
-  replaceBackend,
-  previewBackend,
-  useBackend,
-  type BackendDetail,
-  type BackendWriteBody,
+  createProvider,
+  replaceProvider,
+  previewProvider,
+  useProvider,
+  type ProviderDetail,
+  type ProviderWriteBody,
   type PreviewResult,
 } from "@/lib/config-api"
 import { APIError, UnauthorizedError } from "@/lib/api"
@@ -61,7 +61,7 @@ type PassthroughFamilyDraft = {
   paths: PassthroughPathDraft[]
 }
 
-type BackendFormState = {
+type ProviderFormState = {
   name: string
   baseUrl: string
   requiredHeaders: KVPair[]
@@ -70,7 +70,7 @@ type BackendFormState = {
   passthrough: PassthroughFamilyDraft[]
 }
 
-function emptyForm(): BackendFormState {
+function emptyForm(): ProviderFormState {
   return {
     name: "",
     baseUrl: "",
@@ -81,7 +81,7 @@ function emptyForm(): BackendFormState {
   }
 }
 
-function formFromDetail(d: BackendDetail): BackendFormState {
+function formFromDetail(d: ProviderDetail): ProviderFormState {
   return {
     name: d.name,
     baseUrl: d.base_url,
@@ -101,8 +101,8 @@ function formFromDetail(d: BackendDetail): BackendFormState {
   }
 }
 
-function toWriteBody(form: BackendFormState): BackendWriteBody {
-  const body: BackendWriteBody = {
+function toWriteBody(form: ProviderFormState): ProviderWriteBody {
+  const body: ProviderWriteBody = {
     name: form.name.trim(),
     base_url: form.baseUrl.trim(),
   }
@@ -140,35 +140,35 @@ function toWriteBody(form: BackendFormState): BackendWriteBody {
   return body
 }
 
-export function BackendEditorPage({ mode }: { mode: "create" | "edit" }) {
-  if (mode === "create") return <CreateBackendPage />
-  return <EditBackendPage />
+export function ProviderEditorPage({ mode }: { mode: "create" | "edit" }) {
+  if (mode === "create") return <CreateProviderPage />
+  return <EditProviderPage />
 }
 
-function CreateBackendPage() {
+function CreateProviderPage() {
   const nav = useNavigate()
-  const [form, setForm] = useState<BackendFormState>(emptyForm)
+  const [form, setForm] = useState<ProviderFormState>(emptyForm)
   return (
     <EditorBody
-      title="New backend"
+      title="New provider"
       sub="Define an upstream connection shared across configurations — base URL, per-protocol paths + auth, and any passthrough families."
       form={form}
       setForm={setForm}
       urlName={null}
-      onSaved={(d) => nav(`/backends/${encodeURIComponent(d.name)}`)}
-      cancelTo="/backends"
+      onSaved={(d) => nav(`/providers/${encodeURIComponent(d.name)}`)}
+      cancelTo="/providers"
       nameEditable
-      submitLabel="Create backend"
+      submitLabel="Create provider"
     />
   )
 }
 
-function EditBackendPage() {
+function EditProviderPage() {
   const { name } = useParams<{ name: string }>()
   const nav = useNavigate()
-  const { state } = useBackend(name)
+  const { state } = useProvider(name)
   useUnauthorizedRedirect(state)
-  const [form, setForm] = useState<BackendFormState | null>(null)
+  const [form, setForm] = useState<ProviderFormState | null>(null)
 
   useEffect(() => {
     if (state.status === "ok" && form === null) {
@@ -177,21 +177,21 @@ function EditBackendPage() {
     }
   }, [state, form])
 
-  if (state.status === "loading") return <Wrap title={name ?? "Backend"}><LoadingPanel /></Wrap>
-  if (state.status === "error") return <Wrap title={name ?? "Backend"}><ErrorPanel message={state.message} /></Wrap>
-  if (state.status === "not_found") return <Wrap title={name ?? "Backend"}><NotFoundPanel kind="backend" name={name} /></Wrap>
+  if (state.status === "loading") return <Wrap title={name ?? "Provider"}><LoadingPanel /></Wrap>
+  if (state.status === "error") return <Wrap title={name ?? "Provider"}><ErrorPanel message={state.message} /></Wrap>
+  if (state.status === "not_found") return <Wrap title={name ?? "Provider"}><NotFoundPanel kind="provider" name={name} /></Wrap>
   if (state.status !== "ok" || form === null) return null
 
-  const backendName = state.data.name
+  const providerName = state.data.name
   return (
     <EditorBody
-      title={`Edit backend · ${backendName}`}
-      sub="Replace this backend's connection settings. The name is fixed — bindings and credentials reference it by name."
+      title={`Edit provider · ${providerName}`}
+      sub="Replace this provider's connection settings. The name is fixed — bindings and credentials reference it by name."
       form={form}
       setForm={setForm}
-      urlName={backendName}
-      onSaved={(d) => nav(`/backends/${encodeURIComponent(d.name)}`)}
-      cancelTo={`/backends/${encodeURIComponent(backendName)}`}
+      urlName={providerName}
+      onSaved={(d) => nav(`/providers/${encodeURIComponent(d.name)}`)}
+      cancelTo={`/providers/${encodeURIComponent(providerName)}`}
       nameEditable={false}
       submitLabel="Save changes"
     />
@@ -211,10 +211,10 @@ function EditorBody({
 }: {
   title: string
   sub: string
-  form: BackendFormState
-  setForm: (next: BackendFormState) => void
+  form: ProviderFormState
+  setForm: (next: ProviderFormState) => void
   urlName: string | null
-  onSaved: (d: BackendDetail) => void
+  onSaved: (d: ProviderDetail) => void
   cancelTo: string
   nameEditable: boolean
   submitLabel: string
@@ -238,7 +238,7 @@ function EditorBody({
     setError(null)
     setPreview(null)
     try {
-      setPreview(await previewBackend(urlName, toWriteBody(form)))
+      setPreview(await previewProvider(urlName, toWriteBody(form)))
     } catch (e) {
       handleError(e)
     } finally {
@@ -251,7 +251,7 @@ function EditorBody({
     setError(null)
     try {
       const body = toWriteBody(form)
-      const d = urlName ? await replaceBackend(urlName, body) : await createBackend(body)
+      const d = urlName ? await replaceProvider(urlName, body) : await createProvider(body)
       onSaved(d)
     } catch (e) {
       handleError(e)
@@ -284,7 +284,7 @@ function EditorBody({
             onChange={(v) => setForm({ ...form, name: v })}
             placeholder="openai"
             mono
-            hint={nameEditable ? "Unique across backends. Referenced by bindings, groups, and credentials." : "Names are immutable post-create."}
+            hint={nameEditable ? "Unique across providers. Referenced by bindings, groups, and credentials." : "Names are immutable post-create."}
           />
           <TextField
             label="Base URL"
@@ -300,7 +300,7 @@ function EditorBody({
             keyPlaceholder="anthropic-version"
             valuePlaceholder="2023-06-01"
             addLabel="+ Add header"
-            hint="Injected on every forwarded request to this backend."
+            hint="Injected on every forwarded request to this provider."
           />
           <KeyValueEditor
             label="Default query parameters"
@@ -317,7 +317,7 @@ function EditorBody({
       <PanelCard>
         <PanelHead
           title="Protocols"
-          sub="generative wire shapes this backend serves; each with an upstream path + optional per-protocol auth override"
+          sub="generative wire shapes this provider serves; each with an upstream path + optional per-protocol auth override"
           action={
             <Button
               type="button"
@@ -331,7 +331,7 @@ function EditorBody({
         />
         <div className="px-4 py-4 flex flex-col gap-3">
           {form.protocols.length === 0 && (
-            <div className="text-[12.5px] text-[color:var(--text-4)]">No protocols — this backend serves no generative traffic.</div>
+            <div className="text-[12.5px] text-[color:var(--text-4)]">No protocols — this provider serves no generative traffic.</div>
           )}
           {form.protocols.map((p, i) => (
             <ProtocolCard

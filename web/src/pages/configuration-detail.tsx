@@ -127,7 +127,7 @@ function CredentialsCard({ creds }: { creds: Record<string, RedactedSecret> }) {
   const entries = Object.entries(creds)
   return (
     <PanelCard>
-      <PanelHead title="Credentials" sub="redacted · managed mode swaps these onto the upstream request, keyed by backend" />
+      <PanelHead title="Credentials" sub="redacted · managed mode swaps these onto the upstream request, keyed by provider" />
       {entries.length === 0 && (
         <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">
           No managed-mode credentials. Passthrough-only configuration.
@@ -137,16 +137,16 @@ function CredentialsCard({ creds }: { creds: Record<string, RedactedSecret> }) {
         <TableScroll>
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Backend</th>
+              <th className="text-left font-medium px-4 py-2">Provider</th>
               <th className="text-left font-medium px-4 py-2">Redacted</th>
               <th className="text-right font-medium px-4 py-2">Length</th>
             </tr>
           </thead>
           <tbody>
-            {entries.map(([backend, redacted]) => (
-              <tr key={backend} className="border-t border-[color:var(--border)]">
+            {entries.map(([provider, redacted]) => (
+              <tr key={provider} className="border-t border-[color:var(--border)]">
                 <td className="px-4 py-2.5">
-                  <Link to={`/backends/${encodeURIComponent(backend)}`}><ProviderChip name={backend} /></Link>
+                  <Link to={`/providers/${encodeURIComponent(provider)}`}><ProviderChip name={provider} /></Link>
                 </td>
                 <td className="px-4 py-2.5"><Redacted r={redacted} /></td>
                 <td className="mono tnum text-right px-4 py-2.5 text-[color:var(--text-3)]">{redacted.length}</td>
@@ -169,7 +169,7 @@ function BindingsCard({
   const total = bindings.length + passthrough.length
   return (
     <PanelCard>
-      <PanelHead title="Bindings" sub={`how this configuration maps models to backends · ${total}`} />
+      <PanelHead title="Bindings" sub={`how this configuration maps models to providers · ${total}`} />
       {total === 0 && (
         <div className="px-4 py-6 text-[12.5px] text-[color:var(--text-4)]">No bindings configured.</div>
       )}
@@ -199,8 +199,8 @@ function BindingsCard({
                   </div>
                 </td>
                 <td className="px-4 py-2.5">
-                  {b.backend ? (
-                    <Link to={`/backends/${encodeURIComponent(b.backend)}`}><ProviderChip name={b.backend} /></Link>
+                  {b.provider ? (
+                    <Link to={`/providers/${encodeURIComponent(b.provider)}`}><ProviderChip name={b.provider} /></Link>
                   ) : b.group ? (
                     <Tag variant="violet"><span className="mono">group {b.group}</span></Tag>
                   ) : (
@@ -220,7 +220,7 @@ function BindingsCard({
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Passthrough family</th>
-              <th className="text-left font-medium px-4 py-2">Backend</th>
+              <th className="text-left font-medium px-4 py-2">Provider</th>
             </tr>
           </thead>
           <tbody>
@@ -228,7 +228,7 @@ function BindingsCard({
               <tr key={`${b.family}::${i}`} className="border-t border-[color:var(--border)]">
                 <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">{b.family}</td>
                 <td className="px-4 py-2.5">
-                  <Link to={`/backends/${encodeURIComponent(b.backend)}`}><ProviderChip name={b.backend} /></Link>
+                  <Link to={`/providers/${encodeURIComponent(b.provider)}`}><ProviderChip name={b.provider} /></Link>
                 </td>
               </tr>
             ))}

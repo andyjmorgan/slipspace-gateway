@@ -26,7 +26,7 @@ export function BindingsPage() {
     return state.data.bindings.filter((b) =>
       b.protocol.toLowerCase().includes(q) ||
       b.models.some((m) => m.toLowerCase().includes(q)) ||
-      (b.backend ?? "").toLowerCase().includes(q) ||
+      (b.provider ?? "").toLowerCase().includes(q) ||
       (b.group ?? "").toLowerCase().includes(q) ||
       (b.alias ?? "").toLowerCase().includes(q) ||
       (b.configuration ?? "").toLowerCase().includes(q),
@@ -39,7 +39,7 @@ export function BindingsPage() {
     if (!q) return state.data.passthrough_bindings
     return state.data.passthrough_bindings.filter((b) =>
       b.family.toLowerCase().includes(q) ||
-      b.backend.toLowerCase().includes(q) ||
+      b.provider.toLowerCase().includes(q) ||
       (b.configuration ?? "").toLowerCase().includes(q),
     )
   }, [state, filter])
@@ -52,7 +52,7 @@ export function BindingsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Bindings"
-        sub="How models map to backends. Each binding routes a (protocol, models) pair to a single backend or a group; passthrough bindings route a client-token family verbatim to one backend."
+        sub="How models map to providers. Each binding routes a (protocol, models) pair to a single provider or a group; passthrough bindings route a client-token family verbatim to one provider."
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}
@@ -62,7 +62,7 @@ export function BindingsPage() {
           <PanelCard>
             <PanelHead
               title={`${generic.length} of ${totalGeneric} bindings`}
-              sub="filters across protocol, models, backend, group, alias, and configuration"
+              sub="filters across protocol, models, provider, group, alias, and configuration"
               action={
                 <Input
                   placeholder="filter…"
@@ -94,14 +94,14 @@ export function BindingsPage() {
             <PanelCard>
               <PanelHead
                 title={`${passthrough.length} of ${totalPassthrough} passthrough bindings`}
-                sub="client-token families forwarded verbatim to a backend"
+                sub="client-token families forwarded verbatim to a provider"
               />
               <TableScroll>
                 <thead>
                   <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
                     <th className="text-left font-medium px-4 py-2">Configuration</th>
                     <th className="text-left font-medium px-4 py-2">Family</th>
-                    <th className="text-left font-medium px-4 py-2">Backend</th>
+                    <th className="text-left font-medium px-4 py-2">Provider</th>
                     <th className="text-left font-medium px-4 py-2">Tags</th>
                   </tr>
                 </thead>
@@ -144,8 +144,8 @@ function BindingRowView({ b }: { b: BindingRow }) {
         </div>
       </td>
       <td className="px-4 py-2.5">
-        {b.backend ? (
-          <Link to={`/backends/${encodeURIComponent(b.backend)}`}><ProviderChip name={b.backend} /></Link>
+        {b.provider ? (
+          <Link to={`/providers/${encodeURIComponent(b.provider)}`}><ProviderChip name={b.provider} /></Link>
         ) : b.group ? (
           <Tag variant="violet"><span className="mono">group {b.group}</span></Tag>
         ) : (
@@ -173,7 +173,7 @@ function PassthroughRowView({ b }: { b: PassthroughBindingRow }) {
       </td>
       <td className="mono px-4 py-2.5 text-[color:var(--text-2)]">{b.family}</td>
       <td className="px-4 py-2.5">
-        <Link to={`/backends/${encodeURIComponent(b.backend)}`}><ProviderChip name={b.backend} /></Link>
+        <Link to={`/providers/${encodeURIComponent(b.provider)}`}><ProviderChip name={b.provider} /></Link>
       </td>
       <td className="px-4 py-2.5">
         <div className="flex gap-1 flex-wrap">

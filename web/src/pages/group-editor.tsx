@@ -48,7 +48,7 @@ const MODE_OPTIONS: SelectOption[] = [
 ]
 
 type TargetDraft = {
-  backend: string
+  provider: string
   alias: string
   path: string
   weight: number | null
@@ -90,7 +90,7 @@ function formFromView(v: GroupView): GroupFormState {
     cbConfig: v.circuit_breaker ?? null,
     responseHeaderTimeoutSeconds: v.response_header_timeout_seconds ?? null,
     targets: v.targets.map((t) => ({
-      backend: t.backend,
+      provider: t.provider,
       alias: t.alias ?? "",
       path: t.path ?? "",
       weight: t.weight ?? null,
@@ -100,9 +100,9 @@ function formFromView(v: GroupView): GroupFormState {
 
 function toWriteBody(form: GroupFormState): GroupWriteBody {
   const targets: Target[] = form.targets
-    .filter((t) => t.backend.trim() !== "")
+    .filter((t) => t.provider.trim() !== "")
     .map((t) => {
-      const out: Target = { backend: t.backend.trim() }
+      const out: Target = { provider: t.provider.trim() }
       if (t.alias.trim()) out.alias = t.alias.trim()
       if (t.path.trim()) out.path = t.path.trim()
       if (t.weight != null && t.weight > 0) out.weight = t.weight
@@ -140,7 +140,7 @@ function CreateGroupPage() {
   return (
     <EditorBody
       title="New group"
-      sub="A named resilience unit — an ordered or weighted set of backend targets the orchestrator routes across."
+      sub="A named resilience unit — an ordered or weighted set of provider targets the orchestrator routes across."
       form={form}
       setForm={setForm}
       urlName={null}
@@ -316,7 +316,7 @@ function EditorBody({
               label="Circuit breaker enabled"
               checked={form.cbEnabled}
               onChange={(c) => setForm({ ...form, cbEnabled: c })}
-              hint="Skip a dead backend across every group that includes it."
+              hint="Skip a dead provider across every group that includes it."
             />
             <CheckboxField
               label="Strict weights"
@@ -338,13 +338,13 @@ function EditorBody({
       <PanelCard>
         <PanelHead
           title="Targets"
-          sub={`backends this group routes across · ${form.targets.length}`}
+          sub={`providers this group routes across · ${form.targets.length}`}
           action={
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setForm({ ...form, targets: [...form.targets, { backend: "", alias: "", path: "", weight: null }] })}
+              onClick={() => setForm({ ...form, targets: [...form.targets, { provider: "", alias: "", path: "", weight: null }] })}
             >
               + Add target
             </Button>
@@ -432,7 +432,7 @@ function TargetCard({
     <div className="rounded-[var(--radius)] border border-[color:var(--border)] overflow-hidden">
       <div className="px-3 py-2 border-b border-[color:var(--border)] bg-[color:var(--bg-2)] flex items-center gap-2">
         <span className="text-[11px] text-[color:var(--text-4)] mono w-5 text-right">{index + 1}</span>
-        <Tag variant="default"><span className="mono">{draft.backend || "backend"}</span></Tag>
+        <Tag variant="default"><span className="mono">{draft.provider || "provider"}</span></Tag>
         <div className="ml-auto flex items-center gap-1">
           <Button type="button" size="xs" variant="ghost" onClick={onMoveUp} disabled={index === 0}>↑</Button>
           <Button type="button" size="xs" variant="ghost" onClick={onMoveDown} disabled={index === total - 1}>↓</Button>
@@ -440,7 +440,7 @@ function TargetCard({
         </div>
       </div>
       <div className="px-3 py-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <TextField label="Backend" value={draft.backend} onChange={(v) => onChange({ ...draft, backend: v })} placeholder="openai" mono />
+        <TextField label="Provider" value={draft.provider} onChange={(v) => onChange({ ...draft, provider: v })} placeholder="openai" mono />
         <TextField label="Alias (model rewrite)" value={draft.alias} onChange={(v) => onChange({ ...draft, alias: v })} placeholder="gpt-4o" mono hint="Rewrites the request model when this target is picked." />
         <TextField label="Path override" value={draft.path} onChange={(v) => onChange({ ...draft, path: v })} placeholder="" mono />
         {weighted && (

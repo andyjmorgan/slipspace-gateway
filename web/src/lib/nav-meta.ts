@@ -24,7 +24,7 @@ export type NavMeta = {
   color: string
   section?: string
   // match lists the path prefixes this section owns, so detail/editor routes
-  // (e.g. /backends/foo/edit) resolve to the parent section's icon. Defaults
+  // (e.g. /providers/foo/edit) resolve to the parent section's icon. Defaults
   // to [to] when omitted.
   match?: string[]
 }
@@ -34,7 +34,7 @@ export const NAV: NavMeta[] = [
   { to: "/messages", label: "Live messages", icon: Activity, color: "#4ade80" },
   { to: "/configurations", label: "Configurations", icon: SlidersHorizontal, color: "#a78bfa", section: "Configuration" },
   { to: "/rules", label: "Rules", icon: ListTree, color: "#f97316" },
-  { to: "/backends", label: "Backends", icon: Server, color: "#38bdf8" },
+  { to: "/providers", label: "Providers", icon: Server, color: "#38bdf8" },
   { to: "/policies", label: "Groups", icon: Shield, color: "#fb7185", match: ["/policies", "/groups"] },
   { to: "/connectors", label: "Connectors", icon: Database, color: "#2dd4bf" },
   { to: "/api-keys", label: "API keys", icon: KeyRound, color: "#facc15" },
@@ -43,7 +43,7 @@ export const NAV: NavMeta[] = [
 ]
 
 // navMetaForPath resolves a pathname to its owning section by longest matching
-// prefix (so /backends/foo → Backends). Returns undefined for paths no section
+// prefix (so /providers/foo → Providers). Returns undefined for paths no section
 // claims (e.g. /login).
 export function navMetaForPath(pathname: string): NavMeta | undefined {
   let best: NavMeta | undefined

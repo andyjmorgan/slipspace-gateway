@@ -9,8 +9,8 @@ const TITLES: Record<string, { t: string; s: string }> = {
   "/configurations": { t: "Configurations", s: "policy bundles · rule chains" },
   "/apikeys": { t: "API Keys", s: "internal services holding sluice secrets" },
   "/rules": { t: "Rules", s: "shared library — referenced by configurations" },
-  "/backends": { t: "Backends", s: "backends.yaml — read-only" },
-  "/bindings": { t: "Bindings", s: "model → backend mapping — read-only" },
+  "/providers": { t: "Providers", s: "providers.yaml — read-only" },
+  "/bindings": { t: "Bindings", s: "model → provider mapping — read-only" },
   "/settings": { t: "Settings", s: "gateway config & telemetry destinations" },
 }
 
