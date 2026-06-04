@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useConfiguration, deleteConfiguration, type RedactedSecret, type RuleAttachment, type APIKeySummary, type BindingRow, type PassthroughBindingRow } from "@/lib/config-api"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
@@ -86,10 +87,38 @@ export function ConfigurationDetailPage() {
         onClose={() => setConfirmDelete(false)}
       />
 
-      <CredentialsCard creds={c.credentials} />
-      <BindingsCard bindings={c.bindings} passthrough={c.passthrough_bindings} />
-      <AttachedRulesCard rules={c.rules} />
-      <APIKeysCard keys={c.api_keys} />
+      <Tabs defaultValue="credentials" className="gap-4">
+        <TabsList variant="line" className="flex-wrap">
+          <TabsTrigger value="credentials">
+            Credentials{Object.keys(c.credentials).length > 0 ? ` · ${Object.keys(c.credentials).length}` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="bindings">
+            Bindings{c.bindings.length + c.passthrough_bindings.length > 0 ? ` · ${c.bindings.length + c.passthrough_bindings.length}` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="rules">
+            Rules{c.rules.length > 0 ? ` · ${c.rules.length}` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="api-keys">
+            API keys{c.api_keys.length > 0 ? ` · ${c.api_keys.length}` : ""}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="credentials">
+          <CredentialsCard creds={c.credentials} />
+        </TabsContent>
+
+        <TabsContent value="bindings">
+          <BindingsCard bindings={c.bindings} passthrough={c.passthrough_bindings} />
+        </TabsContent>
+
+        <TabsContent value="rules">
+          <AttachedRulesCard rules={c.rules} />
+        </TabsContent>
+
+        <TabsContent value="api-keys">
+          <APIKeysCard keys={c.api_keys} />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
