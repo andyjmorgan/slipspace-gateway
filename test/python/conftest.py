@@ -31,6 +31,39 @@ STARTUP_TIMEOUT = 30.0
 HEALTH_INTERVAL = 0.1
 
 
+def _scrub_ambient_provider_env() -> None:
+    """Make the SDK clients hermetic by dropping ambient provider env vars.
+
+    The official provider SDKs fold environment variables into every client —
+    base URL, auth, and (critically) default headers. A developer who routes
+    their own tooling through Sluice has e.g. ANTHROPIC_BASE_URL plus
+    ANTHROPIC_CUSTOM_HEADERS="X-Sluice-Configuration: ..." exported; the
+    anthropic SDK injects that header on every request regardless of an
+    explicit base_url or default_headers, which flips the gateway into
+    passthrough mode against the wrong configuration and breaks selection.
+
+    Scrub the provider routing/auth/header vars at import — before any client
+    or the session `stack` fixture is built — so each SDK is a vanilla client
+    pointed only at the spawned gateway. The SLUICE_* harness controls are
+    deliberately untouched.
+    """
+    prefixes = ("ANTHROPIC_", "OPENAI_", "GEMINI_", "GOOGLE_")
+    suffixes = (
+        "_BASE_URL",
+        "_CUSTOM_HEADERS",
+        "_API_KEY",
+        "_AUTH_TOKEN",
+        "_ORG_ID",
+        "_PROJECT_ID",
+    )
+    for key in list(os.environ):
+        if key.startswith(prefixes) and key.endswith(suffixes):
+            del os.environ[key]
+
+
+_scrub_ambient_provider_env()
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
