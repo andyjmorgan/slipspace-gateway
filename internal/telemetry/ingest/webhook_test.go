@@ -50,8 +50,9 @@ func testReg() *registry.Registry {
 	return registry.New([]config.Gateway{{ID: "gw-a", HMACSecret: "secret-a"}})
 }
 
-// post builds a signed (or not) request and runs it through the handler.
-func post(t *testing.T, h http.Handler, gwID, sig string, body []byte) *http.Response {
+// post builds a signed (or not) request and runs it through the handler,
+// returning the recorder (no http.Response body to close — quiets bodyclose).
+func post(t *testing.T, h http.Handler, gwID, sig string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ingest/payload", strings.NewReader(string(body)))
 	if gwID != "" {
@@ -62,7 +63,7 @@ func post(t *testing.T, h http.Handler, gwID, sig string, body []byte) *http.Res
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	return rec.Result()
+	return rec
 }
 
 func validEnvelope(t *testing.T) []byte {
@@ -86,8 +87,8 @@ func TestWebhook_Valid(t *testing.T) {
 	h := NewWebhookHandler(testReg(), st, discard())
 	body := validEnvelope(t)
 	resp := post(t, h, "gw-a", sign("secret-a", body), body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Code)
 	}
 	if st.n != 1 {
 		t.Fatalf("stored %d, want 1", st.n)
@@ -108,8 +109,8 @@ func TestWebhook_BadSignature(t *testing.T) {
 	h := NewWebhookHandler(testReg(), st, discard())
 	body := validEnvelope(t)
 	resp := post(t, h, "gw-a", sign("wrong-secret", body), body)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.Code)
 	}
 	if st.n != 0 {
 		t.Fatalf("stored %d on bad sig, want 0", st.n)
@@ -121,19 +122,19 @@ func TestWebhook_UnknownGateway(t *testing.T) {
 	h := NewWebhookHandler(testReg(), st, discard())
 	body := validEnvelope(t)
 	resp := post(t, h, "gw-x", sign("secret-a", body), body)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.Code)
 	}
 }
 
 func TestWebhook_MissingHeaders(t *testing.T) {
 	h := NewWebhookHandler(testReg(), &captureStore{}, discard())
 	body := validEnvelope(t)
-	if resp := post(t, h, "", sign("secret-a", body), body); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("no gateway id: status = %d, want 401", resp.StatusCode)
+	if resp := post(t, h, "", sign("secret-a", body), body); resp.Code != http.StatusUnauthorized {
+		t.Fatalf("no gateway id: status = %d, want 401", resp.Code)
 	}
-	if resp := post(t, h, "gw-a", "", body); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("no signature: status = %d, want 401", resp.StatusCode)
+	if resp := post(t, h, "gw-a", "", body); resp.Code != http.StatusUnauthorized {
+		t.Fatalf("no signature: status = %d, want 401", resp.Code)
 	}
 }
 
@@ -142,8 +143,8 @@ func TestWebhook_MalformedEnvelope(t *testing.T) {
 	h := NewWebhookHandler(testReg(), st, discard())
 	body := []byte("not json")
 	resp := post(t, h, "gw-a", sign("secret-a", body), body)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.Code)
 	}
 }
 
@@ -152,8 +153,8 @@ func TestWebhook_MissingCorrelationID(t *testing.T) {
 	h := NewWebhookHandler(testReg(), st, discard())
 	body, _ := json.Marshal(PayloadEnvelope{Kind: store.KindRequestBody})
 	resp := post(t, h, "gw-a", sign("secret-a", body), body)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.Code)
 	}
 }
 
@@ -162,8 +163,8 @@ func TestWebhook_UnknownKind(t *testing.T) {
 	h := NewWebhookHandler(testReg(), st, discard())
 	body, _ := json.Marshal(PayloadEnvelope{CorrelationID: "c", Kind: "bogus"})
 	resp := post(t, h, "gw-a", sign("secret-a", body), body)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.Code)
 	}
 }
 
@@ -172,7 +173,7 @@ func TestWebhook_StoreError(t *testing.T) {
 	h := NewWebhookHandler(testReg(), st, discard())
 	body := validEnvelope(t)
 	resp := post(t, h, "gw-a", sign("secret-a", body), body)
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }

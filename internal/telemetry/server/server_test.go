@@ -34,38 +34,38 @@ func newTestServer(t *testing.T, ping error) *Server {
 	return New(console, stubPinger{err: ping}, nil, nil, discardLogger())
 }
 
-func doRequest(t *testing.T, h http.Handler, method, path string, auth *[2]string) *http.Response {
+func doRequest(t *testing.T, h http.Handler, path string, auth *[2]string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, nil)
+	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if auth != nil {
 		req.SetBasicAuth(auth[0], auth[1])
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	return rec.Result()
+	return rec
 }
 
 func TestHealthz_Open(t *testing.T) {
 	h := newTestServer(t, nil).Handler()
-	resp := doRequest(t, h, http.MethodGet, "/healthz", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	resp := doRequest(t, h, "/healthz", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Code)
 	}
 }
 
 func TestReadyz_OK(t *testing.T) {
 	h := newTestServer(t, nil).Handler()
-	resp := doRequest(t, h, http.MethodGet, "/readyz", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	resp := doRequest(t, h, "/readyz", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Code)
 	}
 }
 
 func TestReadyz_StoreDown(t *testing.T) {
 	h := newTestServer(t, errors.New("connection refused")).Handler()
-	resp := doRequest(t, h, http.MethodGet, "/readyz", nil)
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	resp := doRequest(t, h, "/readyz", nil)
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.Code)
 	}
 }
 
@@ -74,16 +74,16 @@ func TestConsoleSPA_Public(t *testing.T) {
 	h := newTestServer(t, nil).Handler()
 	// Root serves the SPA entry (placeholder in the test binary — built assets
 	// are gitignored and not embedded).
-	if resp := doRequest(t, h, http.MethodGet, "/", nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET / status = %d, want 200", resp.StatusCode)
+	if resp := doRequest(t, h, "/", nil); resp.Code != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200", resp.Code)
 	}
 	// An unknown deep link falls back to the SPA entry (client-side routing).
-	if resp := doRequest(t, h, http.MethodGet, "/messages", nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("SPA fallback status = %d, want 200", resp.StatusCode)
+	if resp := doRequest(t, h, "/messages", nil); resp.Code != http.StatusOK {
+		t.Fatalf("SPA fallback status = %d, want 200", resp.Code)
 	}
 	// A real embedded file is served directly.
-	if resp := doRequest(t, h, http.MethodGet, "/placeholder.html", nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("static file status = %d, want 200", resp.StatusCode)
+	if resp := doRequest(t, h, "/placeholder.html", nil); resp.Code != http.StatusOK {
+		t.Fatalf("static file status = %d, want 200", resp.Code)
 	}
 }
 
@@ -104,9 +104,9 @@ func TestAPIAuthMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := doRequest(t, h, http.MethodGet, "/api/v1/dashboard/summary", &[2]string{tc.user, tc.pass})
-			if resp.StatusCode != tc.want {
-				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
+			resp := doRequest(t, h, "/api/v1/dashboard/summary", &[2]string{tc.user, tc.pass})
+			if resp.Code != tc.want {
+				t.Fatalf("status = %d, want %d", resp.Code, tc.want)
 			}
 		})
 	}

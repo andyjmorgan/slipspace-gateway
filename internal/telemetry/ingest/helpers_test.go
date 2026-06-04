@@ -140,8 +140,8 @@ func TestWebhook_TooLarge(t *testing.T) {
 	h := NewWebhookHandler(testReg(), st, discard())
 	body := strings.Repeat("a", maxPayloadBytes+1)
 	resp := post(t, h, "gw-a", sign("secret-a", []byte(body)), []byte(body))
-	if resp.StatusCode != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	if resp.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.Code)
 	}
 	if st.n != 0 {
 		t.Error("nothing should be stored")

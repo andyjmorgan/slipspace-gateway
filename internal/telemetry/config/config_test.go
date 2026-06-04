@@ -18,6 +18,7 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
+//nolint:gosec // test fixture, not a real credential
 const validBody = `
 postgres:
   dsn: postgres://u:p@localhost:5432/telemetry
@@ -89,7 +90,7 @@ func TestLoad_UnknownField(t *testing.T) {
 }
 
 func TestLoad_ValidationErrors(t *testing.T) {
-	cases := map[string]string{
+	cases := map[string]string{ //nolint:gosec // test fixtures, not real credentials
 		"no dsn": `
 console: {username: a, password_hash: h}
 `,

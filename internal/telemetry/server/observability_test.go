@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -11,10 +12,10 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
-func decodeAdmin[T any](t *testing.T, resp *http.Response) T {
+func decodeAdmin[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 	t.Helper()
 	var v T
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+	if err := json.NewDecoder(rec.Body).Decode(&v); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	return v
@@ -34,8 +35,8 @@ func TestObsSummary_ParityShape(t *testing.T) {
 	}}
 	h := newQueryServer(t, q)
 	resp := get(t, h, "/api/v1/dashboard/summary?window=1h", true)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
 	}
 	got := decodeAdmin[adminc.DashboardSummary](t, resp)
 	if got.Window != "1h" {
@@ -68,8 +69,8 @@ func TestObsSummary_DefaultWindowAndError(t *testing.T) {
 		t.Errorf("unknown window should default to 24h, got %q", got.Window)
 	}
 	hErr := newQueryServer(t, &fakeQueries{summaryErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/dashboard/summary", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp := get(t, hErr, "/api/v1/dashboard/summary", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
 
@@ -91,8 +92,8 @@ func TestObsTimeseries(t *testing.T) {
 	}
 	// error
 	hErr := newQueryServer(t, &fakeQueries{seriesErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/dashboard/timeseries", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp := get(t, hErr, "/api/v1/dashboard/timeseries", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
 
@@ -119,8 +120,8 @@ func TestObsMessagesRecent(t *testing.T) {
 	}
 	// error
 	hErr := newQueryServer(t, &fakeQueries{eventsErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/messages/recent", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp := get(t, hErr, "/api/v1/messages/recent", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
 
@@ -140,13 +141,13 @@ func TestObsMessageBody(t *testing.T) {
 	}
 	// not found
 	hNF := newQueryServer(t, &fakeQueries{payErr: store.ErrPayloadNotFound})
-	if resp := get(t, hNF, "/api/v1/messages/c/body", true); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	if resp := get(t, hNF, "/api/v1/messages/c/body", true); resp.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.Code)
 	}
 	// hard error
 	hErr := newQueryServer(t, &fakeQueries{payErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/messages/c/body", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp := get(t, hErr, "/api/v1/messages/c/body", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
 

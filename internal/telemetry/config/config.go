@@ -77,7 +77,7 @@ func Load(path string) (Config, error) {
 		return Config{}, ErrNoConfig
 	}
 
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied config path, same trust model as the gateway config dir
 	if err != nil {
 		return Config{}, fmt.Errorf("telemetry config: read %q: %w", path, err)
 	}

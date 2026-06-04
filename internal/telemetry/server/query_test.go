@@ -60,7 +60,9 @@ func newQueryServer(t *testing.T, q Queries) http.Handler {
 	return New(console, stubPinger{}, q, nil, discardLogger()).Handler()
 }
 
-func get(t *testing.T, h http.Handler, path string, auth bool) *http.Response {
+// get runs a GET through the handler and returns the recorder (no http.Response,
+// so there's no body to close — keeps bodyclose quiet for the many call sites).
+func get(t *testing.T, h http.Handler, path string, auth bool) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if auth {
@@ -68,13 +70,13 @@ func get(t *testing.T, h http.Handler, path string, auth bool) *http.Response {
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	return rec.Result()
+	return rec
 }
 
 func TestQuery_RequiresAuth(t *testing.T) {
 	h := newQueryServer(t, &fakeQueries{})
-	if resp := get(t, h, "/api/v1/dashboard/summary", false); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	if resp := get(t, h, "/api/v1/dashboard/summary", false); resp.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.Code)
 	}
 }
 
@@ -84,8 +86,8 @@ func TestQuery_NoQueriesDisablesRoutes(t *testing.T) {
 	h := New(config.Console{Username: "admin", PasswordHash: string(hash)}, stubPinger{}, nil, nil, discardLogger()).Handler()
 	resp := get(t, h, "/api/v1/dashboard/summary", true)
 	// The catch-all GET / console handler answers 200 with the shell text.
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
 	}
 }
 
@@ -93,8 +95,8 @@ func TestEvents(t *testing.T) {
 	q := &fakeQueries{events: []store.RequestEvent{{CorrelationID: "c"}}, next: "cur2"}
 	h := newQueryServer(t, q)
 	resp := get(t, h, "/api/v1/events?from=2026-01-01T00:00:00Z&limit=10", true)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
 	}
 	var body struct {
 		Events     []store.RequestEvent `json:"events"`
@@ -108,19 +110,19 @@ func TestEvents(t *testing.T) {
 
 func TestEvents_BadParamsAndErrors(t *testing.T) {
 	h := newQueryServer(t, &fakeQueries{})
-	if resp := get(t, h, "/api/v1/events?from=x", true); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("bad from: %d", resp.StatusCode)
+	if resp := get(t, h, "/api/v1/events?from=x", true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("bad from: %d", resp.Code)
 	}
-	if resp := get(t, h, "/api/v1/events?to=x", true); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("bad to: %d", resp.StatusCode)
+	if resp := get(t, h, "/api/v1/events?to=x", true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("bad to: %d", resp.Code)
 	}
 	hCur := newQueryServer(t, &fakeQueries{eventsErr: store.ErrInvalidCursor})
-	if resp := get(t, hCur, "/api/v1/events?cursor=bad", true); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("bad cursor: %d", resp.StatusCode)
+	if resp := get(t, hCur, "/api/v1/events?cursor=bad", true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("bad cursor: %d", resp.Code)
 	}
 	hErr := newQueryServer(t, &fakeQueries{eventsErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/events", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("db err: %d", resp.StatusCode)
+	if resp := get(t, hErr, "/api/v1/events", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("db err: %d", resp.Code)
 	}
 }
 
@@ -131,61 +133,61 @@ func TestEventInspector(t *testing.T) {
 	}
 	h := newQueryServer(t, q)
 	resp := get(t, h, "/api/v1/events/c", true)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
 	}
 	// not found
 	hNF := newQueryServer(t, &fakeQueries{eventErr: store.ErrRequestEventNotFound})
-	if resp := get(t, hNF, "/api/v1/events/x", true); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	if resp := get(t, hNF, "/api/v1/events/x", true); resp.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.Code)
 	}
 	// payload-not-found is tolerated (event still returned)
 	hNoPay := newQueryServer(t, &fakeQueries{event: store.RequestEvent{CorrelationID: "c"}, payErr: store.ErrPayloadNotFound})
-	if resp := get(t, hNoPay, "/api/v1/events/c", true); resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	if resp := get(t, hNoPay, "/api/v1/events/c", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Code)
 	}
 	// event error
 	hErr := newQueryServer(t, &fakeQueries{eventErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/events/c", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp := get(t, hErr, "/api/v1/events/c", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 	// payload hard error
 	hPayErr := newQueryServer(t, &fakeQueries{event: store.RequestEvent{CorrelationID: "c"}, payErr: errors.New("db")})
-	if resp := get(t, hPayErr, "/api/v1/events/c", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp := get(t, hPayErr, "/api/v1/events/c", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
 
 func TestEventBody(t *testing.T) {
 	q := &fakeQueries{payloads: []store.Payload{{Kind: store.KindResponseBody, Body: []byte(`{}`)}}}
 	h := newQueryServer(t, q)
-	if resp := get(t, h, "/api/v1/events/c/body", true); resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if resp := get(t, h, "/api/v1/events/c/body", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
 	}
 	hNF := newQueryServer(t, &fakeQueries{payErr: store.ErrPayloadNotFound})
-	if resp := get(t, hNF, "/api/v1/events/c/body", true); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	if resp := get(t, hNF, "/api/v1/events/c/body", true); resp.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.Code)
 	}
 	hErr := newQueryServer(t, &fakeQueries{payErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/events/c/body", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp := get(t, hErr, "/api/v1/events/c/body", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
 
 func TestSession(t *testing.T) {
 	q := &fakeQueries{session: []store.RequestEvent{{CorrelationID: "1", SessionID: "s"}}}
 	h := newQueryServer(t, q)
-	if resp := get(t, h, "/api/v1/sessions/s", true); resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if resp := get(t, h, "/api/v1/sessions/s", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
 	}
 	// empty -> 404
 	hEmpty := newQueryServer(t, &fakeQueries{})
-	if resp := get(t, hEmpty, "/api/v1/sessions/s", true); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	if resp := get(t, hEmpty, "/api/v1/sessions/s", true); resp.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.Code)
 	}
 	// error
 	hErr := newQueryServer(t, &fakeQueries{sessionErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/sessions/s", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	if resp := get(t, hErr, "/api/v1/sessions/s", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
