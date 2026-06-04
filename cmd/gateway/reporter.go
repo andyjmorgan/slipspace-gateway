@@ -656,6 +656,7 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 		if len(body) > 0 {
 			rec.Response.Body = jsonBodyOrEscaped(body)
 			rec.Response.BodyBytes = int(buf.Total())
+			rec.Response.BodyTruncated = buf.Truncated()
 			sum := sha256.Sum256(body)
 			rec.Response.BodySha256 = hex.EncodeToString(sum[:])
 		}

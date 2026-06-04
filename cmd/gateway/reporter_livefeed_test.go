@@ -159,6 +159,48 @@ func TestReporter_CapturesRequestAndResponseBodies(t *testing.T) {
 	}
 }
 
+func TestReporter_BuildRecordResponseTruncationFlag(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		cap       int
+		body      []byte
+		wantTrunc bool
+	}{
+		{
+			// Complete body within the cap: BodyBytes equals Total, no
+			// truncation. The CP must not flag this even if the inline JSON
+			// re-encodes to fewer bytes than BodyBytes.
+			name:      "within cap",
+			cap:       8 * 1024,
+			body:      []byte(`{"choices":[{"message":{"content":"hello"}}]}`),
+			wantTrunc: false,
+		},
+		{
+			// Body exceeds the per-body cap: Append keeps a head prefix and
+			// sets Truncated -> the Record must carry BodyTruncated.
+			name:      "over cap",
+			cap:       16,
+			body:      []byte(`{"choices":[{"message":{"content":"a much longer body than the cap"}}]}`),
+			wantTrunc: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newTestReporter(t, nil)
+			buf := livefeed.NewResponseBuffer(tt.cap)
+			buf.Append(tt.body)
+			ctx := livefeed.WithResponseBuffer(context.Background(), buf)
+
+			rec := r.buildRecord(ctx, events.Request{StatusCode: 200}, nil)
+			if rec.Response.BodyTruncated != tt.wantTrunc {
+				t.Errorf("BodyTruncated = %v, want %v (BodyBytes=%d len(Body)=%d)",
+					rec.Response.BodyTruncated, tt.wantTrunc, rec.Response.BodyBytes, len(rec.Response.Body))
+			}
+		})
+	}
+}
+
 func TestReporter_StreamingResponseAccumulated(t *testing.T) {
 	t.Parallel()
 	ring, _ := livefeed.NewRing(4)

@@ -451,10 +451,11 @@ func TestMessageBody_Shape(t *testing.T) {
 			Headers:   map[string]string{"Content-Type": "application/json"},
 		},
 		Response: connc.ResponsePart{
-			Status:    200,
-			Body:      json.RawMessage(`{"id":"x"}`),
-			BodyBytes: 100, // larger than captured -> truncated
-			Headers:   map[string]string{"X-Test": "1"},
+			Status:        200,
+			Body:          json.RawMessage(`{"id":"x"}`),
+			BodyBytes:     100,
+			BodyTruncated: true,
+			Headers:       map[string]string{"X-Test": "1"},
 		},
 	}
 	raw, _ := json.Marshal(record)
@@ -484,6 +485,60 @@ func TestMessageBody_Shape(t *testing.T) {
 	}
 	if len(d.ResponseHeaders["X-Test"]) != 1 {
 		t.Errorf("resp headers = %+v", d.ResponseHeaders)
+	}
+}
+
+func TestRecordToBodyDetail_Truncation(t *testing.T) {
+	tests := []struct {
+		name      string
+		req       connc.RequestPart
+		resp      connc.ResponsePart
+		wantReqTr bool
+		wantResTr bool
+	}{
+		{
+			// The live repro: a complete body whose inline JSON is compacted
+			// relative to the raw wire bytes BodyBytes counts. BodyBytes (1089)
+			// exceeds len(Body) (744-ish here, scaled) with no truncation flag
+			// set -> must NOT be reported as truncated.
+			name:      "complete body, BodyBytes > len(Body), no flag",
+			req:       connc.RequestPart{Body: json.RawMessage(`{"model":"gpt-4o"}`), BodyBytes: 64},
+			resp:      connc.ResponsePart{Body: json.RawMessage(`{"id":"x","object":"chat.completion"}`), BodyBytes: 1089},
+			wantReqTr: false,
+			wantResTr: false,
+		},
+		{
+			name:      "actually cap-truncated body, flag set",
+			req:       connc.RequestPart{Body: json.RawMessage(`"{\"model\":\"gpt-4o"`), BodyBytes: 4096, BodyTruncated: true},
+			resp:      connc.ResponsePart{Body: json.RawMessage(`"{\"id\":\"x"`), BodyBytes: 8192, BodyTruncated: true},
+			wantReqTr: true,
+			wantResTr: true,
+		},
+		{
+			name:      "omitted (metadata_only) body",
+			req:       connc.RequestPart{BodyBytes: 12_000_000, BodyOmitted: true},
+			resp:      connc.ResponsePart{BodyBytes: 9_000_000, BodyOmitted: true},
+			wantReqTr: true,
+			wantResTr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := json.Marshal(connc.Record{Request: tt.req, Response: tt.resp})
+			if err != nil {
+				t.Fatalf("marshal record: %v", err)
+			}
+			d, err := recordToBodyDetail("c1", raw)
+			if err != nil {
+				t.Fatalf("recordToBodyDetail: %v", err)
+			}
+			if d.RequestTruncated != tt.wantReqTr {
+				t.Errorf("RequestTruncated = %v, want %v", d.RequestTruncated, tt.wantReqTr)
+			}
+			if d.ResponseTruncated != tt.wantResTr {
+				t.Errorf("ResponseTruncated = %v, want %v", d.ResponseTruncated, tt.wantResTr)
+			}
+		})
 	}
 }
 
