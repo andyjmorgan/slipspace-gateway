@@ -89,54 +89,6 @@ func TestQuery_NoQueriesDisablesRoutes(t *testing.T) {
 	}
 }
 
-func TestDashboardSummary(t *testing.T) {
-	q := &fakeQueries{summary: store.DashboardSummary{Totals: store.DashboardTotals{Requests: 7}}}
-	h := newQueryServer(t, q)
-	resp := get(t, h, "/api/v1/dashboard/summary?backend=anthropic", true)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var got store.DashboardSummary
-	_ = json.NewDecoder(resp.Body).Decode(&got)
-	if got.Totals.Requests != 7 {
-		t.Errorf("requests = %d", got.Totals.Requests)
-	}
-}
-
-func TestDashboardSummary_BadFrom(t *testing.T) {
-	h := newQueryServer(t, &fakeQueries{})
-	if resp := get(t, h, "/api/v1/dashboard/summary?from=nonsense", true); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestDashboardSummary_Error(t *testing.T) {
-	h := newQueryServer(t, &fakeQueries{summaryErr: errors.New("db")})
-	if resp := get(t, h, "/api/v1/dashboard/summary", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
-	}
-}
-
-func TestDashboardSeries(t *testing.T) {
-	h := newQueryServer(t, &fakeQueries{series: []store.DashboardSeriesBucket{{Requests: 3}}})
-	if resp := get(t, h, "/api/v1/dashboard/series?bucket_seconds=30", true); resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	// bad bucket
-	if resp := get(t, h, "/api/v1/dashboard/series?bucket_seconds=0", true); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("bucket 0: status = %d, want 400", resp.StatusCode)
-	}
-	// bad to
-	if resp := get(t, h, "/api/v1/dashboard/series?to=x", true); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("bad to: status = %d, want 400", resp.StatusCode)
-	}
-	// error
-	hErr := newQueryServer(t, &fakeQueries{seriesErr: errors.New("db")})
-	if resp := get(t, hErr, "/api/v1/dashboard/series", true); resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
-	}
-}
-
 func TestEvents(t *testing.T) {
 	q := &fakeQueries{events: []store.RequestEvent{{CorrelationID: "c"}}, next: "cur2"}
 	h := newQueryServer(t, q)

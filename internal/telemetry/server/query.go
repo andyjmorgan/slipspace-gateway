@@ -22,40 +22,24 @@ type Queries interface {
 	EventsBySession(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
 }
 
-// defaultWindow is the look-back applied when a request omits ?from.
-const defaultWindow = time.Hour
-
 // registerQueryRoutes mounts the Basic-auth-gated, DB-backed console API.
 func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	if s.queries == nil {
 		return
 	}
 	gated := func(h http.HandlerFunc) http.Handler { return s.basicAuth(h) }
-	mux.Handle("GET /api/v1/dashboard/summary", gated(s.handleDashboardSummary))
-	mux.Handle("GET /api/v1/dashboard/series", gated(s.handleDashboardSeries))
+	// Parity surface — emits contracts/admin shapes so the shared SPA
+	// observability components decode without translation.
+	mux.Handle("GET /api/v1/dashboard/summary", gated(s.handleObsSummary))
+	mux.Handle("GET /api/v1/dashboard/timeseries", gated(s.handleObsTimeseries))
+	mux.Handle("GET /api/v1/messages/recent", gated(s.handleObsMessagesRecent))
+	mux.Handle("GET /api/v1/messages/{id}/body", gated(s.handleObsMessageBody))
+	// Telemetry-native extras (keyset event paging, stitched inspector, session
+	// rollup) — used by the telemetry shell beyond the gateway parity surface.
 	mux.Handle("GET /api/v1/events", gated(s.handleEvents))
 	mux.Handle("GET /api/v1/events/{id}", gated(s.handleEventInspector))
 	mux.Handle("GET /api/v1/events/{id}/body", gated(s.handleEventBody))
 	mux.Handle("GET /api/v1/sessions/{id}", gated(s.handleSession))
-}
-
-// timeWindow parses ?from / ?to (RFC3339), defaulting to [now-defaultWindow, now)
-// when absent. now is taken from the request deadline-free; callers pass it so
-// tests are deterministic.
-func timeWindow(r *http.Request, now time.Time) (from, to time.Time, err error) {
-	to = now
-	from = now.Add(-defaultWindow)
-	if v := r.URL.Query().Get("from"); v != "" {
-		if from, err = time.Parse(time.RFC3339, v); err != nil {
-			return time.Time{}, time.Time{}, errors.New("invalid from")
-		}
-	}
-	if v := r.URL.Query().Get("to"); v != "" {
-		if to, err = time.Parse(time.RFC3339, v); err != nil {
-			return time.Time{}, time.Time{}, errors.New("invalid to")
-		}
-	}
-	return from, to, nil
 }
 
 // filterFromQuery reads the shared equality/status filters from the query string.
@@ -69,46 +53,6 @@ func filterFromQuery(r *http.Request) store.EventFilter {
 		Protocol:      q.Get("protocol"),
 		StatusClass:   q.Get("status_class"),
 	}
-}
-
-func (s *Server) handleDashboardSummary(w http.ResponseWriter, r *http.Request) {
-	from, to, err := timeWindow(r, time.Now())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	summary, err := s.queries.QueryDashboardSummary(r.Context(), store.DashboardParams{
-		From:       from,
-		To:         to,
-		RecentFrom: to.Add(-5 * time.Minute),
-		Filter:     filterFromQuery(r),
-	})
-	if err != nil {
-		s.queryError(w, "dashboard summary", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, summary)
-}
-
-func (s *Server) handleDashboardSeries(w http.ResponseWriter, r *http.Request) {
-	from, to, err := timeWindow(r, time.Now())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	bucket := intParam(r, "bucket_seconds", 60)
-	if bucket <= 0 {
-		writeError(w, http.StatusBadRequest, "bucket_seconds must be positive")
-		return
-	}
-	series, err := s.queries.QueryDashboardSeries(r.Context(), store.DashboardSeriesParams{
-		From: from, To: to, BucketSeconds: bucket, Filter: filterFromQuery(r),
-	})
-	if err != nil {
-		s.queryError(w, "dashboard series", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"series": series})
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
