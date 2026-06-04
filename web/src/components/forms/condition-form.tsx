@@ -19,6 +19,7 @@ import {
   TextField,
   type SelectOption,
 } from "@/components/forms/field-atoms"
+import { ProviderSelectField } from "@/components/forms/provider-select"
 
 export type ConditionValue = Record<string, unknown>
 
@@ -163,12 +164,10 @@ function ProviderForm({ value, onChange }: { value: ConditionValue; onChange: (v
         options={ENUM_OPERATORS}
         onChange={(op) => onChange({ ...value, operator: op })}
       />
-      <TextField
+      <ProviderSelectField
         label="Expected provider"
         value={String(value.expected_provider ?? "")}
         onChange={(v) => onChange({ ...value, expected_provider: v })}
-        placeholder="openai"
-        mono
       />
     </FieldGrid>
   )

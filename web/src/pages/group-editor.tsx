@@ -24,6 +24,7 @@ import {
   StringListEditor,
   type SelectOption,
 } from "@/components/forms/field-atoms"
+import { ProviderSelectField } from "@/components/forms/provider-select"
 import { stringsFromList } from "@/components/forms/field-helpers"
 import { ErrorBanner, PreviewBanner, DeleteDialog } from "@/components/forms/write-atoms"
 import { classifyWriteError, type EditorError } from "@/lib/write-error"
@@ -440,7 +441,7 @@ function TargetCard({
         </div>
       </div>
       <div className="px-3 py-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <TextField label="Provider" value={draft.provider} onChange={(v) => onChange({ ...draft, provider: v })} placeholder="openai" mono />
+        <ProviderSelectField label="Provider" value={draft.provider} onChange={(v) => onChange({ ...draft, provider: v })} />
         <TextField label="Alias (model rewrite)" value={draft.alias} onChange={(v) => onChange({ ...draft, alias: v })} placeholder="gpt-4o" mono hint="Rewrites the request model when this target is picked." />
         <TextField label="Path override" value={draft.path} onChange={(v) => onChange({ ...draft, path: v })} placeholder="" mono />
         {weighted && (
