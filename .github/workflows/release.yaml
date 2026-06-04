@@ -33,6 +33,8 @@ jobs:
             dockerfile: deploy/docker/Dockerfile
           - name: sluice-mockllm
             dockerfile: deploy/docker/Dockerfile.mockllm
+          - name: sluice-telemetry
+            dockerfile: deploy/docker/Dockerfile.telemetry
     steps:
       - uses: actions/checkout@v4
         with:
@@ -140,6 +142,7 @@ jobs:
           \`\`\`
           docker pull ghcr.io/${{ github.repository_owner }}/sluice-gateway:${stripped}
           docker pull ghcr.io/${{ github.repository_owner }}/sluice-mockllm:${stripped}
+          docker pull ghcr.io/${{ github.repository_owner }}/sluice-telemetry:${stripped}
           \`\`\`
 
           ## Quick run
