@@ -250,6 +250,7 @@ export function MessagesPage() {
               <th className="text-left font-medium px-4 py-2">Endpoint</th>
               <th className="text-left font-medium px-4 py-2">Model</th>
               <th className="text-left font-medium px-4 py-2">Configuration</th>
+              <th className="text-left font-medium px-4 py-2">Tags</th>
               <th className="text-right font-medium px-4 py-2">Duration</th>
               <th className="text-right font-medium px-4 py-2">Tokens</th>
             </tr>
@@ -267,6 +268,7 @@ export function MessagesPage() {
                 <td className="mono text-[12px] px-4 py-2">{e.endpoint || <Dash />}</td>
                 <td className="mono text-[12px] px-4 py-2">{e.model || <Dash />}</td>
                 <td className="mono text-[12px] px-4 py-2">{e.configuration || <Dash />}</td>
+                <td className="px-4 py-2"><TagCell tags={e.tags} /></td>
                 <td className="mono tnum text-[12px] text-right px-4 py-2">{fmt.ms(e.duration_ms)}</td>
                 <td className="mono tnum text-[11.5px] text-right px-4 py-2 text-[color:var(--text-3)]">
                   {(e.tokens_in ?? 0) + (e.tokens_out ?? 0) > 0 ? `${fmt.compact(e.tokens_in ?? 0)}/${fmt.compact(e.tokens_out ?? 0)}` : <Dash />}
@@ -274,7 +276,7 @@ export function MessagesPage() {
               </tr>
             ))}
             {status === "ok" && entries.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No requests match these filters." : "No requests recorded yet."}</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No requests match these filters." : "No requests recorded yet."}</td></tr>
             )}
           </tbody>
         </TableScroll>
@@ -311,6 +313,35 @@ export function MessagesPage() {
 
 export function Dash() {
   return <span className="text-[color:var(--text-4)]">—</span>
+}
+
+// TAG_CELL_MAX caps how many tag chips a row renders inline; the rest collapse
+// into a "+N" chip so a request with many tags can't blow out the row height.
+const TAG_CELL_MAX = 3
+
+// TagCell renders a request's tags as compact chips in the table, capped at
+// TAG_CELL_MAX with a "+N" overflow. The full list is on the row's hover title
+// and always in the inspector, so the cap loses nothing — it just keeps rows
+// uniform. Empty tags render as the same em-dash the other columns use.
+function TagCell({ tags }: { tags?: string[] }) {
+  if (!tags || tags.length === 0) return <Dash />
+  const shown = tags.slice(0, TAG_CELL_MAX)
+  const overflow = tags.length - shown.length
+  return (
+    <div className="flex flex-wrap items-center gap-1" title={tags.join(", ")}>
+      {shown.map((t) => (
+        <span
+          key={t}
+          className="inline-flex max-w-[10rem] items-center truncate rounded-[4px] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-1.5 py-0.5 text-[10.5px] mono uppercase tracking-[0.04em] text-[color:var(--text-2)]"
+        >
+          {t}
+        </span>
+      ))}
+      {overflow > 0 && (
+        <span className="mono text-[10.5px] text-[color:var(--text-4)]">+{overflow}</span>
+      )}
+    </div>
+  )
 }
 
 // Inspector is the per-request detail modal (meta grid, captured
