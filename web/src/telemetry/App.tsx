@@ -1,10 +1,12 @@
 import { useState } from "react"
 import { NavLink, Navigate, Outlet, Route, Routes, useNavigate } from "react-router"
-import { Activity, LayoutDashboard, ListTree, LogOut, Menu, Moon, Sun } from "lucide-react"
+import { Activity, Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, Sun } from "lucide-react"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { DashboardPage } from "./pages/dashboard"
 import { MessagesPage } from "./pages/messages"
 
@@ -127,52 +129,129 @@ function TelemetryTopbar({ onMenuToggle }: { onMenuToggle: () => void }) {
   )
 }
 
+// LoginPage is the telemetry console's Basic-auth gate. It mirrors the gateway
+// admin console's login (web/src/pages/login.tsx) — same gradient backdrop,
+// branded card, theme toggle, shared Input/Label controls, and password
+// reveal — so the two consoles feel like one product. The auth model stays
+// telemetry-specific: there is no /auth/me on the telemetry service, so we
+// store the credentials and let the first gated API call surface a 401 (the
+// pages route back here on UnauthorizedError). The form only guards against an
+// empty submit locally.
 function LoginPage() {
   const nav = useNavigate()
+  const [theme, , toggleTheme] = useTheme()
+
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
+  const [showPw, setShowPw] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    // No /auth/me on the telemetry service — store the credentials and let the
-    // first API call surface a 401 if they're wrong (the pages route back here
-    // on UnauthorizedError).
+    setError(null)
+    if (!username || !password) {
+      setError("Enter your operator credentials.")
+      return
+    }
     auth.store(username, password)
     nav("/", { replace: true })
   }
 
   return (
-    <div className="min-h-screen grid place-items-center bg-[color:var(--bg)] px-4">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-sm rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-6 flex flex-col gap-4"
+    <div
+      className="min-h-screen grid place-items-center px-6 py-8 relative"
+      style={{
+        backgroundImage:
+          "radial-gradient(ellipse 80% 60% at 50% 0%, color-mix(in oklab, var(--accent) 8%, transparent), transparent 70%), radial-gradient(ellipse 60% 50% at 50% 100%, color-mix(in oklab, var(--accent) 5%, transparent), transparent 70%)",
+        background: "var(--bg)",
+      }}
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={toggleTheme}
+        aria-label="Toggle theme"
+        className="absolute top-4 right-4"
       >
-        <div className="flex items-center gap-2">
-          <Activity size={18} className="text-[color:var(--accent)]" />
-          <h1 className="font-semibold tracking-[-0.01em]">Sluice Telemetry</h1>
+        {theme === "dark" ? <Sun /> : <Moon />}
+      </Button>
+
+      <div
+        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-8"
+        style={{ boxShadow: "var(--shadow-md)" }}
+      >
+        <div className="flex items-center gap-2.5 pb-5 mb-5 border-b border-[color:var(--border)]">
+          <Activity size={20} className="text-[color:var(--accent)]" />
+          <span className="text-[16px] font-semibold tracking-tight">Sluice Telemetry</span>
         </div>
-        <label className="flex flex-col gap-1 text-[13px]">
-          <span className="text-[color:var(--text-3)]">Username</span>
-          <input
-            className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-3 py-2 text-[13px] outline-none focus:border-[color:var(--border-strong)]"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoComplete="username"
-            autoFocus
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-[13px]">
-          <span className="text-[color:var(--text-3)]">Password</span>
-          <input
-            type="password"
-            className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-3 py-2 text-[13px] outline-none focus:border-[color:var(--border-strong)]"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-        </label>
-        <Button type="submit" className="mt-1">Sign in</Button>
-      </form>
+
+        <h1 className="text-[20px] font-semibold tracking-[-0.02em] mb-1">Sign in</h1>
+        <p className="text-[13px] text-[color:var(--text-3)] mb-5">Read-only observability console</p>
+
+        <form onSubmit={submit} className="flex flex-col gap-3.5">
+          <div className="flex flex-col gap-1.5">
+            <Label
+              htmlFor="login-user"
+              className="text-[11px] font-medium uppercase tracking-[0.07em] text-[color:var(--text-3)]"
+            >
+              Username
+            </Label>
+            <Input
+              id="login-user"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="operator"
+              autoComplete="username"
+              autoFocus
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label
+              htmlFor="login-pw"
+              className="text-[11px] font-medium uppercase tracking-[0.07em] text-[color:var(--text-3)]"
+            >
+              Password
+            </Label>
+            <div className="relative">
+              <Input
+                id="login-pw"
+                type={showPw ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw((s) => !s)}
+                aria-label={showPw ? "Hide password" : "Show password"}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[color:var(--text-3)] hover:text-[color:var(--text)] transition-colors"
+              >
+                {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div
+              className="text-[12.5px] rounded-[var(--radius)] px-2.5 py-2 border"
+              style={{
+                color: "var(--err)",
+                background: "var(--err-bg)",
+                borderColor: "color-mix(in oklab, var(--err) 30%, var(--border))",
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          <Button type="submit" className="w-full h-9 mt-1">
+            Sign in
+          </Button>
+        </form>
+      </div>
     </div>
   )
 }
