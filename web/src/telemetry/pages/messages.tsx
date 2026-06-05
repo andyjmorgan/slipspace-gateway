@@ -545,8 +545,7 @@ function GenAIContentView({ content }: { content: GenAIContent }) {
 // GenAIMessagesSection renders a list of role-tagged turns and their parts.
 function GenAIMessagesSection({ label, messages }: { label: string; messages: GenAIMessage[] }) {
   return (
-    <div className="flex flex-col">
-      <SectionLabel label={label} count={messages.length} />
+    <CollapsibleSection label={label} count={messages.length}>
       <div className="flex flex-col gap-2">
         {messages.map((m, i) => (
           <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
@@ -555,7 +554,7 @@ function GenAIMessagesSection({ label, messages }: { label: string; messages: Ge
           </div>
         ))}
       </div>
-    </div>
+    </CollapsibleSection>
   )
 }
 
@@ -563,12 +562,11 @@ function GenAIMessagesSection({ label, messages }: { label: string; messages: Ge
 // role wrapper).
 function GenAIPartsSection({ label, parts }: { label: string; parts: GenAIMessagePart[] }) {
   return (
-    <div className="flex flex-col">
-      <SectionLabel label={label} count={parts.length} />
+    <CollapsibleSection label={label} count={parts.length}>
       <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
         <GenAIParts parts={parts} />
       </div>
-    </div>
+    </CollapsibleSection>
   )
 }
 
@@ -642,8 +640,7 @@ function GenAIPart({ part }: { part: GenAIMessagePart }) {
 // GenAIToolDefsSection lists the tools the request advertised to the model.
 function GenAIToolDefsSection({ defs }: { defs: GenAIToolDefinition[] }) {
   return (
-    <div className="flex flex-col">
-      <SectionLabel label="Tool definitions" count={defs.length} />
+    <CollapsibleSection label="Tool definitions" count={defs.length}>
       <div className="flex flex-col gap-2">
         {defs.map((d, i) => (
           <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
@@ -660,7 +657,7 @@ function GenAIToolDefsSection({ defs }: { defs: GenAIToolDefinition[] }) {
           </div>
         ))}
       </div>
-    </div>
+    </CollapsibleSection>
   )
 }
 
@@ -678,11 +675,38 @@ function GenAIJson({ value }: { value: unknown }) {
   return <JsonViewer text={text} maxHeightClassName="max-h-56" />
 }
 
-function SectionLabel({ label, count }: { label: string; count: number }) {
+// CollapsibleSection wraps a GenAI content section in a click-to-toggle panel so
+// the inspector's long turns and tool schemas can be folded away while
+// navigating. Sections start expanded; the header chevron mirrors open state.
+function CollapsibleSection({
+  label,
+  count,
+  defaultOpen = true,
+  children,
+}: {
+  label: string
+  count: number
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="mb-1 flex items-center gap-2">
-      <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{label}</div>
-      <div className="mono text-[10.5px] text-[color:var(--text-4)]">{count}</div>
+    <div className="flex flex-col">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="mb-1 flex w-full items-center gap-1.5 text-left hover:opacity-80"
+      >
+        {open ? (
+          <ChevronDown className="size-3 text-[color:var(--text-4)]" />
+        ) : (
+          <ChevronRight className="size-3 text-[color:var(--text-4)]" />
+        )}
+        <span className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{label}</span>
+        <span className="mono text-[10.5px] text-[color:var(--text-4)]">{count}</span>
+      </button>
+      {open && children}
     </div>
   )
 }
