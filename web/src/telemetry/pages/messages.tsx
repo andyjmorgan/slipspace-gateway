@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { ChevronDown, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react"
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, RefreshCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -315,6 +315,35 @@ export function Dash() {
   return <span className="text-[color:var(--text-4)]">—</span>
 }
 
+// CopyButton copies `value` to the clipboard and flips to a check for a beat.
+// Used beside ids (session id) where the operator's next move is often to paste
+// the value elsewhere.
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard
+      .writeText(value)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1200)
+      })
+      .catch(() => {
+        /* clipboard blocked (insecure context / permissions) — no-op */
+      })
+  }
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="shrink-0 text-[color:var(--text-4)] hover:text-[color:var(--text)]"
+      aria-label={copied ? `Copied ${label}` : `Copy ${label}`}
+      title={copied ? "Copied" : `Copy ${label}`}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  )
+}
+
 // TAG_CELL_MAX caps how many tag chips a row renders inline; the rest collapse
 // into a "+N" chip so a request with many tags can't blow out the row height.
 const TAG_CELL_MAX = 3
@@ -438,6 +467,25 @@ export function Inspector({
 }
 
 function MetaGrid({ entry }: { entry: MessageEntry }) {
+  const nav = useNavigate()
+  // The session id links to that session's view — the common pivot from "this
+  // one request" to "the whole conversation". The route switch unmounts this
+  // modal on its own (or re-keys it when already on the sessions page).
+  const sessionNode = entry.session_id ? (
+    <span className="flex items-center gap-1 min-w-0">
+      <button
+        type="button"
+        onClick={() => nav(`/sessions/${encodeURIComponent(entry.session_id!)}`)}
+        className="truncate min-w-0 text-left text-[color:var(--accent)] hover:underline"
+        title={`View session ${entry.session_id}`}
+      >
+        {entry.session_id}
+      </button>
+      <CopyButton value={entry.session_id} label="session id" />
+    </span>
+  ) : (
+    "—"
+  )
   const items: [string, React.ReactNode][] = [
     ["Provider", entry.provider || "—"],
     ["Endpoint", entry.endpoint || "—"],
@@ -446,7 +494,7 @@ function MetaGrid({ entry }: { entry: MessageEntry }) {
     ["Configuration", entry.configuration || "—"],
     ["Duration", fmt.ms(entry.duration_ms)],
     ["Streaming", entry.streaming ? "yes" : "no"],
-    ["Session", entry.session_id || "—"],
+    ["Session", sessionNode],
     ["At", new Date(entry.at).toLocaleString()],
   ]
   return (

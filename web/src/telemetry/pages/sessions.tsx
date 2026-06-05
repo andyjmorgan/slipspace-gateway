@@ -26,9 +26,9 @@ import { fetchSession, type SessionView } from "@/lib/sessions"
 import { Dash, Inspector } from "./messages"
 
 // SessionsPage is the per-session view: a session id is typed in or supplied by
-// URL (/sessions/:id). The page splits 50/50 vertically — cross-request graphs
-// on top (collapsible, to hand the viewport to the table), the session's
-// messages newest-first below, reusing the messages row + GenAI inspector.
+// URL (/sessions/:id). Fixed-height cross-request graphs sit on top
+// (collapsible, to hand the viewport to the table); the session's messages,
+// newest-first, fill the rest below, reusing the messages row + GenAI inspector.
 export function SessionsPage() {
   const nav = useNavigate()
   const { id: routeId } = useParams<{ id?: string }>()
@@ -146,8 +146,12 @@ function SessionBody({ sessionId }: { sessionId: string }) {
     <>
       <SessionTiles view={view} />
 
+      {/* Graphs are fixed-height content (shrink-0), not a forced half of the
+          viewport: fixed charts in a 50/50 split either trail whitespace on a
+          tall session or cram/overlap on a short one. The messages table takes
+          the remaining height; collapsing graphs hands it the whole pane. */}
       <div className="flex flex-col gap-3.5 flex-1 min-h-0">
-        <PanelCard className={collapsed ? "shrink-0" : "flex-1 min-h-0 flex flex-col"}>
+        <PanelCard className="shrink-0">
           <button
             type="button"
             onClick={toggleCollapsed}
@@ -161,7 +165,7 @@ function SessionBody({ sessionId }: { sessionId: string }) {
             </span>
           </button>
           {!collapsed && (
-            <div className="flex-1 min-h-0 overflow-auto p-4 flex flex-col gap-4">
+            <div className="p-4 flex flex-col gap-4">
               <SessionGraphs requests={requests} />
             </div>
           )}
@@ -299,7 +303,7 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
           </div>
         }
       >
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={200}>
           <BarChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
             <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.ms(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
@@ -314,7 +318,7 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
       </ChartBlock>
 
       <ChartBlock title="Cumulative input tokens" sub="context growth across the session">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={150}>
           <AreaChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
             <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.compact(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
@@ -335,7 +339,7 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
           </div>
         }
       >
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={150}>
           <BarChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
             <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.compact(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
@@ -352,17 +356,13 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
 
 function ChartBlock({ title, sub, legend, children }: { title: string; sub: string; legend?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1.5 flex-1 min-h-0">
+    <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-[13px] font-medium">{title}</span>
         <span className="text-[11px] text-[color:var(--text-4)]">{sub}</span>
         {legend && <span className="ml-auto">{legend}</span>}
       </div>
-      {/* flex-1 so the chart fills the graphs pane (no trailing whitespace);
-          minHeight keeps it readable when the pane is short, scrolling instead. */}
-      <div className="flex-1" style={{ minHeight: 150 }}>
-        {children}
-      </div>
+      {children}
     </div>
   )
 }
