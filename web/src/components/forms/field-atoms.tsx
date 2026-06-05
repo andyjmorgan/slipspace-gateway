@@ -49,6 +49,13 @@ export function FieldRow({
 const inputClassName =
   "rounded-[5px] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-2 py-1 text-[12.5px] text-[color:var(--text)] outline-none focus:border-[color:var(--text-3)]"
 
+// singleLineClassName pins single-line controls (TextField, NumberField,
+// SelectField) to a fixed height. Native <input> and <select> derive their
+// box height from padding differently, so sharing inputClassName alone left
+// selects shorter than text inputs sitting beside them in the same FieldGrid.
+// Excludes textarea, which is intentionally multi-line.
+const singleLineClassName = cn(inputClassName, "h-[30px]")
+
 export function TextField({
   label,
   value,
@@ -75,7 +82,7 @@ export function TextField({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className={cn(inputClassName, mono && "mono")}
+        className={cn(singleLineClassName, mono && "mono")}
       />
     </FieldRow>
   )
@@ -110,7 +117,7 @@ export function NumberField({
           const n = Number(v)
           onChange(Number.isFinite(n) ? n : null)
         }}
-        className={cn(inputClassName, "mono")}
+        className={cn(singleLineClassName, "mono")}
       />
     </FieldRow>
   )
@@ -177,7 +184,7 @@ export function SelectField({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={cn(inputClassName, "pr-6")}
+        className={cn(singleLineClassName, "pr-6")}
       >
         {options.map((opt) => (
           <option key={opt.value} value={opt.value}>
@@ -264,7 +271,7 @@ export function KeyValueEditor({
                 copy[i] = { ...copy[i], key: e.target.value }
                 onChange(copy)
               }}
-              className={cn(inputClassName, "mono flex-1 min-w-0")}
+              className={cn(singleLineClassName, "mono flex-1 min-w-0")}
             />
             <input
               type="text"
@@ -275,7 +282,7 @@ export function KeyValueEditor({
                 copy[i] = { ...copy[i], value: e.target.value }
                 onChange(copy)
               }}
-              className={cn(inputClassName, "mono flex-1 min-w-0")}
+              className={cn(singleLineClassName, "mono flex-1 min-w-0")}
             />
             <button
               type="button"
@@ -376,7 +383,7 @@ export function StringListEditor({
                   copy[i] = e.target.value
                   onChange(copy)
                 }}
-                className={cn(inputClassName, "flex-1 min-w-0 pr-6", mono && "mono")}
+                className={cn(singleLineClassName, "flex-1 min-w-0 pr-6", mono && "mono")}
               >
                 <option value="">{placeholder ?? "Select…"}</option>
                 {options.map((opt) => (
@@ -398,7 +405,7 @@ export function StringListEditor({
                   copy[i] = e.target.value
                   onChange(copy)
                 }}
-                className={cn(inputClassName, "flex-1 min-w-0", mono && "mono")}
+                className={cn(singleLineClassName, "flex-1 min-w-0", mono && "mono")}
               />
             )}
             <button
