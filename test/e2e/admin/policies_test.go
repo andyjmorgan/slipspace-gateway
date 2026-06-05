@@ -35,8 +35,8 @@ groups:
     mode: failover
     failure_status_codes: [503]
     targets:
-      - { backend: openai }
-      - { backend: anthropic }
+      - { provider: openai }
+      - { provider: anthropic }
 `
 
 // TestAdmin_Policies_ReturnsConfiguredPolicy hits /admin/api/v1/policies

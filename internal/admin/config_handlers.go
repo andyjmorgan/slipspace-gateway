@@ -16,7 +16,7 @@ import (
 const (
 	pathConfigurations = "/api/v1/config/configurations/"
 	pathRules          = "/api/v1/config/rules/"
-	pathBackends       = "/api/v1/config/backends/"
+	pathProviders      = "/api/v1/config/providers/"
 )
 
 // ConfigurationsListHandler returns the sorted summary list of every
@@ -79,7 +79,7 @@ func ConfigurationDetailHandler(store *config.Store) http.Handler {
 // attachments and api-key summaries resolved. Shared by the GET detail handler
 // and the create/replace write handlers so a write response is byte-identical to
 // a follow-up GET.
-func configurationDetailView(name string, resolved *config.ResolvedConfigV2) ConfigurationDetail {
+func configurationDetailView(name string, resolved *config.ResolvedConfig) ConfigurationDetail {
 	cfg := resolved.Configurations[name]
 	gen, pass := bindingRowsFromConfiguration("", cfg)
 	return ConfigurationDetail{
@@ -153,46 +153,46 @@ func RuleDetailHandler(store *config.Store) http.Handler {
 	})
 }
 
-// BackendsListHandler returns the sorted summary list of every backend
+// ProvidersListHandler returns the sorted summary list of every provider
 // connection loaded from the v2 config (was the providers list).
-func BackendsListHandler(store *config.Store) http.Handler {
+func ProvidersListHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		out := make([]BackendSummary, 0, len(resolved.Backends))
-		for name, b := range resolved.Backends {
-			out = append(out, backendSummaryFromContract(name, b))
+		out := make([]ProviderSummary, 0, len(resolved.Providers))
+		for name, b := range resolved.Providers {
+			out = append(out, providerSummaryFromContract(name, b))
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		writeJSON(w, out)
 	})
 }
 
-// BackendDetailHandler returns a backend's full protocol catalogue, including
+// ProviderDetailHandler returns a provider's full protocol catalogue, including
 // per-protocol auth conventions + passthrough families — the load-bearing data
 // for debugging the OpenAI-compat surfaces on Anthropic and Gemini.
-func BackendDetailHandler(store *config.Store) http.Handler {
+func ProviderDetailHandler(store *config.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resolved := snapshot(store)
 		if resolved == nil {
 			http.Error(w, "config unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		name := strings.TrimPrefix(r.URL.Path, pathBackends)
+		name := strings.TrimPrefix(r.URL.Path, pathProviders)
 		name = strings.TrimSuffix(name, "/")
 		if name == "" {
 			http.NotFound(w, r)
 			return
 		}
-		b, ok := resolved.Backends[name]
+		b, ok := resolved.Providers[name]
 		if !ok {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, backendDetailFromContract(name, b))
+		writeJSON(w, providerDetailFromContract(name, b))
 	})
 }
 
@@ -237,7 +237,7 @@ func APIKeysRevealHandler(store *config.Store) http.Handler {
 
 // BindingsHandler returns the flattened binding table across every
 // configuration — the v2 analogue of the route table. A binding is
-// (protocol, models) → backend|group; this is the data selection reads on
+// (protocol, models) → provider|group; this is the data selection reads on
 // every request, so surfacing it is the highest-value page for routing
 // debugging. Passthrough bindings are returned as a separate list.
 func BindingsHandler(store *config.Store) http.Handler {
@@ -282,7 +282,7 @@ func BindingsHandler(store *config.Store) http.Handler {
 // every handler calls at the top of the request. Returns nil when the
 // store is nil or its current snapshot is nil; handlers translate that
 // to a 503.
-func snapshot(store *config.Store) *config.ResolvedConfigV2 {
+func snapshot(store *config.Store) *config.ResolvedConfig {
 	if store == nil {
 		return nil
 	}
@@ -319,7 +319,7 @@ func buildAPIKeySummaries(configName string, keys []contractsconfig.APIKey) []AP
 // runtime priority order. Falls back to the configuration's RuleNames
 // ordering if the indexes have not been built (defensive — Validate
 // builds them, but the handlers do not require that).
-func buildRuleAttachments(configName string, resolved *config.ResolvedConfigV2) []RuleAttachment {
+func buildRuleAttachments(configName string, resolved *config.ResolvedConfig) []RuleAttachment {
 	cfg, ok := resolved.Configurations[configName]
 	if !ok {
 		return nil
@@ -350,7 +350,7 @@ func buildRuleAttachments(configName string, resolved *config.ResolvedConfigV2) 
 // invertRuleUsage maps rule name → configurations that reference it.
 // Configuration order matches insertion order from the map; callers sort
 // for stable rendering.
-func invertRuleUsage(resolved *config.ResolvedConfigV2) map[string][]string {
+func invertRuleUsage(resolved *config.ResolvedConfig) map[string][]string {
 	out := make(map[string][]string)
 	for name, cfg := range resolved.Configurations {
 		for _, ruleName := range cfg.RuleNames {

@@ -1,5 +1,5 @@
-# v2 model: configurations carry credentials (per backend), bindings (the
-# router as data — (protocol, models) → backend|group), passthrough bindings,
+# v2 model: configurations carry credentials (per provider), bindings (the
+# router as data — (protocol, models) → provider|group), passthrough bindings,
 # and transform rules. The v1 changeProvider/changeUrl/changeApiKey/
 # useResiliencePolicy routing actions are gone — routing is bindings now; rules
 # are pure request/response transforms (tags, header sets, body rewrites).
@@ -9,11 +9,11 @@
 #      hardcodes the api-key secret + configuration name, so this block stays
 #      backwards-compatible.
 #   2. `production` — a sanitised replica of the cluster policy. Real
-#      credentials swapped for *-mock equivalents; binding/backend structure
+#      credentials swapped for *-mock equivalents; binding/provider structure
 #      mirrors what runs in the office cluster.
 #
 # Rule evaluation order is the rule_names list position. Rules condition on the
-# resolved backend (provider:), protocol (endpoint:), and client model
+# resolved provider (provider:), protocol (endpoint:), and client model
 # (modelName:) — selection runs before rules.
 
 configurations:
@@ -24,17 +24,17 @@ configurations:
       gemini: dev-mock
 
     bindings:
-      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], backend: openai }
-      - { protocol: responses, models: ["gpt-*"], backend: openai }
-      - { protocol: chat, models: ["claude-*"], backend: anthropic }
-      - { protocol: messages, models: ["claude-*"], backend: anthropic }
-      - { protocol: chat, models: ["gemini-*"], backend: gemini }
-      - { protocol: generate_content, models: ["gemini-*"], backend: gemini }
+      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], provider: openai }
+      - { protocol: responses, models: ["gpt-*"], provider: openai }
+      - { protocol: chat, models: ["claude-*"], provider: anthropic }
+      - { protocol: messages, models: ["claude-*"], provider: anthropic }
+      - { protocol: chat, models: ["gemini-*"], provider: gemini }
+      - { protocol: generate_content, models: ["gemini-*"], provider: gemini }
 
     passthrough_bindings:
-      - { family: messages_batches, backend: anthropic }
-      - { family: models, backend: openai }
-      - { family: models, backend: gemini }
+      - { family: messages_batches, provider: anthropic }
+      - { family: models, provider: openai }
+      - { family: models, provider: gemini }
 
     rule_names:
       - tag-openai-chat
@@ -55,12 +55,12 @@ configurations:
       qwen-ollama: ""
 
     bindings:
-      - { protocol: chat, models: ["gpt-oss*"], backend: gpt-oss }
-      - { protocol: chat, models: ["qwen3.6*"], backend: qwen36 }
-      - { protocol: chat, models: ["qwen2.5-coder:7b"], backend: qwen-ollama }
-      - { protocol: chat, models: ["claude-*"], backend: anthropic }
-      - { protocol: chat, models: ["gemini-*"], backend: gemini }
-      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], backend: openai }
+      - { protocol: chat, models: ["gpt-oss*"], provider: gpt-oss }
+      - { protocol: chat, models: ["qwen3.6*"], provider: qwen36 }
+      - { protocol: chat, models: ["qwen2.5-coder:7b"], provider: qwen-ollama }
+      - { protocol: chat, models: ["claude-*"], provider: anthropic }
+      - { protocol: chat, models: ["gemini-*"], provider: gemini }
+      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], provider: openai }
 
     rule_names:
       - tag-k3s-agentling

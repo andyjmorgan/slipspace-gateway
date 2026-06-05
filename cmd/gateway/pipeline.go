@@ -91,7 +91,7 @@ func kindFromProtocol(ctx context.Context) (bodycapture.RequestKind, bool) {
 	}
 }
 
-// selectionMiddleware resolves the request to a backend (or resilience group)
+// selectionMiddleware resolves the request to a provider (or resilience group)
 // from the resolved configuration's bindings and seeds the per-request state
 // the downstream stages consume. It runs after auth (which resolves the
 // configuration) and bodycapture (which decodes the model), and before rules +
@@ -100,7 +100,7 @@ func kindFromProtocol(ctx context.Context) (bodycapture.RequestKind, bool) {
 // Generative path: selection.Select picks the binding; the chosen
 // single-target or group is synthesised into a resilience config stashed on
 // context (the orchestrator reuses it), and a MutableState is seeded so rules
-// can condition on backend/protocol/model. No binding match → 404 (no
+// can condition on provider/protocol/model. No binding match → 404 (no
 // fallthrough). Non-generative path: selection.MatchPassthrough picks the
 // opaque family → 404/405 on miss.
 func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Handler) http.Handler {
@@ -124,7 +124,7 @@ func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Ha
 		cfg := *ar.Configuration
 
 		if !pi.generative {
-			pm, err := selection.MatchPassthrough(r.Method, r.URL.Path, cfg, snap.Backends)
+			pm, err := selection.MatchPassthrough(r.Method, r.URL.Path, cfg, snap.Providers)
 			switch {
 			case errors.Is(err, selection.ErrNoPassthrough):
 				errs.Write(ctx, w, http.StatusNotFound, "selection", "no_route", "no route for path")
@@ -141,7 +141,7 @@ func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Ha
 			// Rules condition on the passthrough family name as the
 			// "endpoint" (e.g. messages_batches), since a passthrough request
 			// has no generative protocol.
-			state := rules.NewMutableState(pm.Backend, pm.Family, r.URL.Path, pm.Params, r.Header)
+			state := rules.NewMutableState(pm.Provider, pm.Family, r.URL.Path, pm.Params, r.Header)
 			for _, t := range pm.Tags {
 				state.AddTag(t)
 			}
@@ -157,7 +157,7 @@ func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Ha
 			}
 		}
 
-		dest, err := selection.Select(pi.protocol, model, cfg, snap.Backends, snap.Groups)
+		dest, err := selection.Select(pi.protocol, model, cfg, snap.Providers, snap.Groups)
 		switch {
 		case errors.Is(err, selection.ErrNoBinding):
 			errs.Write(ctx, w, http.StatusNotFound, "selection", "no_binding", "model not served on this protocol")
@@ -169,17 +169,17 @@ func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Ha
 		}
 
 		var (
-			rc      contractsres.ResilienceConfig
-			backend string
+			rc       contractsres.ResilienceConfig
+			provider string
 		)
 		if dest.Group != nil {
 			rc = groupToResilienceConfig(dest.Group.Name, *dest.Group)
 		} else {
 			rc = singleTargetConfig(*dest.Single)
-			backend = dest.Single.Backend
+			provider = dest.Single.Provider
 		}
 
-		state := rules.NewMutableState(backend, pi.protocol, "", pi.params, r.Header)
+		state := rules.NewMutableState(provider, pi.protocol, "", pi.params, r.Header)
 		for _, t := range dest.Tags {
 			state.AddTag(t)
 		}
@@ -192,8 +192,8 @@ func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Ha
 }
 
 // buildPassthroughDestination resolves the opaque-proxy destination: the
-// inbound path is forwarded verbatim under the backend base URL, the inbound
-// query is preserved with the backend's default query overlaid, and the family
+// inbound path is forwarded verbatim under the provider base URL, the inbound
+// query is preserved with the provider's default query overlaid, and the family
 // auth convention is applied at the single credential mint site.
 func buildPassthroughDestination(
 	pm selection.PassthroughMatch,
@@ -225,7 +225,7 @@ func buildPassthroughDestination(
 	}
 
 	target := selection.Target{
-		Backend:         pm.Backend,
+		Provider:        pm.Provider,
 		BaseURL:         pm.BaseURL,
 		Auth:            pm.Auth,
 		RequiredHeaders: pm.RequiredHeaders,

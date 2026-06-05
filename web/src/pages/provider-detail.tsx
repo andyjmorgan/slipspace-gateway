@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
-import { useBackend, deleteBackend, type PassthroughFamilyRow } from "@/lib/config-api"
+import { useProvider, deleteProvider, type PassthroughFamilyRow } from "@/lib/config-api"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Tag } from "@/components/atoms/tag"
 import { ProviderChip } from "@/components/atoms/provider-chip"
@@ -14,16 +14,16 @@ import {
   useUnauthorizedRedirect,
 } from "@/components/atoms/page-states"
 
-export function BackendDetailPage() {
+export function ProviderDetailPage() {
   const { name } = useParams<{ name: string }>()
   const nav = useNavigate()
-  const { state } = useBackend(name)
+  const { state } = useProvider(name)
   useUnauthorizedRedirect(state)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   if (state.status === "loading") return <Wrap name={name}><LoadingPanel /></Wrap>
   if (state.status === "error") return <Wrap name={name}><ErrorPanel message={state.message} /></Wrap>
-  if (state.status === "not_found") return <Wrap name={name}><NotFoundPanel kind="backend" name={name} /></Wrap>
+  if (state.status === "not_found") return <Wrap name={name}><NotFoundPanel kind="provider" name={name} /></Wrap>
   if (state.status !== "ok") return null
 
   const b = state.data
@@ -42,11 +42,11 @@ export function BackendDetailPage() {
         }
         action={
           <div className="flex items-center gap-2">
-            <Link to={`/backends/${encodeURIComponent(b.name)}/edit`}>
+            <Link to={`/providers/${encodeURIComponent(b.name)}/edit`}>
               <Button size="sm" variant="outline">Edit</Button>
             </Link>
             <Button size="sm" variant="destructive" onClick={() => setConfirmDelete(true)}>Delete</Button>
-            <Link to="/backends" className="text-[12.5px] text-[color:var(--text-3)] hover:underline ml-1">
+            <Link to="/providers" className="text-[12.5px] text-[color:var(--text-3)] hover:underline ml-1">
               ← back
             </Link>
           </div>
@@ -55,12 +55,12 @@ export function BackendDetailPage() {
 
       <DeleteDialog
         open={confirmDelete}
-        resourceKind="backend"
+        resourceKind="provider"
         resourceName={b.name}
         requireConfirmName
         onConfirm={async () => {
-          await deleteBackend(b.name)
-          nav("/backends", { replace: true })
+          await deleteProvider(b.name)
+          nav("/providers", { replace: true })
         }}
         onClose={() => setConfirmDelete(false)}
       />
@@ -75,7 +75,7 @@ export function BackendDetailPage() {
       {b.required_headers && Object.keys(b.required_headers).length > 0 && (
         <KeyValueCard
           title="Required headers"
-          sub="added to every request forwarded to this backend"
+          sub="added to every request forwarded to this provider"
           keyLabel="Header"
           entries={b.required_headers}
         />
@@ -84,7 +84,7 @@ export function BackendDetailPage() {
       {b.query && Object.keys(b.query).length > 0 && (
         <KeyValueCard
           title="Query parameters"
-          sub="appended to every request forwarded to this backend"
+          sub="appended to every request forwarded to this provider"
           keyLabel="Parameter"
           entries={b.query}
         />
@@ -205,7 +205,7 @@ function PassthroughFamily({ family }: { family: PassthroughFamilyRow }) {
 function Wrap({ name, children }: { name?: string; children: React.ReactNode }) {
   return (
     <div>
-      <PageHeader title={name ?? "Backend"} />
+      <PageHeader title={name ?? "Provider"} />
       {children}
     </div>
   )

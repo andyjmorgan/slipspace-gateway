@@ -10,7 +10,7 @@ import (
 	"time"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	anthropicmessages "github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
+	anthropicmessages "github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
 	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
 )
 

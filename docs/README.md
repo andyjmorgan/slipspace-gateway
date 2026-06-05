@@ -46,13 +46,13 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 |---|---|
 | Rewrite a field in the request or response body | [FAQ → Rewrite a request field](faq.md#how-do-i-rewrite-a-field-in-the-request-body), [FAQ → Rewrite the response body](faq.md#how-do-i-rewrite-the-response-body) |
 | Proxy Anthropic message batches | [FAQ → Passthrough surfaces](faq.md#how-do-i-support-anthropic-message-batches-and-other-passthrough-surfaces) |
-| Add Azure OpenAI as a backend | [FAQ → Azure OpenAI](faq.md#how-do-i-add-azure-openai-as-a-backend) |
+| Add Azure OpenAI as a provider | [FAQ → Azure OpenAI](faq.md#how-do-i-add-azure-openai-as-a-provider) |
 | Boot a gateway against a local mock LLM | [Local development → Quickest path](local-development.md#quickest-path-to-a-running-gateway) |
 | Wire a new upstream provider | [Providers → Schema](providers.md#yaml-schema), [Configuration model → providers block](configuration-model.md#providers-block) |
 | Route requests to a different provider by model name | [Rules → modelName condition](rules.md#modelname), [Actions → changeProvider](actions.md#changeprovider) |
 | Set up failover between two providers | [Resilience → 30-second failover](resilience.md#30-second-failover) |
-| Load-balance across two backends | [Resilience → 30-second weighted load-balance](resilience.md#30-second-weighted-load-balance) |
-| Trip the circuit breaker on a noisy backend | [Resilience → Tripping the breaker](resilience.md#tripping-the-breaker) |
+| Load-balance across two providers | [Resilience → 30-second weighted load-balance](resilience.md#30-second-weighted-load-balance) |
+| Trip the circuit breaker on a noisy provider | [Resilience → Tripping the breaker](resilience.md#tripping-the-breaker) |
 | Enable the admin console | [Admin console → Enabling the console](admin-console.md#enabling-the-console), [Admin console → Setting the password](admin-console.md#setting-the-password) |
 | Generate an API key | [Auxiliary binaries → `sluice-cli` → `key new`](auxiliary-binaries.md#key-new) |
 | Validate a YAML bundle before deploy | [Auxiliary binaries → `sluice-cli` → `config validate`](auxiliary-binaries.md#config-validate) |

@@ -59,7 +59,7 @@ func TestRequestEvent_RoundTrip(t *testing.T) {
 	e := store.RequestEvent{
 		CorrelationID: "evt-rt-1",
 		GatewayID:     "gw-a",
-		Backend:       "anthropic",
+		Provider:      "anthropic",
 		Model:         "claude-x",
 		StatusCode:    200,
 		TokensIn:      10,
@@ -75,7 +75,7 @@ func TestRequestEvent_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRequestEvent: %v", err)
 	}
-	if got.Backend != "anthropic" || got.TokensIn != 10 || got.SessionID != "sess-1" {
+	if got.Provider != "anthropic" || got.TokensIn != 10 || got.SessionID != "sess-1" {
 		t.Errorf("got = %+v", got)
 	}
 	if got.ObservedAt.IsZero() {

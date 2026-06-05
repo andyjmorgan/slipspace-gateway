@@ -73,7 +73,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("gateway: validate env: %w", err)
 	}
 
-	resolved, err := config.LoadV2(ctx, env.ConfigDir)
+	resolved, err := config.Load(ctx, env.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("gateway: load config %q: %w", env.ConfigDir, err)
 	}
@@ -196,7 +196,7 @@ func run(ctx context.Context) error {
 	logger.InfoContext(ctx, "gateway starting",
 		"bind", env.HTTPBind,
 		"config_dir", env.ConfigDir,
-		"backends", len(resolved.Backends),
+		"providers", len(resolved.Providers),
 		"configurations", len(resolved.Configurations),
 		"api_keys", len(resolved.APIKeys),
 		"admin_enabled", resolved.Admin != nil && resolved.Admin.Enabled,
@@ -221,7 +221,7 @@ func run(ctx context.Context) error {
 // recovery aborts gateway boot; an operator-visible error is the
 // right escalation since silently dropping records on a misconfigured
 // spool root is worse than refusing to start.
-func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.ResolvedConfigV2, logger *slog.Logger) (*spool.Spool, func(), error) {
+func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.ResolvedConfig, logger *slog.Logger) (*spool.Spool, func(), error) {
 	noop := func() {}
 	if len(resolved.Connectors) == 0 {
 		logger.InfoContext(ctx, "no connectors configured; spool disabled")
@@ -388,8 +388,8 @@ func startAdmin(ctx context.Context, store *config.Store, obs *observability.Pro
 		return
 	}
 
-	providers := make([]string, 0, len(resolved.Backends))
-	for name := range resolved.Backends {
+	providers := make([]string, 0, len(resolved.Providers))
+	for name := range resolved.Providers {
 		providers = append(providers, name)
 	}
 
@@ -451,7 +451,7 @@ func shutdownAdminServer(srv *http.Server, drain time.Duration) {
 // joins against. A rule referenced by zero configurations is omitted —
 // it would never appear in a rules-fired event so the dashboard never
 // needs to render it.
-func buildRuleAttachments(resolved *config.ResolvedConfigV2) map[string][]string {
+func buildRuleAttachments(resolved *config.ResolvedConfig) map[string][]string {
 	out := map[string][]string{}
 	for name, cfg := range resolved.Configurations {
 		for _, ruleName := range cfg.RuleNames {
@@ -473,7 +473,7 @@ func buildRuleAttachments(resolved *config.ResolvedConfigV2) map[string][]string
 // The same configuration name can appear multiple times for the same
 // tag if multiple rules in that configuration's chain attach it; we
 // dedupe so the SPA sees one entry per (tag, configuration) pair.
-func buildTagAttachments(resolved *config.ResolvedConfigV2) map[string][]string {
+func buildTagAttachments(resolved *config.ResolvedConfig) map[string][]string {
 	out := map[string][]string{}
 	for configName, cfg := range resolved.Configurations {
 		for _, ruleName := range cfg.RuleNames {

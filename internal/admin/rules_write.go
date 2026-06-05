@@ -252,11 +252,11 @@ func decodeRuleBody(w http.ResponseWriter, body io.Reader) (rulescontract.RuleCo
 // commitClone is the shared tail every write handler runs: validate
 // the clone, reindex it, persist policy.yaml, then atomically swap.
 // On any error the live snapshot is untouched.
-func commitClone(clone *config.ResolvedConfigV2, configDir string, store *config.Store) error {
+func commitClone(clone *config.ResolvedConfig, configDir string, store *config.Store) error {
 	if err := clone.RevalidateAndIndex(); err != nil {
 		return validationError{wrapped: err}
 	}
-	if err := config.WriteConfigV2(configDir, clone); err != nil {
+	if err := config.WriteConfig(configDir, clone); err != nil {
 		return fmt.Errorf("persist: %w", err)
 	}
 	store.Replace(clone)
@@ -312,7 +312,7 @@ func indexOfRule(rules []rulescontract.RuleContract, name string) (int, bool) {
 
 // configurationsReferencingRule returns the sorted list of
 // configuration names whose RuleNames slice contains ruleName.
-func configurationsReferencingRule(snap *config.ResolvedConfigV2, ruleName string) []string {
+func configurationsReferencingRule(snap *config.ResolvedConfig, ruleName string) []string {
 	out := make([]string, 0)
 	for name, cfg := range snap.Configurations {
 		for _, rn := range cfg.RuleNames {
@@ -328,7 +328,7 @@ func configurationsReferencingRule(snap *config.ResolvedConfigV2, ruleName strin
 // ruleDetailFromClone projects the post-write snapshot's rule into
 // the same RuleDetail shape the GET handler returns, so create and
 // replace responses are interchangeable with a follow-up GET.
-func ruleDetailFromClone(snap *config.ResolvedConfigV2, name string) RuleDetail {
+func ruleDetailFromClone(snap *config.ResolvedConfig, name string) RuleDetail {
 	rule, ok := snap.RuleIndex[name]
 	if !ok {
 		// Should not happen — Replace just published a snapshot that

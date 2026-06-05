@@ -229,7 +229,7 @@ func TestConfigValidate_HappyPath(t *testing.T) {
 	expectedFragments := []string{
 		"configuration(s)",
 		"api_keys",
-		"backends",
+		"providers",
 		"bindings",
 	}
 	for _, f := range expectedFragments {
@@ -259,7 +259,7 @@ func TestConfigValidate_ParseError(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stdout=%q", code, stdout.String())
 	}
-	// LoadV2 wraps the underlying yaml error; the cli reports it under the
+	// Load wraps the underlying yaml error; the cli reports it under the
 	// generic failure prefix rather than a v1-specific parse_error class.
 	if !strings.HasPrefix(stdout.String(), "FAIL: ") {
 		t.Fatalf("stdout = %q, want FAIL prefix", stdout.String())

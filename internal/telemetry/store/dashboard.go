@@ -103,7 +103,7 @@ func (s *Store) QueryDashboardSummary(ctx context.Context, p DashboardParams) (D
 	if out.Latency, err = s.queryDashLatency(ctx, p); err != nil {
 		return DashboardSummary{}, err
 	}
-	if out.ByProvider, err = s.queryDashDimension(ctx, p, "backend"); err != nil {
+	if out.ByProvider, err = s.queryDashDimension(ctx, p, "provider"); err != nil {
 		return DashboardSummary{}, err
 	}
 	if out.ByConfiguration, err = s.queryDashDimension(ctx, p, "configuration"); err != nil {
@@ -178,7 +178,7 @@ WHERE ` + strings.Join(where, " AND ")
 
 // dashDimensionColumns is the allowlist for the single-column breakdowns.
 var dashDimensionColumns = map[string]string{
-	"backend":       "backend",
+	"provider":      "provider",
 	"configuration": "configuration",
 }
 
@@ -223,14 +223,14 @@ ORDER BY COUNT(*) DESC, grp`, col, strings.Join(where, " AND "), col)
 func (s *Store) queryDashEndpoint(ctx context.Context, p DashboardParams) ([]DashboardEndpointRow, error) {
 	where, args := dashWindow(p)
 	q := `
-SELECT backend, protocol, COUNT(*),
+SELECT provider, protocol, COUNT(*),
   COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0),
   COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
 FROM request_events
 WHERE ` + strings.Join(where, " AND ") + `
-  AND backend <> '' AND protocol <> ''
-GROUP BY backend, protocol
-ORDER BY COUNT(*) DESC, backend, protocol`
+  AND provider <> '' AND protocol <> ''
+GROUP BY provider, protocol
+ORDER BY COUNT(*) DESC, provider, protocol`
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -258,7 +258,7 @@ ORDER BY COUNT(*) DESC, backend, protocol`
 func (s *Store) queryDashModel(ctx context.Context, p DashboardParams) ([]DashboardModelRow, error) {
 	where, args := dashWindow(p)
 	q := `
-SELECT model, COALESCE(MAX(backend), ''), COUNT(*),
+SELECT model, COALESCE(MAX(provider), ''), COUNT(*),
   COALESCE(SUM(tokens_in), 0), COALESCE(SUM(tokens_out), 0)
 FROM request_events
 WHERE ` + strings.Join(where, " AND ") + `
@@ -323,16 +323,16 @@ ORDER BY cnt DESC, key`, path, strings.Join(where, " AND "))
 }
 
 func (s *Store) queryDashProviderHealth(ctx context.Context, p DashboardParams) ([]DashboardProviderHealth, error) {
-	where := []string{"observed_at >= $1", "observed_at < $2", "backend <> ''"}
+	where := []string{"observed_at >= $1", "observed_at < $2", "provider <> ''"}
 	args := []any{p.RecentFrom, p.To}
 	where, args = appendFilter(where, args, p.Filter)
 	q := `
-SELECT backend, COUNT(*),
+SELECT provider, COUNT(*),
   COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
 FROM request_events
 WHERE ` + strings.Join(where, " AND ") + `
-GROUP BY backend
-ORDER BY backend`
+GROUP BY provider
+ORDER BY provider`
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {

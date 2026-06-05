@@ -9,7 +9,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
-func fixtureConfig() *config.ResolvedConfigV2 {
+func fixtureConfig() *config.ResolvedConfig {
 	enabled := contractsconfig.APIKey{ //nolint:gosec // test fixture, not a credential
 		Secret:        "sk_live_enabled",
 		Name:          "enabled-key",
@@ -28,7 +28,7 @@ func fixtureConfig() *config.ResolvedConfigV2 {
 		Configuration: "ghost",
 		Enabled:       true,
 	}
-	openaiCfg := contractsconfig.ConfigurationV2{
+	openaiCfg := contractsconfig.Configuration{
 		Credentials: map[string]string{
 			"openai":    "sk-openai-upstream",
 			"anthropic": "ak-anthropic-upstream",
@@ -36,14 +36,14 @@ func fixtureConfig() *config.ResolvedConfigV2 {
 			"custom":    "custom-upstream",
 		},
 	}
-	restricted := contractsconfig.ConfigurationV2{
+	restricted := contractsconfig.Configuration{
 		Credentials: map[string]string{
 			"openai": "sk-openai-restricted",
 		},
 	}
 
-	cfg := &config.ResolvedConfigV2{
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+	cfg := &config.ResolvedConfig{
+		Configurations: map[string]contractsconfig.Configuration{
 			"prod":       openaiCfg,
 			"restricted": restricted,
 		},
@@ -54,7 +54,7 @@ func fixtureConfig() *config.ResolvedConfigV2 {
 		disabled.Secret: &disabled,
 		orphan.Secret:   &orphan,
 	}
-	cfg.ConfigurationIndex = map[string]*contractsconfig.ConfigurationV2{
+	cfg.ConfigurationIndex = map[string]*contractsconfig.Configuration{
 		"prod":       &openaiCfg,
 		"restricted": &restricted,
 	}

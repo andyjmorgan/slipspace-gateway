@@ -123,15 +123,15 @@ func TestStatusClassBounds(t *testing.T) {
 
 func TestAppendFilter_BetweenAndEquality(t *testing.T) {
 	// 4xx exercises the BETWEEN (bounded upper) branch; equality covers a col.
-	where, args := appendFilter(nil, nil, EventFilter{Backend: "anthropic", StatusClass: "4xx"})
-	if len(args) != 3 { // backend + lo + hi
+	where, args := appendFilter(nil, nil, EventFilter{Provider: "anthropic", StatusClass: "4xx"})
+	if len(args) != 3 { // provider + lo + hi
 		t.Fatalf("args = %v", args)
 	}
 	joined := ""
 	for _, w := range where {
 		joined += w + " "
 	}
-	if !contains(joined, "BETWEEN") || !contains(joined, "backend =") {
+	if !contains(joined, "BETWEEN") || !contains(joined, "provider =") {
 		t.Errorf("where = %q", joined)
 	}
 }
@@ -201,7 +201,7 @@ func TestDashSubqueries_Errors(t *testing.T) {
 
 	// Query-backed: each has a query-error and a scan-error branch.
 	queryBacked := map[string]func(*Store) error{
-		"dimension": func(s *Store) error { _, e := s.queryDashDimension(ctx(), p, "backend"); return e },
+		"dimension": func(s *Store) error { _, e := s.queryDashDimension(ctx(), p, "provider"); return e },
 		"endpoint":  func(s *Store) error { _, e := s.queryDashEndpoint(ctx(), p); return e },
 		"model":     func(s *Store) error { _, e := s.queryDashModel(ctx(), p); return e },
 		"fired":     func(s *Store) error { _, e := s.queryDashFired(ctx(), p, "tags"); return e },

@@ -40,7 +40,7 @@ func TestPoliciesHandler_NilConfigReturns503(t *testing.T) {
 
 func TestPoliciesHandler_EmptyConfig(t *testing.T) {
 	t.Parallel()
-	resolved := &config.ResolvedConfigV2{}
+	resolved := &config.ResolvedConfig{}
 	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil))
@@ -63,11 +63,11 @@ func TestPoliciesHandler_ProjectsTargetsAndCircuitState(t *testing.T) {
 		Mode:               contractsres.ModeFailover,
 		FailureStatusCodes: []int{503},
 		Targets: []contractsconfig.Target{
-			{Backend: "primary"},
-			{Backend: "backup"},
+			{Provider: "primary"},
+			{Provider: "backup"},
 		},
 	}
-	resolved := &config.ResolvedConfigV2{Groups: contractsconfig.GroupsConfig{"ha": grp}}
+	resolved := &config.ResolvedConfig{Groups: contractsconfig.GroupsConfig{"ha": grp}}
 	cb := stubBreakerStates{states: map[string]string{
 		"ha|primary": "open",
 		// "ha|backup" intentionally absent → "closed"
@@ -107,10 +107,10 @@ func TestPoliciesHandler_NilBreakerSource_AllUnknown(t *testing.T) {
 	grp := contractsconfig.Group{
 		Mode: contractsres.ModeFailover,
 		Targets: []contractsconfig.Target{
-			{Backend: "primary"},
+			{Provider: "primary"},
 		},
 	}
-	resolved := &config.ResolvedConfigV2{Groups: contractsconfig.GroupsConfig{"ha": grp}}
+	resolved := &config.ResolvedConfig{Groups: contractsconfig.GroupsConfig{"ha": grp}}
 
 	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()
@@ -137,10 +137,10 @@ func TestPoliciesHandler_PolicyCBEnabledFlag(t *testing.T) {
 			HalfOpenSuccessThreshold: 2,
 		},
 		Targets: []contractsconfig.Target{
-			{Backend: "primary"},
+			{Provider: "primary"},
 		},
 	}
-	resolved := &config.ResolvedConfigV2{Groups: contractsconfig.GroupsConfig{"ha": grp}}
+	resolved := &config.ResolvedConfig{Groups: contractsconfig.GroupsConfig{"ha": grp}}
 
 	h := PoliciesHandler(config.NewStore(resolved), nil)
 	rec := httptest.NewRecorder()

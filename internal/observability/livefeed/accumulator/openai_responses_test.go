@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
+	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
 )
 
 func parseResponses(t *testing.T, raw []byte) openairesponses.ResponsesResponse {

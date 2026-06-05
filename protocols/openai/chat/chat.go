@@ -143,7 +143,7 @@ type ChatCompletionResponse struct {
 	// Model is the resolved model name OpenAI billed the request against.
 	Model string `json:"model"`
 
-	// SystemFingerprint identifies the backend configuration that served the
+	// SystemFingerprint identifies the provider configuration that served the
 	// request; useful for reproducibility when paired with Seed.
 	SystemFingerprint string `json:"system_fingerprint,omitempty"`
 
@@ -190,7 +190,7 @@ type ChatCompletionChunk struct {
 	// Model is the resolved model name.
 	Model string `json:"model"`
 
-	// SystemFingerprint identifies the backend configuration that served the
+	// SystemFingerprint identifies the provider configuration that served the
 	// stream.
 	SystemFingerprint string `json:"system_fingerprint,omitempty"`
 

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
+	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
 )
 
 // accumulateAnthropicMessages walks an Anthropic /v1/messages SSE

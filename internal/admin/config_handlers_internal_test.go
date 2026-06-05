@@ -36,8 +36,8 @@ func TestBuildRuleAttachments_FallbackToRuleNamesIndex(t *testing.T) {
 		Name:     "redirect-haiku",
 		Behavior: "continue",
 	}
-	resolved := &config.ResolvedConfigV2{
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+	resolved := &config.ResolvedConfig{
+		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {RuleNames: []string{"redirect-haiku", "unknown-rule"}},
 		},
 		RuleIndex:             map[string]*rulescontract.RuleContract{"redirect-haiku": rule},
@@ -51,7 +51,7 @@ func TestBuildRuleAttachments_FallbackToRuleNamesIndex(t *testing.T) {
 
 func TestBuildRuleAttachments_UnknownConfigReturnsNil(t *testing.T) {
 	t.Parallel()
-	resolved := &config.ResolvedConfigV2{Configurations: map[string]contractsconfig.ConfigurationV2{}}
+	resolved := &config.ResolvedConfig{Configurations: map[string]contractsconfig.Configuration{}}
 	if got := buildRuleAttachments("missing", resolved); got != nil {
 		t.Errorf("unknown config = %v, want nil", got)
 	}

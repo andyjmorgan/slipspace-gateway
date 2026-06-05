@@ -70,7 +70,7 @@ func GroupDetailHandler(store *config.Store) http.Handler {
 //   - 201 Created (body = groupView) / 200 dry-run (PreviewResult)
 //   - 400 parse / empty name / empty body
 //   - 409 when the group name already exists
-//   - 422 on validation failure (e.g. no targets, target backend unknown)
+//   - 422 on validation failure (e.g. no targets, target provider unknown)
 //   - 500 / 503
 func GroupsCreateHandler(store *config.Store, configDir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +92,7 @@ func GroupsCreateHandler(store *config.Store, configDir string) http.Handler {
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) {
+		mutate := func(c *config.ResolvedConfig) {
 			if c.Groups == nil {
 				c.Groups = contractsconfig.GroupsConfig{}
 			}
@@ -143,7 +143,7 @@ func GroupsReplaceHandler(store *config.Store, configDir string) http.Handler {
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) { c.Groups[urlName] = g }
+		mutate := func(c *config.ResolvedConfig) { c.Groups[urlName] = g }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return

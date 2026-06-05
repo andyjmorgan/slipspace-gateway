@@ -87,11 +87,11 @@ type Connector struct {
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 
 	// Region is the AWS region. Required when Type == s3; the SDK
-	// still wants a region for S3-compatible backends even when
+	// still wants a region for S3-compatible providers even when
 	// EndpointURL is set.
 	Region string `yaml:"region,omitempty" json:"region,omitempty"`
 
-	// EndpointURL points at an S3-compatible backend (MinIO,
+	// EndpointURL points at an S3-compatible provider (MinIO,
 	// SeaweedFS, Garage, Ceph RGW). Empty = use real AWS S3.
 	EndpointURL string `yaml:"endpoint_url,omitempty" json:"endpoint_url,omitempty"`
 

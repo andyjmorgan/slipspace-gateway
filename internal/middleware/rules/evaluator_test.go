@@ -10,7 +10,7 @@ import (
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
 )
 
 // newGC builds the GatewayContext most evaluator tests need. The
@@ -302,7 +302,7 @@ func TestEvaluator_PicksUpStoreReplace(t *testing.T) {
 	initialRule := tag("initial", "first")
 	replacedRule := tag("replaced", "second")
 
-	store := config.NewStore(&config.ResolvedConfigV2{
+	store := config.NewStore(&config.ResolvedConfig{
 		PerConfigurationRules: map[string][]*contractsrules.RuleContract{
 			"dev": {initialRule},
 		},
@@ -327,7 +327,7 @@ func TestEvaluator_PicksUpStoreReplace(t *testing.T) {
 
 	mustEval("pre-swap", "initial")
 
-	store.Replace(&config.ResolvedConfigV2{
+	store.Replace(&config.ResolvedConfig{
 		PerConfigurationRules: map[string][]*contractsrules.RuleContract{
 			"dev": {replacedRule},
 		},

@@ -18,7 +18,7 @@ const pathConnectors = "/api/v1/config/connectors/"
 // secret_ref indirections (env:NAME / file:/path) resolved at runtime, so the
 // contract type serialises directly on read and decodes directly on write —
 // no mask/write-back is needed. ConnectorsConfig is a slice (each entry carries
-// its own Name), unlike the map-keyed backends/groups.
+// its own Name), unlike the map-keyed providers/groups.
 
 // ConnectorsListHandler serves GET /api/v1/config/connectors in name order.
 func ConnectorsListHandler(store *config.Store) http.Handler {
@@ -84,7 +84,7 @@ func ConnectorsCreateHandler(store *config.Store, configDir string) http.Handler
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) { c.Connectors = append(c.Connectors, conn) }
+		mutate := func(c *config.ResolvedConfig) { c.Connectors = append(c.Connectors, conn) }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return
@@ -132,7 +132,7 @@ func ConnectorsReplaceHandler(store *config.Store, configDir string) http.Handle
 			return
 		}
 
-		mutate := func(c *config.ResolvedConfigV2) { c.Connectors[idx] = conn }
+		mutate := func(c *config.ResolvedConfig) { c.Connectors[idx] = conn }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return

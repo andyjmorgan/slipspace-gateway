@@ -100,8 +100,8 @@ func TestObsTimeseries(t *testing.T) {
 func TestObsMessagesRecent(t *testing.T) {
 	// fake returns newest-first; handler must emit oldest-first.
 	q := &fakeQueries{events: []store.RequestEvent{
-		{CorrelationID: "new", Backend: "anthropic", Protocol: "messages", StatusCode: 200, Detail: []byte(`{"tags":["x"],"rules_fired":["r1"]}`)},
-		{CorrelationID: "old", Backend: "openai"},
+		{CorrelationID: "new", Provider: "anthropic", Protocol: "messages", StatusCode: 200, Detail: []byte(`{"tags":["x"],"rules_fired":["r1"]}`)},
+		{CorrelationID: "old", Provider: "openai"},
 	}}
 	h := newQueryServer(t, q)
 	got := decodeAdmin[adminc.MessagesRecentResponse](t, get(t, h, "/api/v1/messages/recent?limit=50", true))

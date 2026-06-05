@@ -17,6 +17,7 @@ import {
   TextareaField,
   type SelectOption,
 } from "@/components/forms/field-atoms"
+import { ProviderSelectField } from "@/components/forms/provider-select"
 
 export type ActionValue = Record<string, unknown>
 
@@ -115,12 +116,10 @@ function Subform({ value, onChange }: { value: ActionValue; onChange: (v: Action
   switch (type) {
     case "changeProvider":
       return (
-        <TextField
+        <ProviderSelectField
           label="New provider"
           value={String(value.new_provider ?? "")}
           onChange={(v) => onChange({ ...value, new_provider: v })}
-          placeholder="anthropic"
-          mono
         />
       )
     case "changeModelName":

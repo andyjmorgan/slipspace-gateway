@@ -16,46 +16,46 @@ import (
 // (configuration, protocol) differing only by models (the models tie-break),
 // differing protocols, differing configurations, and passthrough bindings
 // across two configurations.
-func twoConfigStore() *config.ResolvedConfigV2 {
-	rc := &config.ResolvedConfigV2{
-		Backends: contractsconfig.BackendsConfig{
-			"openai": contractsconfig.Backend{
+func twoConfigStore() *config.ResolvedConfig {
+	rc := &config.ResolvedConfig{
+		Providers: contractsconfig.ProvidersConfig{
+			"openai": contractsconfig.Provider{
 				BaseURL: "https://api.openai.com",
-				Protocols: map[string]contractsconfig.BackendProtocol{
-					"chat":      {Path: "/v1/chat/completions", Auth: &contractsconfig.BackendAuth{Header: "Authorization", Format: "Bearer {key}"}},
+				Protocols: map[string]contractsconfig.ProviderProtocol{
+					"chat":      {Path: "/v1/chat/completions", Auth: &contractsconfig.ProviderAuth{Header: "Authorization", Format: "Bearer {key}"}},
 					"responses": {Path: "/v1/responses"},
 				},
 			},
-			"anthropic": contractsconfig.Backend{
+			"anthropic": contractsconfig.Provider{
 				BaseURL: "https://api.anthropic.com",
-				Protocols: map[string]contractsconfig.BackendProtocol{
-					"messages": {Path: "/v1/messages", Auth: &contractsconfig.BackendAuth{Header: "x-api-key", Format: "{key}"}},
+				Protocols: map[string]contractsconfig.ProviderProtocol{
+					"messages": {Path: "/v1/messages", Auth: &contractsconfig.ProviderAuth{Header: "x-api-key", Format: "{key}"}},
 				},
 				Passthrough: map[string]contractsconfig.PassthroughFamily{
 					"messages_batches": {Paths: []contractsconfig.PassthroughPath{{Match: "/v1/messages/batches", Methods: []string{"POST"}}}},
 				},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"alpha": {
 				Credentials: map[string]string{"openai": "sk-a", "anthropic": "ak-a"},
 				Bindings: []contractsconfig.Binding{
 					// same (alpha, chat) — models tie-break: "gpt-*" < "o1*"
-					{Protocol: "chat", Models: []string{"o1*"}, Backend: "openai"},
-					{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"},
-					{Protocol: "messages", Models: []string{"claude-*"}, Backend: "anthropic"},
+					{Protocol: "chat", Models: []string{"o1*"}, Provider: "openai"},
+					{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "openai"},
+					{Protocol: "messages", Models: []string{"claude-*"}, Provider: "anthropic"},
 				},
 				PassthroughBindings: []contractsconfig.PassthroughBinding{
-					{Family: "messages_batches", Backend: "anthropic"},
+					{Family: "messages_batches", Provider: "anthropic"},
 				},
 			},
 			"beta": {
 				Credentials: map[string]string{"openai": "sk-b", "anthropic": "ak-b"},
 				Bindings: []contractsconfig.Binding{
-					{Protocol: "responses", Models: []string{"gpt-*"}, Backend: "openai"},
+					{Protocol: "responses", Models: []string{"gpt-*"}, Provider: "openai"},
 				},
 				PassthroughBindings: []contractsconfig.PassthroughBinding{
-					{Family: "messages_batches", Backend: "anthropic"},
+					{Family: "messages_batches", Provider: "anthropic"},
 				},
 			},
 		},
@@ -103,14 +103,14 @@ func TestBindingsHandler_SortOrderingAcrossBranches(t *testing.T) {
 	}
 }
 
-func TestBackendDetailHandler_NoPassthrough(t *testing.T) {
-	h := admin.BackendDetailHandler(config.NewStore(twoConfigStore()))
+func TestProviderDetailHandler_NoPassthrough(t *testing.T) {
+	h := admin.ProviderDetailHandler(config.NewStore(twoConfigStore()))
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config/backends/openai", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config/providers/openai", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var got admin.BackendDetail
+	var got admin.ProviderDetail
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

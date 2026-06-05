@@ -262,7 +262,7 @@ function EditorBody({
 
       {form.type === "s3" && (
         <PanelCard>
-          <PanelHead title="S3 destination" sub="bucket + region; endpoint_url for S3-compatible backends" />
+          <PanelHead title="S3 destination" sub="bucket + region; endpoint_url for S3-compatible providers" />
           <div className="px-4 py-4 flex flex-col gap-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextField label="Bucket" value={form.bucket ?? ""} onChange={(v) => setForm({ ...form, bucket: v })} placeholder="sluice-artifacts" mono />

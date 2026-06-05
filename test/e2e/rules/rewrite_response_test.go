@@ -23,7 +23,7 @@ configurations:
     credentials:
       openai: sk-dev-mock
     bindings:
-      - { protocol: chat, models: ["gpt-*"], backend: openai }
+      - { protocol: chat, models: ["gpt-*"], provider: openai }
     rule_names:
       - rebase-result-url
     tags:

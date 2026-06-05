@@ -49,7 +49,7 @@ func filterFromQuery(r *http.Request) store.EventFilter {
 		Configuration: q.Get("configuration"),
 		Gateway:       q.Get("gateway"),
 		Model:         q.Get("model"),
-		Backend:       q.Get("backend"),
+		Provider:      q.Get("provider"),
 		Protocol:      q.Get("protocol"),
 		StatusClass:   q.Get("status_class"),
 	}

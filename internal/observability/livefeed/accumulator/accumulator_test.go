@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
-	geminicontent "github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
+	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
+	geminicontent "github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
 )
 
 // parseOpenAI is a test helper that unmarshalls the assembled bytes

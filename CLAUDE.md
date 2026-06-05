@@ -123,7 +123,7 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 
 - `cmd/` — `gateway` (data plane), `api` (control plane), `cli`, `mockllm`. One binary per dir.
 - `internal/` — engines: `proxy`, `pipeline`, `middleware/{auth,bodycapture,rules,resilience,guardrails,forwarder}`, `config`, `keys`, `spool`, `connector`, `observability`, `routing`, `server`.
-- `providers/` (PUBLIC) — on-the-wire models: `openai/{chat,responses,models}`, `anthropic/{messages,models}`, `gemini/{content,models}`.
+- `protocols/` (PUBLIC) — on-the-wire models, one per protocol a provider speaks: `openai/{chat,responses,models}`, `anthropic/{messages,models}`, `gemini/{content,models}`.
 - `models/` (PUBLIC) — shared multimodal types + `dynamic.go` (`DynamicProperties`).
 - `contracts/` (PUBLIC) — control-plane schemas: `rules`, `resilience`, `config`, `connector`.
 - `web/` SPA source, `deploy/{docker,helm}`, `test/{e2e,fixtures,python,smoke}`, `.github/workflows/`.
@@ -132,7 +132,7 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 
 - **Schemas public, engines private.** Provider model types, rule contracts, configuration types live at the root. The evaluators that *consume* those schemas stay in `internal/`.
 - **`cmd/<name>` produces binary `<name>`.** Default Go behavior. Docker image tags carry the brand; binaries don't.
-- **`internal/` is reversible pre-v1.0-tag.** Once we tag v1.0 and external consumers may import `providers/`, `models/`, `contracts/`, the public/private boundary becomes SemVer-load-bearing.
+- **`internal/` is reversible pre-v1.0-tag.** Once we tag v1.0 and external consumers may import `protocols/`, `models/`, `contracts/`, the public/private boundary becomes SemVer-load-bearing.
 
 ## Configuration model
 
@@ -170,13 +170,13 @@ Unit (internal correctness) and E2E (wire contract through the real binary) are 
 - **Tests reading captured records sort by `(ts_ns, instance_id, seq)`, never receive order** — see invariant #8.
 - Stdlib `testing` only — hand-rolled stubs, no `gomock`/`mockery`/`testify`. `-race` everywhere; `goleak` at teardown. Fuzz every `UnmarshalJSON` + the YAML loader + route detection (corpora in `testdata/fuzz/`). Real-over-mock (testcontainers MinIO beats a fake `S3Putter`).
 
-## Provider contracts — perpetual maintenance
+## Protocol contracts — perpetual maintenance
 
-The `providers/` packages model the on-the-wire shapes of OpenAI, Anthropic, and Gemini — a moving spec the codebase must continuously chase. Field drops are **silent**: we forward, the provider responds, the client gets *something* subtly wrong, with no error to log and no metric to spike. Contract-level testing is the only catch. **Treat every PR touching `providers/` as a wire-compat change.**
+The `protocols/` packages model the on-the-wire shapes of OpenAI, Anthropic, and Gemini — a moving spec the codebase must continuously chase. (A provider speaks one or more protocols; `protocols/` models each protocol's vendor-flavored wire shape.) Field drops are **silent**: we forward, the provider responds, the client gets *something* subtly wrong, with no error to log and no metric to spike. Contract-level testing is the only catch. **Treat every PR touching `protocols/` as a wire-compat change.**
 
 - **`DynamicProperties` + `UnknownX` safety net is non-negotiable** — every model type embeds `DynamicProperties`; every polymorphic base has an `UnknownX` fallback. A new struct without these is a regression (invariant #1).
 - **Test surface per model type:** golden round-trips from `test/fixtures/<provider>/` (byte-equivalent modulo key order); fuzz on every `UnmarshalJSON` ("if it parses, it round-trips", ≥10min in CI); unknown-discriminator + unknown-field tests via `UnknownX` / `DynamicProperties.Extra`; a `TestX_AllFieldsTagged` reflection meta-test enforcing `json` tags.
-- **When touching `providers/`:** cite the source for any new field (docs link / captured payload / SDK PR), add a fixture if the shape is new, add a fuzz seed for non-trivial value spaces, update the `Unknown*` fallback for new concrete types, run `make py-compat` locally before pushing.
+- **When touching `protocols/`:** cite the source for any new field (docs link / captured payload / SDK PR), add a fixture if the shape is new, add a fuzz seed for non-trivial value spaces, update the `Unknown*` fallback for new concrete types, run `make py-compat` locally before pushing.
 - **Drift early-warning:** scheduled `fixture-refresh.yaml` runs the compat suite against the latest published SDKs and files a `provider-drift` issue on failure.
 
 ## E2E requirements

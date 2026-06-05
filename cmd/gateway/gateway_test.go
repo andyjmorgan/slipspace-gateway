@@ -70,11 +70,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	dir := writeTestConfig(t, upstream.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	resolved, err := config.LoadV2(ctx, dir)
+	resolved, err := config.Load(ctx, dir)
 	if err != nil {
 		upstream.Close()
 		cancel()
-		t.Fatalf("config.LoadV2: %v", err)
+		t.Fatalf("config.Load: %v", err)
 	}
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
@@ -123,7 +123,7 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	backendsYAML := fmt.Sprintf(`backends:
+	providersYAML := fmt.Sprintf(`providers:
   openai:
     base_url: %s
     protocols:
@@ -161,12 +161,12 @@ func writeTestConfig(t *testing.T, upstreamURL string) string {
       anthropic: sk-upstream-anthropic
       gemini: gm-upstream-gemini
     bindings:
-      - { protocol: chat, models: ["gpt-*"], backend: openai }
-      - { protocol: chat, models: ["claude-*"], backend: anthropic }
-      - { protocol: messages, models: ["claude-*"], backend: anthropic }
-      - { protocol: chat, models: ["gemini-*"], backend: gemini }
+      - { protocol: chat, models: ["gpt-*"], provider: openai }
+      - { protocol: chat, models: ["claude-*"], provider: anthropic }
+      - { protocol: messages, models: ["claude-*"], provider: anthropic }
+      - { protocol: chat, models: ["gemini-*"], provider: gemini }
     passthrough_bindings:
-      - { family: models, backend: anthropic }
+      - { family: models, provider: anthropic }
 
 api_keys:
   - secret: sk_dev_local
@@ -180,8 +180,8 @@ api_keys:
 `
 
 	for name, body := range map[string]string{
-		"backends.yaml": backendsYAML,
-		"policy.yaml":   policyYAML,
+		"providers.yaml": providersYAML,
+		"policy.yaml":    policyYAML,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)
@@ -374,7 +374,7 @@ func TestGateway_IdentityPassthroughMode_UnknownKey(t *testing.T) {
 
 // TestGateway_AnthropicChatCompletions_OpenAICompatSurface exercises the v2
 // model-keyed redirect: a chat request whose model is claude-* binds to the
-// anthropic backend's chat protocol, swapping the upstream credential into
+// anthropic provider's chat protocol, swapping the upstream credential into
 // Authorization: Bearer (not the native x-api-key).
 func TestGateway_AnthropicChatCompletions_OpenAICompatSurface(t *testing.T) {
 	env := newTestEnv(t)

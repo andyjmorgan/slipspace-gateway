@@ -1,12 +1,12 @@
-# v2 model: backends are connections (base_url + per-protocol auth). They carry
+# v2 model: providers are connections (base_url + per-protocol auth). They carry
 # NO credentials — the configuration brings those. Routing is config data
 # (bindings on the configuration), so there is no route table here.
 #
-# In local dev every backend points at the mock LLM; the per-protocol paths and
+# In local dev every provider points at the mock LLM; the per-protocol paths and
 # auth conventions mirror the real upstreams so the admin console + selection
 # behave as they do in production.
 
-backends:
+providers:
   openai:
     base_url: http://mockllm:5555
     protocols:

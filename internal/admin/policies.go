@@ -45,7 +45,7 @@ func PoliciesHandler(store *config.Store, cb CircuitBreakerStateSource) http.Han
 // buildPoliciesResponse projects resolved + cb into the wire DTO. Kept
 // pure so the unit tests can exercise it without spinning up an HTTP
 // recorder.
-func buildPoliciesResponse(resolved *config.ResolvedConfigV2, cb CircuitBreakerStateSource) adminc.PoliciesResponse {
+func buildPoliciesResponse(resolved *config.ResolvedConfig, cb CircuitBreakerStateSource) adminc.PoliciesResponse {
 	host, _ := os.Hostname()
 	if host == "" {
 		host = "unknown"
@@ -66,8 +66,8 @@ func buildPoliciesResponse(resolved *config.ResolvedConfigV2, cb CircuitBreakerS
 }
 
 // summariseGroup projects a v2 resilience group onto the policy DTO. Group
-// targets are backends (with an optional model alias); per-attempt circuit
-// state is keyed by (group, backend).
+// targets are providers (with an optional model alias); per-attempt circuit
+// state is keyed by (group, provider).
 func summariseGroup(name string, g contractsconfig.Group, cb CircuitBreakerStateSource) adminc.PolicySummary {
 	summary := adminc.PolicySummary{
 		Name:               name,
@@ -86,13 +86,13 @@ func summariseGroup(name string, g contractsconfig.Group, cb CircuitBreakerState
 
 func summariseGroupTarget(group string, order int, t contractsconfig.Target, cb CircuitBreakerStateSource) adminc.PolicyTarget {
 	tgt := adminc.PolicyTarget{
-		Name:         t.Backend,
-		Provider:     t.Backend,
+		Name:         t.Provider,
+		Provider:     t.Provider,
 		Order:        order,
 		CircuitState: "unknown",
 	}
 	if cb != nil {
-		tgt.CircuitState = cb.State(group, t.Backend)
+		tgt.CircuitState = cb.State(group, t.Provider)
 	}
 	return tgt
 }

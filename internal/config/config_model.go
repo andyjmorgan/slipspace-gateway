@@ -14,30 +14,30 @@ import (
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
 
-// ResolvedConfigV2 is the merged, validated, indexed runtime view of a v2
-// configuration directory (backends + bindings). It is the v2 analogue of
-// ResolvedConfig; the data plane reads it through config.Store the same way.
+// ResolvedConfig is the merged, validated, indexed runtime view of a
+// configuration directory (providers + bindings). The data plane reads it
+// through config.Store.
 //
 // Routing is config data here: a request resolves its destination by selecting
 // a binding on the owning configuration (see internal/selection), so there is
 // no RouteIndex — the inbound path maps to a protocol and the configuration's
 // bindings do the rest.
-type ResolvedConfigV2 struct {
-	// Backends is the shared connection catalogue keyed by backend name.
-	Backends contractsconfig.BackendsConfig
+type ResolvedConfig struct {
+	// Providers is the shared connection catalogue keyed by provider name.
+	Providers contractsconfig.ProvidersConfig
 
 	// Groups is the shared resilience-group catalogue keyed by group name.
 	Groups contractsconfig.GroupsConfig
 
 	// Configurations is the policy bundles keyed by configuration name.
-	Configurations map[string]contractsconfig.ConfigurationV2
+	Configurations map[string]contractsconfig.Configuration
 
 	// APIKeys is the `api_keys` block in authoring order. Lookups use
 	// SecretIndex.
 	APIKeys contractsconfig.APIKeysConfig
 
 	// Rules is the top-level transform-rule library (routing actions have been
-	// retired into bindings/backends/groups).
+	// retired into bindings/providers/groups).
 	Rules []rulescontract.RuleContract
 
 	// Connectors is the top-level connector catalogue (unchanged from v1).
@@ -54,7 +54,7 @@ type ResolvedConfigV2 struct {
 
 	// ConfigurationIndex maps configuration name to a pointer-stable copy so
 	// downstream code may retain it across reload boundaries.
-	ConfigurationIndex map[string]*contractsconfig.ConfigurationV2
+	ConfigurationIndex map[string]*contractsconfig.Configuration
 
 	// RuleIndex maps rule name to a pointer into Rules.
 	RuleIndex map[string]*rulescontract.RuleContract
@@ -67,39 +67,45 @@ type ResolvedConfigV2 struct {
 	ConnectorIndex map[string]*contractsconfig.Connector
 
 	// SourceFiles records which file each top-level block was loaded from
-	// (block name -> filename, e.g. "backends" -> "backends.yaml"). The admin
+	// (block name -> filename, e.g. "providers" -> "providers.yaml"). The admin
 	// write path uses it to persist a mutated block back to the file it came
 	// from rather than a fixed filename, so an operator's chosen layout
 	// survives a round-trip and a co-located block is never dropped. Blocks
 	// introduced through the API with no recorded origin fall back to a
-	// canonical default file (see writer_v2.go).
+	// canonical default file (see config_writer.go).
 	SourceFiles map[string]string
 }
 
-// v2Doc is the decode target for one YAML file's top-level blocks. Files are
+// configDoc is the decode target for one YAML file's top-level blocks. Files are
 // merged by top-level key; a key set by two files is a duplicate-key error.
-type v2Doc struct {
-	Backends       contractsconfig.BackendsConfig             `yaml:"backends"`
-	Groups         contractsconfig.GroupsConfig               `yaml:"groups"`
-	Configurations map[string]contractsconfig.ConfigurationV2 `yaml:"configurations"`
-	APIKeys        contractsconfig.APIKeysConfig              `yaml:"api_keys"`
-	Connectors     contractsconfig.ConnectorsConfig           `yaml:"connectors"`
-	Rules          []rulescontract.RuleContract               `yaml:"rules"`
-	Admin          *admin.Config                              `yaml:"admin"`
-	Telemetry      *contractsconfig.Telemetry                 `yaml:"telemetry"`
+type configDoc struct {
+	Providers      contractsconfig.ProvidersConfig          `yaml:"providers"`
+	Groups         contractsconfig.GroupsConfig             `yaml:"groups"`
+	Configurations map[string]contractsconfig.Configuration `yaml:"configurations"`
+	APIKeys        contractsconfig.APIKeysConfig            `yaml:"api_keys"`
+	Connectors     contractsconfig.ConnectorsConfig         `yaml:"connectors"`
+	Rules          []rulescontract.RuleContract             `yaml:"rules"`
+	Admin          *admin.Config                            `yaml:"admin"`
+	Telemetry      *contractsconfig.Telemetry               `yaml:"telemetry"`
+
+	// LegacyBackends captures the pre-rename `backends:` key solely so Load can
+	// reject it with a clear message — the block is `providers:` now and the cut
+	// is hard. A present key decodes to a non-zero Node (Kind != 0); an absent
+	// one stays zero. Exported because yaml.v3 only populates exported fields.
+	LegacyBackends yaml.Node `yaml:"backends"`
 }
 
-// LoadV2 reads the v2 YAML configuration directory at dir and returns the
+// Load reads the v2 YAML configuration directory at dir and returns the
 // merged, validated, indexed runtime view. Every *.yaml file is read; the
 // top-level blocks are merged by key and a key set by two files is rejected.
-func LoadV2(ctx context.Context, dir string) (*ResolvedConfigV2, error) {
+func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("config: loadv2 %q: %w", dir, err)
+		return nil, fmt.Errorf("config: load %q: %w", dir, err)
 	}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("config: loadv2 read dir %q: %w", dir, err)
+		return nil, fmt.Errorf("config: load read dir %q: %w", dir, err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -109,20 +115,23 @@ func LoadV2(ctx context.Context, dir string) (*ResolvedConfigV2, error) {
 		names = append(names, e.Name())
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("config: loadv2 %q: %w", dir, ErrEmptyDirectory)
+		return nil, fmt.Errorf("config: load %q: %w", dir, ErrEmptyDirectory)
 	}
 	sort.Strings(names)
 
-	r := &ResolvedConfigV2{}
+	r := &ResolvedConfig{}
 	seen := map[string]string{} // top-level block -> filename that set it
 	for _, name := range names {
 		raw, rerr := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // dir is operator-trusted config root
 		if rerr != nil {
-			return nil, fmt.Errorf("config: loadv2 read %q: %w", name, rerr)
+			return nil, fmt.Errorf("config: load read %q: %w", name, rerr)
 		}
-		var doc v2Doc
+		var doc configDoc
 		if uerr := yaml.Unmarshal(raw, &doc); uerr != nil {
-			return nil, fmt.Errorf("config: loadv2 parse %q: %w", name, uerr)
+			return nil, fmt.Errorf("config: load parse %q: %w", name, uerr)
+		}
+		if doc.LegacyBackends.Kind != 0 {
+			return nil, fmt.Errorf("config: load %q: %w", name, ErrLegacyProvidersKey)
 		}
 		if merr := r.mergeDoc(name, &doc, seen); merr != nil {
 			return nil, merr
@@ -140,18 +149,18 @@ func LoadV2(ctx context.Context, dir string) (*ResolvedConfigV2, error) {
 
 // mergeDoc folds one file's blocks into r, rejecting a top-level block set by
 // more than one file.
-func (r *ResolvedConfigV2) mergeDoc(file string, doc *v2Doc, seen map[string]string) error {
+func (r *ResolvedConfig) mergeDoc(file string, doc *configDoc, seen map[string]string) error {
 	claim := func(block string, set bool) error {
 		if !set {
 			return nil
 		}
 		if prev, dup := seen[block]; dup {
-			return fmt.Errorf("config: loadv2 %q sets %q already set by %q: %w", file, block, prev, ErrDuplicateKey)
+			return fmt.Errorf("config: load %q sets %q already set by %q: %w", file, block, prev, ErrDuplicateKey)
 		}
 		seen[block] = file
 		return nil
 	}
-	if err := claim("backends", len(doc.Backends) > 0); err != nil {
+	if err := claim("providers", len(doc.Providers) > 0); err != nil {
 		return err
 	}
 	if err := claim("groups", len(doc.Groups) > 0); err != nil {
@@ -176,8 +185,8 @@ func (r *ResolvedConfigV2) mergeDoc(file string, doc *v2Doc, seen map[string]str
 		return err
 	}
 
-	if len(doc.Backends) > 0 {
-		r.Backends = doc.Backends
+	if len(doc.Providers) > 0 {
+		r.Providers = doc.Providers
 	}
 	if len(doc.Groups) > 0 {
 		r.Groups = doc.Groups
@@ -205,14 +214,14 @@ func (r *ResolvedConfigV2) mergeDoc(file string, doc *v2Doc, seen map[string]str
 
 // buildIndexes constructs the lookup tables the data plane reads per request.
 // Mirrors ResolvedConfig.buildIndexes; called after Validate.
-func (r *ResolvedConfigV2) buildIndexes() {
+func (r *ResolvedConfig) buildIndexes() {
 	r.SecretIndex = make(map[string]*contractsconfig.APIKey, len(r.APIKeys))
 	for i := range r.APIKeys {
 		key := &r.APIKeys[i]
 		r.SecretIndex[key.Secret] = key
 	}
 
-	r.ConfigurationIndex = make(map[string]*contractsconfig.ConfigurationV2, len(r.Configurations))
+	r.ConfigurationIndex = make(map[string]*contractsconfig.Configuration, len(r.Configurations))
 	for name, cfg := range r.Configurations {
 		entry := cfg
 		r.ConfigurationIndex[name] = &entry

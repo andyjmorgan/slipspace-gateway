@@ -24,10 +24,10 @@ import (
 //
 // protocol maps the inbound path to a wire shape; auth identifies the
 // configuration from headers alone; selection walks that configuration's
-// bindings to pick the backend/group and seeds the per-request state; the
+// bindings to pick the provider/group and seeds the per-request state; the
 // resilience orchestrator (reused unchanged) dispatches single-target or group
 // attempts, each switching state.Provider; the final handler re-resolves the
-// chosen backend's transport and forwards.
+// chosen provider's transport and forwards.
 //
 // The store is read per request inside selection + final via store.Snapshot,
 // so an admin write that lands mid-request still produces a consistent answer.
@@ -80,7 +80,7 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 
 		if pm, ok := passthroughMatchFromContext(ctx); ok {
 			ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
-				Provider:      pm.Backend,
+				Provider:      pm.Provider,
 				Endpoint:      pm.Family,
 				Method:        r.Method,
 				Configuration: authResult.ConfigurationName,
@@ -99,9 +99,9 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 			return
 		}
 
-		backend := state.Provider
-		if backend == "" {
-			log.ErrorContext(ctx, "forwarder: no backend resolved")
+		provider := state.Provider
+		if provider == "" {
+			log.ErrorContext(ctx, "forwarder: no provider resolved")
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
@@ -111,23 +111,23 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
-		target, err := selection.ResolveTarget(pi.protocol, backend, "", *authResult.Configuration, snap.Backends)
+		target, err := selection.ResolveTarget(pi.protocol, provider, "", *authResult.Configuration, snap.Providers)
 		if err != nil {
-			log.ErrorContext(ctx, "forwarder: resolve target", "backend", backend, "err", err.Error())
+			log.ErrorContext(ctx, "forwarder: resolve target", "provider", provider, "err", err.Error())
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
 
 		captured, _ := bodycapture.FromContext(ctx)
 		ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
-			Provider:      backend,
+			Provider:      provider,
 			Endpoint:      pi.protocol,
 			Model:         outboundModel(captured, state),
 			Method:        r.Method,
 			Configuration: authResult.ConfigurationName,
 		})
 
-		dest, err := buildDestinationV2(target, state.PathParams, authResult.Mode, authResult.DropHeaders, inboundAuthorization)
+		dest, err := buildDestination(target, state.PathParams, authResult.Mode, authResult.DropHeaders, inboundAuthorization)
 		if err != nil {
 			log.ErrorContext(ctx, "forwarder: destination", "err", err.Error())
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
@@ -152,7 +152,7 @@ var credentialHeaderNames = []string{
 }
 
 // authFormatPlaceholder is the literal substring the destination builder
-// substitutes with the resolved credential when a backend protocol declares a
+// substitutes with the resolved credential when a provider protocol declares a
 // custom auth format.
 const authFormatPlaceholder = "{key}"
 

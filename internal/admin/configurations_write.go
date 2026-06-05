@@ -12,11 +12,11 @@ import (
 
 // configurationWriteBody is the POST/PUT decode target for a configuration.
 //
-// Credentials is map[backend]*secret with write-back-if-delivered semantics: a
+// Credentials is map[provider]*secret with write-back-if-delivered semantics: a
 // nil value (JSON null, the form for an unchanged masked secret) keeps the
-// stored credential for that backend; a non-nil value sets it, including "" for
-// a no-credential backend. A backend absent from the map is dropped (full
-// replace of which backends carry a credential).
+// stored credential for that provider; a non-nil value sets it, including "" for
+// a no-credential provider. A provider absent from the map is dropped (full
+// replace of which providers carry a credential).
 //
 // There is deliberately no api_keys field — keys are managed solely through the
 // dedicated /api-keys endpoints and are never accepted in a configuration
@@ -37,11 +37,11 @@ type configurationWriteBody struct {
 	ConnectorBindings []contractsconfig.ConnectorBinding `json:"connector_bindings,omitempty"`
 }
 
-// buildConfigurationV2 assembles the contract configuration from the write body,
+// buildConfiguration assembles the contract configuration from the write body,
 // merging each credential against the existing stored value (mergeSecret) so a
 // masked round-trip never wipes a secret.
-func buildConfigurationV2(body configurationWriteBody, existing contractsconfig.ConfigurationV2) contractsconfig.ConfigurationV2 {
-	out := contractsconfig.ConfigurationV2{
+func buildConfiguration(body configurationWriteBody, existing contractsconfig.Configuration) contractsconfig.Configuration {
+	out := contractsconfig.Configuration{
 		Bindings:            body.Bindings,
 		PassthroughBindings: body.PassthroughBindings,
 		RuleNames:           body.RuleNames,
@@ -50,8 +50,8 @@ func buildConfigurationV2(body configurationWriteBody, existing contractsconfig.
 	}
 	if len(body.Credentials) > 0 {
 		out.Credentials = make(map[string]string, len(body.Credentials))
-		for backend, incoming := range body.Credentials {
-			out.Credentials[backend] = mergeSecret(incoming, existing.Credentials[backend])
+		for provider, incoming := range body.Credentials {
+			out.Credentials[provider] = mergeSecret(incoming, existing.Credentials[provider])
 		}
 	}
 	return out
@@ -62,7 +62,7 @@ func buildConfigurationV2(body configurationWriteBody, existing contractsconfig.
 //   - 201 Created (body = redacted ConfigurationDetail) / 200 dry-run
 //   - 400 parse / empty name / empty body
 //   - 409 when the configuration name already exists
-//   - 422 on validation failure (unknown backend credential, bad binding, …)
+//   - 422 on validation failure (unknown provider credential, bad binding, …)
 //   - 500 / 503
 func ConfigurationsCreateHandler(store *config.Store, configDir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,10 +84,10 @@ func ConfigurationsCreateHandler(store *config.Store, configDir string) http.Han
 			return
 		}
 
-		cfg := buildConfigurationV2(body, contractsconfig.ConfigurationV2{})
-		mutate := func(c *config.ResolvedConfigV2) {
+		cfg := buildConfiguration(body, contractsconfig.Configuration{})
+		mutate := func(c *config.ResolvedConfig) {
 			if c.Configurations == nil {
-				c.Configurations = map[string]contractsconfig.ConfigurationV2{}
+				c.Configurations = map[string]contractsconfig.Configuration{}
 			}
 			c.Configurations[body.Name] = cfg
 		}
@@ -139,8 +139,8 @@ func ConfigurationsReplaceHandler(store *config.Store, configDir string) http.Ha
 			return
 		}
 
-		cfg := buildConfigurationV2(body, existing)
-		mutate := func(c *config.ResolvedConfigV2) { c.Configurations[urlName] = cfg }
+		cfg := buildConfiguration(body, existing)
+		mutate := func(c *config.ResolvedConfig) { c.Configurations[urlName] = cfg }
 		if isDryRun(r) {
 			writeJSON(w, previewMutation(snap, mutate))
 			return

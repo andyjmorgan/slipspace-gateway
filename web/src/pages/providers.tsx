@@ -1,5 +1,5 @@
 import { Link } from "react-router"
-import { useBackends } from "@/lib/config-api"
+import { useProviders } from "@/lib/config-api"
 import { PanelCard, TableScroll } from "@/components/atoms/card"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Tag } from "@/components/atoms/tag"
@@ -13,23 +13,23 @@ import {
   useUnauthorizedRedirect,
 } from "@/components/atoms/page-states"
 
-export function BackendsPage() {
-  const { state } = useBackends()
+export function ProvidersPage() {
+  const { state } = useProviders()
   useUnauthorizedRedirect(state)
 
   return (
     <div>
       <PageHeader
-        title="Backends"
+        title="Providers"
         sub="Upstream services the gateway forwards to, shared across every configuration — base URLs, the protocols each one speaks, and whether it accepts passthrough traffic."
         action={
-          <NewButton to="/backends/new" label="New backend" />
+          <NewButton to="/providers/new" label="New provider" />
         }
       />
       {state.status === "loading" && <LoadingPanel />}
       {state.status === "error" && <ErrorPanel message={state.message} />}
       {state.status === "ok" && state.data.length === 0 && (
-        <EmptyPanel message="No backends configured." />
+        <EmptyPanel message="No providers configured." />
       )}
       {state.status === "ok" && state.data.length > 0 && (
         <PanelCard>
@@ -46,7 +46,7 @@ export function BackendsPage() {
               {state.data.map((b) => (
                 <tr key={b.name} className="border-t border-[color:var(--border)] hover:bg-[color:var(--hover)]">
                   <td className="px-4 py-2.5">
-                    <Link to={`/backends/${encodeURIComponent(b.name)}`}><ProviderChip name={b.name} /></Link>
+                    <Link to={`/providers/${encodeURIComponent(b.name)}`}><ProviderChip name={b.name} /></Link>
                   </td>
                   <td className="mono px-4 py-2.5 text-[color:var(--text-2)] truncate max-w-[280px]">{b.base_url}</td>
                   <td className="px-4 py-2.5">

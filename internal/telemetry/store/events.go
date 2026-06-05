@@ -24,8 +24,8 @@ type RequestEvent struct {
 	GatewayID string
 	// Configuration is the resolved policy bundle name.
 	Configuration string
-	// Backend is the post-rule upstream backend (falls back to provider name).
-	Backend string
+	// Provider is the post-rule upstream provider (falls back to provider name).
+	Provider string
 	// Model is the requested model.
 	Model string
 	// Protocol is the post-rule wire protocol / endpoint.
@@ -80,7 +80,7 @@ type EventDetail struct {
 	RulesFired []string `json:"rules_fired,omitempty"`
 }
 
-const requestEventColumns = `correlation_id, gateway_id, configuration, backend, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at`
+const requestEventColumns = `correlation_id, gateway_id, configuration, provider, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at`
 
 // UpsertRequestEvent inserts or refines a request event, keyed by
 // correlation_id, so re-delivered or two-phase (request then response)
@@ -89,12 +89,12 @@ const requestEventColumns = `correlation_id, gateway_id, configuration, backend,
 // server-side; a non-zero ObservedAt is honored verbatim.
 func (s *Store) UpsertRequestEvent(ctx context.Context, e RequestEvent) error {
 	_, err := s.db.Exec(ctx, `
-INSERT INTO request_events (correlation_id, gateway_id, configuration, backend, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at)
+INSERT INTO request_events (correlation_id, gateway_id, configuration, provider, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,COALESCE($22, now()))
 ON CONFLICT (correlation_id) DO UPDATE SET
   gateway_id            = EXCLUDED.gateway_id,
   configuration         = EXCLUDED.configuration,
-  backend               = EXCLUDED.backend,
+  provider               = EXCLUDED.provider,
   model                 = EXCLUDED.model,
   protocol              = EXCLUDED.protocol,
   method                = EXCLUDED.method,
@@ -112,7 +112,7 @@ ON CONFLICT (correlation_id) DO UPDATE SET
   streaming             = EXCLUDED.streaming,
   gen_ai_content        = COALESCE(EXCLUDED.gen_ai_content, request_events.gen_ai_content),
   detail                = COALESCE(EXCLUDED.detail, request_events.detail)`,
-		e.CorrelationID, e.GatewayID, e.Configuration, e.Backend, e.Model, e.Protocol, e.Method,
+		e.CorrelationID, e.GatewayID, e.Configuration, e.Provider, e.Model, e.Protocol, e.Method,
 		e.StatusCode, e.UpstreamStatus, e.LatencyMs, e.TokensIn, e.TokensOut, e.TokensCached, e.TokensCacheCreation,
 		e.SessionID, e.SessionIDSource, e.APIKeyName, e.PolicyRef, e.Streaming, nullJSON(e.GenAIContent), nullJSON(e.Detail), nullTime(e.ObservedAt))
 	if err != nil {
@@ -159,7 +159,7 @@ func (s *Store) ListRecentRequestEvents(ctx context.Context, limit int) ([]Reque
 
 func scanRequestEvent(s rowScanner) (RequestEvent, error) {
 	var e RequestEvent
-	if err := s.Scan(&e.CorrelationID, &e.GatewayID, &e.Configuration, &e.Backend, &e.Model, &e.Protocol, &e.Method,
+	if err := s.Scan(&e.CorrelationID, &e.GatewayID, &e.Configuration, &e.Provider, &e.Model, &e.Protocol, &e.Method,
 		&e.StatusCode, &e.UpstreamStatus, &e.LatencyMs, &e.TokensIn, &e.TokensOut, &e.TokensCached, &e.TokensCacheCreation,
 		&e.SessionID, &e.SessionIDSource, &e.APIKeyName, &e.PolicyRef, &e.Streaming, &e.GenAIContent, &e.Detail, &e.ObservedAt); err != nil {
 		return RequestEvent{}, fmt.Errorf("store: scan request event: %w", err)

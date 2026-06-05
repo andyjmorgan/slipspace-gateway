@@ -13,37 +13,37 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 )
 
-// fixtureResolved builds a small but representative v2 ResolvedConfigV2 with the
+// fixtureResolved builds a small but representative v2 ResolvedConfig with the
 // indexes populated. Used by every handler test below to avoid duplicating the
 // wiring.
-func fixtureResolved(t *testing.T) *config.ResolvedConfigV2 {
+func fixtureResolved(t *testing.T) *config.ResolvedConfig {
 	t.Helper()
-	rc := &config.ResolvedConfigV2{
-		Backends: contractsconfig.BackendsConfig{
-			"openai": contractsconfig.Backend{
+	rc := &config.ResolvedConfig{
+		Providers: contractsconfig.ProvidersConfig{
+			"openai": contractsconfig.Provider{
 				BaseURL: "https://api.openai.com",
-				Protocols: map[string]contractsconfig.BackendProtocol{
+				Protocols: map[string]contractsconfig.ProviderProtocol{
 					"chat": {
 						Path: "/v1/chat/completions",
-						Auth: &contractsconfig.BackendAuth{Header: "Authorization", Format: "Bearer {key}"},
+						Auth: &contractsconfig.ProviderAuth{Header: "Authorization", Format: "Bearer {key}"},
 					},
 				},
 			},
-			"anthropic": contractsconfig.Backend{
+			"anthropic": contractsconfig.Provider{
 				BaseURL: "https://api.anthropic.com",
-				Protocols: map[string]contractsconfig.BackendProtocol{
+				Protocols: map[string]contractsconfig.ProviderProtocol{
 					"messages": {
 						Path: "/v1/messages",
-						Auth: &contractsconfig.BackendAuth{Header: "x-api-key", Format: "{key}"},
+						Auth: &contractsconfig.ProviderAuth{Header: "x-api-key", Format: "{key}"},
 					},
 					"chat": {
 						Path: "/v1/chat/completions",
-						Auth: &contractsconfig.BackendAuth{Header: "Authorization", Format: "Bearer {key}"},
+						Auth: &contractsconfig.ProviderAuth{Header: "Authorization", Format: "Bearer {key}"},
 					},
 				},
 				Passthrough: map[string]contractsconfig.PassthroughFamily{
 					"messages_batches": {
-						Auth: &contractsconfig.BackendAuth{Header: "x-api-key", Format: "{key}"},
+						Auth: &contractsconfig.ProviderAuth{Header: "x-api-key", Format: "{key}"},
 						Paths: []contractsconfig.PassthroughPath{
 							{Match: "/v1/messages/batches", Methods: []string{"POST", "GET"}},
 						},
@@ -51,18 +51,18 @@ func fixtureResolved(t *testing.T) *config.ResolvedConfigV2 {
 				},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"dev": {
 				Credentials: map[string]string{
 					"openai":    "sk-very-secret-openai-key-abcd1234",
 					"anthropic": "sk-ant-supersecret-mnop5678",
 				},
 				Bindings: []contractsconfig.Binding{
-					{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"},
-					{Protocol: "messages", Models: []string{"claude-*"}, Backend: "anthropic"},
+					{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "openai"},
+					{Protocol: "messages", Models: []string{"claude-*"}, Provider: "anthropic"},
 				},
 				PassthroughBindings: []contractsconfig.PassthroughBinding{
-					{Family: "messages_batches", Backend: "anthropic"},
+					{Family: "messages_batches", Provider: "anthropic"},
 				},
 				RuleNames: []string{"only-openai"},
 				Tags:      map[string]string{"tier": "dev"},
@@ -72,7 +72,7 @@ func fixtureResolved(t *testing.T) *config.ResolvedConfigV2 {
 					"openai": "sk-prod-tighten-this-wxyz9876",
 				},
 				Bindings: []contractsconfig.Binding{
-					{Protocol: "chat", Models: []string{"gpt-*"}, Backend: "openai"},
+					{Protocol: "chat", Models: []string{"gpt-*"}, Provider: "openai"},
 				},
 			},
 		},
@@ -103,12 +103,12 @@ func fixtureResolved(t *testing.T) *config.ResolvedConfigV2 {
 // populateIndexes mirrors config.buildIndexes for the handful of indexes the
 // admin handlers read. Kept local to the test so a future loader refactor does
 // not break these tests through the back door.
-func populateIndexes(rc *config.ResolvedConfigV2) {
+func populateIndexes(rc *config.ResolvedConfig) {
 	rc.SecretIndex = make(map[string]*contractsconfig.APIKey, len(rc.APIKeys))
 	for i := range rc.APIKeys {
 		rc.SecretIndex[rc.APIKeys[i].Secret] = &rc.APIKeys[i]
 	}
-	rc.ConfigurationIndex = make(map[string]*contractsconfig.ConfigurationV2, len(rc.Configurations))
+	rc.ConfigurationIndex = make(map[string]*contractsconfig.Configuration, len(rc.Configurations))
 	for name, cfg := range rc.Configurations {
 		entry := cfg
 		rc.ConfigurationIndex[name] = &entry
@@ -310,16 +310,16 @@ func TestRuleDetailHandler_NotFound(t *testing.T) {
 	}
 }
 
-func TestBackendsListHandler_HappyPath(t *testing.T) {
+func TestProvidersListHandler_HappyPath(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.BackendsListHandler(config.NewStore(rc))
+	h := admin.ProvidersListHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/backends", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/providers", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var got []admin.BackendSummary
+	var got []admin.ProviderSummary
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -334,16 +334,16 @@ func TestBackendsListHandler_HappyPath(t *testing.T) {
 	}
 }
 
-func TestBackendDetailHandler_IncludesProtocolsAndPassthrough(t *testing.T) {
+func TestProviderDetailHandler_IncludesProtocolsAndPassthrough(t *testing.T) {
 	rc := fixtureResolved(t)
-	h := admin.BackendDetailHandler(config.NewStore(rc))
+	h := admin.ProviderDetailHandler(config.NewStore(rc))
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/backends/anthropic", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/providers/anthropic", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got admin.BackendDetail
+	var got admin.ProviderDetail
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -424,8 +424,8 @@ func TestAllHandlers_NilResolvedReturn503(t *testing.T) {
 		{"configurations.detail", admin.ConfigurationDetailHandler(nil), "/api/v1/config/configurations/x"},
 		{"rules.list", admin.RulesListHandler(nil), "/api/v1/config/rules"},
 		{"rules.detail", admin.RuleDetailHandler(nil), "/api/v1/config/rules/x"},
-		{"backends.list", admin.BackendsListHandler(nil), "/api/v1/config/backends"},
-		{"backends.detail", admin.BackendDetailHandler(nil), "/api/v1/config/backends/x"},
+		{"providers.list", admin.ProvidersListHandler(nil), "/api/v1/config/providers"},
+		{"providers.detail", admin.ProviderDetailHandler(nil), "/api/v1/config/providers/x"},
 		{"bindings", admin.BindingsHandler(nil), "/api/v1/config/bindings"},
 	}
 	for _, tc := range cases {
@@ -449,7 +449,7 @@ func TestDetailHandlers_NotFoundOnBlankAndMissing(t *testing.T) {
 	}{
 		{"configurations", admin.ConfigurationDetailHandler(config.NewStore(rc)), "/api/v1/config/configurations/"},
 		{"rules", admin.RuleDetailHandler(config.NewStore(rc)), "/api/v1/config/rules/"},
-		{"backends", admin.BackendDetailHandler(config.NewStore(rc)), "/api/v1/config/backends/"},
+		{"providers", admin.ProviderDetailHandler(config.NewStore(rc)), "/api/v1/config/providers/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"/blank", func(t *testing.T) {

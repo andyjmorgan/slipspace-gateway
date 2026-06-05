@@ -164,8 +164,8 @@ func NewMux(opts MuxOptions) http.Handler {
 	configDetail := ConfigurationDetailHandler(opts.Store)
 	rulesList := RulesListHandler(opts.Store)
 	ruleDetail := RuleDetailHandler(opts.Store)
-	backendsList := BackendsListHandler(opts.Store)
-	backendDetail := BackendDetailHandler(opts.Store)
+	providersList := ProvidersListHandler(opts.Store)
+	providerDetail := ProviderDetailHandler(opts.Store)
 	bindingsAll := BindingsHandler(opts.Store)
 	apiKeysReveal := APIKeysRevealHandler(opts.Store)
 	// API keys — dedicated resource (GET/POST/PUT/PATCH/DELETE). Never part of
@@ -243,26 +243,26 @@ func NewMux(opts MuxOptions) http.Handler {
 	apiMux.Handle("DELETE /api/v1/config/rules/{name}",
 		InstrumentRoute(opts.Meters, "/api/v1/config/rules/{name}", rulesDelete),
 	)
-	// Backends surface — read (GET) plus the write API (POST/PUT/DELETE),
+	// Providers surface — read (GET) plus the write API (POST/PUT/DELETE),
 	// method-routed under the same paths; write handlers 503 when ConfigDir
 	// is empty (admin write disabled by deployment).
-	backendsCreate := BackendsCreateHandler(opts.Store, opts.ConfigDir)
-	backendsReplace := BackendsReplaceHandler(opts.Store, opts.ConfigDir)
-	backendsDelete := BackendsDeleteHandler(opts.Store, opts.ConfigDir)
-	apiMux.Handle("GET /api/v1/config/backends",
-		InstrumentRoute(opts.Meters, "/api/v1/config/backends", backendsList),
+	providersCreate := ProvidersCreateHandler(opts.Store, opts.ConfigDir)
+	providersReplace := ProvidersReplaceHandler(opts.Store, opts.ConfigDir)
+	providersDelete := ProvidersDeleteHandler(opts.Store, opts.ConfigDir)
+	apiMux.Handle("GET /api/v1/config/providers",
+		InstrumentRoute(opts.Meters, "/api/v1/config/providers", providersList),
 	)
-	apiMux.Handle("POST /api/v1/config/backends",
-		InstrumentRoute(opts.Meters, "/api/v1/config/backends", backendsCreate),
+	apiMux.Handle("POST /api/v1/config/providers",
+		InstrumentRoute(opts.Meters, "/api/v1/config/providers", providersCreate),
 	)
-	apiMux.Handle("GET /api/v1/config/backends/{name}",
-		InstrumentRoute(opts.Meters, "/api/v1/config/backends/{name}", backendDetail),
+	apiMux.Handle("GET /api/v1/config/providers/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/providers/{name}", providerDetail),
 	)
-	apiMux.Handle("PUT /api/v1/config/backends/{name}",
-		InstrumentRoute(opts.Meters, "/api/v1/config/backends/{name}", backendsReplace),
+	apiMux.Handle("PUT /api/v1/config/providers/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/providers/{name}", providersReplace),
 	)
-	apiMux.Handle("DELETE /api/v1/config/backends/{name}",
-		InstrumentRoute(opts.Meters, "/api/v1/config/backends/{name}", backendsDelete),
+	apiMux.Handle("DELETE /api/v1/config/providers/{name}",
+		InstrumentRoute(opts.Meters, "/api/v1/config/providers/{name}", providersDelete),
 	)
 	// Groups surface — editable CRUD under /config/groups (the richer
 	// live-circuit-breaker projection stays on /api/v1/policies).

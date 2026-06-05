@@ -13,10 +13,10 @@ import (
 	"encoding/json"
 
 	"github.com/andyjmorgan/sluice-gateway/models"
-	anthropicmessages "github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
-	geminicontent "github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
+	anthropicmessages "github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
+	geminicontent "github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
 )
 
 // RequestFields returns the sorted unmapped field paths on the typed request

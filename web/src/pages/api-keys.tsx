@@ -389,7 +389,7 @@ function EditDialog({
     setError(null)
     try {
       // Reassign config + enabled via PUT; rename (if changed) via PATCH,
-      // which the backend handles as a separate name-uniqueness path.
+      // which the provider handles as a separate name-uniqueness path.
       await replaceAPIKey(ref, { configuration, enabled })
       if (name.trim() !== k.name) {
         await patchAPIKey(ref, { name: name.trim() })

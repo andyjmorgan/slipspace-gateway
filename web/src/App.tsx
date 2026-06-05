@@ -6,9 +6,9 @@ import { ConfigurationDetailPage } from "@/pages/configuration-detail"
 import { RulesPage } from "@/pages/rules"
 import { RuleDetailPage } from "@/pages/rule-detail"
 import { RuleEditorPage } from "@/pages/rule-editor"
-import { BackendsPage } from "@/pages/backends"
-import { BackendDetailPage } from "@/pages/backend-detail"
-import { BackendEditorPage } from "@/pages/backend-editor"
+import { ProvidersPage } from "@/pages/providers"
+import { ProviderDetailPage } from "@/pages/provider-detail"
+import { ProviderEditorPage } from "@/pages/provider-editor"
 import { ConfigurationEditorPage } from "@/pages/configuration-editor"
 import { GroupEditorPage } from "@/pages/group-editor"
 import { ConnectorsPage } from "@/pages/connectors"
@@ -43,10 +43,10 @@ export default function App() {
         <Route path="/rules/new" element={<RuleEditorPage mode="create" />} />
         <Route path="/rules/:name/edit" element={<RuleEditorPage mode="edit" />} />
         <Route path="/rules/:name" element={<RuleDetailPage />} />
-        <Route path="/backends" element={<BackendsPage />} />
-        <Route path="/backends/new" element={<BackendEditorPage mode="create" />} />
-        <Route path="/backends/:name/edit" element={<BackendEditorPage mode="edit" />} />
-        <Route path="/backends/:name" element={<BackendDetailPage />} />
+        <Route path="/providers" element={<ProvidersPage />} />
+        <Route path="/providers/new" element={<ProviderEditorPage mode="create" />} />
+        <Route path="/providers/:name/edit" element={<ProviderEditorPage mode="edit" />} />
+        <Route path="/providers/:name" element={<ProviderDetailPage />} />
         <Route path="/groups/new" element={<GroupEditorPage mode="create" />} />
         <Route path="/groups/:name/edit" element={<GroupEditorPage mode="edit" />} />
         <Route path="/connectors" element={<ConnectorsPage />} />

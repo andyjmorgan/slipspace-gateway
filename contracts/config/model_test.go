@@ -10,9 +10,9 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
 )
 
-func TestModelV2_YAMLRoundTrip(t *testing.T) {
+func TestModel_YAMLRoundTrip(t *testing.T) {
 	body := `
-backends:
+providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -44,8 +44,8 @@ groups:
     failure_status_codes: [502, 503, 504]
     circuit_breaker: { enabled: true, failure_threshold: 3, cooldown_seconds: 60 }
     targets:
-      - { backend: qwen-ollama,     alias: "qwen2.5-coder:7b" }
-      - { backend: qwen-standalone, alias: "qwen-coder" }
+      - { provider: qwen-ollama,     alias: "qwen2.5-coder:7b" }
+      - { provider: qwen-standalone, alias: "qwen-coder" }
 
 configurations:
   production:
@@ -54,23 +54,23 @@ configurations:
       anthropic: ref:anthropic
       qwen-ollama: ""
     bindings:
-      - { protocol: chat,      models: ["gpt-*","o3*"], backend: openai }
-      - { protocol: chat,      models: ["claude-*"],    backend: anthropic }
+      - { protocol: chat,      models: ["gpt-*","o3*"], provider: openai }
+      - { protocol: chat,      models: ["claude-*"],    provider: anthropic }
       - { protocol: chat,      models: ["qwen2.5-coder:7b"], group: qwen-load-balance }
-      - { protocol: responses, models: ["foundry-model-name"], backend: azure-foundry, alias: gpt-5.2-chat, tags: [foundry] }
+      - { protocol: responses, models: ["foundry-model-name"], provider: azure-foundry, alias: gpt-5.2-chat, tags: [foundry] }
     passthrough_bindings:
-      - { family: messages_batches, backend: anthropic }
+      - { family: messages_batches, provider: anthropic }
     rule_names: [force-openai-streaming-usage]
     tags: { tier: production }
 `
-	var m contractsconfig.ModelV2
+	var m contractsconfig.Model
 	if err := yaml.Unmarshal([]byte(body), &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// Backend connection + per-protocol auth (the OpenAI-compat invariant: same
-	// backend, different credential conventions per protocol).
-	anth := m.Backends["anthropic"]
+	// Provider connection + per-protocol auth (the OpenAI-compat invariant: same
+	// provider, different credential conventions per protocol).
+	anth := m.Providers["anthropic"]
 	if anth.RequiredHeaders["anthropic-version"] != "2023-06-01" {
 		t.Errorf("anthropic required header = %v", anth.RequiredHeaders)
 	}
@@ -90,12 +90,12 @@ configurations:
 		t.Errorf("passthrough methods = %v", batches.Paths[0].Methods)
 	}
 
-	// Backend-level default query (Azure api-version, was an appendQueryString rule).
-	if m.Backends["azure-foundry"].Query["api-version"] != "2025-04-01-preview" {
-		t.Errorf("azure query = %v", m.Backends["azure-foundry"].Query)
+	// Provider-level default query (Azure api-version, was an appendQueryString rule).
+	if m.Providers["azure-foundry"].Query["api-version"] != "2025-04-01-preview" {
+		t.Errorf("azure query = %v", m.Providers["azure-foundry"].Query)
 	}
 
-	// Group: cross-backend targets with per-target alias.
+	// Group: cross-provider targets with per-target alias.
 	g := m.Groups["qwen-load-balance"]
 	if g.Mode != resilience.ModeLoadBalance {
 		t.Errorf("group mode = %q", g.Mode)
@@ -107,7 +107,7 @@ configurations:
 		t.Errorf("group circuit breaker = %+v", g.CircuitBreaker)
 	}
 
-	// Configuration bindings: single-backend, group, alias+tags.
+	// Configuration bindings: single-provider, group, alias+tags.
 	prod := m.Configurations["production"]
 	if prod.Credentials["openai"] != "ref:openai" || prod.Credentials["qwen-ollama"] != "" {
 		t.Errorf("credentials = %v", prod.Credentials)
@@ -119,7 +119,7 @@ configurations:
 		t.Errorf("binding[2] group = %q", prod.Bindings[2].Group)
 	}
 	foundry := prod.Bindings[3]
-	if foundry.Backend != "azure-foundry" || foundry.Alias != "gpt-5.2-chat" || foundry.Tags[0] != "foundry" {
+	if foundry.Provider != "azure-foundry" || foundry.Alias != "gpt-5.2-chat" || foundry.Tags[0] != "foundry" {
 		t.Errorf("foundry binding = %+v", foundry)
 	}
 	if prod.PassthroughBindings[0].Family != "messages_batches" {
@@ -132,14 +132,14 @@ configurations:
 	}
 }
 
-func TestModelV2_JSONRoundTrip(t *testing.T) {
-	in := contractsconfig.ModelV2{
-		Backends: contractsconfig.BackendsConfig{
+func TestModel_JSONRoundTrip(t *testing.T) {
+	in := contractsconfig.Model{
+		Providers: contractsconfig.ProvidersConfig{
 			"openai": {
 				BaseURL: "https://api.openai.com",
 				Query:   map[string]string{"api-version": "x"},
-				Protocols: map[string]contractsconfig.BackendProtocol{
-					"chat": {Path: "/v1/chat/completions", Auth: &contractsconfig.BackendAuth{Header: "Authorization", Format: "Bearer {key}"}},
+				Protocols: map[string]contractsconfig.ProviderProtocol{
+					"chat": {Path: "/v1/chat/completions", Auth: &contractsconfig.ProviderAuth{Header: "Authorization", Format: "Bearer {key}"}},
 				},
 				Passthrough: map[string]contractsconfig.PassthroughFamily{
 					"batches": {Paths: []contractsconfig.PassthroughPath{{Match: "/v1/batches", Methods: []string{"POST"}}}},
@@ -151,14 +151,14 @@ func TestModelV2_JSONRoundTrip(t *testing.T) {
 				Mode:               resilience.ModeFailover,
 				FailureStatusCodes: []int{503},
 				CircuitBreaker:     &resilience.CircuitBreakerConfig{Enabled: true, FailureThreshold: 3},
-				Targets:            []contractsconfig.Target{{Backend: "openai", Alias: "gpt-4o", Path: "/openai/responses"}},
+				Targets:            []contractsconfig.Target{{Provider: "openai", Alias: "gpt-4o", Path: "/openai/responses"}},
 			},
 		},
-		Configurations: map[string]contractsconfig.ConfigurationV2{
+		Configurations: map[string]contractsconfig.Configuration{
 			"prod": {
 				Credentials:         map[string]string{"openai": "ref:openai"},
-				Bindings:            []contractsconfig.Binding{{Protocol: contractsconfig.ProtocolChat, Models: []string{"gpt-*"}, Backend: "openai", Tags: []string{"t"}}},
-				PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Backend: "openai"}},
+				Bindings:            []contractsconfig.Binding{{Protocol: contractsconfig.ProtocolChat, Models: []string{"gpt-*"}, Provider: "openai", Tags: []string{"t"}}},
+				PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Provider: "openai"}},
 				RuleNames:           []string{"r"},
 				Tags:                map[string]string{"tier": "prod"},
 			},
@@ -169,17 +169,17 @@ func TestModelV2_JSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out contractsconfig.ModelV2
+	var out contractsconfig.Model
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out.Backends["openai"].Protocols["chat"].Auth.Format != "Bearer {key}" {
-		t.Errorf("round-trip lost protocol auth: %+v", out.Backends["openai"])
+	if out.Providers["openai"].Protocols["chat"].Auth.Format != "Bearer {key}" {
+		t.Errorf("round-trip lost protocol auth: %+v", out.Providers["openai"])
 	}
 	if out.Groups["lb"].Targets[0].Alias != "gpt-4o" {
 		t.Errorf("round-trip lost target alias: %+v", out.Groups["lb"].Targets)
 	}
-	if out.Configurations["prod"].Bindings[0].Backend != "openai" {
+	if out.Configurations["prod"].Bindings[0].Provider != "openai" {
 		t.Errorf("round-trip lost binding: %+v", out.Configurations["prod"].Bindings)
 	}
 }

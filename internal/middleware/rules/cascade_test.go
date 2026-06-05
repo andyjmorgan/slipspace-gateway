@@ -7,10 +7,10 @@ import (
 
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/providers/anthropic/messages"
-	"github.com/andyjmorgan/sluice-gateway/providers/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/providers/openai/responses"
+	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
 )
 
 // The cascade tests assert the v1.0.5 semantic change: a rule's

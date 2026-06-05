@@ -73,7 +73,7 @@ export type RuleDetail = {
   used_by: string[]
 }
 
-export type BackendSummary = {
+export type ProviderSummary = {
   name: string
   base_url: string
   protocols: string[]
@@ -98,7 +98,7 @@ export type PassthroughFamilyRow = {
   paths: PassthroughPathRow[]
 }
 
-export type BackendDetail = {
+export type ProviderDetail = {
   name: string
   base_url: string
   required_headers?: Record<string, string>
@@ -111,7 +111,7 @@ export type BindingRow = {
   configuration?: string
   protocol: string
   models: string[]
-  backend?: string
+  provider?: string
   group?: string
   alias?: string
   tags?: string[]
@@ -120,7 +120,7 @@ export type BindingRow = {
 export type PassthroughBindingRow = {
   configuration?: string
   family: string
-  backend: string
+  provider: string
   tags?: string[]
 }
 
@@ -140,18 +140,18 @@ export type APIKeyReveal = {
 // v2 contract shapes the write editors read + submit. These mirror the Go
 // contract types (contracts/config/model_v2.go, connectors.go, api_keys.go) on
 // the wire — the GET detail endpoints return the contract type directly for
-// backends/groups/connectors (no DTO projection except for credentials, which
-// are redacted on the configuration detail and never travel on the backend /
+// providers/groups/connectors (no DTO projection except for credentials, which
+// are redacted on the configuration detail and never travel on the provider /
 // group / connector shapes).
 
-export type BackendAuth = {
+export type ProviderAuth = {
   header: string
   format?: string
 }
 
-export type BackendProtocol = {
+export type ProviderProtocol = {
   path?: string
-  auth?: BackendAuth | null
+  auth?: ProviderAuth | null
 }
 
 export type PassthroughPath = {
@@ -160,23 +160,23 @@ export type PassthroughPath = {
 }
 
 export type PassthroughFamily = {
-  auth?: BackendAuth | null
+  auth?: ProviderAuth | null
   paths: PassthroughPath[]
 }
 
-// Backend is the full editable backend connection. The GET /backends/{name}
-// detail endpoint returns the BackendDetail DTO (protocols/passthrough as
-// arrays); the write body accepts the contract Backend (protocols/passthrough
-// as maps). The editor seeds from BackendDetail and submits this map shape.
-export type Backend = {
+// Provider is the full editable provider connection. The GET /providers/{name}
+// detail endpoint returns the ProviderDetail DTO (protocols/passthrough as
+// arrays); the write body accepts the contract Provider (protocols/passthrough
+// as maps). The editor seeds from ProviderDetail and submits this map shape.
+export type Provider = {
   base_url: string
   required_headers?: Record<string, string>
   query?: Record<string, string>
-  protocols?: Record<string, BackendProtocol>
+  protocols?: Record<string, ProviderProtocol>
   passthrough?: Record<string, PassthroughFamily>
 }
 
-export type BackendWriteBody = Backend & {
+export type ProviderWriteBody = Provider & {
   name: string
 }
 
@@ -192,7 +192,7 @@ export type CircuitBreakerConfig = {
 }
 
 export type Target = {
-  backend: string
+  provider: string
   alias?: string
   query?: Record<string, string>
   path?: string
@@ -261,9 +261,9 @@ export type APIKeyListItem = {
 }
 
 // ConfigurationWriteBody is the POST/PUT shape for a configuration. Credentials
-// is map[backend] -> string | null with write-back-if-delivered semantics: null
-// keeps the stored secret for that backend (the masked-unchanged signal), a
-// real string sets it, "" is a no-credential backend. A backend absent from the
+// is map[provider] -> string | null with write-back-if-delivered semantics: null
+// keeps the stored secret for that provider (the masked-unchanged signal), a
+// real string sets it, "" is a no-credential provider. A provider absent from the
 // map is dropped. There is deliberately no api_keys field — keys are managed
 // only via the dedicated /api-keys endpoints.
 export type ConfigurationWriteBody = {
@@ -373,12 +373,12 @@ export function useRule(name: string | undefined): ConfigFetchHandle<RuleDetail>
   return useConfigFetch<RuleDetail>(name ? `/api/v1/config/rules/${encodeURIComponent(name)}` : null)
 }
 
-export function useBackends(): ConfigFetchHandle<BackendSummary[]> {
-  return useConfigFetch<BackendSummary[]>("/api/v1/config/backends")
+export function useProviders(): ConfigFetchHandle<ProviderSummary[]> {
+  return useConfigFetch<ProviderSummary[]>("/api/v1/config/providers")
 }
 
-export function useBackend(name: string | undefined): ConfigFetchHandle<BackendDetail> {
-  return useConfigFetch<BackendDetail>(name ? `/api/v1/config/backends/${encodeURIComponent(name)}` : null)
+export function useProvider(name: string | undefined): ConfigFetchHandle<ProviderDetail> {
+  return useConfigFetch<ProviderDetail>(name ? `/api/v1/config/providers/${encodeURIComponent(name)}` : null)
 }
 
 /**
@@ -448,7 +448,7 @@ export function usePolicies(): ConfigFetchHandle<PoliciesResponse> {
 }
 
 // ---------------------------------------------------------------------------
-// Rules write API. Mirrors the Phase 2 backend handlers under
+// Rules write API. Mirrors the Phase 2 server handlers under
 // /admin/api/v1/config/rules[/{name}] — see internal/admin/rules_write.go.
 // Every write goes through the same Snapshot.Clone → mutate → Validate →
 // WritePolicyYAML → Store.Replace flow, so a 200/201/204 here means the
@@ -470,7 +470,7 @@ export type RuleWriteBody = {
 }
 
 /**
- * RuleConflict is the JSON envelope the backend returns with 409 on
+ * RuleConflict is the JSON envelope the server returns with 409 on
  * the rules write endpoints. `used_by` is populated only on the
  * DELETE-referenced path; create-duplicate and PUT-rename responses
  * leave it absent.
@@ -506,7 +506,7 @@ export async function createRule(rule: RuleWriteBody): Promise<RuleDetail> {
 
 /**
  * replaceRule PUTs a rule by URL name. 200 returns the updated
- * RuleDetail. Rename is rejected by the backend with 409 — pass the
+ * RuleDetail. Rename is rejected by the server with 409 — pass the
  * same name on the URL and in the body to avoid that path. 404 fires
  * when the URL name does not match any existing rule.
  */
@@ -531,7 +531,7 @@ export async function deleteRule(name: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Backends / groups / configurations / connectors / api_keys write API.
+// Providers / groups / configurations / connectors / api_keys write API.
 // Every write mirrors the same Snapshot.Clone -> mutate -> Validate ->
 // WritePolicyYAML -> Store.Replace flow as rules; a 200/201/204 means the next
 // GET reflects the new state and the change is persisted. POST/PUT accept
@@ -542,30 +542,30 @@ function dryRunPath(path: string): string {
   return path.includes("?") ? `${path}&dry_run=true` : `${path}?dry_run=true`
 }
 
-// Backends ------------------------------------------------------------------
+// Providers ------------------------------------------------------------------
 
-export async function createBackend(body: BackendWriteBody): Promise<BackendDetail> {
-  return apiFetch<BackendDetail>("/api/v1/config/backends", {
+export async function createProvider(body: ProviderWriteBody): Promise<ProviderDetail> {
+  return apiFetch<ProviderDetail>("/api/v1/config/providers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
 }
 
-export async function replaceBackend(name: string, body: BackendWriteBody): Promise<BackendDetail> {
-  return apiFetch<BackendDetail>(`/api/v1/config/backends/${encodeURIComponent(name)}`, {
+export async function replaceProvider(name: string, body: ProviderWriteBody): Promise<ProviderDetail> {
+  return apiFetch<ProviderDetail>(`/api/v1/config/providers/${encodeURIComponent(name)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
 }
 
-export async function deleteBackend(name: string): Promise<void> {
-  await apiFetch<void>(`/api/v1/config/backends/${encodeURIComponent(name)}`, { method: "DELETE" })
+export async function deleteProvider(name: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/config/providers/${encodeURIComponent(name)}`, { method: "DELETE" })
 }
 
-export async function previewBackend(name: string | null, body: BackendWriteBody): Promise<PreviewResult> {
-  const base = name ? `/api/v1/config/backends/${encodeURIComponent(name)}` : "/api/v1/config/backends"
+export async function previewProvider(name: string | null, body: ProviderWriteBody): Promise<PreviewResult> {
+  const base = name ? `/api/v1/config/providers/${encodeURIComponent(name)}` : "/api/v1/config/providers"
   return apiFetch<PreviewResult>(dryRunPath(base), {
     method: name ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },

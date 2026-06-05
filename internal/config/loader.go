@@ -9,9 +9,9 @@ import (
 
 // Top-level block keys the v2 writer emits. Kept here (rather than in the
 // writer) because they double as the canonical block-name vocabulary — the same
-// strings ResolvedConfigV2.SourceFiles is keyed by.
+// strings ResolvedConfig.SourceFiles is keyed by.
 const (
-	keyBackends       = "backends"
+	keyProviders      = "providers"
 	keyGroups         = "groups"
 	keyConfigurations = "configurations"
 	keyAPIKeys        = "api_keys"
@@ -24,9 +24,9 @@ const (
 // Canonical filenames the writer falls back to for a block with no recorded
 // SourceFiles origin (e.g. a block first introduced through the admin API).
 const (
-	filenameBackends = "backends.yaml"
-	filenamePolicy   = "policy.yaml"
-	filenameAdmin    = "admin.yaml"
+	filenameProviders = "providers.yaml"
+	filenamePolicy    = "policy.yaml"
+	filenameAdmin     = "admin.yaml"
 )
 
 // ListConfigFiles enumerates the *.yaml files in dir and returns a map of

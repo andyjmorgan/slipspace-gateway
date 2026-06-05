@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	cfgFixtureBackends = `backends:
+	cfgFixtureProviders = `providers:
   openai:
     base_url: https://api.openai.com
     protocols:
@@ -32,12 +32,12 @@ const (
     bindings:
       - protocol: chat
         models: ["gpt-*"]
-        backend: openai
+        provider: openai
   spare:
     bindings:
       - protocol: chat
         models: ["o1*"]
-        backend: openai
+        provider: openai
 api_keys:
   - secret: sk_live_x
     name: k
@@ -50,16 +50,16 @@ func newConfigurationsFixture(t *testing.T) (*config.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range map[string]string{
-		"backends.yaml": cfgFixtureBackends,
-		"policy.yaml":   cfgFixturePolicy,
+		"providers.yaml": cfgFixtureProviders,
+		"policy.yaml":    cfgFixturePolicy,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	rc, err := config.LoadV2(context.Background(), dir)
+	rc, err := config.Load(context.Background(), dir)
 	if err != nil {
-		t.Fatalf("LoadV2: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	return config.NewStore(rc), dir
 }
@@ -67,7 +67,7 @@ func newConfigurationsFixture(t *testing.T) (*config.Store, string) {
 func TestConfigurationsCreate(t *testing.T) {
 	store, dir := newConfigurationsFixture(t)
 	h := ConfigurationsCreateHandler(store, dir)
-	body := `{"name":"newc","credentials":{"openai":"sk-new"},"bindings":[{"protocol":"chat","models":["gpt-*"],"backend":"openai"}]}`
+	body := `{"name":"newc","credentials":{"openai":"sk-new"},"bindings":[{"protocol":"chat","models":["gpt-*"],"provider":"openai"}]}`
 	rec := do(t, h, http.MethodPost, "/api/v1/config/configurations", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (body=%s)", rec.Code, rec.Body)
@@ -75,7 +75,7 @@ func TestConfigurationsCreate(t *testing.T) {
 	if store.Snapshot().Configurations["newc"].Credentials["openai"] != "sk-new" {
 		t.Errorf("credential not stored")
 	}
-	reloaded, _ := config.LoadV2(context.Background(), dir)
+	reloaded, _ := config.Load(context.Background(), dir)
 	if _, ok := reloaded.Configurations["newc"]; !ok {
 		t.Errorf("configuration not persisted to disk")
 	}
@@ -96,9 +96,9 @@ func TestConfigurationsCreate_Errors(t *testing.T) {
 	if rec := do(t, h, http.MethodPost, "/api/v1/config/configurations", `{"name":"prod"}`); rec.Code != http.StatusConflict {
 		t.Errorf("dup = %d, want 409", rec.Code)
 	}
-	// Credential for a backend that does not exist -> 422.
+	// Credential for a provider that does not exist -> 422.
 	if rec := do(t, h, http.MethodPost, "/api/v1/config/configurations", `{"name":"bad","credentials":{"ghost":"x"}}`); rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("unknown-backend credential = %d, want 422", rec.Code)
+		t.Errorf("unknown-provider credential = %d, want 422", rec.Code)
 	}
 	// Oversized body -> 400.
 	big := `{"name":"big","tags":{"x":"` + strings.Repeat("a", 300*1024) + `"}}`
@@ -109,11 +109,11 @@ func TestConfigurationsCreate_Errors(t *testing.T) {
 
 // TestConfigurations_CredentialWriteBack is the load-bearing secret test: a
 // masked round-trip (null credential) keeps the stored secret; a real value
-// rotates it; "" sets a no-credential backend.
+// rotates it; "" sets a no-credential provider.
 func TestConfigurations_CredentialWriteBack(t *testing.T) {
 	store, dir := newConfigurationsFixture(t)
 	h := ConfigurationsReplaceHandler(store, dir)
-	binding := `"bindings":[{"protocol":"chat","models":["gpt-*"],"backend":"openai"}]`
+	binding := `"bindings":[{"protocol":"chat","models":["gpt-*"],"provider":"openai"}]`
 
 	// null credential = unchanged -> stored secret preserved.
 	rec := do(t, h, http.MethodPut, "/api/v1/config/configurations/prod",
@@ -132,7 +132,7 @@ func TestConfigurations_CredentialWriteBack(t *testing.T) {
 		t.Errorf("rotation failed: got %q", got)
 	}
 
-	// "" -> no-credential backend.
+	// "" -> no-credential provider.
 	do(t, h, http.MethodPut, "/api/v1/config/configurations/prod",
 		`{"credentials":{"openai":""},`+binding+`}`)
 	if got := store.Snapshot().Configurations["prod"].Credentials["openai"]; got != "" {
@@ -153,7 +153,7 @@ func TestConfigurations_ApiKeysIgnored(t *testing.T) {
 	store, dir := newConfigurationsFixture(t)
 	before := len(store.Snapshot().APIKeys)
 	rec := do(t, ConfigurationsCreateHandler(store, dir), http.MethodPost, "/api/v1/config/configurations",
-		`{"name":"withkeys","bindings":[{"protocol":"chat","models":["gpt-*"],"backend":"openai"}],"api_keys":[{"secret":"sk_live_evil","name":"injected","configuration":"withkeys","enabled":true}]}`)
+		`{"name":"withkeys","bindings":[{"protocol":"chat","models":["gpt-*"],"provider":"openai"}],"api_keys":[{"secret":"sk_live_evil","name":"injected","configuration":"withkeys","enabled":true}]}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (body=%s)", rec.Code, rec.Body)
 	}
@@ -168,7 +168,7 @@ func TestConfigurations_ApiKeysIgnored(t *testing.T) {
 func TestConfigurationsReplace_Misc(t *testing.T) {
 	store, dir := newConfigurationsFixture(t)
 	h := ConfigurationsReplaceHandler(store, dir)
-	bind := `"bindings":[{"protocol":"chat","models":["o1*"],"backend":"openai"}]`
+	bind := `"bindings":[{"protocol":"chat","models":["o1*"],"provider":"openai"}]`
 
 	if rec := do(t, h, http.MethodPut, "/api/v1/config/configurations/ghost", `{`+bind+`}`); rec.Code != http.StatusNotFound {
 		t.Errorf("404 expected, got %d", rec.Code)
@@ -231,11 +231,11 @@ func TestConfigurationsWrite_DisabledAndPersistError(t *testing.T) {
 	store2, _ := newConfigurationsFixture(t)
 	badDir := filepath.Join(t.TempDir(), "missing")
 	if rec := do(t, ConfigurationsCreateHandler(store2, badDir), http.MethodPost, "/api/v1/config/configurations",
-		`{"name":"x","bindings":[{"protocol":"chat","models":["z*"],"backend":"openai"}]}`); rec.Code != http.StatusInternalServerError {
+		`{"name":"x","bindings":[{"protocol":"chat","models":["z*"],"provider":"openai"}]}`); rec.Code != http.StatusInternalServerError {
 		t.Errorf("create persist error = %d, want 500", rec.Code)
 	}
 	if rec := do(t, ConfigurationsReplaceHandler(store2, badDir), http.MethodPut, "/api/v1/config/configurations/prod",
-		`{"bindings":[{"protocol":"chat","models":["gpt-*"],"backend":"openai"}]}`); rec.Code != http.StatusInternalServerError {
+		`{"bindings":[{"protocol":"chat","models":["gpt-*"],"provider":"openai"}]}`); rec.Code != http.StatusInternalServerError {
 		t.Errorf("replace persist error = %d, want 500", rec.Code)
 	}
 	if rec := do(t, ConfigurationsDeleteHandler(store2, badDir), http.MethodDelete, "/api/v1/config/configurations/spare", ""); rec.Code != http.StatusInternalServerError {

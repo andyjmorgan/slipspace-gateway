@@ -1,5 +1,5 @@
 // Package s3 implements a Connector backed by AWS S3 or any S3-compatible
-// backend (MinIO, SeaweedFS, Garage, Ceph RGW).
+// provider (MinIO, SeaweedFS, Garage, Ceph RGW).
 //
 // Object layout mirrors the design note:
 //
@@ -12,7 +12,7 @@
 //     secret_ref env:/file: indirection.
 //   - assume_role: cross-account role assumption with optional external_id.
 //
-// S3-compatible backends are addressed via Connector.EndpointURL +
+// S3-compatible providers are addressed via Connector.EndpointURL +
 // UsePathStyle. The SDK still requires a Region; arbitrary values are
 // accepted by SeaweedFS / MinIO.
 package s3

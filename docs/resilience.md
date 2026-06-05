@@ -237,7 +237,7 @@ If every target fails:
 
 - If some attempt returned a non-zero status, the client sees the **last attempt's status**.
 - If every attempt was a transport error (no status ever received), the client sees **`502 Bad Gateway`**.
-- If every target was filtered by the circuit breaker before any attempt ran, the client sees **`503 Service Unavailable`** ("no healthy backend").
+- If every target was filtered by the circuit breaker before any attempt ran, the client sees **`503 Service Unavailable`** ("no healthy provider").
 
 ```mermaid
 flowchart TB
@@ -324,7 +324,7 @@ Status codes outside the configured set always commit. A `4xx` from a provider i
 
 ## Circuit breaker
 
-The breaker is a per-(policy, target) state machine that protects a backend from a stampede when it's clearly unhealthy. State lives **per-pod**, in-memory; v1.3+ adds a Redis-backed implementation behind the same `BreakerStore` interface.
+The breaker is a per-(policy, target) state machine that protects a provider from a stampede when it's clearly unhealthy. State lives **per-pod**, in-memory; v1.3+ adds a Redis-backed implementation behind the same `BreakerStore` interface.
 
 ```mermaid
 stateDiagram-v2
@@ -356,13 +356,13 @@ If neither threshold is set, the breaker never trips — useful for "metric-only
 
 When cooldown elapses the breaker moves to HalfOpen. The next `half_open_success_threshold` requests are allowed through as probes; a single failure during this window reopens immediately. Each consecutive success counts down; the last one closes the breaker, clears the window, and resumes normal operation.
 
-`half_open_success_threshold` defaults to 1 — a single probe success closes. Bump it for backends that need a couple of green probes before you're confident they've recovered.
+`half_open_success_threshold` defaults to 1 — a single probe success closes. Bump it for providers that need a couple of green probes before you're confident they've recovered.
 
 ### CB and the load-balance pool
 
 In load-balance modes, CB-blocked targets are filtered **out of the pool** before weighted selection runs. They never trigger `strict_weights`' no-re-roll path, and they never appear as an "attempted" entry — they record as `cb_blocked` in the per-attempt history but the weighted-random roll happens over the survivors.
 
-If every target is blocked, the orchestrator returns **503 Service Unavailable** rather than 502 — "no healthy backend" is a more honest signal than "all upstreams transport-erred".
+If every target is blocked, the orchestrator returns **503 Service Unavailable** rather than 502 — "no healthy provider" is a more honest signal than "all upstreams transport-erred".
 
 ---
 
@@ -503,7 +503,7 @@ Each request picks one target at 50/50. On a 502/503/504 the orchestrator remove
 
 ### Canary mirroring with `strict_weights`
 
-Goal: 95% of traffic on the established backend, 5% on a new build whose failure rate must surface to the client.
+Goal: 95% of traffic on the established provider, 5% on a new build whose failure rate must surface to the client.
 
 ```yaml
 resilience_policies:
@@ -520,11 +520,11 @@ resilience_policies:
         weight: 5
 ```
 
-`strict_weights: true` disables LBWF re-roll. If the canary is picked and it returns 503, the client sees the 503. That's the point — without it you'd silently absorb canary failures into the stable backend's apparent reliability.
+`strict_weights: true` disables LBWF re-roll. If the canary is picked and it returns 503, the client sees the 503. That's the point — without it you'd silently absorb canary failures into the stable provider's apparent reliability.
 
 ### Tripping the breaker
 
-Goal: if a backend produces 5 failures in 60 seconds with at least 10 samples observed, take it out of rotation for 30 seconds.
+Goal: if a provider produces 5 failures in 60 seconds with at least 10 samples observed, take it out of rotation for 30 seconds.
 
 ```yaml
 resilience_policies:
@@ -540,14 +540,14 @@ resilience_policies:
       half_open_success_threshold: 2
     targets:
       - name: a
-        provider: backend-a
+        provider: provider-a
         weight: 50
       - name: b
-        provider: backend-b
+        provider: provider-b
         weight: 50
 ```
 
-The per-(policy, target) CB applies to both targets independently. If `backend-a` trips, the pool shrinks to just `b` until cooldown elapses; if `b` is also blocked, every request gets a 503 with `outcome=all_open`. After 30s the breaker probes HalfOpen — the next 2 consecutive successes close it; any failure reopens.
+The per-(policy, target) CB applies to both targets independently. If `provider-a` trips, the pool shrinks to just `b` until cooldown elapses; if `b` is also blocked, every request gets a 503 with `outcome=all_open`. After 30s the breaker probes HalfOpen — the next 2 consecutive successes close it; any failure reopens.
 
 ---
 

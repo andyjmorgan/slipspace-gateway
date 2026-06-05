@@ -23,7 +23,7 @@ import (
 // request headers and, on success, stashes the resulting AuthResult (carrying
 // the resolved v2 configuration) on the request context, retrieved downstream
 // via FromContext. The selection middleware then walks that configuration's
-// bindings to pick the backend. On failure a typed JSON error response is
+// bindings to pick the provider. On failure a typed JSON error response is
 // written and next is not invoked.
 func HTTPHandler(resolver *Resolver, next http.Handler) http.Handler {
 	if resolver == nil {

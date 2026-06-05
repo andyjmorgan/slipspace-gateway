@@ -32,46 +32,58 @@ func wantStatus(t *testing.T, resp *http.Response, want int, ctx string) {
 	}
 }
 
-func TestAdmin_Backends_FullLifecycle(t *testing.T) {
+func TestAdmin_Providers_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	h := harness.NewWithOptions(t, harness.Options{AdminEnabled: true})
 	const name = "e2e-be"
 
-	resp := authedJSON(t, h, "POST", "/api/v1/config/backends",
+	resp := authedJSON(t, h, "POST", "/api/v1/config/providers",
 		[]byte(`{"name":"`+name+`","base_url":"http://mockllm:5555","protocols":{"chat":{"path":"/v1/chat/completions"}}}`))
-	wantStatus(t, resp, http.StatusCreated, "POST backend")
+	wantStatus(t, resp, http.StatusCreated, "POST provider")
 	_ = resp.Body.Close()
 
-	resp = authedJSON(t, h, "GET", "/api/v1/config/backends/"+name, nil)
-	wantStatus(t, resp, http.StatusOK, "GET backend")
+	resp = authedJSON(t, h, "GET", "/api/v1/config/providers/"+name, nil)
+	wantStatus(t, resp, http.StatusOK, "GET provider")
 	_ = resp.Body.Close()
 
-	resp = authedJSON(t, h, "PUT", "/api/v1/config/backends/"+name,
+	resp = authedJSON(t, h, "PUT", "/api/v1/config/providers/"+name,
 		[]byte(`{"base_url":"http://moved:5555","protocols":{"chat":{"path":"/v1/chat/completions"}}}`))
-	wantStatus(t, resp, http.StatusOK, "PUT backend")
+	wantStatus(t, resp, http.StatusOK, "PUT provider")
 	_ = resp.Body.Close()
 
-	resp = authedJSON(t, h, "GET", "/api/v1/config/backends/"+name, nil)
+	resp = authedJSON(t, h, "GET", "/api/v1/config/providers/"+name, nil)
 	if !strings.Contains(bodyString(t, resp), "moved:5555") {
 		t.Errorf("PUT did not persist new base_url")
 	}
 
-	resp = authedJSON(t, h, "DELETE", "/api/v1/config/backends/"+name, nil)
-	wantStatus(t, resp, http.StatusNoContent, "DELETE backend")
+	resp = authedJSON(t, h, "DELETE", "/api/v1/config/providers/"+name, nil)
+	wantStatus(t, resp, http.StatusNoContent, "DELETE provider")
 	_ = resp.Body.Close()
 
-	resp = authedJSON(t, h, "GET", "/api/v1/config/backends/"+name, nil)
+	resp = authedJSON(t, h, "GET", "/api/v1/config/providers/"+name, nil)
 	wantStatus(t, resp, http.StatusNotFound, "GET after delete")
 	_ = resp.Body.Close()
 }
 
-func TestAdmin_Backends_DeleteReferenced_409(t *testing.T) {
+// TestAdmin_LegacyBackendsRoute_404 proves the hard cut on the admin surface:
+// the pre-rename /api/v1/config/backends route no longer exists (renamed to
+// /providers), so it 404s with no alias.
+func TestAdmin_LegacyBackendsRoute_404(t *testing.T) {
+	t.Parallel()
+	h := harness.NewWithOptions(t, harness.Options{AdminEnabled: true})
+
+	resp := authedJSON(t, h, "GET", "/api/v1/config/backends", nil)
+	wantStatus(t, resp, http.StatusNotFound, "GET legacy /backends")
+	_ = resp.Body.Close()
+}
+
+func TestAdmin_Providers_DeleteReferenced_409(t *testing.T) {
 	t.Parallel()
 	h := harness.NewWithOptions(t, harness.Options{AdminEnabled: true})
 
 	// openai is referenced by bindings + credentials in config-dev.
-	resp := authedJSON(t, h, "DELETE", "/api/v1/config/backends/openai", nil)
-	wantStatus(t, resp, http.StatusConflict, "DELETE referenced backend")
+	resp := authedJSON(t, h, "DELETE", "/api/v1/config/providers/openai", nil)
+	wantStatus(t, resp, http.StatusConflict, "DELETE referenced provider")
 	var c struct {
 		UsedBy []string `json:"used_by"`
 	}
@@ -90,12 +102,12 @@ func TestAdmin_Groups_FullLifecycle(t *testing.T) {
 	const name = "e2e-grp"
 
 	resp := authedJSON(t, h, "POST", "/api/v1/config/groups",
-		[]byte(`{"name":"`+name+`","mode":"failover","targets":[{"backend":"openai"}]}`))
+		[]byte(`{"name":"`+name+`","mode":"failover","targets":[{"provider":"openai"}]}`))
 	wantStatus(t, resp, http.StatusCreated, "POST group")
 	_ = resp.Body.Close()
 
 	resp = authedJSON(t, h, "PUT", "/api/v1/config/groups/"+name,
-		[]byte(`{"mode":"load_balance","targets":[{"backend":"openai","weight":3}]}`))
+		[]byte(`{"mode":"load_balance","targets":[{"provider":"openai","weight":3}]}`))
 	wantStatus(t, resp, http.StatusOK, "PUT group")
 	_ = resp.Body.Close()
 
@@ -143,7 +155,7 @@ func TestAdmin_Configurations_CredentialWriteBack(t *testing.T) {
 	const name = "e2e-cfg"
 
 	resp := authedJSON(t, h, "POST", "/api/v1/config/configurations",
-		[]byte(`{"name":"`+name+`","credentials":{"openai":"secret123"},"bindings":[{"protocol":"chat","models":["gpt-*"],"backend":"openai"}]}`))
+		[]byte(`{"name":"`+name+`","credentials":{"openai":"secret123"},"bindings":[{"protocol":"chat","models":["gpt-*"],"provider":"openai"}]}`))
 	wantStatus(t, resp, http.StatusCreated, "POST configuration")
 	if strings.Contains(bodyString(t, resp), "secret123") {
 		t.Errorf("create response leaked the plaintext credential")
@@ -165,7 +177,7 @@ func TestAdmin_Configurations_CredentialWriteBack(t *testing.T) {
 
 	// PUT with the credential null (unchanged) — must NOT wipe it.
 	resp = authedJSON(t, h, "PUT", "/api/v1/config/configurations/"+name,
-		[]byte(`{"credentials":{"openai":null},"bindings":[{"protocol":"chat","models":["gpt-*"],"backend":"openai"}]}`))
+		[]byte(`{"credentials":{"openai":null},"bindings":[{"protocol":"chat","models":["gpt-*"],"provider":"openai"}]}`))
 	wantStatus(t, resp, http.StatusOK, "PUT configuration (null credential)")
 	_ = resp.Body.Close()
 

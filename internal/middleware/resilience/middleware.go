@@ -349,7 +349,7 @@ func runFailover(
 	}
 	if attempts == 0 {
 		// Every target was CB-blocked — service-unavailable signals
-		// "no healthy backend" more honestly than 502.
+		// "no healthy provider" more honestly than 502.
 		status = http.StatusServiceUnavailable
 		orchestratorOutcome = orchestratorOutcomeAllOpen
 	} else {
@@ -525,7 +525,7 @@ func runLoadBalance(
 	}
 	if attempt == 0 && cbBlocked > 0 {
 		// Every target was CB-blocked — fail with 503 (no healthy
-		// backend), the same signal failover uses for the same case.
+		// provider), the same signal failover uses for the same case.
 		status = http.StatusServiceUnavailable
 		orchestratorOutcome = orchestratorOutcomeAllOpen
 	} else {

@@ -36,8 +36,8 @@ groups:
     mode: failover
     response_header_timeout_seconds: 1
     targets:
-      - { backend: openai }
-      - { backend: anthropic }
+      - { provider: openai }
+      - { provider: anthropic }
 `
 
 // TestFailover_ResponseHeaderTimeout_AbandonsSlowPrimary proves the per-policy

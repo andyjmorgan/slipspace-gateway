@@ -83,7 +83,7 @@ type Options struct {
 }
 
 // Connector implements connector.Connector against an S3-compatible
-// backend.
+// provider.
 type Connector struct {
 	name         string
 	bucket       string

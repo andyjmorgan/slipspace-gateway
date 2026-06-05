@@ -84,7 +84,7 @@ configurations:
     credentials:
       openai: sk-dev-mock
     bindings:
-      - { protocol: chat, models: ["gpt-*"], backend: openai }
+      - { protocol: chat, models: ["gpt-*"], provider: openai }
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production

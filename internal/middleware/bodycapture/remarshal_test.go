@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
-	"github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
+	"github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
 )
 
 func TestRemarshalTyped_NoCaptured(t *testing.T) {

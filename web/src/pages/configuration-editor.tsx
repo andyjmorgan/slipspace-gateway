@@ -7,7 +7,7 @@
 // arrives redacted ({length, last4}); the editor shows ••••last4 as a
 // placeholder and submits the field as `null` (keep existing) UNLESS the
 // operator types a new value. A real string sets it; "" is a no-credential
-// backend. Submitting the masked placeholder back would wipe the secret —
+// provider. Submitting the masked placeholder back would wipe the secret —
 // so an untouched credential always submits null.
 
 import { useEffect, useState } from "react"
@@ -61,12 +61,12 @@ const PROTOCOL_OPTIONS: SelectOption[] = [
   { value: "embeddings", label: "embeddings" },
 ]
 
-// CredentialDraft models one per-backend credential row. `existing` carries the
+// CredentialDraft models one per-provider credential row. `existing` carries the
 // redacted GET projection (when editing a pre-existing credential); `value` is
 // the operator's typed input; `dirty` flips true the moment they touch the
 // field. An undirty existing credential submits null (keep stored secret).
 type CredentialDraft = {
-  backend: string
+  provider: string
   existing: RedactedSecret | null
   value: string
   dirty: boolean
@@ -75,14 +75,14 @@ type CredentialDraft = {
 type BindingDraft = {
   protocol: string
   models: string[]
-  destinationKind: "backend" | "group"
+  destinationKind: "provider" | "group"
   destination: string
   alias: string
 }
 
 type PassthroughBindingDraft = {
   family: string
-  backend: string
+  provider: string
 }
 
 type ConfigFormState = {
@@ -112,8 +112,8 @@ function emptyForm(): ConfigFormState {
 function formFromDetail(d: ConfigurationDetail): ConfigFormState {
   return {
     name: d.name,
-    credentials: Object.entries(d.credentials ?? {}).map(([backend, redacted]) => ({
-      backend,
+    credentials: Object.entries(d.credentials ?? {}).map(([provider, redacted]) => ({
+      provider,
       existing: redacted,
       value: "",
       dirty: false,
@@ -121,11 +121,11 @@ function formFromDetail(d: ConfigurationDetail): ConfigFormState {
     bindings: d.bindings.map((b) => ({
       protocol: b.protocol,
       models: (b.models ?? []).slice(),
-      destinationKind: b.group ? "group" : "backend",
-      destination: b.group ?? b.backend ?? "",
+      destinationKind: b.group ? "group" : "provider",
+      destination: b.group ?? b.provider ?? "",
       alias: b.alias ?? "",
     })),
-    passthroughBindings: d.passthrough_bindings.map((p) => ({ family: p.family, backend: p.backend })),
+    passthroughBindings: d.passthrough_bindings.map((p) => ({ family: p.family, provider: p.provider })),
     ruleNames: d.rules.map((r) => r.name),
     tags: pairsFromRecord(d.tags),
     connectorBindings: (d.connector_bindings ?? []).slice(),
@@ -135,14 +135,14 @@ function formFromDetail(d: ConfigurationDetail): ConfigFormState {
 function toWriteBody(form: ConfigFormState): ConfigurationWriteBody {
   const credentials: Record<string, string | null> = {}
   for (const c of form.credentials) {
-    const backend = c.backend.trim()
-    if (backend === "") continue
+    const provider = c.provider.trim()
+    if (provider === "") continue
     if (c.existing && !c.dirty) {
       // Untouched stored secret — null keeps it (never round-trip the mask).
-      credentials[backend] = null
+      credentials[provider] = null
     } else {
       // New row, or operator typed a new value (including "" for no-credential).
-      credentials[backend] = c.value
+      credentials[provider] = c.value
     }
   }
 
@@ -156,15 +156,15 @@ function toWriteBody(form: ConfigFormState): ConfigurationWriteBody {
       if (b.destinationKind === "group") {
         row.group = b.destination.trim()
       } else {
-        row.backend = b.destination.trim()
+        row.provider = b.destination.trim()
         if (b.alias.trim()) row.alias = b.alias.trim()
       }
       return row
     })
 
   const passthrough: PassthroughBindingRow[] = form.passthroughBindings
-    .filter((p) => p.family.trim() !== "" && p.backend.trim() !== "")
-    .map((p) => ({ family: p.family.trim(), backend: p.backend.trim() }))
+    .filter((p) => p.family.trim() !== "" && p.provider.trim() !== "")
+    .map((p) => ({ family: p.family.trim(), provider: p.provider.trim() }))
 
   const body: ConfigurationWriteBody = {
     name: form.name.trim(),
@@ -192,7 +192,7 @@ function CreateConfigPage() {
   return (
     <EditorBody
       title="New configuration"
-      sub="A reusable policy bundle — per-backend credentials, bindings that route models to backends, attached transform rules, and tags."
+      sub="A reusable policy bundle — per-provider credentials, bindings that route models to providers, attached transform rules, and tags."
       form={form}
       setForm={setForm}
       urlName={null}
@@ -377,13 +377,13 @@ function EditorBody({
           <PanelCard>
             <PanelHead
               title="Credentials"
-              sub="per-backend upstream credential (managed mode). Existing secrets are masked — leave a row untouched to keep it."
+              sub="per-provider upstream credential (managed mode). Existing secrets are masked — leave a row untouched to keep it."
               action={
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setForm({ ...form, credentials: [...form.credentials, { backend: "", existing: null, value: "", dirty: true }] })}
+                  onClick={() => setForm({ ...form, credentials: [...form.credentials, { provider: "", existing: null, value: "", dirty: true }] })}
                 >
                   + Add credential
                 </Button>
@@ -417,13 +417,13 @@ function EditorBody({
           <PanelCard>
             <PanelHead
               title="Bindings"
-              sub="map (protocol, model) to a backend or group · evaluated in order, first match wins"
+              sub="map (protocol, model) to a provider or group · evaluated in order, first match wins"
               action={
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setForm({ ...form, bindings: [...form.bindings, { protocol: "chat", models: [], destinationKind: "backend", destination: "", alias: "" }] })}
+                  onClick={() => setForm({ ...form, bindings: [...form.bindings, { protocol: "chat", models: [], destinationKind: "provider", destination: "", alias: "" }] })}
                 >
                   + Add binding
                 </Button>
@@ -469,13 +469,13 @@ function EditorBody({
           <PanelCard>
             <PanelHead
               title="Passthrough bindings"
-              sub="expose a backend's passthrough family on this configuration"
+              sub="expose a provider's passthrough family on this configuration"
               action={
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setForm({ ...form, passthroughBindings: [...form.passthroughBindings, { family: "", backend: "" }] })}
+                  onClick={() => setForm({ ...form, passthroughBindings: [...form.passthroughBindings, { family: "", provider: "" }] })}
                 >
                   + Add passthrough
                 </Button>
@@ -492,9 +492,9 @@ function EditorBody({
                     copy[i] = { ...copy[i], family: v }
                     setForm({ ...form, passthroughBindings: copy })
                   }} placeholder="message_batches" mono />
-                  <TextField label="Backend" value={p.backend} onChange={(v) => {
+                  <TextField label="Provider" value={p.provider} onChange={(v) => {
                     const copy = form.passthroughBindings.slice()
-                    copy[i] = { ...copy[i], backend: v }
+                    copy[i] = { ...copy[i], provider: v }
                     setForm({ ...form, passthroughBindings: copy })
                   }} placeholder="anthropic" mono />
                   <Button type="button" variant="ghost" size="sm" className="text-[color:var(--text-3)] hover:text-[color:var(--err)]" onClick={() => {
@@ -553,9 +553,9 @@ function CredentialRow({
   return (
     <div className="rounded-[var(--radius)] border border-[color:var(--border)] px-3 py-3 grid grid-cols-1 sm:grid-cols-[1fr_1.4fr_auto] gap-3 items-start">
       <TextField
-        label="Backend"
-        value={draft.backend}
-        onChange={(v) => onChange({ ...draft, backend: v })}
+        label="Provider"
+        value={draft.provider}
+        onChange={(v) => onChange({ ...draft, provider: v })}
         placeholder="openai"
         mono
       />
@@ -580,7 +580,7 @@ function CredentialRow({
               type="text"
               value={draft.value}
               onChange={(e) => onChange({ ...draft, value: e.target.value, dirty: true })}
-              placeholder={draft.existing ? "new secret (blank = no-credential backend)" : "sk-… (blank = no-credential backend)"}
+              placeholder={draft.existing ? "new secret (blank = no-credential provider)" : "sk-… (blank = no-credential provider)"}
               className="mono flex-1 min-w-0 rounded-[5px] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-2 py-1 text-[12.5px] text-[color:var(--text)] outline-none focus:border-[color:var(--text-3)]"
             />
             {draft.existing && (
@@ -595,7 +595,7 @@ function CredentialRow({
           </div>
         )}
         <span className="text-[11px] text-[color:var(--text-4)]">
-          {masked ? "Stored secret kept on save unless you change it." : "Typed value will be set. Leave blank for a no-credential backend."}
+          {masked ? "Stored secret kept on save unless you change it." : "Typed value will be set. Leave blank for a no-credential provider."}
         </span>
       </div>
       <div className="flex flex-col gap-1.5">
@@ -652,10 +652,10 @@ function BindingCard({
           <SelectField
             label="Destination"
             value={draft.destinationKind}
-            options={[{ value: "backend", label: "backend" }, { value: "group", label: "group" }]}
-            onChange={(v) => onChange({ ...draft, destinationKind: v as "backend" | "group" })}
+            options={[{ value: "provider", label: "provider" }, { value: "group", label: "group" }]}
+            onChange={(v) => onChange({ ...draft, destinationKind: v as "provider" | "group" })}
           />
-          <TextField label={draft.destinationKind === "group" ? "Group name" : "Backend name"} value={draft.destination} onChange={(v) => onChange({ ...draft, destination: v })} placeholder={draft.destinationKind === "group" ? "qwen-pool" : "openai"} mono />
+          <TextField label={draft.destinationKind === "group" ? "Group name" : "Provider name"} value={draft.destination} onChange={(v) => onChange({ ...draft, destination: v })} placeholder={draft.destinationKind === "group" ? "qwen-pool" : "openai"} mono />
         </div>
         <StringListEditor
           label="Models"
@@ -665,8 +665,8 @@ function BindingCard({
           addLabel="+ Add model pattern"
           hint="Trailing-* wildcard. Empty matches any model for the protocol."
         />
-        {draft.destinationKind === "backend" && (
-          <TextField label="Alias (model rewrite)" value={draft.alias} onChange={(v) => onChange({ ...draft, alias: v })} placeholder="" mono hint="Rewrites the request model on the way to the backend." />
+        {draft.destinationKind === "provider" && (
+          <TextField label="Alias (model rewrite)" value={draft.alias} onChange={(v) => onChange({ ...draft, alias: v })} placeholder="" mono hint="Rewrites the request model on the way to the provider." />
         )}
       </div>
     </div>

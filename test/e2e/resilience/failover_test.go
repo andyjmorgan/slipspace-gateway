@@ -22,7 +22,7 @@ configurations:
       gemini: dev-mock
     bindings:
       - { protocol: chat, models: ["gpt-*"], group: cross-provider-failover }
-      - { protocol: messages, models: ["claude-*"], backend: anthropic }
+      - { protocol: messages, models: ["claude-*"], provider: anthropic }
 
 api_keys:
   - secret: sk_dev_local_development_only_not_for_production
@@ -35,8 +35,8 @@ groups:
     mode: failover
     failure_status_codes: [503]
     targets:
-      - { backend: openai }
-      - { backend: anthropic }
+      - { provider: openai }
+      - { provider: anthropic }
 `
 
 // TestFailover_PrimaryReturns503_BackupServes200 — the headline

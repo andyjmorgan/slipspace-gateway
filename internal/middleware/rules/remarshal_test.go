@@ -14,7 +14,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	openaichat "github.com/andyjmorgan/sluice-gateway/providers/openai/chat"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
 )
 
 // failMarshalBody implements json.Marshaler with a guaranteed error
