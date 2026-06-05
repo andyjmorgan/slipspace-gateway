@@ -301,7 +301,7 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
       >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
-            <XAxis dataKey="i" tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" />
+            <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.ms(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
             <Tooltip cursor={{ fill: "var(--hover)" }} content={<TurnTooltip />} />
             <Bar dataKey="durationMs" radius={[2, 2, 0, 0]} isAnimationActive={false}>
@@ -316,7 +316,7 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
       <ChartBlock title="Cumulative input tokens" sub="context growth across the session">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
-            <XAxis dataKey="i" tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" />
+            <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.compact(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
             <Tooltip cursor={{ stroke: "var(--border)" }} content={<TurnTooltip />} />
             <Area dataKey="cumIn" stroke="var(--accent)" fill="color-mix(in oklch, var(--accent) 15%, transparent)" strokeWidth={1.5} isAnimationActive={false} />
@@ -337,7 +337,7 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
       >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
-            <XAxis dataKey="i" tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" />
+            <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.compact(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
             <Tooltip cursor={{ fill: "var(--hover)" }} content={<TurnTooltip />} />
             <Bar dataKey="cached" stackId="t" fill="var(--accent)" isAnimationActive={false} />
