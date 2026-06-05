@@ -21,9 +21,11 @@ import {
 } from "@/components/atoms/page-states"
 import {
   TextField,
+  SelectField,
   KeyValueEditor,
   StringListEditor,
 } from "@/components/forms/field-atoms"
+import { PROTOCOL_OPTIONS } from "@/lib/protocols"
 import {
   recordFromPairs,
   pairsFromRecord,
@@ -427,7 +429,7 @@ function ProtocolCard({
         </button>
       </div>
       <div className="px-3 py-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <TextField label="Protocol name" value={draft.name} onChange={(v) => onChange({ ...draft, name: v })} placeholder="chat" mono />
+        <SelectField label="Protocol name" value={draft.name} options={[{ value: "", label: "Select a protocol…" }, ...PROTOCOL_OPTIONS]} onChange={(v) => onChange({ ...draft, name: v })} />
         <TextField label="Upstream path" value={draft.path} onChange={(v) => onChange({ ...draft, path: v })} placeholder="/v1/chat/completions" mono />
         <TextField label="Auth header (override)" value={draft.authHeader} onChange={(v) => onChange({ ...draft, authHeader: v })} placeholder="Authorization" mono hint="Leave blank to use the provider-native default." />
         <TextField label="Auth format (override)" value={draft.authFormat} onChange={(v) => onChange({ ...draft, authFormat: v })} placeholder="Bearer {key}" mono />

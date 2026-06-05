@@ -54,14 +54,7 @@ import {
   type PreviewResult,
 } from "@/lib/config-api"
 import { APIError, UnauthorizedError } from "@/lib/api"
-
-const PROTOCOL_OPTIONS: SelectOption[] = [
-  { value: "chat", label: "chat" },
-  { value: "responses", label: "responses" },
-  { value: "messages", label: "messages" },
-  { value: "generate_content", label: "generate_content" },
-  { value: "embeddings", label: "embeddings" },
-]
+import { PROTOCOL_OPTIONS } from "@/lib/protocols"
 
 // CredentialDraft models one per-provider credential row. `existing` carries the
 // redacted GET projection (when editing a pre-existing credential); `value` is
