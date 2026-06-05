@@ -299,9 +299,9 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
           </div>
         }
       >
-        <ResponsiveContainer width="100%" height={170}>
+        <ResponsiveContainer width="100%" height="100%">
           <BarChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
-            <XAxis dataKey="i" tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" />
+            <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.ms(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
             <Tooltip cursor={{ fill: "var(--hover)" }} content={<TurnTooltip />} />
             <Bar dataKey="durationMs" radius={[2, 2, 0, 0]} isAnimationActive={false}>
@@ -314,9 +314,9 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
       </ChartBlock>
 
       <ChartBlock title="Cumulative input tokens" sub="context growth across the session">
-        <ResponsiveContainer width="100%" height={150}>
+        <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
-            <XAxis dataKey="i" tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" />
+            <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.compact(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
             <Tooltip cursor={{ stroke: "var(--border)" }} content={<TurnTooltip />} />
             <Area dataKey="cumIn" stroke="var(--accent)" fill="color-mix(in oklch, var(--accent) 15%, transparent)" strokeWidth={1.5} isAnimationActive={false} />
@@ -335,9 +335,9 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
           </div>
         }
       >
-        <ResponsiveContainer width="100%" height={150}>
+        <ResponsiveContainer width="100%" height="100%">
           <BarChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
-            <XAxis dataKey="i" tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" />
+            <XAxis dataKey="at" tickFormatter={(v) => fmt.shortTime(v as string)} tick={{ fontSize: 10, fill: axis }} stroke={axis} interval="preserveStartEnd" minTickGap={28} />
             <YAxis tickFormatter={(v) => fmt.compact(v as number)} tick={{ fontSize: 10, fill: axis }} stroke={axis} width={44} />
             <Tooltip cursor={{ fill: "var(--hover)" }} content={<TurnTooltip />} />
             <Bar dataKey="cached" stackId="t" fill="var(--accent)" isAnimationActive={false} />
@@ -352,13 +352,17 @@ function SessionGraphs({ requests }: { requests: MessageEntry[] }) {
 
 function ChartBlock({ title, sub, legend, children }: { title: string; sub: string; legend?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5 flex-1 min-h-0">
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-[13px] font-medium">{title}</span>
         <span className="text-[11px] text-[color:var(--text-4)]">{sub}</span>
         {legend && <span className="ml-auto">{legend}</span>}
       </div>
-      {children}
+      {/* flex-1 so the chart fills the graphs pane (no trailing whitespace);
+          minHeight keeps it readable when the pane is short, scrolling instead. */}
+      <div className="flex-1" style={{ minHeight: 150 }}>
+        {children}
+      </div>
     </div>
   )
 }
