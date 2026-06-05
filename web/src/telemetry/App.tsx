@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { NavLink, Navigate, Outlet, Route, Routes, useNavigate } from "react-router"
-import { Activity, Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, Sun } from "lucide-react"
+import { Activity, Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Sun } from "lucide-react"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { DashboardPage } from "./pages/dashboard"
 import { MessagesPage } from "./pages/messages"
+import { SessionsPage } from "./pages/sessions"
 
 // App is the telemetry console root: a Basic-auth login gate wrapping the
 // shared app shell (sidebar + topbar) the gateway admin console uses, themed
@@ -22,6 +23,8 @@ export default function App() {
         <Route element={<TelemetryLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="messages" element={<MessagesPage />} />
+          <Route path="sessions" element={<SessionsPage />} />
+          <Route path="sessions/:id" element={<SessionsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -41,6 +44,7 @@ function Guard() {
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/messages", label: "Messages", icon: ListTree, end: false },
+  { to: "/sessions", label: "Sessions", icon: MessagesSquare, end: false },
 ]
 
 function TelemetryLayout() {

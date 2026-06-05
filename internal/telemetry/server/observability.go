@@ -9,6 +9,7 @@ import (
 	"time"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/stitch"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
@@ -335,6 +336,29 @@ func mapMessages(events []store.RequestEvent, capacity int) adminc.MessagesRecen
 		entries = append(entries, mapEntry(events[i]))
 	}
 	return adminc.MessagesRecentResponse{Capacity: capacity, Entries: entries}
+}
+
+// mapSession projects a session's events onto the tagged SessionView wire
+// shape: each request mapped through mapEntry (so tags/rules/attempts are
+// parsed, not raw base64 JSONB), totals from stitch.BuildSessionView. Events
+// stay oldest-first — the graphs plot cumulative/timeline series straight off
+// the slice; the table reverses client-side.
+func mapSession(sessionID string, events []store.RequestEvent) adminc.SessionView {
+	base := stitch.BuildSessionView(sessionID, events)
+	out := adminc.SessionView{
+		SessionID: sessionID,
+		Totals: adminc.SessionTotals{
+			Requests:  base.Totals.Requests,
+			Errors:    base.Totals.Errors,
+			TokensIn:  base.Totals.TokensIn,
+			TokensOut: base.Totals.TokensOut,
+		},
+		Requests: make([]adminc.MessageEntry, 0, len(events)),
+	}
+	for _, e := range events {
+		out.Requests = append(out.Requests, mapEntry(e))
+	}
+	return out
 }
 
 func mapEntry(e store.RequestEvent) adminc.MessageEntry {

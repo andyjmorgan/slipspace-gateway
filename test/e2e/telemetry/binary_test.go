@@ -452,18 +452,26 @@ func TestE2E_SessionRollup(t *testing.T) {
 			intKV("gen_ai.usage.input_tokens", 5),
 		)
 	}
-	var sess struct {
-		SessionID string `json:"session_id"`
-		Requests  []any  `json:"requests"`
-		Totals    struct {
-			Requests int `json:"requests"`
-		} `json:"totals"`
-	}
+	var sess adminc.SessionView
 	if code := svc.getJSON(t, "/api/v1/sessions/session-1", &sess); code != http.StatusOK {
 		t.Fatalf("session status = %d", code)
 	}
+	if sess.SessionID != "session-1" {
+		t.Errorf("session_id = %q", sess.SessionID)
+	}
 	if sess.Totals.Requests != 2 {
 		t.Errorf("session rollup requests = %d, want 2", sess.Totals.Requests)
+	}
+	// The endpoint must serve the tagged MessageEntry shape (snake_case,
+	// projected via mapEntry) — not the raw store struct. Assert per-request
+	// fields decoded onto the typed contract through the real binary.
+	if len(sess.Requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(sess.Requests))
+	}
+	for _, r := range sess.Requests {
+		if r.Provider != "openai" || r.StatusCode != 200 || r.TokensIn != 5 {
+			t.Errorf("request not projected onto tagged shape: %+v", r)
+		}
 	}
 }
 
