@@ -10,7 +10,18 @@
 
 import { auth } from "@/lib/auth"
 
-const API_BASE = "/admin"
+// apiBase is prepended to every "/api/v1/..." path. The gateway admin console
+// mounts its API under /admin (the default); the telemetry console serves its
+// API at the listener root and calls setApiBase("") at bootstrap. Kept as a
+// module-level switch so the shared data hooks (dashboard, messages) work
+// against either backend without threading the prefix through every caller.
+let apiBase = "/admin"
+
+/** setApiBase overrides the API prefix. Call once at SPA bootstrap, before any
+ * fetch. Telemetry sets "" (root); the gateway keeps the "/admin" default. */
+export function setApiBase(base: string): void {
+  apiBase = base
+}
 
 export class UnauthorizedError extends Error {
   constructor() {
@@ -52,7 +63,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     headers.set("Authorization", authHeader)
   }
   headers.set("Accept", "application/json")
-  const res = await fetch(API_BASE + path, { ...init, headers })
+  const res = await fetch(apiBase + path, { ...init, headers })
   if (res.status === 401) {
     auth.clear()
     throw new UnauthorizedError()
@@ -98,7 +109,7 @@ export async function validateSession(): Promise<boolean> {
  * console.
  */
 export async function fetchVersion(): Promise<string> {
-  const res = await fetch(API_BASE + "/api/v1/version", { headers: { Accept: "application/json" } })
+  const res = await fetch(apiBase + "/api/v1/version", { headers: { Accept: "application/json" } })
   if (!res.ok) {
     throw new APIError(res.status, res.statusText)
   }
