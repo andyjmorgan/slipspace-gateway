@@ -198,6 +198,56 @@ func TestReporter_StreamingResponseAccumulated(t *testing.T) {
 	}
 }
 
+// TestReporter_StreamingRecordCarriesAssembled pins the alignment fix: the
+// same accumulator rollup the live-feed envelope gets must also ride the
+// connector Record, so telemetry shows the assembled response and not only
+// the raw SSE bytes. Exercises assembleResponse -> buildRecord.
+func TestReporter_StreamingRecordCarriesAssembled(t *testing.T) {
+	t.Parallel()
+	ring, _ := livefeed.NewRing(4)
+	r := newTestReporter(t, ring)
+	r.endpoint = "chat_completions" // maps to the OpenAI chat accumulator
+	r.streaming = true
+
+	buf := livefeed.NewResponseBuffer(8 * 1024)
+	buf.Append([]byte(
+		`data: {"choices":[{"delta":{"content":"Hello"},"index":0}]}` + "\n\n" +
+			`data: {"choices":[{"delta":{"content":" world"},"index":0}]}` + "\n\n" +
+			"data: [DONE]\n\n"))
+	ctx := livefeed.WithResponseBuffer(context.Background(), buf)
+
+	ev := events.Request{
+		CorrelationID: "corr-rec",
+		Provider:      r.provider,
+		Endpoint:      r.endpoint,
+		Model:         r.model,
+		StatusCode:    200,
+		Streaming:     true,
+	}
+
+	assembled, partial := r.assembleResponse(ctx, ev)
+	if len(assembled) == 0 {
+		t.Fatal("assembleResponse returned no rollup for a recognised stream")
+	}
+	if partial {
+		t.Errorf("assembleResponse partial=true for a clean stream")
+	}
+
+	rec := r.buildRecord(ctx, ev, nil, assembled, partial)
+	if !strings.Contains(string(rec.Response.Assembled), `"content":"Hello world"`) {
+		t.Errorf("Record.Response.Assembled=%q (expected assembled content)", rec.Response.Assembled)
+	}
+	if rec.Response.AssemblyPartial {
+		t.Errorf("Record.Response.AssemblyPartial=true, want false")
+	}
+
+	// Non-streaming yields no rollup — the accumulator must not run.
+	ev.Streaming = false
+	if a, _ := r.assembleResponse(ctx, ev); a != nil {
+		t.Errorf("assembleResponse on non-streaming returned %q, want nil", a)
+	}
+}
+
 func TestReporter_BodyStoreNilIsNoop(t *testing.T) {
 	t.Parallel()
 	ring, _ := livefeed.NewRing(4)

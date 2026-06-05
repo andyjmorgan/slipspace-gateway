@@ -175,6 +175,20 @@ type ResponsePart struct {
 	// StreamChunks counts the number of SSE chunks observed. Zero for
 	// non-streaming responses.
 	StreamChunks int `json:"stream_chunks,omitempty"`
+
+	// Assembled is the JSON-encoded reconstruction of a streamed
+	// response, produced by the gateway's per-provider accumulator from
+	// the SSE chunks — the same rollup the admin live-feed renders. Its
+	// shape matches the provider's non-streaming response type. Empty for
+	// non-streaming responses and for streams no accumulator recognised.
+	// This is what lets the telemetry inspector show the assembled
+	// response instead of only the raw SSE bytes (which ride in Body).
+	Assembled json.RawMessage `json:"assembled,omitempty"`
+
+	// AssemblyPartial is true when the accumulator hit a malformed chunk
+	// or unknown delta mid-stream and could not finish reassembly;
+	// Assembled then holds whatever parsed up to that point.
+	AssemblyPartial bool `json:"assembly_partial,omitempty"`
 }
 
 // Tokens carries usage-style accounting parsed from the upstream response.

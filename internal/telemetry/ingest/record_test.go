@@ -180,6 +180,44 @@ func TestRecord_Valid(t *testing.T) {
 	}
 }
 
+func TestRecord_AssembledRollupStoredAndPartialFlagged(t *testing.T) {
+	st := &recordStore{}
+	h := NewRecordHandler(testReg(), st, discard())
+	rec := sampleRecord()
+	rec.Response.StreamChunks = 3
+	rec.Response.Assembled = json.RawMessage(`{"id":"msg_x","content":[{"type":"text","text":"hi"}]}`)
+	rec.Response.AssemblyPartial = true
+	body := recordJSON(t, rec)
+	if resp := post(t, h, "gw-a", sign("secret-a", body), body); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Code)
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	// The assembled rollup becomes its own sse_rollup payload.
+	var rollup *store.Payload
+	for i := range st.payloads {
+		if st.payloads[i].Kind == store.KindSSERollup {
+			rollup = &st.payloads[i]
+		}
+	}
+	if rollup == nil {
+		t.Fatal("no sse_rollup payload stored for an assembled response")
+	}
+	if !strings.Contains(string(rollup.Body), `"text":"hi"`) {
+		t.Errorf("sse_rollup body = %s", rollup.Body)
+	}
+
+	// The partial flag rides the event detail.
+	var d store.EventDetail
+	if err := json.Unmarshal(st.event.Detail, &d); err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if !d.AssemblyPartial {
+		t.Errorf("EventDetail.AssemblyPartial = false, want true; detail = %+v", d)
+	}
+}
+
 func TestRecord_OmittedBodiesSkipPayloads(t *testing.T) {
 	st := &recordStore{}
 	h := NewRecordHandler(testReg(), st, discard())

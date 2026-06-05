@@ -504,15 +504,31 @@ func TestE2E_DashboardFiredFromMeters(t *testing.T) {
 
 func TestE2E_StreamingResponseCaptured(t *testing.T) {
 	svc := startService(t)
-	rec := recordWith("sse-1", `{"q":"hi"}`, `{"assembled":"hello world"}`)
+	// The gateway escapes raw SSE bytes to a JSON string before they ride
+	// the Record's Body; model that with a JSON-string response here.
+	rec := recordWith("sse-1", `{"q":"hi"}`, `"data: {\"delta\":\"hello\"}\n\n"`)
 	rec.Response.StreamChunks = 3 // streaming
+	// The gateway's accumulator rollup rides the Record alongside the raw SSE
+	// bytes — this is the alignment fix: telemetry must show the assembled
+	// response (Response tab), not only the raw stream (Raw stream tab).
+	rec.Response.Assembled = json.RawMessage(`{"content":[{"type":"text","text":"hello world"}]}`)
+	rec.Response.AssemblyPartial = true
 	svc.postRecord(t, testGatewayID, testSecret, rec)
 	var body adminc.MessageBodyDetail
 	if code := svc.getJSON(t, "/api/v1/messages/sse-1/body", &body); code != http.StatusOK {
 		t.Fatalf("body status = %d", code)
 	}
-	if !strings.Contains(body.Response, "hello world") {
-		t.Errorf("streaming response body = %q", body.Response)
+	// Raw SSE bytes survive on the response body (the Raw stream tab).
+	if !strings.Contains(body.Response, "delta") {
+		t.Errorf("raw SSE response body = %q", body.Response)
+	}
+	// The assembled rollup reaches the inspector's Response (assembled) tab.
+	if !strings.Contains(body.ResponseAssembled, `"text":"hello world"`) {
+		t.Errorf("assembled rollup not captured: %q", body.ResponseAssembled)
+	}
+	// The partial flag is carried through the event detail.
+	if !body.AssemblyPartial {
+		t.Errorf("AssemblyPartial = false, want true")
 	}
 }
 

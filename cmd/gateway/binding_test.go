@@ -20,7 +20,7 @@ func makeRec() cc.Record {
 		Endpoint:       "chat_completions",
 		Model:          "gpt-4o-mini",
 		UpstreamStatus: 200,
-		Response:       cc.ResponsePart{Status: 200, BodyBytes: 1024, Body: json.RawMessage(`"resp"`)},
+		Response:       cc.ResponsePart{Status: 200, BodyBytes: 1024, Body: json.RawMessage(`"resp"`), Assembled: json.RawMessage(`{"id":"x"}`), AssemblyPartial: true},
 		Request:        cc.RequestPart{BodyBytes: 512, Body: json.RawMessage(`"req"`)},
 		Tags:           []string{"surface:openai-chat", "audit:large-prompt"},
 		SchemaVersion:  cc.SchemaVersion,
@@ -86,6 +86,12 @@ func TestEvaluateBinding_OversizeMetadataOnlyStrips(t *testing.T) {
 	}
 	if len(out.Response.Body) != 0 || !out.Response.BodyOmitted {
 		t.Errorf("response body not stripped: %+v", out.Response)
+	}
+	// The assembled rollup rides with the response body family — a
+	// metadata-only record must not leak the reconstruction the operator
+	// asked to cap.
+	if len(out.Response.Assembled) != 0 || out.Response.AssemblyPartial {
+		t.Errorf("assembled rollup not stripped: %+v", out.Response)
 	}
 	if !ov.Triggered || ov.Dropped {
 		t.Errorf("oversize outcome = %+v, want triggered + not dropped", ov)

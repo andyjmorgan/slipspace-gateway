@@ -109,14 +109,24 @@ func (s *Server) handleObsMessageBody(w http.ResponseWriter, r *http.Request) {
 		s.queryError(w, "message body", err)
 		return
 	}
-	// gen_ai content lives on the request_events row, not a payload — fetch it
-	// best-effort so the inspector's GenAI tab can render captured content
-	// alongside the bodies. A missing event just leaves the tab empty.
-	var genAI []byte
+	// gen_ai content + the assembly-partial flag live on the request_events
+	// row, not a payload — fetch the event best-effort so the inspector's
+	// GenAI tab and the "partial" badge can render alongside the bodies. A
+	// missing event just leaves both empty.
+	var (
+		genAI   []byte
+		partial bool
+	)
 	if ev, evErr := s.queries.GetRequestEvent(r.Context(), id); evErr == nil {
 		genAI = ev.GenAIContent
+		if len(ev.Detail) > 0 {
+			var d store.EventDetail
+			if json.Unmarshal(ev.Detail, &d) == nil {
+				partial = d.AssemblyPartial
+			}
+		}
 	}
-	writeJSON(w, http.StatusOK, mapBody(id, payloads, genAI))
+	writeJSON(w, http.StatusOK, mapBody(id, payloads, genAI, partial))
 }
 
 // handleObsMessages serves the message browser: a filtered, keyset-paged page of
@@ -384,7 +394,7 @@ func mapEntry(e store.RequestEvent) adminc.MessageEntry {
 	return entry
 }
 
-func mapBody(correlationID string, payloads []store.Payload, genAIContent []byte) adminc.MessageBodyDetail {
+func mapBody(correlationID string, payloads []store.Payload, genAIContent []byte, assemblyPartial bool) adminc.MessageBodyDetail {
 	detail := adminc.MessageBodyDetail{EventID: correlationID}
 	for _, p := range payloads {
 		switch p.Kind {
@@ -405,6 +415,8 @@ func mapBody(correlationID string, payloads []store.Payload, genAIContent []byte
 	if len(genAIContent) > 0 {
 		detail.GenAIContent = string(genAIContent)
 	}
+	// Only meaningful alongside an assembled rollup; harmless otherwise.
+	detail.AssemblyPartial = assemblyPartial
 	return detail
 }
 

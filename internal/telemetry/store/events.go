@@ -90,6 +90,10 @@ type EventDetail struct {
 	// Attempts is the per-attempt resilience outcome record, present only for
 	// requests that ran under a resilience policy.
 	Attempts []AttemptDetail `json:"attempts,omitempty"`
+	// AssemblyPartial is true when the gateway's accumulator could only
+	// partially reconstruct a streamed response; the sse_rollup payload then
+	// holds whatever parsed. Surfaced as the inspector's "partial" badge.
+	AssemblyPartial bool `json:"assembly_partial,omitempty"`
 }
 
 // RuleChainEntry is one rule's entry in EventDetail.RuleChain — the inspector's
