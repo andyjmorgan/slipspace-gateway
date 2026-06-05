@@ -20,6 +20,7 @@ type Queries interface {
 	GetRequestEvent(ctx context.Context, correlationID string) (store.RequestEvent, error)
 	ListPayloads(ctx context.Context, correlationID string) ([]store.Payload, error)
 	EventsBySession(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
+	Facets(ctx context.Context) (store.Facets, error)
 }
 
 // registerQueryRoutes mounts the Basic-auth-gated, DB-backed console API.
@@ -34,6 +35,10 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/dashboard/timeseries", gated(s.handleObsTimeseries))
 	mux.Handle("GET /api/v1/messages/recent", gated(s.handleObsMessagesRecent))
 	mux.Handle("GET /api/v1/messages/{id}/body", gated(s.handleObsMessageBody))
+	// Message browser — filtered + keyset-paged events in the rich MessageEntry
+	// shape, plus the cached distinct-value facets that drive its dropdowns.
+	mux.Handle("GET /api/v1/messages", gated(s.handleObsMessages))
+	mux.Handle("GET /api/v1/facets", gated(s.handleFacets))
 	// Telemetry-native extras (keyset event paging, stitched inspector, session
 	// rollup) — used by the telemetry shell beyond the gateway parity surface.
 	mux.Handle("GET /api/v1/events", gated(s.handleEvents))
@@ -42,7 +47,9 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/sessions/{id}", gated(s.handleSession))
 }
 
-// filterFromQuery reads the shared equality/status filters from the query string.
+// filterFromQuery reads the shared equality/status filters from the query
+// string. The message browser adds exact session/correlation lookups and a
+// repeated ?tags= multi-value param (AND containment).
 func filterFromQuery(r *http.Request) store.EventFilter {
 	q := r.URL.Query()
 	return store.EventFilter{
@@ -52,30 +59,55 @@ func filterFromQuery(r *http.Request) store.EventFilter {
 		Provider:      q.Get("provider"),
 		Protocol:      q.Get("protocol"),
 		StatusClass:   q.Get("status_class"),
+		SessionID:     q.Get("session_id"),
+		CorrelationID: q.Get("correlation_id"),
+		Tags:          nonEmpty(q["tags"]),
 	}
+}
+
+// nonEmpty drops blank entries so a stray ?tags= doesn't add an empty-string
+// predicate that no event would match.
+func nonEmpty(in []string) []string {
+	var out []string
+	for _, v := range in {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// parseWindowBounds reads optional RFC3339 ?from / ?to bounds. A bad value is a
+// reported error; an absent bound is the zero time (no predicate), so the
+// browser can page across all history unless explicitly bounded.
+func parseWindowBounds(r *http.Request) (from, to time.Time, badParam string) {
+	q := r.URL.Query()
+	if v := q.Get("from"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return time.Time{}, time.Time{}, "from"
+		}
+		from = t
+	}
+	if v := q.Get("to"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return time.Time{}, time.Time{}, "to"
+		}
+		to = t
+	}
+	return from, to, ""
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// Events list omits the default window unless from/to are given, so the
 	// browser can page across all history; only an explicit ?from bounds it.
-	var from, to time.Time
+	from, to, bad := parseWindowBounds(r)
+	if bad != "" {
+		writeError(w, http.StatusBadRequest, "invalid "+bad)
+		return
+	}
 	q := r.URL.Query()
-	if v := q.Get("from"); v != "" {
-		t, perr := time.Parse(time.RFC3339, v)
-		if perr != nil {
-			writeError(w, http.StatusBadRequest, "invalid from")
-			return
-		}
-		from = t
-	}
-	if v := q.Get("to"); v != "" {
-		t, perr := time.Parse(time.RFC3339, v)
-		if perr != nil {
-			writeError(w, http.StatusBadRequest, "invalid to")
-			return
-		}
-		to = t
-	}
 	events, next, err := s.queries.ListEventsFiltered(r.Context(), store.EventListParams{
 		From:   from,
 		To:     to,

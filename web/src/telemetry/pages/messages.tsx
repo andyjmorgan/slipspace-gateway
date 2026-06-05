@@ -1,75 +1,237 @@
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { ChevronDown, ChevronUp, RefreshCw, X } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RefreshCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { JsonViewer } from "@/components/atoms/json-viewer"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { Segmented } from "@/components/atoms/segmented"
+import { Select } from "@/components/atoms/select"
+import { MultiSelect } from "@/components/atoms/multi-select"
 import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
 import {
+  fetchFacets,
   fetchMessageBody,
-  fetchRecentMessages,
+  fetchMessagesPage,
+  type Facets,
   type MessageBodyDetail,
   type MessageEntry,
+  type MessageFilters,
 } from "@/lib/messages"
 
-const POLL_MS = 5000
-const LIMIT = 200
+// PAGE_SIZES the operator can page in. Default keeps the table snappy while
+// covering most browsing in one screen.
+const PAGE_SIZES = [50, 100, 200] as const
+const DEFAULT_PAGE_SIZE = 100
 
-// MessagesPage lists the most recent requests the telemetry store has stitched
-// (from the gen_ai OTLP feed + the Record feed) and opens a per-request
-// inspector. The telemetry service has no live SSE stream, so this polls
-// /messages/recent rather than streaming; the inspector reads the captured
-// bodies via /messages/{id}/body.
+// TIME_RANGES are the relative-window presets. "all" omits the bound so the
+// keyset scan can walk the full history.
+const TIME_RANGES = [
+  { value: "1h", label: "1h", ms: 3_600_000 },
+  { value: "24h", label: "24h", ms: 86_400_000 },
+  { value: "7d", label: "7d", ms: 604_800_000 },
+  { value: "all", label: "All", ms: 0 },
+] as const
+type TimeRange = (typeof TIME_RANGES)[number]["value"]
+
+const STATUS_CLASSES = [
+  { value: "", label: "Any" },
+  { value: "2xx", label: "2xx" },
+  { value: "4xx", label: "4xx" },
+  { value: "5xx", label: "5xx" },
+] as const
+
+const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], endpoints: [], tags: [] }
+
+// useDebounced delays propagating a fast-changing value (the id search boxes)
+// so each keystroke doesn't fire a query.
+function useDebounced<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), ms)
+    return () => clearTimeout(id)
+  }, [value, ms])
+  return debounced
+}
+
+// MessagesPage is the request browser: a filter bar (two exact id boxes, four
+// facet dropdowns, a tags AND multi-select, status-class + time-range presets)
+// over a keyset-paged table with Next/Prev. Unlike the dashboard's live feed it
+// does not poll — it's a deliberate browse surface; Refresh re-fetches the
+// current page and the dropdown facets. Rows open the per-request inspector.
 export function MessagesPage() {
   const nav = useNavigate()
+
+  // Filter inputs. Dropdowns/segments apply immediately; the id boxes debounce.
+  const [corrInput, setCorrInput] = useState("")
+  const [sessInput, setSessInput] = useState("")
+  const correlationId = useDebounced(corrInput, 300)
+  const sessionId = useDebounced(sessInput, 300)
+  const [provider, setProvider] = useState("")
+  const [model, setModel] = useState("")
+  const [configuration, setConfiguration] = useState("")
+  const [endpoint, setEndpoint] = useState("")
+  const [statusClass, setStatusClass] = useState("")
+  const [tags, setTags] = useState<string[]>([])
+  const [timeRange, setTimeRange] = useState<TimeRange>("all")
+  const [limit, setLimit] = useState<number>(DEFAULT_PAGE_SIZE)
+
+  // filters holds the pure (input-derived) predicates. The relative time bound
+  // is resolved from timeRange at fetch time, not here — Date.now() is impure
+  // and must not run during render.
+  const filters = useMemo<MessageFilters>(
+    () => ({ correlationId, sessionId, provider, model, configuration, endpoint, statusClass, tags }),
+    [correlationId, sessionId, provider, model, configuration, endpoint, statusClass, tags],
+  )
+
+  const activeCount = useMemo(() => {
+    const f = filters
+    return (
+      [f.correlationId, f.sessionId, f.provider, f.model, f.configuration, f.endpoint, f.statusClass].filter(Boolean)
+        .length +
+      (f.tags?.length ?? 0) +
+      (timeRange !== "all" ? 1 : 0)
+    )
+  }, [filters, timeRange])
+
+  // Data + paging state. cursorsRef holds the keyset cursor that fetches each
+  // page (index 0 = "" = page one); it's navigational, not render state.
+  const [facets, setFacets] = useState<Facets>(EMPTY_FACETS)
   const [entries, setEntries] = useState<MessageEntry[]>([])
+  const [nextCursor, setNextCursor] = useState("")
+  const [pageIndex, setPageIndex] = useState(0)
+  const cursorsRef = useRef<string[]>([""])
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading")
   const [err, setErr] = useState("")
   const [selected, setSelected] = useState<number | null>(null)
+  const [reloadNonce, setReloadNonce] = useState(0)
 
-  const load = useCallback(() => {
-    fetchRecentMessages(LIMIT)
-      .then((r) => {
-        // Newest first for the table.
-        setEntries([...r.entries].reverse())
+  // Any filter, time-range, or page-size change invalidates the cursor stack —
+  // restart at page one. Runs before the fetch effect so it reads the reset
+  // cursor.
+  useEffect(() => {
+    cursorsRef.current = [""]
+    setPageIndex(0)
+  }, [filters, timeRange, limit])
+
+  // Fetch the current page whenever the filters, time range, page, size, or a
+  // manual reload changes. pageIndex moves via Next/Prev within the same set.
+  useEffect(() => {
+    let cancelled = false
+    setStatus("loading")
+    const range = TIME_RANGES.find((r) => r.value === timeRange)
+    const from = range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined
+    fetchMessagesPage({ ...filters, from }, { cursor: cursorsRef.current[pageIndex] ?? "", limit })
+      .then((p) => {
+        if (cancelled) return
+        setEntries(p.entries)
+        setNextCursor(p.nextCursor)
         setStatus("ok")
+        setSelected(null)
       })
       .catch((e) => {
+        if (cancelled) return
         if (e instanceof UnauthorizedError) {
           nav("/login", { replace: true })
           return
         }
         setErr(e instanceof Error ? e.message : String(e))
-        setStatus((s) => (s === "loading" ? "error" : s))
+        setStatus("error")
       })
-  }, [nav])
+    return () => {
+      cancelled = true
+    }
+  }, [filters, timeRange, pageIndex, limit, reloadNonce, nav])
 
+  // Facets load on mount and refresh; they back the dropdowns (cached server
+  // side, so re-fetching on Refresh is cheap).
   useEffect(() => {
-    load()
-    const id = setInterval(load, POLL_MS)
-    return () => clearInterval(id)
-  }, [load])
+    let cancelled = false
+    fetchFacets()
+      .then((f) => {
+        if (!cancelled) setFacets(f)
+      })
+      .catch(() => {
+        /* dropdowns degrade to empty; the table still loads */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [reloadNonce])
+
+  const onNext = () => {
+    if (!nextCursor) return
+    const ci = pageIndex + 1
+    if (ci >= cursorsRef.current.length) cursorsRef.current = [...cursorsRef.current, nextCursor]
+    else cursorsRef.current[ci] = nextCursor
+    setPageIndex(ci)
+  }
+  const onPrev = () => {
+    if (pageIndex > 0) setPageIndex(pageIndex - 1)
+  }
+  const clearFilters = () => {
+    setCorrInput("")
+    setSessInput("")
+    setProvider("")
+    setModel("")
+    setConfiguration("")
+    setEndpoint("")
+    setStatusClass("")
+    setTags([])
+    setTimeRange("all")
+  }
 
   return (
     <div className="flex flex-col gap-3.5">
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Messages</h1>
-          <div className="text-[13px] text-[color:var(--text-3)] mt-1">Recent requests · polled every {POLL_MS / 1000}s</div>
+          <div className="text-[13px] text-[color:var(--text-3)] mt-1">Search, filter, and page through captured requests</div>
         </div>
-        <Button variant="ghost" size="sm" onClick={load} aria-label="Refresh">
+        <Button variant="ghost" size="sm" onClick={() => setReloadNonce((n) => n + 1)} aria-label="Refresh">
           <RefreshCw /> <span className="hidden sm:inline">Refresh</span>
         </Button>
       </div>
 
-      {status === "error" && <div className="rounded-[var(--radius-lg)] border p-5 text-[13px]" style={{ color: "var(--err)", background: "var(--err-bg)" }}>Failed to load messages: <span className="mono">{err}</span></div>}
-
       <PanelCard>
-        <PanelHead title="Recent requests" sub={`${entries.length} shown`} />
+        <div className="flex flex-col gap-2.5 p-3 border-b border-[color:var(--border)]">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            <Input placeholder="Correlation ID" value={corrInput} onChange={(e) => setCorrInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Input placeholder="Session ID" value={sessInput} onChange={(e) => setSessInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} />
+            <Select label="Model" value={model} options={facets.models} onChange={setModel} />
+            <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} />
+            <Select label="Endpoint" value={endpoint} options={facets.endpoints} onChange={setEndpoint} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-44" />
+            <Segmented
+              value={statusClass}
+              onChange={setStatusClass}
+              options={STATUS_CLASSES.map((s) => ({ value: s.value, label: s.label }))}
+            />
+            <Segmented value={timeRange} onChange={setTimeRange} options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))} />
+            {activeCount > 0 && (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <X /> Clear
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <PanelHead
+          title="Requests"
+          sub={`page ${pageIndex + 1} · ${entries.length} shown${activeCount > 0 ? ` · ${activeCount} filter${activeCount > 1 ? "s" : ""}` : ""}`}
+        />
+        {status === "error" && (
+          <div className="m-3 rounded-[var(--radius-lg)] border p-4 text-[13px]" style={{ color: "var(--err)", background: "var(--err-bg)" }}>
+            Failed to load messages: <span className="mono">{err}</span>
+          </div>
+        )}
         <TableScroll>
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
@@ -103,10 +265,26 @@ export function MessagesPage() {
               </tr>
             ))}
             {status === "ok" && entries.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">No requests recorded yet.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No requests match these filters." : "No requests recorded yet."}</td></tr>
             )}
           </tbody>
         </TableScroll>
+
+        <div className="flex items-center gap-3 px-4 py-2.5 border-t border-[color:var(--border)]">
+          <div className="flex items-center gap-1.5 text-[11px] text-[color:var(--text-4)]">
+            <span>Rows</span>
+            <Segmented
+              value={String(limit)}
+              onChange={(v) => setLimit(Number(v))}
+              options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+            />
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-[11px] text-[color:var(--text-4)] mono">page {pageIndex + 1}</span>
+            <Button variant="ghost" size="icon-xs" onClick={onPrev} disabled={pageIndex === 0} aria-label="Previous page"><ChevronLeft /></Button>
+            <Button variant="ghost" size="icon-xs" onClick={onNext} disabled={!nextCursor} aria-label="Next page"><ChevronRight /></Button>
+          </div>
+        </div>
       </PanelCard>
 
       {selected !== null && entries[selected] && (

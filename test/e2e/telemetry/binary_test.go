@@ -516,6 +516,159 @@ func TestE2E_StreamingResponseCaptured(t *testing.T) {
 	}
 }
 
+// messagesPage is the decode target for the filtered/paged browser endpoint.
+type messagesPage struct {
+	Entries    []adminc.MessageEntry `json:"entries"`
+	NextCursor string                `json:"next_cursor"`
+}
+
+// ids pulls the event ids out of a page for set comparisons.
+func ids(p messagesPage) []string {
+	out := make([]string, len(p.Entries))
+	for i, e := range p.Entries {
+		out[i] = e.EventID
+	}
+	return out
+}
+
+func TestE2E_MessageBrowserFilters(t *testing.T) {
+	svc := startService(t)
+
+	// The package shares one Postgres database across tests, so sibling tests'
+	// events are present too. Namespace every filter dimension with an "mbf-"
+	// prefix so exact-match filters return only this test's records, and tag
+	// every seeded record with a shared "mbf-all" so the paging assertions scope
+	// to exactly these four. recordWith defaults are all overridden below.
+	mk := func(id, provider, model, cfg, endpoint, session string, tags []string) cc.Record {
+		r := recordWith(id, `{"q":"hi"}`, `{"a":"yo"}`)
+		r.Provider, r.Model, r.Configuration, r.Endpoint = provider, model, cfg, endpoint
+		r.SessionID = session
+		r.Tags = append([]string{"mbf-all"}, tags...)
+		return r
+	}
+	seed := []cc.Record{
+		mk("mb-1", "mbf-anthropic", "mbf-claude", "mbf-dev", "mbf-messages", "mbf-sess-A", []string{"mbf-eu", "mbf-pii"}),
+		mk("mb-2", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-A", []string{"mbf-eu"}),
+		mk("mb-3", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-B", []string{"mbf-pii"}),
+		mk("mb-4", "mbf-gemini", "mbf-gemini2", "mbf-dev", "mbf-generate", "mbf-sess-B", []string{"mbf-eu", "mbf-pii"}),
+	}
+	for _, r := range seed {
+		if resp := svc.postRecord(t, testGatewayID, testSecret, r); resp.StatusCode != http.StatusOK {
+			t.Fatalf("post %s: status %d", r.CorrelationID, resp.StatusCode)
+		}
+	}
+
+	// Helper: fetch a page and require 200.
+	page := func(query string) messagesPage {
+		var p messagesPage
+		if code := svc.getJSON(t, "/api/v1/messages?"+query, &p); code != http.StatusOK {
+			t.Fatalf("messages?%s: status %d", query, code)
+		}
+		return p
+	}
+	hasExactly := func(p messagesPage, want ...string) {
+		t.Helper()
+		got := ids(p)
+		set := map[string]bool{}
+		for _, g := range got {
+			set[g] = true
+		}
+		if len(got) != len(want) {
+			t.Fatalf("ids = %v, want %v", got, want)
+		}
+		for _, w := range want {
+			if !set[w] {
+				t.Fatalf("ids = %v, missing %s", got, w)
+			}
+		}
+	}
+
+	// Single-dimension filters (namespaced values can't collide with siblings).
+	hasExactly(page("provider=mbf-openai"), "mb-2", "mb-3")
+	hasExactly(page("model=mbf-gemini2"), "mb-4")
+	hasExactly(page("configuration=mbf-prod"), "mb-2", "mb-3")
+	hasExactly(page("protocol=mbf-messages"), "mb-1")
+	hasExactly(page("session_id=mbf-sess-A"), "mb-1", "mb-2")
+	hasExactly(page("correlation_id=mb-3"), "mb-3")
+
+	// Tags AND: only records carrying BOTH mbf-eu and mbf-pii.
+	hasExactly(page("tags=mbf-eu&tags=mbf-pii"), "mb-1", "mb-4")
+	// A single tag is the looser any-of-that-one set.
+	hasExactly(page("tags=mbf-pii"), "mb-1", "mb-3", "mb-4")
+
+	// Combined filters intersect.
+	hasExactly(page("provider=mbf-openai&session_id=mbf-sess-B"), "mb-3")
+
+	// Keyset paging, scoped to this test's four via the shared tag: limit=2 walks
+	// two pages with no overlap, and the cursor clears at the end.
+	p1 := page("tags=mbf-all&limit=2")
+	if len(p1.Entries) != 2 || p1.NextCursor == "" {
+		t.Fatalf("page 1 = %d entries, next=%q", len(p1.Entries), p1.NextCursor)
+	}
+	p2 := page("tags=mbf-all&limit=2&cursor=" + p1.NextCursor)
+	if len(p2.Entries) != 2 {
+		t.Fatalf("page 2 = %d entries", len(p2.Entries))
+	}
+	if p2.NextCursor != "" {
+		// A third page must be empty if a cursor was returned.
+		if p3 := page("tags=mbf-all&limit=2&cursor=" + p2.NextCursor); len(p3.Entries) != 0 {
+			t.Fatalf("page 3 = %d entries, want 0", len(p3.Entries))
+		}
+	}
+	seen := map[string]bool{}
+	for _, id := range append(ids(p1), ids(p2)...) {
+		if seen[id] {
+			t.Fatalf("id %s appeared on two pages", id)
+		}
+		seen[id] = true
+	}
+	if len(seen) != 4 {
+		t.Fatalf("paged ids = %v, want all 4", seen)
+	}
+
+	// Facets enumerate the distinct seeded values (subset assertions — sibling
+	// tests contribute their own dimensions to the same shared store).
+	var facets struct {
+		Providers      []string `json:"providers"`
+		Models         []string `json:"models"`
+		Configurations []string `json:"configurations"`
+		Endpoints      []string `json:"endpoints"`
+		Tags           []string `json:"tags"`
+	}
+	if code := svc.getJSON(t, "/api/v1/facets", &facets); code != http.StatusOK {
+		t.Fatalf("facets status = %d", code)
+	}
+	contains := func(s []string, v string) bool {
+		for _, x := range s {
+			if x == v {
+				return true
+			}
+		}
+		return false
+	}
+	for _, v := range []string{"mbf-anthropic", "mbf-openai", "mbf-gemini"} {
+		if !contains(facets.Providers, v) {
+			t.Errorf("providers %v missing %s", facets.Providers, v)
+		}
+	}
+	if !contains(facets.Endpoints, "mbf-chat") || !contains(facets.Endpoints, "mbf-generate") {
+		t.Errorf("endpoints = %v", facets.Endpoints)
+	}
+	if !contains(facets.Tags, "mbf-eu") || !contains(facets.Tags, "mbf-pii") {
+		t.Errorf("tags = %v", facets.Tags)
+	}
+	// Tags are de-duped: the shared mbf-all appears once despite four records.
+	mbfAll := 0
+	for _, tg := range facets.Tags {
+		if tg == "mbf-all" {
+			mbfAll++
+		}
+	}
+	if mbfAll != 1 {
+		t.Errorf("mbf-all not de-duped in tags (count=%d): %v", mbfAll, facets.Tags)
+	}
+}
+
 func TestE2E_ConsoleServedPublic(t *testing.T) {
 	svc := startService(t)
 	resp, err := http.Get(svc.httpBase + "/") //nolint:noctx // test
