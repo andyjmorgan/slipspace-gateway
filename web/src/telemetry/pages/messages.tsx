@@ -309,11 +309,15 @@ export function MessagesPage() {
   )
 }
 
-function Dash() {
+export function Dash() {
   return <span className="text-[color:var(--text-4)]">—</span>
 }
 
-function Inspector({
+// Inspector is the per-request detail modal (meta grid, captured
+// request/response bodies, GenAI content) rendered inside the shared
+// InspectorModal shell. Exported so the sessions page can reuse it unchanged
+// against a session's MessageEntry rows.
+export function Inspector({
   entry,
   position,
   onClose,

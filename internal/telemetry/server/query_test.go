@@ -302,10 +302,37 @@ func TestFacets_NilSlicesAndError(t *testing.T) {
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestSession(t *testing.T) {
-	q := &fakeQueries{session: []store.RequestEvent{{CorrelationID: "1", SessionID: "s"}}}
+	// EventsBySession returns oldest-first; the handler must preserve that order
+	// and project each event onto the tagged MessageEntry shape (parsed tags,
+	// not raw base64 Detail) with totals over the session.
+	q := &fakeQueries{session: []store.RequestEvent{
+		{CorrelationID: "1", SessionID: "s", Model: "claude-opus-4-8", StatusCode: 200, TokensIn: 100, TokensOut: 10,
+			Detail: []byte(`{"tags":["Claude-Code"],"rules_fired":["tag-claude-code"]}`)},
+		{CorrelationID: "2", SessionID: "s", Model: "claude-haiku-4-5", StatusCode: 404, TokensIn: 5, TokensOut: 0},
+	}}
 	h := newQueryServer(t, q)
-	if resp := get(t, h, "/api/v1/sessions/s", true); resp.Code != http.StatusOK {
+	resp := get(t, h, "/api/v1/sessions/s", true)
+	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d", resp.Code)
+	}
+	var sv adminc.SessionView
+	if err := json.NewDecoder(resp.Body).Decode(&sv); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if sv.SessionID != "s" {
+		t.Errorf("session_id = %q", sv.SessionID)
+	}
+	if sv.Totals.Requests != 2 || sv.Totals.Errors != 1 || sv.Totals.TokensIn != 105 || sv.Totals.TokensOut != 10 {
+		t.Errorf("totals = %+v", sv.Totals)
+	}
+	if len(sv.Requests) != 2 || sv.Requests[0].CorrelationID != "1" || sv.Requests[1].CorrelationID != "2" {
+		t.Fatalf("requests not oldest-first: %+v", sv.Requests)
+	}
+	if len(sv.Requests[0].Tags) != 1 || sv.Requests[0].Tags[0] != "Claude-Code" {
+		t.Errorf("tags not parsed: %+v", sv.Requests[0].Tags)
+	}
+	if len(sv.Requests[0].RulesMatched) != 1 || sv.Requests[0].RulesMatched[0].RuleName != "tag-claude-code" {
+		t.Errorf("rules not parsed: %+v", sv.Requests[0].RulesMatched)
 	}
 	// empty -> 404
 	hEmpty := newQueryServer(t, &fakeQueries{})

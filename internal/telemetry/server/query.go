@@ -169,7 +169,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, stitch.BuildSessionView(id, events))
+	writeJSON(w, http.StatusOK, mapSession(id, events))
 }
 
 // queryError logs a query failure and returns 500 without leaking detail.

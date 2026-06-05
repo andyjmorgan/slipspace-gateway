@@ -152,6 +152,42 @@ type MessagesRecentResponse struct {
 	Entries []MessageEntry `json:"entries"`
 }
 
+// SessionTotals is the aggregate rollup over one session's requests, shown
+// in the session view's header tiles. An error is any request with a
+// client-facing status >= 400. Latency percentiles and cached-token sums are
+// intentionally absent — the session view derives those client-side from the
+// per-request Requests slice, so no extra aggregation query is needed.
+type SessionTotals struct {
+	// Requests is the number of requests in the session.
+	Requests int `json:"requests"`
+
+	// Errors is the count of requests with status_code >= 400.
+	Errors int `json:"errors"`
+
+	// TokensIn / TokensOut sum the per-request usage across the session.
+	TokensIn int64 `json:"tokens_in"`
+
+	TokensOut int64 `json:"tokens_out"`
+}
+
+// SessionView is the JSON shape returned by GET /api/v1/sessions/{id}: every
+// request in the session as a rich MessageEntry plus the aggregate Totals.
+//
+// Requests are oldest-first so the session graphs (cumulative tokens, the
+// per-turn timeline) can plot the series directly; the messages table reverses
+// to newest-first client-side. Same per-row shape as the messages browser, so
+// the session view reuses the messages row + GenAI inspector unchanged.
+type SessionView struct {
+	// SessionID is the conversation/bundle id these requests share.
+	SessionID string `json:"session_id"`
+
+	// Totals is the header-tile rollup over Requests.
+	Totals SessionTotals `json:"totals"`
+
+	// Requests is every request in the session, oldest-first.
+	Requests []MessageEntry `json:"requests"`
+}
+
 // MessageBodyDetail is the JSON shape returned by
 // GET /admin/api/v1/messages/{event_id}/body. Holds the captured
 // request and response bodies plus, for streamed responses, the
