@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { createPortal } from "react-dom"
 import { useNavigate } from "react-router"
-import { ChevronDown, ChevronRight, ChevronUp, Layers, Pause, Play, Trash2, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Layers, Pause, Play, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PanelCard } from "@/components/atoms/card"
+import { InspectorModal } from "@/components/atoms/inspector-modal"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { fmt } from "@/lib/fmt"
@@ -542,12 +542,11 @@ function formatSpan(ms: number): string {
   return `${m}m ${Math.round(s % 60)}s`
 }
 
-// MessageModal renders the per-request detail in a centered overlay
-// instead of pushed below the table — keeps the detail visible while
-// new rows stream in. Up / Down buttons (and ArrowUp / ArrowDown keys)
-// scan through entries without re-clicking from the table; Up = newer
-// (lower index in `entries`, which is reversed-newest-first), Down =
-// older. Esc + backdrop click + X close.
+// MessageModal renders the per-request detail in the shared InspectorModal
+// overlay instead of pushed below the table — keeps the detail visible while
+// new rows stream in. Up / Down buttons (and ArrowUp / ArrowDown keys) scan
+// through entries without re-clicking from the table; Up = newer (lower index
+// in `entries`, which is reversed-newest-first), Down = older.
 function MessageModal({
   entries,
   selectedId,
@@ -572,22 +571,6 @@ function MessageModal({
     if (index >= 0 && index < entries.length - 1) onSelect(entries[index + 1].event_id)
   }, [entries, index, onSelect])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose()
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault()
-        goNewer()
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault()
-        goOlder()
-      }
-    }
-    document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
-  }, [goNewer, goOlder, onClose])
-
   // If the selected entry rolled off the ring while the modal was
   // open, close rather than render nothing — keeps the SPA honest
   // about why the detail disappeared.
@@ -600,88 +583,56 @@ function MessageModal({
   const canNewer = index > 0
   const canOlder = index >= 0 && index < entries.length - 1
 
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Request detail"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
-      onClick={onClose}
+  return (
+    <InspectorModal
+      onClose={onClose}
+      onPrev={canNewer ? goNewer : undefined}
+      onNext={canOlder ? goOlder : undefined}
+      prevTitle="Newer (↑)"
+      nextTitle="Older (↓)"
+      header={
+        <>
+          <div className="text-[13px] font-medium">Request detail</div>
+          <div className="mono text-[11.5px] text-[color:var(--text-3)] truncate">
+            {entry.correlation_id ?? entry.event_id}
+          </div>
+          <div className="mono mt-0.5 text-[10.5px] text-[color:var(--text-4)]">
+            {index + 1} of {entries.length}
+          </div>
+        </>
+      }
     >
-      <div
-        className="relative flex w-[92vw] max-w-7xl h-[92vh] flex-col rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex flex-none items-start gap-2">
-          <div className="flex-1 min-w-0">
-            <div className="text-[13px] font-medium">Request detail</div>
-            <div className="mono text-[11.5px] text-[color:var(--text-3)] truncate">
-              {entry.correlation_id ?? entry.event_id}
-            </div>
-            <div className="mono mt-0.5 text-[10.5px] text-[color:var(--text-4)]">
-              {index + 1} of {entries.length}
-            </div>
-          </div>
-          <div className="flex flex-none items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={goNewer}
-              disabled={!canNewer}
-              aria-label="Newer entry (Arrow Up)"
-              title="Newer (↑)"
-            >
-              <ChevronUp />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={goOlder}
-              disabled={!canOlder}
-              aria-label="Older entry (Arrow Down)"
-              title="Older (↓)"
-            >
-              <ChevronDown />
-            </Button>
-            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close" title="Close (Esc)">
-              <X />
-            </Button>
-          </div>
+      <dl className="grid flex-none grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-3">
+        <Field label="Status" value={String(entry.status_code)} />
+        <Field label="Duration" value={`${entry.duration_ms} ms`} />
+        <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
+        <Field label="Provider" value={entry.provider ?? "—"} />
+        <Field label="Method" value={entry.method ?? "—"} />
+        <Field label="Endpoint" value={entry.endpoint ?? "—"} />
+        <Field label="Model" value={entry.model ?? "—"} />
+        <Field label="Configuration" value={entry.configuration ?? "—"} />
+        <Field label="Session" value={entry.session_id ?? "—"} />
+        <Field label="Session source" value={entry.session_id_source ?? "—"} />
+        <Field label="At" value={entry.at} />
+      </dl>
+      {entry.upstream_error && (
+        <div className="mt-3 flex-none rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
+          <div className="mono text-[11px] uppercase text-[color:var(--err)]">upstream error</div>
+          <div className="mono mt-1 text-[color:var(--text-2)]">{entry.upstream_error}</div>
         </div>
-
-        <dl className="grid flex-none grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-3">
-          <Field label="Status" value={String(entry.status_code)} />
-          <Field label="Duration" value={`${entry.duration_ms} ms`} />
-          <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
-          <Field label="Provider" value={entry.provider ?? "—"} />
-          <Field label="Method" value={entry.method ?? "—"} />
-          <Field label="Endpoint" value={entry.endpoint ?? "—"} />
-          <Field label="Model" value={entry.model ?? "—"} />
-          <Field label="Configuration" value={entry.configuration ?? "—"} />
-          <Field label="Session" value={entry.session_id ?? "—"} />
-          <Field label="Session source" value={entry.session_id_source ?? "—"} />
-          <Field label="At" value={entry.at} />
-        </dl>
-        {entry.upstream_error && (
-          <div className="mt-3 flex-none rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
-            <div className="mono text-[11px] uppercase text-[color:var(--err)]">upstream error</div>
-            <div className="mono mt-1 text-[color:var(--text-2)]">{entry.upstream_error}</div>
-          </div>
-        )}
-        {entry.rules_matched && entry.rules_matched.length > 0 && (
-          <div className="flex-none">
-            <RulesList rules={entry.rules_matched} />
-          </div>
-        )}
-        {entry.attempts && entry.attempts.length > 0 && (
-          <div className="flex-none">
-            <AttemptsList policy={entry.policy_ref} attempts={entry.attempts} />
-          </div>
-        )}
-        <BodyDetail eventId={entry.event_id} streaming={!!entry.streaming} />
-      </div>
-    </div>,
-    document.body,
+      )}
+      {entry.rules_matched && entry.rules_matched.length > 0 && (
+        <div className="flex-none">
+          <RulesList rules={entry.rules_matched} />
+        </div>
+      )}
+      {entry.attempts && entry.attempts.length > 0 && (
+        <div className="flex-none">
+          <AttemptsList policy={entry.policy_ref} attempts={entry.attempts} />
+        </div>
+      )}
+      <BodyDetail eventId={entry.event_id} streaming={!!entry.streaming} />
+    </InspectorModal>
   )
 }
 
