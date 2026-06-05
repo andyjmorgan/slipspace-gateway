@@ -38,6 +38,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/unmapped"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/spool"
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/pusher"
 )
 
 // modelLabelMaxLen caps the length of the `model` metric label value to
@@ -85,6 +86,13 @@ type reporterFactory struct {
 	liveFeed  *livefeed.Ring
 	bodyStore *livefeed.BodyStore
 
+	// pushers holds one real-time pusher per webhook connector, keyed by
+	// connector name. A webhook binding routes its evaluated record to the
+	// matching pusher (channel 3: per-record HMAC POST, non-spooled,
+	// drop-on-full) instead of the disk spool. Empty when no webhook
+	// connectors are configured.
+	pushers map[string]*pusher.Pusher
+
 	// tracer emits the per-request span at completion. May be nil (no
 	// OTLP endpoint configured, or test contexts); emitTrace no-ops then.
 	tracer trace.Tracer
@@ -111,7 +119,7 @@ type reporterFactory struct {
 	seq        atomic.Uint64
 }
 
-func newReporterFactory(s *spool.Spool, store *config.Store, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool, caps contractsconfig.ResolvedContentCaps) *reporterFactory {
+func newReporterFactory(s *spool.Spool, store *config.Store, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool, caps contractsconfig.ResolvedContentCaps, pushers map[string]*pusher.Pusher) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -130,6 +138,7 @@ func newReporterFactory(s *spool.Spool, store *config.Store, logger *slog.Logger
 		eventLogger:    eventLogger,
 		captureContent: captureContent,
 		caps:           caps,
+		pushers:        pushers,
 		instanceID:     hostname,
 	}
 }
@@ -412,6 +421,11 @@ func (r *reporterRun) recordPerRequestMetrics(ctx context.Context, ev events.Req
 	if r.factory.meters.RequestDuration != nil {
 		r.factory.meters.RequestDuration.Record(ctx, float64(ev.DurationMs)/1000.0, attrs)
 	}
+	if r.factory.meters.ConfigHitsTotal != nil && r.configuration != "" {
+		r.factory.meters.ConfigHitsTotal.Add(ctx, 1, metric.WithAttributes(
+			attribute.String(observability.AttrSluiceConfiguration, r.configuration),
+		))
+	}
 	r.recordUnmappedFields(ctx, ev)
 }
 
@@ -493,6 +507,7 @@ func (r *reporterRun) emitUnmappedFields(ctx context.Context, counter metric.Int
 //  5. Emit the structured request-completed log line.
 func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Request, ttfbMs int64) {
 	matches := r.drainRuleMatches(ctx, ev.CorrelationID)
+	r.recordRuleFired(ctx, matches)
 	entryID := r.appendLiveFeed(ev, matches)
 	r.captureBody(ctx, entryID, ev)
 	r.enqueueRecord(ctx, ev, matches)
@@ -514,16 +529,15 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 	)
 }
 
-// enqueueRecord builds a contracts/connector.Record from the
-// captured request/response + the rule + token snapshots, and
-// evaluates each binding the resolved configuration declares:
-// sampling, filter, oversize. Records that survive land on the
-// connector's spool track. No-ops when the spool is nil (no
-// connectors configured) or the configuration is unknown.
+// enqueueRecord builds a contracts/connector.Record from the captured
+// request/response + the rule + token snapshots and routes it to each
+// connector binding the resolved configuration declares. The record is built
+// once and shared; every binding runs the evaluator independently
+// (sampling / filter / oversize), then dispatches by connector type:
+// s3 / azure_blob land on the durable disk spool, webhook on the real-time
+// pusher (channel 3, non-spooled, drop-on-full). No-ops when the
+// configuration declares no bindings.
 func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matches []events.RuleMatched) {
-	if r.factory.spool == nil {
-		return
-	}
 	if r.factory.store == nil {
 		return
 	}
@@ -542,23 +556,48 @@ func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matc
 			connectorType = c.Type
 		}
 		modified, ship, ov := evaluateBinding(rec, b, connectorType)
-		if ov.Triggered {
-			msg := "connector record body exceeded max_body_bytes; bodies stripped"
-			if ov.Dropped {
-				msg = "connector record body exceeded max_body_bytes; record dropped"
-			}
-			observability.FromContext(ctx).Error(msg,
-				"connector", b.Connector,
-				"connector_type", connectorType,
-				"max_body_bytes", ov.CapBytes,
-				"body_bytes", ov.BodyBytes,
-			)
-		}
+		r.logOversize(ctx, ov, b.Connector, connectorType)
 		if !ship {
 			continue
 		}
-		r.factory.spool.Enqueue(modified, b.Connector)
+		r.dispatchRecord(modified, b.Connector, connectorType)
 	}
+}
+
+// dispatchRecord routes one evaluated record to its connector's sink: the
+// webhook type to its real-time pusher (non-blocking, drop-on-full — a full
+// queue is telemetry loss, never a request-path stall, invariant #2), every
+// other (s3 / azure_blob) to the durable disk spool. A binding whose sink is
+// absent (spool disabled, or no pusher built for the connector) is a no-op.
+func (r *reporterRun) dispatchRecord(rec cc.Record, connector, connectorType string) {
+	if connectorType == contractsconfig.ConnectorTypeWebhook {
+		if p := r.factory.pushers[connector]; p != nil {
+			p.Enqueue(rec)
+		}
+		return
+	}
+	if r.factory.spool != nil {
+		r.factory.spool.Enqueue(rec, connector)
+	}
+}
+
+// logOversize emits the operator breadcrumb when a binding's body cap
+// stripped bodies or dropped a record — the capping is silent on the wire,
+// so an operator chasing a destination missing its bodies needs the log.
+func (r *reporterRun) logOversize(ctx context.Context, ov oversizeOutcome, sink, sinkType string) {
+	if !ov.Triggered {
+		return
+	}
+	msg := "connector record body exceeded max_body_bytes; bodies stripped"
+	if ov.Dropped {
+		msg = "connector record body exceeded max_body_bytes; record dropped"
+	}
+	observability.FromContext(ctx).Error(msg,
+		"connector", sink,
+		"connector_type", sinkType,
+		"max_body_bytes", ov.CapBytes,
+		"body_bytes", ov.BodyBytes,
+	)
 }
 
 // buildRecord maps the in-flight reporter state into the connector
@@ -686,6 +725,23 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 	}
 
 	return rec
+}
+
+// recordRuleFired bumps sluice.rule.fired once per drained rule match,
+// labelled rule_name + configuration. This is the channel-2 meter the
+// central telemetry service rolls up for the rules-fired dashboard panel
+// (invariant #4) — the same fact also rides the Record's rule chain
+// (channel 3) for the per-request inspector, at a different altitude.
+func (r *reporterRun) recordRuleFired(ctx context.Context, matches []events.RuleMatched) {
+	if r.factory.meters == nil || r.factory.meters.RuleFiredTotal == nil {
+		return
+	}
+	for _, m := range matches {
+		r.factory.meters.RuleFiredTotal.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("rule_name", m.RuleName),
+			attribute.String(observability.AttrSluiceConfiguration, r.configuration),
+		))
+	}
 }
 
 // drainRuleMatches merges the observer's OnRuleMatched buffer with the
@@ -828,8 +884,14 @@ func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 	if r.factory.meters == nil || r.factory.meters.TagsAppliedTotal == nil {
 		return
 	}
+	// Carry the configuration alongside the tag so the central telemetry
+	// service can roll up tag applications per configuration (the tags-fired
+	// dashboard panel) without the gateway's tag→configuration map.
 	for _, tag := range state.Tags {
-		r.factory.meters.TagsAppliedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("tag", tag)))
+		r.factory.meters.TagsAppliedTotal.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("tag", tag),
+			attribute.String(observability.AttrSluiceConfiguration, r.configuration),
+		))
 	}
 }
 
@@ -959,12 +1021,17 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 	op := observability.OperationNameForEndpoint(ev.Endpoint)
 	model := sanitiseModelLabel(ev.Model)
 
+	// The gen_ai span carries GenAI semconv only (model / provider /
+	// operation / usage / duration) plus the standard server.* and HTTP
+	// status. The sole Sluice-specific attribute permitted is
+	// correlation_id, the stitch join key — every other gateway fact
+	// (endpoint, configuration, rules, attempts, api-key, ...) rides the
+	// Record (channel 3), not the span. See the telemetry design note's
+	// "Channel boundary": no other sluice.* is smuggled onto a gen_ai span.
 	attrs := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIOperationName, op),
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),
 		attribute.String(observability.AttrGenAIRequestModel, model),
-		attribute.String(observability.AttrSluiceEndpoint, ev.Endpoint),
-		attribute.String(observability.AttrSluiceConfiguration, r.configuration),
 		attribute.Int(observability.AttrHTTPResponseStatusCode, ev.StatusCode),
 	}
 	attrs = append(attrs, r.serverAttrs()...)

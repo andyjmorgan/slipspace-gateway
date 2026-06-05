@@ -60,6 +60,23 @@ const (
 
 	MetricTagsAppliedTotal    = "gateway.tags.applied.total"
 	MetricUnmappedFieldsTotal = "gateway.unmapped_fields.total"
+
+	// MetricRuleFiredTotal counts rules that fired on a request, labelled
+	// by rule_name + configuration. Distinct from gateway.rule.matches.total
+	// (evaluator-emitted, labelled rule_name/rule_id/terminated/action_count
+	// for engine introspection): this Sluice-namespaced counter carries the
+	// configuration so the central telemetry service can roll up
+	// "rule X fired N times under configuration Y" without the gateway's
+	// rule→configuration map — it is the meter the rules-fired dashboard
+	// panel reads (telemetry design channel 2, invariant #4: dashboards
+	// read meters, never record scans).
+	MetricRuleFiredTotal = "sluice.rule.fired"
+
+	// MetricConfigHitsTotal counts requests resolved to a configuration,
+	// labelled by configuration. The configuration-hit aggregate the
+	// dashboard's by-configuration panel reads from the meter rollup rather
+	// than scanning the per-request record store.
+	MetricConfigHitsTotal     = "sluice.config.hit"
 	MetricConfigReloadTotal   = "gateway.config_reload.total"
 	MetricUpstreamErrorsTotal = "gateway.upstream_errors.total"
 	MetricErrorResponsesTotal = "gateway.error_responses.total"
@@ -212,6 +229,16 @@ type Meters struct {
 
 	ActiveRequests metric.Int64UpDownCounter
 
+	// RuleFiredTotal counts rules that fired, labelled rule_name +
+	// configuration. Emitted by the reporter (where the configuration is
+	// resolved) so the central telemetry service can roll up rule hits per
+	// configuration without the gateway's rule→configuration map.
+	RuleFiredTotal metric.Int64Counter
+
+	// ConfigHitsTotal counts requests per resolved configuration. Backs the
+	// by-configuration dashboard aggregate via the meter rollup.
+	ConfigHitsTotal metric.Int64Counter
+
 	// RuleMatchesTotal counts rules that matched a request. Labels:
 	// rule_name, rule_id (optional), terminated, action_count.
 	RuleMatchesTotal metric.Int64Counter
@@ -326,6 +353,8 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricConfigReloadTotal, "Configuration reload attempts.", "1", &m.ConfigReloadTotal},
 		{MetricUpstreamErrorsTotal, "Errors returned by upstream providers.", "1", &m.UpstreamErrorsTotal},
 		{MetricErrorResponsesTotal, "JSON error responses written by the gateway middleware chain.", "1", &m.ErrorResponsesTotal},
+		{MetricRuleFiredTotal, "Rules that fired on a request, labelled by rule_name and configuration. Backs the telemetry rules-fired dashboard rollup.", "1", &m.RuleFiredTotal},
+		{MetricConfigHitsTotal, "Requests resolved to a configuration, labelled by configuration. Backs the telemetry by-configuration dashboard rollup.", "1", &m.ConfigHitsTotal},
 		{MetricRuleMatchesTotal, "Rules that matched on a request.", "1", &m.RuleMatchesTotal},
 		{MetricRuleErrorsTotal, "Action execution failures during rule evaluation.", "1", &m.RuleErrorsTotal},
 		{MetricRewriteAppliedTotal, "Body-field mutations that changed the request body, by action_type.", "1", &m.RewriteAppliedTotal},

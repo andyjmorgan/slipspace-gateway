@@ -2,6 +2,7 @@ package pusher
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,16 +12,27 @@ import (
 	"testing"
 	"time"
 
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/ingest"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/registry"
-	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-func sampleItem() Item {
-	return Item{CorrelationID: "c1", Kind: KindRequestBody, InstanceID: "i1", Seq: 1, TsNs: 99, Body: []byte(`{"k":"v"}`)}
+func sampleRecord() cc.Record {
+	return cc.Record{
+		V:             1,
+		ID:            "r1",
+		CorrelationID: "c1",
+		InstanceID:    "i1",
+		Seq:           1,
+		TsNs:          99,
+		Provider:      "openai",
+		Endpoint:      "chat",
+		Configuration: "prod",
+		SchemaVersion: cc.SchemaVersion,
+		Request:       cc.RequestPart{Method: "POST", Body: json.RawMessage(`{"k":"v"}`)},
+	}
 }
 
 // drain closes the pusher with a generous deadline.
@@ -31,31 +43,41 @@ func drain(t *testing.T, p *Pusher) {
 	p.Close(ctx)
 }
 
-// captureStore records payloads the webhook handler upserts.
-type captureStore struct {
+// recordReceiver is a minimal stand-in for the telemetry record-ingest
+// endpoint: it verifies the HMAC against a registry (the real trust check)
+// and decodes the bare cc.Record body. It proves the pusher's signing +
+// wire shape without coupling the pusher to the ingest package's storage.
+type recordReceiver struct {
+	reg  *registry.Registry
 	mu   sync.Mutex
-	last store.Payload
+	last cc.Record
 	n    int
 }
 
-func (c *captureStore) UpsertPayload(_ context.Context, p store.Payload) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.last = p
-	c.n++
-	return nil
+func (rr *recordReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	if err := rr.reg.Verify(r.Header.Get(headerGatewayID), body, r.Header.Get(headerSignature)); err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	var rec cc.Record
+	if err := json.Unmarshal(body, &rec); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	rr.mu.Lock()
+	rr.last = rec
+	rr.n++
+	rr.mu.Unlock()
+	w.WriteHeader(http.StatusAccepted)
 }
 
-// TestPusher_EndToEnd proves the gateway pusher's signing matches the telemetry
-// service's webhook handler + registry verification, end to end over httptest.
+// TestPusher_EndToEnd proves the gateway pusher's signing matches registry
+// verification and the bare-Record wire shape, end to end over httptest.
 func TestPusher_EndToEnd(t *testing.T) {
 	const gwID, secret = "gw-a", "shhh"
-	st := &captureStore{}
-	handler := ingest.NewWebhookHandler(
-		registry.New([]config.Gateway{{ID: gwID, HMACSecret: secret}}),
-		st, discard(),
-	)
-	srv := httptest.NewServer(handler)
+	rr := &recordReceiver{reg: registry.New([]config.Gateway{{ID: gwID, HMACSecret: secret}})}
+	srv := httptest.NewServer(rr)
 	defer srv.Close()
 
 	p := New(Options{
@@ -65,7 +87,7 @@ func TestPusher_EndToEnd(t *testing.T) {
 		Workers:   1,
 		Logger:    discard(),
 	})
-	if !p.Enqueue(sampleItem()) {
+	if !p.Enqueue(sampleRecord()) {
 		t.Fatal("Enqueue should accept")
 	}
 	drain(t, p)
@@ -73,31 +95,31 @@ func TestPusher_EndToEnd(t *testing.T) {
 	if p.Sent() != 1 {
 		t.Fatalf("sent = %d, want 1 (failed=%d)", p.Sent(), p.Failed())
 	}
-	if st.n != 1 || st.last.CorrelationID != "c1" || st.last.GatewayID != gwID {
-		t.Fatalf("stored = %+v (n=%d)", st.last, st.n)
+	rr.mu.Lock()
+	defer rr.mu.Unlock()
+	if rr.n != 1 || rr.last.CorrelationID != "c1" || rr.last.Provider != "openai" {
+		t.Fatalf("received = %+v (n=%d)", rr.last, rr.n)
 	}
 }
 
 // TestPusher_RejectedSignature confirms a wrong secret is rejected by the
-// service and counted as failed, never as sent.
+// receiver and counted as failed, never as sent.
 func TestPusher_RejectedSignature(t *testing.T) {
-	st := &captureStore{}
-	handler := ingest.NewWebhookHandler(
-		registry.New([]config.Gateway{{ID: "gw-a", HMACSecret: "right"}}),
-		st, discard(),
-	)
-	srv := httptest.NewServer(handler)
+	rr := &recordReceiver{reg: registry.New([]config.Gateway{{ID: "gw-a", HMACSecret: "right"}})}
+	srv := httptest.NewServer(rr)
 	defer srv.Close()
 
 	p := New(Options{Endpoint: srv.URL, GatewayID: "gw-a", Secret: "wrong", Workers: 1, Logger: discard()})
-	p.Enqueue(sampleItem())
+	p.Enqueue(sampleRecord())
 	drain(t, p)
 
 	if p.Sent() != 0 || p.Failed() != 1 {
 		t.Fatalf("sent=%d failed=%d, want 0/1", p.Sent(), p.Failed())
 	}
-	if st.n != 0 {
-		t.Fatal("nothing should be stored on bad signature")
+	rr.mu.Lock()
+	defer rr.mu.Unlock()
+	if rr.n != 0 {
+		t.Fatal("nothing should be received on bad signature")
 	}
 }
 
@@ -123,7 +145,7 @@ func TestPusher_DropsWhenFull(t *testing.T) {
 	// the only free capacity.
 	deadline := time.After(2 * time.Second)
 	for doer.calls.Load() == 0 {
-		p.Enqueue(sampleItem())
+		p.Enqueue(sampleRecord())
 		select {
 		case <-deadline:
 			t.Fatal("worker never entered Do")
@@ -132,10 +154,10 @@ func TestPusher_DropsWhenFull(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	// Worker is blocked; fill the 1-slot buffer then overflow.
-	p.Enqueue(sampleItem()) // fills buffer (best effort)
+	p.Enqueue(sampleRecord()) // fills buffer (best effort)
 	got := 0
 	for range 50 {
-		if !p.Enqueue(sampleItem()) {
+		if !p.Enqueue(sampleRecord()) {
 			got++
 		}
 	}
@@ -152,7 +174,7 @@ func TestPusher_DropsWhenFull(t *testing.T) {
 func TestPusher_CloseTimeout(t *testing.T) {
 	doer := &blockingDoer{release: make(chan struct{})}
 	p := New(Options{Endpoint: "http://x", Secret: "s", Workers: 1, Buffer: 4, Client: doer, Logger: discard()})
-	p.Enqueue(sampleItem())
+	p.Enqueue(sampleRecord())
 	// Worker is stuck in Do; Close with a tiny deadline must return (timeout
 	// path), not hang.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -170,7 +192,7 @@ func (errDoer) Do(*http.Request) (*http.Response, error) { return nil, io.ErrUne
 func TestSend_ErrorBranches(t *testing.T) {
 	// transport error
 	p := New(Options{Endpoint: "http://x", Secret: "s", Client: errDoer{}, Logger: discard()})
-	p.send(sampleItem())
+	p.send(sampleRecord())
 	if p.Failed() != 1 {
 		t.Errorf("transport: failed = %d, want 1", p.Failed())
 	}
@@ -178,7 +200,7 @@ func TestSend_ErrorBranches(t *testing.T) {
 
 	// marshal error: an invalid json.RawMessage body makes json.Marshal fail.
 	p2 := New(Options{Endpoint: "http://x", Secret: "s", Client: errDoer{}, Logger: discard()})
-	p2.send(Item{CorrelationID: "c", Body: []byte("{not json")})
+	p2.send(cc.Record{CorrelationID: "c", Request: cc.RequestPart{Body: json.RawMessage("{not json")}})
 	if p2.Failed() != 1 {
 		t.Errorf("marshal: failed = %d, want 1", p2.Failed())
 	}
@@ -186,7 +208,7 @@ func TestSend_ErrorBranches(t *testing.T) {
 
 	// request-build error: a control char in the URL makes http.NewRequest fail.
 	p3 := New(Options{Endpoint: "http://\x7f\n", Secret: "s", Client: errDoer{}, Logger: discard()})
-	p3.send(sampleItem())
+	p3.send(sampleRecord())
 	if p3.Failed() != 1 {
 		t.Errorf("build: failed = %d, want 1", p3.Failed())
 	}

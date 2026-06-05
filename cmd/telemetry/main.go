@@ -88,16 +88,16 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		log.Info("store ready", "schema_version", v)
 	}
 
-	// Ingest surfaces: HMAC webhook (HTTP) for large payloads, OTLP gRPC for
-	// the gen_ai + sluice telemetry feeds.
+	// Ingest surfaces: HMAC Record webhook (HTTP) for the full per-request
+	// digital record, OTLP gRPC for the gen_ai telemetry feed + sluice meters.
 	reg := registry.New(cfg.Gateways)
-	webhook := ingest.NewWebhookHandler(reg, st, log)
+	recordIngest := ingest.NewRecordHandler(reg, st, log)
 	otlp := ingest.NewOTLPServer(
 		ingest.NewTraceReceiver(st, log),
 		ingest.NewMetricsReceiver(st, log),
 	)
 
-	httpSrv := server.New(cfg.Console, st, st, webhook, log).HTTPServer(cfg.HTTPBind)
+	httpSrv := server.New(cfg.Console, st, st, recordIngest, log).HTTPServer(cfg.HTTPBind)
 
 	errCh := make(chan error, 1)
 	safego.Go(ctx, "telemetry.serve.http", log, nil, func() {

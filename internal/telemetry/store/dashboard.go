@@ -78,8 +78,11 @@ type DashboardProviderHealth struct {
 	TotalErrors int64
 }
 
-// DashboardSummary is the full rollup the console dashboard renders. All
-// aggregation runs in Postgres over request_events.
+// DashboardSummary is the full rollup the console dashboard renders. Most
+// panels aggregate request_events (the lean per-request index); the fired-row
+// panels (RulesFired / TagsFired) aggregate the sluice meter rollups in
+// metric_points instead (invariant #4: dashboards read meters, never record
+// scans).
 type DashboardSummary struct {
 	Totals          DashboardTotals
 	Latency         DashboardLatency
@@ -115,7 +118,7 @@ func (s *Store) QueryDashboardSummary(ctx context.Context, p DashboardParams) (D
 	if out.ByModel, err = s.queryDashModel(ctx, p); err != nil {
 		return DashboardSummary{}, err
 	}
-	if out.RulesFired, err = s.queryDashFired(ctx, p, "rules_fired"); err != nil {
+	if out.RulesFired, err = s.queryDashFired(ctx, p, "rules"); err != nil {
 		return DashboardSummary{}, err
 	}
 	if out.TagsFired, err = s.queryDashFired(ctx, p, "tags"); err != nil {
@@ -283,31 +286,65 @@ ORDER BY COUNT(*) DESC, model`
 	return out, rows.Err()
 }
 
-// dashFiredArrayPaths is the allowlist for the detail JSONB array a fired-row
-// aggregate unrolls.
-var dashFiredArrayPaths = map[string]string{
-	"rules_fired": "rules_fired",
-	"tags":        "tags",
+// Meter names + label keys backing the fired-row panels. These mirror the
+// gateway's sluice.* counters (internal/observability) — a wire contract, like
+// the payload Kind* constants. The configuration rides every sluice meter as
+// the OTel attribute "sluice.configuration"; the per-row key is the meter's own
+// dimension (rule_name / tag).
+const (
+	meterRuleFired     = "sluice.rule.fired"
+	meterTagsApplied   = "gateway.tags.applied.total"
+	labelConfiguration = "sluice.configuration"
+)
+
+// dashFiredMeter pairs a panel's backing meter name with its per-row key label.
+type dashFiredMeter struct {
+	metric   string
+	keyLabel string
 }
 
-func (s *Store) queryDashFired(ctx context.Context, p DashboardParams, field string) ([]DashboardFiredRow, error) {
-	path, ok := dashFiredArrayPaths[field]
+// dashFiredMeters is the allowlist for the meter-backed fired-row panels. The
+// keyLabel is interpolated into SQL, so it MUST come from this fixed set, never
+// from request input.
+var dashFiredMeters = map[string]dashFiredMeter{
+	"rules": {metric: meterRuleFired, keyLabel: "rule_name"},
+	"tags":  {metric: meterTagsApplied, keyLabel: "tag"},
+}
+
+// queryDashFired aggregates a fired-row panel from the sluice meter rollups in
+// metric_points — NOT from a request_events.detail scan (invariant #4:
+// dashboards read meters, never record scans). The gateway exports these
+// counters with delta temporality, so SUM(value) over the window is the exact
+// count. Only the window + configuration filter apply; the meters carry no
+// provider/model/status dimension, so those filters don't narrow these panels.
+func (s *Store) queryDashFired(ctx context.Context, p DashboardParams, panel string) ([]DashboardFiredRow, error) {
+	m, ok := dashFiredMeters[panel]
 	if !ok {
-		return nil, fmt.Errorf("store: unknown fired field %q", field)
+		return nil, fmt.Errorf("store: unknown fired panel %q", panel)
 	}
-	where, args := dashWindow(p)
+	where := []string{
+		"metric_name = $1",
+		"observed_at >= $2",
+		"observed_at < $3",
+		fmt.Sprintf("labels->>'%s' IS NOT NULL", m.keyLabel),
+		fmt.Sprintf("labels->>'%s' <> ''", m.keyLabel),
+	}
+	args := []any{m.metric, p.From, p.To}
+	if p.Filter.Configuration != "" {
+		args = append(args, p.Filter.Configuration)
+		where = append(where, fmt.Sprintf("labels->>'%s' = $%d", labelConfiguration, len(args)))
+	}
 	q := fmt.Sprintf(`
-SELECT elem AS key, COUNT(*) AS cnt,
-  COALESCE(array_agg(DISTINCT configuration) FILTER (WHERE configuration <> ''), ARRAY[]::text[]) AS configs
-FROM request_events,
-  LATERAL jsonb_array_elements_text(COALESCE(detail->'%s', '[]'::jsonb)) AS elem
+SELECT labels->>'%s' AS key, COALESCE(SUM(value), 0)::bigint AS cnt,
+  COALESCE(array_agg(DISTINCT labels->>'%s') FILTER (WHERE labels->>'%s' IS NOT NULL AND labels->>'%s' <> ''), ARRAY[]::text[]) AS configs
+FROM metric_points
 WHERE %s
-GROUP BY elem
-ORDER BY cnt DESC, key`, path, strings.Join(where, " AND "))
+GROUP BY key
+ORDER BY cnt DESC, key`, m.keyLabel, labelConfiguration, labelConfiguration, labelConfiguration, strings.Join(where, " AND "))
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("store: dashboard fired %s: %w", field, err)
+		return nil, fmt.Errorf("store: dashboard fired %s: %w", panel, err)
 	}
 	defer rows.Close()
 

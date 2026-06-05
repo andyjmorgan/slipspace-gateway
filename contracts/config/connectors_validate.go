@@ -9,12 +9,11 @@ import (
 	"strings"
 )
 
-// envWebhookAllowPrivate is the test-only escape hatch shared with
-// the runtime SSRF guard in internal/connector/webhook. When set
-// ("1"/"true"), validateWebhook accepts loopback / RFC1918 /
-// link-local URLs so the e2e harness's httptest.Server (bound to
-// 127.0.0.1) can be wired as a webhook receiver. Production never
-// sets it.
+// envWebhookAllowPrivate is the test-only escape hatch for the webhook
+// connector's config-load SSRF guard. When set ("1"/"true"),
+// validateWebhook accepts loopback / RFC1918 / link-local URLs so the e2e
+// harness's httptest.Server (bound to 127.0.0.1) can be wired as a webhook
+// receiver. Production never sets it.
 const envWebhookAllowPrivate = "SLUICE_WEBHOOK_ALLOW_PRIVATE" //nolint:gosec // env var name, not a credential
 
 // ErrConnectorValidation is the sentinel returned (via fmt.Errorf wrap) by
@@ -62,8 +61,8 @@ func (c *Connector) validateS3() error {
 	if c.Account != "" || c.Container != "" {
 		return c.errf("account/container are azure_blob fields, not s3")
 	}
-	if c.URL != "" || c.SecretRef != "" || c.TimeoutMS != 0 {
-		return c.errf("url/secret_ref/timeout_ms are webhook fields, not s3")
+	if c.URL != "" || c.SecretRef != "" || c.TimeoutMS != 0 || c.GatewayID != "" {
+		return c.errf("url/secret_ref/gateway_id/timeout_ms are webhook fields, not s3")
 	}
 	if c.EndpointURL != "" {
 		if _, err := url.Parse(c.EndpointURL); err != nil {
@@ -83,8 +82,8 @@ func (c *Connector) validateAzureBlob() error {
 	if c.Bucket != "" || c.Region != "" || c.EndpointURL != "" || c.UsePathStyle {
 		return c.errf("bucket/region/endpoint_url/use_path_style are s3 fields, not azure_blob")
 	}
-	if c.URL != "" || c.SecretRef != "" || c.TimeoutMS != 0 {
-		return c.errf("url/secret_ref/timeout_ms are webhook fields, not azure_blob")
+	if c.URL != "" || c.SecretRef != "" || c.TimeoutMS != 0 || c.GatewayID != "" {
+		return c.errf("url/secret_ref/gateway_id/timeout_ms are webhook fields, not azure_blob")
 	}
 	return c.validateAzureAuth()
 }

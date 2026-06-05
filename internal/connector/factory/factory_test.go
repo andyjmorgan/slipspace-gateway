@@ -32,17 +32,15 @@ func TestBuild_AzureBlob(t *testing.T) {
 	}
 }
 
-func TestBuild_Webhook(t *testing.T) {
-	t.Setenv("FAC_HOOK_SECRET", "k")
-	c, err := Build(context.Background(), contractsconfig.Connector{ //nolint:gosec // G101: fixture
+func TestBuild_WebhookRejected(t *testing.T) {
+	// webhook is a real-time pusher, not a spool connector.Connector — the
+	// factory rejects it; the gateway builds it via the telemetry pusher.
+	_, err := Build(context.Background(), contractsconfig.Connector{ //nolint:gosec // G101: fixture
 		Type: "webhook", Name: "x", URL: "https://example.com",
 		SecretRef: "env:FAC_HOOK_SECRET", TimeoutMS: 1000,
 	}, Options{})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if c.Type() != "webhook" {
-		t.Errorf("Type = %q", c.Type())
+	if err == nil || !strings.Contains(err.Error(), "webhook is a real-time pusher") {
+		t.Errorf("got %v, want webhook-rejection error", err)
 	}
 }
 
@@ -56,20 +54,20 @@ func TestBuild_UnknownType(t *testing.T) {
 }
 
 func TestBuildAll_PreservesOrder(t *testing.T) {
-	t.Setenv("HOOK_S", "k")
+	// BuildAll handles spool-backed connectors only; webhook connectors are
+	// partitioned out by the gateway before this is called.
 	cs := []contractsconfig.Connector{
 		{Type: "s3", Name: "first", Bucket: "b", Region: "r"},
 		{Type: "azure_blob", Name: "second", Account: "a", Container: "c"},
-		{Type: "webhook", Name: "third", URL: "https://x", SecretRef: "env:HOOK_S", TimeoutMS: 1000}, //nolint:gosec // G101: fixture
 	}
 	out, err := BuildAll(context.Background(), cs, Options{})
 	if err != nil {
 		t.Fatalf("BuildAll: %v", err)
 	}
-	if len(out) != 3 {
-		t.Fatalf("len = %d, want 3", len(out))
+	if len(out) != 2 {
+		t.Fatalf("len = %d, want 2", len(out))
 	}
-	wantNames := []string{"first", "second", "third"}
+	wantNames := []string{"first", "second"}
 	for i, want := range wantNames {
 		if out[i].Name() != want {
 			t.Errorf("[%d] name = %q, want %q", i, out[i].Name(), want)

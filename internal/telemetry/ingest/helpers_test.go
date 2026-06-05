@@ -135,15 +135,15 @@ func TestTraceReceiver_EmptyBatch(t *testing.T) {
 	}
 }
 
-func TestWebhook_TooLarge(t *testing.T) {
-	st := &captureStore{}
-	h := NewWebhookHandler(testReg(), st, discard())
-	body := strings.Repeat("a", maxPayloadBytes+1)
+func TestRecord_TooLarge(t *testing.T) {
+	st := &recordStore{}
+	h := NewRecordHandler(testReg(), st, discard())
+	body := strings.Repeat("a", maxRecordBytes+1)
 	resp := post(t, h, "gw-a", sign("secret-a", []byte(body)), []byte(body))
 	if resp.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", resp.Code)
 	}
-	if st.n != 0 {
+	if st.events != 0 {
 		t.Error("nothing should be stored")
 	}
 }

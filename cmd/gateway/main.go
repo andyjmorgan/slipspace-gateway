@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
@@ -27,6 +29,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/server"
 	"github.com/andyjmorgan/sluice-gateway/internal/spool"
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/pusher"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
 
@@ -120,7 +123,13 @@ func run(ctx context.Context) error {
 	}
 
 	contentCaps := resolved.Telemetry.ContentCapture.Resolve()
-	reporter := newReporterFactory(spoolInst, store, logger, obs.Meters, liveFeed, bodyStore, obs.Tracer(), obs.EventLogger(), env.OTelCaptureContent, contentCaps)
+	//nolint:contextcheck // pusher workers bind to the channel lifecycle, not a request ctx — context.Background is intentional (same rationale as the spool's detached workers)
+	pushers, pushCleanup, err := setupPushers(resolved.Connectors, logger)
+	if err != nil {
+		return fmt.Errorf("gateway: webhook pusher setup: %w", err)
+	}
+	defer pushCleanup()
+	reporter := newReporterFactory(spoolInst, store, logger, obs.Meters, liveFeed, bodyStore, obs.Tracer(), obs.EventLogger(), env.OTelCaptureContent, contentCaps, pushers)
 	observerFactory := reporter.Factory()
 	// One Redactor for the whole process — the built-in substring
 	// list plus any operator-supplied extras from
@@ -208,12 +217,83 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-// setupSpool wires the connector spool. Builds concrete connectors via
-// factory.BuildAll, constructs the Spool at env.SpoolRoot, registers
-// one track per connector, and starts the workers. Returns
-// (nil, noop, nil) when ResolvedConfig.Connectors is empty — the
-// reporter then short-circuits at OnComplete and the request path
-// pays nothing.
+// pushStopTimeout bounds graceful drain of each webhook pusher's in-flight
+// queue on SIGTERM. Short: the push is best-effort telemetry, so we give the
+// workers a brief window to flush and move on rather than holding shutdown
+// open.
+const pushStopTimeout = 5 * time.Second
+
+// setupPushers builds one real-time pusher per webhook connector, keyed by
+// connector name — the non-spooled channel-3 record sink. s3/azure_blob
+// connectors are skipped (they run through the disk spool). Each pusher's HMAC
+// secret is resolved from its secret_ref at startup so a missing secret fails
+// boot loudly rather than silently dropping every pushed record. Returns an
+// empty map + noop cleanup when no webhook connectors are configured.
+func setupPushers(connectors []contractsconfig.Connector, logger *slog.Logger) (map[string]*pusher.Pusher, func(), error) {
+	noop := func() {}
+	pushers := map[string]*pusher.Pusher{}
+	for _, c := range connectors {
+		if c.Type != contractsconfig.ConnectorTypeWebhook {
+			continue
+		}
+		secret, err := resolveSecretRef(c.SecretRef)
+		if err != nil {
+			return nil, noop, fmt.Errorf("webhook connector %q: resolve secret_ref: %w", c.Name, err)
+		}
+		pushers[c.Name] = pusher.New(pusher.Options{
+			Endpoint:  c.URL,
+			GatewayID: c.GatewayID,
+			Secret:    secret,
+			Timeout:   time.Duration(c.TimeoutMS) * time.Millisecond,
+			Logger:    logger,
+		})
+		logger.Info("webhook connector enabled", "connector", c.Name, "url", c.URL, "gateway_id", c.GatewayID)
+	}
+	if len(pushers) == 0 {
+		return pushers, noop, nil
+	}
+	cleanup := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), pushStopTimeout)
+		defer cancel()
+		for _, p := range pushers {
+			p.Close(ctx)
+		}
+	}
+	return pushers, cleanup, nil
+}
+
+// resolveSecretRef resolves the env:NAME / file:/path indirection used by
+// the telemetry push secret. The shape mirrors the connector secret
+// loaders; config validation has already enforced the prefix, so the only
+// errors here are a missing env var or unreadable file.
+func resolveSecretRef(ref string) (string, error) {
+	switch {
+	case strings.HasPrefix(ref, "env:"):
+		name := strings.TrimPrefix(ref, "env:")
+		val, ok := os.LookupEnv(name)
+		if !ok {
+			return "", fmt.Errorf("env var %q not set", name)
+		}
+		return val, nil
+	case strings.HasPrefix(ref, "file:"):
+		p := strings.TrimPrefix(ref, "file:")
+		b, err := os.ReadFile(p) //nolint:gosec // operator-supplied path
+		if err != nil {
+			return "", fmt.Errorf("read %q: %w", p, err)
+		}
+		return strings.TrimRight(string(b), "\r\n"), nil
+	default:
+		return "", fmt.Errorf("secret_ref must start with env: or file:, got %q", ref)
+	}
+}
+
+// setupSpool wires the connector spool. Builds the durable spool-backed
+// connectors (s3, azure_blob) via factory.BuildAll, constructs the Spool at
+// env.SpoolRoot, registers one track per connector, and starts the workers.
+// Webhook connectors are skipped — they are real-time pushers wired by
+// setupPushers and never touch the spool. Returns (nil, noop, nil) when no
+// spool-backed connectors are configured — the reporter then routes only to
+// pushers (or nowhere) and the spool pays nothing.
 //
 // Per design note "Connector + Spool Architecture": startup recovery
 // (uploading/ → sealed/, torn active/ → quarantine/) runs at New /
@@ -223,8 +303,14 @@ func run(ctx context.Context) error {
 // spool root is worse than refusing to start.
 func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.ResolvedConfig, logger *slog.Logger) (*spool.Spool, func(), error) {
 	noop := func() {}
-	if len(resolved.Connectors) == 0 {
-		logger.InfoContext(ctx, "no connectors configured; spool disabled")
+	spoolCfgs := make([]contractsconfig.Connector, 0, len(resolved.Connectors))
+	for _, c := range resolved.Connectors {
+		if c.Type != contractsconfig.ConnectorTypeWebhook {
+			spoolCfgs = append(spoolCfgs, c)
+		}
+	}
+	if len(spoolCfgs) == 0 {
+		logger.InfoContext(ctx, "no spool-backed connectors configured; spool disabled")
 		return nil, noop, nil
 	}
 
@@ -233,7 +319,7 @@ func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.Res
 		hostname = "local"
 	}
 
-	conns, err := factory.BuildAll(ctx, resolved.Connectors, factory.Options{
+	conns, err := factory.BuildAll(ctx, spoolCfgs, factory.Options{
 		InstanceID: hostname,
 	})
 	if err != nil {
@@ -249,7 +335,7 @@ func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.Res
 	}
 
 	for i, c := range conns {
-		cfg := resolved.Connectors[i]
+		cfg := spoolCfgs[i]
 		opts := spool.RegisterTrackOptions{Connector: c}
 		if cfg.Rotation != nil {
 			opts.Rotation = spool.RotationOpts{

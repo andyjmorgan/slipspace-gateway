@@ -17,8 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
-
 	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 )
@@ -97,10 +95,10 @@ func (h *Harness) ExpectNoEvent(subject string, window time.Duration) {
 
 var errEventTimeout = errors.New("timeout waiting for event")
 
-// startCaptureServer spins up the in-process HTTP receiver the
-// gateway's webhook connector POSTs sealed segments to. Every POST
-// payload is a zstd-compressed ndjson batch of connector.Record;
-// captureHandler decompresses, parses each record, and pushes one or
+// startCaptureServer spins up the in-process HTTP receiver the gateway's
+// webhook connector (real-time pusher) POSTs records to. Every POST is one
+// cc.Record as a plain JSON body (HMAC-signed; the harness trusts the loopback
+// link and does not verify). captureHandler parses the record and pushes one or
 // more pre-translated Envelopes onto eventBuf for ExpectEvent.
 func (h *Harness) startCaptureServer() error {
 	h.eventBuf = make(chan Envelope, 256)
@@ -111,32 +109,18 @@ func (h *Harness) startCaptureServer() error {
 	return nil
 }
 
-// captureHandler decompresses the POST body, parses records, and pushes
-// the equivalent legacy envelopes onto eventBuf. The handler always
-// returns 202 — the gateway side considers any 2xx a success.
+// captureHandler parses the POSTed record(s) and pushes the equivalent
+// envelopes onto eventBuf. The pusher sends one cc.Record per POST; the
+// line-scan also tolerates an ndjson batch so a test can synthesise multiple
+// records in one body. The handler always returns 202 — the pusher considers
+// any 2xx a success.
 func (h *Harness) captureHandler(w http.ResponseWriter, r *http.Request) {
-	raw, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	_ = r.Body.Close()
-
-	body := raw
-	if strings.Contains(r.Header.Get("Content-Encoding"), "zstd") {
-		dec, derr := zstd.NewReader(bytes.NewReader(raw))
-		if derr != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		decompressed, derr := io.ReadAll(dec)
-		dec.Close()
-		if derr != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		body = decompressed
-	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)

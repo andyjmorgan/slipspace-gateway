@@ -233,7 +233,7 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 		t.Fatalf("NewMeters: %v", err)
 	}
 
-	reporter := newReporterFactory(nil, nil, logger, meters, nil, nil, nil, nil, false, testDefaultCaps())
+	reporter := newReporterFactory(nil, nil, logger, meters, nil, nil, nil, nil, false, testDefaultCaps(), nil)
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
 	evaluator := rules.NewEvaluator(store, 8, meters)
 
