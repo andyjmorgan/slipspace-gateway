@@ -78,7 +78,7 @@ export function BindingsPage() {
                   <th className="text-left font-medium px-4 py-2">Configuration</th>
                   <th className="text-left font-medium px-4 py-2">Protocol</th>
                   <th className="text-left font-medium px-4 py-2">Models</th>
-                  <th className="text-left font-medium px-4 py-2">Target</th>
+                  <th className="text-left font-medium px-4 py-2">Provider / Group</th>
                   <th className="text-left font-medium px-4 py-2">Alias</th>
                 </tr>
               </thead>

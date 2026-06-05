@@ -314,6 +314,7 @@ export function StringListEditor({
   addLabel = "+ Add",
   hint,
   mono = true,
+  orderable = false,
 }: {
   label: string
   values: string[]
@@ -322,12 +323,45 @@ export function StringListEditor({
   addLabel?: string
   hint?: string
   mono?: boolean
+  // orderable adds up/down controls so the list position is editable. Use it
+  // when the slice order is load-bearing (e.g. a configuration's rule_names —
+  // position is the rule evaluation order).
+  orderable?: boolean
 }) {
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= values.length) return
+    const copy = values.slice()
+    const [item] = copy.splice(from, 1)
+    copy.splice(to, 0, item)
+    onChange(copy)
+  }
   return (
     <FieldRow label={label} hint={values.length === 0 ? hint : undefined}>
       <div className="flex flex-col gap-2">
         {values.map((v, i) => (
           <div key={i} className="flex items-center gap-2">
+            {orderable && (
+              <div className="flex flex-col leading-none">
+                <button
+                  type="button"
+                  aria-label="Move up"
+                  disabled={i === 0}
+                  onClick={() => move(i, i - 1)}
+                  className="text-[color:var(--text-3)] hover:text-[color:var(--text)] disabled:opacity-30 disabled:hover:text-[color:var(--text-3)] text-[10px] px-1"
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  aria-label="Move down"
+                  disabled={i === values.length - 1}
+                  onClick={() => move(i, i + 1)}
+                  className="text-[color:var(--text-3)] hover:text-[color:var(--text)] disabled:opacity-30 disabled:hover:text-[color:var(--text-3)] text-[10px] px-1"
+                >
+                  ▼
+                </button>
+              </div>
+            )}
             <input
               type="text"
               value={v}
