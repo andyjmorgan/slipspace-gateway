@@ -29,14 +29,16 @@ func TestRecord_JSONRoundTrip(t *testing.T) {
 			Body:       json.RawMessage(`{"model":"claude-haiku-4-5"}`),
 		},
 		Response: ResponsePart{
-			Status:       200,
-			Headers:      map[string]string{"content-type": "application/json"},
-			BodySha256:   "cd",
-			BodyBytes:    84200,
-			Body:         json.RawMessage(`{"id":"msg_x"}`),
-			FirstByteNs:  1715000000234567890,
-			LastByteNs:   1715000003123456789,
-			StreamChunks: 24,
+			Status:          200,
+			Headers:         map[string]string{"content-type": "application/json"},
+			BodySha256:      "cd",
+			BodyBytes:       84200,
+			Body:            json.RawMessage(`{"id":"msg_x"}`),
+			FirstByteNs:     1715000000234567890,
+			LastByteNs:      1715000003123456789,
+			StreamChunks:    24,
+			Assembled:       json.RawMessage(`{"id":"msg_x","content":[{"type":"text","text":"hi"}]}`),
+			AssemblyPartial: true,
 		},
 		Tokens:         &Tokens{Input: 542, Output: 1320},
 		RulesFired:     []RuleFired{{Name: "route-claude-models-to-anthropic", TookUs: 8}},
@@ -112,7 +114,7 @@ func TestRecord_OmitemptyTrims(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	// Spot-check that omitempty fields are absent.
-	for _, key := range []string{`"model"`, `"tokens"`, `"rules_fired"`, `"upstream_error"`, `"body_ref"`, `"body_omitted"`} {
+	for _, key := range []string{`"model"`, `"tokens"`, `"rules_fired"`, `"upstream_error"`, `"body_ref"`, `"body_omitted"`, `"assembled"`, `"assembly_partial"`} {
 		if bytes.Contains(data, []byte(key)) {
 			t.Errorf("unexpected %s in minimal record: %s", key, data)
 		}

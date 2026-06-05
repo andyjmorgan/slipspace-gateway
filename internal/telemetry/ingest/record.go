@@ -163,7 +163,7 @@ func recordLatencyMs(rec cc.Record) int64 {
 // the full per-rule chain, and the resilience attempts. Returns nil when there
 // is nothing to record so the column stays SQL NULL.
 func detailFromRecord(rec cc.Record) []byte {
-	d := store.EventDetail{Tags: rec.Tags}
+	d := store.EventDetail{Tags: rec.Tags, AssemblyPartial: rec.Response.AssemblyPartial}
 	for _, rf := range rec.RulesFired {
 		d.RulesFired = append(d.RulesFired, rf.Name)
 		d.RuleChain = append(d.RuleChain, store.RuleChainEntry{
@@ -183,7 +183,7 @@ func detailFromRecord(rec cc.Record) []byte {
 			Outcome:     a.Outcome,
 		})
 	}
-	if len(d.Tags) == 0 && len(d.RuleChain) == 0 && len(d.Attempts) == 0 {
+	if len(d.Tags) == 0 && len(d.RuleChain) == 0 && len(d.Attempts) == 0 && !d.AssemblyPartial {
 		return nil
 	}
 	b, err := json.Marshal(d)
@@ -220,6 +220,10 @@ func payloadsFromRecord(rec cc.Record, gatewayID string) []store.Payload {
 	if !rec.Response.BodyOmitted {
 		add(store.KindResponseBody, rec.Response.Body)
 	}
+	// The accumulator's assembled rollup of a streamed response — the
+	// inspector's "Response (assembled)" tab. add() no-ops when empty
+	// (non-streaming, unrecognised stream, or stripped on oversize).
+	add(store.KindSSERollup, rec.Response.Assembled)
 	add(store.KindRequestHeaders, marshalHeaders(rec.Request.Headers))
 	add(store.KindResponseHeaders, marshalHeaders(rec.Response.Headers))
 	return out

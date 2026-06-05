@@ -148,12 +148,19 @@ func TestObsMessageBody(t *testing.T) {
 			{Kind: store.KindRequestHeaders, Body: []byte(`{"content-type":"application/json"}`)},
 			{Kind: store.KindResponseHeaders, Body: []byte("not json")}, // malformed → nil, no crash
 		},
-		event: store.RequestEvent{GenAIContent: []byte(`{"input_messages":[]}`)},
+		event: store.RequestEvent{
+			GenAIContent: []byte(`{"input_messages":[]}`),
+			Detail:       []byte(`{"assembly_partial":true}`),
+		},
 	}
 	h := newQueryServer(t, q)
 	got := decodeAdmin[adminc.MessageBodyDetail](t, get(t, h, "/api/v1/messages/c/body", true))
 	if got.Request != `{"req":1}` || got.Response != `{"resp":1}` || got.ResponseAssembled != `{"assembled":1}` {
 		t.Errorf("body = %+v", got)
+	}
+	// The partial flag is sourced from the event detail, not a payload.
+	if !got.AssemblyPartial {
+		t.Errorf("AssemblyPartial = false, want true (from event detail)")
 	}
 	if got.RequestTotalBytes == 0 || got.ResponseTotalBytes == 0 {
 		t.Errorf("byte totals not set: %+v", got)

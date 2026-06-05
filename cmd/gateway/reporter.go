@@ -508,9 +508,15 @@ func (r *reporterRun) emitUnmappedFields(ctx context.Context, counter metric.Int
 func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Request, ttfbMs int64) {
 	matches := r.drainRuleMatches(ctx, ev.CorrelationID)
 	r.recordRuleFired(ctx, matches)
+	// Reconstruct the streamed response once, here, then hand the same
+	// rollup to both the admin live-feed envelope and the connector Record.
+	// Running the accumulator in one place is the whole point — the two
+	// consumers used to diverge (admin showed the assembled response,
+	// telemetry only ever saw the raw SSE bytes).
+	assembled, assemblyPartial := r.assembleResponse(ctx, ev)
 	entryID := r.appendLiveFeed(ev, matches)
-	r.captureBody(ctx, entryID, ev)
-	r.enqueueRecord(ctx, ev, matches)
+	r.captureBody(ctx, entryID, assembled, assemblyPartial)
+	r.enqueueRecord(ctx, ev, matches, assembled, assemblyPartial)
 	traceCtx := r.emitTrace(ctx, ev)
 	r.emitEvents(traceCtx, ev)
 
@@ -537,7 +543,7 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 // s3 / azure_blob land on the durable disk spool, webhook on the real-time
 // pusher (channel 3, non-spooled, drop-on-full). No-ops when the
 // configuration declares no bindings.
-func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matches []events.RuleMatched) {
+func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matches []events.RuleMatched, assembled []byte, assemblyPartial bool) {
 	if r.factory.store == nil {
 		return
 	}
@@ -549,7 +555,7 @@ func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matc
 	if cfg == nil || len(cfg.ConnectorBindings) == 0 {
 		return
 	}
-	rec := r.buildRecord(ctx, ev, matches)
+	rec := r.buildRecord(ctx, ev, matches, assembled, assemblyPartial)
 	for _, b := range cfg.ConnectorBindings {
 		var connectorType string
 		if c := snap.ConnectorIndex[b.Connector]; c != nil {
@@ -606,7 +612,7 @@ func (r *reporterRun) logOversize(ctx context.Context, ov oversizeOutcome, sink,
 // payloads — Validate at config-load could enforce this if the
 // follow-up shows it matters; today the gateway always wires the
 // live-feed bodyStore unless explicitly disabled.
-func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matches []events.RuleMatched) cc.Record {
+func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matches []events.RuleMatched, assembled []byte, assemblyPartial bool) cc.Record {
 	tsNs := r.started.UnixNano()
 	if r.started.IsZero() {
 		tsNs = time.Now().UnixNano()
@@ -720,6 +726,14 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 			rec.Response.StreamChunks = 1
 		}
 	}
+	// Carry the accumulator's rollup so telemetry can render the assembled
+	// response, not just the raw SSE bytes — parity with the admin live-feed
+	// (which reads the same reconstruction from the body envelope). Assembled
+	// is already valid JSON; copy so the Record owns its bytes.
+	if len(assembled) > 0 {
+		rec.Response.Assembled = json.RawMessage(append([]byte(nil), assembled...))
+		rec.Response.AssemblyPartial = assemblyPartial
+	}
 	if !r.started.IsZero() {
 		rec.Response.LastByteNs = r.started.Add(time.Duration(ev.DurationMs) * time.Millisecond).UnixNano()
 	}
@@ -825,17 +839,45 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 	return id
 }
 
+// assembleResponse reconstructs a streamed response into the provider's
+// non-streaming JSON shape via the per-provider accumulator, returning the
+// rollup and whether reassembly was only partial. Non-streaming responses,
+// an absent/empty response buffer, and streams no accumulator recognises all
+// yield (nil, false).
+//
+// Called once per terminal publish; the result feeds both the admin live-feed
+// envelope ([captureBody]) and the connector Record ([buildRecord]) so the two
+// surfaces never reconstruct independently — and so never disagree.
+func (r *reporterRun) assembleResponse(ctx context.Context, ev events.Request) ([]byte, bool) {
+	if !ev.Streaming {
+		return nil, false
+	}
+	buf, ok := livefeed.ResponseBufferFromContext(ctx)
+	if !ok || buf == nil {
+		return nil, false
+	}
+	body := buf.Bytes()
+	if len(body) == 0 {
+		return nil, false
+	}
+	res := accumulator.Accumulate(ev.Provider, ev.Endpoint, body)
+	if !res.Recognised {
+		return nil, false
+	}
+	return res.Assembled, res.Partial
+}
+
 // captureBody writes the per-request body envelope to the in-process
 // body store keyed by entryID. No-ops when:
 //   - bodies are disabled (nil store)
 //   - the ring entry was not created (empty entryID, caused by a nil
 //     ring — same disabled-feature path)
 //
-// Streaming responses run through the per-provider accumulator so the
-// modal can render the assembled text + structured tool calls. Raw
-// bytes are kept alongside (subject to the per-body cap) for the
-// "raw chunks" toggle.
-func (r *reporterRun) captureBody(ctx context.Context, entryID string, ev events.Request) {
+// The assembled rollup is computed by the caller ([assembleResponse]) and
+// passed in, so the admin live-feed and the connector Record share one
+// reconstruction. Raw bytes are kept alongside (subject to the per-body cap)
+// for the "raw stream" toggle.
+func (r *reporterRun) captureBody(ctx context.Context, entryID string, assembled []byte, assemblyPartial bool) {
 	if r.factory.bodyStore == nil || entryID == "" {
 		return
 	}
@@ -858,12 +900,9 @@ func (r *reporterRun) captureBody(ctx context.Context, entryID string, ev events
 		if h := buf.Headers(); len(h) > 0 {
 			env.ResponseHeaders = h
 		}
-		if ev.Streaming && len(env.Response) > 0 {
-			res := accumulator.Accumulate(ev.Provider, ev.Endpoint, env.Response)
-			if res.Recognised {
-				env.ResponseAssembled = string(res.Assembled)
-				env.AssemblyPartial = res.Partial
-			}
+		if len(assembled) > 0 {
+			env.ResponseAssembled = string(assembled)
+			env.AssemblyPartial = assemblyPartial
 		}
 	}
 

@@ -241,6 +241,11 @@ func applyOversize(rec cc.Record, b contractsconfig.ConnectorBinding, connectorT
 		out.Request.BodyOmitted = true
 		out.Response.Body = nil
 		out.Response.BodyOmitted = true
+		// The assembled rollup is part of the response body family — drop it
+		// alongside the raw body so a metadata-only record never ships a large
+		// reconstruction the operator asked to cap.
+		out.Response.Assembled = nil
+		out.Response.AssemblyPartial = false
 		return out, true, oversizeOutcome{Triggered: true, CapBytes: maxBytes, BodyBytes: maxLen}
 	default:
 		// Unknown behaviour — config validation should have rejected
