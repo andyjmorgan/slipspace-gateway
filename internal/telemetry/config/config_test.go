@@ -51,6 +51,43 @@ func TestLoad_Valid(t *testing.T) {
 	}
 }
 
+func TestContentCap(t *testing.T) {
+	zero := 0
+	custom := 65536
+	neg := -1
+	cases := []struct {
+		name string
+		ptr  *int
+		want int
+	}{
+		{"unset takes default", nil, DefaultContentMaxBytes},
+		{"explicit zero is unlimited", &zero, 0},
+		{"explicit value passes through", &custom, 65536},
+		{"negative passes through (unlimited)", &neg, -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (Config{ContentMaxBytes: tc.ptr}).ContentCap(); got != tc.want {
+				t.Errorf("ContentCap() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoad_ContentMaxBytesParses(t *testing.T) {
+	body := validBody + "content_max_bytes: 0\n"
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ContentMaxBytes == nil || *cfg.ContentMaxBytes != 0 {
+		t.Fatalf("ContentMaxBytes = %v, want &0", cfg.ContentMaxBytes)
+	}
+	if cfg.ContentCap() != 0 {
+		t.Errorf("ContentCap() = %d, want 0 (unlimited)", cfg.ContentCap())
+	}
+}
+
 func TestLoad_OverridesDefaults(t *testing.T) {
 	body := validBody + "http_bind: 127.0.0.1:9000\notlp_bind: 127.0.0.1:9001\n"
 	cfg, err := Load(writeConfig(t, body))

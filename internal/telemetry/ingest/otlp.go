@@ -33,11 +33,15 @@ type TraceReceiver struct {
 
 	store  eventWriter
 	logger *slog.Logger
+	// contentMaxBytes bounds the gen_ai content kept per request; <= 0 keeps it
+	// whole. Resolved from the telemetry config's content_max_bytes.
+	contentMaxBytes int
 }
 
-// NewTraceReceiver builds the OTLP trace receiver over store.
-func NewTraceReceiver(store eventWriter, logger *slog.Logger) *TraceReceiver {
-	return &TraceReceiver{store: store, logger: logger}
+// NewTraceReceiver builds the OTLP trace receiver over store. contentMaxBytes
+// bounds the gen_ai content captured per span (<= 0 disables the cap).
+func NewTraceReceiver(store eventWriter, logger *slog.Logger, contentMaxBytes int) *TraceReceiver {
+	return &TraceReceiver{store: store, logger: logger, contentMaxBytes: contentMaxBytes}
 }
 
 // Export ingests a batch of OTLP spans. A per-span failure is logged and
@@ -48,7 +52,7 @@ func (r *TraceReceiver) Export(ctx context.Context, req *collectortrace.ExportTr
 		resourceAttrs := rs.GetResource().GetAttributes()
 		for _, ss := range rs.GetScopeSpans() {
 			for _, span := range ss.GetSpans() {
-				e, ok := EventFromSpan(resourceAttrs, span)
+				e, ok := EventFromSpan(resourceAttrs, span, r.contentMaxBytes)
 				if !ok {
 					continue
 				}
