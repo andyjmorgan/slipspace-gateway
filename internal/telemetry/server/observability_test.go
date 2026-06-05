@@ -99,24 +99,38 @@ func TestObsTimeseries(t *testing.T) {
 
 func TestObsMessagesRecent(t *testing.T) {
 	// fake returns newest-first; handler must emit oldest-first.
+	// "rich" exercises the full rule chain + attempts from the Record feed;
+	// "flat" exercises the rules_fired-names fallback (no rule_chain).
 	q := &fakeQueries{events: []store.RequestEvent{
-		{CorrelationID: "new", Provider: "anthropic", Protocol: "messages", StatusCode: 200, Detail: []byte(`{"tags":["x"],"rules_fired":["r1"]}`)},
-		{CorrelationID: "old", Provider: "openai"},
+		{CorrelationID: "rich", Provider: "anthropic", Protocol: "messages", StatusCode: 200, Detail: []byte(`{"tags":["x"],"rule_chain":[{"name":"r1","actions_applied":["changeProvider"],"terminated":true}],"attempts":[{"target":"primary","outcome":"success","status_code":200,"started_at_ns":1000000000}]}`)},
+		{CorrelationID: "flat", Provider: "openai", Detail: []byte(`{"rules_fired":["r2"]}`)},
 	}}
 	h := newQueryServer(t, q)
 	got := decodeAdmin[adminc.MessagesRecentResponse](t, get(t, h, "/api/v1/messages/recent?limit=50", true))
 	if got.Capacity != 50 || len(got.Entries) != 2 {
 		t.Fatalf("resp = %+v", got)
 	}
-	if got.Entries[0].EventID != "old" || got.Entries[1].EventID != "new" {
+	if got.Entries[0].EventID != "flat" || got.Entries[1].EventID != "rich" {
 		t.Errorf("not oldest-first: %s,%s", got.Entries[0].EventID, got.Entries[1].EventID)
 	}
-	newest := got.Entries[1]
-	if newest.Provider != "anthropic" || newest.Endpoint != "messages" {
-		t.Errorf("entry mapping = %+v", newest)
+	rich := got.Entries[1]
+	if rich.Provider != "anthropic" || rich.Endpoint != "messages" {
+		t.Errorf("entry mapping = %+v", rich)
 	}
-	if len(newest.Tags) != 1 || newest.Tags[0] != "x" || len(newest.RulesMatched) != 1 || newest.RulesMatched[0].RuleName != "r1" {
-		t.Errorf("detail mapping = %+v", newest)
+	if len(rich.Tags) != 1 || rich.Tags[0] != "x" {
+		t.Errorf("tags = %+v", rich.Tags)
+	}
+	if len(rich.RulesMatched) != 1 || rich.RulesMatched[0].RuleName != "r1" || !rich.RulesMatched[0].Terminated ||
+		len(rich.RulesMatched[0].ActionsApplied) != 1 || rich.RulesMatched[0].ActionsApplied[0] != "changeProvider" {
+		t.Errorf("rule chain mapping = %+v", rich.RulesMatched)
+	}
+	if len(rich.Attempts) != 1 || rich.Attempts[0].Target != "primary" || rich.Attempts[0].Outcome != "success" || rich.Attempts[0].StatusCode != 200 {
+		t.Errorf("attempts mapping = %+v", rich.Attempts)
+	}
+	// Fallback branch: only rule names, no actions/attempts.
+	flat := got.Entries[0]
+	if len(flat.RulesMatched) != 1 || flat.RulesMatched[0].RuleName != "r2" || flat.RulesMatched[0].Terminated || len(flat.Attempts) != 0 {
+		t.Errorf("flat fallback mapping = %+v / attempts %+v", flat.RulesMatched, flat.Attempts)
 	}
 	// error
 	hErr := newQueryServer(t, &fakeQueries{eventsErr: errors.New("db")})
@@ -126,11 +140,16 @@ func TestObsMessagesRecent(t *testing.T) {
 }
 
 func TestObsMessageBody(t *testing.T) {
-	q := &fakeQueries{payloads: []store.Payload{
-		{Kind: store.KindRequestBody, Body: []byte(`{"req":1}`)},
-		{Kind: store.KindResponseBody, Body: []byte(`{"resp":1}`)},
-		{Kind: store.KindSSERollup, Body: []byte(`{"assembled":1}`)},
-	}}
+	q := &fakeQueries{
+		payloads: []store.Payload{
+			{Kind: store.KindRequestBody, Body: []byte(`{"req":1}`)},
+			{Kind: store.KindResponseBody, Body: []byte(`{"resp":1}`)},
+			{Kind: store.KindSSERollup, Body: []byte(`{"assembled":1}`)},
+			{Kind: store.KindRequestHeaders, Body: []byte(`{"content-type":"application/json"}`)},
+			{Kind: store.KindResponseHeaders, Body: []byte("not json")}, // malformed → nil, no crash
+		},
+		event: store.RequestEvent{GenAIContent: []byte(`{"input_messages":[]}`)},
+	}
 	h := newQueryServer(t, q)
 	got := decodeAdmin[adminc.MessageBodyDetail](t, get(t, h, "/api/v1/messages/c/body", true))
 	if got.Request != `{"req":1}` || got.Response != `{"resp":1}` || got.ResponseAssembled != `{"assembled":1}` {
@@ -138,6 +157,15 @@ func TestObsMessageBody(t *testing.T) {
 	}
 	if got.RequestTotalBytes == 0 || got.ResponseTotalBytes == 0 {
 		t.Errorf("byte totals not set: %+v", got)
+	}
+	if len(got.RequestHeaders["content-type"]) != 1 || got.RequestHeaders["content-type"][0] != "application/json" {
+		t.Errorf("request headers = %+v", got.RequestHeaders)
+	}
+	if got.ResponseHeaders != nil {
+		t.Errorf("malformed response headers should decode to nil, got %+v", got.ResponseHeaders)
+	}
+	if got.GenAIContent != `{"input_messages":[]}` {
+		t.Errorf("gen_ai content = %q", got.GenAIContent)
 	}
 	// not found
 	hNF := newQueryServer(t, &fakeQueries{payErr: store.ErrPayloadNotFound})

@@ -78,6 +78,10 @@ export type MessageBodyDetail = {
   assembly_partial?: boolean
   request_headers?: Record<string, string[]>
   response_headers?: Record<string, string[]>
+  // gen_ai_content is the bounded gen_ai.* content (system instructions, input
+  // turn, output, tool definitions) captured when content capture is enabled,
+  // as a JSON string. Empty otherwise. Telemetry inspector only.
+  gen_ai_content?: string
 }
 
 /**
