@@ -137,6 +137,51 @@ export async function fetchFacets(): Promise<Facets> {
   return apiFetch<Facets>(`/api/v1/facets`)
 }
 
+// GenAIMessagePart is a single part of a GenAI message — text, a model-issued
+// tool call, a tool-call result, or a reasoning trace. Mirrors the gateway's
+// emitPart JSON (cmd/gateway/reporter.go::jsonMap): tool calls carry name +
+// arguments, tool-call responses carry a result, everything else carries
+// content.
+export type GenAIMessagePart = {
+  type: string
+  content?: string
+  id?: string
+  name?: string
+  arguments?: unknown
+  result?: unknown
+}
+
+// GenAIMessage is one role-tagged turn ([{role, parts}]). The gateway emits
+// input as the latest user turn and output as the assistant turn (incl.
+// tool_call parts).
+export type GenAIMessage = {
+  role: string
+  parts?: GenAIMessagePart[]
+}
+
+// GenAIToolDefinition is one tool the request advertised to the model. Mirrors
+// the gateway's jsonToolDefsString output.
+export type GenAIToolDefinition = {
+  type?: string
+  name?: string
+  description?: string
+  parameters?: unknown
+}
+
+// GenAIContent is the bounded gen_ai.* content (system instructions, input
+// turn, output, tool definitions) the gateway captured on the request span when
+// content capture is enabled. Each field is the gateway's [{role, parts}] /
+// tool-defs JSON. A {"truncated":...} marker replaces the object when the
+// captured content exceeded the service's content cap.
+export type GenAIContent = {
+  input_messages?: GenAIMessage[]
+  output_messages?: GenAIMessage[]
+  tool_definitions?: GenAIToolDefinition[]
+  system_instructions?: GenAIMessagePart[]
+  truncated?: boolean
+  original_bytes?: number
+}
+
 export type MessageBodyDetail = {
   event_id: string
   request?: string
@@ -149,10 +194,24 @@ export type MessageBodyDetail = {
   assembly_partial?: boolean
   request_headers?: Record<string, string[]>
   response_headers?: Record<string, string[]>
-  // gen_ai_content is the bounded gen_ai.* content (system instructions, input
-  // turn, output, tool definitions) captured when content capture is enabled,
-  // as a JSON string. Empty otherwise. Telemetry inspector only.
+  // gen_ai_content is the bounded gen_ai.* content captured when content
+  // capture is enabled, delivered as a JSON string (the contract field is a
+  // string; parse with parseGenAIContent). Empty otherwise. Telemetry inspector
+  // only.
   gen_ai_content?: string
+}
+
+// parseGenAIContent parses the gen_ai_content JSON string the body endpoint
+// returns into a structured GenAIContent. Returns null when absent or
+// malformed, so the inspector simply omits the GenAI tab rather than erroring.
+export function parseGenAIContent(raw?: string): GenAIContent | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as GenAIContent
+    return parsed && typeof parsed === "object" ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 /**
