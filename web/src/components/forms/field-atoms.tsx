@@ -315,6 +315,7 @@ export function StringListEditor({
   hint,
   mono = true,
   orderable = false,
+  options,
 }: {
   label: string
   values: string[]
@@ -327,6 +328,11 @@ export function StringListEditor({
   // when the slice order is load-bearing (e.g. a configuration's rule_names —
   // position is the rule evaluation order).
   orderable?: boolean
+  // options, when set, renders each row as a constrained dropdown instead of a
+  // free-text input — for entries that must reference an existing named object
+  // (e.g. rule_names → the rules library). A saved value not in options is
+  // preserved as a "(not in library)" choice rather than silently dropped.
+  options?: SelectOption[]
 }) {
   const move = (from: number, to: number) => {
     if (to < 0 || to >= values.length) return
@@ -362,17 +368,39 @@ export function StringListEditor({
                 </button>
               </div>
             )}
-            <input
-              type="text"
-              value={v}
-              placeholder={placeholder}
-              onChange={(e) => {
-                const copy = values.slice()
-                copy[i] = e.target.value
-                onChange(copy)
-              }}
-              className={cn(inputClassName, "flex-1 min-w-0", mono && "mono")}
-            />
+            {options ? (
+              <select
+                value={v}
+                onChange={(e) => {
+                  const copy = values.slice()
+                  copy[i] = e.target.value
+                  onChange(copy)
+                }}
+                className={cn(inputClassName, "flex-1 min-w-0 pr-6", mono && "mono")}
+              >
+                <option value="">{placeholder ?? "Select…"}</option>
+                {options.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label ?? opt.value}
+                  </option>
+                ))}
+                {v !== "" && !options.some((o) => o.value === v) && (
+                  <option value={v}>{v} (not in library)</option>
+                )}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={v}
+                placeholder={placeholder}
+                onChange={(e) => {
+                  const copy = values.slice()
+                  copy[i] = e.target.value
+                  onChange(copy)
+                }}
+                className={cn(inputClassName, "flex-1 min-w-0", mono && "mono")}
+              />
+            )}
             <button
               type="button"
               aria-label="Remove entry"

@@ -44,6 +44,7 @@ import {
   replaceConfiguration,
   previewConfiguration,
   useConfiguration,
+  useRules,
   type ConfigurationDetail,
   type ConfigurationWriteBody,
   type RedactedSecret,
@@ -53,14 +54,7 @@ import {
   type PreviewResult,
 } from "@/lib/config-api"
 import { APIError, UnauthorizedError } from "@/lib/api"
-
-const PROTOCOL_OPTIONS: SelectOption[] = [
-  { value: "chat", label: "chat" },
-  { value: "responses", label: "responses" },
-  { value: "messages", label: "messages" },
-  { value: "generate_content", label: "generate_content" },
-  { value: "embeddings", label: "embeddings" },
-]
+import { PROTOCOL_OPTIONS } from "@/lib/protocols"
 
 // CredentialDraft models one per-provider credential row. `existing` carries the
 // redacted GET projection (when editing a pre-existing credential); `value` is
@@ -264,6 +258,15 @@ function EditorBody({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<EditorError | null>(null)
   const [preview, setPreview] = useState<PreviewResult | null>(null)
+
+  // Rule-name entries reference the shared rules library — offer them as a
+  // constrained dropdown so an operator picks an existing rule rather than
+  // typing one (which would fail validation with ErrUnknownRuleName).
+  const rulesHandle = useRules()
+  const ruleOptions: SelectOption[] =
+    rulesHandle.state.status === "ok"
+      ? rulesHandle.state.data.map((r) => ({ value: r.name }))
+      : []
 
   const handleError = (e: unknown) => {
     if (e instanceof UnauthorizedError) {
@@ -517,10 +520,11 @@ function EditorBody({
                 label="Rule names"
                 values={form.ruleNames}
                 onChange={(v) => setForm({ ...form, ruleNames: v })}
-                placeholder="force-openai-streaming-usage"
+                placeholder="Select a rule…"
                 addLabel="+ Attach rule"
                 orderable
-                hint="Must match a rule in the shared rules library. Order is the evaluation order — use ▲▼ to reorder."
+                options={ruleOptions}
+                hint="Pick a rule from the shared library. Order is the evaluation order — use ▲▼ to reorder."
               />
             </div>
           </PanelCard>
