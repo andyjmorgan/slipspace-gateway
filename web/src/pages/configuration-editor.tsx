@@ -338,9 +338,33 @@ function EditorBody({
         </div>
       )}
 
-      <Tabs defaultValue="identity" className="gap-4">
+      {/* Identity — name + tags, pinned above the tabs so it stays visible
+          while editing credentials / bindings / rules. */}
+      <PanelCard>
+        <PanelHead title="Identity" sub="configuration name and telemetry tags" />
+        <div className="px-4 py-4 flex flex-col gap-3">
+          <TextField
+            label="Name"
+            value={form.name}
+            onChange={(v) => setForm({ ...form, name: v })}
+            placeholder="production"
+            mono
+            hint={nameEditable ? "Unique. Named by use-case (production, internal-dev). API keys resolve to this." : "Names are immutable post-create."}
+          />
+          <KeyValueEditor
+            label="Tags"
+            pairs={form.tags}
+            onChange={(p) => setForm({ ...form, tags: p })}
+            keyPlaceholder="client"
+            valuePlaceholder="k3s-agentling"
+            addLabel="+ Add tag"
+            hint="Propagated to telemetry for every request under this configuration."
+          />
+        </div>
+      </PanelCard>
+
+      <Tabs defaultValue="credentials" className="gap-4">
         <TabsList variant="line" className="flex-wrap">
-          <TabsTrigger value="identity">Identity</TabsTrigger>
           <TabsTrigger value="credentials">
             Credentials{form.credentials.length > 0 ? ` · ${form.credentials.length}` : ""}
           </TabsTrigger>
@@ -351,31 +375,6 @@ function EditorBody({
             Rules{form.ruleNames.length > 0 ? ` · ${form.ruleNames.length}` : ""}
           </TabsTrigger>
         </TabsList>
-
-        <TabsContent value="identity">
-          <PanelCard>
-            <PanelHead title="Identity" sub="configuration name and telemetry tags" />
-            <div className="px-4 py-4 flex flex-col gap-3">
-              <TextField
-                label="Name"
-                value={form.name}
-                onChange={(v) => setForm({ ...form, name: v })}
-                placeholder="production"
-                mono
-                hint={nameEditable ? "Unique. Named by use-case (production, internal-dev). API keys resolve to this." : "Names are immutable post-create."}
-              />
-              <KeyValueEditor
-                label="Tags"
-                pairs={form.tags}
-                onChange={(p) => setForm({ ...form, tags: p })}
-                keyPlaceholder="client"
-                valuePlaceholder="k3s-agentling"
-                addLabel="+ Add tag"
-                hint="Propagated to telemetry for every request under this configuration."
-              />
-            </div>
-          </PanelCard>
-        </TabsContent>
 
         <TabsContent value="credentials">
           <PanelCard>
