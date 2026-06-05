@@ -542,16 +542,20 @@ function GenAIContentView({ content }: { content: GenAIContent }) {
   )
 }
 
-// GenAIMessagesSection renders a list of role-tagged turns and their parts.
+// GenAIMessagesSection renders a list of role-tagged turns, each turn a
+// collapsible panel so individual messages can be folded away.
 function GenAIMessagesSection({ label, messages }: { label: string; messages: GenAIMessage[] }) {
   return (
     <CollapsibleSection label={label} count={messages.length}>
       <div className="flex flex-col gap-2">
         {messages.map((m, i) => (
-          <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
-            <div className="mb-1 mono text-[10px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{m.role}</div>
+          <CollapsiblePanel
+            key={i}
+            header={<span className="mono text-[10px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{m.role}</span>}
+            preview={messagePreview(m)}
+          >
             <GenAIParts parts={m.parts ?? []} />
-          </div>
+          </CollapsiblePanel>
         ))}
       </div>
     </CollapsibleSection>
@@ -559,13 +563,31 @@ function GenAIMessagesSection({ label, messages }: { label: string; messages: Ge
 }
 
 // GenAIPartsSection renders a bare parts array (system instructions have no
-// role wrapper).
+// role wrapper). Each part is its own collapsible panel so multi-part system
+// prompts are visibly split rather than running together as one block.
 function GenAIPartsSection({ label, parts }: { label: string; parts: GenAIMessagePart[] }) {
   return (
     <CollapsibleSection label={label} count={parts.length}>
-      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
-        <GenAIParts parts={parts} />
-      </div>
+      {parts.length === 0 ? (
+        <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {parts.map((p, i) => (
+            <CollapsiblePanel
+              key={i}
+              header={
+                <>
+                  <span className="mono text-[10px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{p.type || "text"}</span>
+                  <span className="mono text-[10px] text-[color:var(--text-4)]">#{i + 1}</span>
+                </>
+              }
+              preview={partPreview(p)}
+            >
+              <GenAIPart part={p} />
+            </CollapsiblePanel>
+          ))}
+        </div>
+      )}
     </CollapsibleSection>
   )
 }
@@ -638,23 +660,32 @@ function GenAIPart({ part }: { part: GenAIMessagePart }) {
 }
 
 // GenAIToolDefsSection lists the tools the request advertised to the model.
+// Each definition is a collapsible panel, collapsed by default — tool schemas
+// are the bulkiest GenAI content, so the section opens as a scannable list of
+// tool names and you expand only the one you want.
 function GenAIToolDefsSection({ defs }: { defs: GenAIToolDefinition[] }) {
   return (
     <CollapsibleSection label="Tool definitions" count={defs.length}>
       <div className="flex flex-col gap-2">
         {defs.map((d, i) => (
-          <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
-            <div className="mb-1 flex items-center gap-2">
-              {d.name && <span className="mono text-[12px] text-[color:var(--text-2)]">{d.name}</span>}
-              {d.type && <span className="mono text-[10.5px] text-[color:var(--text-4)]">{d.type}</span>}
-            </div>
+          <CollapsiblePanel
+            key={i}
+            defaultOpen={false}
+            header={
+              <>
+                {d.name && <span className="mono text-[12px] text-[color:var(--text-2)]">{d.name}</span>}
+                {d.type && <span className="mono text-[10.5px] text-[color:var(--text-4)]">{d.type}</span>}
+              </>
+            }
+            preview={previewText(d.description)}
+          >
             {d.description && (
               <div className="mb-1 whitespace-pre-wrap break-words text-[12px] text-[color:var(--text-3)]">
                 {d.description}
               </div>
             )}
             {d.parameters !== undefined && <GenAIJson value={d.parameters} />}
-          </div>
+          </CollapsiblePanel>
         ))}
       </div>
     </CollapsibleSection>
@@ -709,6 +740,71 @@ function CollapsibleSection({
       {open && children}
     </div>
   )
+}
+
+// CollapsiblePanel is a single bordered, click-to-toggle card for one item
+// inside a section — a message turn, a system-instruction part, or a tool
+// definition — so each can be folded away on its own. The header row stays
+// visible; `preview` is a one-line summary shown only while collapsed so a
+// folded card is still identifiable.
+function CollapsiblePanel({
+  header,
+  preview,
+  defaultOpen = true,
+  children,
+}: {
+  header: React.ReactNode
+  preview?: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 p-2 text-left hover:bg-[color:var(--hover)]"
+      >
+        {open ? (
+          <ChevronDown className="size-3 shrink-0 text-[color:var(--text-4)]" />
+        ) : (
+          <ChevronRight className="size-3 shrink-0 text-[color:var(--text-4)]" />
+        )}
+        <span className="flex min-w-0 items-center gap-2">{header}</span>
+        {!open && preview && (
+          <span className="min-w-0 flex-1 truncate text-[11.5px] text-[color:var(--text-4)]">{preview}</span>
+        )}
+      </button>
+      {open && <div className="border-t border-[color:var(--border)] p-2">{children}</div>}
+    </div>
+  )
+}
+
+// previewText collapses whitespace and clips a string to a single short line,
+// used for the collapsed-panel summaries.
+function previewText(s: string | undefined, max = 90): string {
+  if (!s) return ""
+  const line = s.replace(/\s+/g, " ").trim()
+  return line.length > max ? line.slice(0, max) + "…" : line
+}
+
+// partPreview summarises a single message part for a collapsed panel header.
+function partPreview(part: GenAIMessagePart): string {
+  if (part.type === "tool_call") return part.name ? `tool call · ${part.name}` : "tool call"
+  if (part.type === "tool_call_response") return "tool result"
+  if (part.content) return previewText(part.content)
+  return part.type ?? ""
+}
+
+// messagePreview summarises a message turn by its first content-bearing part.
+function messagePreview(m: GenAIMessage): string {
+  for (const p of m.parts ?? []) {
+    const t = partPreview(p)
+    if (t) return t
+  }
+  return ""
 }
 
 function Headers({ label, headers }: { label: string; headers?: Record<string, string[]> }) {
