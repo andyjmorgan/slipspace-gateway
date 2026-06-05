@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RefreshCw, X } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { JsonViewer } from "@/components/atoms/json-viewer"
+import { InspectorModal } from "@/components/atoms/inspector-modal"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { Segmented } from "@/components/atoms/segmented"
 import { Select } from "@/components/atoms/select"
@@ -336,32 +337,22 @@ function Inspector({
     return () => { cancelled = true }
   }, [entry.event_id])
 
-  // Keyboard nav: Esc close, arrows prev/next.
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") onClose()
-      else if (ev.key === "ArrowUp" && onPrev) { ev.preventDefault(); onPrev() }
-      else if (ev.key === "ArrowDown" && onNext) { ev.preventDefault(); onNext() }
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose, onPrev, onNext])
-
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
-      <div
-        className="h-full w-full max-w-2xl overflow-auto border-l border-[color:var(--border)] bg-[color:var(--bg-1)] p-5 flex flex-col gap-4"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <InspectorModal
+      onClose={onClose}
+      onPrev={onPrev}
+      onNext={onNext}
+      header={
         <div className="flex items-center gap-2">
           <StatusPill code={entry.status_code} />
           <span className="mono text-[12px] text-[color:var(--text-3)] truncate">{entry.correlation_id || entry.event_id}</span>
           <span className="ml-auto mono text-[11px] text-[color:var(--text-4)]">{position}</span>
-          <Button variant="ghost" size="icon-xs" onClick={onPrev} disabled={!onPrev} aria-label="Previous"><ChevronUp /></Button>
-          <Button variant="ghost" size="icon-xs" onClick={onNext} disabled={!onNext} aria-label="Next"><ChevronDown /></Button>
-          <Button variant="ghost" size="icon-xs" onClick={onClose} aria-label="Close"><X /></Button>
         </div>
-
+      }
+    >
+      {/* Telemetry content stacks taller than the modal, so it scrolls within
+          the fixed-height shell rather than filling it like the admin view. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto">
         <MetaGrid entry={entry} />
 
         {entry.upstream_error && (
@@ -407,7 +398,7 @@ function Inspector({
 
         <BodyTabs body={body} streaming={entry.streaming} />
       </div>
-    </div>
+    </InspectorModal>
   )
 }
 
