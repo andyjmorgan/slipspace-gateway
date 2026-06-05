@@ -30,6 +30,7 @@ import {
   StringListEditor,
   type SelectOption,
 } from "@/components/forms/field-atoms"
+import { ProviderSelectField } from "@/components/forms/provider-select"
 import {
   recordFromPairs,
   pairsFromRecord,
@@ -492,11 +493,11 @@ function EditorBody({
                     copy[i] = { ...copy[i], family: v }
                     setForm({ ...form, passthroughBindings: copy })
                   }} placeholder="message_batches" mono />
-                  <TextField label="Provider" value={p.provider} onChange={(v) => {
+                  <ProviderSelectField label="Provider" value={p.provider} onChange={(v) => {
                     const copy = form.passthroughBindings.slice()
                     copy[i] = { ...copy[i], provider: v }
                     setForm({ ...form, passthroughBindings: copy })
-                  }} placeholder="anthropic" mono />
+                  }} />
                   <Button type="button" variant="ghost" size="sm" className="text-[color:var(--text-3)] hover:text-[color:var(--err)]" onClick={() => {
                     const copy = form.passthroughBindings.slice()
                     copy.splice(i, 1)
@@ -518,7 +519,8 @@ function EditorBody({
                 onChange={(v) => setForm({ ...form, ruleNames: v })}
                 placeholder="force-openai-streaming-usage"
                 addLabel="+ Attach rule"
-                hint="Must match a rule in the shared rules library."
+                orderable
+                hint="Must match a rule in the shared rules library. Order is the evaluation order — use ▲▼ to reorder."
               />
             </div>
           </PanelCard>
@@ -552,12 +554,10 @@ function CredentialRow({
   const masked = draft.existing && !draft.dirty
   return (
     <div className="rounded-[var(--radius)] border border-[color:var(--border)] px-3 py-3 grid grid-cols-1 sm:grid-cols-[1fr_1.4fr_auto] gap-3 items-start">
-      <TextField
+      <ProviderSelectField
         label="Provider"
         value={draft.provider}
         onChange={(v) => onChange({ ...draft, provider: v })}
-        placeholder="openai"
-        mono
       />
       <div className="flex flex-col gap-1.5">
         <label className="text-[10px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">Credential</label>
@@ -655,7 +655,11 @@ function BindingCard({
             options={[{ value: "provider", label: "provider" }, { value: "group", label: "group" }]}
             onChange={(v) => onChange({ ...draft, destinationKind: v as "provider" | "group" })}
           />
-          <TextField label={draft.destinationKind === "group" ? "Group name" : "Provider name"} value={draft.destination} onChange={(v) => onChange({ ...draft, destination: v })} placeholder={draft.destinationKind === "group" ? "qwen-pool" : "openai"} mono />
+          {draft.destinationKind === "group" ? (
+            <TextField label="Group name" value={draft.destination} onChange={(v) => onChange({ ...draft, destination: v })} placeholder="qwen-pool" mono />
+          ) : (
+            <ProviderSelectField label="Provider" value={draft.destination} onChange={(v) => onChange({ ...draft, destination: v })} />
+          )}
         </div>
         <StringListEditor
           label="Models"
