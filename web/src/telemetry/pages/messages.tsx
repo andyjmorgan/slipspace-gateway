@@ -17,7 +17,12 @@ import {
   fetchFacets,
   fetchMessageBody,
   fetchMessagesPage,
+  parseGenAIContent,
   type Facets,
+  type GenAIContent,
+  type GenAIMessage,
+  type GenAIMessagePart,
+  type GenAIToolDefinition,
   type MessageBodyDetail,
   type MessageEntry,
   type MessageFilters,
@@ -437,10 +442,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefined; streaming?: boolean }) {
+  // Parse the captured gen_ai content (a JSON string on the wire) once per
+  // body so the rich GenAI view and the tab gating share one result.
+  const genAI = useMemo(() => parseGenAIContent(body?.gen_ai_content), [body])
+
   if (body === undefined) return <div className="text-[12px] text-[color:var(--text-4)]">Loading bodies…</div>
   if (body === null) return <div className="text-[12px] text-[color:var(--text-4)]">No captured bodies (rolled off or capture disabled).</div>
 
-  const hasGenAI = !!body.gen_ai_content
+  const hasGenAI = genAI !== null && genAIContentHasParts(genAI)
   return (
     <Tabs defaultValue={hasGenAI ? "genai" : "request"} className="flex flex-col gap-2">
       <TabsList>
@@ -452,7 +461,7 @@ function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefi
       </TabsList>
       {hasGenAI && (
         <TabsContent value="genai">
-          <BodyView label="GenAI content" text={body.gen_ai_content} />
+          <GenAIContentView content={genAI} />
         </TabsContent>
       )}
       <TabsContent value="request">
@@ -483,6 +492,197 @@ function BodyView({ label, text, bytes, truncated, partial }: { label: string; t
         {label}{bytes ? ` · ${fmt.compact(bytes)} bytes` : ""}{truncated ? " · truncated" : ""}{partial ? " · partial" : ""}
       </div>
       <JsonViewer text={text} maxHeightClassName="max-h-[60vh]" />
+    </div>
+  )
+}
+
+// genAIContentHasParts reports whether the captured content carries any
+// renderable section, so an empty {} or a content-less envelope does not light
+// up an empty GenAI tab.
+function genAIContentHasParts(c: GenAIContent): boolean {
+  return (
+    !!c.truncated ||
+    (c.input_messages?.length ?? 0) > 0 ||
+    (c.output_messages?.length ?? 0) > 0 ||
+    (c.tool_definitions?.length ?? 0) > 0 ||
+    (c.system_instructions?.length ?? 0) > 0
+  )
+}
+
+// GenAIContentView renders the telemetry-native GenAI content the gateway put
+// on the request span: the system instructions, the input turn, the model's
+// response (incl. tool calls), and the tool definitions advertised to the
+// model. This is the content channel — the request/response body tabs carry the
+// spool-captured bytes — and either may be present without the other.
+function GenAIContentView({ content }: { content: GenAIContent }) {
+  if (content.truncated) {
+    return (
+      <div className="rounded-[var(--radius)] border border-[color:var(--warn)] bg-[color:var(--bg-2)] p-3 text-[12px] text-[color:var(--text-3)]">
+        Captured content exceeded the telemetry service's content cap and was dropped
+        {content.original_bytes ? ` (${fmt.compact(content.original_bytes)} bytes)` : ""}. The Request / Response tabs
+        still carry the spool-captured bytes when a connector binding is configured.
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      {(content.system_instructions?.length ?? 0) > 0 && (
+        <GenAIPartsSection label="System instructions" parts={content.system_instructions ?? []} />
+      )}
+      {(content.input_messages?.length ?? 0) > 0 && (
+        <GenAIMessagesSection label="Input messages" messages={content.input_messages ?? []} />
+      )}
+      {(content.output_messages?.length ?? 0) > 0 && (
+        <GenAIMessagesSection label="Response" messages={content.output_messages ?? []} />
+      )}
+      {(content.tool_definitions?.length ?? 0) > 0 && (
+        <GenAIToolDefsSection defs={content.tool_definitions ?? []} />
+      )}
+    </div>
+  )
+}
+
+// GenAIMessagesSection renders a list of role-tagged turns and their parts.
+function GenAIMessagesSection({ label, messages }: { label: string; messages: GenAIMessage[] }) {
+  return (
+    <div className="flex flex-col">
+      <SectionLabel label={label} count={messages.length} />
+      <div className="flex flex-col gap-2">
+        {messages.map((m, i) => (
+          <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
+            <div className="mb-1 mono text-[10px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{m.role}</div>
+            <GenAIParts parts={m.parts ?? []} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// GenAIPartsSection renders a bare parts array (system instructions have no
+// role wrapper).
+function GenAIPartsSection({ label, parts }: { label: string; parts: GenAIMessagePart[] }) {
+  return (
+    <div className="flex flex-col">
+      <SectionLabel label={label} count={parts.length} />
+      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
+        <GenAIParts parts={parts} />
+      </div>
+    </div>
+  )
+}
+
+// GenAIParts renders each part by kind: assembled text, a model-issued tool
+// call (name + arguments), a tool-call result, or a reasoning trace.
+function GenAIParts({ parts }: { parts: GenAIMessagePart[] }) {
+  if (parts.length === 0) {
+    return <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {parts.map((p, i) => (
+        <GenAIPart key={i} part={p} />
+      ))}
+    </div>
+  )
+}
+
+function GenAIPart({ part }: { part: GenAIMessagePart }) {
+  if (part.type === "tool_call") {
+    return (
+      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-2">
+        <div className="mb-1 flex items-center gap-2">
+          <span className="mono text-[10px] uppercase tracking-[0.06em]" style={{ color: "var(--violet)" }}>
+            tool call
+          </span>
+          {part.name && <span className="mono text-[12px] text-[color:var(--text-2)]">{part.name}</span>}
+          {part.id && <span className="mono text-[10.5px] text-[color:var(--text-4)]">{part.id}</span>}
+        </div>
+        {part.arguments !== undefined && <GenAIJson value={part.arguments} />}
+      </div>
+    )
+  }
+  if (part.type === "tool_call_response") {
+    return (
+      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-2">
+        <div className="mb-1 flex items-center gap-2">
+          <span className="mono text-[10px] uppercase tracking-[0.06em]" style={{ color: "var(--ok)" }}>
+            tool result
+          </span>
+          {part.id && <span className="mono text-[10.5px] text-[color:var(--text-4)]">{part.id}</span>}
+        </div>
+        <GenAIJson value={part.result} />
+      </div>
+    )
+  }
+  if (part.type === "reasoning") {
+    return (
+      <div className="flex flex-col">
+        <span className="mono text-[10px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">reasoning</span>
+        <div className="whitespace-pre-wrap break-words text-[12.5px] text-[color:var(--text-3)]">
+          {part.content || <span className="italic text-[color:var(--text-4)]">redacted</span>}
+        </div>
+      </div>
+    )
+  }
+  if (part.type === "text" || part.content) {
+    return (
+      <div className="whitespace-pre-wrap break-words text-[12.5px] text-[color:var(--text-2)]">
+        {part.content || <span className="italic text-[color:var(--text-4)]">empty</span>}
+      </div>
+    )
+  }
+  // Pass-through media block (image, audio, …): the gateway records only the
+  // type, never the inline bytes, so surface the type alone.
+  return (
+    <div className="mono text-[11.5px] text-[color:var(--text-4)] italic">{part.type}</div>
+  )
+}
+
+// GenAIToolDefsSection lists the tools the request advertised to the model.
+function GenAIToolDefsSection({ defs }: { defs: GenAIToolDefinition[] }) {
+  return (
+    <div className="flex flex-col">
+      <SectionLabel label="Tool definitions" count={defs.length} />
+      <div className="flex flex-col gap-2">
+        {defs.map((d, i) => (
+          <div key={i} className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2">
+            <div className="mb-1 flex items-center gap-2">
+              {d.name && <span className="mono text-[12px] text-[color:var(--text-2)]">{d.name}</span>}
+              {d.type && <span className="mono text-[10.5px] text-[color:var(--text-4)]">{d.type}</span>}
+            </div>
+            {d.description && (
+              <div className="mb-1 whitespace-pre-wrap break-words text-[12px] text-[color:var(--text-3)]">
+                {d.description}
+              </div>
+            )}
+            {d.parameters !== undefined && <GenAIJson value={d.parameters} />}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// GenAIJson pretty-prints a nested JSON value (tool arguments, results, tool
+// parameter schemas) through the shared JsonViewer.
+function GenAIJson({ value }: { value: unknown }) {
+  const text = useMemo(() => {
+    if (typeof value === "string") return value
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
+  }, [value])
+  return <JsonViewer text={text} maxHeightClassName="max-h-56" />
+}
+
+function SectionLabel({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="mb-1 flex items-center gap-2">
+      <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{label}</div>
+      <div className="mono text-[10.5px] text-[color:var(--text-4)]">{count}</div>
     </div>
   )
 }
