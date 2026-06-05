@@ -25,12 +25,24 @@ const (
 	DefaultOTLPBind = "0.0.0.0:8687"
 )
 
+// DefaultContentMaxBytes is the per-request gen_ai content cap applied when the
+// operator does not set content_max_bytes. Content is a best-effort console
+// aid (the audit copy is the Record feed), so it is bounded by default; an
+// operator who wants the full content in the console raises this or sets it to
+// 0 (unlimited).
+const DefaultContentMaxBytes = 16 * 1024
+
 // Config is the root of the telemetry service's YAML file.
 type Config struct {
 	// HTTPBind is the listen address for the console + HMAC webhook ingest.
 	HTTPBind string `yaml:"http_bind"`
 	// OTLPBind is the listen address for the gen_ai + sluice OTLP feeds.
 	OTLPBind string `yaml:"otlp_bind"`
+	// ContentMaxBytes caps the per-request gen_ai content the OTLP ingest keeps
+	// for the console, in bytes. nil applies DefaultContentMaxBytes; a value of
+	// 0 (or negative) disables the cap so the full content is stored. A pointer
+	// distinguishes "unset" (take the default) from an explicit 0 (unlimited).
+	ContentMaxBytes *int `yaml:"content_max_bytes,omitempty"`
 	// Postgres is the central store connection.
 	Postgres Postgres `yaml:"postgres"`
 	// Console carries the HTTP Basic credentials for the operator console.
@@ -105,6 +117,16 @@ func (c *Config) applyDefaults() {
 	if c.OTLPBind == "" {
 		c.OTLPBind = DefaultOTLPBind
 	}
+}
+
+// ContentCap resolves the per-request content cap in bytes: the operator's
+// explicit value when set (including 0, which disables the cap), else
+// DefaultContentMaxBytes. The ingest layer treats a result <= 0 as unlimited.
+func (c Config) ContentCap() int {
+	if c.ContentMaxBytes == nil {
+		return DefaultContentMaxBytes
+	}
+	return *c.ContentMaxBytes
 }
 
 // Validate enforces the invariants the service depends on at startup: a store

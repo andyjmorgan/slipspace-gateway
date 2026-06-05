@@ -9,12 +9,6 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
-// maxContentBytes bounds the captured gen_ai content per request. Content is a
-// best-effort console aid, not the audit record (that is the request_payloads
-// channel), so it is capped hard and replaced with a marker when it would
-// exceed the limit.
-const maxContentBytes = 16 * 1024
-
 // Content span-attribute keys the gateway's reporter writes. Each attribute's
 // value is itself a JSON string: input/output messages are [{role, parts:[...]}],
 // system_instructions is a bare parts array, tool definitions are
@@ -33,12 +27,13 @@ const (
 // producing {input_messages, output_messages, tool_definitions,
 // system_instructions}; it falls back to the legacy gen_ai.* span-event scan.
 // Returns nil when the span carries no gen_ai content, and a small
-// {"truncated":...} marker when the content exceeds maxContentBytes.
-func captureContent(span *tracepb.Span) []byte {
-	if b := captureContentAttrs(span); b != nil {
+// {"truncated":...} marker when the content exceeds maxBytes. A maxBytes of 0
+// or less disables the cap so the full content is kept.
+func captureContent(span *tracepb.Span, maxBytes int) []byte {
+	if b := captureContentAttrs(span, maxBytes); b != nil {
 		return b
 	}
-	return captureContentEvents(span)
+	return captureContentEvents(span, maxBytes)
 }
 
 // captureContentAttrs builds the structured content object from the span's
@@ -46,7 +41,7 @@ func captureContent(span *tracepb.Span) []byte {
 // as json.RawMessage so the wire payload is a real nested object rather than a
 // doubly-escaped string. Non-JSON values are skipped. Returns nil when no
 // content attribute is present.
-func captureContentAttrs(span *tracepb.Span) []byte {
+func captureContentAttrs(span *tracepb.Span, maxBytes int) []byte {
 	attrs := make(map[string]string, len(span.GetAttributes()))
 	for _, kv := range span.GetAttributes() {
 		switch kv.GetKey() {
@@ -73,7 +68,7 @@ func captureContentAttrs(span *tracepb.Span) []byte {
 	if out.InputMessages == nil && out.OutputMessages == nil && out.ToolDefinitions == nil && out.SystemInstructions == nil {
 		return nil
 	}
-	return marshalBounded(out)
+	return marshalBounded(out, maxBytes)
 }
 
 // rawJSON returns the attribute string as a json.RawMessage when it is valid
@@ -89,7 +84,7 @@ func rawJSON(s string) json.RawMessage {
 // captureContentEvents is the legacy fallback: scan the span's gen_ai.* events
 // into a compact JSON array. Retained for producers that emit content as span
 // events rather than attributes.
-func captureContentEvents(span *tracepb.Span) []byte {
+func captureContentEvents(span *tracepb.Span, maxBytes int) []byte {
 	type contentEvent struct {
 		Name       string            `json:"name"`
 		Attributes map[string]string `json:"attributes,omitempty"`
@@ -110,17 +105,18 @@ func captureContentEvents(span *tracepb.Span) []byte {
 	if len(events) == 0 {
 		return nil
 	}
-	return marshalBounded(events)
+	return marshalBounded(events, maxBytes)
 }
 
 // marshalBounded marshals v, returning a {"truncated":...} marker in place of
-// the payload when it exceeds maxContentBytes, and nil on a marshal error.
-func marshalBounded(v any) []byte {
+// the payload when it exceeds maxBytes, and nil on a marshal error. A maxBytes
+// of 0 or less disables the cap, so the full payload is always returned.
+func marshalBounded(v any, maxBytes int) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return nil
 	}
-	if len(b) > maxContentBytes {
+	if maxBytes > 0 && len(b) > maxBytes {
 		marker, _ := json.Marshal(map[string]any{"truncated": true, "original_bytes": len(b)})
 		return marker
 	}

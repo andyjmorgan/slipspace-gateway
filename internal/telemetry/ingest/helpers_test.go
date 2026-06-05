@@ -83,17 +83,33 @@ func TestCaptureContent_EventsFallback(t *testing.T) {
 		{Name: "gen_ai.user.message", Attributes: []*commonpb.KeyValue{strKV("content", "hi")}},
 		{Name: "other.event", Attributes: nil}, // ignored, not gen_ai.*
 	}}
-	b := captureContent(span)
+	b := captureContent(span, testContentCap)
 	if b == nil || !strings.Contains(string(b), "gen_ai.user.message") {
 		t.Fatalf("events fallback = %s", b)
 	}
 }
 
 func TestMarshalBounded_Truncates(t *testing.T) {
-	big := strings.Repeat("x", maxContentBytes+10)
-	out := marshalBounded(map[string]string{"v": big})
+	big := strings.Repeat("x", testContentCap+10)
+	out := marshalBounded(map[string]string{"v": big}, testContentCap)
 	if !strings.Contains(string(out), `"truncated":true`) {
 		t.Fatalf("expected truncation marker, got %s", string(out)[:40])
+	}
+}
+
+func TestMarshalBounded_ZeroDisablesCap(t *testing.T) {
+	// 0 (and negative) means unlimited: the full payload survives even when it
+	// would blow past the default cap. This is the "unset the boundary" path an
+	// operator gets from content_max_bytes: 0.
+	big := strings.Repeat("x", testContentCap+10)
+	for _, cap := range []int{0, -1} {
+		out := marshalBounded(map[string]string{"v": big}, cap)
+		if strings.Contains(string(out), `"truncated":true`) {
+			t.Fatalf("cap=%d truncated; want full payload", cap)
+		}
+		if !strings.Contains(string(out), big) {
+			t.Fatalf("cap=%d dropped the payload", cap)
+		}
 	}
 }
 
@@ -118,7 +134,7 @@ func TestPointsFromMetric_SumDouble(t *testing.T) {
 }
 
 func TestNewOTLPServer(t *testing.T) {
-	srv := NewOTLPServer(NewTraceReceiver(&eventSink{}, discard()), NewMetricsReceiver(&metricSink{}, discard()))
+	srv := NewOTLPServer(NewTraceReceiver(&eventSink{}, discard(), testContentCap), NewMetricsReceiver(&metricSink{}, discard()))
 	if srv == nil {
 		t.Fatal("nil server")
 	}
@@ -129,7 +145,7 @@ func TestNewOTLPServer(t *testing.T) {
 }
 
 func TestTraceReceiver_EmptyBatch(t *testing.T) {
-	r := NewTraceReceiver(&eventSink{}, discard())
+	r := NewTraceReceiver(&eventSink{}, discard(), testContentCap)
 	if _, err := r.Export(context.Background(), &collectortrace.ExportTraceServiceRequest{}); err != nil {
 		t.Fatalf("empty Export: %v", err)
 	}

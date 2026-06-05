@@ -7,6 +7,12 @@ http_bind: "0.0.0.0:8686"
 # OTLP gRPC listener for the gen_ai + sluice telemetry feeds.
 otlp_bind: "0.0.0.0:8687"
 
+# Per-request cap (bytes) on the gen_ai content the console keeps. Content is a
+# best-effort console aid — the audit copy travels the Record feed — so it is
+# bounded by default (16384). Raise it to keep larger prompts/responses, or set
+# 0 to disable the cap entirely. Omit to take the default.
+# content_max_bytes: 0
+
 postgres:
   # Matches the telemetry-db service in docker-compose.telemetry.yaml.
   dsn: "postgres://telemetry:telemetry@telemetry-db:5432/telemetry?sslmode=disable"

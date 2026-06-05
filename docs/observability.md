@@ -267,6 +267,8 @@ The caps shape only what reaches the span and the operation-details event; they 
 
 On the **span**, content rides as JSON strings (span attributes can't hold structured values — the spec permits a JSON string there); on the **event**, it is recorded in structured form, as the spec requires. The operation-detail events are emitted within the request span's context, so the log records carry the span's `trace_id`/`span_id` for native trace↔logs correlation.
 
+**Second cap — the telemetry service ingest.** The gateway caps above shape *individual* parts before emission. The central telemetry service applies a *second*, independent cap on the **assembled** gen_ai content object as it ingests each span — a whole-object byte limit, not a per-part one. When the assembled content exceeds it, the service stores no content for that request: it keeps only a `{"truncated": true, "original_bytes": N}` marker, which the console renders as a banner pointing operators at the Request/Response tabs (the spool-captured bytes, present when a connector binding is configured). This cap is set on the telemetry service via `content_max_bytes` in its config file (defaults to 16384; `0` or negative disables it). Note the two layers can disagree — the gateway per-part defaults (32 KiB each) sum well past the ingest default (16 KiB), so an assembled object can clear every gateway cap yet still be dropped whole by the ingest cap. Raise or zero `content_max_bytes` to keep large content in the console.
+
 ---
 
 ## Snapshotter

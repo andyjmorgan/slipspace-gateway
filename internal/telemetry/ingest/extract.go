@@ -45,8 +45,9 @@ const (
 // (span wins). Returns ok=false when the span carries no correlation id — the
 // key everything joins on. Only gen_ai semconv columns are populated; the
 // gateway columns (configuration, protocol, method, detail, ...) are left zero
-// for the Record feed to fill via UpsertGatewayRecord.
-func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (store.RequestEvent, bool) {
+// for the Record feed to fill via UpsertGatewayRecord. contentMaxBytes bounds
+// the captured gen_ai content (<= 0 keeps it whole).
+func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, contentMaxBytes int) (store.RequestEvent, bool) {
 	if span == nil {
 		return store.RequestEvent{}, false
 	}
@@ -69,7 +70,7 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (stor
 		TokensCacheCreation: intAttr(attrs, attrCacheCreationTokens),
 		SessionID:           strAttr(attrs, attrConversationID),
 		Streaming:           boolAttr(attrs, attrRequestStream),
-		GenAIContent:        captureContent(span),
+		GenAIContent:        captureContent(span, contentMaxBytes),
 	}, true
 }
 

@@ -93,7 +93,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	reg := registry.New(cfg.Gateways)
 	recordIngest := ingest.NewRecordHandler(reg, st, log)
 	otlp := ingest.NewOTLPServer(
-		ingest.NewTraceReceiver(st, log),
+		ingest.NewTraceReceiver(st, log, cfg.ContentCap()),
 		ingest.NewMetricsReceiver(st, log),
 	)
 

@@ -55,6 +55,11 @@ func (s *metricSink) InsertMetricPoints(_ context.Context, pts []store.MetricPoi
 	return nil
 }
 
+// testContentCap is the byte cap the extraction tests pass to EventFromSpan /
+// captureContent; matches the config default. Cap-specific behaviour (0 =
+// unlimited, over-cap truncation) is exercised in helpers_test.go.
+const testContentCap = 16 * 1024
+
 // --- EventFromSpan ---
 
 func TestEventFromSpan_GenAIAttributes(t *testing.T) {
@@ -78,7 +83,7 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 			boolKV(attrRequestStream, true),
 		},
 	}
-	e, ok := EventFromSpan(nil, span)
+	e, ok := EventFromSpan(nil, span, testContentCap)
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
@@ -101,13 +106,13 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 }
 
 func TestEventFromSpan_NoCorrelationID(t *testing.T) {
-	if _, ok := EventFromSpan(nil, &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrModel, "m")}}); ok {
+	if _, ok := EventFromSpan(nil, &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrModel, "m")}}, testContentCap); ok {
 		t.Fatal("ok = true for span without correlation id")
 	}
 }
 
 func TestEventFromSpan_NilSpan(t *testing.T) {
-	if _, ok := EventFromSpan(nil, nil); ok {
+	if _, ok := EventFromSpan(nil, nil, testContentCap); ok {
 		t.Fatal("ok = true for nil span")
 	}
 }
@@ -117,7 +122,7 @@ func TestEventFromSpan_ResourceMerge(t *testing.T) {
 	// on the resource is picked up when the span carries only the correlation id.
 	resource := []*commonpb.KeyValue{strKV(attrGenAIProvider, "openai")}
 	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrCorrelationID, "c")}}
-	e, ok := EventFromSpan(resource, span)
+	e, ok := EventFromSpan(resource, span, testContentCap)
 	if !ok {
 		t.Fatal("ok = false")
 	}
@@ -134,7 +139,7 @@ func TestCaptureContent_Attrs(t *testing.T) {
 		strKV(attrOutputMessages, `[{"role":"assistant"}]`),
 		strKV(attrToolDefinitions, "not json"), // dropped
 	}}
-	b := captureContent(span)
+	b := captureContent(span, testContentCap)
 	if b == nil {
 		t.Fatal("content = nil")
 	}
@@ -151,7 +156,7 @@ func TestCaptureContent_Attrs(t *testing.T) {
 }
 
 func TestCaptureContent_None(t *testing.T) {
-	if b := captureContent(&tracepb.Span{}); b != nil {
+	if b := captureContent(&tracepb.Span{}, testContentCap); b != nil {
 		t.Errorf("content = %s, want nil", b)
 	}
 }
@@ -168,7 +173,7 @@ func traceReq(spans ...*tracepb.Span) *collectortrace.ExportTraceServiceRequest 
 
 func TestTraceReceiver_Export(t *testing.T) {
 	sink := &eventSink{}
-	r := NewTraceReceiver(sink, discard())
+	r := NewTraceReceiver(sink, discard(), testContentCap)
 	good := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrCorrelationID, "c1")}}
 	skip := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrModel, "m")}} // no corr id
 	if _, err := r.Export(context.Background(), traceReq(good, skip)); err != nil {
@@ -180,7 +185,7 @@ func TestTraceReceiver_Export(t *testing.T) {
 }
 
 func TestTraceReceiver_StoreErrorIsSwallowed(t *testing.T) {
-	r := NewTraceReceiver(&eventSink{err: errors.New("db down")}, discard())
+	r := NewTraceReceiver(&eventSink{err: errors.New("db down")}, discard(), testContentCap)
 	good := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrCorrelationID, "c1")}}
 	if _, err := r.Export(context.Background(), traceReq(good)); err != nil {
 		t.Fatalf("Export must not propagate store errors: %v", err)
