@@ -37,6 +37,10 @@ type Server struct {
 	queries Queries
 	webhook http.Handler
 	log     *slog.Logger
+	// facets caches the distinct dropdown values so a dropdown open doesn't scan
+	// the event table on every request; refreshed once past its TTL. See
+	// cachedFacets.
+	facets facetsCache
 }
 
 // New builds the console server. store backs the readiness probe; queries backs

@@ -113,4 +113,14 @@ CREATE INDEX IF NOT EXISTS metric_points_name_time ON metric_points (metric_name
 		// new column name automatically, so only the rename is needed.
 		sql: `ALTER TABLE request_events RENAME COLUMN backend TO provider;`,
 	},
+	{
+		version: 3,
+		name:    "tags_gin_index",
+		// The message browser filters by post-rule tags (detail->'tags' @> ...)
+		// and enumerates the distinct tag set for its dropdown. A GIN index on
+		// the tags path makes both the containment filter and the
+		// jsonb_array_elements_text scan index-backed instead of a full table
+		// scan as the event table grows.
+		sql: `CREATE INDEX IF NOT EXISTS request_events_tags ON request_events USING gin ((detail->'tags'));`,
+	},
 }

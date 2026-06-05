@@ -24,6 +24,13 @@ type EventFilter struct {
 	Provider      string
 	Protocol      string
 	StatusClass   string
+	// SessionID and CorrelationID are exact-match lookups for the message
+	// browser's two id search boxes; empty means no predicate.
+	SessionID     string
+	CorrelationID string
+	// Tags narrows to events whose post-rule tag set contains ALL listed tags
+	// (JSONB containment). Empty/nil means no predicate.
+	Tags []string
 }
 
 // appendFilter grows the WHERE fragments + args for the equality and
@@ -37,6 +44,8 @@ func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 		{"model", f.Model},
 		{"provider", f.Provider},
 		{"protocol", f.Protocol},
+		{"session_id", f.SessionID},
+		{"correlation_id", f.CorrelationID},
 	}
 	for _, e := range eq {
 		if e.val == "" {
@@ -44,6 +53,14 @@ func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 		}
 		args = append(args, e.val)
 		where = append(where, fmt.Sprintf("%s = $%d", e.col, len(args)))
+	}
+	// Tags is an AND containment: the event's detail->'tags' array must contain
+	// every requested tag. We bind the requested set as a single jsonb array
+	// param so the @> operator can use the GIN index on (detail->'tags').
+	if len(f.Tags) > 0 {
+		tagsJSON, _ := json.Marshal(f.Tags)
+		args = append(args, string(tagsJSON))
+		where = append(where, fmt.Sprintf("detail->'tags' @> $%d::jsonb", len(args)))
 	}
 	if lo, hi, ok := statusClassBounds(f.StatusClass); ok {
 		args = append(args, lo)

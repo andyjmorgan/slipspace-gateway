@@ -66,6 +66,77 @@ export async function fetchRecentMessages(limit?: number): Promise<MessagesRecen
   return apiFetch<MessagesRecentResponse>(`/api/v1/messages/recent${qs}`)
 }
 
+// MessageFilters is the message browser's filter set. Empty fields are omitted
+// from the query string (no predicate); tags is AND containment.
+export type MessageFilters = {
+  correlationId?: string
+  sessionId?: string
+  provider?: string
+  model?: string
+  configuration?: string
+  endpoint?: string
+  statusClass?: string
+  tags?: string[]
+  from?: string
+  to?: string
+}
+
+// MessagesPage is one keyset page of the filtered browser. nextCursor is empty
+// on the last page.
+export type MessagesPage = {
+  entries: MessageEntry[]
+  nextCursor: string
+}
+
+type MessagesPageWire = {
+  entries: MessageEntry[]
+  next_cursor: string
+}
+
+/**
+ * Fetches one filtered, keyset-paged page of messages (newest-first). Pass the
+ * previous page's nextCursor to advance; omit it for page one. The endpoint
+ * filter maps to the `protocol` column on the wire.
+ */
+export async function fetchMessagesPage(
+  filters: MessageFilters,
+  opts: { cursor?: string; limit?: number } = {},
+): Promise<MessagesPage> {
+  const p = new URLSearchParams()
+  const put = (k: string, v?: string) => {
+    if (v) p.set(k, v)
+  }
+  put("correlation_id", filters.correlationId)
+  put("session_id", filters.sessionId)
+  put("provider", filters.provider)
+  put("model", filters.model)
+  put("configuration", filters.configuration)
+  put("protocol", filters.endpoint)
+  put("status_class", filters.statusClass)
+  put("from", filters.from)
+  put("to", filters.to)
+  for (const t of filters.tags ?? []) p.append("tags", t)
+  put("cursor", opts.cursor)
+  if (opts.limit && opts.limit > 0) p.set("limit", String(opts.limit))
+  const r = await apiFetch<MessagesPageWire>(`/api/v1/messages?${p.toString()}`)
+  return { entries: r.entries ?? [], nextCursor: r.next_cursor ?? "" }
+}
+
+// Facets is the distinct dropdown values for the browser. Each list is sorted
+// and de-duplicated server-side.
+export type Facets = {
+  providers: string[]
+  models: string[]
+  configurations: string[]
+  endpoints: string[]
+  tags: string[]
+}
+
+/** Fetches the distinct filter-dropdown values (cached server-side). */
+export async function fetchFacets(): Promise<Facets> {
+  return apiFetch<Facets>(`/api/v1/facets`)
+}
+
 export type MessageBodyDetail = {
   event_id: string
   request?: string

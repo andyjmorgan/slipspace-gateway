@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
 
+	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
@@ -29,6 +31,12 @@ type fakeQueries struct {
 	payErr     error
 	session    []store.RequestEvent
 	sessionErr error
+	facets     store.Facets
+	facetsErr  error
+	facetsHits int
+	// lastParams records the EventListParams of the most recent
+	// ListEventsFiltered call so filter-plumbing tests can assert on it.
+	lastParams store.EventListParams
 }
 
 func (f *fakeQueries) QueryDashboardSummary(context.Context, store.DashboardParams) (store.DashboardSummary, error) {
@@ -37,8 +45,13 @@ func (f *fakeQueries) QueryDashboardSummary(context.Context, store.DashboardPara
 func (f *fakeQueries) QueryDashboardSeries(context.Context, store.DashboardSeriesParams) ([]store.DashboardSeriesBucket, error) {
 	return f.series, f.seriesErr
 }
-func (f *fakeQueries) ListEventsFiltered(context.Context, store.EventListParams) ([]store.RequestEvent, string, error) {
+func (f *fakeQueries) ListEventsFiltered(_ context.Context, p store.EventListParams) ([]store.RequestEvent, string, error) {
+	f.lastParams = p
 	return f.events, f.next, f.eventsErr
+}
+func (f *fakeQueries) Facets(context.Context) (store.Facets, error) {
+	f.facetsHits++
+	return f.facets, f.facetsErr
 }
 func (f *fakeQueries) GetRequestEvent(context.Context, string) (store.RequestEvent, error) {
 	return f.event, f.eventErr
@@ -173,6 +186,120 @@ func TestEventBody(t *testing.T) {
 		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
+
+func TestMessages_FiltersAndPaging(t *testing.T) {
+	q := &fakeQueries{events: []store.RequestEvent{{CorrelationID: "c1"}}, next: "cur2"}
+	h := newQueryServer(t, q)
+	resp := get(t, h,
+		"/api/v1/messages?provider=openai&model=gpt-4o&configuration=default&protocol=chat_completions"+
+			"&session_id=sess-1&correlation_id=corr-1&status_class=2xx&tags=eu&tags=pii"+
+			"&from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z&cursor=cur1&limit=25", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	var body struct {
+		Entries    []adminc.MessageEntry `json:"entries"`
+		NextCursor string                `json:"next_cursor"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Entries) != 1 || body.NextCursor != "cur2" {
+		t.Fatalf("body = %+v", body)
+	}
+	// Every filter dimension must have reached the store untouched.
+	got := q.lastParams
+	if got.Cursor != "cur1" || got.Limit != 25 {
+		t.Errorf("cursor/limit not plumbed: %+v", got)
+	}
+	if got.From.IsZero() || got.To.IsZero() {
+		t.Errorf("window not plumbed: %+v", got)
+	}
+	f := got.Filter
+	if f.Provider != "openai" || f.Model != "gpt-4o" || f.Configuration != "default" ||
+		f.Protocol != "chat_completions" || f.SessionID != "sess-1" || f.CorrelationID != "corr-1" ||
+		f.StatusClass != "2xx" {
+		t.Errorf("scalar filters not plumbed: %+v", f)
+	}
+	if len(f.Tags) != 2 || f.Tags[0] != "eu" || f.Tags[1] != "pii" {
+		t.Errorf("tags not plumbed: %+v", f.Tags)
+	}
+}
+
+func TestMessages_BadParamsAndErrors(t *testing.T) {
+	h := newQueryServer(t, &fakeQueries{})
+	if resp := get(t, h, "/api/v1/messages?from=x", true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("bad from: %d", resp.Code)
+	}
+	hCur := newQueryServer(t, &fakeQueries{eventsErr: store.ErrInvalidCursor})
+	if resp := get(t, hCur, "/api/v1/messages?cursor=bad", true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("bad cursor: %d", resp.Code)
+	}
+	hErr := newQueryServer(t, &fakeQueries{eventsErr: errors.New("db")})
+	if resp := get(t, hErr, "/api/v1/messages", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("db err: %d", resp.Code)
+	}
+	// A blank ?tags= must not become a predicate that matches nothing.
+	q := &fakeQueries{}
+	hBlank := newQueryServer(t, q)
+	if resp := get(t, hBlank, "/api/v1/messages?tags=", true); resp.Code != http.StatusOK {
+		t.Fatalf("blank tag: %d", resp.Code)
+	}
+	if len(q.lastParams.Filter.Tags) != 0 {
+		t.Errorf("blank tag became a predicate: %+v", q.lastParams.Filter.Tags)
+	}
+}
+
+func TestFacets(t *testing.T) {
+	q := &fakeQueries{facets: store.Facets{
+		Providers: []string{"openai"}, Models: []string{"gpt-4o"},
+		Configurations: []string{"default"}, Endpoints: []string{"chat_completions"},
+		Tags: []string{"eu"},
+	}}
+	h := newQueryServer(t, q)
+	resp := get(t, h, "/api/v1/facets", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	var body struct {
+		Providers      []string `json:"providers"`
+		Models         []string `json:"models"`
+		Configurations []string `json:"configurations"`
+		Endpoints      []string `json:"endpoints"`
+		Tags           []string `json:"tags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Providers) != 1 || body.Providers[0] != "openai" || len(body.Tags) != 1 {
+		t.Fatalf("body = %+v", body)
+	}
+	// Second call within the TTL is served from cache — the store is hit once.
+	_ = get(t, h, "/api/v1/facets", true)
+	if q.facetsHits != 1 {
+		t.Errorf("facets store hits = %d, want 1 (cached)", q.facetsHits)
+	}
+}
+
+func TestFacets_NilSlicesAndError(t *testing.T) {
+	// A fresh store with no events yields nil slices; the API must render [].
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	resp := get(t, h, "/api/v1/facets", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if got := resp.Body.String(); !json.Valid([]byte(got)) ||
+		!contains(got, `"providers":[]`) || !contains(got, `"tags":[]`) {
+		t.Errorf("nil slices not rendered as []: %s", got)
+	}
+	hErr := newQueryServer(t, &fakeQueries{facetsErr: errors.New("db")})
+	if resp := get(t, hErr, "/api/v1/facets", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("db err: %d", resp.Code)
+	}
+}
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestSession(t *testing.T) {
 	q := &fakeQueries{session: []store.RequestEvent{{CorrelationID: "1", SessionID: "s"}}}

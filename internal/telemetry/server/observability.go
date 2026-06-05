@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
@@ -115,6 +117,99 @@ func (s *Server) handleObsMessageBody(w http.ResponseWriter, r *http.Request) {
 		genAI = ev.GenAIContent
 	}
 	writeJSON(w, http.StatusOK, mapBody(id, payloads, genAI))
+}
+
+// handleObsMessages serves the message browser: a filtered, keyset-paged page of
+// events in the rich contracts/admin.MessageEntry shape (so the inspector
+// decodes them unchanged), newest-first. Unlike /messages/recent (the dashboard
+// live feed) it honors the full filter set, an optional time window, and a
+// cursor, and returns next_cursor for forward paging.
+func (s *Server) handleObsMessages(w http.ResponseWriter, r *http.Request) {
+	from, to, bad := parseWindowBounds(r)
+	if bad != "" {
+		writeError(w, http.StatusBadRequest, "invalid "+bad)
+		return
+	}
+	q := r.URL.Query()
+	events, next, err := s.queries.ListEventsFiltered(r.Context(), store.EventListParams{
+		From:   from,
+		To:     to,
+		Filter: filterFromQuery(r),
+		Cursor: q.Get("cursor"),
+		Limit:  intParam(r, "limit", 0),
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrInvalidCursor) {
+			writeError(w, http.StatusBadRequest, "invalid cursor")
+			return
+		}
+		s.queryError(w, "messages", err)
+		return
+	}
+	// Keep store order (newest-first) — this is a browser, not the live feed.
+	entries := make([]adminc.MessageEntry, 0, len(events))
+	for _, e := range events {
+		entries = append(entries, mapEntry(e))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "next_cursor": next})
+}
+
+// handleFacets emits the distinct dropdown values for the message browser. The
+// values come from cachedFacets, so repeated dropdown opens don't rescan the
+// event table within the TTL.
+func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
+	f, err := s.cachedFacets(r.Context())
+	if err != nil {
+		s.queryError(w, "facets", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"providers":      nonNil(f.Providers),
+		"models":         nonNil(f.Models),
+		"configurations": nonNil(f.Configurations),
+		"endpoints":      nonNil(f.Endpoints),
+		"tags":           nonNil(f.Tags),
+	})
+}
+
+// nonNil renders a nil slice as [] rather than null so the SPA can map over it
+// without a guard.
+func nonNil(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
+}
+
+// facetsTTL bounds how stale the dropdown values may be. Short enough that a new
+// provider/model/tag shows up promptly, long enough to absorb a burst of
+// dropdown opens with a single scan.
+const facetsTTL = 30 * time.Second
+
+// facetsCache memoizes the distinct dropdown values behind a mutex. The lock is
+// held across the refresh query so a burst of concurrent opens collapses to one
+// scan rather than a thundering herd.
+type facetsCache struct {
+	mu      sync.Mutex
+	value   store.Facets
+	expires time.Time
+}
+
+// cachedFacets returns the facets, refreshing from the store when the cache has
+// expired.
+func (s *Server) cachedFacets(ctx context.Context) (store.Facets, error) {
+	s.facets.mu.Lock()
+	defer s.facets.mu.Unlock()
+	if time.Now().Before(s.facets.expires) {
+		return s.facets.value, nil
+	}
+	f, err := s.queries.Facets(ctx)
+	if err != nil {
+		return store.Facets{}, err
+	}
+	s.facets.value = f
+	s.facets.expires = time.Now().Add(facetsTTL)
+	return f, nil
 }
 
 // --- mappers: store shapes -> contracts/admin shapes ---
