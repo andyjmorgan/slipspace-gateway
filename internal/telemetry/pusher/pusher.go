@@ -1,16 +1,19 @@
-// Package pusher is the gateway-side client that ships large payloads to the
-// central telemetry service over the HMAC webhook — in real time, NOT through
-// the connector spool. It exists to honour the non-blocking invariant
-// (invariant #2): Enqueue is non-blocking and fires from a bounded in-memory
-// worker pool *after* the client response, dropping on backpressure and bumping
-// a dropped counter. The request path never waits on it, and a wedged or slow
-// telemetry service can only cost dropped telemetry, never client latency.
+// Package pusher is the gateway-side client that ships the full per-request
+// cc.Record to the central telemetry service in real time — NOT through the
+// connector spool. It is channel 3 of the telemetry design (the authoritative
+// request log: headers, bodies, rule chain, resilience attempts), the
+// counterpart to the gen_ai/sluice OTLP feeds.
 //
-// The wire shape mirrors the telemetry service's ingest contract: a JSON
-// envelope POSTed to /api/v1/ingest/payload, signed with the gateway's HMAC
-// secret (hex HMAC-SHA256 of the raw body) under X-Sluice-Signature, identified
-// by X-Sluice-Gateway-Id. Kept dependency-light on purpose so the data plane
-// pulls no Postgres/gRPC/OTLP weight.
+// It exists to honour the non-blocking invariant (invariant #2): Enqueue is
+// non-blocking and fires from a bounded in-memory worker pool *after* the
+// client response, dropping on backpressure and bumping a dropped counter. The
+// request path never waits on it, and a wedged or slow telemetry service can
+// only cost dropped telemetry, never client latency.
+//
+// The wire shape is the bare cc.Record JSON POSTed to /api/v1/ingest/record,
+// signed with the gateway's HMAC secret (hex HMAC-SHA256 of the raw body) under
+// X-Sluice-Signature, identified by X-Sluice-Gateway-Id. Kept dependency-light
+// on purpose so the data plane pulls no Postgres/gRPC/OTLP weight.
 package pusher
 
 import (
@@ -27,15 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
-)
-
-// Payload kinds, mirroring the telemetry service's store.Kind* values. Kept in
-// sync as a wire contract.
-const (
-	KindRequestBody  = "request_body"
-	KindResponseBody = "response_body"
-	KindSSERollup    = "sse_rollup"
 )
 
 // Webhook headers, mirroring the telemetry service's ingest contract.
@@ -44,16 +40,6 @@ const (
 	headerSignature = "X-Sluice-Signature"
 )
 
-// Item is one large payload to ship: a captured body keyed to its request.
-type Item struct {
-	CorrelationID string          `json:"correlation_id"`
-	Kind          string          `json:"kind"`
-	InstanceID    string          `json:"instance_id"`
-	Seq           uint64          `json:"seq"`
-	TsNs          int64           `json:"ts_ns"`
-	Body          json.RawMessage `json:"body"`
-}
-
 // httpDoer is the http.Client surface; tests inject a fake.
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -61,7 +47,7 @@ type httpDoer interface {
 
 // Options configures a Pusher.
 type Options struct {
-	// Endpoint is the full telemetry ingest URL (…/api/v1/ingest/payload).
+	// Endpoint is the telemetry record-ingest URL (…/api/v1/ingest/record).
 	Endpoint string
 	// GatewayID identifies this gateway to the telemetry registry.
 	GatewayID string
@@ -72,21 +58,24 @@ type Options struct {
 	// Buffer is the bounded queue depth. Defaults to 1024. When full, Enqueue
 	// drops and bumps the dropped counter.
 	Buffer int
-	// Client is the HTTP transport. Defaults to a 5s-timeout *http.Client.
+	// Timeout is the per-send HTTP timeout. Zero defaults to 5s.
+	Timeout time.Duration
+	// Client is the HTTP transport. Defaults to an *http.Client with Timeout.
 	Client httpDoer
 	// Logger is optional; defaults to slog.Default().
 	Logger *slog.Logger
 }
 
-// Pusher ships items to the telemetry service from a bounded worker pool.
+// Pusher ships records to the telemetry service from a bounded worker pool.
 type Pusher struct {
 	endpoint  string
 	gatewayID string
 	secret    []byte
 	client    httpDoer
+	timeout   time.Duration
 	log       *slog.Logger
 
-	ch      chan Item
+	ch      chan cc.Record
 	wg      sync.WaitGroup
 	dropped atomic.Int64
 	sent    atomic.Int64
@@ -111,9 +100,13 @@ func New(opts Options) *Pusher {
 	if buffer <= 0 {
 		buffer = defaultBuffer
 	}
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
 	client := opts.Client
 	if client == nil {
-		client = &http.Client{Timeout: defaultTimeout}
+		client = &http.Client{Timeout: timeout}
 	}
 	logger := opts.Logger
 	if logger == nil {
@@ -125,8 +118,9 @@ func New(opts Options) *Pusher {
 		gatewayID: opts.GatewayID,
 		secret:    []byte(opts.Secret),
 		client:    client,
+		timeout:   timeout,
 		log:       logger,
-		ch:        make(chan Item, buffer),
+		ch:        make(chan cc.Record, buffer),
 	}
 	for range workers {
 		p.wg.Add(1)
@@ -139,12 +133,12 @@ func New(opts Options) *Pusher {
 	return p
 }
 
-// Enqueue offers an item to the worker pool without blocking. If the queue is
-// full it drops the item and bumps the dropped counter — the request path never
-// waits. Returns true if the item was accepted.
-func (p *Pusher) Enqueue(item Item) bool {
+// Enqueue offers a record to the worker pool without blocking. If the queue is
+// full it drops the record and bumps the dropped counter — the request path
+// never waits. Returns true if the record was accepted.
+func (p *Pusher) Enqueue(rec cc.Record) bool {
 	select {
-	case p.ch <- item:
+	case p.ch <- rec:
 		return true
 	default:
 		p.dropped.Add(1)
@@ -152,17 +146,17 @@ func (p *Pusher) Enqueue(item Item) bool {
 	}
 }
 
-// Dropped returns the number of items dropped due to a full queue.
+// Dropped returns the number of records dropped due to a full queue.
 func (p *Pusher) Dropped() int64 { return p.dropped.Load() }
 
-// Sent returns the number of items successfully delivered.
+// Sent returns the number of records successfully delivered.
 func (p *Pusher) Sent() int64 { return p.sent.Load() }
 
-// Failed returns the number of items that errored on send (telemetry loss, not
-// a request-path failure).
+// Failed returns the number of records that errored on send (telemetry loss,
+// not a request-path failure).
 func (p *Pusher) Failed() int64 { return p.failed.Load() }
 
-// Close stops accepting items, drains the in-flight queue, and waits for the
+// Close stops accepting records, drains the in-flight queue, and waits for the
 // workers — bounded by ctx. After Close, Enqueue still returns false (drops).
 func (p *Pusher) Close(ctx context.Context) {
 	p.closeOnce.Do(func() { close(p.ch) })
@@ -177,20 +171,20 @@ func (p *Pusher) Close(ctx context.Context) {
 
 func (p *Pusher) worker() {
 	defer p.wg.Done()
-	for item := range p.ch {
-		p.send(item)
+	for rec := range p.ch {
+		p.send(rec)
 	}
 }
 
-// send delivers one item. Errors are logged and counted, never propagated —
+// send delivers one record. Errors are logged and counted, never propagated —
 // telemetry delivery is best-effort by design.
-func (p *Pusher) send(item Item) {
-	raw, err := json.Marshal(item)
+func (p *Pusher) send(rec cc.Record) {
+	raw, err := json.Marshal(rec)
 	if err != nil {
 		p.failed.Add(1)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(raw))
@@ -205,7 +199,7 @@ func (p *Pusher) send(item Item) {
 	resp, err := p.client.Do(req)
 	if err != nil {
 		p.failed.Add(1)
-		p.log.Debug("telemetry pusher: send failed", "correlation_id", item.CorrelationID, "err", err)
+		p.log.Debug("telemetry pusher: send failed", "correlation_id", rec.CorrelationID, "err", err)
 		return
 	}
 	defer func() {
@@ -214,7 +208,7 @@ func (p *Pusher) send(item Item) {
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		p.failed.Add(1)
-		p.log.Debug("telemetry pusher: non-2xx", "correlation_id", item.CorrelationID, "status", resp.StatusCode)
+		p.log.Debug("telemetry pusher: non-2xx", "correlation_id", rec.CorrelationID, "status", resp.StatusCode)
 		return
 	}
 	p.sent.Add(1)

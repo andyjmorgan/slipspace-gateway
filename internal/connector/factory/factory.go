@@ -3,6 +3,12 @@
 // dispatch — each connector type's New runs against its package and
 // every per-type required-field invariant has already passed in
 // contracts/config.Connector.Validate by the time we get here.
+//
+// Only the spool-backed durable types (s3, azure_blob) are built here. The
+// webhook type is a real-time, non-spooled pusher realized by
+// internal/telemetry/pusher and wired directly in cmd/gateway — it is not a
+// connector.Connector and never reaches this factory (the gateway partitions
+// it out before BuildAll); Build rejects it as a safety net.
 package factory
 
 import (
@@ -14,7 +20,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/connector"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/azureblob"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/s3"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector/webhook"
 )
 
 // Options bundles the wiring deps every connector type may consume.
@@ -62,9 +67,7 @@ func Build(ctx context.Context, cfg contractsconfig.Connector, opts Options) (co
 			Clock:      opts.Clock,
 		})
 	case contractsconfig.ConnectorTypeWebhook:
-		return webhook.New(ctx, webhook.Options{
-			Config: cfg,
-		})
+		return nil, fmt.Errorf("factory: webhook is a real-time pusher, not a spool connector (build it via the telemetry pusher, not here)")
 	default:
 		return nil, fmt.Errorf("factory: unknown connector type %q", cfg.Type)
 	}

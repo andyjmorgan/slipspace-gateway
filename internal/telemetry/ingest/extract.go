@@ -1,17 +1,19 @@
-// Package ingest maps the feeds gateways push — gen_ai + sluice OTLP spans and
-// metrics, and HMAC-trusted large-payload webhooks — into the telemetry store.
-// This file is the pure extraction layer: an OTLP span (plus its resource
-// attributes) becomes a store.RequestEvent.
+// Package ingest maps the feeds gateways push — gen_ai OTLP spans and metrics,
+// and the HMAC-trusted Record webhook — into the telemetry store. This file is
+// the pure extraction layer: a gen_ai OTLP span (plus its resource attributes)
+// becomes the gen_ai half of a store.RequestEvent.
 //
-// Attribute conventions: OTel GenAI semconv (gen_ai.*) for model/provider/usage,
-// plus sluice.* for the post-rule fleet labels (gateway, configuration, provider,
-// protocol) and the correlation id that joins an event to its payloads.
+// Channel boundary (telemetry design): a gen_ai span carries GenAI semconv only
+// (model / provider / usage / duration) plus the single Sluice-specific
+// attribute correlation_id — the stitch join key. Every other gateway fact
+// (configuration, protocol, method, rule chain, attempts, api-key, ...) arrives
+// on the Record feed (see record.go), not the span. The two feeds converge on
+// one request_events row by correlation_id: the OTLP upsert owns the gen_ai
+// columns, the Record upsert owns the gateway columns, either order (no clobber).
 package ingest
 
 import (
-	"encoding/json"
 	"strconv"
-	"strings"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -20,42 +22,30 @@ import (
 )
 
 const (
+	// attrCorrelationID is the only Sluice-specific attribute read off a
+	// gen_ai span — the join key that stitches the OTLP feed to the Record.
 	attrCorrelationID = "sluice.correlation_id"
-	attrGatewayID     = "sluice.gateway_id"
-	attrConfiguration = "sluice.configuration"
-	attrProvider      = "sluice.provider"
-	attrProtocol      = "sluice.protocol"
-	attrEndpoint      = "sluice.endpoint"
+
 	attrModel         = "gen_ai.request.model"
 	attrGenAIProvider = "gen_ai.provider.name"
 	attrInputTokens   = "gen_ai.usage.input_tokens"  //nolint:gosec // OTLP attribute key, not a credential
 	attrOutputTokens  = "gen_ai.usage.output_tokens" //nolint:gosec // OTLP attribute key, not a credential
 	attrStatusCode    = "http.response.status_code"
 
-	// Cache-token + session + streaming attributes the gateway already emits
-	// on the gen_ai.* span, captured so the event mirrors the connector
-	// Record's token + session detail.
+	// Cache-token + session + streaming attributes carried on the gen_ai
+	// span — all GenAI semconv, all part of the gen_ai channel.
 	attrCacheReadTokens     = "gen_ai.usage.cache_read.input_tokens"     //nolint:gosec // OTLP attribute key, not a credential
 	attrCacheCreationTokens = "gen_ai.usage.cache_creation.input_tokens" //nolint:gosec // OTLP attribute key, not a credential
 	attrConversationID      = "gen_ai.conversation.id"
 	attrRequestStream       = "gen_ai.request.stream"
-
-	// Additive sluice.* fleet dimensions emitted by the gateway's emitTrace —
-	// the post-rule tags, fired-rule names, policy ref, api-key name, upstream
-	// status, session-id source, and inbound method.
-	attrTags            = "sluice.tags"
-	attrRulesFired      = "sluice.rules_fired"
-	attrPolicyRef       = "sluice.policy_ref"
-	attrAPIKeyName      = "sluice.api_key_name" //nolint:gosec // OTLP attribute key naming the key, not a credential
-	attrUpstreamStatus  = "sluice.upstream_status"
-	attrSessionIDSource = "sluice.session_id_source"
-	attrMethod          = "sluice.method"
 )
 
-// EventFromSpan extracts a request event from a span and its resource
-// attributes. Resource attributes are merged under the span's own (span wins).
-// Returns ok=false when the span is not a sluice request event — i.e. it
-// carries no correlation id, the key everything joins on.
+// EventFromSpan extracts the gen_ai half of a request event from a span and its
+// resource attributes. Resource attributes are merged under the span's own
+// (span wins). Returns ok=false when the span carries no correlation id — the
+// key everything joins on. Only gen_ai semconv columns are populated; the
+// gateway columns (configuration, protocol, method, detail, ...) are left zero
+// for the Record feed to fill via UpsertGatewayRecord.
 func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (store.RequestEvent, bool) {
 	if span == nil {
 		return store.RequestEvent{}, false
@@ -67,64 +57,20 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span) (stor
 		return store.RequestEvent{}, false
 	}
 
-	provider := strAttr(attrs, attrProvider)
-	if provider == "" {
-		provider = strAttr(attrs, attrGenAIProvider)
-	}
-
-	protocol := strAttr(attrs, attrProtocol)
-	if protocol == "" {
-		protocol = strAttr(attrs, attrEndpoint)
-	}
-
 	return store.RequestEvent{
 		CorrelationID:       corr,
-		GatewayID:           strAttr(attrs, attrGatewayID),
-		Configuration:       strAttr(attrs, attrConfiguration),
-		Provider:            provider,
+		Provider:            strAttr(attrs, attrGenAIProvider),
 		Model:               strAttr(attrs, attrModel),
-		Protocol:            protocol,
-		Method:              strAttr(attrs, attrMethod),
 		StatusCode:          int(intAttr(attrs, attrStatusCode)),
-		UpstreamStatus:      int(intAttr(attrs, attrUpstreamStatus)),
 		LatencyMs:           spanLatencyMs(span),
 		TokensIn:            intAttr(attrs, attrInputTokens),
 		TokensOut:           intAttr(attrs, attrOutputTokens),
 		TokensCached:        intAttr(attrs, attrCacheReadTokens),
 		TokensCacheCreation: intAttr(attrs, attrCacheCreationTokens),
 		SessionID:           strAttr(attrs, attrConversationID),
-		SessionIDSource:     strAttr(attrs, attrSessionIDSource),
-		APIKeyName:          strAttr(attrs, attrAPIKeyName),
-		PolicyRef:           strAttr(attrs, attrPolicyRef),
 		Streaming:           boolAttr(attrs, attrRequestStream),
-		Detail:              eventDetail(attrs),
 		GenAIContent:        captureContent(span),
 	}, true
-}
-
-// eventDetail packs the post-rule tags and fired-rule names — comma-joined in
-// the span attributes — into the event's JSONB detail. Returns nil when neither
-// is present, leaving the column SQL NULL rather than an empty object.
-func eventDetail(attrs map[string]*commonpb.AnyValue) []byte {
-	tags := splitCSV(strAttr(attrs, attrTags))
-	rules := splitCSV(strAttr(attrs, attrRulesFired))
-	if len(tags) == 0 && len(rules) == 0 {
-		return nil
-	}
-	b, err := json.Marshal(store.EventDetail{Tags: tags, RulesFired: rules})
-	if err != nil {
-		return nil
-	}
-	return b
-}
-
-// splitCSV splits a comma-joined attribute value, returning nil for an empty
-// string so an absent attribute yields no slice rather than [""].
-func splitCSV(s string) []string {
-	if s == "" {
-		return nil
-	}
-	return strings.Split(s, ",")
 }
 
 func mergeAttrs(resource, span []*commonpb.KeyValue) map[string]*commonpb.AnyValue {

@@ -57,39 +57,33 @@ func (s *metricSink) InsertMetricPoints(_ context.Context, pts []store.MetricPoi
 
 // --- EventFromSpan ---
 
-func TestEventFromSpan_FullAttributes(t *testing.T) {
+func TestEventFromSpan_GenAIAttributes(t *testing.T) {
+	// A gen_ai span carries GenAI semconv + correlation_id only. The gateway
+	// columns (configuration, protocol, method, detail, ...) are NOT on the
+	// span — they arrive via the Record feed — so the extracted event leaves
+	// them zero.
 	span := &tracepb.Span{
 		StartTimeUnixNano: 1_000_000_000,
 		EndTimeUnixNano:   1_500_000_000, // 500ms
 		Attributes: []*commonpb.KeyValue{
 			strKV(attrCorrelationID, "corr-1"),
-			strKV(attrGatewayID, "gw-a"),
-			strKV(attrConfiguration, "default"),
-			strKV(attrProvider, "anthropic"),
+			strKV(attrGenAIProvider, "anthropic"),
 			strKV(attrModel, "claude-x"),
-			strKV(attrProtocol, "messages"),
-			strKV(attrMethod, "POST"),
 			intKV(attrStatusCode, 200),
-			intKV(attrUpstreamStatus, 200),
 			intKV(attrInputTokens, 10),
 			intKV(attrOutputTokens, 20),
 			intKV(attrCacheReadTokens, 5),
 			intKV(attrCacheCreationTokens, 2),
 			strKV(attrConversationID, "sess-9"),
-			strKV(attrSessionIDSource, "x-session"),
-			strKV(attrAPIKeyName, "key-1"),
-			strKV(attrPolicyRef, "pol-1"),
 			boolKV(attrRequestStream, true),
-			strKV(attrTags, "a,b"),
-			strKV(attrRulesFired, "r1,r2"),
 		},
 	}
 	e, ok := EventFromSpan(nil, span)
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
-	if e.CorrelationID != "corr-1" || e.GatewayID != "gw-a" || e.Provider != "anthropic" {
-		t.Errorf("labels = %+v", e)
+	if e.CorrelationID != "corr-1" || e.Provider != "anthropic" || e.Model != "claude-x" {
+		t.Errorf("gen_ai dims = %+v", e)
 	}
 	if e.LatencyMs != 500 {
 		t.Errorf("latency = %d, want 500", e.LatencyMs)
@@ -97,15 +91,12 @@ func TestEventFromSpan_FullAttributes(t *testing.T) {
 	if e.TokensIn != 10 || e.TokensOut != 20 || e.TokensCached != 5 || e.TokensCacheCreation != 2 {
 		t.Errorf("tokens = %+v", e)
 	}
-	if !e.Streaming {
-		t.Error("streaming = false, want true")
+	if e.SessionID != "sess-9" || !e.Streaming {
+		t.Errorf("session/streaming = %q/%v", e.SessionID, e.Streaming)
 	}
-	var d store.EventDetail
-	if err := json.Unmarshal(e.Detail, &d); err != nil {
-		t.Fatalf("detail: %v", err)
-	}
-	if len(d.Tags) != 2 || len(d.RulesFired) != 2 {
-		t.Errorf("detail = %+v", d)
+	// Gateway columns must stay empty — they are the Record feed's to fill.
+	if e.Configuration != "" || e.Protocol != "" || e.Method != "" || e.GatewayID != "" || e.Detail != nil {
+		t.Errorf("gateway columns leaked onto the gen_ai event: %+v", e)
 	}
 }
 
@@ -121,20 +112,17 @@ func TestEventFromSpan_NilSpan(t *testing.T) {
 	}
 }
 
-func TestEventFromSpan_ResourceFallbacks(t *testing.T) {
-	// provider falls back to provider; protocol falls back to endpoint; resource
-	// attrs are merged under span attrs.
-	resource := []*commonpb.KeyValue{strKV(attrProvider, "openai"), strKV(attrEndpoint, "chat_completions")}
+func TestEventFromSpan_ResourceMerge(t *testing.T) {
+	// Resource attributes are merged under span attributes; gen_ai.provider.name
+	// on the resource is picked up when the span carries only the correlation id.
+	resource := []*commonpb.KeyValue{strKV(attrGenAIProvider, "openai")}
 	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrCorrelationID, "c")}}
 	e, ok := EventFromSpan(resource, span)
 	if !ok {
 		t.Fatal("ok = false")
 	}
 	if e.Provider != "openai" {
-		t.Errorf("provider = %q, want openai (provider fallback)", e.Provider)
-	}
-	if e.Protocol != "chat_completions" {
-		t.Errorf("protocol = %q, want chat_completions (endpoint fallback)", e.Protocol)
+		t.Errorf("provider = %q, want openai (resource merge)", e.Provider)
 	}
 }
 

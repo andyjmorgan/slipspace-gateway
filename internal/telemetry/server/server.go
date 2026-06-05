@@ -54,8 +54,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	if s.webhook != nil {
-		// Open path: the webhook's own HMAC check is its auth, not Basic.
-		mux.Handle("POST /api/v1/ingest/payload", s.webhook)
+		// Open path: the Record ingest's own HMAC check is its auth, not Basic.
+		mux.Handle("POST /api/v1/ingest/record", s.webhook)
 	}
 	s.registerQueryRoutes(mux)
 	// The SPA + its assets are public (the API it calls is Basic-auth gated);

@@ -423,16 +423,17 @@ func (h *Harness) injectWebhookConnector(dst string) error {
 	const devBindingInsert = devKey + "    connector_bindings:\n      - connector: harness-webhook\n"
 	content = strings.Replace(content, devKey, devBindingInsert, 1)
 
+	// The webhook connector is a real-time, non-spooled pusher: it POSTs one
+	// cc.Record JSON per request to the capture server (no rotation — that's a
+	// spool concept). gateway_id rides the X-Sluice-Gateway-Id header.
 	content += fmt.Sprintf(`
 connectors:
   - name: harness-webhook
     type: webhook
     url: %s
+    gateway_id: harness-gw
     secret_ref: env:HARNESS_WEBHOOK_SECRET
     timeout_ms: 5000
-    rotation:
-      max_bytes: 1
-      max_age_seconds: 1
 `, h.captureURL)
 
 	return os.WriteFile(policyPath, []byte(content), 0o600) //nolint:gosec // dst is os.MkdirTemp output

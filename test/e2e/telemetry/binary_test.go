@@ -19,14 +19,17 @@ import (
 	"testing"
 	"time"
 
+	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 )
 
 const (
@@ -150,29 +153,26 @@ func waitReady(t *testing.T, base string) {
 	t.Fatal("service did not become ready")
 }
 
-// --- webhook ---
+// --- record ingest (the real-time webhook pusher's wire shape) ---
 
-func (s *service) postPayload(t *testing.T, gwID, secret, correlationID, kind string, body string) *http.Response {
+// postRecord HMAC-signs and POSTs one cc.Record to the record-ingest endpoint,
+// exactly as the gateway's webhook connector pusher does.
+func (s *service) postRecord(t *testing.T, gwID, secret string, rec cc.Record) *http.Response {
 	t.Helper()
-	env := map[string]any{
-		"correlation_id": correlationID,
-		"kind":           kind,
-		"instance_id":    "i1",
-		"seq":            1,
-		"ts_ns":          1,
-		"body":           json.RawMessage(body),
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal record: %v", err)
 	}
-	raw, _ := json.Marshal(env)
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(raw)
 	sig := hex.EncodeToString(mac.Sum(nil))
 
-	req, _ := http.NewRequest(http.MethodPost, s.httpBase+"/api/v1/ingest/payload", strings.NewReader(string(raw)))
+	req, _ := http.NewRequest(http.MethodPost, s.httpBase+"/api/v1/ingest/record", strings.NewReader(string(raw)))
 	req.Header.Set("X-Sluice-Gateway-Id", gwID)
 	req.Header.Set("X-Sluice-Signature", sig)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("post payload: %v", err)
+		t.Fatalf("post record: %v", err)
 	}
 	return resp
 }
@@ -186,8 +186,9 @@ func intKV(k string, v int64) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: v}}}
 }
 
-// sendSpan exports one gen_ai span carrying the sluice.* + gen_ai.* attributes
-// the extractor reads, then closes the connection.
+// sendSpan exports one gen_ai span carrying GenAI semconv attributes plus the
+// sluice.correlation_id join key (the only sluice.* the extractor reads), then
+// closes the connection.
 func (s *service) sendSpan(t *testing.T, attrs ...*commonpb.KeyValue) {
 	t.Helper()
 	conn, err := grpc.NewClient(s.otlpAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -215,6 +216,47 @@ func (s *service) sendSpan(t *testing.T, attrs ...*commonpb.KeyValue) {
 	}
 }
 
+// sendCounter exports one delta-temporality sum metric (the shape the gateway's
+// sluice.* counters export under) so the dashboard meter rollups can SUM it.
+func (s *service) sendCounter(t *testing.T, name string, dps ...*metricspb.NumberDataPoint) {
+	t.Helper()
+	conn, err := grpc.NewClient(s.otlpAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("otlp dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	client := collectormetrics.NewMetricsServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = client.Export(ctx, &collectormetrics.ExportMetricsServiceRequest{
+		ResourceMetrics: []*metricspb.ResourceMetrics{{
+			ScopeMetrics: []*metricspb.ScopeMetrics{{
+				Metrics: []*metricspb.Metric{{
+					Name: name,
+					Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+						AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
+						IsMonotonic:            true,
+						DataPoints:             dps,
+					}},
+				}},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("otlp metrics export: %v", err)
+	}
+}
+
+// counterDP builds one delta counter sample stamped now (inside the dashboard
+// window) with the given attributes.
+func counterDP(value int64, attrs ...*commonpb.KeyValue) *metricspb.NumberDataPoint {
+	return &metricspb.NumberDataPoint{
+		TimeUnixNano: uint64(time.Now().UnixNano()), //nolint:gosec // test timestamp
+		Value:        &metricspb.NumberDataPoint_AsInt{AsInt: value},
+		Attributes:   attrs,
+	}
+}
+
 // --- authed API ---
 
 func (s *service) getJSON(t *testing.T, path string, out any) int {
@@ -236,20 +278,39 @@ func (s *service) getJSON(t *testing.T, path string, out any) int {
 
 // --- tests ---
 
-func TestE2E_WebhookTrust(t *testing.T) {
+func recordWith(correlationID string, req, resp string) cc.Record {
+	return cc.Record{
+		V:              1,
+		ID:             "id-" + correlationID,
+		TsNs:           1_000_000_000,
+		Seq:            1,
+		InstanceID:     "i1",
+		CorrelationID:  correlationID,
+		Configuration:  "dev",
+		Provider:       "anthropic",
+		Endpoint:       "messages",
+		Model:          "claude-x",
+		Request:        cc.RequestPart{Method: "POST", Body: json.RawMessage(req)},
+		Response:       cc.ResponsePart{Status: 200, Body: json.RawMessage(resp), LastByteNs: 1_200_000_000},
+		UpstreamStatus: 200,
+		SchemaVersion:  cc.SchemaVersion,
+	}
+}
+
+func TestE2E_RecordTrust(t *testing.T) {
 	svc := startService(t)
 
 	// Accepted: correct gateway + signature.
-	if resp := svc.postPayload(t, testGatewayID, testSecret, "wh-ok", "request_body", `{"hello":"world"}`); resp.StatusCode != http.StatusOK {
-		t.Fatalf("trusted webhook status = %d, want 200", resp.StatusCode)
+	if resp := svc.postRecord(t, testGatewayID, testSecret, recordWith("wh-ok", `{"hello":"world"}`, `{"ok":true}`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("trusted record status = %d, want 200", resp.StatusCode)
 	}
 	// Rejected: forged signature.
-	if resp := svc.postPayload(t, testGatewayID, "wrong-secret", "wh-bad", "request_body", `{}`); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("forged webhook status = %d, want 401", resp.StatusCode)
+	if resp := svc.postRecord(t, testGatewayID, "wrong-secret", recordWith("wh-bad", `{}`, `{}`)); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("forged record status = %d, want 401", resp.StatusCode)
 	}
 	// Rejected: unregistered gateway.
-	if resp := svc.postPayload(t, "gw-unknown", testSecret, "wh-bad2", "request_body", `{}`); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unregistered webhook status = %d, want 401", resp.StatusCode)
+	if resp := svc.postRecord(t, "gw-unknown", testSecret, recordWith("wh-bad2", `{}`, `{}`)); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unregistered record status = %d, want 401", resp.StatusCode)
 	}
 
 	// The accepted body is retrievable via the inspector; the rejected ones are not.
@@ -268,20 +329,21 @@ func TestE2E_WebhookTrust(t *testing.T) {
 func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 	svc := startService(t)
 
+	// gen_ai OTLP feed: GenAI semconv + correlation_id only (the join key).
+	// model / provider / tokens land on the request_events row's gen_ai columns.
 	svc.sendSpan(t,
 		strKV("sluice.correlation_id", "otlp-1"),
-		strKV("sluice.gateway_id", testGatewayID),
-		strKV("sluice.provider", "anthropic"),
+		strKV("gen_ai.provider.name", "anthropic"),
 		strKV("gen_ai.request.model", "claude-x"),
-		strKV("sluice.protocol", "messages"),
 		intKV("http.response.status_code", 200),
 		intKV("gen_ai.usage.input_tokens", 10),
 		intKV("gen_ai.usage.output_tokens", 20),
-		strKV("sluice.tags", "alpha,beta"),
 	)
-	// Also push the captured bodies for the same correlation id.
-	svc.postPayload(t, testGatewayID, testSecret, "otlp-1", "request_body", `{"q":"hi"}`)
-	svc.postPayload(t, testGatewayID, testSecret, "otlp-1", "response_body", `{"a":"yo"}`)
+	// Record feed: the gateway columns (configuration, protocol, tags) + bodies
+	// for the same correlation id. The two feeds merge by correlation_id.
+	rec := recordWith("otlp-1", `{"q":"hi"}`, `{"a":"yo"}`)
+	rec.Tags = []string{"alpha", "beta"}
+	svc.postRecord(t, testGatewayID, testSecret, rec)
 
 	// Messages list carries the stitched event.
 	var msgs adminc.MessagesRecentResponse
@@ -336,7 +398,7 @@ func TestE2E_SessionRollup(t *testing.T) {
 		svc.sendSpan(t,
 			strKV("sluice.correlation_id", id),
 			strKV("gen_ai.conversation.id", "session-1"),
-			strKV("sluice.provider", "openai"),
+			strKV("gen_ai.provider.name", "openai"),
 			intKV("http.response.status_code", 200),
 			intKV("gen_ai.usage.input_tokens", 5),
 		)
@@ -356,15 +418,52 @@ func TestE2E_SessionRollup(t *testing.T) {
 	}
 }
 
-func TestE2E_SSERollup(t *testing.T) {
+// TestE2E_DashboardFiredFromMeters proves the rules-fired / tags-fired panels
+// read the sluice meter rollups (metric_points), not a request_events.detail
+// scan (invariant #4). Delta counter samples SUM to exact counts.
+func TestE2E_DashboardFiredFromMeters(t *testing.T) {
 	svc := startService(t)
-	svc.postPayload(t, testGatewayID, testSecret, "sse-1", "sse_rollup", `{"assembled":"hello world"}`)
+
+	svc.sendCounter(t, "sluice.rule.fired",
+		counterDP(2, strKV("rule_name", "redirect"), strKV("sluice.configuration", "dev")),
+		counterDP(1, strKV("rule_name", "tagit"), strKV("sluice.configuration", "dev")),
+	)
+	svc.sendCounter(t, "gateway.tags.applied.total",
+		counterDP(3, strKV("tag", "alpha"), strKV("sluice.configuration", "dev")),
+	)
+
+	var sum adminc.DashboardSummary
+	if code := svc.getJSON(t, "/api/v1/dashboard/summary?window=24h", &sum); code != http.StatusOK {
+		t.Fatalf("summary status = %d", code)
+	}
+
+	rules := map[string]int64{}
+	for _, r := range sum.RulesFired {
+		rules[r.RuleName] = r.FireCount
+	}
+	if rules["redirect"] != 2 || rules["tagit"] != 1 {
+		t.Errorf("rules-fired rollup = %+v (want redirect=2, tagit=1)", sum.RulesFired)
+	}
+	tags := map[string]int64{}
+	for _, r := range sum.TagsFired {
+		tags[r.Tag] = r.ApplyCount
+	}
+	if tags["alpha"] != 3 {
+		t.Errorf("tags-fired rollup = %+v (want alpha=3)", sum.TagsFired)
+	}
+}
+
+func TestE2E_StreamingResponseCaptured(t *testing.T) {
+	svc := startService(t)
+	rec := recordWith("sse-1", `{"q":"hi"}`, `{"assembled":"hello world"}`)
+	rec.Response.StreamChunks = 3 // streaming
+	svc.postRecord(t, testGatewayID, testSecret, rec)
 	var body adminc.MessageBodyDetail
 	if code := svc.getJSON(t, "/api/v1/messages/sse-1/body", &body); code != http.StatusOK {
 		t.Fatalf("body status = %d", code)
 	}
-	if !strings.Contains(body.ResponseAssembled, "hello world") {
-		t.Errorf("sse rollup = %q", body.ResponseAssembled)
+	if !strings.Contains(body.Response, "hello world") {
+		t.Errorf("streaming response body = %q", body.Response)
 	}
 }
 

@@ -64,7 +64,10 @@ type Connector struct {
 	// references. Required; unique across the connectors slice.
 	Name string `yaml:"name" json:"name"`
 
-	// Type is one of "s3", "azure_blob", "webhook". Required.
+	// Type is one of "s3", "azure_blob", "webhook". Required. The s3 and
+	// azure_blob types are durable spool-backed archival destinations; the
+	// webhook type is a real-time, non-spooled pusher (per-record HMAC POST,
+	// drop-on-full) — it never touches the disk spool.
 	Type string `yaml:"type" json:"type"`
 
 	// --- s3 + azure_blob common ---
@@ -113,13 +116,20 @@ type Connector struct {
 
 	// --- webhook specifics ---
 
-	// URL is the customer-supplied HTTPS endpoint that receives POSTs.
+	// URL is the receiver endpoint each record is POSTed to (e.g. the
+	// telemetry service's /api/v1/ingest/record, or any customer endpoint).
 	// Required when Type == webhook.
 	URL string `yaml:"url,omitempty" json:"url,omitempty"`
 
 	// SecretRef is the secret_ref indirection (env:NAME or file:/path)
 	// pointing at the HMAC signing key. Required when Type == webhook.
 	SecretRef string `yaml:"secret_ref,omitempty" json:"secret_ref,omitempty"`
+
+	// GatewayID is sent as the X-Sluice-Gateway-Id header so a receiver that
+	// keys HMAC secrets by gateway (the telemetry service registry) can look
+	// the secret up. Optional for a generic receiver that verifies the
+	// signature alone; required when pushing to the telemetry service.
+	GatewayID string `yaml:"gateway_id,omitempty" json:"gateway_id,omitempty"`
 
 	// TimeoutMS is the per-call HTTP timeout in milliseconds. Required
 	// when Type == webhook; 0 < TimeoutMS <= 60000.

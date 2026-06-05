@@ -83,25 +83,51 @@ func TestRequestEvent_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestRequestEvent_UpsertPreservesContent(t *testing.T) {
+// TestRequestEvent_TwoFeedMerge proves the gen_ai (OTLP) and gateway (Record)
+// feeds converge on one row by correlation_id without clobbering each other's
+// columns, in either arrival order. UpsertRequestEvent owns the gen_ai columns;
+// UpsertGatewayRecord owns the gateway columns.
+func TestRequestEvent_TwoFeedMerge(t *testing.T) {
 	st := migratedStore(t)
 	ctx := context.Background()
-	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{CorrelationID: "evt-up", GenAIContent: []byte(`{"x":1}`)}); err != nil {
+
+	// gen_ai feed first: tokens + content + provider.
+	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
+		CorrelationID: "evt-up", Provider: "anthropic", TokensIn: 7, GenAIContent: []byte(`{"x":1}`),
+	}); err != nil {
 		t.Fatal(err)
 	}
-	// A response-phase update omits content; it must be preserved.
-	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{CorrelationID: "evt-up", StatusCode: 200}); err != nil {
+	// gateway feed adds the gateway columns; must NOT clobber the gen_ai ones.
+	if err := st.UpsertGatewayRecord(ctx, store.RequestEvent{
+		CorrelationID: "evt-up", Configuration: "dev", StatusCode: 200, Detail: []byte(`{"tags":["a"]}`),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.GetRequestEvent(ctx, "evt-up")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.StatusCode != 200 {
-		t.Errorf("status not updated: %d", got.StatusCode)
+	if got.StatusCode != 200 || got.Configuration != "dev" || len(got.Detail) == 0 {
+		t.Errorf("gateway columns not applied: %+v", got)
 	}
-	if len(got.GenAIContent) == 0 {
-		t.Error("gen_ai_content should be preserved across an update that omits it")
+	if got.TokensIn != 7 || got.Provider != "anthropic" || len(got.GenAIContent) == 0 {
+		t.Errorf("gen_ai columns clobbered by the gateway feed: %+v", got)
+	}
+
+	// A later gen_ai refresh that omits content must preserve content AND must
+	// not clobber the gateway-owned status_code/configuration/detail.
+	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{CorrelationID: "evt-up", TokensIn: 9}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetRequestEvent(ctx, "evt-up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TokensIn != 9 || len(got.GenAIContent) == 0 {
+		t.Errorf("gen_ai refresh wrong: tokens=%d content=%dB", got.TokensIn, len(got.GenAIContent))
+	}
+	if got.StatusCode != 200 || got.Configuration != "dev" || len(got.Detail) == 0 {
+		t.Errorf("gateway columns clobbered by a later gen_ai refresh: %+v", got)
 	}
 }
 

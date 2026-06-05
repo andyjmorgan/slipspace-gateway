@@ -71,14 +71,21 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 		observability.AttrGenAIOperationName:  observability.OperationChat,
 		observability.AttrGenAIProviderName:   "openai",
 		observability.AttrGenAIRequestModel:   "gpt-4o-mini",
-		observability.AttrSluiceEndpoint:      "chat_completions",
-		observability.AttrSluiceConfiguration: "dev",
 		observability.AttrSluiceCorrelationID: "corr-1",
 	}
 	for k, want := range checks {
 		got, ok := attrValue(attrs, k)
 		if !ok || got.AsString() != want {
 			t.Errorf("attr %s = %q (ok=%v), want %q", k, got.AsString(), ok, want)
+		}
+	}
+	// The gen_ai span carries no sluice.* beyond correlation_id — endpoint
+	// and configuration now ride the Record (telemetry design channel
+	// boundary). Their presence on the span would re-smuggle gateway facts
+	// onto the GenAI feed.
+	for _, banned := range []string{observability.AttrSluiceEndpoint, observability.AttrSluiceConfiguration} {
+		if _, ok := attrValue(attrs, banned); ok {
+			t.Errorf("attr %s must be absent from the gen_ai span (belongs on the Record)", banned)
 		}
 	}
 	if v, ok := attrValue(attrs, observability.AttrGenAIUsageInputTokens); !ok || v.AsInt64() != 10 {

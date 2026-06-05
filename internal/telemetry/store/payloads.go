@@ -19,6 +19,12 @@ const (
 	KindResponseBody = "response_body"
 	// KindSSERollup is the assembled (de-chunked) SSE stream.
 	KindSSERollup = "sse_rollup"
+	// KindRequestHeaders is the captured request header map (JSON object),
+	// sourced from the Record feed alongside the request body.
+	KindRequestHeaders = "request_headers"
+	// KindResponseHeaders is the captured response header map (JSON object),
+	// sourced from the Record feed alongside the response body.
+	KindResponseHeaders = "response_headers"
 )
 
 // Payload is one captured large item — a request body, a response body, or an

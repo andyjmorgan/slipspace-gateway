@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
@@ -335,13 +336,13 @@ func newOTLPReader(ctx context.Context, endpoint, protocol string) (*sdkmetric.P
 	)
 	switch proto {
 	case OTLPProtocolGRPC:
-		opts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithInsecure()}
+		opts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithInsecure(), otlpmetricgrpc.WithTemporalitySelector(deltaTemporality)}
 		if endpoint != "" {
 			opts = append(opts, otlpmetricgrpc.WithEndpoint(endpoint))
 		}
 		exp, err = otlpmetricgrpc.New(ctx, opts...)
 	case OTLPProtocolHTTPProtobuf, "http":
-		opts := []otlpmetrichttp.Option{otlpmetrichttp.WithInsecure()}
+		opts := []otlpmetrichttp.Option{otlpmetrichttp.WithInsecure(), otlpmetrichttp.WithTemporalitySelector(deltaTemporality)}
 		if endpoint != "" {
 			opts = append(opts, otlpmetrichttp.WithEndpoint(endpoint))
 		}
@@ -353,6 +354,21 @@ func newOTLPReader(ctx context.Context, endpoint, protocol string) (*sdkmetric.P
 		return nil, fmt.Errorf("observability: create OTLP exporter: %w", err)
 	}
 	return sdkmetric.NewPeriodicReader(exp), nil
+}
+
+// deltaTemporality selects delta temporality for the OTLP metric export so the
+// central telemetry service can SUM a window of metric_points to an exact count
+// (cumulative would carry running totals that double-count when summed). Sums
+// and histograms go delta; up-down counters (gateway.active_requests) and gauges
+// (gateway.cb.state) MUST stay cumulative — delta is undefined for them. Only
+// the OTLP reader uses this; the Prometheus reader stays cumulative for /metrics.
+func deltaTemporality(kind sdkmetric.InstrumentKind) metricdata.Temporality {
+	switch kind {
+	case sdkmetric.InstrumentKindCounter, sdkmetric.InstrumentKindHistogram, sdkmetric.InstrumentKindObservableCounter:
+		return metricdata.DeltaTemporality
+	default:
+		return metricdata.CumulativeTemporality
+	}
 }
 
 // idempotentShutdown collapses a slice of shutdown callbacks into one
