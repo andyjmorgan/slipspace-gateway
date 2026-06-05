@@ -262,14 +262,21 @@ function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefi
   if (body === undefined) return <div className="text-[12px] text-[color:var(--text-4)]">Loading bodies…</div>
   if (body === null) return <div className="text-[12px] text-[color:var(--text-4)]">No captured bodies (rolled off or capture disabled).</div>
 
+  const hasGenAI = !!body.gen_ai_content
   return (
-    <Tabs defaultValue="request" className="flex flex-col gap-2">
+    <Tabs defaultValue={hasGenAI ? "genai" : "request"} className="flex flex-col gap-2">
       <TabsList>
+        {hasGenAI && <TabsTrigger value="genai">GenAI</TabsTrigger>}
         <TabsTrigger value="request">Request</TabsTrigger>
         <TabsTrigger value="response">Response</TabsTrigger>
         {streaming && <TabsTrigger value="sse">SSE</TabsTrigger>}
         <TabsTrigger value="headers">Headers</TabsTrigger>
       </TabsList>
+      {hasGenAI && (
+        <TabsContent value="genai">
+          <BodyView label="GenAI content" text={body.gen_ai_content} />
+        </TabsContent>
+      )}
       <TabsContent value="request">
         <BodyView label="Request body" text={body.request} bytes={body.request_total_bytes} truncated={body.request_truncated} />
       </TabsContent>

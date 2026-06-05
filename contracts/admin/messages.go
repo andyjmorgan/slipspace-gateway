@@ -215,4 +215,11 @@ type MessageBodyDetail struct {
 	// before the gateway wrote the response status, redacted with the
 	// same rules as RequestHeaders.
 	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
+
+	// GenAIContent is the bounded gen_ai.* content captured for this
+	// request (system instructions, the latest input turn, the model
+	// output, tool definitions) as a JSON object, when content capture
+	// was enabled on the gateway. Empty otherwise. Sourced from the
+	// request_events.gen_ai_content column, not a payload row.
+	GenAIContent string `json:"gen_ai_content,omitempty"`
 }

@@ -107,7 +107,14 @@ func (s *Server) handleObsMessageBody(w http.ResponseWriter, r *http.Request) {
 		s.queryError(w, "message body", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, mapBody(id, payloads))
+	// gen_ai content lives on the request_events row, not a payload — fetch it
+	// best-effort so the inspector's GenAI tab can render captured content
+	// alongside the bodies. A missing event just leaves the tab empty.
+	var genAI []byte
+	if ev, evErr := s.queries.GetRequestEvent(r.Context(), id); evErr == nil {
+		genAI = ev.GenAIContent
+	}
+	writeJSON(w, http.StatusOK, mapBody(id, payloads, genAI))
 }
 
 // --- mappers: store shapes -> contracts/admin shapes ---
@@ -250,15 +257,39 @@ func mapEntry(e store.RequestEvent) adminc.MessageEntry {
 		var d store.EventDetail
 		if json.Unmarshal(e.Detail, &d) == nil {
 			entry.Tags = d.Tags
-			for _, r := range d.RulesFired {
-				entry.RulesMatched = append(entry.RulesMatched, adminc.RuleHit{RuleName: r})
+			// Prefer the full rule chain (actions / terminated / error) the
+			// Record feed carries; fall back to the flat name list when only
+			// names are present (e.g. an older record).
+			if len(d.RuleChain) > 0 {
+				for _, r := range d.RuleChain {
+					entry.RulesMatched = append(entry.RulesMatched, adminc.RuleHit{
+						RuleName:       r.Name,
+						ActionsApplied: r.ActionsApplied,
+						Terminated:     r.Terminated,
+						ErrorMessage:   r.ErrorMessage,
+					})
+				}
+			} else {
+				for _, r := range d.RulesFired {
+					entry.RulesMatched = append(entry.RulesMatched, adminc.RuleHit{RuleName: r})
+				}
+			}
+			for _, a := range d.Attempts {
+				entry.Attempts = append(entry.Attempts, adminc.AttemptHit{
+					Target:     a.Target,
+					StartedAt:  time.Unix(0, a.StartedAtNs).UTC(),
+					DurationMs: a.DurationMs,
+					StatusCode: a.StatusCode,
+					Error:      a.Error,
+					Outcome:    a.Outcome,
+				})
 			}
 		}
 	}
 	return entry
 }
 
-func mapBody(correlationID string, payloads []store.Payload) adminc.MessageBodyDetail {
+func mapBody(correlationID string, payloads []store.Payload, genAIContent []byte) adminc.MessageBodyDetail {
 	detail := adminc.MessageBodyDetail{EventID: correlationID}
 	for _, p := range payloads {
 		switch p.Kind {
@@ -270,9 +301,32 @@ func mapBody(correlationID string, payloads []store.Payload) adminc.MessageBodyD
 			detail.ResponseTotalBytes = int64(len(p.Body))
 		case store.KindSSERollup:
 			detail.ResponseAssembled = string(p.Body)
+		case store.KindRequestHeaders:
+			detail.RequestHeaders = decodeHeaders(p.Body)
+		case store.KindResponseHeaders:
+			detail.ResponseHeaders = decodeHeaders(p.Body)
 		}
 	}
+	if len(genAIContent) > 0 {
+		detail.GenAIContent = string(genAIContent)
+	}
 	return detail
+}
+
+// decodeHeaders parses a Record-feed header payload — a JSON object of
+// single-value headers ({name: value}) — into the contract's multi-value
+// shape ({name: [value]}). Returns nil on malformed input so the tab simply
+// renders empty rather than erroring.
+func decodeHeaders(body []byte) map[string][]string {
+	var flat map[string]string
+	if json.Unmarshal(body, &flat) != nil || len(flat) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(flat))
+	for k, v := range flat {
+		out[k] = []string{v}
+	}
+	return out
 }
 
 // bucketFor picks a bucket width (seconds) giving a readable number of points

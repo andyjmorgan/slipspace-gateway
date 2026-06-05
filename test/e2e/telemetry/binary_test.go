@@ -326,6 +326,55 @@ func TestE2E_RecordTrust(t *testing.T) {
 	}
 }
 
+func TestE2E_RecordDetailEnriched(t *testing.T) {
+	svc := startService(t)
+
+	rec := recordWith("enriched-1", `{"q":"hi"}`, `{"a":"yo"}`)
+	rec.Request.Headers = map[string]string{"content-type": "application/json"}
+	rec.RulesFired = []cc.RuleFired{
+		{Name: "redirect", ActionsApplied: []string{"changeProvider"}, Terminated: false},
+		{Name: "stop", Terminated: true},
+	}
+	rec.PolicyRef = "failover-pool"
+	rec.Attempts = []cc.Attempt{
+		{Target: "primary", StartedAtNs: 1_000_000_000, DurationMs: 80, StatusCode: 503, Outcome: "failure_status"},
+		{Target: "backup", StartedAtNs: 1_080_000_000, DurationMs: 100, StatusCode: 200, Outcome: "success"},
+	}
+	if resp := svc.postRecord(t, testGatewayID, testSecret, rec); resp.StatusCode != http.StatusOK {
+		t.Fatalf("post record status = %d", resp.StatusCode)
+	}
+
+	// The recent-messages entry surfaces the full rule chain + attempts (not
+	// just rule names) and the parity body surfaces the request headers.
+	var msgs adminc.MessagesRecentResponse
+	if code := svc.getJSON(t, "/api/v1/messages/recent?limit=50", &msgs); code != http.StatusOK {
+		t.Fatalf("messages status = %d", code)
+	}
+	var e *adminc.MessageEntry
+	for i := range msgs.Entries {
+		if msgs.Entries[i].EventID == "enriched-1" {
+			e = &msgs.Entries[i]
+		}
+	}
+	if e == nil {
+		t.Fatalf("enriched-1 not found in %+v", msgs.Entries)
+	}
+	if len(e.RulesMatched) != 2 || e.RulesMatched[0].RuleName != "redirect" ||
+		len(e.RulesMatched[0].ActionsApplied) != 1 || e.RulesMatched[0].ActionsApplied[0] != "changeProvider" ||
+		!e.RulesMatched[1].Terminated {
+		t.Errorf("rule chain not surfaced: %+v", e.RulesMatched)
+	}
+	if len(e.Attempts) != 2 || e.Attempts[0].Target != "primary" || e.Attempts[1].Outcome != "success" {
+		t.Errorf("attempts not surfaced: %+v", e.Attempts)
+	}
+
+	var body adminc.MessageBodyDetail
+	svc.getJSON(t, "/api/v1/messages/enriched-1/body", &body)
+	if len(body.RequestHeaders["content-type"]) != 1 || body.RequestHeaders["content-type"][0] != "application/json" {
+		t.Errorf("request headers not surfaced: %+v", body.RequestHeaders)
+	}
+}
+
 func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 	svc := startService(t)
 
