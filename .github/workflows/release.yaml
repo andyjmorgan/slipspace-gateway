@@ -86,6 +86,14 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            # Also move `:latest` on every default-branch (main) push, not
+            # just on v-tags. An image added to the matrix after the last
+            # semver tag (sluice-telemetry, added in #234) otherwise never
+            # gets a `:latest` until the next release is cut, even though it
+            # builds on every main push. This mirrors the floating `:main`
+            # tag from `type=ref,event=branch`; sha-pinned tags remain the
+            # source of truth that Deployments pin to.
+            type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short,prefix=sha-
 
       - uses: docker/build-push-action@v6
