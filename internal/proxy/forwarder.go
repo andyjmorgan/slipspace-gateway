@@ -352,9 +352,20 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 	observer.OnRequestStart(ctx, dest)
 	start := time.Now()
 
-	rp.ServeHTTP(cw, req)
+	// OnComplete is deferred, not called inline, because rp.ServeHTTP can
+	// panic: httputil.ReverseProxy raises http.ErrAbortHandler when a streamed
+	// response copy fails (client disconnects, or the upstream breaks
+	// mid-stream). Inline, that panic would skip OnComplete entirely — leaking
+	// the ActiveRequests gauge (the +1 from OnRequestStart never balanced) and
+	// dropping the terminal Record for the aborted stream. Deferred, the
+	// reporter still settles its state, then the panic continues up to
+	// recoverMiddleware. cw.Status() is read at defer time and reflects the
+	// final written status either way.
+	defer func() {
+		observer.OnComplete(ctx, cw.Status(), time.Since(start).Milliseconds())
+	}()
 
-	observer.OnComplete(ctx, cw.Status(), time.Since(start).Milliseconds())
+	rp.ServeHTTP(cw, req)
 
 	if upstreamErr == nil {
 		f.logger.InfoContext(ctx, "proxy: upstream completed",

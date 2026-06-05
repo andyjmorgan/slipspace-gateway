@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -46,6 +47,22 @@ func recoverMiddleware(meters *observability.Meters, errs *httperr.Writer, next 
 			}
 			ctx := r.Context()
 			logger := observability.FromContext(ctx)
+			// http.ErrAbortHandler is the stdlib's benign "abort this request"
+			// signal, not a code panic: httputil.ReverseProxy raises it when a
+			// streamed response copy fails because the client disconnected or
+			// the upstream broke mid-stream. The stdlib http.Server recovers it
+			// silently; because this middleware sits below the server it catches
+			// it first, so mirror that intent — log at debug, do NOT count it
+			// against gateway.request.panics.total, and leave the already-aborted
+			// stream alone (no 500: headers are long since on the wire). Without
+			// this, every client-cancelled SSE stream looks like a handler panic.
+			if err, ok := panicVal.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				logger.DebugContext(ctx, "request stream aborted",
+					"path", r.URL.Path,
+					"method", r.Method,
+				)
+				return
+			}
 			stack := debug.Stack()
 			logger.ErrorContext(ctx, "request handler panic recovered",
 				"path", r.URL.Path,
