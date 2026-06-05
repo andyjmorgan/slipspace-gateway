@@ -169,4 +169,39 @@ func TestStreaming_ClientDisconnect_GatewayCleansUp(t *testing.T) {
 	if hr.StatusCode != http.StatusOK {
 		t.Errorf("post-disconnect healthz status=%d", hr.StatusCode)
 	}
+
+	// The mid-stream disconnect drives the gateway's ReverseProxy into
+	// http.ErrAbortHandler. That sentinel is benign (the client left), so the
+	// recover middleware must NOT count it against gateway.request.panics.total
+	// — otherwise every cancelled SSE stream inflates the panic counter and
+	// error logs. With the bug the counter series appears within a chunk or two;
+	// poll briefly and require it to stay absent.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		body := scrapeGatewayMetrics(t, h.PromURL())
+		for _, line := range strings.Split(body, "\n") {
+			if strings.HasPrefix(line, "gateway_request_panics_total") {
+				t.Fatalf("client-disconnect abort was counted as a request panic: %s", line)
+			}
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+}
+
+// scrapeGatewayMetrics fetches the gateway's Prometheus exposition text.
+func scrapeGatewayMetrics(t *testing.T, promURL string) string {
+	t.Helper()
+	resp, err := http.Get(promURL + "/metrics") //nolint:gosec,noctx // test scrape against the harness's bound prom port
+	if err != nil {
+		t.Fatalf("scrape metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read metrics: %v", err)
+	}
+	return string(b)
 }

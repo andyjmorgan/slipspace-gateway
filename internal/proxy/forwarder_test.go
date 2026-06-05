@@ -85,6 +85,69 @@ func TestForward_HappyPath(t *testing.T) {
 	}
 }
 
+// TestForward_AbortPanicStillCompletes pins the deferred-OnComplete fix. When a
+// streamed response copy fails mid-flight, httputil.ReverseProxy panics
+// http.ErrAbortHandler; OnComplete is deferred so it still runs on that unwind
+// — balancing the ActiveRequests gauge and giving the reporter a terminal
+// event. The upstream declares a Content-Length it never fulfils then closes
+// the conn, so the proxy's body copy fails. Forward must run under a real
+// http.Server: ReverseProxy only raises the panic (vs silently suppressing it)
+// when the request carries an http.Server context.
+func TestForward_AbortPanicStillCompletes(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Errorf("upstream needs a Hijacker")
+			return
+		}
+		conn, bufrw, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		// Promise 4096 bytes, send ~13, then close → short read on the proxy
+		// side → copyResponse error → panic(http.ErrAbortHandler).
+		_, _ = bufrw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 4096\r\n\r\nevent: ping\n\n")
+		_ = bufrw.Flush()
+		_ = conn.Close()
+	}))
+	t.Cleanup(upstream.Close)
+
+	obs := newRecordingObserver()
+	f := New(Options{ObserverFactory: staticObserver(obs)})
+	dest := newDestination(t, upstream.URL+"/v1/stream")
+
+	// done closes after Forward unwinds (its deferred OnComplete has run by
+	// then) even when the abort panic fires; the http.Server recovers the
+	// ErrAbortHandler panic silently afterward.
+	done := make(chan struct{})
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		_, _ = f.Forward(r.Context(), w, r, dest)
+	}))
+	t.Cleanup(gateway.Close)
+
+	resp, err := http.Get(gateway.URL + "/v1/stream") //nolint:bodyclose,noctx // aborted mid-stream; drained+closed below if non-nil
+	if resp != nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+	_ = err // the client legitimately sees a broken stream; we assert on the observer
+	<-done
+
+	// The fix: OnComplete (deferred) ran during the panic unwind. Without it the
+	// gauge leaks and the aborted stream produces no terminal event.
+	var sawComplete bool
+	for _, e := range obs.snapshot() {
+		if e.kind == eventComplete {
+			sawComplete = true
+		}
+	}
+	if !sawComplete {
+		t.Fatal("OnComplete was not called on the abort-panic path")
+	}
+}
+
 func TestForward_ResponseBodyTransform(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -9,10 +9,47 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
+
+// newCountingMeters returns a Meters wired to a manual reader, plus a func that
+// collects and sums the named counter — for asserting (non-)increments.
+func newCountingMeters(t *testing.T) (*observability.Meters, func(name string) int64) {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	m, err := observability.NewMeters(mp.Meter("test"))
+	if err != nil {
+		t.Fatalf("NewMeters: %v", err)
+	}
+	return m, func(name string) int64 {
+		var rm metricdata.ResourceMetrics
+		if err := reader.Collect(context.Background(), &rm); err != nil {
+			t.Fatalf("collect: %v", err)
+		}
+		for _, sm := range rm.ScopeMetrics {
+			for _, metricRow := range sm.Metrics {
+				if metricRow.Name != name {
+					continue
+				}
+				sum, ok := metricRow.Data.(metricdata.Sum[int64])
+				if !ok {
+					t.Fatalf("metric %s is %T, want Sum[int64]", name, metricRow.Data)
+				}
+				var total int64
+				for _, dp := range sum.DataPoints {
+					total += dp.Value
+				}
+				return total
+			}
+		}
+		return 0 // absent => never incremented
+	}
+}
 
 func newTestLogger(_ *testing.T) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -112,6 +149,60 @@ func TestRecoverMiddleware_PanicAfterWriteHeader(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "partial response..." {
 		t.Errorf("body = %q, want only the pre-panic content", got)
+	}
+}
+
+// TestRecoverMiddleware_AbortHandlerNotCountedAsPanic — http.ErrAbortHandler
+// is the stdlib's benign "client/upstream broke the stream" signal (raised by
+// httputil.ReverseProxy mid-copy), not a code panic. recoverMiddleware must
+// swallow it without writing a 500 over the already-streamed response and
+// without bumping gateway.request.panics.total — otherwise every cancelled SSE
+// stream pollutes the panic counter and error logs.
+func TestRecoverMiddleware_AbortHandlerNotCountedAsPanic(t *testing.T) {
+	t.Parallel()
+	meters, count := newCountingMeters(t)
+	errs := httperr.New(meters.ErrorResponsesTotal, newTestLogger(t))
+
+	aborter := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: ping\n\n"))
+		panic(http.ErrAbortHandler)
+	})
+	h := recoverMiddleware(meters, errs, aborter)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", nil)
+	h.ServeHTTP(rec, req) // must not re-panic — continued execution is the proof
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (abort must not write a 500 over the stream)", rec.Code)
+	}
+	if n := count(observability.MetricRequestPanicsTotal); n != 0 {
+		t.Errorf("%s = %d, want 0 (ErrAbortHandler is benign, not a panic)", observability.MetricRequestPanicsTotal, n)
+	}
+}
+
+// TestRecoverMiddleware_GenericPanicCounted is the contrast case: a real panic
+// (not ErrAbortHandler) is still logged + counted, proving the special-case
+// above suppresses only the benign sentinel, not genuine faults.
+func TestRecoverMiddleware_GenericPanicCounted(t *testing.T) {
+	t.Parallel()
+	meters, count := newCountingMeters(t)
+	errs := httperr.New(meters.ErrorResponsesTotal, newTestLogger(t))
+
+	h := recoverMiddleware(meters, errs, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("genuine fault")
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if n := count(observability.MetricRequestPanicsTotal); n != 1 {
+		t.Errorf("%s = %d, want 1 (a real panic must still be counted)", observability.MetricRequestPanicsTotal, n)
 	}
 }
 
