@@ -204,6 +204,10 @@ E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`
 
 PR titles + descriptions follow the global `~/.claude/CLAUDE.md` rules (semantic prefix, why-first, paste the URL). No emojis in code/docs unless asked.
 
+**Merge on green means *green*, not *queued*.** This repo enforces no required status checks, so `gh pr merge --auto` merges **immediately** (it has no checks to wait on) — it is NOT "merge when CI passes". When asked to merge on green: poll `gh pr checks <n>` until **every** check has passed, then merge with `gh pr merge <n> --squash`. Never merge — or enable auto-merge — while any check is pending. (Caught on PR #241, where `--auto` landed the merge before CI even started.)
+
+**Always ensure every action completes — never fire-and-forget.** After any state-changing action (push, merge, deploy, cluster apply, background job), confirm it actually finished and succeeded before reporting done or moving on: read the exit status, poll the resource to its terminal state, re-fetch and verify. A backgrounded command's `&& echo OK || echo FAIL` masks the real exit code — check the underlying result, not the wrapper.
+
 **Flakes:** a flake is a test that fails then passes with no code change. On spotting one, check for an existing `flake: <test>: <cause>` issue (`gh issue list --state open --search 'flake: <test>'`); comment with the new run link if it exists, else open one (`--label flake`). Confirm with `go test -count=10 -race -run <Name> ./<pkg>` — if it reproduces every time it's a `bug:`, not a flake. Fixing it is a follow-up PR; the issue stays open until that merges.
 
 **Stacked PRs:** branch each off its parent, not main. On parent merge, rebase onto main + `git push --force-with-lease` — dependents often carry the same test fix as the parent, so resolve conflicts to the on-main version. Confirm `git branch --show-current` before every commit; recover a misplaced commit with `git checkout <intended> && git cherry-pick <sha> && git checkout <parent> && git reset --hard <prior>`.
