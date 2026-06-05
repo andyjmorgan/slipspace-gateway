@@ -31,7 +31,7 @@ import {
 // PAGE_SIZES the operator can page in. Default keeps the table snappy while
 // covering most browsing in one screen.
 const PAGE_SIZES = [50, 100, 200] as const
-const DEFAULT_PAGE_SIZE = 100
+const DEFAULT_PAGE_SIZE = 50
 
 // TIME_RANGES are the relative-window presets. "all" omits the bound so the
 // keyset scan can walk the full history.
@@ -82,7 +82,10 @@ export function MessagesPage() {
   const [endpoint, setEndpoint] = useState("")
   const [statusClass, setStatusClass] = useState("")
   const [tags, setTags] = useState<string[]>([])
-  const [timeRange, setTimeRange] = useState<TimeRange>("all")
+  // Default the browse window to the last hour at 50 rows — the unbounded
+  // all-time view scans far too much to be a useful landing state. Operators
+  // widen via the time-range presets / row-size control as needed.
+  const [timeRange, setTimeRange] = useState<TimeRange>("1h")
   const [limit, setLimit] = useState<number>(DEFAULT_PAGE_SIZE)
 
   // filters holds the pure (input-derived) predicates. The relative time bound
