@@ -108,6 +108,12 @@ func TestAPIAuthMatrix(t *testing.T) {
 			if resp.Code != tc.want {
 				t.Fatalf("status = %d, want %d", resp.Code, tc.want)
 			}
+			// A rejected request must NOT carry WWW-Authenticate, or the
+			// browser pops its native Basic dialog over the SPA's own login
+			// form and re-fires on every poll. The SPA drives auth itself.
+			if tc.want == http.StatusUnauthorized && resp.Header().Get("WWW-Authenticate") != "" {
+				t.Errorf("401 carried WWW-Authenticate %q; must be a bare 401", resp.Header().Get("WWW-Authenticate"))
+			}
 		})
 	}
 }

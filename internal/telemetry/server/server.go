@@ -93,11 +93,19 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 // username and the bcrypt password check are both constant-time-ish: bcrypt is
 // inherently so, and the username uses subtle.ConstantTimeCompare to avoid a
 // length/early-exit oracle.
+//
+// A rejected request gets a BARE 401 — deliberately NO WWW-Authenticate header
+// (mirrors internal/admin.BasicAuth). The console SPA drives the credential
+// prompt with its own login form + the Authorization header on every fetch; if
+// we sent `WWW-Authenticate: Basic …`, browsers would intercept the SPA's
+// fetch() 401s and pop their native auth dialog over the SPA, re-firing on
+// every poll. The header is not required by RFC 7617 for the scheme to work,
+// only for browser-driven challenge-response, which we suppress. curl users
+// can still pass --basic credentials directly.
 func (s *Server) basicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
 		if !ok || !s.credentialsValid(user, pass) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="sluice telemetry", charset="UTF-8"`)
 			writePlain(w, http.StatusUnauthorized, "unauthorized\n")
 			return
 		}
