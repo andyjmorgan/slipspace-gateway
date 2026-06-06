@@ -129,7 +129,7 @@ func recentEventID(t *testing.T, h *harness.Harness, endpoint string) string {
 		t.Fatalf("decode messages/recent: %v", err)
 	}
 	for i := len(got.Entries) - 1; i >= 0; i-- {
-		if strings.EqualFold(got.Entries[i].Endpoint, endpoint) {
+		if strings.EqualFold(got.Entries[i].Protocol, endpoint) {
 			return got.Entries[i].EventID
 		}
 	}

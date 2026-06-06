@@ -17,7 +17,7 @@ import (
 // Condition reads the live state every prior rule's action left
 // behind, not the frozen GatewayContext from the start of Evaluate.
 // Each test isolates one cascade dimension (provider, model,
-// endpoint, header) so a regression maps unambiguously to the
+// protocol, header) so a regression maps unambiguously to the
 // affected condition kind.
 
 func modelCondition(operator contractsrules.StringOperator, expected string) contractsrules.Condition {
@@ -28,11 +28,11 @@ func modelCondition(operator contractsrules.StringOperator, expected string) con
 	}
 }
 
-func endpointCondition(expected string) contractsrules.Condition {
-	return &contractsrules.EndpointCondition{
-		Type:             "endpoint",
+func protocolCondition(expected string) contractsrules.Condition {
+	return &contractsrules.ProtocolCondition{
+		Type:             "protocol",
 		Operator:         contractsrules.EnumEquals,
-		ExpectedEndpoint: expected,
+		ExpectedProtocol: expected,
 	}
 }
 
@@ -409,7 +409,7 @@ func TestCascade_LiveModelFromGeminiBodyPathParams(t *testing.T) {
 	body := &content.GenerateContentRequest{}
 	gc := rules.GatewayContext{
 		Provider:          "gemini",
-		Endpoint:          "generate_content",
+		Protocol:          "generate_content",
 		Model:             "gemini-2.0-flash-001",
 		ConfigurationName: "dev",
 	}
@@ -445,7 +445,7 @@ func TestCascade_LiveModelFromAnthropicBody(t *testing.T) {
 	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}), 8, nil)
 	state := rules.NewMutableState("anthropic", "messages", "", nil, http.Header{})
 	body := &messages.MessagesRequest{Model: "claude-haiku-4-5"}
-	gc := rules.GatewayContext{Provider: "anthropic", Endpoint: "messages", Model: "claude-haiku-4-5", ConfigurationName: "dev"}
+	gc := rules.GatewayContext{Provider: "anthropic", Protocol: "messages", Model: "claude-haiku-4-5", ConfigurationName: "dev"}
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 
 	if _, err := e.Evaluate(ctx, gc, state, body); err != nil {
@@ -477,7 +477,7 @@ func TestCascade_LiveModelFromOpenAIResponsesBody(t *testing.T) {
 	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {normalise, catchall}}), 8, nil)
 	state := rules.NewMutableState("openai", "responses", "", nil, http.Header{})
 	body := &openairesponses.ResponsesRequest{Model: "gpt-4o-mini"}
-	gc := rules.GatewayContext{Provider: "openai", Endpoint: "responses", Model: "gpt-4o-mini", ConfigurationName: "dev"}
+	gc := rules.GatewayContext{Provider: "openai", Protocol: "responses", Model: "gpt-4o-mini", ConfigurationName: "dev"}
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 
 	if _, err := e.Evaluate(ctx, gc, state, body); err != nil {
@@ -491,25 +491,25 @@ func TestCascade_LiveModelFromOpenAIResponsesBody(t *testing.T) {
 	}
 }
 
-// TestCascade_EndpointCondition_FrozenWhenNoActionMutatesEndpoint:
-// v1.0.2 actions don't mutate state.Endpoint (per .NET parity —
-// ChangeProvider doesn't remap endpoint names). So an
-// EndpointCondition on a later rule sees the SAME endpoint name
+// TestCascade_ProtocolCondition_FrozenWhenNoActionMutatesProtocol:
+// v1.0.2 actions don't mutate state.Protocol (per .NET parity —
+// ChangeProvider doesn't remap protocol names). So an
+// ProtocolCondition on a later rule sees the SAME protocol name
 // the initial gc carried; this confirms the cascade isn't
 // accidentally injecting drift where there shouldn't be any.
-func TestCascade_EndpointCondition_FrozenWhenNoActionMutatesEndpoint(t *testing.T) {
+func TestCascade_ProtocolCondition_FrozenWhenNoActionMutatesProtocol(t *testing.T) {
 	t.Parallel()
 	flip := &contractsrules.RuleContract{
 		Name:      "flip-provider",
 		Condition: providerCondition("openai"),
 		Actions:   []contractsrules.Action{changeProvider("anthropic")},
 	}
-	endpointGate := &contractsrules.RuleContract{
-		Name:      "tag-chat-endpoint",
-		Condition: endpointCondition("chat_completions"),
-		Actions:   []contractsrules.Action{setHeaderAction("X-Endpoint-Tag", "matched")},
+	protocolGate := &contractsrules.RuleContract{
+		Name:      "tag-chat-protocol",
+		Condition: protocolCondition("chat_completions"),
+		Actions:   []contractsrules.Action{setHeaderAction("X-Protocol-Tag", "matched")},
 	}
-	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {flip, endpointGate}}), 8, nil)
+	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {flip, protocolGate}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
 	ctx, _ := rules.WithMatchBuffer(context.Background())
 
@@ -520,10 +520,10 @@ func TestCascade_EndpointCondition_FrozenWhenNoActionMutatesEndpoint(t *testing.
 	if state.Provider != "anthropic" {
 		t.Errorf("Provider should have flipped: %q", state.Provider)
 	}
-	if state.Endpoint != "chat_completions" {
-		t.Errorf("Endpoint should NOT have mutated: %q", state.Endpoint)
+	if state.Protocol != "chat_completions" {
+		t.Errorf("Protocol should NOT have mutated: %q", state.Protocol)
 	}
-	if got := state.OutgoingHeaders.Get("X-Endpoint-Tag"); got != "matched" {
-		t.Errorf("X-Endpoint-Tag = %q, want matched — endpoint cascade should produce the routed name", got)
+	if got := state.OutgoingHeaders.Get("X-Protocol-Tag"); got != "matched" {
+		t.Errorf("X-Protocol-Tag = %q, want matched — protocol cascade should produce the routed name", got)
 	}
 }

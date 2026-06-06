@@ -81,7 +81,7 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 		if pm, ok := passthroughMatchFromContext(ctx); ok {
 			ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
 				Provider:      pm.Provider,
-				Endpoint:      pm.Family,
+				Protocol:      pm.Family,
 				Method:        r.Method,
 				Configuration: authResult.ConfigurationName,
 			})
@@ -121,7 +121,7 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 		captured, _ := bodycapture.FromContext(ctx)
 		ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
 			Provider:      provider,
-			Endpoint:      pi.protocol,
+			Protocol:      pi.protocol,
 			Model:         outboundModel(captured, state),
 			Method:        r.Method,
 			Configuration: authResult.ConfigurationName,

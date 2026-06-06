@@ -493,7 +493,7 @@ func makeTestRecord(id string, seq uint64) cc.Record {
 		CorrelationID: "c-" + id,
 		Configuration: "test",
 		Provider:      "openai",
-		Endpoint:      "chat_completions",
+		Protocol:      "chat_completions",
 		Request:       cc.RequestPart{Method: "POST", Path: "/x"},
 		Response:      cc.ResponsePart{Status: 200},
 		SchemaVersion: cc.SchemaVersion,

@@ -15,7 +15,7 @@ func TestRequest_MarshalRoundTrip(t *testing.T) {
 	in := events.Request{
 		CorrelationID: "11111111-1111-1111-1111-111111111111",
 		Provider:      "openai",
-		Endpoint:      "chat_completions",
+		Protocol:      "chat_completions",
 		Model:         "gpt-4o-mini",
 		StatusCode:    200,
 		DurationMs:    742,
@@ -48,7 +48,7 @@ func TestRequest_OmitemptyFields(t *testing.T) {
 	}
 
 	got := string(data)
-	for _, banned := range []string{"correlation_id", "provider", "endpoint", "model", "streaming", "upstream_error"} {
+	for _, banned := range []string{"correlation_id", "provider", "protocol", "model", "streaming", "upstream_error"} {
 		if strings.Contains(got, banned) {
 			t.Errorf("expected %q to be omitted on zero value; got: %s", banned, got)
 		}
@@ -67,7 +67,7 @@ func TestRequest_PopulatedFieldsSerialise(t *testing.T) {
 	ev := events.Request{
 		CorrelationID: "abc",
 		Provider:      "anthropic",
-		Endpoint:      "messages",
+		Protocol:      "messages",
 		Model:         "claude-haiku-4-5",
 		StatusCode:    502,
 		DurationMs:    1234,
@@ -82,7 +82,7 @@ func TestRequest_PopulatedFieldsSerialise(t *testing.T) {
 	want := []string{
 		`"correlation_id":"abc"`,
 		`"provider":"anthropic"`,
-		`"endpoint":"messages"`,
+		`"protocol":"messages"`,
 		`"model":"claude-haiku-4-5"`,
 		`"status_code":502`,
 		`"duration_ms":1234`,

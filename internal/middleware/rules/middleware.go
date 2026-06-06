@@ -77,7 +77,7 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 
 		gc := GatewayContext{
 			Provider:          state.Provider,
-			Endpoint:          state.Endpoint,
+			Protocol:          state.Protocol,
 			Model:             extractInboundModel(captured, state.PathParams),
 			Headers:           r.Header,
 			ConfigurationName: ar.ConfigurationName,
@@ -101,7 +101,7 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 			ctx = withSyntheticOutcome(ctx, result)
 			ctx = observability.WithRequestLabels(ctx, observability.RequestLabels{
 				Provider:      state.Provider,
-				Endpoint:      state.Endpoint,
+				Protocol:      state.Protocol,
 				Model:         extractInboundModel(captured, state.PathParams),
 				Method:        r.Method,
 				Configuration: ar.ConfigurationName,

@@ -9,7 +9,7 @@ import (
 )
 
 // makeRec returns a baseline Record the binding tests mutate to
-// exercise individual predicates. Provider/endpoint/model/status/tags
+// exercise individual predicates. Provider/protocol/model/status/tags
 // + body sizes are populated so filter + oversize behave realistically.
 func makeRec() cc.Record {
 	return cc.Record{
@@ -17,7 +17,7 @@ func makeRec() cc.Record {
 		CorrelationID:  "corr-1",
 		Configuration:  "production",
 		Provider:       "openai",
-		Endpoint:       "chat_completions",
+		Protocol:       "chat_completions",
 		Model:          "gpt-4o-mini",
 		UpstreamStatus: 200,
 		Response:       cc.ResponsePart{Status: 200, BodyBytes: 1024, Body: json.RawMessage(`"resp"`), Assembled: json.RawMessage(`{"id":"x"}`), AssemblyPartial: true},
@@ -195,13 +195,13 @@ func TestMatchesFilter_Providers(t *testing.T) {
 	}
 }
 
-func TestMatchesFilter_Endpoints(t *testing.T) {
+func TestMatchesFilter_Protocols(t *testing.T) {
 	rec := makeRec()
-	if !matchesFilter(rec, &contractsconfig.ConnectorFilter{Endpoints: []string{"chat_completions"}}) {
-		t.Error("endpoint match")
+	if !matchesFilter(rec, &contractsconfig.ConnectorFilter{Protocols: []string{"chat_completions"}}) {
+		t.Error("protocol match")
 	}
-	if matchesFilter(rec, &contractsconfig.ConnectorFilter{Endpoints: []string{"messages"}}) {
-		t.Error("endpoint miss should reject")
+	if matchesFilter(rec, &contractsconfig.ConnectorFilter{Protocols: []string{"messages"}}) {
+		t.Error("protocol miss should reject")
 	}
 }
 

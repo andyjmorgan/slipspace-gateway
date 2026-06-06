@@ -43,7 +43,7 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 	p50, p95, p99 := allLatencyQuantiles(start, end, observability.MetricRequestDuration)
 
 	byProvider := computeByProvider(requestDeltas, start, end)
-	byEndpoint := computeByEndpoint(requestDeltas, start, end)
+	byProtocol := computeByProtocol(requestDeltas, start, end)
 	byConfiguration := computeByConfiguration(requestDeltas, start, end)
 	byModel := computeByModel(requestDeltas, tokensInDeltas, tokensOutDeltas)
 	rulesFired := computeRulesFired(start, end, ruleAttachments)
@@ -76,7 +76,7 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 			P99: int64(math.Round(p99 * 1000)),
 		},
 		ByProvider:      byProvider,
-		ByEndpoint:      byEndpoint,
+		ByProtocol:      byProtocol,
 		ByConfiguration: byConfiguration,
 		ByModel:         byModel,
 		RulesFired:      rulesFired,
@@ -322,30 +322,30 @@ func computeByProvider(requestDeltas map[observability.LabelKey]int64, start, en
 	return out
 }
 
-// computeByEndpoint partitions request deltas + latency histogram
-// deltas by the (provider, endpoint) pair. Endpoint is repeated on
-// each provider that exposes it (openai.chat_completions vs
-// anthropic.chat_completions are distinct rows) so model-keyed
-// changeProvider rules don't collapse into a single bucket.
-func computeByEndpoint(requestDeltas map[observability.LabelKey]int64, start, end observability.Sample) []adminc.DashboardEndpointRow {
+// computeByProtocol partitions request deltas + latency histogram
+// deltas by the (provider, protocol) pair. Protocol is repeated on
+// each provider that exposes it (openai.chat vs anthropic.chat are
+// distinct rows) so model-keyed changeProvider rules don't collapse
+// into a single bucket.
+func computeByProtocol(requestDeltas map[observability.LabelKey]int64, start, end observability.Sample) []adminc.DashboardProtocolRow {
 	type acc struct {
 		requests int64
 		errored  int64
 		hist     observability.HistogramSnapshot
 	}
 	type groupKey struct {
-		provider, endpoint string
+		provider, protocol string
 	}
-	perEndpoint := map[groupKey]*acc{}
+	perProtocol := map[groupKey]*acc{}
 	for key, v := range requestDeltas {
-		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), endpoint: key.Get(observability.AttrSluiceEndpoint)}
-		if gk.provider == "" || gk.endpoint == "" {
+		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), protocol: key.Get(observability.AttrSluiceProtocol)}
+		if gk.provider == "" || gk.protocol == "" {
 			continue
 		}
-		a := perEndpoint[gk]
+		a := perProtocol[gk]
 		if a == nil {
 			a = &acc{}
-			perEndpoint[gk] = a
+			perProtocol[gk] = a
 		}
 		a.requests += v
 		status := key.Get(observability.AttrHTTPResponseStatusCode)
@@ -354,8 +354,8 @@ func computeByEndpoint(requestDeltas map[observability.LabelKey]int64, start, en
 		}
 	}
 	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
-		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), endpoint: key.Get(observability.AttrSluiceEndpoint)}
-		a := perEndpoint[gk]
+		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), protocol: key.Get(observability.AttrSluiceProtocol)}
+		a := perProtocol[gk]
 		if a == nil {
 			continue
 		}
@@ -373,11 +373,11 @@ func computeByEndpoint(requestDeltas map[observability.LabelKey]int64, start, en
 			a.hist.Counts[i] += c
 		}
 	}
-	out := make([]adminc.DashboardEndpointRow, 0, len(perEndpoint))
-	for gk, a := range perEndpoint {
-		out = append(out, adminc.DashboardEndpointRow{
+	out := make([]adminc.DashboardProtocolRow, 0, len(perProtocol))
+	for gk, a := range perProtocol {
+		out = append(out, adminc.DashboardProtocolRow{
 			Provider:     gk.provider,
-			Endpoint:     gk.endpoint,
+			Protocol:     gk.protocol,
 			Requests:     a.requests,
 			ErrorRate:    safeRatio(a.errored, a.requests),
 			P95LatencyMs: int64(quantile(a.hist, 0.95) * 1000),

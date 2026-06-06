@@ -48,17 +48,19 @@ func (c *ProviderCondition) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (c ProviderCondition) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
 
-// EndpointCondition matches when the resolved endpoint equals ExpectedEndpoint.
-type EndpointCondition struct {
-	// Type is the polymorphic discriminator; always "endpoint".
+// ProtocolCondition matches when the resolved protocol equals ExpectedProtocol.
+// The matched value is the generative protocol (e.g. "chat", "messages") or,
+// for opaque requests, the passthrough family name (e.g. "messages_batches").
+type ProtocolCondition struct {
+	// Type is the polymorphic discriminator; always "protocol".
 	Type string `yaml:"type" json:"type"`
 
 	// Operator is the comparison strategy. Only EnumEquals is meaningful.
 	Operator EnumOperator `yaml:"operator" json:"operator"`
 
-	// ExpectedEndpoint is the endpoint identifier the condition compares
-	// against (e.g., "openai.chat_completions").
-	ExpectedEndpoint string `yaml:"expectedEndpoint" json:"expected_endpoint"`
+	// ExpectedProtocol is the protocol identifier the condition compares
+	// against (e.g., "chat", "messages", or a passthrough family name).
+	ExpectedProtocol string `yaml:"expectedProtocol" json:"expected_protocol"`
 
 	// Not inverts the match result.
 	Not bool `yaml:"not,omitempty" json:"not,omitempty"`
@@ -66,18 +68,18 @@ type EndpointCondition struct {
 	models.DynamicProperties `yaml:",inline"`
 }
 
-// ConditionType returns the "endpoint" discriminator.
-func (EndpointCondition) ConditionType() string { return "endpoint" }
+// ConditionType returns the "protocol" discriminator.
+func (ProtocolCondition) ConditionType() string { return "protocol" }
 
-func (EndpointCondition) isCondition() {}
+func (ProtocolCondition) isCondition() {}
 
 // UnmarshalJSON routes unknown fields through DynamicProperties.
-func (c *EndpointCondition) UnmarshalJSON(data []byte) error {
+func (c *ProtocolCondition) UnmarshalJSON(data []byte) error {
 	return models.UnmarshalDynamic(data, c)
 }
 
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
-func (c EndpointCondition) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
+func (c ProtocolCondition) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
 
 // ModelNameCondition matches the resolved model name with a string operator.
 type ModelNameCondition struct {
@@ -358,7 +360,7 @@ var conditionRegistry = models.PolymorphicRegistry[Condition]{
 	DiscriminatorField: "type",
 	Factories: map[string]func() Condition{
 		"provider":  func() Condition { return &ProviderCondition{} },
-		"endpoint":  func() Condition { return &EndpointCondition{} },
+		"protocol":  func() Condition { return &ProtocolCondition{} },
 		"modelName": func() Condition { return &ModelNameCondition{} },
 		"header":    func() Condition { return &HeaderCondition{} },
 		"tag":       func() Condition { return &TagCondition{} },

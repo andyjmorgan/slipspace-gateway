@@ -16,7 +16,7 @@ import {
   type DashboardSummary,
   type DashboardProviderHealth,
   type DashboardProviderRow,
-  type DashboardEndpointRow,
+  type DashboardProtocolRow,
   type DashboardConfigurationRow,
   type DashboardModelRow,
   type DashboardRuleFiredRow,
@@ -178,7 +178,7 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-        <ByEndpointStrip rows={d.by_endpoint ?? []} window={d.window} />
+        <ByProtocolStrip rows={d.by_protocol ?? []} window={d.window} />
         <ByConfigurationStrip rows={d.by_configuration ?? []} window={d.window} />
       </div>
 
@@ -285,22 +285,22 @@ function ByProviderStrip({ rows }: { rows: DashboardProviderRow[] }) {
   )
 }
 
-function ByEndpointStrip({ rows, window }: { rows: DashboardEndpointRow[]; window: string }) {
+function ByProtocolStrip({ rows, window }: { rows: DashboardProtocolRow[]; window: string }) {
   const sub = `requests · ${window}`
-  if (!rows.length) return <EmptyCard title="Traffic by endpoint" sub={sub} message="No traffic recorded yet." />
+  if (!rows.length) return <EmptyCard title="Traffic by protocol" sub={sub} message="No traffic recorded yet." />
   const max = Math.max(...rows.map((r) => r.requests))
   return (
     <PanelCard>
-      <PanelHead title="Traffic by endpoint" sub={sub} />
+      <PanelHead title="Traffic by protocol" sub={sub} />
       <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
           <div
-            key={`${r.provider}.${r.endpoint}`}
+            key={`${r.provider}.${r.protocol}`}
             className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3 min-w-[30rem]"
           >
             <div className="flex items-center gap-2 min-w-0">
               <ProviderChip name={r.provider} />
-              <span className="mono text-[11.5px] text-[color:var(--text-3)] truncate">{r.endpoint}</span>
+              <span className="mono text-[11.5px] text-[color:var(--text-3)] truncate">{r.protocol}</span>
             </div>
             <div className="h-2 rounded-full bg-[color:var(--bg-2)] overflow-hidden">
               <div

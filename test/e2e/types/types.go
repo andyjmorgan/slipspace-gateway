@@ -15,7 +15,7 @@ type RequestEvent struct {
 
 	Provider string `json:"provider,omitempty"`
 
-	Endpoint string `json:"endpoint,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
 
 	Model string `json:"model,omitempty"`
 

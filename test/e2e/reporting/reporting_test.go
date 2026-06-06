@@ -49,8 +49,8 @@ func TestReporting_RequestEvent_Inline(t *testing.T) {
 	if ev.Provider != "openai" {
 		t.Errorf("Provider=%q want openai", ev.Provider)
 	}
-	if ev.Endpoint != "chat" {
-		t.Errorf("Endpoint=%q want chat", ev.Endpoint)
+	if ev.Protocol != "chat" {
+		t.Errorf("Protocol=%q want chat", ev.Protocol)
 	}
 	if ev.Method != http.MethodPost {
 		t.Errorf("Method=%q want POST", ev.Method)
@@ -99,8 +99,8 @@ func TestReporting_RequestEvent_CapturesGetMethod(t *testing.T) {
 	if err := json.Unmarshal(env.InlinePayload, &ev); err != nil {
 		t.Fatalf("decode payload: %v raw=%s", err, env.InlinePayload)
 	}
-	if ev.Endpoint != "models" {
-		t.Errorf("Endpoint=%q want models", ev.Endpoint)
+	if ev.Protocol != "models" {
+		t.Errorf("Protocol=%q want models", ev.Protocol)
 	}
 	if ev.Method != http.MethodGet {
 		t.Errorf("Method=%q want GET", ev.Method)
@@ -159,7 +159,7 @@ func TestReporting_Streaming_EventEmitted(t *testing.T) {
 	if !ev.Streaming {
 		t.Errorf("Streaming=false, want true for SSE response")
 	}
-	if ev.Provider != "openai" || ev.Endpoint != "chat" {
-		t.Errorf("provider/endpoint=%q/%q", ev.Provider, ev.Endpoint)
+	if ev.Provider != "openai" || ev.Protocol != "chat" {
+		t.Errorf("provider/endpoint=%q/%q", ev.Provider, ev.Protocol)
 	}
 }

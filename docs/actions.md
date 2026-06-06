@@ -607,7 +607,7 @@ Identifier segments only — no array indices (`messages.0`), no brackets, no gj
 | string (`"hi"`, `"{request.body.model}"`) | template — resolved (see below) |
 | sequence / mapping | structured literal, emitted verbatim |
 
-Template strings resolve `{ref}` placeholders. A string that is **exactly** one `{ref}` passes the referenced value's JSON type through; any other template stringifies the substituted result. Supported references: `{request.body.<dotted>}`, `{response.body.<dotted>}`, `{path_params.X}`, `{state.provider}`, `{state.endpoint}`, `{external_url}`. A single-reference template whose ref cannot be resolved drops the op (`template_ref_miss`); a missing ref inside mixed content substitutes empty string. No silent coercion — declare `"1024"` for an int field and the wire gets the string `"1024"`; upstream rejection is the backstop.
+Template strings resolve `{ref}` placeholders. A string that is **exactly** one `{ref}` passes the referenced value's JSON type through; any other template stringifies the substituted result. Supported references: `{request.body.<dotted>}`, `{response.body.<dotted>}`, `{path_params.X}`, `{state.provider}`, `{state.protocol}`, `{external_url}`. A single-reference template whose ref cannot be resolved drops the op (`template_ref_miss`); a missing ref inside mixed content substitutes empty string. No silent coercion — declare `"1024"` for an int field and the wire gets the string `"1024"`; upstream rejection is the backstop.
 
 Reference scoping follows the phase. On a **request.body** target, `{request.body.x}` reads the evolving request body and `{response.body.x}` is out of scope. On a **response.body** target, `{response.body.x}` reads the response body and `{request.body.x}` reads the original request snapshot. `{external_url}` is the gateway's externally reachable base URL from `SLUICE_EXTERNAL_URL`; unset, it misses (dropping any rewrite that depends on it).
 
@@ -639,7 +639,7 @@ rules:
       logicalOperator: And
       children:
         - { type: provider, operator: Equals, expectedProvider: openai }
-        - { type: endpoint, operator: Equals, expectedEndpoint: chat_completions }
+        - { type: protocol, operator: Equals, expectedProtocol: chat_completions }
         - { type: bodyField, target: request.body.stream, operator: Equals, value: "true" }
     actions:
       - type: rewriteField
@@ -679,7 +679,7 @@ rules:
       logicalOperator: And
       children:
         - { type: provider, operator: Equals, expectedProvider: anthropic }
-        - { type: endpoint, operator: Equals, expectedEndpoint: messages_batches_create }
+        - { type: protocol, operator: Equals, expectedProtocol: messages_batches_create }
     actions:
       - type: rewriteField
         target: response.body.results_url

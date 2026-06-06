@@ -26,7 +26,7 @@ func TestObsSummary_ParityShape(t *testing.T) {
 		Totals:          store.DashboardTotals{Requests: 10, RequestsErrored: 2, TokensIn: 100, TokensOut: 50},
 		Latency:         store.DashboardLatency{P50: 1, P95: 9, P99: 20},
 		ByProvider:      []store.DashboardDimensionRow{{Key: "anthropic", Requests: 8, P95LatencyMs: 9, ErrorRate: 0.1}},
-		ByEndpoint:      []store.DashboardEndpointRow{{Provider: "anthropic", Endpoint: "messages", Requests: 8}},
+		ByProtocol:      []store.DashboardProtocolRow{{Provider: "anthropic", Protocol: "messages", Requests: 8}},
 		ByConfiguration: []store.DashboardDimensionRow{{Key: "default", Requests: 10}},
 		ByModel:         []store.DashboardModelRow{{Model: "claude-x", Provider: "anthropic", Requests: 8, TokensIn: 100}},
 		RulesFired:      []store.DashboardFiredRow{{Key: "r1", Count: 3, UsedByConfigurations: []string{"default"}}},
@@ -114,7 +114,7 @@ func TestObsMessagesRecent(t *testing.T) {
 		t.Errorf("not oldest-first: %s,%s", got.Entries[0].EventID, got.Entries[1].EventID)
 	}
 	rich := got.Entries[1]
-	if rich.Provider != "anthropic" || rich.Endpoint != "messages" {
+	if rich.Provider != "anthropic" || rich.Protocol != "messages" {
 		t.Errorf("entry mapping = %+v", rich)
 	}
 	if len(rich.Tags) != 1 || rich.Tags[0] != "x" {

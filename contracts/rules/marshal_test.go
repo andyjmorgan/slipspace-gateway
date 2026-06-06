@@ -14,7 +14,7 @@ import (
 func TestAllConditions_MarshalRoundTrip(t *testing.T) {
 	cases := []rules.Condition{
 		&rules.ProviderCondition{Type: "provider", Operator: rules.EnumEquals, ExpectedProvider: "openai", Not: true},
-		&rules.EndpointCondition{Type: "endpoint", Operator: rules.EnumEquals, ExpectedEndpoint: "messages"},
+		&rules.ProtocolCondition{Type: "protocol", Operator: rules.EnumEquals, ExpectedProtocol: "messages"},
 		&rules.ModelNameCondition{Type: "modelName", Operator: rules.StringContains, ExpectedModelName: "gpt", CaseInsensitive: true},
 		&rules.HeaderCondition{Type: "header", KeyOperator: rules.StringEquals, KeyPattern: "X-Tenant"},
 		&rules.UnknownCondition{Type: "newcond"},

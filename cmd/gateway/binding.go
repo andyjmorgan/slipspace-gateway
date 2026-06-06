@@ -99,7 +99,7 @@ func matchesFilter(rec cc.Record, f *contractsconfig.ConnectorFilter) bool {
 	if !inStringList(rec.Provider, f.Providers) {
 		return false
 	}
-	if !inStringList(rec.Endpoint, f.Endpoints) {
+	if !inStringList(rec.Protocol, f.Protocols) {
 		return false
 	}
 	if !matchesModelPatterns(rec.Model, f.Models) {

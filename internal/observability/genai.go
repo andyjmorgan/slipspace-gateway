@@ -171,10 +171,10 @@ const (
 
 // Sluice-namespaced extras — dimensions the GenAI spec has no concept for.
 const (
-	// AttrSluiceEndpoint is the precise provider route (chat_completions,
-	// messages, generate_content) retained beside the coarse
-	// gen_ai.operation.name so the console keeps its per-route breakdown.
-	AttrSluiceEndpoint = "sluice.endpoint"
+	// AttrSluiceProtocol is the precise resolved protocol (chat, messages,
+	// generate_content) or passthrough family, retained beside the coarse
+	// gen_ai.operation.name so the console keeps its per-protocol breakdown.
+	AttrSluiceProtocol = "sluice.protocol"
 
 	// AttrSluiceConfiguration is the resolved Sluice configuration name.
 	AttrSluiceConfiguration = "sluice.configuration"
@@ -215,15 +215,15 @@ const (
 	TokenTypeOutput = "output"
 )
 
-// OperationNameForEndpoint maps a Sluice endpoint key to the
+// OperationNameForProtocol maps a Sluice protocol key to the
 // gen_ai.operation.name spec value: OpenAI/Anthropic chat surfaces and the
 // OpenAI responses API to "chat", Gemini's generate_content to the dedicated
-// "generate_content" value, embeddings to "embeddings". Endpoints the spec
+// "generate_content" value, embeddings to "embeddings". Protocols the spec
 // has no operation for (e.g. models listing) fall through to their own key —
-// the precise route is always also emitted as sluice.endpoint, so nothing is
+// the precise route is always also emitted as sluice.protocol, so nothing is
 // lost.
-func OperationNameForEndpoint(endpoint string) string {
-	switch endpoint {
+func OperationNameForProtocol(protocol string) string {
+	switch protocol {
 	case "chat_completions", "chat", "messages", "responses":
 		return OperationChat
 	case "generate_content":
@@ -231,7 +231,7 @@ func OperationNameForEndpoint(endpoint string) string {
 	case "embeddings":
 		return OperationEmbeddings
 	default:
-		return endpoint
+		return protocol
 	}
 }
 

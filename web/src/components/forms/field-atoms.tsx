@@ -88,6 +88,56 @@ export function TextField({
   )
 }
 
+// ComboField is a text input backed by a native <datalist>: the options
+// appear as a dropdown of suggestions, but the user may also type a value
+// not in the list. Use it where a field has a well-known closed set plus a
+// long tail of valid free-text values (e.g. the protocol condition, whose
+// value is one of the fixed protocols OR an operator-defined passthrough
+// family name).
+export function ComboField({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+  hint,
+  error,
+  mono,
+  className,
+}: {
+  label: string
+  value: string
+  onChange: (next: string) => void
+  options: SelectOption[]
+  placeholder?: string
+  hint?: string
+  error?: string
+  mono?: boolean
+  className?: string
+}) {
+  // datalist is matched to its input by id; derive a stable one from the label.
+  const listId = `combo-${label.replace(/\s+/g, "-").toLowerCase()}`
+  return (
+    <FieldRow label={label} hint={hint} error={error} className={className}>
+      <input
+        type="text"
+        list={listId}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(singleLineClassName, mono && "mono")}
+      />
+      <datalist id={listId}>
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label ?? opt.value}
+          </option>
+        ))}
+      </datalist>
+    </FieldRow>
+  )
+}
+
 export function NumberField({
   label,
   value,

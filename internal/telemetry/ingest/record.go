@@ -127,7 +127,7 @@ func eventFromRecord(rec cc.Record, gatewayID string) store.RequestEvent {
 		Configuration:   rec.Configuration,
 		Provider:        rec.Provider,
 		Model:           rec.Model,
-		Protocol:        rec.Endpoint,
+		Protocol:        rec.Protocol,
 		Method:          rec.Request.Method,
 		StatusCode:      rec.Response.Status,
 		UpstreamStatus:  rec.UpstreamStatus,

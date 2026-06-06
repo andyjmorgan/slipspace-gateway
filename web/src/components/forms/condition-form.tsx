@@ -13,6 +13,7 @@ import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import {
   CheckboxField,
+  ComboField,
   FieldGrid,
   FieldRow,
   SelectField,
@@ -20,6 +21,7 @@ import {
   type SelectOption,
 } from "@/components/forms/field-atoms"
 import { ProviderSelectField } from "@/components/forms/provider-select"
+import { PROTOCOL_OPTIONS } from "@/lib/protocols"
 
 export type ConditionValue = Record<string, unknown>
 
@@ -51,7 +53,7 @@ const BODY_FIELD_OPERATORS: SelectOption[] = [
 // in config-dev's hand-authored rules.
 const CONDITION_TYPES: SelectOption[] = [
   { value: "provider", label: "provider" },
-  { value: "endpoint", label: "endpoint" },
+  { value: "protocol", label: "protocol" },
   { value: "modelName", label: "model name" },
   { value: "header", label: "header" },
   { value: "tag", label: "tag" },
@@ -66,8 +68,8 @@ function defaultsFor(type: string): ConditionValue {
   switch (type) {
     case "provider":
       return { type, operator: "Equals", expected_provider: "" }
-    case "endpoint":
-      return { type, operator: "Equals", expected_endpoint: "" }
+    case "protocol":
+      return { type, operator: "Equals", expected_protocol: "" }
     case "modelName":
       return { type, operator: "Equals", expected_model_name: "" }
     case "header":
@@ -120,8 +122,8 @@ function Subform({ value, onChange }: { value: ConditionValue; onChange: (v: Con
   switch (type) {
     case "provider":
       return <ProviderForm value={value} onChange={onChange} />
-    case "endpoint":
-      return <EndpointForm value={value} onChange={onChange} />
+    case "protocol":
+      return <ProtocolForm value={value} onChange={onChange} />
     case "modelName":
       return <ModelNameForm value={value} onChange={onChange} />
     case "header":
@@ -173,7 +175,7 @@ function ProviderForm({ value, onChange }: { value: ConditionValue; onChange: (v
   )
 }
 
-function EndpointForm({ value, onChange }: { value: ConditionValue; onChange: (v: ConditionValue) => void }) {
+function ProtocolForm({ value, onChange }: { value: ConditionValue; onChange: (v: ConditionValue) => void }) {
   return (
     <FieldGrid>
       <SelectField
@@ -182,11 +184,13 @@ function EndpointForm({ value, onChange }: { value: ConditionValue; onChange: (v
         options={ENUM_OPERATORS}
         onChange={(op) => onChange({ ...value, operator: op })}
       />
-      <TextField
-        label="Expected endpoint"
-        value={String(value.expected_endpoint ?? "")}
-        onChange={(v) => onChange({ ...value, expected_endpoint: v })}
-        placeholder="chat_completions"
+      <ComboField
+        label="Expected protocol"
+        value={String(value.expected_protocol ?? "")}
+        onChange={(v) => onChange({ ...value, expected_protocol: v })}
+        options={PROTOCOL_OPTIONS}
+        placeholder="chat"
+        hint="A protocol, or a passthrough family name (e.g. messages_batches)"
         mono
       />
     </FieldGrid>

@@ -89,7 +89,7 @@ func sampleRecord() cc.Record {
 		CorrelationID: "corr-1",
 		Configuration: "default",
 		Provider:      "anthropic",
-		Endpoint:      "messages",
+		Protocol:      "messages",
 		Model:         "claude-x",
 		APIKeyName:    "key-1",
 		PolicyRef:     "pol-1",

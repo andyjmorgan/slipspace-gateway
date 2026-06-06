@@ -17,7 +17,7 @@ import (
 )
 
 // newTestReporter builds a reporterRun against a fresh ring and meter
-// set, with the (provider, endpoint, model, configuration) labels
+// set, with the (provider, protocol, model, configuration) labels
 // pre-populated so OnComplete has something concrete to publish.
 func newTestReporter(t *testing.T, ring *livefeed.Ring) *reporterRun {
 	t.Helper()
@@ -30,7 +30,7 @@ func newTestReporter(t *testing.T, ring *livefeed.Ring) *reporterRun {
 	return &reporterRun{
 		factory:       f,
 		provider:      "openai",
-		endpoint:      "chat_completions",
+		protocol:      "chat_completions",
 		model:         "gpt-4o-mini",
 		configuration: "production",
 	}
@@ -55,8 +55,8 @@ func TestReporter_AppendsLiveFeedEntryOnComplete(t *testing.T) {
 	if e.CorrelationID != "corr-123" {
 		t.Errorf("CorrelationID = %q want corr-123", e.CorrelationID)
 	}
-	if e.Provider != "openai" || e.Endpoint != "chat_completions" {
-		t.Errorf("provider/endpoint = %q/%q", e.Provider, e.Endpoint)
+	if e.Provider != "openai" || e.Protocol != "chat_completions" {
+		t.Errorf("provider/protocol = %q/%q", e.Provider, e.Protocol)
 	}
 	if e.Model != "gpt-4o-mini" {
 		t.Errorf("Model = %q", e.Model)
@@ -165,8 +165,8 @@ func TestReporter_StreamingResponseAccumulated(t *testing.T) {
 	store, _ := livefeed.NewBodyStore(64 * 1024)
 	r := newTestReporter(t, ring)
 	r.factory.bodyStore = store
-	// Endpoint maps to OpenAI chat accumulator.
-	r.endpoint = "chat_completions"
+	// Protocol maps to OpenAI chat accumulator.
+	r.protocol = "chat_completions"
 
 	buf := livefeed.NewResponseBuffer(8 * 1024)
 	buf.Append([]byte(
@@ -206,7 +206,7 @@ func TestReporter_StreamingRecordCarriesAssembled(t *testing.T) {
 	t.Parallel()
 	ring, _ := livefeed.NewRing(4)
 	r := newTestReporter(t, ring)
-	r.endpoint = "chat_completions" // maps to the OpenAI chat accumulator
+	r.protocol = "chat_completions" // maps to the OpenAI chat accumulator
 	r.streaming = true
 
 	buf := livefeed.NewResponseBuffer(8 * 1024)
@@ -219,7 +219,7 @@ func TestReporter_StreamingRecordCarriesAssembled(t *testing.T) {
 	ev := events.Request{
 		CorrelationID: "corr-rec",
 		Provider:      r.provider,
-		Endpoint:      r.endpoint,
+		Protocol:      r.protocol,
 		Model:         r.model,
 		StatusCode:    200,
 		Streaming:     true,

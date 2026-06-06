@@ -136,7 +136,7 @@ func TestAdmin_MessagesRecent_CarriesAttemptsForMultiAttempt(t *testing.T) {
 		}
 		_ = r.Body.Close()
 		for i := len(got.Entries) - 1; i >= 0; i-- {
-			if got.Entries[i].Endpoint == "chat" {
+			if got.Entries[i].Protocol == "chat" {
 				entry = got.Entries[i]
 				break
 			}

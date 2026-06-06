@@ -189,7 +189,7 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 		return &reporterRun{
 			factory:         f,
 			provider:        labels.Provider,
-			endpoint:        labels.Endpoint,
+			protocol:        labels.Protocol,
 			model:           labels.Model,
 			method:          labels.Method,
 			configuration:   labels.Configuration,
@@ -214,12 +214,12 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 type reporterRun struct {
 	factory *reporterFactory
 
-	// provider, endpoint, model, configuration, apiKeyName are the
+	// provider, protocol, model, configuration, apiKeyName are the
 	// routed labels captured at construction time from the request
 	// context. Emitted on every metric this observer fires and on the
 	// Record at completion.
 	provider      string
-	endpoint      string
+	protocol      string
 	model         string
 	configuration string
 	apiKeyName    string
@@ -362,7 +362,7 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 	ev := events.Request{
 		CorrelationID: observability.CorrelationIDFromContext(ctx),
 		Provider:      r.provider,
-		Endpoint:      r.endpoint,
+		Protocol:      r.protocol,
 		Model:         r.model,
 		Method:        r.method,
 		StatusCode:    status,
@@ -414,7 +414,7 @@ func (r *reporterRun) recordPerRequestMetrics(ctx context.Context, ev events.Req
 	if r.factory.meters == nil {
 		return
 	}
-	attrs := r.withCompletionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration, ev.StatusCode)
+	attrs := r.withCompletionAttrs(ev.Provider, ev.Protocol, ev.Model, r.configuration, ev.StatusCode)
 	if r.factory.meters.RequestsTotal != nil {
 		r.factory.meters.RequestsTotal.Add(ctx, 1, attrs)
 	}
@@ -446,7 +446,7 @@ func (r *reporterRun) recordUnmappedFields(ctx context.Context, ev events.Reques
 	if captured, ok := bodycapture.FromContext(ctx); ok {
 		reqFields = unmapped.RequestFields(captured.Body)
 	}
-	respFields := unmapped.ResponseFields(ev.Endpoint, r.responseForUnmapped(ctx, ev))
+	respFields := unmapped.ResponseFields(ev.Protocol, r.responseForUnmapped(ctx, ev))
 	r.emitUnmappedFields(ctx, counter, "request", reqFields)
 	r.emitUnmappedFields(ctx, counter, "response", respFields)
 }
@@ -468,7 +468,7 @@ func (r *reporterRun) responseForUnmapped(ctx context.Context, ev events.Request
 	if !ev.Streaming {
 		return raw
 	}
-	if res := accumulator.Accumulate(ev.Provider, ev.Endpoint, raw); res.Recognised && len(res.Assembled) > 0 {
+	if res := accumulator.Accumulate(ev.Provider, ev.Protocol, raw); res.Recognised && len(res.Assembled) > 0 {
 		return res.Assembled
 	}
 	return nil
@@ -483,7 +483,7 @@ func (r *reporterRun) emitUnmappedFields(ctx context.Context, counter metric.Int
 	}
 	base := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
-		attribute.String(observability.AttrSluiceEndpoint, r.endpoint),
+		attribute.String(observability.AttrSluiceProtocol, r.protocol),
 		attribute.String(observability.AttrSluiceUnmappedDirection, direction),
 	}
 	for _, f := range fields {
@@ -492,7 +492,7 @@ func (r *reporterRun) emitUnmappedFields(ctx context.Context, counter metric.Int
 	observability.FromContext(ctx).Warn("unmapped provider fields detected",
 		"direction", direction,
 		"provider", r.provider,
-		"endpoint", r.endpoint,
+		"protocol", r.protocol,
 		"fields", fields,
 	)
 }
@@ -525,7 +525,7 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 		"status_code", ev.StatusCode,
 		"duration_ms", ev.DurationMs,
 		"provider", ev.Provider,
-		"endpoint", ev.Endpoint,
+		"protocol", ev.Protocol,
 		"model", ev.Model,
 		"streaming", ev.Streaming,
 		"ttfb_ms", ttfbMs,
@@ -630,7 +630,7 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 		Configuration:   r.configuration,
 		APIKeyName:      r.apiKeyName,
 		Provider:        ev.Provider,
-		Endpoint:        ev.Endpoint,
+		Protocol:        ev.Protocol,
 		Model:           ev.Model,
 		Tags:            ev.Tags,
 		Request: cc.RequestPart{
@@ -819,7 +819,7 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		SessionID:           r.sessionID,
 		SessionIDSource:     r.sessionIDSource,
 		Provider:            ev.Provider,
-		Endpoint:            ev.Endpoint,
+		Protocol:            ev.Protocol,
 		Model:               ev.Model,
 		Method:              ev.Method,
 		Configuration:       r.configuration,
@@ -860,7 +860,7 @@ func (r *reporterRun) assembleResponse(ctx context.Context, ev events.Request) (
 	if len(body) == 0 {
 		return nil, false
 	}
-	res := accumulator.Accumulate(ev.Provider, ev.Endpoint, body)
+	res := accumulator.Accumulate(ev.Provider, ev.Protocol, body)
 	if !res.Recognised {
 		return nil, false
 	}
@@ -942,7 +942,7 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	if len(r.responseFrames) == 0 {
 		return
 	}
-	snap := tokens.ExtractFrames(ev.Provider, ev.Endpoint, r.responseFrames)
+	snap := tokens.ExtractFrames(ev.Provider, ev.Protocol, r.responseFrames)
 	if !snap.Recognised {
 		return
 	}
@@ -957,7 +957,7 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	// base carries the request dimensions without status. The full-slice
 	// expression caps base's capacity so each token.type append below
 	// allocates a fresh backing array rather than aliasing base.
-	base := r.requestDimensionAttrs(ev.Provider, ev.Endpoint, ev.Model, r.configuration)
+	base := r.requestDimensionAttrs(ev.Provider, ev.Protocol, ev.Model, r.configuration)
 	base = base[:len(base):len(base)]
 	if snap.Input > 0 && r.factory.meters.TokenUsage != nil {
 		r.factory.meters.TokenUsage.Record(ctx, int64(snap.Input),
@@ -982,8 +982,8 @@ func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
 	attrs := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
 		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(r.model)),
-		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(r.endpoint)),
-		attribute.String(observability.AttrSluiceEndpoint, r.endpoint),
+		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForProtocol(r.protocol)),
+		attribute.String(observability.AttrSluiceProtocol, r.protocol),
 	}
 	return metric.WithAttributes(append(attrs, r.serverAttrs()...)...)
 }
@@ -996,8 +996,8 @@ func (r *reporterRun) streamingMetricAttrs() metric.MeasurementOption {
 	attrs := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
 		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(r.model)),
-		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(r.endpoint)),
-		attribute.String(observability.AttrSluiceEndpoint, r.endpoint),
+		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForProtocol(r.protocol)),
+		attribute.String(observability.AttrSluiceProtocol, r.protocol),
 	}
 	if r.respModel != "" {
 		attrs = append(attrs, attribute.String(observability.AttrGenAIResponseModel, sanitiseModelLabel(r.respModel)))
@@ -1057,7 +1057,7 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 	if r.factory.tracer == nil || r.started.IsZero() {
 		return ctx
 	}
-	op := observability.OperationNameForEndpoint(ev.Endpoint)
+	op := observability.OperationNameForProtocol(ev.Protocol)
 	model := sanitiseModelLabel(ev.Model)
 
 	// The gen_ai span carries GenAI semconv only (model / provider /
@@ -1106,8 +1106,8 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 	// openai.api.type distinguishes the Chat Completions vs Responses API
 	// surface. The v2 endpoint label is the protocol ("chat"/"responses"); the
 	// emitted api.type keeps the spec's well-known value ("chat_completions").
-	if ev.Provider == "openai" && (ev.Endpoint == "chat" || ev.Endpoint == "responses") {
-		attrs = append(attrs, attribute.String(observability.AttrOpenAIAPIType, openAIAPIType(ev.Endpoint)))
+	if ev.Provider == "openai" && (ev.Protocol == "chat" || ev.Protocol == "responses") {
+		attrs = append(attrs, attribute.String(observability.AttrOpenAIAPIType, openAIAPIType(ev.Protocol)))
 	}
 	if r.factory.captureContent {
 		attrs = r.appendSpanContent(ctx, attrs)
@@ -1195,7 +1195,7 @@ func (r *reporterRun) emitEvents(ctx context.Context, ev events.Request) {
 	if ts.IsZero() {
 		ts = time.Now()
 	}
-	op := observability.OperationNameForEndpoint(ev.Endpoint)
+	op := observability.OperationNameForProtocol(ev.Protocol)
 
 	if ev.StatusCode >= 400 || ev.UpstreamError != "" {
 		excType := strconv.Itoa(ev.StatusCode)
@@ -1236,7 +1236,7 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 		otellog.String(observability.AttrGenAIOperationName, op),
 		otellog.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),
 		otellog.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(ev.Model)),
-		otellog.String(observability.AttrSluiceEndpoint, ev.Endpoint),
+		otellog.String(observability.AttrSluiceProtocol, ev.Protocol),
 		otellog.String(observability.AttrSluiceConfiguration, r.configuration),
 		otellog.Int(observability.AttrHTTPResponseStatusCode, ev.StatusCode),
 	}
@@ -1330,8 +1330,8 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	if r.respSystemFingerprint != "" {
 		attrs = append(attrs, otellog.String(observability.AttrOpenAIResponseSystemFingerprint, r.respSystemFingerprint))
 	}
-	if ev.Provider == "openai" && (ev.Endpoint == "chat" || ev.Endpoint == "responses") {
-		attrs = append(attrs, otellog.String(observability.AttrOpenAIAPIType, openAIAPIType(ev.Endpoint)))
+	if ev.Provider == "openai" && (ev.Protocol == "chat" || ev.Protocol == "responses") {
+		attrs = append(attrs, otellog.String(observability.AttrOpenAIAPIType, openAIAPIType(ev.Protocol)))
 	}
 
 	caps := r.factory.caps
@@ -1555,7 +1555,7 @@ func (r *reporterRun) boundedContent(ctx context.Context) genaiattr.Content {
 	}
 	r.contentExtracted = true
 	if captured, ok := bodycapture.FromContext(ctx); ok && len(captured.Raw) > 0 {
-		r.reqContent = genaiattr.ExtractContent(r.endpoint, captured.Raw)
+		r.reqContent = genaiattr.ExtractContent(r.protocol, captured.Raw)
 	}
 	return r.reqContent
 }
@@ -1692,7 +1692,7 @@ func (r *reporterRun) requestParams(ctx context.Context) genaiattr.RequestAttrs 
 	}
 	r.reqParamsKnown = true
 	if captured, ok := bodycapture.FromContext(ctx); ok && len(captured.Raw) > 0 {
-		r.reqParams = genaiattr.ExtractRequest(r.endpoint, captured.Raw)
+		r.reqParams = genaiattr.ExtractRequest(r.protocol, captured.Raw)
 	}
 	return r.reqParams
 }
@@ -1758,7 +1758,7 @@ func (r *reporterRun) captureResponseAttrs(ctx context.Context) {
 	// Split the response once; populateTokens and the span both read these
 	// frames rather than re-scanning the body.
 	r.responseFrames = sseframe.Collate(raw)
-	resp := genaiattr.ExtractResponseFrames(r.endpoint, r.responseFrames)
+	resp := genaiattr.ExtractResponseFrames(r.protocol, r.responseFrames)
 	r.respID = resp.ID
 	r.respModel = resp.Model
 	r.respFinishReasons = resp.FinishReasons
@@ -1817,15 +1817,15 @@ func jsonBodyOrEscaped(b []byte) json.RawMessage {
 // requestDimensionAttrs builds the gen_ai + sluice dimension attributes
 // shared by every per-request instrument: gen_ai.provider.name (mapped to
 // the spec enum value), request model, the coarse gen_ai.operation.name,
-// the precise sluice.endpoint route, the resolved configuration, and the
+// the precise sluice.protocol route, the resolved configuration, and the
 // upstream server.address/server.port. Status is layered on separately
 // because token instruments don't carry it.
-func (r *reporterRun) requestDimensionAttrs(provider, endpoint, model, configuration string) []attribute.KeyValue {
+func (r *reporterRun) requestDimensionAttrs(provider, protocol, model, configuration string) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(provider)),
 		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(model)),
-		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForEndpoint(endpoint)),
-		attribute.String(observability.AttrSluiceEndpoint, endpoint),
+		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForProtocol(protocol)),
+		attribute.String(observability.AttrSluiceProtocol, protocol),
 		attribute.String(observability.AttrSluiceConfiguration, configuration),
 	}
 	// gen_ai.response.model is Recommended on the client metrics; emitted
@@ -1842,8 +1842,8 @@ func (r *reporterRun) requestDimensionAttrs(provider, endpoint, model, configura
 // code, and on the failure path the spec error.type. error.type is an
 // open enum, so the status code string is a spec-legal value; it is set
 // only for 4xx/5xx so the attribute's presence itself marks a failure.
-func (r *reporterRun) withCompletionAttrs(provider, endpoint, model, configuration string, status int) metric.MeasurementOption {
-	attrs := r.requestDimensionAttrs(provider, endpoint, model, configuration)
+func (r *reporterRun) withCompletionAttrs(provider, protocol, model, configuration string, status int) metric.MeasurementOption {
+	attrs := r.requestDimensionAttrs(provider, protocol, model, configuration)
 	attrs = append(attrs, attribute.Int(observability.AttrHTTPResponseStatusCode, status))
 	if status >= 400 {
 		attrs = append(attrs, attribute.String(observability.AttrErrorType, strconv.Itoa(status)))

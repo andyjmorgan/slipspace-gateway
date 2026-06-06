@@ -11,7 +11,7 @@ import (
 func TestMarkerMethods(t *testing.T) {
 	conds := []Condition{
 		ProviderCondition{},
-		EndpointCondition{},
+		ProtocolCondition{},
 		ModelNameCondition{},
 		HeaderCondition{},
 		TagCondition{},
@@ -23,7 +23,7 @@ func TestMarkerMethods(t *testing.T) {
 		switch v := c.(type) {
 		case ProviderCondition:
 			v.isCondition()
-		case EndpointCondition:
+		case ProtocolCondition:
 			v.isCondition()
 		case ModelNameCondition:
 			v.isCondition()

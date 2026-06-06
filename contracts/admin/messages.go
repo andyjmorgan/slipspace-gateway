@@ -29,11 +29,11 @@ type MessageEntry struct {
 
 	SessionIDSource string `json:"session_id_source,omitempty"`
 
-	// Provider, Endpoint, Model carry the routed labels (post rule
+	// Provider, Protocol, Model carry the routed labels (post rule
 	// mutation).
 	Provider string `json:"provider,omitempty"`
 
-	Endpoint string `json:"endpoint,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
 
 	Model string `json:"model,omitempty"`
 

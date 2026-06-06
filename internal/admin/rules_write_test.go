@@ -159,7 +159,7 @@ func TestRulesReplace_HappyPath(t *testing.T) {
 
 	updated := []byte(`{
 		"name": "tag-openai-chat",
-		"condition": {"type": "endpoint", "operator": "Equals", "expectedEndpoint": "chat_completions"},
+		"condition": {"type": "protocol", "operator": "Equals", "expectedProtocol": "chat_completions"},
 		"actions": [
 			{"type": "setHeader", "headerName": "X-Replaced", "headerAction": "Set", "headerValue": "yes"}
 		],
@@ -174,8 +174,8 @@ func TestRulesReplace_HappyPath(t *testing.T) {
 	if !ok {
 		t.Fatal("rule missing after replace")
 	}
-	if rule.Condition.ConditionType() != "endpoint" {
-		t.Errorf("condition type=%s, want endpoint", rule.Condition.ConditionType())
+	if rule.Condition.ConditionType() != "protocol" {
+		t.Errorf("condition type=%s, want protocol", rule.Condition.ConditionType())
 	}
 }
 

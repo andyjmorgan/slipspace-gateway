@@ -28,11 +28,11 @@ type Entry struct {
 	SessionID       string
 	SessionIDSource string
 
-	// Provider, Endpoint, Model are the routed labels after rule
+	// Provider, Protocol, Model are the routed labels after rule
 	// mutation — same values that hit the connector pipeline's
 	// Record.
 	Provider string
-	Endpoint string
+	Protocol string
 	Model    string
 
 	// Method is the inbound HTTP verb (GET, POST, …) of the client

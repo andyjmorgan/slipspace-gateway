@@ -45,7 +45,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__range]))",
+          "expr": "sum(increase(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__range]))",
           "refId": "A"
         }
       ],
@@ -104,7 +104,7 @@
       },
       "targets": [
         {
-          "expr": "100 * (sum(rate(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\", status_code=~\"5..\"}[$__rate_interval])) or vector(0)) / clamp_min(sum(rate(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__rate_interval])), 1e-9)",
+          "expr": "100 * (sum(rate(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\", status_code=~\"5..\"}[$__rate_interval])) or vector(0)) / clamp_min(sum(rate(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__rate_interval])), 1e-9)",
           "refId": "A"
         }
       ],
@@ -160,7 +160,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(gateway_upstream_errors_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(gateway_upstream_errors_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__range])) or vector(0)",
           "refId": "A"
         }
       ],
@@ -219,7 +219,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(gateway_request_duration_seconds_bucket{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(gateway_request_duration_seconds_bucket{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__rate_interval])))",
           "refId": "A"
         }
       ],
@@ -269,12 +269,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (endpoint) (increase(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__rate_interval]))",
-          "legendFormat": "{{endpoint}}",
+          "expr": "sum by (protocol) (increase(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__rate_interval]))",
+          "legendFormat": "{{protocol}}",
           "refId": "A"
         }
       ],
-      "title": "Calls over time (per endpoint)",
+      "title": "Calls over time (per protocol)",
       "type": "timeseries"
     },
     {
@@ -319,12 +319,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (endpoint, le) (rate(gateway_request_duration_seconds_bucket{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__rate_interval])))",
-          "legendFormat": "{{endpoint}}",
+          "expr": "histogram_quantile(0.95, sum by (protocol, le) (rate(gateway_request_duration_seconds_bucket{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__rate_interval])))",
+          "legendFormat": "{{protocol}}",
           "refId": "A"
         }
       ],
-      "title": "p95 latency (per endpoint)",
+      "title": "p95 latency (per protocol)",
       "type": "timeseries"
     },
     {
@@ -370,7 +370,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (model) (increase(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__rate_interval]))",
+          "expr": "sum by (model) (increase(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__rate_interval]))",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -486,7 +486,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (status_class) (label_replace(rate(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__rate_interval]), \"status_class\", \"${1}xx\", \"status_code\", \"(.)..\"))",
+          "expr": "sum by (status_class) (label_replace(rate(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__rate_interval]), \"status_class\", \"${1}xx\", \"status_code\", \"(.)..\"))",
           "legendFormat": "{{status_class}}",
           "refId": "A"
         }
@@ -540,8 +540,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (endpoint, model) (increase(gateway_upstream_errors_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__rate_interval]))",
-          "legendFormat": "{{endpoint}} · {{model}}",
+          "expr": "sum by (protocol, model) (increase(gateway_upstream_errors_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__rate_interval]))",
+          "legendFormat": "{{protocol}} · {{model}}",
           "refId": "A"
         }
       ],
@@ -553,7 +553,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Empty for non-streaming endpoints. TTFB is recorded when the upstream sends response headers.",
+      "description": "Empty for non-streaming protocols. TTFB is recorded when the upstream sends response headers.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -591,12 +591,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (endpoint, le) (rate(gateway_request_time_to_first_byte_seconds_bucket{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\", model=~\"$model\"}[$__rate_interval])))",
-          "legendFormat": "{{endpoint}}",
+          "expr": "histogram_quantile(0.95, sum by (protocol, le) (rate(gateway_request_time_to_first_byte_seconds_bucket{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\", model=~\"$model\"}[$__rate_interval])))",
+          "legendFormat": "{{protocol}}",
           "refId": "A"
         }
       ],
-      "title": "TTFB p95 (streaming, per endpoint)",
+      "title": "TTFB p95 (streaming, per protocol)",
       "type": "timeseries"
     },
     {
@@ -624,7 +624,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"sluice-gateway\"} | json | line_format \"{{.body}}\" | json | msg = \"request completed\" | provider =~ \"$provider\" | endpoint =~ \"$endpoint\" | model =~ \"$model\" | status_code =~ \"[45]..\"",
+          "expr": "{service_name=\"sluice-gateway\"} | json | line_format \"{{.body}}\" | json | msg = \"request completed\" | provider =~ \"$provider\" | protocol =~ \"$protocol\" | model =~ \"$model\" | status_code =~ \"[45]..\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -671,10 +671,10 @@
           "uid": "prometheus"
         },
         "includeAll": true,
-        "label": "Endpoint",
+        "label": "Protocol",
         "multi": true,
-        "name": "endpoint",
-        "query": "label_values(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\"}, endpoint)",
+        "name": "protocol",
+        "query": "label_values(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\"}, protocol)",
         "refresh": 2,
         "type": "query"
       },
@@ -692,7 +692,7 @@
         "label": "Model",
         "multi": true,
         "name": "model",
-        "query": "label_values(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", endpoint=~\"$endpoint\"}, model)",
+        "query": "label_values(gateway_requests_total{service=\"sluice-gateway\", provider=~\"$provider\", protocol=~\"$protocol\"}, model)",
         "refresh": 2,
         "type": "query"
       }

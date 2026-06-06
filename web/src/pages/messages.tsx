@@ -352,7 +352,7 @@ function Row({
               {entry.method}
             </span>
           )}
-          <span className="mono text-[color:var(--text-3)]">{entry.endpoint ?? "—"}</span>
+          <span className="mono text-[color:var(--text-3)]">{entry.protocol ?? "—"}</span>
           {entry.streaming && (
             <span className="mono text-[10px] uppercase text-[color:var(--text-4)]">
               sse
@@ -608,7 +608,7 @@ function MessageModal({
         <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
         <Field label="Provider" value={entry.provider ?? "—"} />
         <Field label="Method" value={entry.method ?? "—"} />
-        <Field label="Endpoint" value={entry.endpoint ?? "—"} />
+        <Field label="Protocol" value={entry.protocol ?? "—"} />
         <Field label="Model" value={entry.model ?? "—"} />
         <Field label="Configuration" value={entry.configuration ?? "—"} />
         <Field label="Session" value={entry.session_id ?? "—"} />

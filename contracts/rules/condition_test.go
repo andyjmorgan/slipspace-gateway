@@ -27,19 +27,19 @@ func TestUnmarshalCondition_Provider(t *testing.T) {
 }
 
 func TestUnmarshalCondition_Endpoint(t *testing.T) {
-	raw := `{"type":"endpoint","operator":"Equals","expected_endpoint":"chat_completions","not":true}`
+	raw := `{"type":"protocol","operator":"Equals","expected_protocol":"chat_completions","not":true}`
 	cond, err := rules.UnmarshalCondition([]byte(raw))
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	ec, ok := cond.(*rules.EndpointCondition)
+	ec, ok := cond.(*rules.ProtocolCondition)
 	if !ok {
 		t.Fatalf("type = %T", cond)
 	}
-	if ec.ExpectedEndpoint != "chat_completions" || !ec.Not {
+	if ec.ExpectedProtocol != "chat_completions" || !ec.Not {
 		t.Errorf("bad fields: %+v", ec)
 	}
-	if ec.ConditionType() != "endpoint" {
+	if ec.ConditionType() != "protocol" {
 		t.Errorf("ConditionType: %q", ec.ConditionType())
 	}
 }
@@ -173,7 +173,7 @@ func TestRuleGroup_MarshalJSON_PreservesChildOrder(t *testing.T) {
 		LogicalOperator: rules.LogicalAnd,
 		Children: []rules.Condition{
 			&rules.ProviderCondition{Type: "provider", Operator: rules.EnumEquals, ExpectedProvider: "openai"},
-			&rules.EndpointCondition{Type: "endpoint", Operator: rules.EnumEquals, ExpectedEndpoint: "messages"},
+			&rules.ProtocolCondition{Type: "protocol", Operator: rules.EnumEquals, ExpectedProtocol: "messages"},
 		},
 	}
 	raw, err := json.Marshal(g)
@@ -266,7 +266,7 @@ func TestConditionTypes_BlankImpl(t *testing.T) {
 		want string
 	}{
 		{"provider", rules.ProviderCondition{}, "provider"},
-		{"endpoint", rules.EndpointCondition{}, "endpoint"},
+		{"protocol", rules.ProtocolCondition{}, "protocol"},
 		{"modelName", rules.ModelNameCondition{}, "modelName"},
 		{"header", rules.HeaderCondition{}, "header"},
 		{"tag", rules.TagCondition{}, "tag"},

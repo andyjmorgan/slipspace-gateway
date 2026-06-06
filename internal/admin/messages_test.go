@@ -48,8 +48,8 @@ func TestMessagesRecentHandler_503WhenRingNil(t *testing.T) {
 func TestMessagesRecentHandler_ReturnsEntries(t *testing.T) {
 	t.Parallel()
 	ring, _ := livefeed.NewRing(4)
-	ring.Append(livefeed.Entry{EventID: "a", At: time.Now().UTC(), Provider: "openai", Endpoint: "chat_completions", Method: "POST", StatusCode: 200})
-	ring.Append(livefeed.Entry{EventID: "b", At: time.Now().UTC(), Provider: "anthropic", Endpoint: "models", Method: "GET", StatusCode: 503})
+	ring.Append(livefeed.Entry{EventID: "a", At: time.Now().UTC(), Provider: "openai", Protocol: "chat_completions", Method: "POST", StatusCode: 200})
+	ring.Append(livefeed.Entry{EventID: "b", At: time.Now().UTC(), Provider: "anthropic", Protocol: "models", Method: "GET", StatusCode: 503})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/messages/recent", nil)

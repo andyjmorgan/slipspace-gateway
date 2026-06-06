@@ -14,7 +14,7 @@ func TestFacets_Success(t *testing.T) {
 		t.Fatalf("facets: %v", err)
 	}
 	if len(f.Providers) != 1 || len(f.Models) != 1 || len(f.Configurations) != 1 ||
-		len(f.Endpoints) != 1 || len(f.Tags) != 1 {
+		len(f.Protocols) != 1 || len(f.Tags) != 1 {
 		t.Fatalf("facets = %+v", f)
 	}
 	if q.queryCalls != 5 {

@@ -142,7 +142,7 @@ func (h *Harness) emitRecord(rec cc.Record) {
 	req := events.Request{
 		CorrelationID: rec.CorrelationID,
 		Provider:      rec.Provider,
-		Endpoint:      rec.Endpoint,
+		Protocol:      rec.Protocol,
 		Model:         rec.Model,
 		Method:        rec.Request.Method,
 		StatusCode:    rec.UpstreamStatus,

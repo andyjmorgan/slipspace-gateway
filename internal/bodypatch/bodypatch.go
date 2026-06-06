@@ -88,8 +88,8 @@ type Refs struct {
 	// Provider resolves {state.provider}.
 	Provider string
 
-	// Endpoint resolves {state.endpoint}.
-	Endpoint string
+	// Protocol resolves {state.protocol}.
+	Protocol string
 
 	// ExternalURL resolves {external_url} — the gateway's externally
 	// reachable base URL. Empty means unset; the ref then misses.
@@ -316,7 +316,7 @@ const (
 	refResponseBody = "response.body."
 	refPathParams   = "path_params."
 	refStateProv    = "state.provider"
-	refStateEnd     = "state.endpoint"
+	refStateProto   = "state.protocol"
 	refExternalURL  = "external_url"
 )
 
@@ -366,9 +366,9 @@ func resolveRefRaw(working, ref string, refs Refs) (string, bool) {
 			return marshalString(refs.Provider), true
 		}
 		return "", false
-	case ref == refStateEnd:
-		if refs.Endpoint != "" {
-			return marshalString(refs.Endpoint), true
+	case ref == refStateProto:
+		if refs.Protocol != "" {
+			return marshalString(refs.Protocol), true
 		}
 		return "", false
 	case ref == refExternalURL:
@@ -398,8 +398,8 @@ func resolveRefString(working, ref string, refs Refs) (string, bool) {
 		return "", false
 	case ref == refStateProv:
 		return refs.Provider, refs.Provider != ""
-	case ref == refStateEnd:
-		return refs.Endpoint, refs.Endpoint != ""
+	case ref == refStateProto:
+		return refs.Protocol, refs.Protocol != ""
 	case ref == refExternalURL:
 		return refs.ExternalURL, refs.ExternalURL != ""
 	default:

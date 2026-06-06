@@ -43,9 +43,9 @@ rules:
         - type: provider
           operator: Equals
           expectedProvider: anthropic
-        - type: endpoint
+        - type: protocol
           operator: Equals
-          expectedEndpoint: messages_batches
+          expectedProtocol: messages_batches
     actions:
       - type: rewriteField
         target: response.body.results_url

@@ -22,13 +22,14 @@ type Request struct {
 	// after rule mutation in v1.0.1+.
 	Provider string `json:"provider,omitempty"`
 
-	// Endpoint is the routed endpoint name under that provider
-	// (e.g. "chat_completions") — after rule mutation in v1.0.1+.
-	Endpoint string `json:"endpoint,omitempty"`
+	// Protocol is the resolved protocol under that provider (e.g. "chat",
+	// "messages"), or the passthrough family name — after rule mutation
+	// in v1.0.1+.
+	Protocol string `json:"protocol,omitempty"`
 
 	// Model is the outbound model identifier the gateway forwarded to
 	// upstream — read at destination-finalisation time so it reflects
-	// any rule mutation. Empty for endpoints that carry no model.
+	// any rule mutation. Empty for protocols that carry no model.
 	Model string `json:"model,omitempty"`
 
 	// StatusCode is the HTTP status the client received. Synthetic

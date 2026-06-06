@@ -96,7 +96,7 @@ func TestAdmin_Rules_FullLifecycle(t *testing.T) {
 	// PUT: replace with a different condition shape (endpoint).
 	updated := []byte(`{
 		"name": "` + name + `",
-		"condition": {"type": "endpoint", "operator": "Equals", "expectedEndpoint": "chat_completions"},
+		"condition": {"type": "protocol", "operator": "Equals", "expectedProtocol": "chat_completions"},
 		"actions": [{"type": "setHeader", "headerName": "X-E2E-Updated", "headerAction": "Set", "headerValue": "yes"}],
 		"behavior": "continue"
 	}`)
@@ -115,8 +115,8 @@ func TestAdmin_Rules_FullLifecycle(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if !strings.Contains(string(body), `"endpoint"`) {
-		t.Errorf("post-PUT body missing endpoint condition; body=%s", body)
+	if !strings.Contains(string(body), `"protocol"`) {
+		t.Errorf("post-PUT body missing protocol condition; body=%s", body)
 	}
 
 	// DELETE: unreferenced rule, expect 204.

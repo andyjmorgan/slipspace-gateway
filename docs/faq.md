@@ -183,7 +183,7 @@ rules:
       logicalOperator: And
       children:
         - { type: provider, operator: Equals, expectedProvider: openai }
-        - { type: endpoint, operator: Equals, expectedEndpoint: chat }
+        - { type: protocol, operator: Equals, expectedProtocol: chat }
         - { type: bodyField, target: request.body.stream, operator: Equals, value: "true" }
     actions:
       - type: rewriteField
@@ -194,9 +194,9 @@ rules:
 
 Source: `test/e2e/rules/rewrite_test.go`. Notes that bite:
 
-- **In v2, `provider` means the resolved provider name and `endpoint` means the
-  protocol** (`chat`/`messages`/…) or passthrough family. The condition above
-  reads "OpenAI provider, chat protocol".
+- **The `provider` condition matches the resolved provider name and the
+  `protocol` condition matches the resolved protocol** (`chat`/`messages`/…) or
+  passthrough family. The condition above reads "OpenAI provider, chat protocol".
 - **Value typing follows YAML.** An unquoted scalar is emitted with its JSON type
   (`value: true` → boolean `true`, `value: 42` → number). A **quoted** string is a
   template that may contain `{…}` refs (`value: "t1"` → string `"t1"`). A YAML
@@ -253,7 +253,7 @@ rules:
       logicalOperator: And
       children:
         - { type: provider, operator: Equals, expectedProvider: anthropic }
-        - { type: endpoint, operator: Equals, expectedEndpoint: messages_batches }
+        - { type: protocol, operator: Equals, expectedProtocol: messages_batches }
     actions:
       - type: rewriteField
         target: response.body.results_url
@@ -284,7 +284,7 @@ A **quoted** `value` (or a `setHeader` value) is a template. Supported tokens
 | `{response.body.<path>}` | a field of the response body | response phase only |
 | `{path_params.<name>}` | a URL path placeholder | e.g. `{path_params.id}` from `/v1/messages/batches/{id}` |
 | `{state.provider}` | the resolved provider name | |
-| `{state.endpoint}` | the resolved protocol / family | |
+| `{state.protocol}` | the resolved protocol / family | |
 | `{external_url}` | the gateway's external base URL | from the `ExternalURL` setting |
 
 A bare quoted string with no `{…}` resolves to itself. Unresolved/empty refs
@@ -485,9 +485,9 @@ Walk these in order:
 1. **Is the rule listed?** A rule only runs if its `name` is in the
    configuration's `rule_names`. Defining it in the `rules` block is not enough.
 2. **Does the condition match the v2 vocabulary?** `provider` = resolved
-   **provider name** (e.g. `anthropic`, `azure-foundry`), `endpoint` = the
+   **provider name** (e.g. `anthropic`, `azure-foundry`), `protocol` = the
    **protocol** (`chat`/`messages`/`responses`/`generate_content`) or passthrough
-   **family** (`messages_batches`). A condition expecting an old provider/endpoint
+   **family** (`messages_batches`). A condition expecting an old provider/protocol
    name silently never matches.
 3. **Right phase?** `request.body.*` rewrites apply before forwarding;
    `response.body.*` only on **non-streaming** responses (streaming SSE drops

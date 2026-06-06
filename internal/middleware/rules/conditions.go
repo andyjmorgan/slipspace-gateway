@@ -31,8 +31,8 @@ func matchCondition(
 	switch c := cond.(type) {
 	case *contractsrules.ProviderCondition:
 		return invertIf(c.Not, matchProvider(*c, gc))
-	case *contractsrules.EndpointCondition:
-		return invertIf(c.Not, matchEndpoint(*c, gc))
+	case *contractsrules.ProtocolCondition:
+		return invertIf(c.Not, matchProtocol(*c, gc))
 	case *contractsrules.ModelNameCondition:
 		return invertIf(c.Not, matchModelName(*c, gc))
 	case *contractsrules.HeaderCondition:
@@ -64,11 +64,11 @@ func matchProvider(c contractsrules.ProviderCondition, gc GatewayContext) bool {
 	return c.ExpectedProvider == gc.Provider
 }
 
-func matchEndpoint(c contractsrules.EndpointCondition, gc GatewayContext) bool {
+func matchProtocol(c contractsrules.ProtocolCondition, gc GatewayContext) bool {
 	if c.Operator != contractsrules.EnumEquals {
 		return false
 	}
-	return c.ExpectedEndpoint == gc.Endpoint
+	return c.ExpectedProtocol == gc.Protocol
 }
 
 func matchModelName(c contractsrules.ModelNameCondition, gc GatewayContext) bool {

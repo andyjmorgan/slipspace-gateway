@@ -229,7 +229,7 @@ func TestMeters_RequestsTotalCarriesModelAttribute(t *testing.T) {
 	ctx := context.Background()
 	meters.RequestsTotal.Add(ctx, 1, metric.WithAttributes(
 		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+		attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
 		attribute.String(observability.AttrGenAIRequestModel, "gpt-4o-mini"),
 		attribute.Int(observability.AttrHTTPResponseStatusCode, 200),
 	))

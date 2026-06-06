@@ -19,7 +19,7 @@ import (
 func newGC() rules.GatewayContext {
 	return rules.GatewayContext{
 		Provider:          "openai",
-		Endpoint:          "chat_completions",
+		Protocol:          "chat_completions",
 		Model:             "gpt-4o-mini",
 		ConfigurationName: "dev",
 	}

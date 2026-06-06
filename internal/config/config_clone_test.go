@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -91,6 +92,49 @@ func TestResolvedConfig_CloneIndependence(t *testing.T) {
 	if orig.Providers["openai"].Protocols["chat"].Auth.Header != "Authorization" {
 		t.Errorf("orig provider auth mutated")
 	}
+}
+
+// TestValidate_RetiredEndpointCondition asserts the rename guard: a rule whose
+// condition decoded to the retired "endpoint" discriminator (an inert
+// UnknownCondition) fails validation loud rather than silently evaluating
+// false — both as a top-level condition and nested inside a RuleGroup.
+func TestValidate_RetiredEndpointCondition(t *testing.T) {
+	t.Run("top-level", func(t *testing.T) {
+		r := v2Fixture()
+		r.Rules[0].Condition = &rulescontract.UnknownCondition{Type: "endpoint"}
+		if err := r.RevalidateAndIndex(); !errors.Is(err, ErrRetiredEndpointCondition) {
+			t.Fatalf("err = %v, want ErrRetiredEndpointCondition", err)
+		}
+	})
+
+	t.Run("nested-in-group", func(t *testing.T) {
+		r := v2Fixture()
+		r.Rules[0].Condition = &rulescontract.RuleGroup{
+			Type:            "group",
+			LogicalOperator: rulescontract.LogicalAnd,
+			Children: []rulescontract.Condition{
+				&rulescontract.ProviderCondition{Type: "provider", Operator: rulescontract.EnumEquals, ExpectedProvider: "openai"},
+				&rulescontract.UnknownCondition{Type: "endpoint"},
+			},
+		}
+		if err := r.RevalidateAndIndex(); !errors.Is(err, ErrRetiredEndpointCondition) {
+			t.Fatalf("err = %v, want ErrRetiredEndpointCondition", err)
+		}
+	})
+
+	t.Run("unrelated-unknown-condition-passes", func(t *testing.T) {
+		r := v2Fixture()
+		r.Rules[0].Condition = &rulescontract.RuleGroup{
+			Type:            "group",
+			LogicalOperator: rulescontract.LogicalAnd,
+			Children: []rulescontract.Condition{
+				&rulescontract.UnknownCondition{Type: "somethingNew"},
+			},
+		}
+		if err := r.RevalidateAndIndex(); errors.Is(err, ErrRetiredEndpointCondition) {
+			t.Fatalf("unrelated UnknownCondition wrongly tripped the endpoint guard")
+		}
+	})
 }
 
 func TestResolvedConfig_CloneNil(t *testing.T) {

@@ -28,7 +28,7 @@ func sampleRecord() cc.Record {
 		Seq:           1,
 		TsNs:          99,
 		Provider:      "openai",
-		Endpoint:      "chat",
+		Protocol:      "chat",
 		Configuration: "prod",
 		SchemaVersion: cc.SchemaVersion,
 		Request:       cc.RequestPart{Method: "POST", Body: json.RawMessage(`{"k":"v"}`)},
