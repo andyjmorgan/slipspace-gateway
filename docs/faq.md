@@ -13,17 +13,21 @@ config expressed in the current model.
 > **Config model note.** Sluice routes on the **v2 model**: a shared `providers`
 > catalogue (connections) plus per-configuration `bindings` (the router as data)
 > and `credentials`. Routing is config, not rule actions. The
-> `changeProvider`/`changeUrl`/`changeApiKey`/`useResiliencePolicy` actions are
+> `changeProvider`/`changeUrl`/`useResiliencePolicy` actions are
 > **not gone** — they still parse, validate, round-trip, and apply to
 > `MutableState` (registered in `contracts/rules/action.go`) — but the v2 data
 > plane no longer consults the state they write, so they are **inert for
-> routing**: `changeUrl` (`state.UpstreamURL`) and `changeApiKey`
-> (`state.UpstreamCredentialOverride`) are written but never read;
+> routing**: `changeUrl` (`state.UpstreamURL`) is
+> written but never read;
 > `useResiliencePolicy` (`state.PolicyRef`) is ignored because the binding-derived
 > `ResilienceConfig` stashed on context wins and the data plane wires the name
 > lookup to `nil`; `changeProvider` (`state.Provider`) is overwritten per attempt
 > by the orchestrator's binding-derived provider switch before the final handler
-> reads it. Treat those four as no-ops and route via `bindings`/`groups` instead.
+> reads it. Treat those three as no-ops and route via `bindings`/`groups` instead.
+> (`changeApiKey` is **wired**: `state.UpstreamCredentialOverride` is read at the
+> single credential mint site, so the action overrides the upstream credential —
+> a literal `apiKey` is minted with the post-rule provider's header format, and
+> `useSluiceKey` forwards the inbound `Authorization` verbatim.)
 > (`changeModelName` still works — it rewrites the typed body model and the path
 > param, both of which the data plane reads; a binding/group `alias` is the
 > last writer.) Rules are otherwise pure request/response **transforms** (tags,

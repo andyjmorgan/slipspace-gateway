@@ -83,8 +83,12 @@ func providerSwitchActions(provider, alias string) []contractsrules.Action {
 // configuration's credential, so there is no provider/endpoint lookup and no
 // changeProvider/changeUrl/changeApiKey override table.
 //
-// Credential resolution:
+// Credential resolution (see resolveCredentialHeaders for the full table):
 //
+//	changeApiKey literal override → mint the override key with the post-rule
+//	    provider's header format; drop every other credential header.
+//	changeApiKey UseSluiceKey override → forward the inbound Authorization
+//	    verbatim, stripping nothing (passthrough-style on a managed config).
 //	passthrough mode → forward the inbound Authorization verbatim.
 //	managed mode, credential non-empty → set target.Auth header (or the
 //	    per-protocol default when Auth is nil) to the formatted credential;
@@ -93,16 +97,22 @@ func providerSwitchActions(provider, alias string) []contractsrules.Action {
 //	managed mode, credential empty → strip all credential headers, set none
 //	    (no-credential provider, e.g. an unauthenticated in-cluster ollama).
 //
-// pathModel is the effective model for path substitution (Gemini's {model});
-// it is the target alias when set, else the path-derived model. Body-model
-// aliasing for the body-keyed protocols is handled by the body-rewrite stage,
-// not here.
+// override is the post-rule MutableState.UpstreamCredentialOverride: nil leaves
+// the mode default intact, non-nil non-empty substitutes the literal key, and
+// the empty-string sentinel forwards the inbound bearer. Threading it here
+// keeps this the single credential mint site (invariant #6) — no middleware
+// mints the header itself.
+//
+// pathParams carries the named substitutions for the path template (Gemini's
+// {model}/{op}); the body-model aliasing for the body-keyed protocols is handled
+// by the body-rewrite stage, not here.
 func buildDestination(
 	target selection.Target,
 	pathParams map[string]string,
 	mode auth.Mode,
 	dropHeaders []string,
 	inboundAuthorization string,
+	override *string,
 ) (proxy.Destination, error) {
 	base, err := url.Parse(target.BaseURL)
 	if err != nil {
@@ -128,8 +138,59 @@ func buildDestination(
 	}
 
 	drops := append([]string(nil), dropHeaders...)
+	drops = resolveCredentialHeaders(outgoing, drops, target, mode, override, inboundAuthorization)
 
+	return proxy.Destination{
+		BaseURL:         base,
+		UpstreamURL:     &upstream,
+		OutgoingHeaders: outgoing,
+		DropHeaders:     drops,
+	}, nil
+}
+
+// resolveCredentialHeaders applies the upstream credential onto outgoing and
+// returns the updated drop set. It is the single mint site for upstream
+// credentials (invariant #6); both the generative and passthrough destination
+// builders funnel through it so the per-(provider, protocol) header format lives
+// in exactly one place.
+//
+// The post-rule changeApiKey override takes precedence over the auth mode, since
+// rules win the last word on the wire:
+//
+//	override != nil && non-empty → mint the literal key with the post-rule
+//	    provider's header format and drop every other credential header.
+//	override != nil && empty (UseSluiceKey sentinel) → forward the inbound
+//	    Authorization verbatim; strip nothing.
+//	override nil, passthrough mode → forward the inbound Authorization verbatim.
+//	override nil, managed mode, credential non-empty → mint target.Credential,
+//	    drop every other credential header.
+//	override nil, managed mode, credential empty → strip all credential headers
+//	    (no-credential provider).
+func resolveCredentialHeaders(
+	outgoing http.Header,
+	drops []string,
+	target selection.Target,
+	mode auth.Mode,
+	override *string,
+	inboundAuthorization string,
+) []string {
 	switch {
+	case override != nil && *override != "":
+		// changeApiKey literal: mint the override with the post-rule
+		// provider's header format, drop the rest.
+		name, value := credentialHeaderFor(target, *override)
+		outgoing.Set(name, value)
+		for _, h := range credentialHeaderNames {
+			if h != name {
+				drops = appendUnique(drops, h)
+			}
+		}
+	case override != nil:
+		// changeApiKey UseSluiceKey sentinel (empty string): forward the
+		// inbound bearer verbatim, stripping nothing.
+		if inboundAuthorization != "" {
+			outgoing.Set(auth.HeaderAuthorization, inboundAuthorization)
+		}
 	case mode == auth.ModePassthrough:
 		if inboundAuthorization != "" {
 			outgoing.Set(auth.HeaderAuthorization, inboundAuthorization)
@@ -140,7 +201,7 @@ func buildDestination(
 			drops = appendUnique(drops, h)
 		}
 	default:
-		name, value := credentialHeaderFor(target)
+		name, value := credentialHeaderFor(target, target.Credential)
 		outgoing.Set(name, value)
 		for _, h := range credentialHeaderNames {
 			if h != name {
@@ -148,24 +209,20 @@ func buildDestination(
 			}
 		}
 	}
-
-	return proxy.Destination{
-		BaseURL:         base,
-		UpstreamURL:     &upstream,
-		OutgoingHeaders: outgoing,
-		DropHeaders:     drops,
-	}, nil
+	return drops
 }
 
 // credentialHeaderFor returns the (header, value) for a managed-mode credential
 // on target, using the provider's per-protocol auth convention when present and
-// falling back to the per-provider-name default otherwise.
-func credentialHeaderFor(target selection.Target) (string, string) {
+// falling back to the per-provider-name default otherwise. credential is the
+// value substituted into the format — target.Credential for the managed default,
+// or a changeApiKey override key.
+func credentialHeaderFor(target selection.Target, credential string) (string, string) {
 	if target.Auth == nil || target.Auth.Header == "" {
-		return auth.UpstreamCredentialHeader(target.Provider, target.Credential)
+		return auth.UpstreamCredentialHeader(target.Provider, credential)
 	}
 	if target.Auth.Format == "" {
-		return target.Auth.Header, target.Credential
+		return target.Auth.Header, credential
 	}
-	return target.Auth.Header, strings.ReplaceAll(target.Auth.Format, authFormatPlaceholder, target.Credential)
+	return target.Auth.Header, strings.ReplaceAll(target.Auth.Format, authFormatPlaceholder, credential)
 }

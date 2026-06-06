@@ -64,10 +64,20 @@ type MutableState struct {
 	// builder's defaults.
 	OutgoingHeaders http.Header
 
-	// UpstreamCredentialOverride, when non-nil, replaces the credential
-	// the destination builder would otherwise pull from
-	// Configuration.UpstreamCredentials[Provider]. Written by
-	// ChangeApiKeyAction; nil leaves managed-mode lookup intact.
+	// UpstreamCredentialOverride is the post-rule changeApiKey override
+	// the destination builder reads when minting the upstream credential
+	// (cmd/gateway/destination.go::resolveCredentialHeaders — the single
+	// mint site, invariant #6). Written by ChangeApiKeyAction:
+	//
+	//	nil          → no override; managed-mode default credential stands.
+	//	non-empty    → literal APIKey, minted with the post-rule provider's
+	//	               header format, dropping every other credential header.
+	//	empty string → UseSluiceKey sentinel; forward the inbound bearer
+	//	               verbatim instead of substituting, stripping nothing.
+	//
+	// Cloned per attempt by Clone so the override survives the resilience
+	// orchestrator's buildAttemptState for both rule-authored and
+	// group-target paths.
 	UpstreamCredentialOverride *string
 
 	// PathParams carries the named substitutions for the endpoint's

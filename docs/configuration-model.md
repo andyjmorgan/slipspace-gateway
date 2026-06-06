@@ -390,7 +390,7 @@ Lookups use `SecretIndex` (built post-validate); the slice exists for enumeratio
 
 ## `rules` block
 
-`rules:` is the top-level **transform**-rule library, a flat list of `RuleContract` entries (`contracts/rules`). In v2 the routing actions (`changeProvider` / `changeUrl` / `changeApiKey` / `useResiliencePolicy`) have been retired into bindings, providers, and groups; what remains in a rule is body / header / query rewrites, tags, and short-circuits. Definitions are unique by `name`; configurations reference them through `Configuration.RuleNames`. See [rules.md](rules.md) for the condition/action grammar.
+`rules:` is the top-level **transform**-rule library, a flat list of `RuleContract` entries (`contracts/rules`). In v2 the routing actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`) have been retired into bindings, providers, and groups; what remains in a rule is body / header / query rewrites, tags, short-circuits, and the upstream-credential override (`changeApiKey`, which is wired — it overrides the credential sent upstream at the single mint site). Definitions are unique by `name`; configurations reference them through `Configuration.RuleNames`. See [rules.md](rules.md) for the condition/action grammar.
 
 Each rule must:
 

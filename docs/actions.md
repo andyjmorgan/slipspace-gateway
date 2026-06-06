@@ -130,7 +130,7 @@ Actions write through a [`rules.MutableState`](../internal/middleware/rules/stat
 |---|---|---|---|
 | `Provider` | `string` | `changeProvider` | **No (overwritten).** Read at [`handler.go`](../cmd/gateway/handler.go) line 102, but the resilience orchestrator rewrites it per attempt after rules run — see [`changeProvider`](#changeprovider). |
 | `UpstreamURL` | `*url.URL` | `changeUrl` | **No (inert).** `buildDestination` sets `dest.UpstreamURL` from the resolved target; `applyStateOverlays` never reads this field — see [`changeUrl`](#changeurl). |
-| `UpstreamCredentialOverride` | `*string` | `changeApiKey` | **No (inert).** Never read by the destination builder — see [`changeApiKey`](#changeapikey). |
+| `UpstreamCredentialOverride` | `*string` | `changeApiKey` | **Yes (wired).** Read by `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), the single credential mint site, which honours it over the auth mode: a literal key is minted with the post-rule provider's header format, the `useSluiceKey` sentinel (empty string) forwards the inbound `Authorization` verbatim — see [`changeApiKey`](#changeapikey). |
 | `OutgoingHeaders` | `http.Header` | `setHeader` | Yes — layered onto the destination by `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 278-283). |
 | `QueryAdditions` | `[]QueryAddition` | `appendQueryString` | Yes — layered onto `dest.UpstreamURL` by `applyStateOverlays` (pipeline.go lines 271-277). |
 | `PathParams` | `map[string]string` | `changeModelName` (writes `"model"` key) | Yes — drives Gemini `{model}` path substitution and the outbound-model telemetry label. |
@@ -139,7 +139,7 @@ Actions write through a [`rules.MutableState`](../internal/middleware/rules/stat
 | `PolicyRef` | `string` | `useResiliencePolicy` | **No (inert).** The v2 selection middleware seeds `PolicyRef` from the chosen binding's synthesised policy and stashes the `ResilienceConfig` on context; the orchestrator reads that, the data plane wires the name lookup to `nil`, and the reported `PolicyRef` comes from the binding's policy name, not `state.PolicyRef`. A rule-authored write is ignored — see [`useResiliencePolicy`](#useresiliencepolicy). |
 | `BodyRewrites` / `ResponseRewrites` | `[]bodypatch.Op` | `rewriteField`, `removeField`, `appendField` | Yes — request ops applied post-rule by `BodyRewriteHandler`, response ops by the proxy's `ModifyResponse` hook. |
 
-> **v2 routing note (load-bearing).** Under v2 the *destination* — provider, upstream URL, and credential header — is resolved from the configuration's **bindings** by `selectionMiddleware` *before* rules run, and finalised by `buildDestination` in [`cmd/gateway/destination.go`](../cmd/gateway/destination.go) from the selected `selection.Target`. The destination builder's own godoc says it plainly: "there is no provider/endpoint lookup and no `changeProvider`/`changeUrl`/`changeApiKey` override table." Four state-mutating actions still parse, validate, and round-trip — they are authorable and registered in [`contracts/rules/action.go`](../contracts/rules/action.go) — but the v2 data plane does not consult the state fields they write, so they are **inert**: `changeUrl` and `changeApiKey` are written-but-never-read; `useResiliencePolicy` is ignored in favour of the binding-derived policy on context (and the data plane wires the name lookup to `nil`); `changeProvider` is **overwritten** per attempt by the orchestrator's binding-derived provider switch before the final handler reads `state.Provider`. The remaining actions (`setHeader`, `appendQueryString`, `changeModelName`, `addTag`, the body-rewrite trio, and the two terminating actions) are fully wired — note `changeModelName` survives as the orchestrator's internal alias-rewrite primitive, so a binding/group `alias` is the last writer of the body model. Each affected section below carries the specifics. The inert writes are tracked as code follow-ups; the route to a different provider/URL/credential/policy in v2 is a binding edit, not a rule.
+> **v2 routing note (load-bearing).** Under v2 the *destination* — provider, upstream URL, and credential header — is resolved from the configuration's **bindings** by `selectionMiddleware` *before* rules run, and finalised by `buildDestination` in [`cmd/gateway/destination.go`](../cmd/gateway/destination.go) from the selected `selection.Target`. There is no provider/endpoint lookup table; routing stays in bindings. Three state-mutating actions still parse, validate, and round-trip — they are authorable and registered in [`contracts/rules/action.go`](../contracts/rules/action.go) — but the v2 data plane does not consult the state fields they write, so they are **inert**: `changeUrl` is written-but-never-read; `useResiliencePolicy` is ignored in favour of the binding-derived policy on context (and the data plane wires the name lookup to `nil`); `changeProvider` is **overwritten** per attempt by the orchestrator's binding-derived provider switch before the final handler reads `state.Provider`. The remaining actions (`changeApiKey`, `setHeader`, `appendQueryString`, `changeModelName`, `addTag`, the body-rewrite trio, and the two terminating actions) are fully wired — `changeApiKey`'s `state.UpstreamCredentialOverride` is now honoured at the single credential mint site (`resolveCredentialHeaders`, destination.go line 169), and `changeModelName` survives as the orchestrator's internal alias-rewrite primitive, so a binding/group `alias` is the last writer of the body model. Each affected section below carries the specifics. The remaining inert writes are tracked as code follow-ups; the route to a different provider/URL/policy in v2 is a binding edit, not a rule (the upstream credential, by contrast, *can* now be overridden by `changeApiKey`).
 
 Two complementary side channels exist:
 
@@ -175,7 +175,7 @@ Writes `state.Provider`. Non-terminating.
 
 ### How v2 resolves the destination instead
 
-The destination builder is the single credential and transport mint site in v2 ([`buildDestination` in `cmd/gateway/destination.go`](../cmd/gateway/destination.go)). It reads the provider's base URL, protocol path, per-protocol auth convention, default query, and the configuration's credential straight off the resolved `selection.Target` — there is no provider/endpoint lookup table and no `changeProvider`/`changeUrl`/`changeApiKey` override applied at this stage. The credential header is formatted once by `credentialHeaderFor` (destination.go line 163), honouring [`CLAUDE.md`](../CLAUDE.md) invariant 6 (one mint site per provider/protocol).
+The destination builder is the single credential and transport mint site in v2 ([`buildDestination` in `cmd/gateway/destination.go`](../cmd/gateway/destination.go)). It reads the provider's base URL, protocol path, per-protocol auth convention, default query, and the configuration's credential straight off the resolved `selection.Target` — there is no provider/endpoint lookup table and no `changeProvider`/`changeUrl` override applied at this stage. The post-rule `changeApiKey` override *is* applied here when set: `resolveCredentialHeaders` (destination.go line 169) honours `state.UpstreamCredentialOverride` over the auth mode, and `credentialHeaderFor` (destination.go line 220) formats the header once — both at this single mint site, honouring [`CLAUDE.md`](../CLAUDE.md) invariant 6 (one mint site per provider/protocol).
 
 The model-keyed redirect pattern (a `claude-*` model posted to an OpenAI-compat path landing on Anthropic) is therefore expressed as a binding from the OpenAI `chat` protocol to the `anthropic` provider, not as a rule. The internal `changeProvider`/`changeModelName` pair survives only as the orchestrator's selection primitive (`providerSwitchActions` in destination.go line 71) — "no longer authorable in rules" for routing purposes, in the words of that function's godoc.
 
@@ -285,9 +285,9 @@ Writes `state.UpstreamURL`. Non-terminating.
 
 ## `changeApiKey`
 
-Writes `state.UpstreamCredentialOverride`. Intended to substitute the upstream API key, or signal "forward the inbound Sluice bearer verbatim" for passthrough scenarios. Non-terminating.
+Writes `state.UpstreamCredentialOverride`. Substitutes the upstream API key, or signals "forward the inbound Sluice bearer verbatim" for passthrough scenarios. Non-terminating.
 
-> **v2 status — currently inert.** `applyChangeApiKey` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) lines 154-169) writes `state.UpstreamCredentialOverride` (a non-empty pointer for a literal key, or a pointer to the empty string as the "forward inbound bearer" sentinel). **Nothing reads that field.** Credential selection in v2 is the switch in `buildDestination` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) lines 132-150), which decides purely on the auth `Mode` and the resolved `selection.Target.Credential` — it never consults `state.UpstreamCredentialOverride`. The override is written, cloned, and ignored. The action still parses, validates, and round-trips. Tracked as a code follow-up. To use a different upstream key in v2, point the configuration's binding at a provider whose credential differs.
+> **v2 status — wired.** `applyChangeApiKey` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) lines 154-169) writes `state.UpstreamCredentialOverride` (a non-empty pointer for a literal key, or a pointer to the empty string as the "forward inbound bearer" sentinel), and the v2 data plane now **reads it**. Credential selection runs through `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), the single credential mint site, which `buildDestination` threads `state.UpstreamCredentialOverride` into. The override takes precedence over the auth `Mode` (rules win the last word on the wire): a non-empty literal is minted with the **post-rule** provider's header format and every other credential header is dropped; the empty-string `useSluiceKey` sentinel forwards the inbound `Authorization` verbatim. Because the orchestrator clones the post-rule state into each attempt, the override carries across resilience attempts. Minting stays at the one site, honouring [`CLAUDE.md`](../CLAUDE.md) invariant 6.
 
 ### YAML
 
@@ -314,25 +314,29 @@ Writes `state.UpstreamCredentialOverride`. Intended to substitute the upstream A
 - `state.UpstreamCredentialOverride` = `&trimmedAPIKey` when `UseSluiceKey=false`.
 - `state.UpstreamCredentialOverride` = `&""` (a pointer to the empty string) when `UseSluiceKey=true`.
 
-Both writes are inert in v2 (see the status note above) — the destination builder never reads this field.
+Both writes are read in v2 (see the status note above) — `buildDestination` threads the override into the single mint site.
 
-### How v2 actually resolves the credential
+### How v2 resolves the credential
 
-Credential selection is the three-way switch in `buildDestination` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) lines 132-150). It decides on the auth `Mode` and the resolved `selection.Target.Credential` only — there is no override branch. When a credential is set, the `(header, value)` is formatted by `credentialHeaderFor` (destination.go lines 160-171): the target's per-protocol auth convention (`target.Auth.Header` / `target.Auth.Format`) when present, falling back to the per-provider-name default in `auth.UpstreamCredentialHeader`. This is the single mint site that honours [`CLAUDE.md`](../CLAUDE.md) invariant 6.
+Credential selection is the precedence `switch` in `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), into which `buildDestination` threads the post-rule `state.UpstreamCredentialOverride`. The `changeApiKey` override is checked **before** the auth `Mode`, so a rule wins the last word on the wire. When a credential is minted, the `(header, value)` is formatted by `credentialHeaderFor` (destination.go line 220): the target's per-protocol auth convention (`target.Auth.Header` / `target.Auth.Format`) when present, falling back to the per-provider-name default in `auth.UpstreamCredentialHeader`. This is the single mint site that honours [`CLAUDE.md`](../CLAUDE.md) invariant 6.
 
 ```mermaid
 flowchart TB
-    Start[buildDestination switch] --> Mode{auth mode}
-    Mode -- passthrough --> Forward[set Authorization to the<br/>inbound bearer verbatim]
+    Start[resolveCredentialHeaders] --> Ovr{changeApiKey override?}
+    Ovr -- "literal key (non-empty)" --> Lit[mint the override key with the<br/>post-rule provider's header format,<br/>drop the other credential headers]
+    Ovr -- "useSluiceKey (empty sentinel)" --> Fwd[forward the inbound<br/>Authorization verbatim]
+    Ovr -- none --> Mode{auth mode}
+    Mode -- passthrough --> Fwd
     Mode -- "managed, target.Credential empty" --> Strip[strip every credential header,<br/>set none]
     Mode -- "managed, target.Credential set" --> Set[credentialHeaderFor: set the<br/>provider/protocol header, drop<br/>the other credential headers]
 ```
 
-The same switch is reused for passthrough-family requests in `buildPassthroughDestination` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 240-257).
+The same `resolveCredentialHeaders` mint site is reused for passthrough-family requests in `buildPassthroughDestination` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) line 241), so a `changeApiKey` override applies there too.
 
 ### Gotchas
 
-- The action is inert in v2; do not author rules expecting a per-rule key swap. Per-tenant key segregation is achieved by pointing the tenant's configuration binding at a provider carrying the dedicated credential.
+- A literal `apiKey` override is minted with the **post-rule** provider's header convention, not the inbound one — a `changeApiKey` paired with a binding that lands on Anthropic mints `x-api-key`, not `Authorization: Bearer`.
+- `useSluiceKey: true` forwards the inbound `Authorization` even on a managed configuration — use it to thread a client-supplied upstream token through a config that would otherwise mint its own credential.
 - Sluice does not redact upstream keys in YAML it loads; treat the YAML file as secret material. Mount from a k8s Secret, never check it in.
 
 ---
@@ -864,7 +868,7 @@ If you need a known action's no-op fallback (an action that does nothing on purp
 
 - [`docs/rules.md`](rules.md) — the condition side of the engine: conditions, operators, rule ordering, `Behavior: continue|exit`, evaluator mechanics, cascade vs single-pass semantics, tag conditions.
 - [`docs/resilience.md`](resilience.md) — the orchestrator that consumes `useResiliencePolicy`. Modes, per-target Actions, circuit breaker, attempt observability, end-to-end examples.
-- [`docs/providers.md`](providers.md) — provider registry, per-protocol `auth_header` / `auth_format` conventions, OpenAI-compat surfaces, and the v2 bindings that resolve the destination (the route to a different provider/URL/credential/policy, now that `changeProvider` / `changeUrl` / `changeApiKey` / `useResiliencePolicy` are inert in the data plane).
+- [`docs/providers.md`](providers.md) — provider registry, per-protocol `auth_header` / `auth_format` conventions, OpenAI-compat surfaces, and the v2 bindings that resolve the destination (the route to a different provider/URL/policy, now that `changeProvider` / `changeUrl` / `useResiliencePolicy` are inert in the data plane; `changeApiKey` is wired and can override the upstream credential).
 - [`contracts/rules/action.go`](../contracts/rules/action.go) — wire schema for most actions; the body-rewrite trio is in [`contracts/rules/rewrite.go`](../contracts/rules/rewrite.go).
 - [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) — runtime `ApplyAction` dispatch and per-action mutation logic.
 - [`internal/middleware/rules/state.go`](../internal/middleware/rules/state.go) — `MutableState` definition and the surface every action writes through.

@@ -9,7 +9,8 @@
 // Declared secret paths (mirroring contracts/config + contracts/admin):
 //
 //   - api_keys[].secret               // Sluice-issued sk_live_... keys
-//   - configurations.<name>.upstream_credentials.* // provider API keys
+//   - configurations.<name>.credentials.*           // v2 provider API keys
+//   - configurations.<name>.upstream_credentials.*  // v1 provider API keys
 //   - admin.password                  // admin Basic-auth password
 //
 // The bundler reads accepted YAML files through config.ListConfigFiles so the

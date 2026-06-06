@@ -151,11 +151,18 @@ func applyChangeUrl(a contractsrules.ChangeUrlAction, state *MutableState) (cont
 	return contractsrules.Outcome{}, nil
 }
 
+// applyChangeApiKey records the changeApiKey override on state for the
+// destination builder to mint at the single credential mint site
+// (cmd/gateway/destination.go::resolveCredentialHeaders, invariant #6); it
+// never mints a header here. UseSluiceKey stores the empty-string sentinel so
+// the builder forwards the inbound bearer verbatim; otherwise the trimmed
+// literal APIKey is stored for the builder to substitute with the post-rule
+// provider's header format. An empty literal is rejected.
 func applyChangeApiKey(a contractsrules.ChangeApiKeyAction, state *MutableState) (contractsrules.Outcome, error) {
 	if a.UseSluiceKey {
 		// Sentinel: empty-string override means "forward the inbound
-		// bearer verbatim" — the destination builder handles the
-		// resolution against the request's Authorization header.
+		// bearer verbatim" — the destination builder resolves it against
+		// the request's Authorization header and strips nothing.
 		empty := ""
 		state.UpstreamCredentialOverride = &empty
 		return contractsrules.Outcome{}, nil

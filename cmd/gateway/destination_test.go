@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"testing"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
@@ -22,7 +23,7 @@ func TestBuildDestination_CredentialModes(t *testing.T) {
 	}
 
 	t.Run("passthrough forwards inbound authorization", func(t *testing.T) {
-		dest, err := buildDestination(target, nil, auth.ModePassthrough, nil, "Bearer client-token")
+		dest, err := buildDestination(target, nil, auth.ModePassthrough, nil, "Bearer client-token", nil)
 		if err != nil {
 			t.Fatalf("buildDestination: %v", err)
 		}
@@ -35,7 +36,7 @@ func TestBuildDestination_CredentialModes(t *testing.T) {
 	})
 
 	t.Run("managed sets provider auth header and drops the others", func(t *testing.T) {
-		dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "Bearer client-token")
+		dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "Bearer client-token", nil)
 		if err != nil {
 			t.Fatalf("buildDestination: %v", err)
 		}
@@ -52,7 +53,7 @@ func TestBuildDestination_CredentialModes(t *testing.T) {
 	t.Run("managed empty credential strips all credential headers", func(t *testing.T) {
 		noCred := target
 		noCred.Credential = ""
-		dest, err := buildDestination(noCred, nil, auth.ModeManaged, nil, "Bearer client-token")
+		dest, err := buildDestination(noCred, nil, auth.ModeManaged, nil, "Bearer client-token", nil)
 		if err != nil {
 			t.Fatalf("buildDestination: %v", err)
 		}
@@ -80,7 +81,7 @@ func TestBuildDestination_PathAndQuery(t *testing.T) {
 	}
 	params := map[string]string{"model": "gemini-2.5-pro", "op": "streamGenerateContent"}
 
-	dest, err := buildDestination(target, params, auth.ModeManaged, nil, "")
+	dest, err := buildDestination(target, params, auth.ModeManaged, nil, "", nil)
 	if err != nil {
 		t.Fatalf("buildDestination: %v", err)
 	}
@@ -93,6 +94,104 @@ func TestBuildDestination_PathAndQuery(t *testing.T) {
 	if got := dest.OutgoingHeaders.Get("x-goog-api-key"); got != "gm-key" {
 		t.Errorf("x-goog-api-key = %q, want gm-key", got)
 	}
+}
+
+// TestBuildDestination_ChangeApiKeyOverride covers the wired changeApiKey
+// action: a literal APIKey override is minted with the post-rule provider's
+// header format (openai → Bearer Authorization, anthropic → x-api-key, gemini →
+// x-goog-api-key), and the UseSluiceKey sentinel (empty-string override)
+// forwards the inbound Authorization verbatim without stripping it.
+func TestBuildDestination_ChangeApiKeyOverride(t *testing.T) {
+	override := "sk-override" //nolint:gosec // synthetic test fixture, not a real credential
+
+	t.Run("literal override mints per provider header format", func(t *testing.T) {
+		cases := []struct {
+			provider   string
+			wantHeader string
+			wantValue  string
+		}{
+			{"openai", "Authorization", "Bearer sk-override"},
+			{"anthropic", "x-api-key", "sk-override"},
+			{"gemini", "x-goog-api-key", "sk-override"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.provider, func(t *testing.T) {
+				// Auth nil exercises the per-provider default format table
+				// (auth.UpstreamCredentialHeader) — the contract's "post-rule
+				// provider's header format".
+				target := selection.Target{ //nolint:gosec // synthetic test fixture
+					Provider:   tc.provider,
+					BaseURL:    "https://example.invalid",
+					Path:       "/v1/x",
+					Credential: "sk-managed-default",
+				}
+				dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "Bearer client-token", &override)
+				if err != nil {
+					t.Fatalf("buildDestination: %v", err)
+				}
+				if got := dest.OutgoingHeaders.Get(tc.wantHeader); got != tc.wantValue {
+					t.Errorf("%s = %q, want %q (override minted with provider format)", tc.wantHeader, got, tc.wantValue)
+				}
+				// No other credential header carries a credential, and the
+				// inbound bearer never leaks. (Compared canonically because the
+				// minted header name canonicalises in http.Header.)
+				want := http.CanonicalHeaderKey(tc.wantHeader)
+				for _, h := range credentialHeaderNames {
+					if http.CanonicalHeaderKey(h) == want {
+						continue
+					}
+					if v := dest.OutgoingHeaders.Get(h); v != "" {
+						t.Errorf("%s = %q, want unset", h, v)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("literal override honours endpoint auth convention", func(t *testing.T) {
+		// An OpenAI-compat surface on anthropic carries an explicit Auth
+		// convention; the override substitutes into that format, not the
+		// provider-name default.
+		target := selection.Target{ //nolint:gosec // synthetic test fixture
+			Provider:   "anthropic",
+			BaseURL:    "https://api.anthropic.com",
+			Path:       "/openai/v1/chat/completions",
+			Auth:       &contractsconfig.ProviderAuth{Header: "Authorization", Format: "Bearer {key}"},
+			Credential: "sk-managed-default",
+		}
+		dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "", &override)
+		if err != nil {
+			t.Fatalf("buildDestination: %v", err)
+		}
+		if got := dest.OutgoingHeaders.Get("Authorization"); got != "Bearer sk-override" {
+			t.Errorf("Authorization = %q, want Bearer sk-override", got)
+		}
+	})
+
+	t.Run("UseSluiceKey sentinel forwards inbound authorization", func(t *testing.T) {
+		empty := ""
+		target := selection.Target{ //nolint:gosec // synthetic test fixture
+			Provider:   "anthropic",
+			BaseURL:    "https://api.anthropic.com",
+			Path:       "/v1/messages",
+			Auth:       &contractsconfig.ProviderAuth{Header: "x-api-key", Format: "{key}"},
+			Credential: "sk-managed-default",
+		}
+		dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "Bearer client-token", &empty)
+		if err != nil {
+			t.Fatalf("buildDestination: %v", err)
+		}
+		if got := dest.OutgoingHeaders.Get("Authorization"); got != "Bearer client-token" {
+			t.Errorf("Authorization = %q, want inbound bearer forwarded", got)
+		}
+		// The managed credential must NOT be minted, and nothing is stripped.
+		if got := dest.OutgoingHeaders.Get("x-api-key"); got != "" {
+			t.Errorf("x-api-key = %q, want unset under UseSluiceKey", got)
+		}
+		if contains(dest.DropHeaders, "Authorization") {
+			t.Errorf("DropHeaders = %v, want Authorization NOT stripped", dest.DropHeaders)
+		}
+	})
 }
 
 func contains(s []string, v string) bool {

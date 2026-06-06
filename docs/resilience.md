@@ -517,7 +517,7 @@ If you are migrating policy YAML authored against the v1 schema, these are the l
 | Per-target `actions:` (`changeProvider`, `changeModelName`, …) authored in YAML | No authorable target actions. Provider switch + alias rewrite are synthesised internally; `model_rewrite` is replaced by `alias` |
 | `timeout_seconds`, `retry:` blocks parsed (inert) on the policy/target | Not part of the v2 group schema — these keys are not recognised under `groups:` and have no effect |
 
-The `useResiliencePolicy`, `changeProvider`, `changeUrl`, and `changeApiKey` actions still exist in the rules action vocabulary for backward-compatible parsing, but routing is config data now: `changeProvider` / `changeModelName` survive only as internal selection primitives, and `useResiliencePolicy` is inert (its `state.PolicyRef` write is never read — see [Binding a request to a group](#binding-a-request-to-a-group)). Author bindings, not routing rules.
+The `useResiliencePolicy`, `changeProvider`, and `changeUrl` actions still exist in the rules action vocabulary for backward-compatible parsing, but routing is config data now: `changeProvider` / `changeModelName` survive only as internal selection primitives, and `useResiliencePolicy` is inert (its `state.PolicyRef` write is never read — see [Binding a request to a group](#binding-a-request-to-a-group)). `changeApiKey` is the exception — it is now functional, overriding the upstream credential at the single mint site, and its `state.UpstreamCredentialOverride` is carried across resilience attempts via the per-attempt state clone. Author bindings for routing, not routing rules.
 
 ---
 
