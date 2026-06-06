@@ -134,6 +134,8 @@ func eventFromRecord(rec cc.Record, gatewayID string) store.RequestEvent {
 		LatencyMs:       recordLatencyMs(rec),
 		SessionID:       rec.SessionID,
 		SessionIDSource: rec.SessionIDSource,
+		AgentID:         rec.AgentID,
+		AgentIDSource:   rec.AgentIDSource,
 		APIKeyName:      rec.APIKeyName,
 		PolicyRef:       rec.PolicyRef,
 		Streaming:       rec.Response.StreamChunks > 0,

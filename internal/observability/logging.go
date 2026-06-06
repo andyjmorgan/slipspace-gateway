@@ -15,6 +15,7 @@ const (
 	LogFieldVersion       = "version"
 	LogFieldCorrelationID = "correlation_id"
 	LogFieldSessionID     = "session_id"
+	LogFieldAgentID       = "agent_id"
 	LogFieldAPIKeyID      = "api_key_id"
 	LogFieldConfiguration = "configuration"
 	LogFieldProvider      = "provider"

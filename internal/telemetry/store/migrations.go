@@ -123,4 +123,17 @@ CREATE INDEX IF NOT EXISTS metric_points_name_time ON metric_points (metric_name
 		// scan as the event table grows.
 		sql: `CREATE INDEX IF NOT EXISTS request_events_tags ON request_events USING gin ((detail->'tags'));`,
 	},
+	{
+		version: 4,
+		name:    "add_agent_id",
+		// Agent identification rides alongside session bundling: the gateway
+		// resolves an agent id (X-Sluice-Agent-Id / X-Claude-Code-Agent-Id /
+		// custom) and emits it as gen_ai.agent.id on the span and agent_id on
+		// the Record. Additive columns + a single-column index so the message
+		// browser can drill down by agent, mirroring request_events_session.
+		sql: `
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS agent_id        TEXT NOT NULL DEFAULT '';
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS agent_id_source TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS request_events_agent ON request_events (agent_id);`,
+	},
 }
