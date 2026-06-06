@@ -49,8 +49,8 @@ The three channels are intentionally disjoint. Every signal the gateway emits be
 
 `internal/observability/setup.go` constructs the SDK MeterProvider with three potential readers:
 
-- **Prometheus exporter** — enabled when `gateway.prometheus.bind_addr` is non-empty. Registers an `otelprom` exporter against a fresh `prometheus.Registry` and exposes a `promhttp.Handler` the data plane mounts at `/metrics` on the Prometheus listener.
-- **OTLP exporter** — enabled when `gateway.otlp.endpoint` is non-empty. `gateway.otlp.protocol` selects between gRPC (`grpc`, default) and HTTP-protobuf (`http/protobuf`, also `http`). Wrapped in a `sdkmetric.PeriodicReader` so the SDK batches pushes on its own cadence. Metrics export with **delta** temporality (`internal/observability/setup.go::deltaTemporality`) — sums and histograms go delta so the ingest side can SUM a window of points to an exact count, while up-down counters and the cb.state gauge stay cumulative (delta is undefined for them); the Prometheus reader is unaffected and stays cumulative. The endpoint is typically the central **telemetry service**, which ingests these meters plus the GenAI spans and events below — see [docs/telemetry-service.md](telemetry-service.md) for its OTLP ingest and the [Second cap](#genai-spans-and-events) it applies to assembled content.
+- **Prometheus exporter** — enabled when the `SLUICE_PROMETHEUS_BIND` environment variable is non-empty (it is env-configured, not a `gateway.yaml` key). Registers an `otelprom` exporter against a fresh `prometheus.Registry` and exposes a `promhttp.Handler` the data plane mounts at `/metrics` on the Prometheus listener.
+- **OTLP exporter** — enabled when the `SLUICE_OTLP_ENDPOINT` environment variable is non-empty. `SLUICE_OTLP_PROTOCOL` selects between gRPC (`grpc`, default) and HTTP-protobuf (`http/protobuf`, also `http`). These are environment variables, not `gateway.yaml` keys. Wrapped in a `sdkmetric.PeriodicReader` so the SDK batches pushes on its own cadence. Metrics export with **delta** temporality (`internal/observability/setup.go::deltaTemporality`) — sums and histograms go delta so the ingest side can SUM a window of points to an exact count, while up-down counters and the cb.state gauge stay cumulative (delta is undefined for them); the Prometheus reader is unaffected and stays cumulative. The endpoint is typically the central **telemetry service**, which ingests these meters plus the GenAI spans and events below — see [docs/telemetry-service.md](telemetry-service.md) for its OTLP ingest and the [Second cap](#genai-spans-and-events) it applies to assembled content.
 - **ManualReader** — **always attached**, regardless of the other two. The [snapshotter](#snapshotter) pulls from this reader on a configurable interval; nothing external consumes it. The cost when both Prom scrape and OTLP push are disabled is essentially zero — the reader only runs work when the snapshotter calls `Collect`.
 
 The same `MeterProvider` is also registered globally via `otel.SetMeterProvider`, so stray code reaching for the global meter still lands on the same instrument set.
@@ -61,8 +61,8 @@ flowchart LR
     MP --> R1[Prom exporter<br/>scrape via /metrics]
     MP --> R2[OTLP PeriodicReader<br/>gRPC or HTTP-protobuf]
     MP --> R3[ManualReader<br/>always attached]
-    R1 -. enabled by<br/>gateway.prometheus.bind_addr .-> R1
-    R2 -. enabled by<br/>gateway.otlp.endpoint .-> R2
+    R1 -. enabled by<br/>SLUICE_PROMETHEUS_BIND .-> R1
+    R2 -. enabled by<br/>SLUICE_OTLP_ENDPOINT .-> R2
     R3 --> Snap[Snapshotter<br/>5-min ring]
     Snap --> Admin[Admin dashboard handlers<br/>/api/v1/dashboard, /api/v1/timeseries]
 ```
@@ -81,7 +81,7 @@ Resource attributes stamped on every metric series:
 
 ## Meters
 
-Every gateway instrument is registered under the OTel meter scope `sluice-gateway` and prefixed with `gateway.` so they sort together in Prometheus and stay disjoint from any future sibling service (`a2a.`, `mcp.`, …). All names live as exported constants in [`internal/observability/meters.go`](../internal/observability/meters.go) (`Metric*`); call sites reference the constants rather than string literals.
+Gateway instruments span three namespaces under the OTel meter scope `sluice-gateway`: `gen_ai.*` for the spec inference signals (`gen_ai.client.token.usage`, `gen_ai.client.operation.duration` / `.time_to_first_chunk` / `.time_per_output_chunk`), `sluice.*` for Sluice convenience aggregates (`sluice.requests.total`, `sluice.config.hit`, `sluice.rule.fired`, `sluice.tokens.cached.total`, `sluice.tokens.cache_creation.total`), and `gateway.*` for instruments the GenAI spec has no concept for (rule engine, resilience orchestrator, circuit breaker, admin console). All names live as exported constants in [`internal/observability/meters.go`](../internal/observability/meters.go) (`Metric*`); call sites reference the constants rather than string literals.
 
 ### Requests
 
@@ -102,14 +102,14 @@ The data-plane request lifecycle. Per-request counters fire **exactly once per i
 
 ### Tokens
 
-Provider-reported token usage extracted from the upstream response body. All four counters share the request labelset so token rate and traffic rate join cleanly in Grafana. Counters are bumped **only for non-zero buckets** — a request that doesn't include `usage` produces no observation rather than a zero-valued one.
+Provider-reported token usage extracted from the upstream response body. Input and output usage ride the `gen_ai.client.token.usage` histogram (keyed by `gen_ai.token.type=input|output`, which replaced the former input/output counters); cache tokens ride two `sluice.*` counters. All share the request labelset so token rate and traffic rate join cleanly in Grafana. They are recorded **only for non-zero buckets** — a request that doesn't include `usage` produces no observation rather than a zero-valued one. There are no `gateway.tokens.input.total` / `gateway.tokens.output.total` instruments.
 
 | Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|
-| `gateway.tokens.input.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Sum of prompt tokens billed for the request, from the upstream `usage` block. Includes cached input (also reported separately in `tokens.cached.total`). Zero when the upstream omitted `usage` — typical for streaming without `include_usage`, cancelled streams, or Gemini preview models. |
-| `gateway.tokens.output.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Tokens the model generated. For providers that bill reasoning tokens separately (OpenAI o1/o3, Gemini thoughts) they are included — the field reflects what the customer pays for, not just visible output. |
-| `gateway.tokens.cached.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Share of `tokens.input.total` the provider served from its prompt cache and billed at the cached-read price. Informational; already counted in input, not a deduction. |
-| `gateway.tokens.cache_creation.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Share of `tokens.input.total` billed at the cache-write premium. Anthropic-only today — OpenAI and Gemini cache writes are implicit and not separately billed, so this stays zero for them. |
+| `gen_ai.client.token.usage` (`gen_ai.token.type=input`) | histogram | `gen_ai.token.type=input`, plus the shared request labelset | 1 | Sum of prompt tokens billed for the request, from the upstream `usage` block. Includes cached input (also reported separately in `sluice.tokens.cached.total`). No observation when the upstream omitted `usage` — typical for streaming without `include_usage`, cancelled streams, or Gemini preview models. |
+| `gen_ai.client.token.usage` (`gen_ai.token.type=output`) | histogram | `gen_ai.token.type=output`, plus the shared request labelset | 1 | Tokens the model generated. For providers that bill reasoning tokens separately (OpenAI o1/o3, Gemini thoughts) they are included — the field reflects what the customer pays for, not just visible output. |
+| `sluice.tokens.cached.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Share of the input tokens the provider served from its prompt cache and billed at the cached-read price. Informational; already counted in input, not a deduction. |
+| `sluice.tokens.cache_creation.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Share of the input tokens billed at the cache-write premium. Anthropic-only today — OpenAI and Gemini cache writes are implicit and not separately billed, so this stays zero for them. |
 
 Token capture is gated on the live-feed response buffer being attached to context. When body capture is disabled (`SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0`, the knob `ServerEnv.BodyCaptureEnabled` keys off — see [`internal/config/env.go`](../internal/config/env.go)) tokens stay zero and the counters don't fire.
 

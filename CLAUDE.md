@@ -64,7 +64,7 @@ These are the rules that, if broken, silently break customers or destabilize the
 
 5. **YAML schema accepts rules + resilience in v1.0 even though evaluation is off.** Locks the shape so v1.1 flips evaluation on without YAML migration.
 
-6. **Credential header format lives in one place per `(provider, endpoint)`.** Managed-mode credential resolution flows: endpoint override (`auth_header` / `auth_format` in `providers.yaml`) → provider override → per-provider default in `auth.UpstreamCredentialHeader`. The destination builder (`cmd/gateway/handler.go::resolveCredentialHeader`) is the only mint site. Bypassing it — minting in auth, in a rule, in middleware — fragments the table and causes silent credential mismatches. OpenAI-compat surfaces on Anthropic and Gemini depend on this: same provider, different credential conventions per endpoint.
+6. **Credential header format lives in one place per `(provider, protocol)`.** Managed-mode credential resolution flows: endpoint override (`auth_header` / `auth_format` in `providers.yaml`) → provider override → per-provider default in `auth.UpstreamCredentialHeader`. The destination builder (`cmd/gateway/destination.go::resolveCredentialHeaders`, with `credentialHeaderFor` as the mint helper) is the only mint site. Bypassing it — minting in auth, in a rule, in middleware — fragments the table and causes silent credential mismatches. OpenAI-compat surfaces on Anthropic and Gemini depend on this: same provider, different credential conventions per protocol.
 
 7. **`changeProvider` re-resolves the endpoint on the new provider.** The destination builder reads `state.Provider` post-rule and looks up the endpoint map on that provider — not the original. This is what makes the model-keyed redirect pattern work (claude-* on `/openai/v1/chat/completions` lands on anthropic's `chat_completions` endpoint with anthropic's credential + auth header). Don't add code that bypasses the post-rule endpoint lookup.
 
@@ -175,7 +175,7 @@ Unit (internal correctness) and E2E (wire contract through the real binary) are 
 The `protocols/` packages model the on-the-wire shapes of OpenAI, Anthropic, and Gemini — a moving spec the codebase must continuously chase. (A provider speaks one or more protocols; `protocols/` models each protocol's vendor-flavored wire shape.) Field drops are **silent**: we forward, the provider responds, the client gets *something* subtly wrong, with no error to log and no metric to spike. Contract-level testing is the only catch. **Treat every PR touching `protocols/` as a wire-compat change.**
 
 - **`DynamicProperties` + `UnknownX` safety net is non-negotiable** — every model type embeds `DynamicProperties`; every polymorphic base has an `UnknownX` fallback. A new struct without these is a regression (invariant #1).
-- **Test surface per model type:** golden round-trips from `test/fixtures/<provider>/` (byte-equivalent modulo key order); fuzz on every `UnmarshalJSON` ("if it parses, it round-trips", ≥10min in CI); unknown-discriminator + unknown-field tests via `UnknownX` / `DynamicProperties.Extra`; a `TestX_AllFieldsTagged` reflection meta-test enforcing `json` tags.
+- **Test surface per model type:** golden round-trips are inline table-driven cases in each `protocols/*/*_test.go` (byte-equivalent modulo key order); `test/fixtures/` holds E2E fixtures, not the per-type golden round-trips; fuzz on every `UnmarshalJSON` ("if it parses, it round-trips", ≥10min in CI); unknown-discriminator + unknown-field tests via `UnknownX` / `DynamicProperties.Extra`; a `TestX_AllExportedFieldsHaveJSONTag` reflection meta-test enforcing `json` tags.
 - **When touching `protocols/`:** cite the source for any new field (docs link / captured payload / SDK PR), add a fixture if the shape is new, add a fuzz seed for non-trivial value spaces, update the `Unknown*` fallback for new concrete types, run `make py-compat` locally before pushing.
 - **Drift early-warning:** scheduled `fixture-refresh.yaml` runs the compat suite against the latest published SDKs and files a `provider-drift` issue on failure.
 
@@ -189,10 +189,10 @@ E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`
 
 ## Local dev
 
-- `make dev` brings up the mock LLM via docker-compose and runs the gateway natively; the spool lands at `./tmp/spool/`
+- `make dev` brings up the mock LLM via docker-compose and runs the gateway natively; the spool root defaults to `/var/lib/sluice/spool` (`SLUICE_SPOOL_ROOT`) — `export SLUICE_SPOOL_ROOT=./tmp/spool` for a repo-local path. docker-compose persists the spool in the named volume `sluice-spool` mounted at `/var/lib/sluice/spool`
 - The C# mock LLM at `~/Source/Repos/airia-llmock/` is used pre-v0.1; `cmd/mockllm/` (Go) replaces it
 - `docker-compose.dev.yaml` is gitignored and overlays the local C# mock image until the Go rewrite ships
-- For captured-record introspection during dev, `zstd -dc ./tmp/spool/records/<connector>/sealed/*.ndjson.zst | jq .` shows the records on disk
+- For captured-record introspection during dev, `zstd -dc "$SLUICE_SPOOL_ROOT"/records/<connector>/sealed/*.ndjson.zst | jq .` shows the records on disk (default root `/var/lib/sluice/spool`)
 - `make e2e` runs the e2e matrix against a spawned binary (Docker required for connector integration containers)
 - `make py-compat` runs the wire-compat suite against a spawned stack
 - `SLUICE_API_KEY=sk_live_... make smoke` runs the post-deploy harness against `sluice.donkeywork.dev` (or `SLUICE_BASE_URL=...`). Use this after every cluster roll. `SLUICE_SMOKE_QWEN=true` enables the cluster-side qwen redirect tests.

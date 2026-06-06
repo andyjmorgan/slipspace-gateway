@@ -24,11 +24,13 @@ func New(t *testing.T) *Harness {
 
 Test helpers:
 
-- `PostJSON(t, path, body, headers)` — synchronous JSON request.
-- `PostStream(t, path, body, headers)` — returns an SSE reader.
-- `ReadSealedRecords(t, connector)` — decompress + ndjson-parse the connector's sealed segments.
-- `ExpectRecord(t, connector, predicate, timeout)` — poll for a record matching a predicate.
-- `WebhookReceiver(t)` — spin up a local `httptest.Server` that captures POSTs for assertion.
+- `(*Harness).PostJSON(path, body, headers)` — synchronous JSON request.
+- `(*Harness).PostStream(path, body, headers)` — returns an SSE reader.
+- `(*Harness).Get(path, headers)` — synchronous GET request.
+- `(*Harness).ExpectEvent(subject, timeout)` — poll for a captured connector record matching `subject`.
+- `(*Harness).ExpectNoEvent(subject, window)` — assert no matching record arrives within `window`.
+
+The harness runs its own in-process capture server and translates each connector `Record` into an event via `emitRecord` — there is no standalone `WebhookReceiver(t)`, `ReadSealedRecords`, or `ExpectRecord`. Beyond `New(t)`, `NewWithOptions(t, opts)` constructs a harness with non-default `Options`. For session-scoped mockllm staging, `(*Harness).NewSession(t)` returns a `Session` with `Stage`, `Post`, `PostStream`, and `Captured`.
 
 Tests reading captured records **sort by `(ts_ns, instance_id, seq)`, never receive order** — see load-bearing invariant #8 in `CLAUDE.md`.
 

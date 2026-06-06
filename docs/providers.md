@@ -382,9 +382,9 @@ The forwarder uses `httputil.ReverseProxy` with `FlushInterval = -1` ([`internal
 
 ### `BufferingResponseWriter` swap under a resilience group
 
-When a request is bound to a resilience group, the orchestrator wraps the outbound `http.ResponseWriter` in a [`BufferingResponseWriter`](../internal/proxy/buffering_writer.go) before each attempt. The buffer accumulates the attempt's bytes in memory; only the first non-retryable outcome (commit) flushes the buffer to the real writer. A retryable failure discards the buffer and tries the next target.
+When a request is bound to a resilience group, the orchestrator wraps the outbound `http.ResponseWriter` in a [`BufferingResponseWriter`](../internal/proxy/buffering_writer.go) before each attempt. Despite the name, it never buffers body bytes — it stages only the response headers and makes a one-time commit-or-discard decision at the status line (`WriteHeader`). A status in the group's `failure_status_codes` set discards the attempt (the staged headers are dropped and the body bytes are drained/absorbed from the connection but never delivered) and the orchestrator tries the next target; any other status commits, after which all body bytes — including SSE chunks — pass straight through the `Flusher` chain unbuffered.
 
-This means a streaming response under a resilience group is buffered until the upstream commits to the attempt as non-retryable. Once committed, every subsequent chunk passes through the `Flusher` chain unmodified. Single-target bindings still flow through the orchestrator as a degenerate `ModeNone` policy ([`cmd/gateway/destination.go::singleTargetConfig`](../cmd/gateway/destination.go)), but with no retry alternative the first attempt is the answer — they effectively stream from byte one.
+The gateway never retries past the status line, so a streaming response under a resilience group is **not** buffered until the upstream commits — it streams from the first byte after the (non-retryable) status line, exactly like a single-target binding. Single-target bindings still flow through the orchestrator as a degenerate `ModeNone` policy ([`cmd/gateway/destination.go::singleTargetConfig`](../cmd/gateway/destination.go)), but with no retry alternative the first attempt is the answer — they too stream from byte one.
 
 ### SSE reassembly off the hot path
 

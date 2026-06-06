@@ -193,7 +193,7 @@ Anything else the client sends is forwarded verbatim unless a rule strips it via
 
 ## Outbound credential headers
 
-In managed mode, the destination builder mints exactly one credential header per request via [`credentialHeaderFor`](../cmd/gateway/destination.go) (`cmd/gateway/destination.go:163`). The header name and value format are read off the resolved selection target's `Auth` convention, with a per-provider default fallback:
+In managed mode, the destination builder mints exactly one credential header per request via [`credentialHeaderFor`](../cmd/gateway/destination.go) (`cmd/gateway/destination.go:220`). The header name and value format are read off the resolved selection target's `Auth` convention, with a per-provider default fallback:
 
 1. `target.Auth.Header` + `target.Auth.Format` (if `target.Auth != nil` and `Header` is set) — the format string's `{key}` placeholder is replaced with the credential.
 2. `target.Auth.Header` + the raw credential (if `Format` is empty).

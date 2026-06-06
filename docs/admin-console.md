@@ -224,7 +224,7 @@ All routes are mounted under `Prefix = "/admin"`. Every route is wrapped in `Ins
 
 | Method · Path | Response shape | Notes |
 |---|---|---|
-| `GET /admin/api/v1/dashboard/summary?window=1h\|24h` | `DashboardSummary` (`contracts/admin/dashboard.go`) | Totals, rates, p50/p95/p99, by-provider, by-endpoint, by-configuration, by-model, rules-fired, tags-fired, provider-health. `window` defaults to `MuxOptions.DashboardWindow` (24h). Provider-health is read over a separate 5m window (`MuxOptions.FiveMinWindow`). |
+| `GET /admin/api/v1/dashboard/summary?window=1h\|24h` | `DashboardSummary` (`contracts/admin/dashboard.go`) | Totals, rates, p50/p95/p99, by-provider, by-protocol, by-configuration, by-model, rules-fired, tags-fired, provider-health. `window` defaults to `MuxOptions.DashboardWindow` (24h). Provider-health is read over a separate 5m window (`MuxOptions.FiveMinWindow`). |
 | `GET /admin/api/v1/dashboard/timeseries?series=...&window=...` | `DashboardTimeseries` (`contracts/admin/dashboard.go`) | One series per charted curve. Single-series queries (RPS, error rate) return one entry; multi-series queries (p95 by provider) return one entry per group key. |
 
 ### Configuration inspector (read)
@@ -431,7 +431,7 @@ Each envelope holds:
 | `ResponseTotalBytes`, `ResponseTruncated` | Same semantics as request side. |
 | `ResponseAssembled` | JSON-encoded reconstruction of the response the provider would have returned non-streaming, built by the per-provider accumulator from the streamed chunks. Empty for non-streaming responses and for streams the accumulator could not parse. |
 | `AssemblyPartial` | `true` when the accumulator hit a malformed chunk or unknown delta type mid-stream and could not complete reassembly. `ResponseAssembled` then holds whatever was parseable up to that point. |
-| `RequestHeaders`, `ResponseHeaders` | HTTP header snapshots, with credential-bearing values replaced by `[REDACTED]` via `internal/headers.RedactSensitive` server-side before storage. |
+| `RequestHeaders`, `ResponseHeaders` | HTTP header snapshots, with credential-bearing values replaced by `[REDACTED]` via `internal/headers.Redactor.Redact` server-side before storage. |
 
 The byte-heavy fields are **zstd-compressed** before storage; the `Bytes()` accounting tracks compressed memory, so a 200 MiB budget commonly holds several GiB of logical content. Envelopes whose compressed size exceeds the entire budget are silently dropped — operators need a bigger budget. `Get` decompresses on the way out and bumps recency.
 

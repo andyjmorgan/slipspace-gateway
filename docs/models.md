@@ -124,8 +124,10 @@ typed fields and `Extra` back into one object:
 Because output is sorted, a round-trip is byte-equivalent *modulo key order*:
 the gateway does not promise to preserve the provider's original key ordering,
 only the full set of keys and their values. Tag enforcement (`json` tags on
-every exported field) is verified per package by the `TestX_AllFieldsTagged`
-reflection meta-tests.
+every exported field) is verified per package by a per-package
+`TestX_AllExportedFieldsHaveJSONTag` reflection meta-test (e.g.
+`TestChat_AllExportedFieldsHaveJSONTag`,
+`TestContentBlock_AllExportedFieldsHaveJSONTag`).
 
 > **Edge case — fields kept as `json.RawMessage`.** Some polymorphic or
 > string-or-array fields (e.g. `ChatCompletionRequest.Stop`,

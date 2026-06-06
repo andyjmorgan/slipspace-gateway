@@ -385,14 +385,14 @@ Each request emits one [`Record`](../contracts/connector/record.go) per matched 
   "attempts": [
     {
       "target": "qwen-ollama",
-      "started_at_ns": 1747921632000000000,
+      "started_at": "2025-05-22T13:47:12Z",
       "duration_ms": 480,
       "status_code": 503,
       "outcome": "failure_status"
     },
     {
       "target": "qwen-ollama-standalone",
-      "started_at_ns": 1747921632480000000,
+      "started_at": "2025-05-22T13:47:12.480Z",
       "duration_ms": 760,
       "status_code": 200,
       "outcome": "success"

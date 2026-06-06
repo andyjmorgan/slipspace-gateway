@@ -251,6 +251,8 @@ Empty fields wildcard (`method: ""` matches any method, `path: ""` matches any p
 
 The mock LLM exposes `/control/responses` (POST to stage, DELETE to clear), `/control/state` (GET the current pool), and `/control/captured` (GET the snapshot of inbound requests). The e2e harness and the wire-compat suite both drive this surface — they stage responses per-test and clear them via an autouse fixture.
 
+The mock LLM listens on the compose network alias `mockllm:5555` and is **not** published to the host by default — the `ports` mapping in `docker-compose.yaml` is commented out, so the gateway reaches it over the compose network but the host can't. Uncomment that mapping to curl this control surface (or any mock endpoint) on host `:5555`.
+
 Sessions are scoped via the `X-Sluice-Session-Id` header: stage a response with `?session=<id>`, send a gateway request that echoes the same session header, and the mock matches per-session first then falls back to the global pool. Lets one mockllm process serve multiple independent scenarios concurrently — important for parallel tests in the same run.
 
 ---

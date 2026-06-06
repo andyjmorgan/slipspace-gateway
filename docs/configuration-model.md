@@ -271,7 +271,7 @@ bindings:
 |---|---|---|---|
 | `protocol` | string | yes | The generative protocol this binding serves — one of the protocol constants (see [Protocol resolution](#protocol-resolution)). Unknown protocol aborts validation. |
 | `models` | []string | no | Client-requested model patterns this binding matches. Exact string, or a single **trailing-`*`** prefix wildcard (interior or multiple `*` is rejected). An **empty** model set is a **catch-all** for the protocol (default-permissive, invariant #1) — never a default-deny. |
-| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`config_validate.go:213`). |
+| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:231-235`, `validateBindings`). |
 | `group` | string | conditionally | Names a resilience group destination. Mutually exclusive with `provider`. |
 | `alias` | string | no | Rewrites the request body model name for the **single-provider** case (sugar for the binding's implicit target alias). **Ignored when `group` is set** — group targets carry their own aliases. |
 | `query` | map[string]string | no | Single-provider per-use query override. Ignored when `group` is set. |
@@ -380,7 +380,7 @@ api_keys:
 |---|---|---|---|
 | `id` | *uuid.UUID | no | Stable identifier the admin write API addresses the key by. `nil` is allowed in operator-authored YAML; the admin API mints one on create. Duplicate non-nil IDs abort validation. |
 | `secret` | string | yes | The bearer token clients present. Conventionally prefixed `sk_live_…` / `sk_dev_…`, but the loader does not enforce a prefix. Empty aborts validation; duplicate secrets abort. Authentication compares this in constant time. |
-| `name` | string | yes | Human-readable label surfaced in logs and reporting events. Carries no auth meaning. |
+| `name` | string | no | Human-readable label surfaced in logs and reporting events. Unvalidated — carries no auth meaning. |
 | `configuration` | string | yes | Name of the configuration this key resolves to. Unknown name aborts load with `ErrUnknownConfiguration`. |
 | `enabled` | bool | yes | Toggles the key without removing it. A disabled key authenticates structurally but is rejected before forwarding. |
 
@@ -417,7 +417,7 @@ Each connector entry must:
 
 ## `admin` block
 
-`admin:` is the management-console gate (`contracts/admin/admin.go::Config`). The block is **optional**; absent means the console never starts. When present and `enabled: true`, the gateway brings up a second `http.Server` bound to `bind_addr` serving the embedded SPA at `/` and the control-plane API under `/api/v1/*`.
+`admin:` is the management-console gate (`contracts/admin/admin.go::Config`). The block is **optional**; absent means the console never starts. When present and `enabled: true`, the gateway brings up a second `http.Server` bound to `bind_addr` serving the embedded SPA at `/admin/` and the control-plane API under `/admin/api/v1/*` (the `Prefix` const in `internal/admin/mux.go`).
 
 ```yaml
 admin:

@@ -82,10 +82,10 @@ The Record shape is the wire format every connector sees. Key fields:
 - `v` — **envelope** schema version, always `1` today. This is the outer container version; it is distinct from `schema_version` (below). Both are emitted on every record.
 - `schema_version` — the **per-record wire** version, always `2` today (bumped from `1` when the additive `session_id` / `session_id_source` fields landed). Bumps are additive-only: an older consumer reading a `schema_version: 2` record simply ignores the new keys and needs no migration. The two fields version independent concerns — `v` the envelope framing, `schema_version` the field set — so keep them apart when writing a consumer's compatibility check.
 - `id` — ULID minted at seal; the consumer dedupe key on retried deliveries.
-- `ts_ns`, `seq`, `instance_id` — sort key tuple. `ts_ns` is the request start in nanoseconds; `seq` is the per-instance monotonic counter; `instance_id` is the pod's hostname (`os.Hostname()`).
+- `ts_ns`, `instance_id`, `seq` — sort key tuple. `ts_ns` is the request start in nanoseconds; `instance_id` is the pod's hostname (`os.Hostname()`); `seq` is the per-instance monotonic counter.
 - `correlation_id` — joins together a request and its retries/tool follow-ups under one logical request.
 - `session_id`, `session_id_source` — the resolved session/bundle id (one level above `correlation_id`, grouping every request of one agent conversation) and the header name it was resolved from (e.g. `X-Sluice-Session-Id`, `Thread_id`). Both are omitted when no session header was present. Consumers bundle on the `(configuration, session_id)` tuple, never the bare id — client-controlled ids can collide across configurations. See [observability.md → Session bundling](observability.md#session-bundling) for the resolution chain.
-- `configuration`, `api_key_name`, `provider`, `endpoint`, `model`, `tags` — the post-rule resolved labels.
+- `configuration`, `api_key_name`, `provider`, `protocol`, `model`, `tags` — the post-rule resolved labels.
 - `request`, `response` — the captured request/response halves with method, path, headers, sha256, body length, and either inline `body` or `body_omitted: true` (set when oversize behaviour stripped the body — see [connector-bindings.md](connector-bindings.md#oversize-behaviour)).
 - `tokens` — provider-reported usage, when the upstream returned one.
 - `rules_fired` — ordered list of rules that matched, including action types and termination flag.
@@ -153,7 +153,7 @@ On each wake, the worker lists `sealed/` (chronological order by filename), and 
 4. On `*cc.Permanent` error → `Manager.Deadletter` moves the file to `deadletter/`.
 5. On `*cc.Retryable` error → sleep with backoff, retry, up to the per-segment cap. On the final failure, move to `deadletter/`.
 
-Retry backoff defaults (see [`internal/spool/options.go`](../internal/spool/options.go)):
+Retry backoff defaults (the `RetryOpts` tunables in [`internal/spool/options.go`](../internal/spool/options.go); the `fullJitter` / `nextBackoff` algorithm lives in [`internal/spool/backoff.go`](../internal/spool/backoff.go)):
 
 | Parameter | Default | Effect |
 |---|---|---|
