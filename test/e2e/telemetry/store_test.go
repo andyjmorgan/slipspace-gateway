@@ -65,6 +65,8 @@ func TestRequestEvent_RoundTrip(t *testing.T) {
 		TokensIn:      10,
 		TokensOut:     20,
 		SessionID:     "sess-1",
+		AgentID:       "agt-1",
+		AgentIDSource: "X-Claude-Code-Agent-Id",
 		GenAIContent:  []byte(`{"input_messages":[]}`),
 		Detail:        []byte(`{"tags":["a"]}`),
 	}
@@ -77,6 +79,9 @@ func TestRequestEvent_RoundTrip(t *testing.T) {
 	}
 	if got.Provider != "anthropic" || got.TokensIn != 10 || got.SessionID != "sess-1" {
 		t.Errorf("got = %+v", got)
+	}
+	if got.AgentID != "agt-1" || got.AgentIDSource != "X-Claude-Code-Agent-Id" {
+		t.Errorf("agent id round-trip = (%q, %q), want (agt-1, X-Claude-Code-Agent-Id)", got.AgentID, got.AgentIDSource)
 	}
 	if got.ObservedAt.IsZero() {
 		t.Error("ObservedAt should default to now()")

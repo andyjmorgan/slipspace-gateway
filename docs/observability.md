@@ -362,6 +362,7 @@ Per-request enrichment, in the order it gets layered on:
 |---|---|---|
 | `correlation_id` | auth middleware / routing middleware | As early as routing can resolve a request ID. Sourced from the inbound `X-Sluice-Correlation-Id` if present, otherwise a fresh UUIDv4 via `NewCorrelationID`. Also echoed back on the response as `X-Sluice-Correlation-Id`. |
 | `session_id` | correlation middleware | When a session header resolves (see [Session bundling](#session-bundling)). Empty when none is present. One level above `correlation_id` — groups every request of one conversation. |
+| `agent_id` | correlation middleware | When an agent header resolves (see [Agent id](#agent-id)). Empty when none is present. Identifies the agent/sub-agent that issued the request — one axis below `session_id`. |
 | `api_key_id` | auth middleware | After managed-mode API-key resolution. Empty for passthrough-mode requests. |
 | `configuration` | auth middleware | After the request's named configuration has been resolved. Bounded cardinality — operator-defined names. |
 | `provider`, `protocol`, `model` | the cmd/gateway final handler (forwarded path) / rules middleware (synthetic path) | At destination-finalisation time, after all rule mutations. Both writers call `WithRequestLabels(ctx, …)` and re-derive the per-request logger so reporters and downstream code see the post-rule values. |
@@ -389,7 +390,8 @@ When a configuration declares `connector_bindings`, the reporter at OnComplete b
 The `Record` shape is the wire format every connector destination sees. Key fields:
 
 - `correlation_id`, `provider`, `protocol`, `model`, `configuration`, `api_key_name` — the post-rule resolved labels.
-- `session_id`, `session_id_source` — the resolved session/bundle id and the header it came from (see [Session bundling](#session-bundling)). Both omitted when no session header was present. `schema_version` is `2` once these ship.
+- `session_id`, `session_id_source` — the resolved session/bundle id and the header it came from (see [Session bundling](#session-bundling)). Both omitted when no session header was present.
+- `agent_id`, `agent_id_source` — the resolved agent id and the header it came from (see [Agent id](#agent-id)). Both omitted when no agent header was present. `schema_version` is `3` once these ship (`2` carried only the session fields).
 - `request`, `response` — method, path, headers, sha256, byte length, and either inline `body` or `body_omitted: true` (set when oversize behaviour stripped the body).
 - `tokens` — provider-reported usage when the upstream returned one.
 - `tags` — the set of tags `addTag` actions attached, in first-attach order, deduplicated.
@@ -425,6 +427,24 @@ The first header that is **present, non-empty, and not redacted** wins; the head
 **Not a metric label.** Session id has unbounded cardinality, so it is deliberately kept off OTel meters — bundling is a records / live-feed concern, not a telemetry one (see [the reporting-vs-telemetry separation](#three-channels)). Consumers bundle on the **`(configuration, session_id)` tuple**, never the bare id: client-controlled ids can collide across unrelated configurations, and the tuple keeps two configurations' identically-named sessions distinct.
 
 **Scope.** The fallback chain is configured globally (the env var). Per-configuration overrides are intentionally not supported: a client sends a consistent session header regardless of which configuration it hits, and session resolution runs in the correlation middleware *before* the configuration is resolved — so a per-config chain would be both low-value and architecturally awkward. The built-in chain plus the global extras covers the real cases.
+
+---
+
+## Agent id
+
+Alongside the session, the correlation middleware resolves an **agent id** — the identifier of the agent (or sub-agent) that issued the request, one axis *below* `session_id`. It mirrors session bundling exactly: same Sluice-first resolution, same redaction handling, same off-the-meters cardinality rule.
+
+**Resolution order.** Sluice-first, then a fallback chain walked top-down:
+
+1. `X-Sluice-Agent-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
+2. `X-Claude-Code-Agent-Id` — Claude Code's acting-agent id (the one shipped default).
+3. Operator extras from [`SLUICE_AGENT_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's agent header is promoted with no code change.
+
+The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `agent_id_source` (the provenance the console labels the agent with). A candidate matching the redactor (built-ins plus `SLUICE_REDACT_EXTRA_HEADERS`) counts as *absent* and resolution falls through, so a promoted `agent_id` can never resurface a redacted value.
+
+**Where it surfaces.** The resolved id is echoed back on the response under `X-Sluice-Agent-Id`, enriches the per-request logger (`agent_id`), and is stamped onto the connector `Record` (`agent_id` + `agent_id_source`), the OTel span and operation-details event as **`gen_ai.agent.id`** (the GenAI-semconv home for an agent identifier), the admin live-messages entry, and the telemetry service's `request_events` row (where it is an indexed drill-down/filter dimension).
+
+**Not a metric label.** Like `session_id`, agent id has unbounded cardinality and is deliberately kept off OTel meters — it rides records / spans / events / the live feed / the telemetry DB, never a meter dimension (see [the reporting-vs-telemetry separation](#three-channels)).
 
 ---
 

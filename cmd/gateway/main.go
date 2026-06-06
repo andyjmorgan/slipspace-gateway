@@ -145,6 +145,10 @@ func run(ctx context.Context) error {
 	// first-class field. X-Sluice-Session-Id is authoritative; the
 	// shipped client defaults plus SLUICE_SESSION_ID_HEADERS follow.
 	sessionResolver := observability.NewSessionResolver(env.SessionIDHeaders)
+	// agentResolver promotes a client-supplied agent id the same way.
+	// X-Sluice-Agent-Id is authoritative; the shipped default
+	// (X-Claude-Code-Agent-Id) plus SLUICE_AGENT_ID_HEADERS follow.
+	agentResolver := observability.NewAgentResolver(env.AgentIDHeaders)
 	forwarder := proxy.New(proxy.Options{
 		Logger:                logger,
 		ObserverFactory:       observerFactory,
@@ -180,7 +184,7 @@ func run(ctx context.Context) error {
 	// log carries the correlation_id) and the data-plane chain, so
 	// any panic in routing/auth/bodycapture/rules/forwarder is
 	// converted to a logged 500 instead of crashing the goroutine.
-	root := correlationMiddleware(logger, sessionResolver, redactor, recoverMiddleware(obs.Meters, errs, captured))
+	root := correlationMiddleware(logger, sessionResolver, agentResolver, redactor, recoverMiddleware(obs.Meters, errs, captured))
 
 	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
 

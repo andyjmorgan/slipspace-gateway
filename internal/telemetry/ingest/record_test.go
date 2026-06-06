@@ -93,6 +93,8 @@ func sampleRecord() cc.Record {
 		Model:         "claude-x",
 		APIKeyName:    "key-1",
 		PolicyRef:     "pol-1",
+		AgentID:       "agt-1",
+		AgentIDSource: "X-Claude-Code-Agent-Id",
 		Tags:          []string{"a", "b"},
 		Request: cc.RequestPart{
 			Method:  "POST",
@@ -147,6 +149,9 @@ func TestRecord_Valid(t *testing.T) {
 	}
 	if e.GatewayID != "gw-a" {
 		t.Errorf("gateway id = %q, want gw-a (registry id, not instance id)", e.GatewayID)
+	}
+	if e.AgentID != "agt-1" || e.AgentIDSource != "X-Claude-Code-Agent-Id" {
+		t.Errorf("agent id = (%q, %q), want (agt-1, X-Claude-Code-Agent-Id)", e.AgentID, e.AgentIDSource)
 	}
 	if e.StatusCode != 200 || e.UpstreamStatus != 200 || e.LatencyMs != 500 {
 		t.Errorf("outcome = status %d/%d latency %d", e.StatusCode, e.UpstreamStatus, e.LatencyMs)

@@ -14,15 +14,15 @@ import (
 const headerCorrelationID = "X-Sluice-Correlation-Id"
 
 // correlationMiddleware assigns a correlation ID (honouring the inbound
-// header when present), resolves the session/bundle id from the request
-// headers, enriches the per-request logger with both, echoes the
-// correlation ID and the resolved session ID on the response, and stores
-// both on the request context for downstream surfaces.
+// header when present), resolves the session/bundle id and the agent id from
+// the request headers, enriches the per-request logger with all three, echoes
+// the correlation ID and the resolved session/agent IDs on the response, and
+// stores them on the request context for downstream surfaces.
 //
-// Session id is promoted to context (and onto records, spans, and the
-// live feed) but never becomes an OTel metric label — it has unbounded
-// cardinality and bundling is a records/live-feed concern, not telemetry.
-func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.SessionResolver, redactor *headers.Redactor, next http.Handler) http.Handler {
+// Session id and agent id are promoted to context (and onto records, spans,
+// and the live feed) but never become an OTel metric label — both have
+// unbounded cardinality and are a records/live-feed concern, not telemetry.
+func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.SessionResolver, agents *observability.AgentResolver, redactor *headers.Redactor, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Extract any inbound W3C trace context (traceparent/baggage) so the
 		// gateway's gen_ai span nests under the caller's distributed trace
@@ -41,6 +41,12 @@ func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.Sess
 			ctx = observability.WithSessionID(ctx, sessionID, sessionSource)
 			logger = logger.With(observability.LogFieldSessionID, sessionID)
 		}
+
+		agentID, agentSource := agents.Resolve(r.Header, redactor.IsSensitive)
+		if agentID != "" {
+			ctx = observability.WithAgentID(ctx, agentID, agentSource)
+			logger = logger.With(observability.LogFieldAgentID, agentID)
+		}
 		ctx = observability.WithLogger(ctx, logger)
 
 		w.Header().Set(headerCorrelationID, id)
@@ -49,6 +55,11 @@ func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.Sess
 		// a client-specific header (Codex's Thread_id, etc.).
 		if sessionID != "" {
 			w.Header().Set(observability.SluiceSessionHeader, sessionID)
+		}
+		// Likewise echo the resolved agent id under the Sluice header, even
+		// when it arrived via a client-specific header (X-Claude-Code-Agent-Id).
+		if agentID != "" {
+			w.Header().Set(observability.SluiceAgentHeader, agentID)
 		}
 
 		logger.InfoContext(ctx, "request received",

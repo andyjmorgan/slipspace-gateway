@@ -6,9 +6,10 @@ import "encoding/json"
 // build carries. Bumps are additive-only — see the package docs.
 //
 // v2 added the additive SessionID + SessionIDSource fields (session
-// bundling). Older consumers reading a v2 record simply ignore the new
-// keys; the change requires no migration.
-const SchemaVersion = 2
+// bundling). v3 added the additive AgentID + AgentIDSource fields (agent
+// identification). Older consumers reading a newer record simply ignore the
+// new keys; the change requires no migration.
+const SchemaVersion = 3
 
 // Record is one captured request/response pair as it sits inside an
 // ndjson.zst batch. Consumers sort by (TsNs, InstanceID, Seq) and group by
@@ -54,6 +55,16 @@ type Record struct {
 	// (e.g. "X-Sluice-Session-Id", "Thread_id") — the provenance the
 	// console uses to label a bundle. Empty when SessionID is empty.
 	SessionIDSource string `json:"session_id_source,omitempty"`
+
+	// AgentID is the resolved agent id identifying the agent (or sub-agent)
+	// that issued the request — one axis below SessionID. Empty when no agent
+	// header was present.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// AgentIDSource is the header name AgentID was resolved from (e.g.
+	// "X-Sluice-Agent-Id", "X-Claude-Code-Agent-Id") — the provenance the
+	// console uses to label the agent. Empty when AgentID is empty.
+	AgentIDSource string `json:"agent_id_source,omitempty"`
 
 	// Configuration is the resolved configuration name (e.g. "production").
 	Configuration string `json:"configuration"`

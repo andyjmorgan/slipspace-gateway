@@ -29,6 +29,13 @@ type MessageEntry struct {
 
 	SessionIDSource string `json:"session_id_source,omitempty"`
 
+	// AgentID is the resolved agent id identifying the agent (or sub-agent)
+	// that issued this request; AgentIDSource is the header it came from.
+	// Both omitted when no agent header was present.
+	AgentID string `json:"agent_id,omitempty"`
+
+	AgentIDSource string `json:"agent_id_source,omitempty"`
+
 	// Provider, Protocol, Model carry the routed labels (post rule
 	// mutation).
 	Provider string `json:"provider,omitempty"`

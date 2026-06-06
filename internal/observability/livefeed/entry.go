@@ -28,6 +28,13 @@ type Entry struct {
 	SessionID       string
 	SessionIDSource string
 
+	// AgentID is the resolved agent id identifying the agent (or sub-agent)
+	// that issued this request; AgentIDSource is the header it came from.
+	// Both empty when no agent header was present. Lets the console filter
+	// the live pane by acting agent.
+	AgentID       string
+	AgentIDSource string
+
 	// Provider, Protocol, Model are the routed labels after rule
 	// mutation — same values that hit the connector pipeline's
 	// Record.
