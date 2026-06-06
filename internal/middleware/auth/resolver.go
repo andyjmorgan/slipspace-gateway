@@ -319,10 +319,11 @@ func extractBearer(v string) (string, bool) {
 
 // UpstreamCredentialHeader returns the (header name, header value)
 // pair the gateway uses to convey credential to provider for managed-
-// mode requests. Exported so downstream consumers — chiefly the
-// rules engine's ChangeApiKey action — can re-mint the credential
-// header for a post-rule provider without duplicating the per-
-// provider format table.
+// mode requests. Exported so the single credential mint site — the
+// gateway's destination builder (cmd/gateway/destination.go::
+// credentialHeaderFor) — can re-mint the header for a post-rule
+// changeApiKey override against the post-rule provider's format
+// without duplicating the per-provider format table (invariant #6).
 //
 // Unknown providers fall back to a Bearer Authorization swap so a
 // rule that retargets an as-yet-unmodelled provider still produces a

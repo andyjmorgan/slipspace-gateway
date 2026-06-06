@@ -60,7 +60,7 @@ func TestCredentialHeaderFor(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotName, gotValue := credentialHeaderFor(tc.target)
+			gotName, gotValue := credentialHeaderFor(tc.target, tc.target.Credential)
 			if gotName != tc.wantName {
 				t.Errorf("header name = %q, want %q", gotName, tc.wantName)
 			}

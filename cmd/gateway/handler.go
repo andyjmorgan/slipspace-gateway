@@ -85,7 +85,7 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 				Method:        r.Method,
 				Configuration: authResult.ConfigurationName,
 			})
-			dest, err := buildPassthroughDestination(pm, r.URL.Path, r.URL.Query(), authResult.Mode, authResult.DropHeaders, inboundAuthorization)
+			dest, err := buildPassthroughDestination(pm, r.URL.Path, r.URL.Query(), authResult.Mode, authResult.DropHeaders, inboundAuthorization, state.UpstreamCredentialOverride)
 			if err != nil {
 				log.ErrorContext(ctx, "forwarder: passthrough destination", "err", err.Error())
 				errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
@@ -127,7 +127,7 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 			Configuration: authResult.ConfigurationName,
 		})
 
-		dest, err := buildDestination(target, state.PathParams, authResult.Mode, authResult.DropHeaders, inboundAuthorization)
+		dest, err := buildDestination(target, state.PathParams, authResult.Mode, authResult.DropHeaders, inboundAuthorization, state.UpstreamCredentialOverride)
 		if err != nil {
 			log.ErrorContext(ctx, "forwarder: destination", "err", err.Error())
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")

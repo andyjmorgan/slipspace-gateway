@@ -65,6 +65,49 @@ func TestRedact_UpstreamCredentialsValuesReplaced(t *testing.T) {
 	}
 }
 
+func TestRedact_V2CredentialsValuesReplaced(t *testing.T) {
+	// v2 configurations serialize the provider credential map under the
+	// `credentials` key (contracts/config.Configuration.Credentials). The
+	// redactor must scrub these exactly as it does the v1 `upstream_credentials`
+	// key — missing it leaks provider API keys in cleartext.
+	in := []byte(`configurations:
+  production:
+    credentials:
+      openai: sk-openai-aaaabbbb
+      anthropic: sk-ant-ccccdddd
+      gemini: AIzaeeeeffff
+    rule_names: [route_claude]
+  internal-dev:
+    credentials:
+      openai: sk-openai-gggghhhh
+      gpt-oss: ""
+`)
+	out, err := configexport.Redact(in)
+	if err != nil {
+		t.Fatalf("Redact: %v", err)
+	}
+	got := string(out)
+	for _, plaintext := range []string{"sk-openai-aaaabbbb", "sk-ant-ccccdddd", "AIzaeeeeffff", "sk-openai-gggghhhh"} {
+		if strings.Contains(got, plaintext) {
+			t.Fatalf("plaintext credential %q survived redaction:\n%s", plaintext, got)
+		}
+	}
+	// Provider keys are operator-defined names, not secrets — they must survive.
+	for _, providerKey := range []string{"openai:", "anthropic:", "gemini:", "gpt-oss:"} {
+		if !strings.Contains(got, providerKey) {
+			t.Fatalf("provider key %q lost:\n%s", providerKey, got)
+		}
+	}
+	if !strings.Contains(got, "route_claude") {
+		t.Fatalf("rule_names list lost:\n%s", got)
+	}
+	// Three populated secrets in `production` plus one in `internal-dev`; the
+	// empty-string no-credential provider is redacted to the placeholder too.
+	if got, want := strings.Count(got, "***"), 5; got != want {
+		t.Fatalf("placeholder count = %d, want %d:\n%s", got, want, out)
+	}
+}
+
 func TestRedact_AdminPasswordReplaced(t *testing.T) {
 	in := []byte(`admin:
   bind_addr: 0.0.0.0:8081

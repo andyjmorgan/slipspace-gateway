@@ -72,8 +72,11 @@ func redactAPIKeysList(n *yaml.Node) {
 }
 
 // redactConfigurations walks the configurations mapping and redacts every
-// value in each configuration's upstream_credentials map. Mirrors
-// contracts/config.Configuration.UpstreamCredentials.
+// value in each configuration's credential map. It redacts under both the v2
+// key `credentials` (contracts/config.Configuration.Credentials) and the v1
+// key `upstream_credentials` (kept for back-compat with older snapshots) —
+// real v2 configs serialize provider API keys under `credentials`, so missing
+// it leaks them in cleartext.
 func redactConfigurations(n *yaml.Node) {
 	if n == nil || n.Kind != yaml.MappingNode {
 		return
@@ -84,7 +87,7 @@ func redactConfigurations(n *yaml.Node) {
 			continue
 		}
 		for j := 0; j+1 < len(cfg.Content); j += 2 {
-			if cfg.Content[j].Value != "upstream_credentials" {
+			if cfg.Content[j].Value != "credentials" && cfg.Content[j].Value != "upstream_credentials" {
 				continue
 			}
 			creds := cfg.Content[j+1]

@@ -202,6 +202,7 @@ func buildPassthroughDestination(
 	mode auth.Mode,
 	dropHeaders []string,
 	inboundAuthorization string,
+	override *string,
 ) (proxy.Destination, error) {
 	base, err := url.Parse(pm.BaseURL)
 	if err != nil {
@@ -237,24 +238,7 @@ func buildPassthroughDestination(
 		outgoing.Set(k, v)
 	}
 	drops := append([]string(nil), dropHeaders...)
-	switch {
-	case mode == auth.ModePassthrough:
-		if inboundAuthorization != "" {
-			outgoing.Set(auth.HeaderAuthorization, inboundAuthorization)
-		}
-	case target.Credential == "":
-		for _, h := range credentialHeaderNames {
-			drops = appendUnique(drops, h)
-		}
-	default:
-		name, value := credentialHeaderFor(target)
-		outgoing.Set(name, value)
-		for _, h := range credentialHeaderNames {
-			if h != name {
-				drops = appendUnique(drops, h)
-			}
-		}
-	}
+	drops = resolveCredentialHeaders(outgoing, drops, target, mode, override, inboundAuthorization)
 
 	return proxy.Destination{
 		BaseURL:         base,
