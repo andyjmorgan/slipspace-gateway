@@ -188,6 +188,37 @@ func TestObsMessageBody(t *testing.T) {
 
 // --- mapper units ---
 
+// TestMapBodyDecodesEscapedSSE pins the inverse of the gateway's
+// jsonBodyOrEscaped: a non-JSON body (an SSE stream) arrives stored as a JSON
+// string token and must be decoded back to raw text — real `event:`/`data:`
+// lines, not a quoted, escaped blob — so the inspector's Raw stream tab renders
+// it. A JSON object body passes through verbatim. Regression guard for the
+// telemetry inspector showing SSE wrapped in quotes with literal "\n".
+func TestMapBodyDecodesEscapedSSE(t *testing.T) {
+	rawSSE := "event: message_start\ndata: {\"type\":\"message_start\"}\n\n"
+	// The gateway wraps non-JSON bodies exactly this way before they ride the
+	// Record feed's json.RawMessage Body field.
+	wrapped, err := json.Marshal(rawSSE)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := mapBody("c", []store.Payload{
+		{Kind: store.KindRequestBody, Body: []byte(`{"model":"x"}`)},
+		{Kind: store.KindResponseBody, Body: wrapped},
+	}, nil, false)
+
+	if got.Response != rawSSE {
+		t.Errorf("response = %q, want decoded raw SSE %q", got.Response, rawSSE)
+	}
+	if got.ResponseTotalBytes != int64(len(rawSSE)) {
+		t.Errorf("response bytes = %d, want raw length %d", got.ResponseTotalBytes, len(rawSSE))
+	}
+	// A native JSON body is left untouched (no quote prefix → no unwrap).
+	if got.Request != `{"model":"x"}` {
+		t.Errorf("request = %q, want JSON body passed through verbatim", got.Request)
+	}
+}
+
 func TestSeriesValueAndUnit(t *testing.T) {
 	b := store.DashboardSeriesBucket{Requests: 60, Errored: 6, TokensIn: 7, TokensOut: 8, P50LatencyMs: 1, P95LatencyMs: 2, P99LatencyMs: 3}
 	cases := map[string]float64{
