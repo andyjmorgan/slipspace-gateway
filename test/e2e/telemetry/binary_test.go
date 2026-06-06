@@ -526,9 +526,16 @@ func TestE2E_StreamingResponseCaptured(t *testing.T) {
 	if code := svc.getJSON(t, "/api/v1/messages/sse-1/body", &body); code != http.StatusOK {
 		t.Fatalf("body status = %d", code)
 	}
-	// Raw SSE bytes survive on the response body (the Raw stream tab).
-	if !strings.Contains(body.Response, "delta") {
-		t.Errorf("raw SSE response body = %q", body.Response)
+	// Raw SSE bytes survive on the response body (the Raw stream tab), decoded
+	// back to their raw form — the gateway's JSON-string wrapping is reversed,
+	// so the inspector shows real `data:` lines and a real newline, not a
+	// quoted, escaped blob. Regression guard for the Raw stream tab rendering
+	// SSE as "…\n…" with literal backslash-n.
+	if want := "data: {\"delta\":\"hello\"}\n\n"; body.Response != want {
+		t.Errorf("raw SSE response body = %q, want decoded %q", body.Response, want)
+	}
+	if strings.HasPrefix(body.Response, `"`) || strings.Contains(body.Response, `\n`) {
+		t.Errorf("response still JSON-string-wrapped (quotes / literal \\n): %q", body.Response)
 	}
 	// The assembled rollup reaches the inspector's Response (assembled) tab.
 	if !strings.Contains(body.ResponseAssembled, `"text":"hello world"`) {

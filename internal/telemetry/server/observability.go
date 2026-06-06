@@ -423,11 +423,11 @@ func mapBody(correlationID string, payloads []store.Payload, genAIContent []byte
 	for _, p := range payloads {
 		switch p.Kind {
 		case store.KindRequestBody:
-			detail.Request = string(p.Body)
-			detail.RequestTotalBytes = int64(len(p.Body))
+			detail.Request = decodeInlineBody(p.Body)
+			detail.RequestTotalBytes = int64(len(detail.Request))
 		case store.KindResponseBody:
-			detail.Response = string(p.Body)
-			detail.ResponseTotalBytes = int64(len(p.Body))
+			detail.Response = decodeInlineBody(p.Body)
+			detail.ResponseTotalBytes = int64(len(detail.Response))
 		case store.KindSSERollup:
 			detail.ResponseAssembled = string(p.Body)
 		case store.KindRequestHeaders:
@@ -442,6 +442,25 @@ func mapBody(correlationID string, payloads []store.Payload, genAIContent []byte
 	// Only meaningful alongside an assembled rollup; harmless otherwise.
 	detail.AssemblyPartial = assemblyPartial
 	return detail
+}
+
+// decodeInlineBody renders a Record inline-body payload (the connector
+// contract's RequestPart/ResponsePart Body) back to display text. The gateway's
+// jsonBodyOrEscaped (cmd/gateway/reporter.go) stores JSON bodies verbatim but
+// wraps non-JSON bodies — SSE streams, plain text — as a JSON string token so
+// they're valid inside the json.RawMessage field. Reverse that here: a JSON
+// string token decodes back to its raw text, so a streamed response shows real
+// `event:` / `data:` lines on the Raw stream tab instead of a quoted, escaped
+// blob. JSON objects/arrays (non-streaming bodies) don't start with a quote and
+// pass through unchanged; a malformed string token falls back to the raw bytes.
+func decodeInlineBody(b []byte) string {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if json.Unmarshal(b, &s) == nil {
+			return s
+		}
+	}
+	return string(b)
 }
 
 // decodeHeaders parses a Record-feed header payload — a JSON object of
