@@ -19,6 +19,7 @@ This page is the operator reference for everything the gateway emits: every mete
    - [Admin](#admin)
    - [Errors](#errors)
    - [Crash safety](#crash-safety)
+   - [Provider drift](#provider-drift)
    - [Reserved](#reserved)
 4. [Runtime and process collectors](#runtime-and-process-collectors)
 5. [Histogram bucket boundaries](#histogram-bucket-boundaries)
@@ -49,7 +50,7 @@ The three channels are intentionally disjoint. Every signal the gateway emits be
 `internal/observability/setup.go` constructs the SDK MeterProvider with three potential readers:
 
 - **Prometheus exporter** — enabled when `gateway.prometheus.bind_addr` is non-empty. Registers an `otelprom` exporter against a fresh `prometheus.Registry` and exposes a `promhttp.Handler` the data plane mounts at `/metrics` on the Prometheus listener.
-- **OTLP exporter** — enabled when `gateway.otlp.endpoint` is non-empty. `gateway.otlp.protocol` selects between gRPC (`grpc`, default) and HTTP-protobuf (`http/protobuf`, also `http`). Wrapped in a `sdkmetric.PeriodicReader` so the SDK batches pushes on its own cadence.
+- **OTLP exporter** — enabled when `gateway.otlp.endpoint` is non-empty. `gateway.otlp.protocol` selects between gRPC (`grpc`, default) and HTTP-protobuf (`http/protobuf`, also `http`). Wrapped in a `sdkmetric.PeriodicReader` so the SDK batches pushes on its own cadence. Metrics export with **delta** temporality (`internal/observability/setup.go::deltaTemporality`) — sums and histograms go delta so the ingest side can SUM a window of points to an exact count, while up-down counters and the cb.state gauge stay cumulative (delta is undefined for them); the Prometheus reader is unaffected and stays cumulative. The endpoint is typically the central **telemetry service**, which ingests these meters plus the GenAI spans and events below — see [docs/telemetry-service.md](telemetry-service.md) for its OTLP ingest and the [Second cap](#genai-spans-and-events) it applies to assembled content.
 - **ManualReader** — **always attached**, regardless of the other two. The [snapshotter](#snapshotter) pulls from this reader on a configurable interval; nothing external consumes it. The cost when both Prom scrape and OTLP push are disabled is essentially zero — the reader only runs work when the snapshotter calls `Collect`.
 
 The same `MeterProvider` is also registered globally via `otel.SetMeterProvider`, so stray code reaching for the global meter still lands on the same instrument set.
@@ -89,6 +90,7 @@ The data-plane request lifecycle. Per-request counters fire **exactly once per i
 | Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|
 | `sluice.requests.total` | counter | `gen_ai.provider.name, gen_ai.request.model, gen_ai.operation.name, sluice.endpoint, sluice.configuration, http.response.status_code, error.type (failure), server.address/port` | 1 | Total requests completed. One increment per inbound request at OnComplete, after rule mutation and (for orchestrated requests) after the resilience orchestrator has resolved a final status. Sluice-namespaced convenience counter — the GenAI spec derives request count from the duration histogram `_count`; this is a spec-legal additive extra the admin console's per-dimension counting is built on. |
+| `sluice.config.hit` | counter | `sluice.configuration` | 1 | Requests resolved to a named configuration. One increment per inbound request at OnComplete, fired only when a configuration resolved (the reporter skips it when `r.configuration` is empty — `cmd/gateway/reporter.go::recordPerRequestMetrics`). The Sluice-namespaced by-configuration rollup the central telemetry service reads for its per-configuration dashboard panel, so a dashboard never scans the per-request record store (channel-2 meter, [invariant #4](../CLAUDE.md)). |
 | `gen_ai.client.operation.duration` | histogram | `gen_ai.provider.name, gen_ai.request.model, gen_ai.operation.name, sluice.endpoint, sluice.configuration, http.response.status_code, error.type (failure)` | s | End-to-end request duration, observed by the gateway as it calls upstream — the GenAI *client* vantage (Sluice is a client of the provider; it times the round trip, it does not generate tokens). Recorded alongside `sluice.requests.total` so the two share an attribute set and Grafana can join rate + quantile by the same dimensions. |
 | `gateway.active_requests` | up-down counter | (none) | 1 | Requests currently in flight. Incremented at OnRequestStart, decremented at OnComplete. |
 | `gen_ai.client.operation.time_to_first_chunk` | histogram | `gen_ai.provider.name, gen_ai.request.model, gen_ai.operation.name, sluice.endpoint` | s | Time from request acceptance to the first response chunk received from upstream (client vantage — time to *receive* the first chunk, not the server-side time to *generate* the first token). **Streaming requests only**, per the GenAI spec, which scopes this metric to streaming calls: a non-streaming response has no first chunk distinct from the whole body, so recording it there would only duplicate `operation.duration`. No `sluice.configuration` or status — it is a transport metric, not a billing one. |
@@ -109,7 +111,7 @@ Provider-reported token usage extracted from the upstream response body. All fou
 | `gateway.tokens.cached.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Share of `tokens.input.total` the provider served from its prompt cache and billed at the cached-read price. Informational; already counted in input, not a deduction. |
 | `gateway.tokens.cache_creation.total` | counter | `provider, endpoint, model, configuration, status_code` | 1 | Share of `tokens.input.total` billed at the cache-write premium. Anthropic-only today — OpenAI and Gemini cache writes are implicit and not separately billed, so this stays zero for them. |
 
-Token capture is gated on the live-feed response buffer being attached to context. When bodies are disabled (`SLUICE_LIVEFEED_BODIES_ENABLED=false`) tokens stay zero and the counters don't fire.
+Token capture is gated on the live-feed response buffer being attached to context. When body capture is disabled (`SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0`, the knob `ServerEnv.BodyCaptureEnabled` keys off — see [`internal/config/env.go`](../internal/config/env.go)) tokens stay zero and the counters don't fire.
 
 ### Rules
 
@@ -120,6 +122,9 @@ The rules engine instruments. Labels are bounded by the configured policy librar
 | `gateway.rule.matches.total` | counter | `rule_name, rule_id, terminated, action_count` | 1 | Rules that matched on a request. Bumped from the evaluator's match loop, after the condition matched and the actions ran. `terminated=true` iff a terminating action (`returnStatusCode`, `llmImpersonation`) short-circuited the pipeline. `action_count` is the number of action types that actually applied. |
 | `gateway.rule.errors.total` | counter | `rule_name, rule_id, error_kind` | 1 | Action execution failures during rule evaluation. `error_kind` is a small fixed taxonomy: `group_depth` (RuleGroup tree exceeded the configured cap), `action_apply` (an Apply call returned an error), `body_remarshal` (typed-body re-marshal failed). |
 | `gateway.rule.evaluation.duration` | histogram | `configuration` | s | Per-request rule-evaluation cycle duration. Sub-millisecond resolution since evaluation runs synchronously on the request path; the long tail captures pathological policies (deep groups, regex catastrophes). |
+| `sluice.rule.fired` | counter | `rule_name, sluice.configuration` | 1 | Rules that fired on a request, carrying the resolved configuration. One increment per drained rule match, emitted by the reporter at OnComplete (`cmd/gateway/reporter.go::recordRuleFired`) where the configuration is resolved. Distinct from `gateway.rule.matches.total` above: that one is evaluator-emitted with engine-introspection labels (`rule_name/rule_id/terminated/action_count`); this Sluice-namespaced counter swaps in `sluice.configuration` so the central telemetry service can roll up "rule X fired N times under configuration Y" without the gateway's rule→configuration map. It is the channel-2 meter the rules-fired dashboard panel reads ([invariant #4](../CLAUDE.md)); the same fact also rides `Record.rules_fired` (channel 3) for the per-request inspector, at a different altitude. |
+| `gateway.rewrite.applied.total` | counter | `action_type` | 1 | Body-field mutations that actually changed a request or response body. `action_type` is one of `rewriteField`, `removeField`, `appendField`. Bumped from the body-rewrite path (`internal/middleware/rules/bodyrewrite.go`), one increment per applied op. |
+| `gateway.rewrite.dropped.total` | counter | `action_type, reason` | 1 | Body-field mutations skipped without changing the body. `reason` is the fixed taxonomy from [`internal/bodypatch`](../internal/bodypatch/bodypatch.go): `path_traverses_primitive`, `append_non_array`, `template_ref_miss`, `streaming_response` (a response-side op on a streamed response), `apply_error`. The reason is always operator/taxonomy-derived, never client input. |
 
 `rule_id` is the UUID minted by the control plane on author; static YAML-authored rules leave it empty and `rule_name` is the stable handle.
 
@@ -168,13 +173,18 @@ Both crash-safety counters surface a panic that the gateway's `recover()` wrappe
 | `gateway.goroutine.panics.total` | counter | `site` | 1 | Panics caught by `safego.Go` in background goroutines (process kept alive). `site` is the identifier the caller passed to `safego.Go` (e.g. `bus.publisher.worker`, `bus.publisher.stop_join`). Implies an unhandled edge in a background worker; the parent caller doesn't see it because the panic was off the request path. |
 | `gateway.request.panics.total` | counter | `provider, endpoint` | 1 | Panics caught by the request-path recovery middleware (`cmd/gateway/recover.go`). The client received a 500 but the process stayed up. Implies a buggy middleware or handler is leaking panics — fix the underlying bug; do not rely on the recovery filter as a long-term substitute. |
 
+### Provider drift
+
+| Metric | Type | Labels | Unit | What it counts |
+|---|---|---|---|---|
+| `gateway.unmapped_fields.total` | counter | `gen_ai.provider.name, sluice.endpoint, sluice.unmapped_direction (request\|response), sluice.unmapped_field` | 1 | Provider fields this build does not model, detected on the typed request body and the reconstructed typed response. One increment per `(direction, field path)` at OnComplete (`cmd/gateway/reporter.go::recordUnmappedFields` → `emitUnmappedFields`); the same field set is logged once via a `unmapped provider fields detected` warning. The DynamicProperties safety net round-trips these intact (invariant #1), so a non-zero count is silent today — it is the provider-drift early-warning signal that a `protocols/` contract update is due. `sluice.unmapped_field` is the dotted JSON path; cardinality is bounded by the provider API surface, not by client input. Reporting stays separate from telemetry: the field paths ride the meter and the log, never the connector record ([invariant #4](../CLAUDE.md)). |
+
 ### Reserved
 
-Two counters exist in the registry but have no production call sites yet. They are deliberately reserved so v1.2+ wiring lands without adding instruments mid-release.
+One counter exists in the registry but has no production call site yet. It is deliberately reserved so v1.2+ wiring lands without adding an instrument mid-release.
 
 | Metric | Type | Labels | Unit | Intent |
 |---|---|---|---|---|
-| `gateway.unmapped_fields.total` | counter | (none, reserved) | 1 | Unknown fields detected on inbound provider payloads. The DynamicProperties safety net catches these at unmarshal time; once the bodycapture middleware wires up the side-channel report, this counter will fire and unmapped-field metadata will join captured connector records. |
 | `gateway.config_reload.total` | counter | (none, reserved) | 1 | Configuration reload attempts. Hot reload is a v1.2+ task; the counter is reserved against the eventual `fsnotify`-based reloader. |
 
 ---
@@ -183,7 +193,7 @@ Two counters exist in the registry but have no production call sites yet. They a
 
 In addition to the OTel-bridged `gateway.*` meters, the Prometheus `/metrics` endpoint exposes the Go runtime and process collectors registered against the same `prometheus.Registry`. These cover the runtime telemetry that `gateway.*` deliberately doesn't model — memory pressure, goroutine counts, fd usage, CPU time. They never replace the gateway's own counters; they sit alongside them.
 
-The registration happens in [`internal/observability/setup.go`](../internal/observability/setup.go) (~line 153):
+The registration happens in [`internal/observability/setup.go`](../internal/observability/setup.go) (~line 194):
 
 ```go
 reg.MustRegister(
@@ -420,6 +430,7 @@ The first header that is **present, non-empty, and not redacted** wins; the head
 
 ## Cross-references
 
+- [docs/telemetry-service.md](telemetry-service.md) — the central service that ingests the gateway's OTLP meters/spans/events (delta temporality, never-rejecting batch) and the connector records, and serves the dashboard/messages console.
 - [docs/resilience.md](resilience.md) — resilience.* and cb.* meters in their orchestrator context; multi-attempt record shape.
 - [docs/connectors.md](connectors.md) — destination types (s3, azure_blob, webhook) and per-type auth.
 - [docs/connector-bindings.md](connector-bindings.md) — per-configuration sampling, filter, oversize behaviour.

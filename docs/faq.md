@@ -7,17 +7,29 @@ batches, wiring Azure OpenAI, load-balancing, and applying rule changes live.
 Every example below is taken from a real test fixture or the live cluster policy,
 not invented — the file path is cited so you can `grep` the canonical form. The
 fullest single example is the selection engine's golden fixture
-(`internal/selection/selection_test.go`, `goldenV2`), which is the production
+(`internal/selection/selection_test.go`, the `golden` constant), which is the production
 config expressed in the current model.
 
 > **Config model note.** Sluice routes on the **v2 model**: a shared `providers`
 > catalogue (connections) plus per-configuration `bindings` (the router as data)
-> and `credentials`. Routing is config, not rule actions — there is no
-> `changeProvider`/`changeUrl`/`changeApiKey`/`useResiliencePolicy`. Rules are
-> now pure request/response **transforms** (tags, headers, body rewrites,
-> short-circuits). A few older pages under `docs/` still describe the previous
-> single-`providers.yaml` shape; where they disagree with this page and with
-> `contracts/config/model.go`, the code (and this page) win.
+> and `credentials`. Routing is config, not rule actions. The
+> `changeProvider`/`changeUrl`/`changeApiKey`/`useResiliencePolicy` actions are
+> **not gone** — they still parse, validate, round-trip, and apply to
+> `MutableState` (registered in `contracts/rules/action.go`) — but the v2 data
+> plane no longer consults the state they write, so they are **inert for
+> routing**: `changeUrl` (`state.UpstreamURL`) and `changeApiKey`
+> (`state.UpstreamCredentialOverride`) are written but never read;
+> `useResiliencePolicy` (`state.PolicyRef`) is ignored because the binding-derived
+> `ResilienceConfig` stashed on context wins and the data plane wires the name
+> lookup to `nil`; `changeProvider` (`state.Provider`) is overwritten per attempt
+> by the orchestrator's binding-derived provider switch before the final handler
+> reads it. Treat those four as no-ops and route via `bindings`/`groups` instead.
+> (`changeModelName` still works — it rewrites the typed body model and the path
+> param, both of which the data plane reads; a binding/group `alias` is the
+> last writer.) Rules are otherwise pure request/response **transforms** (tags,
+> headers, body rewrites, short-circuits). A few older pages under `docs/` still
+> describe the previous single-`providers.yaml` shape; where they disagree with
+> this page and with `contracts/config/model.go`, the code (and this page) win.
 
 ---
 
@@ -114,7 +126,7 @@ configurations:
       - { protocol: messages, models: ["claude-*"],     provider: anthropic }
 ```
 
-Source: `internal/selection/selection_test.go` (`goldenV2`). Model globs use a
+Source: `internal/selection/selection_test.go` (the `golden` constant) and `config-dev/policy.yaml`. Model globs use a
 trailing-`*` wildcard (`gpt-*`, `o3*`). The same provider can serve more than one
 protocol with **different** auth conventions per protocol — that's how
 Anthropic's native `messages` (`x-api-key`) and its OpenAI-compat `chat` surface
@@ -144,7 +156,7 @@ configurations:
       - { protocol: chat, models: ["qwen2.5-coder:7b"], group: qwen-load-balance }
 ```
 
-Source: `internal/selection/selection_test.go` (`goldenV2`). Per-target `alias`
+Source: `internal/selection/selection_test.go` (the `golden` constant). Per-target `alias`
 rewrites the body's model name when *that* target is picked, so one logical model
 maps to a different upstream id per provider. For weighted load-balance use
 `weight:` on targets; for ordered failover use `mode: failover` (declaration
@@ -331,7 +343,7 @@ configurations:
       - { family: messages_batches, provider: anthropic }
 ```
 
-Source: `config-dev/providers.yaml` + `internal/selection/selection_test.go`.
+Source: `config-dev/providers.yaml` (the three-path `messages_batches` family above is the full local-dev definition; the `golden` fixture in `internal/selection/selection_test.go` carries a trimmed two-path variant of the same family).
 
 A passthrough family differs from a normal binding in three ways:
 
@@ -366,7 +378,7 @@ configurations:
       - { protocol: responses, models: ["foundry-model-name"], provider: azure-foundry, alias: gpt-5.2-chat, tags: [foundry] }
 ```
 
-Source: `internal/selection/selection_test.go` (`goldenV2`). Here the client asks
+Source: `internal/selection/selection_test.go` (the `golden` constant). Here the client asks
 for `foundry-model-name`; the binding routes it to the Azure provider and `alias`
 rewrites the body's model to the deployment id `gpt-5.2-chat` the upstream
 expects. The `api-version` rides as a provider-level default query param (next

@@ -4,9 +4,11 @@ A **connector** is a destination the spool ships sealed segments to. Each connec
 
 Three connector types ship today: `s3`, `azure_blob`, and `webhook`. This page is the YAML reference for every per-type field, the auth modes each accepts, and the operational caveats that don't fit on the field table.
 
-For *how* records reach a connector — the binding evaluation — see [connector-bindings.md](connector-bindings.md). For *what happens once records are written to disk* — the spool runtime — see [spool.md](spool.md).
+**Two fundamentally different runtimes hide behind one YAML block.** `s3` and `azure_blob` are *disk-backed spool connectors*: each evaluated record lands on the connector spool, is batched into sealed `.ndjson.zst` segments, and an upload worker ships each segment with a retry budget, circuit breaker, and deadletter path. `webhook` is **not** spool-backed — it is a *real-time per-record pusher* ([`internal/telemetry/pusher`](../internal/telemetry/pusher/)) that POSTs each `cc.Record` as JSON the moment the request completes, from a bounded worker pool, dropping on a full queue. There is no disk queue, no segment, no retry budget, and no deadletter for webhook. Keep this split in mind throughout: the spool semantics on [spool.md](spool.md) apply to `s3`/`azure_blob` only.
 
-Source of truth: [`contracts/config/connectors.go`](../contracts/config/connectors.go) (struct shapes) and [`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) (per-type required fields). Implementations: [`internal/connector/s3/`](../internal/connector/s3/), [`internal/connector/azureblob/`](../internal/connector/azureblob/), [`internal/connector/webhook/`](../internal/connector/webhook/).
+For *how* records reach a connector — the binding evaluation — see [connector-bindings.md](connector-bindings.md). For *what happens once spool-backed records are written to disk* — the spool runtime — see [spool.md](spool.md). For the webhook push contract end-to-end (the telemetry-service ingest side included), see [telemetry-webhook.md](telemetry-webhook.md).
+
+Source of truth: [`contracts/config/connectors.go`](../contracts/config/connectors.go) (struct shapes) and [`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) (per-type required fields). Spool-backed implementations: [`internal/connector/s3/`](../internal/connector/s3/), [`internal/connector/azureblob/`](../internal/connector/azureblob/), built by [`internal/connector/factory/factory.go`](../internal/connector/factory/factory.go). The webhook pusher lives in [`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go) and is wired directly in [`cmd/gateway/main.go`](../cmd/gateway/main.go) (`setupPushers`) — it is **not** a `connector.Connector` and never reaches the factory (the factory rejects `webhook` as a safety net).
 
 ---
 
@@ -33,14 +35,14 @@ flowchart LR
         Bindings[configurations[N].<br/>connector_bindings]
     end
     Bindings -- references by name --> Conn
-    Conn --> Spool[spool track<br/>per connector]
-    Spool -- Upload --> Dest{Destination}
-    Dest --> S3[(S3 / MinIO /<br/>S3-compatible)]
-    Dest --> Az[(Azure Blob<br/>Storage)]
-    Dest --> WH[(HTTPS webhook<br/>receiver)]
+    Conn -- s3 / azure_blob --> Spool[spool track<br/>per connector]
+    Conn -- webhook --> Pusher[real-time pusher<br/>bounded worker pool]
+    Spool -- Upload sealed segment --> S3[(S3 / MinIO /<br/>S3-compatible)]
+    Spool -- Upload sealed segment --> Az[(Azure Blob<br/>Storage)]
+    Pusher -- POST cc.Record JSON --> WH[(HTTPS record<br/>receiver)]
 ```
 
-One `connectors:` entry per logical destination. Many configurations may bind the same connector with different sampling / filter overrides; the connector itself owns rotation policy, auth, and transport details. Different connector instances pointing at the same physical destination (two S3 buckets, two webhooks) are independent — each has its own spool track, its own retry budget, its own circuit breaker.
+One `connectors:` entry per logical destination. Many configurations may bind the same connector with different sampling / filter overrides; the connector itself owns rotation/transport policy and auth. The dispatch fork happens per record in [`cmd/gateway/reporter.go`](../cmd/gateway/reporter.go) (`dispatchRecord`): `s3`/`azure_blob` bindings enqueue onto the disk spool, `webhook` bindings hand the record to the matching pusher. Different connector instances are independent — each spool-backed connector has its own spool track, retry budget, and circuit breaker; each webhook connector has its own pusher with its own bounded queue and dropped/sent/failed counters.
 
 ---
 
@@ -94,7 +96,7 @@ connectors:
 | `max_bytes` | int (uncompressed bytes) | `67108864` (64 MiB) | The active segment seals when its accumulated uncompressed byte count reaches this. Zero falls back to the default. |
 | `max_age_seconds` | int (seconds) | `60` | The active segment seals when this much wall-clock time has elapsed since open. Zero falls back to the default. |
 
-Either trigger alone seals; whichever fires first rotates. Webhook tracks typically want both lower (e.g. 4 MiB / 5 s) for near-real-time delivery; S3/Azure tracks usually keep the defaults to amortise upload overhead.
+Either trigger alone seals; whichever fires first rotates. `rotation:` only affects spool-backed connectors (`s3`, `azure_blob`) — it governs how long records batch on disk before a segment uploads. Webhook connectors ignore `rotation:` entirely (each record is POSTed immediately, never batched into a segment), so the knob is meaningless for them; tune `timeout_ms` and the binding's `max_body_bytes` instead.
 
 ---
 
@@ -146,17 +148,21 @@ connectors:
 | `use_path_style` | bool | no | `false` (default) selects virtual-hosted addressing (`<bucket>.s3.region.amazonaws.com`); `true` selects path-style (`<endpoint>/<bucket>/<key>`). AWS prefers virtual-hosted; MinIO defaults to path-style. |
 | `auth` | object | depends | Required when no `workload_identity` SDK chain is available; see [s3 auth modes](#s3-auth-modes). |
 
-Cloud-storage-only fields (`bucket`, `region`, `endpoint_url`, `use_path_style`) and webhook-only fields (`url`, `secret_ref`, `timeout_ms`) are mutually exclusive — mixing them aborts the load.
+Cloud-storage-only fields (`bucket`, `region`, `endpoint_url`, `use_path_style`) and webhook-only fields (`url`, `secret_ref`, `gateway_id`, `timeout_ms`) are mutually exclusive — mixing them aborts the load.
 
 ### Object key layout
 
-The S3 connector partitions keys by date so a date-range scan against the bucket is cheap:
+The S3 connector partitions keys by instance and date so a per-pod, date-range scan against the bucket is cheap ([`internal/connector/s3/connector.go`](../internal/connector/s3/connector.go) `objectKey`):
 
 ```
-<prefix>/dt=YYYY-MM-DD/hour=HH/<instance_id>/<delivery_id>.ndjson.zst
+[<prefix>/]records/instance=<id>/date=YYYY-MM-DD/hour=HH/<unix_ns>-<seq>-<delivery_id>.ndjson.zst
 ```
 
-`dt`, `hour` come from the segment's earliest record timestamp; `instance_id` is the gateway pod's hostname; `delivery_id` is the ULID minted at seal time, stable across upload retries. This means a retried upload writes to the same key — S3's put-object semantics make this an idempotent overwrite, no duplicate object.
+- `<prefix>` — the optional `prefix:` field, slash-trimmed; omitted entirely when unset (the key then starts at `records/`).
+- `records/` — a fixed segment so audit objects share one root regardless of prefix.
+- `instance=<id>` — the gateway pod's stable `InstanceID` (`"local"` when unset). Concurrent replicas never collide because the instance partition differs.
+- `date=YYYY-MM-DD` / `hour=HH` — UTC, derived from the segment's earliest record timestamp (`TsMinNs`); the connector's clock is the fallback when a segment carries no timestamp.
+- `<unix_ns>-<seq>-<delivery_id>` — the segment filename stem. The on-disk segment is named `<unix_ns>-<seq>.ndjson.zst` ([`internal/spool/segment.go`](../internal/spool/segment.go) `segmentFilename`); the connector appends `-<delivery_id>` before the `.ndjson.zst` extension. `<delivery_id>` is the segment's stable delivery id, identical across upload retries, so a retried upload writes to the same key — S3's put-object semantics make this an idempotent overwrite, no duplicate object.
 
 ### s3 auth modes
 
@@ -189,7 +195,7 @@ The validator enforces that fields belonging to other modes (`sas_token_ref`, `a
 - **Bucket pre-creation is the operator's job.** The connector does not call `CreateBucket`.
 - **Retryable failures:** transport errors, 5xx, 429, throttling, slowdown. The spool's per-segment retry budget caps the blast radius.
 - **Permanent failures:** 4xx other than 429 (auth, permission denied, malformed request). The segment goes straight to deadletter.
-- **No object metadata customisation in v1.** The connector sets `Content-Type: application/x-ndjson` and `Content-Encoding: zstd` and that's it. No SSE-KMS key selection, no object tags, no metadata headers — a v1.2+ feature.
+- **No object metadata customisation in v1.** The `PutObject` call sets `ContentType: application/zstd` ([`internal/connector/s3/connector.go`](../internal/connector/s3/connector.go) `Upload`) and nothing else — no `Content-Encoding`, no SSE-KMS key selection, no object tags, no metadata headers. Those are a v1.2+ feature. The object body is the raw zstd-compressed ndjson segment; consumers decompress with zstd and read it line-delimited.
 
 ---
 
@@ -224,13 +230,13 @@ Like s3, mixing cloud-storage fields with webhook fields aborts. The s3-specific
 
 ### Blob key layout
 
-Same shape as s3:
+Byte-for-byte the same shape as s3 ([`internal/connector/azureblob/connector.go`](../internal/connector/azureblob/connector.go) `blobName`):
 
 ```
-<prefix>/dt=YYYY-MM-DD/hour=HH/<instance_id>/<delivery_id>.ndjson.zst
+[<prefix>/]records/instance=<id>/date=YYYY-MM-DD/hour=HH/<unix_ns>-<seq>-<delivery_id>.ndjson.zst
 ```
 
-The same partition fields. Azure Blob Storage's put-blob semantics make retried uploads idempotent overwrites.
+The same partition fields and the same `<unix_ns>-<seq>-<delivery_id>` filename derivation as s3 (see [Object key layout](#object-key-layout) above). Azure Blob Storage's put-blob semantics make retried uploads idempotent overwrites. The upload streams the raw zstd segment via `UploadStream`; no `Content-Type` or blob metadata is set in v1.
 
 ### azure_blob auth modes
 
@@ -264,98 +270,100 @@ The validator rejects s3-only refs (`access_key_id_ref`, `role_arn`, etc.) on az
 
 ## webhook connector
 
-Ships sealed segments to an HTTPS endpoint as POST requests. Useful when the consumer is your own service (logging pipeline, SIEM, custom enrichment) rather than a blob store.
+Pushes each evaluated `cc.Record` to an HTTPS endpoint as an individual POST, in real time, the moment the request completes. This is the gateway's *channel-3* record sink — the authoritative per-request log (headers, bodies, rule chain, resilience attempts) — and its canonical receiver is the central telemetry service's `/api/v1/ingest/record`, though any endpoint that verifies the signature can consume it.
+
+**Webhook is not spool-backed.** Unlike `s3`/`azure_blob`, there is no disk queue, no `.ndjson.zst` segment, no retry budget, no circuit breaker, and no deadletter. Delivery is best-effort: records flow from a bounded in-memory worker pool ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go)), and a full queue drops the record on the floor (bumping a `dropped` counter) rather than ever blocking the request path (invariant #2). The full end-to-end push contract — including the telemetry-service ingest side, the gateway registry, and secret management — is documented in [telemetry-webhook.md](telemetry-webhook.md); this section covers the gateway-side YAML and wire shape only.
 
 ### Fields
 
 ```yaml
 connectors:
-  - name: siem-ingest
+  - name: telemetry-records
     type: webhook
-    url: https://siem.internal.example.com/sluice/ingest
-    secret_ref: env:SIEM_WEBHOOK_SECRET
-    timeout_ms: 30000
-    rotation:
-      max_bytes: 4194304        # 4 MiB
-      max_age_seconds: 5
+    url: https://telemetry.example.com/api/v1/ingest/record
+    secret_ref: env:SLUICE_TELEMETRY_SECRET
+    gateway_id: prod-gateway-1
+    timeout_ms: 5000
 ```
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `url` | string (URL) | yes | The customer-supplied endpoint that receives POSTs. Scheme must be `http` or `https`. Loopback / private / link-local addresses are rejected at config-load and re-checked at call time (see [SSRF guard](#ssrf-guard)). |
-| `secret_ref` | secret_ref | yes | HMAC-SHA256 signing key. Resolved via [secret_ref indirection](#secret_ref-indirection). An empty resolved value aborts construction. |
-| `timeout_ms` | int (ms) | yes | Per-call HTTP timeout. Must be in `(0, 60000]`. |
+| `url` | string (URL) | yes | The endpoint each record is POSTed to. Scheme must be `http` or `https`. Loopback / private / link-local hosts are rejected at config-load unless the test-only override is set (see [SSRF guard](#ssrf-guard)). |
+| `secret_ref` | secret_ref | yes | HMAC-SHA256 signing key. Resolved via [secret_ref indirection](#secret_ref-indirection) at startup; a missing env var / unreadable file fails boot loudly rather than silently dropping every push. |
+| `gateway_id` | string | no | Sent as the `X-Sluice-Gateway-Id` header so a receiver that keys HMAC secrets per gateway (the telemetry-service registry) can look the secret up. Optional for a generic receiver that verifies the signature alone; **required** when pushing to the telemetry service. |
+| `timeout_ms` | int (ms) | yes | Per-push HTTP timeout. Must be in `(0, 60000]`. |
 
-Cloud-storage fields (`bucket`, `region`, `account`, `container`, etc.) and the `auth:` block are explicitly rejected on webhook connectors.
+`rotation:` and `auth:` are not used by webhook connectors, and cloud-storage fields (`bucket`, `region`, `account`, `container`, `endpoint_url`, `use_path_style`) are explicitly rejected at config-load ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) `validateWebhook`).
 
 ### Delivery contract
 
-For each sealed segment, the connector POSTs the raw `.ndjson.zst` bytes to `url` with these headers:
+For each evaluated record that passes its binding's sampling / filter / body-cap, the pusher marshals the `cc.Record` to JSON and POSTs that single object to `url` ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go) `send`). The body is **one JSON record**, not a compressed ndjson segment. Headers:
 
 | Header | Value | Notes |
 |---|---|---|
-| `Content-Type` | `application/x-ndjson` | The decompressed media type. |
-| `Content-Encoding` | `zstd` | The body is zstd-compressed. |
-| `X-Sluice-Signature` | `t=<unix_ts>,v1=<hex_hmac_sha256>` | HMAC of `"<ts>.<body>"` keyed by the resolved secret. The receiver should reject signatures with timestamp drift beyond a reasonable window (5 min is conventional). |
-| `X-Sluice-Delivery-Id` | The segment's ULID | **Stable across retries.** The receiver should dedupe on this. |
-| `X-Sluice-Connector` | The connector `name` | Diagnostic — tells the receiver which connector produced the delivery. |
-| `User-Agent` | `sluice-gateway/<version>` | Build version. |
+| `Content-Type` | `application/json` | The body is a single JSON-encoded `cc.Record`. |
+| `X-Sluice-Gateway-Id` | the `gateway_id` field | Identifies the sending gateway to the receiver's registry so it can select the right HMAC secret. Empty when `gateway_id` is unset. |
+| `X-Sluice-Signature` | `<hex_hmac_sha256>` | Hex-encoded HMAC-SHA256 of the **raw request body** under the resolved secret. No timestamp, no `t=`/`v1=` prefix — just the bare hex digest. |
+
+The standard Go `User-Agent` is sent (no custom build-version header). Body bodies above the binding's `max_body_bytes` (default 1 MiB for webhooks — [`contracts/config/connectors.go`](../contracts/config/connectors.go) `WebhookDefaultMaxBodyBytes`) are stripped or the record dropped *before* it reaches the pusher; see [connector-bindings.md](connector-bindings.md).
 
 ### Signature verification
 
-The HMAC is computed over `"<unix_ts>.<raw_body_bytes>"` with the shared secret. Verification, in pseudocode:
+The signature is the hex HMAC-SHA256 of the exact raw request body under the shared secret — nothing else is mixed in. Verification, in pseudocode:
 
 ```python
-ts, sig = parse_header(req.headers["X-Sluice-Signature"])  # "t=<ts>,v1=<hex>"
-expected = hmac.new(secret, f"{ts}.".encode() + req.body, hashlib.sha256).hexdigest()
-if not hmac.compare_digest(expected, sig):
+sig_hex = req.headers["X-Sluice-Signature"]                      # bare hex digest
+expected = hmac.new(secret, req.body, hashlib.sha256).hexdigest()
+if not hmac.compare_digest(expected, sig_hex):
     return 401
-if abs(time.time() - int(ts)) > 300:
-    return 401
+# record is one JSON cc.Record:
+record = json.loads(req.body)
 ```
 
-Both checks are mandatory. Skipping the timestamp window lets an attacker replay an intercepted delivery indefinitely; skipping the signature lets anyone post arbitrary data to the endpoint.
+The telemetry service does exactly this ([`internal/telemetry/registry/registry.go`](../internal/telemetry/registry/registry.go)): it selects the secret by `X-Sluice-Gateway-Id`, recomputes the HMAC over the body, and `hmac.Equal`-compares it to the supplied hex. There is **no** timestamp component and **no** replay window — those are not implemented. A receiver that wants replay protection must add its own freshness check from a field inside the record (e.g. the record's `ts_ns`), not from the signature.
 
-### Status code mapping
+### Outcome handling
 
-| Status | Treatment |
+There is no segment lifecycle, so there is no `uploading/` → `deadletter/` state machine. The pusher's `send` simply classifies each POST ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go)):
+
+| Outcome | Treatment |
 |---|---|
-| `2xx` | Success. Segment removed from `uploading/`. |
-| `429` | Retryable. The per-segment retry budget applies. |
-| `5xx` | Retryable. Same. |
-| `4xx` other than `429` | Permanent. Segment moves to `deadletter/`. |
-| `1xx`, `3xx` | Retryable. These are unexpected on a POST to a customer endpoint; classified as transient to ride out quirky load balancers without immediate deadletter. |
-| transport error (DNS, TLS, EOF, timeout) | Retryable. The spool's retry schedule covers transient network blips. |
+| `2xx` | Success. Bumps the `sent` counter. |
+| any non-`2xx` (4xx, 5xx, 1xx, 3xx) | Failure. Bumps the `failed` counter, logs at debug with the correlation id. The record is **not** retried and **not** deadlettered — it is gone. |
+| transport error (DNS, TLS, EOF, timeout) | Failure. Same as above: `failed`++, logged, dropped. |
+| JSON marshal error | Failure. `failed`++, dropped before any HTTP call. |
+| queue full at `Enqueue` time | Dropped before the worker pool ever sees it. Bumps the `dropped` counter (distinct from `failed`). |
+
+`dropped`, `sent`, and `failed` are exposed as `Pusher.Dropped()` / `Sent()` / `Failed()` for the gateway's own telemetry meters. Because every non-success path just drops, webhook delivery is strictly at-most-once and lossy under pressure — by design, so the request path never stalls on a slow or wedged receiver.
 
 ### SSRF guard
 
-Webhook URLs are validated twice — once at config-load, once at every call.
+The webhook URL is validated **once, at config-load** ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) `validateWebhook` → `rejectLocalOrPrivateHost`): the scheme is enforced to `http`/`https`, and a literal-IP host in a loopback, RFC1918-private, link-local, unspecified (`0.0.0.0/8`), or multicast range aborts the load. The pusher's HTTP client does **no** per-call DNS re-resolution check, so a DNS *name* that resolves to a private IP is not caught at dial time — the config-load guard only inspects literal IPs in the URL.
 
-- **Config-load:** the URL is parsed and its scheme is enforced to `http` or `https`. Literal IPs in private (RFC1918), link-local, or loopback ranges abort the load.
-- **Per-call:** before each upload, the URL host is re-resolved via DNS and every returned IP is checked against the denylist (loopback, private RFC1918, link-local, unspecified `0.0.0.0/8`, multicast). Hitting a denied address fails with `*Permanent` so the segment deadletters immediately — DNS rebinding cannot pivot a previously-valid URL into a private one.
-
-The runtime guard has one escape hatch:
+The guard has one escape hatch:
 
 | Env var | Default | Notes |
 |---|---|---|
-| `SLUICE_WEBHOOK_ALLOW_PRIVATE` | unset | Setting to `1` or `true` disables the per-call SSRF re-resolve guard for **every** webhook connector in the process. **Test-only.** The e2e harness sets this so its `httptest.Server` (which binds loopback) is reachable. **Never set this in production.** |
+| `SLUICE_WEBHOOK_ALLOW_PRIVATE` | unset | Setting to `1` or `true` makes config-load validation accept loopback / RFC1918 / link-local hosts for **every** webhook connector in the process. **Test-only.** The e2e harness sets it so its `httptest.Server` (bound to 127.0.0.1) can be wired as a webhook receiver. **Never set this in production.** |
 
-There is no per-connector opt-out — it's a process-global escape hatch by design, so a misconfiguration cannot quietly downgrade only one connector's security posture.
+It is a process-global flag by design, so a misconfiguration cannot quietly downgrade only one connector's posture.
 
 ### Caveats
 
-- **No retries with body changes.** The retry budget re-sends the exact same body; if the receiver returns a retryable error and then a permanent one on retry, the segment deadletters with whatever the final error was. There is no body mutation between attempts.
-- **No incremental delivery.** Each segment is one HTTP request. Segments above a few MiB compressed (which is rare with zstd on ndjson) will block the receiver for the duration; tune `max_bytes` smaller for webhook destinations.
-- **No support for receiver-provided idempotency keys.** The `X-Sluice-Delivery-Id` is the only dedupe identifier; receivers must use it.
+- **At-most-once, lossy under pressure.** A full queue, a slow receiver, or any non-2xx response drops the record permanently. There is no retry and no on-disk durability — use `s3`/`azure_blob` when you need an audit trail that survives backpressure.
+- **One record per request.** Each POST carries a single `cc.Record`; the receiver does not get batched ndjson. High request rates produce a high POST rate — size the receiver accordingly.
+- **No client-supplied idempotency header.** The record body carries its own identifiers (`correlation_id`, `ts_ns`); a receiver that needs dedupe uses those, not a transport header.
 
 ---
 
 ## Cross-references
 
 - [connector-bindings.md](connector-bindings.md) — the per-configuration knobs that decide which records reach each connector.
-- [spool.md](spool.md) — the disk-backed runtime; rotation, retry, breaker, recovery.
+- [spool.md](spool.md) — the disk-backed runtime for `s3`/`azure_blob`; rotation, retry, breaker, recovery.
+- [telemetry-webhook.md](telemetry-webhook.md) — the webhook push contract end-to-end, including the telemetry-service ingest side, the gateway registry, and HMAC secret management.
 - [configuration-model.md](configuration-model.md) — where the `connectors:` block sits in the YAML file allow-list.
 - [environment-variables.md](environment-variables.md) — `SLUICE_SPOOL_ROOT`, `SLUICE_WEBHOOK_ALLOW_PRIVATE`.
 - [`contracts/config/connectors.go`](../contracts/config/connectors.go) — struct shapes.
 - [`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) — per-type validators.
-- [`internal/connector/s3/`](../internal/connector/s3/), [`internal/connector/azureblob/`](../internal/connector/azureblob/), [`internal/connector/webhook/`](../internal/connector/webhook/) — implementations.
+- [`internal/connector/s3/`](../internal/connector/s3/), [`internal/connector/azureblob/`](../internal/connector/azureblob/) — spool-backed connector implementations; [`internal/connector/factory/factory.go`](../internal/connector/factory/factory.go) builds them.
+- [`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go) — the webhook real-time pusher; wired in [`cmd/gateway/main.go`](../cmd/gateway/main.go) (`setupPushers`) and dispatched in [`cmd/gateway/reporter.go`](../cmd/gateway/reporter.go) (`dispatchRecord`).

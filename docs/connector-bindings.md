@@ -83,7 +83,7 @@ Each binding entry's fields:
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `connector` | string | — (required) | Name of an entry in the top-level `connectors:` slice. Unknown name aborts load. |
-| `sampling` | float in `[0, 1]` | `1.0` (everything) | Fraction of records routed to this binding. |
+| `sampling` | float in `[0, 1]` | `1.0` (everything) | Fraction of records routed to this binding. The validator accepts `[0, 1]` inclusive, but the runtime treats any `sampling <= 0` as `1.0` (sends everything) — `0` does **not** disable the binding. See [Sampling](#sampling). |
 | `sampling_key` | enum | `correlation_id` | `correlation_id` (deterministic, retries stay grouped) or `random` (per-record). |
 | `max_body_bytes` | int (optional) | unset → per-type default (webhook 1 MiB; s3/azure none) | Per-record body cap. Unset applies the connector-type default; explicit `0` means no cap (the override); a positive value caps the larger of request/response body. See [Per-record body cap](#per-record-body-cap). |
 | `oversize_behaviour` | enum | `metadata_only` | What to do when the record's body exceeds the cap: `metadata_only` (strip body, ship metadata) or `drop_record` (skip entirely). |
@@ -105,7 +105,9 @@ A record that survives all three lands on the connector's spool track via `Spool
 
 ## Sampling
 
-`sampling` controls what fraction of records reach this binding. `1.0` (default) sends every record; `0.5` sends half; `0` sends none (effectively disables the binding without removing it).
+`sampling` controls what fraction of records reach this binding. `1.0` (default) sends every record; `0.5` sends half.
+
+**`0` does not disable the binding — it sends everything.** The runtime treats any `sampling <= 0` as `1.0`: `samplingIncludes` in [`cmd/gateway/binding.go`](../cmd/gateway/binding.go) opens with `if s <= 0 { s = 1.0 }`. Go's zero-value semantics make an explicit `sampling: 0` indistinguishable from an omitted field, and the validator ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go), `sampling must be in [0, 1]`) accepts `0` rather than rejecting it — so both collapse to "include everything." This is a deliberate footgun trade-off (a custom `UnmarshalYAML` shim to distinguish the two would cost more than it saves; see the `ConnectorBinding.Sampling` godoc in [`contracts/config/connectors.go`](../contracts/config/connectors.go)). To actually stop a binding from shipping, **remove it from `connector_bindings`**, or set a vanishingly small fraction like `0.0001` to keep the destination warm while dropping nearly all traffic.
 
 ```yaml
 sampling: 0.05               # 5%
@@ -214,7 +216,7 @@ Either outcome is logged at **ERROR** so the capping is never silent — an oper
  "max_body_bytes":1048576,"body_bytes":2202010}
 ```
 
-The message reads `...; record dropped` for `drop_record`. The log carries the effective cap that was hit (`max_body_bytes`) and the body length that tripped it (`body_bytes`), so a recurring oversize is easy to spot and re-tune.
+The message reads `...; record dropped` for `drop_record`. `logOversize` ([`cmd/gateway/reporter.go`](../cmd/gateway/reporter.go)) attaches `connector`, `connector_type`, the effective cap that was hit (`max_body_bytes`), and the body length that tripped it (`body_bytes`), so a recurring oversize is easy to spot and re-tune. The `correlation_id` (and `service` / `version`) are not arguments to that call — they come from the per-request enriched logger that `observability.FromContext(ctx)` returns, set once per request in [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) (`baseLogger.With(LogFieldCorrelationID, id)`). Because the reporter runs on the request context, every oversize breadcrumb is automatically keyed to the request's `correlation_id`.
 
 The cap **does not** truncate the body to fit. Either the body is captured in full or it is replaced with `BodyOmitted=true`. There is no head-only / partial body shape on the wire — keep that separation explicit so consumers can't accidentally read truncated content as authoritative.
 
@@ -231,7 +233,7 @@ configurations:
       - connector: prod-audit-s3
 ```
 
-Defaults across the board: `sampling=1.0`, `sampling_key=correlation_id`, `max_body_bytes=16 MiB` (s3 default), `oversize_behaviour=metadata_only`, no filter.
+Defaults across the board: `sampling=1.0`, `sampling_key=correlation_id`, `max_body_bytes` unset → **no cap** (s3 / azure_blob have no default body cap; only `webhook` defaults to 1 MiB), `oversize_behaviour=metadata_only`, no filter. Bodies are still bounded by the bodycapture middleware's 10 MiB inbound read limit regardless.
 
 ### 5% webhook sampling on errors only
 

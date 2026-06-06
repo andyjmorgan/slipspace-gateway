@@ -79,14 +79,18 @@ Each segment is an ndjson.zst file: one [`contracts/connector.Record`](../contra
 
 The Record shape is the wire format every connector sees. Key fields:
 
-- `v: 1` — wire schema version (always `1` today; bumps are additive-only).
+- `v` — **envelope** schema version, always `1` today. This is the outer container version; it is distinct from `schema_version` (below). Both are emitted on every record.
+- `schema_version` — the **per-record wire** version, always `2` today (bumped from `1` when the additive `session_id` / `session_id_source` fields landed). Bumps are additive-only: an older consumer reading a `schema_version: 2` record simply ignores the new keys and needs no migration. The two fields version independent concerns — `v` the envelope framing, `schema_version` the field set — so keep them apart when writing a consumer's compatibility check.
 - `id` — ULID minted at seal; the consumer dedupe key on retried deliveries.
-- `ts_ns`, `seq`, `instance_id` — sort key tuple. `ts_ns` is the request start in nanoseconds; `seq` is the per-instance monotonic counter; `instance_id` is the pod's hostname.
+- `ts_ns`, `seq`, `instance_id` — sort key tuple. `ts_ns` is the request start in nanoseconds; `seq` is the per-instance monotonic counter; `instance_id` is the pod's hostname (`os.Hostname()`).
 - `correlation_id` — joins together a request and its retries/tool follow-ups under one logical request.
+- `session_id`, `session_id_source` — the resolved session/bundle id (one level above `correlation_id`, grouping every request of one agent conversation) and the header name it was resolved from (e.g. `X-Sluice-Session-Id`, `Thread_id`). Both are omitted when no session header was present. Consumers bundle on the `(configuration, session_id)` tuple, never the bare id — client-controlled ids can collide across configurations. See [observability.md → Session bundling](observability.md#session-bundling) for the resolution chain.
 - `configuration`, `api_key_name`, `provider`, `endpoint`, `model`, `tags` — the post-rule resolved labels.
 - `request`, `response` — the captured request/response halves with method, path, headers, sha256, body length, and either inline `body` or `body_omitted: true` (set when oversize behaviour stripped the body — see [connector-bindings.md](connector-bindings.md#oversize-behaviour)).
 - `tokens` — provider-reported usage, when the upstream returned one.
 - `rules_fired` — ordered list of rules that matched, including action types and termination flag.
+- `upstream_status` — the HTTP status the provider returned. May differ from `response.status` (the status the client saw) when a rule rewrote it. Omitted when zero.
+- `upstream_error` — a transport-layer failure talking to the upstream (DNS, TLS, timeout). Empty when the request reached the provider, regardless of any provider-side error status.
 - `policy_ref`, `attempts` — set when a resilience policy orchestrated the request; one entry per attempt with `outcome` in {`success`, `failure_status`, `transport_error`, `cb_blocked`}.
 
 The zstd encoding is plain (no dictionary) and consumers can decompress with any standard zstd library. The format is intentionally **not** msgpack — ndjson lets an operator pipe a sealed segment through `zstd -dc | jq` for ad-hoc inspection without writing code.

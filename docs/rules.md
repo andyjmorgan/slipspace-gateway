@@ -2,7 +2,7 @@
 
 Sluice's rules engine is the request-shaping layer. It inspects a small read-only view of each in-flight request — provider, endpoint, model, headers, tags — and runs an ordered chain of operator-authored rules. Each matched rule fires one or more actions that mutate the destination, set a header, attach a tag, bind a resilience policy, or short-circuit the request with a synthetic response. Rules are defined in `policy.yaml` (or any merged file under `SLUICE_CONFIG_DIR`); configurations opt in by listing them in `rule_names`.
 
-**Two authoring paths, same schema.** Rules can be hand-edited in YAML (the source of truth on disk) **or** created and modified live via the admin write API (`POST/PUT/DELETE /admin/api/v1/config/rules[/{name}]` — see [`docs/admin-console.md → Rules write API`](admin-console.md#rules-write-api)). The admin console's visual editor drives that API; every mutation persists to `policy.yaml` atomically and applies to the next request through `config.Store.Replace` — no pod restart. Both paths produce the same on-disk wire format, so YAML hand-edits and API-driven edits compose cleanly: an operator can mass-author rules in YAML, then tweak individual rules through the SPA.
+**Two authoring paths, same schema.** Rules can be hand-edited in YAML (the source of truth on disk) **or** created and modified live via the admin write API (`POST/PUT/DELETE /admin/api/v1/config/rules[/{name}]` — see [`docs/admin-console.md → Config write API`](admin-console.md#config-write-api)). The admin console's visual editor drives that API; every mutation persists to `policy.yaml` atomically and applies to the next request through `config.Store.Replace` — no pod restart. Both paths produce the same on-disk wire format, so YAML hand-edits and API-driven edits compose cleanly: an operator can mass-author rules in YAML, then tweak individual rules through the SPA.
 
 This page is the operator's reference for **conditions** — every type, every operator, and the evaluator's behaviour around them. Actions get their own page: see [`docs/actions.md`](actions.md).
 
@@ -171,20 +171,20 @@ condition:
 
 ### `endpoint`
 
-Matches when the resolved endpoint equals `expectedEndpoint`. The endpoint is the routing match (e.g. `chat_completions`, `messages`, `models`), not the full path.
+Matches when the resolved endpoint equals `expectedEndpoint`. In the v2 model the endpoint is the **protocol** the inbound path selected (`chat`, `responses`, `messages`, `generate_content`, `embeddings`) or a **passthrough family** name (e.g. `messages_batches`), not the full path.
 
 | Field | Type | Notes |
 |---|---|---|
 | `type` | string | Always `"endpoint"`. |
 | `operator` | enum | Only `Equals` is meaningful. |
-| `expectedEndpoint` | string | The endpoint identifier — match the name declared on the provider's `accepted_paths`. |
+| `expectedEndpoint` | string | The endpoint identifier — a protocol name on the provider's `protocols` map (`chat` / `responses` / `messages` / `generate_content` / `embeddings`, the `Protocol*` constants in `contracts/config/model.go`) or a `passthrough` family name. |
 | `not` | bool | Inverts the match result. |
 
 ```yaml
 condition:
   type: endpoint
   operator: Equals
-  expectedEndpoint: chat_completions
+  expectedEndpoint: chat
 ```
 
 ### `modelName`

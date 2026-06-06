@@ -1,8 +1,12 @@
 # Providers
 
-A provider in Sluice is an upstream API target — OpenAI, Anthropic, Gemini, an in-cluster ollama, a self-hosted vLLM, anything that speaks one of the typed request shapes the gateway knows. The `providers:` block declares its base URL, the endpoint catalogue the gateway exposes for it, and the per-(provider, endpoint) credential conventions used when forwarding managed-mode requests.
+A provider in Sluice is an upstream **connection** — OpenAI, Anthropic, Gemini, an in-cluster ollama, a self-hosted vLLM, anything that speaks one of the wire shapes the gateway knows. The `providers:` block declares its base URL, the per-protocol upstream paths and credential conventions, the headers and query parameters every request to it carries, and any opaque passthrough families it exposes.
 
-This page is the operator's reference for `providers.yaml`. Every field on `Provider` and every field on `Endpoint` is enumerated, with the auth header resolution table and worked examples drawn from `config-dev/providers.yaml`.
+A provider is a *connection definition, not a credential holder*. The upstream key lives on a Configuration (`credentials.<provider>`), and is substituted into the protocol's auth `format` at request time. Routing — which provider serves a given request — is **not** declared here either: it lives in a Configuration's `bindings`, which map `(protocol, model)` to a provider or a resilience group.
+
+This page is the operator's reference for the provider half of the v2 config model. Every field on `Provider`, `ProviderProtocol`, `ProviderAuth`, and the passthrough types is enumerated, with the credential-header resolution table and worked examples drawn from [`config-dev/providers.yaml`](../config-dev/providers.yaml).
+
+> **v1 → v2.** Earlier releases declared a route table on each provider: `prefix`, `prefix_required`, an `endpoints` map with `accepted_paths`, `request_kind`, and per-endpoint `auth_header`/`auth_format`, with routing driven by `changeProvider` rules. That model is gone. The provider now declares only the connection (`base_url`, `required_headers`, `query`), the generative `protocols` it serves, and `passthrough` families. Routing is config data on the Configuration. If you are migrating a v1 `providers.yaml`, none of the `prefix*` / `accepted_paths` / `endpoints` fields survive.
 
 ---
 
@@ -12,30 +16,35 @@ This page is the operator's reference for `providers.yaml`. Every field on `Prov
 2. [Where it sits in the pipeline](#where-it-sits-in-the-pipeline)
 3. [Quick start](#quick-start)
 4. [YAML schema](#yaml-schema)
-5. [Auth header resolution](#auth-header-resolution)
-6. [The OpenAI-compat surface](#the-openai-compat-surface)
-7. [Route emission and prefix disambiguation](#route-emission-and-prefix-disambiguation)
-8. [Path placeholders](#path-placeholders)
-9. [Streaming behaviour](#streaming-behaviour)
-10. [Worked examples](#worked-examples)
-11. [Validation errors](#validation-errors)
-12. [Cross-references](#cross-references)
+5. [How a request reaches a provider](#how-a-request-reaches-a-provider)
+6. [Credential header resolution](#credential-header-resolution)
+7. [The OpenAI-compat surface](#the-openai-compat-surface)
+8. [Passthrough families](#passthrough-families)
+9. [Path placeholders](#path-placeholders)
+10. [Streaming behaviour](#streaming-behaviour)
+11. [Worked examples](#worked-examples)
+12. [Validation errors](#validation-errors)
+13. [Cross-references](#cross-references)
 
 ---
 
 ## Mental model
 
-> **A provider is a base URL plus a catalogue of endpoints. An endpoint is an inbound path pattern plus an upstream path plus a typed body shape.**
+> **A provider is a base URL plus a per-protocol auth convention plus any passthrough families. It declares *how to reach and authenticate* an upstream — never *when* it is chosen. Choosing a provider is the Configuration's job, via bindings on `(protocol, model)`.**
 
-Sluice does not auto-discover what an upstream API supports. Every accepted path is declared in YAML: the operator picks the inbound pattern (`/v1/chat/completions`), the outbound path on the upstream (also `/v1/chat/completions`, usually), and the typed `request_kind` the body capture middleware should deserialise into.
+Sluice does not auto-discover what an upstream supports, and a provider no longer carries a path catalogue. Instead:
+
+- The **inbound path is the protocol.** `/v1/chat/completions` is the `chat` protocol, `/v1/messages` is `messages`, `/v1beta/models/{model}:generateContent` is `generate_content`, and so on. The mapping is fixed in code — [`internal/selection/protocol.go::ProtocolForPath`](../internal/selection/protocol.go).
+- A **provider declares which protocols it serves** under `protocols:`, each with the upstream `path` to forward to and an optional per-protocol auth override.
+- A **Configuration's bindings** select a provider (or resilience group) for a `(protocol, model)` pair. Selection — [`internal/selection/selection.go::Select`](../internal/selection/selection.go) — walks the bindings in order and returns the first match.
 
 Provider names are referenced by:
 
-- **Configurations** — `upstream_credentials.<provider>` maps a provider to a credential.
-- **Rules** — the `provider` condition and the `changeProvider` action both name a provider.
-- **Resilience targets** — `targets[*].provider` names the provider the target dispatches against.
+- **Configurations** — `credentials.<provider>` holds the upstream key, and each `binding` names the provider (or group) it routes to. See [`Configuration`](../contracts/config/model.go) in `contracts/config/model.go`.
+- **Groups** — `groups.<name>.targets[*].provider` names the provider each resilience target dispatches against. See [`docs/resilience.md`](resilience.md).
+- **Rules** — the `provider` and `endpoint` (protocol) conditions match the *already-selected* provider/protocol; rules in v2 are pure request/response transforms (tags, header/body rewrites) and no longer control routing.
 
-When `changeProvider` re-targets a request mid-pipeline, the destination builder re-resolves the endpoint on the **new** provider (invariant 7 in [`CLAUDE.md`](../CLAUDE.md)). This is what makes the model-keyed redirect pattern work — `claude-*` on `/openai/v1/chat/completions` lands on anthropic's `chat_completions` endpoint with anthropic's credential header.
+When a request is bound to a resilience group, the orchestrator picks a target per attempt and the pipeline re-resolves that provider's transport via [`selection.ResolveTarget`](../internal/selection/selection.go) — the per-attempt provider switch is what makes failover and load-balance work without a route table (invariant 7 in [`CLAUDE.md`](../CLAUDE.md)).
 
 ---
 
@@ -43,18 +52,23 @@ When `changeProvider` re-targets a request mid-pipeline, the destination builder
 
 ```mermaid
 flowchart LR
-    A[Client request] --> B[routing<br/>provider+endpoint by path]
-    B --> C[auth]
-    C --> D[bodycapture<br/>by endpoint.request_kind]
-    D --> E[rules]
-    E --> F[resilience]
-    F --> G[forwarder<br/>destination = base_url + endpoint.path]
-    G --> H[upstream]
+    A[Client request] --> B[protocol<br/>path → protocol]
+    B --> C[auth<br/>configuration from headers]
+    C --> D[bodycapture<br/>typed body by protocol]
+    D --> E[selection<br/>binding → provider/group]
+    E --> F[rules<br/>transforms + tags]
+    F --> G[resilience<br/>per-attempt provider switch]
+    G --> H[final forward<br/>destination = base_url + protocol.path]
+    H --> I[upstream]
 ```
 
-Routing reads `accepted_paths` from every endpoint to build its index. Bodycapture reads `request_kind` to pick the typed deserialiser. The forwarder reads `base_url` + `endpoint.path` to construct the upstream URL, and the destination builder reads the auth-header override stack to pick the credential header.
+The chain is composed in [`cmd/gateway/handler.go::buildDataPlaneHandler`](../cmd/gateway/handler.go). The provider declaration is read by:
 
-The provider declaration is therefore touched by **routing**, **bodycapture**, **rules / resilience** (by name), and **the forwarder**. Get the YAML right and the rest of the pipeline follows.
+- **selection** — resolves the binding to a provider, then composes the effective transport (`base_url`, protocol `path`, `auth`, `required_headers`, `query`) into a fully-resolved [`selection.Target`](../internal/selection/selection.go).
+- **bodycapture** — picks the typed deserialiser from the protocol (not from the provider).
+- **the final handler** — [`cmd/gateway/destination.go::buildDestination`](../cmd/gateway/destination.go) reads the resolved `Target` to build the upstream URL and mint the credential header.
+
+Get the provider YAML right and the rest of the pipeline follows from the bindings.
 
 ---
 
@@ -66,23 +80,28 @@ The provider declaration is therefore touched by **routing**, **bodycapture**, *
 providers:
   openai:
     base_url: https://api.openai.com
-    prefix: openai
-    prefix_required: false
-    endpoints:
-      chat_completions:
+    protocols:
+      chat:
         path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions, /chat/completions]
-        accepts_streaming: true
-        request_kind: chat
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+      responses:
+        path: /v1/responses
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
       models:
-        path: /v1/models
-        method: [GET]
-        accepted_paths: [/v1/models, /models]
-        request_kind: passthrough
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+        paths:
+          - match: /v1/models
+            methods: [GET]
 ```
 
-This exposes `/openai/v1/chat/completions`, `/v1/chat/completions`, `/openai/chat/completions`, `/chat/completions`, `/openai/v1/models`, `/v1/models`, `/openai/models`, and `/models` — every `accepted_paths` entry emits both the prefixed and bare form because `prefix_required: false`. See [Route emission](#route-emission-and-prefix-disambiguation) for the rules.
+This says: openai is reachable at `https://api.openai.com`, it serves the `chat` and `responses` generative protocols (each forwarded to the path shown, authenticated with `Authorization: Bearer <key>`), and it exposes a `models` passthrough family. Nothing here decides *when* openai is chosen — that is a Configuration binding (see [How a request reaches a provider](#how-a-request-reaches-a-provider)).
 
 ### 30-second OpenAI-compat surface
 
@@ -90,37 +109,28 @@ This exposes `/openai/v1/chat/completions`, `/v1/chat/completions`, `/openai/cha
 providers:
   anthropic:
     base_url: https://api.anthropic.com
-    prefix: anthropic
-    prefix_required: true
     required_headers:
       anthropic-version: "2023-06-01"
-    endpoints:
+    protocols:
       messages:
         path: /v1/messages
-        method: [POST]
-        accepted_paths: [/v1/messages]
-        accepts_streaming: true
-        request_kind: messages
-        prefix_optional: true
-        auth_header: x-api-key
-        auth_format: "{key}"
-      chat_completions:
+        auth:
+          header: x-api-key
+          format: "{key}"
+      chat:
         path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-        auth_header: Authorization
-        auth_format: "Bearer {key}"
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
 ```
 
-Same provider, two endpoints, two different credential conventions. The native `/v1/messages` uses Anthropic's `x-api-key`; the OpenAI-compat `/v1/chat/completions` uses bearer. See [The OpenAI-compat surface](#the-openai-compat-surface).
+Same provider, two protocols, two credential conventions. The native `messages` protocol uses Anthropic's `x-api-key`; the OpenAI-compat `chat` protocol uses bearer. See [The OpenAI-compat surface](#the-openai-compat-surface).
 
 ---
 
 ## YAML schema
 
-The full schema is in [`contracts/config/providers.go`](../contracts/config/providers.go). What follows is the operator-facing summary.
+The canonical Go types are in [`contracts/config/model.go`](../contracts/config/model.go) — `Provider` (lines 50–77), `ProviderProtocol` (79–92), `ProviderAuth` (94–106), `PassthroughFamily` / `PassthroughPath` (108–131). What follows is the operator-facing summary.
 
 ### Top-level
 
@@ -128,92 +138,122 @@ The full schema is in [`contracts/config/providers.go`](../contracts/config/prov
 providers:
   <provider name>:
     base_url: https://api.example.com
-    prefix: example
-    prefix_required: true
     required_headers:
       x-api-version: "2024-10-01"
-    auth_header: Authorization
-    auth_format: "Bearer {key}"
-    endpoints:
-      <endpoint name>:
-        path: /v1/chat
-        method: [POST]
-        accepted_paths: [/v1/chat]
-        accepts_streaming: true
-        request_kind: chat
-        auth_header: x-api-key
-        auth_format: "{key}"
-        prefix_optional: false
+    query:
+      api-version: "2024-10-01"
+    protocols:
+      <protocol name>:
+        path: /v1/chat/completions
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
+      <family name>:
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+        paths:
+          - match: /v1/files
+            methods: [GET, POST]
 ```
 
 ### Provider fields
 
 | Field | Required | Notes |
 |---|---|---|
-| `base_url` | yes | Upstream root URL. The forwarder appends `endpoint.path` (after placeholder substitution) to this when proxying. |
-| `prefix` | no | URL path segment that disambiguates this provider when multiple providers share an `accepted_paths` entry. Empty means the provider only matches bare paths (legacy single-provider deploys). |
-| `prefix_required` | no | Default `false`. When `false`, every accepted path emits both `/<prefix><accepted_path>` and the bare `<accepted_path>` form. When `true`, only the prefixed form emits — except for endpoints that flip `prefix_optional: true`. With `prefix_required: true` and an empty `prefix`, validation fails with `ErrPrefixRequiredEmpty` — the provider would be unreachable. |
-| `required_headers` | no | Headers the gateway injects on every forwarded request to this provider. Use for static API-version pins like `anthropic-version: "2023-06-01"`. Inbound headers of the same name are overwritten. |
-| `auth_header` | no | Outgoing HTTP header name into which managed-mode credentials are injected for **every** endpoint of this provider. Empty defers to the per-endpoint override or, if that is also empty, to the per-provider default in [`auth.UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go). |
-| `auth_format` | no | Template for the credential value injected into `auth_header`. Contains exactly one `{key}` placeholder, substituted with the resolved credential at request time. Validator rejects: format set without header (silently ignored at runtime), and format with zero or multiple `{key}` placeholders. Only consulted when an override `auth_header` is in effect. |
-| `endpoints` | yes | Provider's endpoint catalogue keyed by logical name (e.g., `chat_completions`, `messages`, `models`). The key seeds the route index and shows up in telemetry as the resolved endpoint name. At least one endpoint required for the provider to be useful. |
+| `base_url` | yes | Upstream root URL. A protocol's `path` (after placeholder substitution) is appended to it when forwarding. Validation rejects an empty `base_url`. |
+| `required_headers` | no | Headers the gateway injects on every forwarded request to this provider, generative or passthrough. Use for static API-version pins like `anthropic-version: "2023-06-01"`. Inbound headers of the same name are overwritten. |
+| `query` | no | Default query-string parameters appended to every request to this provider (e.g. Azure's `api-version`). A binding or group target may add or override entries; the effective set is provider ∪ override, with the override winning ([`selection.mergeQuery`](../internal/selection/selection.go)). |
+| `protocols` | no* | The generative wire shapes this provider serves, keyed by protocol name (`chat`, `responses`, `messages`, `generate_content`, `embeddings` — the `ProtocolX` constants in [`contracts/config/model.go`](../contracts/config/model.go)). Each entry is a [`ProviderProtocol`](#providerprotocol-fields). |
+| `passthrough` | no* | The opaque/stateful endpoint families this provider exposes (e.g. Anthropic message batches), keyed by family name. Each entry is a [`PassthroughFamily`](#passthrough-family-fields). |
 
-### Endpoint fields
+*\*A provider must declare at least one of `protocols` or `passthrough`, or validation fails with `provider %q: declares no protocols or passthrough families`.*
+
+### `ProviderProtocol` fields
 
 | Field | Required | Notes |
 |---|---|---|
-| `path` | yes | Upstream path the gateway forwards to, appended to `provider.base_url`. May contain `{model}` placeholder for path-addressed APIs (Gemini's `generateContent`). |
-| `method` | yes | HTTP methods the endpoint accepts as a YAML list. The router rejects a method mismatch with 405. |
-| `accepted_paths` | yes | Inbound path patterns the gateway matches against the client request. Routing builds its index from this list. Each pattern emits one or two route entries — see [Route emission](#route-emission-and-prefix-disambiguation). |
-| `accepts_streaming` | no | Default `false`. Records whether the endpoint supports SSE streaming responses. The forwarder uses this to decide whether to keep the connection open and stream chunks vs buffer the response. Set `true` for chat/completions, generate_content, and messages on every provider. |
-| `request_kind` | yes | Names the typed request shape. One of: `passthrough`, `chat`, `responses`, `messages`, `generate_content`. The bodycapture middleware dispatches on this to deserialise the request body into the right model type with [`DynamicProperties`](../models/dynamic.go) preservation. New providers add a new kind here plus a case in the bodycapture switch — see [`internal/middleware/bodycapture/bodycapture.go`](../internal/middleware/bodycapture/bodycapture.go). |
-| `auth_header` | no | Outgoing HTTP header name for managed-mode credentials on this specific endpoint. Empty defers to the provider-level override, then to the per-provider default. Load-bearing for OpenAI-compat surfaces on Anthropic and Gemini — both want `Authorization: Bearer` on the OpenAI-compat endpoint rather than the provider's native `x-api-key` / `x-goog-api-key`. |
-| `auth_format` | no | Template for the credential value injected into the endpoint's `auth_header`. Same validation rules as the provider-level field — exactly one `{key}`, only consulted when a header override is in effect at this level. |
-| `prefix_optional` | no | Default `false`. When `true`, escapes `provider.prefix_required` for this single endpoint — bare `accepted_paths` emit as routes even when the rest of the provider's endpoints stay prefix-only. The canonical use is Anthropic's `/v1/messages`: bare so vanilla Anthropic SDKs work pointed at the gateway root, while the OpenAI-compat `/anthropic/v1/chat/completions` on the same provider stays prefix-only to avoid colliding with openai. No effect when `provider.prefix_required` is already `false` — the endpoint already emits both forms. |
+| `path` | no | Upstream path the gateway forwards to, appended to `base_url`. May contain placeholders the gateway substitutes — `{model}` and `{op}` for Gemini's path-addressed `generate_content` (see [Path placeholders](#path-placeholders)). A binding or group target may override the path per use. |
+| `auth` | no | Per-protocol credential convention ([`ProviderAuth`](#providerauth-fields)). Omit (`nil`) to defer to the provider-native default for the wire shape ([`auth.UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go)). The override is load-bearing for OpenAI-compat surfaces, where a provider's native protocol authenticates one way and its compat `chat` surface another (invariant 6 in [`CLAUDE.md`](../CLAUDE.md)). |
+
+### `ProviderAuth` fields
+
+| Field | Required | Notes |
+|---|---|---|
+| `header` | yes | Outgoing HTTP header name the credential is injected into — e.g. `Authorization`, `x-api-key`, `x-goog-api-key`, `api-key`. |
+| `format` | no | Template for the header value. Must contain exactly one `{key}` placeholder, substituted with the resolved upstream credential (e.g. `"Bearer {key}"` or `"{key}"`). Empty `format` means the raw credential is used as the header value. Validation rejects a `format` set without a `header` (`ErrAuthFormatWithoutHeader`) and a `format` with zero or multiple `{key}` placeholders (`ErrInvalidAuthFormat`). |
+
+### Passthrough family fields
+
+| Field | Required | Notes |
+|---|---|---|
+| `auth` | no | Credential convention for the family ([`ProviderAuth`](#providerauth-fields)); `nil` defers to the provider-native default. Resolved through the same mint site as protocol auth. |
+| `paths` | yes | The inbound path patterns this family claims, each with the methods it accepts. A pattern may contain `{name}` placeholders (e.g. `/v1/messages/batches/{id}/results`). See [Passthrough families](#passthrough-families). |
+
+Each `paths[*]` entry is a [`PassthroughPath`](../contracts/config/model.go): `match` (the inbound pattern, required) and `methods` (the accepted HTTP methods, required).
 
 ---
 
-## Auth header resolution
+## How a request reaches a provider
 
-The destination builder ([`cmd/gateway/handler.go::resolveCredentialHeader`](../cmd/gateway/handler.go)) is the **single mint site** for the upstream credential header in managed mode (invariant 6 in `CLAUDE.md`). It resolves the (header name, header value) pair by walking three levels of overrides:
+A provider is *reachable* but never *reached* until a Configuration binds it. The binding lives on the Configuration, not the provider:
+
+```yaml
+configurations:
+  dev:
+    credentials:
+      openai: sk-dev-mock
+      anthropic: sk-ant-dev-mock
+    bindings:
+      - { protocol: chat,     models: ["gpt-*", "o1*", "o3*"], provider: openai }
+      - { protocol: chat,     models: ["claude-*"],            provider: anthropic }
+      - { protocol: messages, models: ["claude-*"],            provider: anthropic }
+```
+
+At request time:
+
+1. **protocol** — the inbound path resolves to a protocol ([`ProtocolForPath`](../internal/selection/protocol.go)). `/v1/chat/completions` → `chat`.
+2. **auth** — the headers resolve to a Configuration.
+3. **bodycapture** — the body is parsed under the protocol's typed shape; the model name is extracted (or, for `generate_content`, taken from the path).
+4. **selection** — [`Select`](../internal/selection/selection.go) walks the Configuration's bindings in order; the first whose `protocol` equals the request protocol **and** whose `models` patterns match the request model wins. An empty `models` list is a catch-all for the protocol (default-permissive, invariant 1). No match → `ErrNoBinding` → 404.
+5. The matched binding names a `provider` (single target) or a `group` (resilience). [`resolveTarget`](../internal/selection/selection.go) composes the effective transport from the provider plus any per-binding/per-target overrides (`alias`, `query`, `path`).
+
+Model patterns reuse the connector-filter matcher: a trailing-`*` is a prefix match, otherwise exact-equal ([`matchesModelPatterns`](../internal/selection/selection.go)). Bindings, groups, and the full Configuration schema are documented in [`docs/configuration-model.md`](configuration-model.md) and [`docs/resilience.md`](resilience.md); this page covers only the provider side they reference.
+
+---
+
+## Credential header resolution
+
+[`cmd/gateway/destination.go::credentialHeaderFor`](../cmd/gateway/destination.go) is the **single mint site** for the upstream credential header in managed mode (invariant 6 in `CLAUDE.md`). By the time it runs, selection has already composed the effective auth onto the resolved `Target` (`Target.Auth` = the protocol's `auth`, or `nil`), so there is no per-request endpoint/provider override walk — the resolver is a two-branch function:
 
 ```mermaid
 flowchart TB
-    Start[managed-mode request<br/>has credential to inject] --> EndCheck{endpoint.auth_header<br/>set?}
-    EndCheck -- yes --> EndHeader[header = endpoint.auth_header]
-    EndHeader --> EndFmt{endpoint.auth_format<br/>set?}
-    EndFmt -- yes --> EndApply[value = format with key substituted]
-    EndFmt -- no --> EndRaw[value = raw credential]
-    EndCheck -- no --> ProvCheck{provider.auth_header<br/>set?}
-    ProvCheck -- yes --> ProvHeader[header = provider.auth_header]
-    ProvHeader --> ProvFmt{provider.auth_format<br/>set?}
-    ProvFmt -- yes --> ProvApply[value = format with key substituted]
-    ProvFmt -- no --> ProvRaw[value = raw credential]
-    ProvCheck -- no --> Default[fall back to<br/>auth.UpstreamCredentialHeader<br/>by provider name]
-    Default --> DefaultOAI{provider name}
-    DefaultOAI -- openai --> Auth1[Authorization: Bearer key]
-    DefaultOAI -- anthropic --> Auth2[x-api-key: key]
-    DefaultOAI -- gemini --> Auth3[x-goog-api-key: key]
-    DefaultOAI -- other --> Auth4[Authorization: Bearer key]
-    EndApply --> Done[set header on outbound]
-    EndRaw --> Done
-    ProvApply --> Done
-    ProvRaw --> Done
-    Auth1 --> Done
-    Auth2 --> Done
-    Auth3 --> Done
-    Auth4 --> Done
+    Start[managed-mode request<br/>credential non-empty] --> AuthCheck{Target.Auth set<br/>and header non-empty?}
+    AuthCheck -- no --> Default[auth.UpstreamCredentialHeader<br/>by provider name]
+    AuthCheck -- yes --> FmtCheck{Target.Auth.Format<br/>set?}
+    FmtCheck -- no --> Raw[value = raw credential]
+    FmtCheck -- yes --> Apply[value = format with key substituted]
+    Default --> ByName{provider name}
+    ByName -- anthropic --> A2[x-api-key: key]
+    ByName -- gemini --> A3[x-goog-api-key: key]
+    ByName -- openai / other --> A1[Authorization: Bearer key]
+    Raw --> Done[set header on outbound,<br/>drop all other credential headers]
+    Apply --> Done
+    A1 --> Done
+    A2 --> Done
+    A3 --> Done
 ```
 
 Resolution table:
 
-| Endpoint `auth_header` | Provider `auth_header` | Result |
-|---|---|---|
-| set | (any) | endpoint header wins; endpoint `auth_format` applied (raw credential if empty). |
-| empty | set | provider header wins; provider `auth_format` applied (raw credential if empty). |
-| empty | empty | fall back to per-provider default in `auth.UpstreamCredentialHeader` — `Authorization: Bearer {key}` for openai, `x-api-key: {key}` for anthropic, `x-goog-api-key: {key}` for gemini, and `Authorization: Bearer {key}` for any other provider name. |
+| `Target.Auth` (from the protocol's `auth`) | Result |
+|---|---|
+| `header` set, `format` set | header = `auth.header`; value = `auth.format` with `{key}` → credential. |
+| `header` set, `format` empty | header = `auth.header`; value = raw credential. |
+| `nil` (no override) | fall back to the per-provider default in [`auth.UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go). |
 
-Per-provider defaults (from [`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)):
+Per-provider defaults (from [`internal/middleware/auth/resolver.go::UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go)):
 
 | Provider name (literal match) | Default header | Default value |
 |---|---|---|
@@ -222,277 +262,245 @@ Per-provider defaults (from [`internal/middleware/auth/resolver.go`](../internal
 | `gemini` | `x-goog-api-key` | `<credential>` |
 | anything else | `Authorization` | `Bearer <credential>` |
 
-The fallback exists so a rule that retargets to an as-yet-unmodelled provider still produces a reasonable outgoing shape. If your custom provider needs a different convention, declare it with `auth_header` + `auth_format` on the provider so the destination builder never falls through to the default.
+The fallback exists so a binding that targets an as-yet-unmodelled provider still produces a reasonable outgoing shape. If your custom provider needs a different convention, declare `auth` on the protocol so the mint site never falls through to the default.
 
-The auth-header override path is also what `changeApiKey` re-uses when a rule rewrites the credential post-rule — the same `auth.UpstreamCredentialHeader` is called from the rules engine so the format table cannot fragment between mint sites.
+Whichever header is minted, [`buildDestination`](../cmd/gateway/destination.go) **drops every other credential header** in the closed set (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key` — `credentialHeaderNames` in [`cmd/gateway/handler.go`](../cmd/gateway/handler.go)) so a managed→other forward never leaks the inbound token. Two non-managed branches:
+
+- **Passthrough auth mode** — the inbound `Authorization` is forwarded verbatim and no managed credential is minted ([`buildDestination`](../cmd/gateway/destination.go), `mode == auth.ModePassthrough` branch).
+- **No-credential provider** — when the Configuration holds an empty credential for the provider (`credentials.<provider>: ""`), every credential header is stripped and none is set. This is the typical in-cluster ollama case.
+
+Passthrough-family requests resolve their credential through the same `credentialHeaderFor` ([`cmd/gateway/pipeline.go::buildPassthroughDestination`](../cmd/gateway/pipeline.go)), so the format table cannot fragment between generative and passthrough paths.
 
 ---
 
 ## The OpenAI-compat surface
 
-Anthropic and Gemini both expose OpenAI-compatible `/chat/completions` endpoints on their native APIs. The clients that hit those endpoints are written against the OpenAI SDK and send `Authorization: Bearer` — not anthropic's `x-api-key` or gemini's `x-goog-api-key`. The endpoint-level auth override is what lets the same provider declare two endpoints with two different credential conventions:
+Anthropic and Gemini both expose OpenAI-compatible `chat/completions` endpoints on their native APIs. The clients that hit those endpoints are written against the OpenAI SDK and send `Authorization: Bearer` — not anthropic's `x-api-key` or gemini's `x-goog-api-key`. The per-protocol `auth` override is what lets the same provider serve two protocols with two different credential conventions:
 
 ```yaml
 providers:
   anthropic:
-    prefix: anthropic
-    prefix_required: true
     base_url: https://api.anthropic.com
-    endpoints:
-      messages:
+    required_headers:
+      anthropic-version: "2023-06-01"
+    protocols:
+      messages:                      # native
         path: /v1/messages
-        accepted_paths: [/v1/messages]
-        request_kind: messages
-        prefix_optional: true
-        auth_header: x-api-key       # native — matches provider default
-        auth_format: "{key}"
-
-      chat_completions:
+        auth:
+          header: x-api-key
+          format: "{key}"
+      chat:                          # OpenAI-compat
         path: /v1/chat/completions
-        accepted_paths: [/v1/chat/completions]
-        request_kind: chat
-        auth_header: Authorization   # OpenAI-compat — bearer
-        auth_format: "Bearer {key}"
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
 ```
 
-The `messages` endpoint declares `auth_header: x-api-key` even though that's what the provider default would produce — explicit is better than relying on the default when the file already declares overrides for the sibling endpoint. The reader sees the convention without cross-referencing the default table.
+Same upstream credential (`credentials.anthropic` on the Configuration), two wire formats — `messages` mints `x-api-key`, `chat` mints `Authorization: Bearer`. Gemini follows the same pattern: its native `generate_content` uses `x-goog-api-key` while its `chat` protocol (`/v1beta/openai/chat/completions`) uses `Authorization: Bearer`.
 
-The same pattern applies to Gemini's `/v1beta/openai/chat/completions` — it's the OpenAI-compat endpoint on the gemini provider and uses `Authorization: Bearer` rather than the provider's native `x-goog-api-key`.
+This pairs with the model-keyed binding pattern. A Configuration that binds `chat` + `models: ["claude-*"]` to provider `anthropic` routes an OpenAI-SDK client sending `model: claude-...` against the gateway's `/v1/chat/completions` straight to anthropic's `chat` protocol — landing on `/v1/chat/completions` upstream with `Authorization: Bearer`, exactly what anthropic's compat surface wants. Without the per-protocol `auth` override, the mint site would fall through to anthropic's `x-api-key` default — wrong for the compat surface.
 
-This pairs with the model-keyed `changeProvider` rule pattern (v1.0.2). A rule on `/openai/v1/chat/completions` that matches `model: claude-*` and fires `changeProvider: anthropic` triggers the destination builder to:
-
-1. Re-resolve the endpoint on the new provider — `anthropic.chat_completions`.
-2. Pull the endpoint-level `auth_header: Authorization` and `auth_format: "Bearer {key}"`.
-3. Mint the outbound header from anthropic's credential.
-
-Without the endpoint-level override the destination builder would fall through to anthropic's default `x-api-key` — wrong for the OpenAI-compat surface. The override path is what makes the cross-provider redirect work transparently.
+> **v1 note.** This is the same capability the v1 docs described as the endpoint-level `auth_header`/`auth_format` override fired by a `changeProvider` rule. In v2 the override lives on `protocols.<name>.auth` and the cross-provider redirect is a binding, not a rule.
 
 ---
 
-## Route emission and prefix disambiguation
+## Passthrough families
 
-The route index is built at config-load time by expanding every `(provider, endpoint, accepted_path)` triple into one or two route entries:
+A passthrough family is an opaque, stateful endpoint group proxied **verbatim** — Anthropic's message-batches surface (create / get / results / cancel), a provider's files API, and similar. Passthrough requests are never typed, never GenAI-telemetried, never payload-captured; only header/query rewrites and plain HTTP metrics apply. See [`PassthroughFamily`](../contracts/config/model.go) and [`selection.MatchPassthrough`](../internal/selection/selection.go).
 
-```mermaid
-flowchart TB
-    Start[provider+endpoint with<br/>accepted_paths] --> PrefixCheck{provider.prefix<br/>empty?}
-    PrefixCheck -- no --> Prefixed[emit /prefix + accepted_path]
-    PrefixCheck -- yes --> SkipPrefixed[no prefixed emit]
-    Prefixed --> BareCheck{bare emit allowed?}
-    SkipPrefixed --> BareCheck
-    BareCheck -- prefix_required=false<br/>OR endpoint.prefix_optional=true --> Bare[emit accepted_path bare]
-    BareCheck -- prefix_required=true<br/>AND prefix_optional=false --> Done[no bare emit]
-    Bare --> Done
+Unlike generative protocols, a passthrough family is **selected by path pattern, not by model**:
+
+```yaml
+providers:
+  anthropic:
+    base_url: https://api.anthropic.com
+    required_headers:
+      anthropic-version: "2023-06-01"
+    passthrough:
+      messages_batches:
+        auth:
+          header: x-api-key
+          format: "{key}"
+        paths:
+          - match: /v1/messages/batches
+            methods: [POST, GET]
+          - match: "/v1/messages/batches/{id}"
+            methods: [GET, DELETE]
+          - match: "/v1/messages/batches/{id}/results"
+            methods: [GET]
 ```
 
-The rules:
+A family is exposed on a Configuration through a `passthrough_binding`:
 
-- If `provider.prefix` is set, every `accepted_path` emits `/<prefix><accepted_path>`.
-- If `provider.prefix_required` is `false` (the default), every `accepted_path` **also** emits the bare form.
-- If `provider.prefix_required` is `true`, the bare form is suppressed — except for endpoints that set `prefix_optional: true`, which emit the bare form anyway.
+```yaml
+configurations:
+  dev:
+    credentials:
+      anthropic: sk-ant-dev-mock
+    passthrough_bindings:
+      - { family: messages_batches, provider: anthropic }
+```
 
-Two providers can claim the same `accepted_path` as long as the resulting fully-resolved routes don't collide. The validator catches collisions and returns `ErrPathCollision`:
+At request time, when the inbound path does not resolve to a generative protocol ([`ProtocolForPath`](../internal/selection/protocol.go) returns `ok == false`), the gateway falls through to [`MatchPassthrough`](../internal/selection/selection.go), which walks the Configuration's `passthrough_bindings`, matches the path against each exposed family's `paths` patterns (capturing `{name}` placeholders), and checks the method:
 
-> Collisions are only possible when two providers both have `prefix_required: false` and share an accepted_path, or when two providers share both the same prefix and an accepted_path.
+- No family claims the path → `ErrNoPassthrough` → 404.
+- A family claims the path but not the method → `ErrMethodNotAllowed` → 405.
 
-In `config-dev/providers.yaml`, OpenAI is the default (`prefix_required: false`), Anthropic and Gemini are prefixed (`prefix_required: true`). The shared `/v1/models` claim doesn't collide because anthropic + gemini only emit the prefixed `/anthropic/v1/models` and `/gemini/v1beta/models` forms; the bare `/v1/models` is claimed by openai alone.
-
-The `prefix_optional` escape is what lets vanilla Anthropic SDKs (which hit `/v1/messages` directly) work against the gateway root. Anthropic's `messages` endpoint sets `prefix_optional: true`, so both `/v1/messages` and `/anthropic/v1/messages` route to anthropic — while the OpenAI-compat `/anthropic/v1/chat/completions` on the same provider stays prefix-only to avoid colliding with openai's bare `/v1/chat/completions`.
+The matched family's `auth` is resolved through the same [`credentialHeaderFor`](../cmd/gateway/destination.go) mint site as a generative protocol; `nil` family auth defers to the provider-native default. In telemetry, a passthrough request labels `endpoint` with the **family name** (e.g. `messages_batches`), not a protocol ([`cmd/gateway/handler.go::buildFinalHandler`](../cmd/gateway/handler.go)).
 
 ---
 
 ## Path placeholders
 
-`endpoint.path` supports a `{model}` placeholder for path-addressed APIs. The forwarder substitutes the placeholder from `state.PathParams["model"]` (populated by the bodycapture middleware from the deserialised request body):
-
-```yaml
-endpoints:
-  generate_content:
-    path: /v1beta/models/{model}:generateContent
-    accepted_paths: ["/v1beta/models/{model}:generateContent"]
-    request_kind: generate_content
-```
-
-Gemini's `generateContent` is the canonical example — the model name is in the URL, not the body. The bodycapture's `generate_content` deserialiser extracts the model from the inbound path; the forwarder re-inserts it into the upstream path via the same placeholder.
-
-If no `{model}` is present in the path, no substitution happens. If `state.PathParams["model"]` is empty for a path that wants it, the upstream URL contains a literal `{model}` segment, which the upstream will reject with 404 — surface this as a `passthrough` bug, not a routing issue.
-
----
-
-## Streaming behaviour
-
-`accepts_streaming: true` on an endpoint is the operator's declaration that the upstream may return Server-Sent Events. It does not by itself wire any streaming machinery — that's the forwarder's job. Three layers cooperate at request time to keep streams flowing end-to-end without buffering.
-
-### `http.Flusher` passthrough
-
-The forwarder uses `httputil.ReverseProxy` under the hood. `ReverseProxy.FlushInterval = -1` (set at construction in [`internal/proxy`](../internal/proxy)) tells the standard library to flush immediately on every write, which is the behaviour SSE requires. Every response writer in the gateway's wrapper stack — the recovery middleware's status recorder, the bodycapture's response tap, the resilience orchestrator's `BufferingResponseWriter` — implements `http.Flusher` and forwards the `Flush()` call through to the wrapped writer. PR #45 (`fix(admin): forward http.Flusher through statusRecorder`) was the last load-bearing fix here; the contract that **every** wrapper preserves `Flusher` is what keeps SSE chunks landing at the client unbatched.
-
-### `BufferingResponseWriter` swap on resilience policies
-
-When a request is bound to a resilience policy (`useResiliencePolicy` action fired), the orchestrator wraps the outbound `http.ResponseWriter` in a [`BufferingResponseWriter`](../internal/proxy/buffering_writer.go) before each attempt. The buffer accumulates the attempt's bytes in memory; only the first non-retryable outcome (commit) flushes the buffer to the real `http.ResponseWriter`. A retryable failure discards the buffer and tries the next target.
-
-This means: **a streaming response under a resilience policy is buffered until the upstream commits to the request as non-retryable.** Once the orchestrator commits, every subsequent chunk passes through the `Flusher` chain unmodified — but the first chunk only reaches the client after the orchestrator has decided "this attempt is the answer." For status-code-driven retries this is invisible (the upstream emits status + headers + first chunk together); for transport-error retries it's why the first byte takes longer when the breaker is having a bad day. Single-shot requests (no policy bound) never go through `BufferingResponseWriter` — they stream from byte one.
-
-### Per-provider response accumulator
-
-While the forwarder is streaming chunks to the client, the admin live-feed's body store retains the raw SSE bytes (per `SLUICE_ADMIN_LIVE_FEED_BODY_BYTES`). At OnComplete the reporter calls [`internal/observability/livefeed/accumulator`](../internal/observability/livefeed/accumulator) — a per-endpoint dispatcher that reassembles the streamed chunks into the JSON shape the provider would have returned non-streaming.
-
-The package keys on endpoint name (not provider), so the OpenAI-compat surfaces on Anthropic and Gemini reuse OpenAI's chunk reassembler under the same `chat_completions` name:
-
-| Endpoint name | Reassembled shape | Source file |
-|---|---|---|
-| `chat_completions` | `*openaichat.ChatCompletionResponse` | [`openai_chat.go`](../internal/observability/livefeed/accumulator/openai_chat.go) |
-| `messages` | `*messages.MessagesResponse` | [`anthropic_messages.go`](../internal/observability/livefeed/accumulator/anthropic_messages.go) |
-| `generate_content` | `*content.GenerateContentResponse` | [`gemini_content.go`](../internal/observability/livefeed/accumulator/gemini_content.go) |
-| `responses` | `*openairesponses.ResponsesResponse` | [`openai_responses.go`](../internal/observability/livefeed/accumulator/openai_responses.go) |
-| anything else | `Result{}` (Recognised=false; admin UI surfaces raw bytes) | dispatch only |
-
-The reassembled JSON lands on the body envelope as `ResponseAssembled` ([`docs/admin-console.md → Body capture`](admin-console.md#body-capture)) so the admin console's body modal can render streaming traffic against the same mental model as non-streaming. If the accumulator hits a malformed chunk or an unknown delta type mid-stream, it sets `AssemblyPartial: true` and returns whatever was parseable up to that point — the UI then knows to caveat the assembled view.
-
-The accumulator runs **after** the response has finished writing to the client. The hot path is unaffected — the cost lands at OnComplete, off the critical path, with no flushing delay introduced by reassembly.
-
----
-
-## Worked examples
-
-### Declaring a custom in-cluster ollama provider
-
-Goal: expose an in-cluster ollama at `http://ollama.ollama.svc.cluster.local:11434` as a provider named `qwen-ollama`, prefixed so it doesn't collide with the openai default.
-
-```yaml
-providers:
-  qwen-ollama:
-    base_url: http://ollama.ollama.svc.cluster.local:11434
-    prefix: qwen-ollama
-    prefix_required: true
-    endpoints:
-      chat_completions:
-        path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-      models:
-        path: /v1/models
-        method: [GET]
-        accepted_paths: [/v1/models]
-        request_kind: passthrough
-```
-
-Routes emitted:
-
-- `/qwen-ollama/v1/chat/completions` → `POST http://ollama.ollama.svc.cluster.local:11434/v1/chat/completions`
-- `/qwen-ollama/v1/models` → `GET http://ollama.ollama.svc.cluster.local:11434/v1/models`
-
-No bare emit because `prefix_required: true` and no endpoint sets `prefix_optional`. Ollama's `/v1/chat/completions` is OpenAI-compatible and accepts bearer tokens; the per-provider default for an unknown provider name is `Authorization: Bearer {key}`, which is exactly what ollama wants — no `auth_header` override needed.
-
-To wire a Configuration to this provider, add the credential under `upstream_credentials`:
-
-```yaml
-configurations:
-  internal-dev:
-    upstream_credentials:
-      qwen-ollama: ollama-static-token
-```
-
-For a credential-less ollama (the typical local-dev setup), omit the entry; the destination builder takes the `credStripNoSet` branch and forwards no credential header at all.
-
-### Declaring an OpenAI-compat endpoint on an existing provider
-
-Goal: add the OpenAI-compat `/chat/completions` surface to a provider that already exposes its native API. Gemini in `config-dev/providers.yaml`:
+A protocol's `path` (and a passthrough `match`) may contain `{name}` placeholders the gateway substitutes from the request's path params. Gemini's `generate_content` is the canonical generative case — the model and operation ride in the URL, not the body:
 
 ```yaml
 providers:
   gemini:
     base_url: https://generativelanguage.googleapis.com
-    prefix: gemini
-    prefix_required: true
-    endpoints:
+    protocols:
       generate_content:
-        path: /v1beta/models/{model}:generateContent
-        method: [POST]
-        accepted_paths: ["/v1beta/models/{model}:generateContent"]
-        accepts_streaming: true
-        request_kind: generate_content
-        prefix_optional: true
-
-      chat_completions:
-        path: /v1beta/openai/chat/completions
-        method: [POST]
-        accepted_paths: [/v1beta/openai/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-        auth_header: Authorization
-        auth_format: "Bearer {key}"
+        path: "/v1beta/models/{model}:{op}"
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
 ```
 
-The native `generate_content` endpoint uses the provider default (`x-goog-api-key`) and is exposed bare via `prefix_optional` so the official Gemini SDK works pointed at the gateway root. The OpenAI-compat `chat_completions` endpoint stays prefix-only (no `prefix_optional`) and declares `Authorization: Bearer {key}` because that's what OpenAI-SDK clients send.
+[`ProtocolForPath`](../internal/selection/protocol.go) parses the inbound `/v1beta/models/{model}:{op}` path, captures `model` and `op` (one of `generateContent` / `streamGenerateContent`), and stashes them as path params. The final handler substitutes them back into the upstream path via [`substitutePlaceholders`](../cmd/gateway/handler.go). When a target alias is set the alias becomes the effective `{model}` for the path; body-keyed protocols alias the model in the body-rewrite stage instead.
 
-Both endpoints use the same gemini upstream credential — only the wire format of the outbound header changes.
+If a placeholder is present in the path but has no captured value, the upstream URL keeps the literal `{model}` segment and the upstream rejects it — surface that as a selection/parse bug, not a routing issue.
 
-### Per-endpoint auth override: `x-api-key` vs bearer
+---
 
-Goal: same provider, two endpoints, two different credential conventions on the wire — `x-api-key` for the native API, `Authorization: Bearer` for the OpenAI-compat surface.
+## Streaming behaviour
+
+There is no `accepts_streaming` flag in v2 — whether a response streams is decided by the upstream and the client (the `stream` field in the request body / the operation, e.g. `streamGenerateContent`). Three layers cooperate at request time to keep SSE flowing end-to-end without buffering.
+
+### `http.Flusher` passthrough
+
+The forwarder uses `httputil.ReverseProxy` with `FlushInterval = -1` ([`internal/proxy/forwarder.go`](../internal/proxy/forwarder.go) line 349), which tells the standard library to flush immediately on every write — the behaviour SSE requires. Every response-writer wrapper in the gateway stack — the status recorder ([`internal/proxy/statuswriter.go`](../internal/proxy/statuswriter.go)), the streaming observer, the resilience orchestrator's [`BufferingResponseWriter`](../internal/proxy/buffering_writer.go) — implements `http.Flusher` and forwards `Flush()` through to the wrapped writer. The contract that **every** wrapper preserves `Flusher` is what keeps SSE chunks landing at the client unbatched.
+
+### `BufferingResponseWriter` swap under a resilience group
+
+When a request is bound to a resilience group, the orchestrator wraps the outbound `http.ResponseWriter` in a [`BufferingResponseWriter`](../internal/proxy/buffering_writer.go) before each attempt. The buffer accumulates the attempt's bytes in memory; only the first non-retryable outcome (commit) flushes the buffer to the real writer. A retryable failure discards the buffer and tries the next target.
+
+This means a streaming response under a resilience group is buffered until the upstream commits to the attempt as non-retryable. Once committed, every subsequent chunk passes through the `Flusher` chain unmodified. Single-target bindings still flow through the orchestrator as a degenerate `ModeNone` policy ([`cmd/gateway/destination.go::singleTargetConfig`](../cmd/gateway/destination.go)), but with no retry alternative the first attempt is the answer — they effectively stream from byte one.
+
+### SSE reassembly off the hot path
+
+While the forwarder streams chunks to the client, the streamed SSE bytes are also retained and, at completion, reassembled into the JSON shape the provider would have returned non-streaming — [`internal/observability/livefeed/accumulator`](../internal/observability/livefeed/accumulator). The package keys on protocol/endpoint name, so the OpenAI-compat `chat` surfaces on Anthropic and Gemini reuse OpenAI's chunk reassembler:
+
+| Endpoint/protocol | Reassembled shape | Source file |
+|---|---|---|
+| `chat` (`chat_completions`) | `*openaichat.ChatCompletionResponse` | [`openai_chat.go`](../internal/observability/livefeed/accumulator/openai_chat.go) |
+| `messages` | Anthropic messages response | [`anthropic_messages.go`](../internal/observability/livefeed/accumulator/anthropic_messages.go) |
+| `generate_content` | Gemini generate-content response | [`gemini_content.go`](../internal/observability/livefeed/accumulator/gemini_content.go) |
+| `responses` | OpenAI Responses response | [`openai_responses.go`](../internal/observability/livefeed/accumulator/openai_responses.go) |
+
+The accumulator runs **after** the response has finished writing to the client — the hot path is unaffected, the cost lands at completion off the critical path with no flushing delay.
+
+---
+
+## Worked examples
+
+### A custom in-cluster ollama provider (no credential)
+
+Goal: expose an in-cluster ollama at `http://ollama.ollama.svc.cluster.local:11434` as a provider named `qwen-ollama`.
 
 ```yaml
 providers:
-  anthropic:
-    base_url: https://api.anthropic.com
-    prefix: anthropic
-    prefix_required: true
-    required_headers:
-      anthropic-version: "2023-06-01"
-    endpoints:
+  qwen-ollama:
+    base_url: http://ollama.ollama.svc.cluster.local:11434
+    protocols:
+      chat:
+        path: /v1/chat/completions
       messages:
         path: /v1/messages
-        method: [POST]
-        accepted_paths: [/v1/messages]
-        accepts_streaming: true
-        request_kind: messages
-        prefix_optional: true
-        auth_header: x-api-key
-        auth_format: "{key}"
-
-      chat_completions:
-        path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-        auth_header: Authorization
-        auth_format: "Bearer {key}"
 ```
 
-The destination builder consults the endpoint-level override first. For `/v1/messages` it picks `x-api-key: <credential>`; for `/v1/chat/completions` it picks `Authorization: Bearer <credential>`. The credential value is the same — `configurations.<name>.upstream_credentials.anthropic` — but the outbound header differs by endpoint.
+No `auth` block on either protocol: ollama's `/v1/chat/completions` is OpenAI-compatible, and the per-provider default for an unknown name is `Authorization: Bearer <credential>`. For a credential-less ollama (the typical local-dev / in-cluster setup), the Configuration holds an empty credential, so [`buildDestination`](../cmd/gateway/destination.go) strips all credential headers and sets none:
 
-This is the v1.0.2 OpenAI-compat surface in production. Operator notes:
+```yaml
+configurations:
+  production:
+    credentials:
+      qwen-ollama: ""              # no-credential provider: strip and forward
+    bindings:
+      - { protocol: chat, models: ["qwen2.5-coder:7b"], provider: qwen-ollama }
+```
 
-- Both endpoint-level overrides are explicit even though the `messages` endpoint matches the provider default — explicit-in-both-places is easier to read and survives someone later flipping the provider-level default.
-- `required_headers.anthropic-version` injects on **every** anthropic endpoint, including the OpenAI-compat one. Anthropic's compat surface still wants the version pin.
-- The native `messages` endpoint is `prefix_optional` so vanilla Anthropic SDKs work; the compat `chat_completions` stays prefix-only to avoid colliding with openai's bare claim on the same path.
+To send a static token instead, set `credentials.qwen-ollama: <token>`; the default `Authorization: Bearer <token>` is then minted.
+
+### An OpenAI-compat protocol on an existing provider
+
+Goal: add the OpenAI-compat `chat` surface to a provider that already serves its native API. Gemini, from [`config-dev/providers.yaml`](../config-dev/providers.yaml):
+
+```yaml
+providers:
+  gemini:
+    base_url: https://generativelanguage.googleapis.com
+    protocols:
+      generate_content:
+        path: "/v1beta/models/{model}:{op}"
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
+      chat:
+        path: /v1beta/openai/chat/completions
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+```
+
+The native `generate_content` protocol uses `x-goog-api-key`; the OpenAI-compat `chat` protocol declares `Authorization: Bearer {key}` because that is what OpenAI-SDK clients send. Both use the same gemini upstream credential — only the wire format of the outbound header changes. A Configuration then routes by model:
+
+```yaml
+bindings:
+  - { protocol: chat,             models: ["gemini-*"], provider: gemini }
+  - { protocol: generate_content, models: ["gemini-*"], provider: gemini }
+```
+
+### Per-protocol auth: `x-api-key` vs bearer
+
+Goal: the same provider, two protocols, two credential conventions on the wire — `x-api-key` for the native API, `Authorization: Bearer` for the OpenAI-compat surface. This is the anthropic block shown in [The OpenAI-compat surface](#the-openai-compat-surface). Operator notes:
+
+- `credentials.anthropic` on the Configuration supplies the one key both protocols share; only the minted header differs.
+- `required_headers.anthropic-version` injects on **every** anthropic request, including the OpenAI-compat `chat` one and the `messages_batches` passthrough — anthropic's compat and batch surfaces still want the version pin.
+- Each protocol's `auth` is explicit even when it matches the provider-native default (anthropic's `messages` → `x-api-key`); explicit-in-place is easier to read and survives someone later changing a default.
 
 ---
 
 ## Validation errors
 
-The loader runs `Validate()` after merge; the first violation aborts startup with a wrapped sentinel:
+The loader runs `Validate()` ([`internal/config/config_validate.go`](../internal/config/config_validate.go)) after merge; the first violation aborts startup with a wrapped sentinel. The provider-relevant checks:
 
-| Error | Cause |
+| Condition | Sentinel / message |
 |---|---|
-| `ErrPrefixRequiredEmpty` | Provider has `prefix_required: true` but no `prefix` — provider would be unreachable. |
-| `ErrPathCollision` | Two endpoints emit the same fully-resolved route. Possible only when two providers share `prefix_required: false` and an `accepted_path`, or when two providers share a prefix and an `accepted_path`. |
-| `ErrAuthFormatWithoutHeader` | `auth_format` set without `auth_header` at the same level — the format would be silently ignored, which is almost always a mistake. |
-| `ErrInvalidAuthFormat` | `auth_format` does not contain exactly one `{key}` placeholder. Zero placeholders means the credential is dropped on the floor; multiple means substitution is ambiguous. |
+| Provider has empty `base_url`. | `ErrValidation` — `provider %q: base_url is required`. |
+| Provider declares neither `protocols` nor `passthrough`. | `ErrValidation` — `provider %q: declares no protocols or passthrough families`. |
+| Protocol key is not a recognised protocol (`chat`/`responses`/`messages`/`generate_content`/`embeddings`). | `ErrValidation` — `provider %q: unknown protocol %q`. |
+| Protocol or family `auth.format` set without `auth.header`. | [`ErrAuthFormatWithoutHeader`](../internal/config/errors.go). |
+| Protocol or family `auth.format` lacks exactly one `{key}`. | [`ErrInvalidAuthFormat`](../internal/config/errors.go). |
+| Passthrough family declares no `paths`, or a path has an empty `match` / empty `methods`. | `ErrValidation` — `passthrough %q ...`. |
+| A binding references an unknown provider/group, or the provider/group does not serve the binding's protocol. | `ErrValidation` — `bindings[%d]: ...` (see [`validateBindings`](../internal/config/config_validate.go)). |
+| A configuration's `credentials` or `passthrough_bindings` reference an unknown provider/family. | `ErrValidation` — `configuration %q ...`. |
 
-Validation runs once at load time. There's no hot reload in v1.0/v1.1, so a malformed `providers.yaml` produces a startup failure with the wrapped sentinel and no live request ever sees the bad config.
+> The v1 sentinels `ErrPathCollision` and `ErrPrefixRequiredEmpty` still exist in [`internal/config/errors.go`](../internal/config/errors.go) but are **not** raised by v2 validation — there is no route table to collide and no prefix to require. `ErrAuthFormatWithoutHeader` and `ErrInvalidAuthFormat` carry over unchanged because the auth-format invariant is identical.
+
+Validation runs once at load time. There is no hot reload in the current release, so a malformed `providers.yaml` produces a startup failure with the wrapped sentinel and no live request ever sees the bad config.
 
 ---
 
 ## Cross-references
 
-- **[`docs/routing.md`](routing.md)** — how an inbound request's path is matched against `accepted_paths` to resolve to a `(provider, endpoint)` pair, and how the prefix disambiguator handles the bare/prefixed forms.
-- **[`docs/resilience.md`](resilience.md)** — how a target's `changeProvider` action re-resolves the endpoint on the new provider, picking up that provider's auth-header override stack automatically. The model-keyed redirect pattern depends on this.
-- **[`contracts/config/providers.go`](../contracts/config/providers.go)** — the canonical Go types for `ProvidersConfig`, `Provider`, and `Endpoint`.
-- **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `UpstreamCredentialHeader`, the per-provider default fallback in the auth-header resolution table.
-- **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — `resolveCredentialHeader` and `buildDestination`, the destination builder that mints the outbound auth header per `(provider, endpoint)`.
-- **[`CLAUDE.md`](../CLAUDE.md)** — load-bearing invariants 6 (auth header lives in one place per `(provider, endpoint)`) and 7 (`changeProvider` re-resolves the endpoint on the new provider).
+- **[`docs/configuration-model.md`](configuration-model.md)** — the full on-disk schema: how `providers`, `groups`, and `configurations` merge, and the binding / passthrough-binding fields that route a request to a provider.
+- **[`docs/resilience.md`](resilience.md)** — `groups` (the v2 resilience unit), how a group dispatches across provider targets, and the per-attempt provider switch the orchestrator drives.
+- **[`docs/pipeline.md`](pipeline.md)** — the typed-message channel the request flows through, stage by stage.
+- **[`contracts/config/model.go`](../contracts/config/model.go)** — the canonical Go types: `Provider`, `ProviderProtocol`, `ProviderAuth`, `PassthroughFamily`, `PassthroughPath`, `Binding`, `Configuration`.
+- **[`internal/selection/selection.go`](../internal/selection/selection.go)** — `Select` / `ResolveTarget` / `MatchPassthrough`, the engine that turns a `(protocol, model)` pair into a resolved upstream target.
+- **[`internal/selection/protocol.go`](../internal/selection/protocol.go)** — `ProtocolForPath`, the fixed inbound-path → protocol mapping.
+- **[`cmd/gateway/destination.go`](../cmd/gateway/destination.go)** — `buildDestination` and `credentialHeaderFor`, the single credential mint site under v2.
+- **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `UpstreamCredentialHeader`, the per-provider-name default fallback.
+- **[`CLAUDE.md`](../CLAUDE.md)** — load-bearing invariants 6 (credential header lives in one place per provider+protocol) and 7 (the per-attempt provider switch re-resolves transport on the new provider).
+</content>
+</invoke>

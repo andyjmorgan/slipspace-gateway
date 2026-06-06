@@ -2,7 +2,7 @@
 
 Sluice's admin console is a management surface bolted onto the gateway binary. It runs as a **second `http.Server` on its own port** (default `:8081`), separate from the data plane (`:8585`), so admin traffic and proxy traffic never share a listener — no shared connection pool, no shared middleware stack, no risk of a stuck admin handler back-pressuring the request path.
 
-The console exposes both read-only inspection surfaces (dashboard, configuration inspector, live messages, policies, export) and a write API for editing the rules library (`POST/PUT/DELETE /api/v1/config/rules[/{name}]`). Writes clone the live config snapshot, validate the clone, persist `policy.yaml` atomically, and publish via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLUICE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
+The console exposes both read-only inspection surfaces (dashboard, live messages, policies, bindings, export) and a write API spanning most of the policy YAML: full CRUD for **Configurations, Providers, Groups, Connectors, Rules, and API Keys**. Bindings are exposed read-only (they are edited as part of a Configuration). Every write clones the live config snapshot, validates the clone, persists the YAML atomically, and publishes via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLUICE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
 
 The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `gateway.admin.enabled: true` *and* a password is configured. With either condition false, the listener never opens.
 
@@ -227,30 +227,63 @@ All routes are mounted under `Prefix = "/admin"`. Every route is wrapped in `Ins
 | `GET /admin/api/v1/dashboard/summary?window=1h\|24h` | `DashboardSummary` (`contracts/admin/dashboard.go`) | Totals, rates, p50/p95/p99, by-provider, by-endpoint, by-configuration, by-model, rules-fired, tags-fired, provider-health. `window` defaults to `MuxOptions.DashboardWindow` (24h). Provider-health is read over a separate 5m window (`MuxOptions.FiveMinWindow`). |
 | `GET /admin/api/v1/dashboard/timeseries?series=...&window=...` | `DashboardTimeseries` (`contracts/admin/dashboard.go`) | One series per charted curve. Single-series queries (RPS, error rate) return one entry; multi-series queries (p95 by provider) return one entry per group key. |
 
-### Configuration inspector
+### Configuration inspector (read)
+
+Read handlers snapshot the store once at the top of the request and project the snapshot onto redacted DTOs (`internal/admin/config_handlers.go`) — every secret (API-key `Secret`, upstream `credentials`) is masked before it leaves the package. All read endpoints return 503 when the `Store` is nil (admin partially wired) rather than a misleading empty `200`.
 
 | Method · Path | Response shape | Notes |
 |---|---|---|
-| `GET /admin/api/v1/config/configurations` | `[]ConfigurationSummary` | List of every configured `Configuration` with rule + API-key counts. |
-| `GET /admin/api/v1/config/configurations/{name}` | `ConfigurationDetail` | Full configuration including the resolved rule chain and the (redacted) upstream credential map. |
-| `GET /admin/api/v1/config/rules` | `[]RuleSummary` | Every rule defined in `policy.yaml`. |
-| `GET /admin/api/v1/config/rules/{name}` | `RuleDetail` | Full rule body — condition tree, action list, references. |
-| `GET /admin/api/v1/config/providers` | `[]ProviderSummary` | Every provider declared in `providers.yaml`. |
-| `GET /admin/api/v1/config/providers/{name}` | `ProviderDetail` | Provider detail including endpoint map with per-endpoint `auth_header`/`auth_format` overrides. |
-| `GET /admin/api/v1/config/routes` | `[]RouteRow` | Flattened path → (provider, endpoint, methods) table — the actual data the routing middleware reads on every request. |
-| `GET /admin/api/v1/config/api-keys/reveal?configuration=&name=` | `APIKeyReveal` | Returns the plaintext secret for a single API key keyed by the composite. Both query params required (400 if missing); 404 on no match; 503 on nil resolved config. List endpoints stay redacted by default; reveal is opt-in, per-row. |
+| `GET /admin/api/v1/config/configurations` | `[]ConfigurationSummary` | List of every configured `Configuration` with rule + API-key counts and tags. |
+| `GET /admin/api/v1/config/configurations/{name}` | `ConfigurationDetail` | Full configuration: redacted per-provider `credentials`, generative `bindings`, `passthrough_bindings`, resolved rule chain, connector bindings, and the keyed API-keys summary (each redacted). |
+| `GET /admin/api/v1/config/rules` | `[]RuleSummary` | Every rule in the library, alphabetical, each with a `used_by` backlink to the configurations that reference it. |
+| `GET /admin/api/v1/config/rules/{name}` | `RuleDetail` | Full rule body — condition tree, action list, behavior, `used_by`. |
+| `GET /admin/api/v1/config/providers` | `[]ProviderSummary` | Every provider connection declared in the config. |
+| `GET /admin/api/v1/config/providers/{name}` | `ProviderDetail` | Provider's full protocol catalogue — per-protocol path + auth conventions and passthrough families. The load-bearing data for debugging the OpenAI-compat surfaces on Anthropic and Gemini. |
+| `GET /admin/api/v1/config/groups` | `[]groupView` | Every resilience group (`groups` block) with its mode, targets, weights, and circuit-breaker config. The richer live per-target circuit-state projection stays on [`/api/v1/policies`](#resilience-policies). |
+| `GET /admin/api/v1/config/groups/{name}` | `groupView` | A single group's full target list and resilience knobs. 404 when absent. |
+| `GET /admin/api/v1/config/connectors` | `[]Connector` | Every connector in name order. Connector credentials are `secret_ref` indirections (`env:` / `file:`), so nothing is masked. |
+| `GET /admin/api/v1/config/connectors/{name}` | `Connector` | A single connector's full definition. 404 when absent. |
+| `GET /admin/api/v1/config/api-keys` | `[]APIKeyListItem` | Every API key, redacted (`secret` is a last-4/length stub), in name order. |
+| `GET /admin/api/v1/config/api-keys/{id}` | `APIKeyListItem` | One key (redacted), addressed by minted UUID first, then name fallback. 404 when absent. |
+| `GET /admin/api/v1/config/api-keys/reveal?configuration=&name=` | `APIKeyReveal` | Returns the plaintext secret for a single API key keyed by the `(configuration, name)` composite. Both query params required (400 if missing); 404 on no match; 503 on nil resolved config. List endpoints stay redacted by default; reveal is opt-in, per-row. |
+| `GET /admin/api/v1/config/bindings` | `{bindings, passthrough_bindings}` | Read-only. The flattened binding table across every configuration — `(protocol, models) → provider\|group`, plus passthrough families. The v2 analogue of a route table: this is the data the router consults on every request, so it is the highest-value page for routing debugging. |
 
-### Rules write API
+### Config write API
 
-The rules library is the only top-level block with a write surface today (v1.1.18). Mutations clone the live `ResolvedConfig`, run `Validate` + `buildIndexes` on the clone, persist `policy.yaml` via atomic temp-file rename, then publish through `config.Store.Replace`. On any error the live snapshot is untouched — disk is only written after validation passes.
+The console writes most of the policy YAML. Each mutating handler runs the same atomic write path (`internal/admin/config_write.go`, `rules_write.go::commitClone`): `store.Snapshot()` → `Clone()` → mutate the clone → `RevalidateAndIndex()` → `config.WriteConfig` (atomic temp-file rename of the affected YAML) → `store.Replace`. On any error the live snapshot is untouched — disk is only written after validation passes, and the data plane reads each request's snapshot atomically, so in-flight requests see either the pre-swap or post-swap config, never a torn mix.
 
-| Method · Path | Response shape | Notes |
+Common behaviour across every write resource:
+
+- **503** when `SLUICE_CONFIG_DIR` is empty (the `writableGuard` in `rules_write.go`) — the data plane runs fine, but admin writes are disabled. The on-disk write also requires the config dir to be writable; see [deployment.md → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api).
+- **400** on a malformed / empty body or a missing name; the body cap is 256 KiB (`maxConfigBodyBytes`).
+- **409** (shape `{error, name}`, with `used_by:[...]` added on referential-integrity refusals) on a duplicate name (POST), a rename attempt (PUT), or a delete blocked by referrers.
+- **422** (shape `{error, detail}`) when `RevalidateAndIndex` rejects the clone (unknown provider/group reference, invalid binding, empty group targets, …).
+- **204** on a successful DELETE; **201** on a successful POST; **200** on a successful PUT/PATCH.
+- **`?dry_run=true`** validates a candidate mutation against a clone and returns a `PreviewResult` (`{valid, error}`) **without** persisting or swapping the live snapshot — the safety floor for the console's diff-preview.
+
+| Resource | Mutating methods · Path | Notes |
 |---|---|---|
-| `POST /admin/api/v1/config/rules` | `RuleDetail` | Create a new rule. Body is a `RuleContract` JSON payload (snake_case field names). 201 on success; 409 with `{error, name}` when the name already exists; 400 on JSON parse failure or missing name; 422 with `{error, detail}` when the post-mutation `Validate` rejects the clone. |
-| `PUT /admin/api/v1/config/rules/{name}` | `RuleDetail` | Replace an existing rule's condition, actions, and behavior. The URL `name` is authoritative — a body `name` field must match it or omit; mismatched names return 409. 404 when the URL name does not resolve. |
-| `DELETE /admin/api/v1/config/rules/{name}` | `204 No Content` | Delete a rule. 404 if absent. **409 with `{error, name, used_by:[...]}`** when one or more configurations reference the rule via `rule_names` — operators must unbind first to keep the post-delete `Validate` clean. |
+| Configurations | `POST /config/configurations`, `PUT·DELETE /config/configurations/{name}` | Credentials use write-back-if-delivered semantics (`mergeSecret`): a `null` value (a masked round-trip) keeps the stored secret; a non-null value sets it. `api_keys` are never accepted here — keys are managed only via the API-keys resource. DELETE 409s with `used_by` listing the API keys still bound to the configuration; deleting the last configuration fails `Validate` (422). |
+| Providers | `POST /config/providers`, `PUT·DELETE /config/providers/{name}` | Full v2 provider (base URL, required headers, protocols, passthrough families). DELETE 409s with `used_by` naming configuration bindings / credentials / passthrough / group targets that still reference the provider. |
+| Groups | `POST /config/groups`, `PUT·DELETE /config/groups/{name}` | Resilience groups (mode, targets, weights, failure status codes, circuit breaker). DELETE 409s with `used_by` naming configuration bindings that target the group. |
+| Connectors | `POST /config/connectors`, `PUT·DELETE /config/connectors/{name}` | Connector definitions; credentials are `secret_ref` indirections so nothing is masked. DELETE 409s with `used_by` naming configurations whose `connector_bindings` reference it. |
+| Rules | `POST /config/rules`, `PUT·DELETE /config/rules/{name}` | Body is a `RuleContract` JSON payload (snake_case). DELETE 409s with `used_by` naming configurations that reference the rule via `rule_names`. The visual rule editor round-trips this surface. |
+| API Keys | `POST /config/api-keys`, `PUT·PATCH·DELETE /config/api-keys/{id}` | See [API Keys](#api-keys) below — the only resource that mints a secret and reveals it once. |
 
-The write endpoints return 503 when `SLUICE_CONFIG_DIR` is empty (i.e. the gateway was started without a config dir) — the data plane works fine in that case but admin writes are disabled. The on-disk write requires the config dir to be writable; see [deployment.md → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api).
+All mutating paths are method-routed under Go 1.22 `ServeMux` patterns, so `GET` and the write verbs share a path without colliding. The URL name/id is authoritative on `PUT`/`PATCH`/`DELETE`; rename is rejected (409) — change a name by deleting and re-creating.
+
+### API Keys
+
+API keys are a **first-class resource managed only through the dedicated `/config/api-keys` endpoints** (`internal/admin/api_keys_write.go`) — never embedded in a configuration payload. A key is addressed by its minted UUID first, then by name fallback (so a hand-authored key with no id yet stays addressable); the secret is never an addressable identifier and never appears in a URL.
+
+| Method · Path | Response | Notes |
+|---|---|---|
+| `POST /admin/api/v1/config/api-keys` | `APIKeyReveal` | Mints the key. The gateway generates the secret (`sk_live_` + 32 random bytes hex) and an id, then returns the **plaintext secret exactly once** in the `201` body. Body: `{name, configuration, enabled?}`. 400 on empty name; 409 when the name already exists; 422 when the configuration does not exist. This is the only time the plaintext leaves the gateway — every subsequent read is redacted. |
+| `PUT /admin/api/v1/config/api-keys/{id}` | `APIKeyListItem` | Replace `configuration` + `enabled`. The secret is immutable (rotation is a deliberate re-mint, not a PUT); a rename is rejected with 409 (use PATCH). |
+| `PATCH /admin/api/v1/config/api-keys/{id}` | `APIKeyListItem` | Partial update — toggle `enabled` (the everyday reversible off-switch), rename, or reassign the `configuration`. Omitted fields are unchanged; the secret is never touched. A rename to a name another key already holds returns 409. |
+| `DELETE /admin/api/v1/config/api-keys/{id}` | `204 No Content` | Delete a key. Nothing references an API key, so there is no referential-integrity guard — the console gates this behind a destructive-action warning, and PATCH-disable is the reversible alternative. 404 when absent. |
+
+Reads (`GET /config/api-keys` and `/{id}`) return the redacted `APIKeyListItem` (last-4/length stub). To recover a forgotten plaintext, use the per-row [`/api-keys/reveal`](#configuration-inspector-read) endpoint — both sit behind the same Basic auth, so handing an operator their own credential is not an escalation.
 
 ### Configuration export (Settings page)
 
@@ -267,20 +300,28 @@ The redactor (`internal/admin/configexport/redact.go`) replaces every API-key se
 
 `gateway.admin.requests.total` carries a `{route, status}` label set. `route` is the literal string the `InstrumentRoute` call site passes — picked at mount time from [`internal/admin/mux.go::NewMux`](../internal/admin/mux.go) — not the inbound URL. The label vocabulary is therefore closed and operator-debuggable: dashboards group by `route` without worrying about cardinality from arbitrary SPA asset paths.
 
-| Route label | Backed by handler | Auth |
+Method-routed paths (the CRUD resources) share a single `route` label across their GET and write verbs — the label is the literal pattern string, not the method — so each path appears once below regardless of how many methods bind it.
+
+| Route label | Backed by handler(s) | Auth |
 |---|---|---|
 | `/api/v1/version` | `VersionHandler` | public |
 | `/api/v1/auth/me` | `AuthMeHandler` | yes |
 | `/api/v1/dashboard/summary` | `DashboardSummaryHandler` | yes |
 | `/api/v1/dashboard/timeseries` | `TimeseriesHandler` | yes |
 | `/api/v1/config/api-keys/reveal` | `APIKeysRevealHandler` | yes |
-| `/api/v1/config/configurations` | `ConfigurationsListHandler` | yes |
-| `/api/v1/config/configurations/{name}` | `ConfigurationDetailHandler` | yes |
-| `/api/v1/config/rules` | `RulesListHandler` | yes |
-| `/api/v1/config/rules/{name}` | `RuleDetailHandler` | yes |
-| `/api/v1/config/providers` | `ProvidersListHandler` | yes |
-| `/api/v1/config/providers/{name}` | `ProviderDetailHandler` | yes |
-| `/api/v1/config/routes` | `RoutesHandler` | yes |
+| `/api/v1/config/api-keys` | `APIKeysListHandler` (GET), `APIKeysCreateHandler` (POST) | yes |
+| `/api/v1/config/api-keys/{id}` | `APIKeyDetailHandler` (GET), `APIKeysReplaceHandler` (PUT), `APIKeysPatchHandler` (PATCH), `APIKeysDeleteHandler` (DELETE) | yes |
+| `/api/v1/config/configurations` | `ConfigurationsListHandler` (GET), `ConfigurationsCreateHandler` (POST) | yes |
+| `/api/v1/config/configurations/{name}` | `ConfigurationDetailHandler` (GET), `ConfigurationsReplaceHandler` (PUT), `ConfigurationsDeleteHandler` (DELETE) | yes |
+| `/api/v1/config/rules` | `RulesListHandler` (GET), `RulesCreateHandler` (POST) | yes |
+| `/api/v1/config/rules/{name}` | `RuleDetailHandler` (GET), `RulesReplaceHandler` (PUT), `RulesDeleteHandler` (DELETE) | yes |
+| `/api/v1/config/providers` | `ProvidersListHandler` (GET), `ProvidersCreateHandler` (POST) | yes |
+| `/api/v1/config/providers/{name}` | `ProviderDetailHandler` (GET), `ProvidersReplaceHandler` (PUT), `ProvidersDeleteHandler` (DELETE) | yes |
+| `/api/v1/config/groups` | `GroupsListHandler` (GET), `GroupsCreateHandler` (POST) | yes |
+| `/api/v1/config/groups/{name}` | `GroupDetailHandler` (GET), `GroupsReplaceHandler` (PUT), `GroupsDeleteHandler` (DELETE) | yes |
+| `/api/v1/config/connectors` | `ConnectorsListHandler` (GET), `ConnectorsCreateHandler` (POST) | yes |
+| `/api/v1/config/connectors/{name}` | `ConnectorDetailHandler` (GET), `ConnectorsReplaceHandler` (PUT), `ConnectorsDeleteHandler` (DELETE) | yes |
+| `/api/v1/config/bindings` | `BindingsHandler` (read-only) | yes |
 | `/api/v1/config/export/files` | `ConfigExportFilesHandler` | yes |
 | `/api/v1/config/export/download` | `ConfigExportDownloadHandler` | yes |
 | `/api/v1/messages/recent` | `MessagesRecentHandler` | yes |
@@ -311,18 +352,25 @@ The `spa` label covers every `/admin/` URL that doesn't match a `/api/v1/*` patt
 
 ## SPA pages
 
-The SPA's router (`web/src/App.tsx`) protects every page behind `<ProtectedRoute>` except `/login`. A 401 from any backing API call triggers `useUnauthorizedRedirect`, which bounces the user back to `/login`.
+The SPA's router (`web/src/App.tsx`) protects every page behind `<ProtectedRoute>` except `/login`; the sidebar's top-level sections come from `web/src/lib/nav-meta.ts`. A 401 from any backing API call triggers `useUnauthorizedRedirect`, which bounces the user back to `/login`. List pages carry a "New" button into the matching editor; detail pages carry an "Edit" button into the same editor in `edit` mode. The editors POST/PUT the write API and can preview with `?dry_run=true`.
 
-| Page | Path | Backing endpoints | Purpose |
+| Page | Path(s) | Backing endpoints | Purpose |
 |---|---|---|---|
 | Login | `/login` | `GET /api/v1/version`, `GET /api/v1/auth/me` | Credential capture. Stores the password in `sessionStorage` on success. |
 | Dashboard | `/dashboard` | `GET /api/v1/dashboard/summary`, `GET /api/v1/dashboard/timeseries` | Totals, p50/p95/p99, per-provider/endpoint/configuration/model tables, rules-fired, tags-fired, provider-health. Single-page summary + sparkline charts. |
 | Live messages | `/messages` | `GET /api/v1/messages/recent`, `GET /api/v1/messages/stream`, `GET /api/v1/messages/{event_id}/body` | Streaming list of completed requests with body modal. Up/down keyboard navigation through entries. Per-attempt expansion table when the entry is bound to a resilience policy. |
-| Configurations | `/configurations`, `/configurations/:name` | `GET /api/v1/config/configurations[/{name}]` | Read-only configuration inspector. Detail page shows the resolved rule chain, upstream-credential redaction, and the keyed API-keys table with per-row reveal. |
-| Rules | `/rules`, `/rules/:name` | `GET /api/v1/config/rules[/{name}]` | Read-only rule library. Detail page has a Visual + JSON tab for the condition tree and action list. |
-| Providers | `/providers`, `/providers/:name` | `GET /api/v1/config/providers[/{name}]` | Read-only provider inventory. Detail page shows the endpoint map with per-endpoint auth overrides. |
-| Routes | `/routes` | `GET /api/v1/config/routes` | Flattened path → (provider, endpoint, methods) table with a filter input. The single highest-value page during routing debugging. |
-| Policies | `/policies` | `GET /api/v1/policies` | One card per resilience policy with the per-target weight/order table and a live circuit-breaker state badge per (policy, target). See [`docs/resilience.md`](resilience.md). |
+| Configurations | `/configurations`, `/configurations/:name` | `GET·POST·PUT·DELETE /api/v1/config/configurations[/{name}]` | Configuration inspector. Detail page shows the resolved rule chain, redacted credentials, bindings, and the keyed API-keys table with per-row reveal. |
+| Configuration editor | `/configurations/new`, `/configurations/:name/edit` | `GET·POST·PUT /api/v1/config/configurations[/{name}]` | Create / edit a configuration — credentials, bindings, passthrough bindings, rule names, connector bindings. |
+| Rules | `/rules`, `/rules/:name` | `GET·POST·PUT·DELETE /api/v1/config/rules[/{name}]` | Rule library. Detail page has a Visual + JSON tab for the condition tree and action list. |
+| Rule editor | `/rules/new`, `/rules/:name/edit` | `GET·POST·PUT /api/v1/config/rules[/{name}]` | Create / edit a rule via the visual condition + action builder. |
+| Providers | `/providers`, `/providers/:name` | `GET·POST·PUT·DELETE /api/v1/config/providers[/{name}]` | Provider inventory. Detail page shows the protocol catalogue with per-protocol auth conventions and passthrough families. |
+| Provider editor | `/providers/new`, `/providers/:name/edit` | `GET·POST·PUT /api/v1/config/providers[/{name}]` | Create / edit a provider connection. |
+| Group editor | `/groups/new`, `/groups/:name/edit` | `GET·POST·PUT /api/v1/config/groups[/{name}]` | Create / edit a resilience group. The group **list** is presented by the Policies page (the sidebar's "Groups" entry routes to `/policies`); editing is here. |
+| Connectors | `/connectors` | `GET·POST·PUT·DELETE /api/v1/config/connectors[/{name}]` | Connector inventory. |
+| Connector editor | `/connectors/new`, `/connectors/:name/edit` | `GET·POST·PUT /api/v1/config/connectors[/{name}]` | Create / edit a connector destination. |
+| API keys | `/api-keys` | `GET·POST·PUT·PATCH·DELETE /api/v1/config/api-keys[/{id}]`, `GET /api/v1/config/api-keys/reveal` | Manage API keys: create (one-time secret reveal), enable/disable, reassign, delete, and per-row plaintext reveal. |
+| Bindings | `/bindings` | `GET /api/v1/config/bindings` | Read-only flattened binding table across all configurations with a filter input. The highest-value page during routing debugging. |
+| Policies | `/policies` | `GET /api/v1/policies` | One card per resilience group (labelled "Groups" in the nav) with the per-target weight/order table and a live circuit-breaker state badge per (policy, target). See [`docs/resilience.md`](resilience.md). |
 | Settings | `/settings` | `GET /api/v1/config/export/files`, `GET /api/v1/config/export/download` | Tabbed inspector over the redacted YAML files plus a "Download ZIP" button. |
 
 ---

@@ -7,23 +7,21 @@ Two coexisting auth modes:
 - **Managed** — client uses a Sluice-issued key (`Authorization: Bearer sk_live_…`); gateway swaps in the upstream provider credentials before forwarding.
 - **Passthrough** — client uses their own upstream token (e.g., Claude Code OAuth); gateway picks the policy via `X-Sluice-Configuration: <name>` and forwards the `Authorization` header verbatim.
 
-## Endpoint catalogue
+## Protocol surface
 
-The gateway exposes a per-provider URL surface. Every endpoint can be reached via the prefixed form (`/<provider>/…`), and the default provider (currently OpenAI) is also reachable bare.
+The gateway is keyed by **protocol, not by provider**. The inbound path identifies the wire shape (the *protocol*); the upstream provider is chosen separately by the matched configuration's bindings (protocol + model) and can be overridden by a `changeProvider` rule. There is no `/<provider>/…` URL prefix — clients send the bare provider-native path and point their SDK at a single gateway base URL. Path → protocol mapping lives in [`internal/selection/protocol.go::ProtocolForPath`](internal/selection/protocol.go).
 
-| Provider | Endpoint | Inbound path | Upstream wire shape |
-|---|---|---|---|
-| `openai` | `chat_completions` | `/openai/v1/chat/completions` *(also `/v1/chat/completions`)* | OpenAI chat completions |
-| `openai` | `responses` | `/openai/v1/responses` *(also `/v1/responses`)* | OpenAI responses |
-| `openai` | `models` | `/openai/v1/models` *(also `/v1/models`)* | OpenAI models list |
-| `anthropic` | `messages` | `/anthropic/v1/messages` | Anthropic native messages |
-| `anthropic` | `chat_completions` | `/anthropic/v1/chat/completions` | Anthropic's OpenAI-compat chat surface[^compat] |
-| `anthropic` | `models` | `/anthropic/v1/models` | Anthropic models list |
-| `gemini` | `generate_content` | `/gemini/v1beta/models/{model}:generateContent` | Gemini native |
-| `gemini` | `chat_completions` | `/gemini/v1beta/openai/chat/completions` | Gemini's OpenAI-compat chat surface[^compat] |
-| `gemini` | `models` | `/gemini/v1beta/models` | Gemini models list |
+| Protocol | Inbound path(s) | Wire shape |
+|---|---|---|
+| `chat` | `/v1/chat/completions` *(also `/chat/completions`)* | OpenAI chat completions — also the OpenAI-compat surface for Anthropic and Gemini[^compat] |
+| `responses` | `/v1/responses` *(also `/responses`)* | OpenAI Responses |
+| `messages` | `/v1/messages` *(also `/messages`)* | Anthropic native Messages |
+| `generate_content` | `/v1beta/models/{model}:generateContent` *(also `:streamGenerateContent`)* | Gemini native |
+| `embeddings` | `/v1/embeddings` *(also `/embeddings`)* | Embeddings (model rides in the body; routed via catch-all bindings) |
 
-[^compat]: Both providers accept OpenAI-shaped `chat.completions` requests but expect `Authorization: Bearer <key>` rather than their native `x-api-key` / `x-goog-api-key`. The gateway applies the right format automatically (per-endpoint `auth_header` / `auth_format` in `providers.yaml`). OpenAI-surface traffic can also be transparently redirected to either provider via a model-keyed `changeProvider` rule — see [config-dev/policy.yaml](config-dev/policy.yaml) for a working example. Pick by customer ergonomics: direct route gives a clean per-provider base URL; rule-based redirect keeps the OpenAI SDK pointed at a single base URL.
+Any path that does **not** match one of the generative protocols above (provider model-lists, Anthropic message batches, and other opaque surfaces) falls through to per-configuration **passthrough** matching, where a configuration's passthrough families claim the path by method + pattern and forward it verbatim. See [docs/routing.md](docs/routing.md) for the full selection algorithm.
+
+[^compat]: Anthropic and Gemini both accept OpenAI-shaped `chat.completions` requests on the `chat` protocol but expect `Authorization: Bearer <key>` rather than their native `x-api-key` / `x-goog-api-key`. The gateway applies the right credential format automatically whenever `chat` traffic resolves onto one of those providers — whether through a binding or a model-keyed `changeProvider` rule. See [config-dev/policy.yaml](config-dev/policy.yaml) for a working redirect example.
 
 ## Quickstart
 
@@ -43,13 +41,15 @@ SLUICE_API_KEY=sk_live_... uv run --project test/smoke pytest -v
 
 ## Configuration
 
-Three YAML files live in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`):
+YAML lives in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The loader merges **every** `*.yaml` file in the directory by top-level block key — filenames are a convention, not a constraint. The conventional split:
 
-- **`providers.yaml`** — operator-owned route table. One entry per provider; one entry per endpoint under each provider. Per-endpoint `auth_header` / `auth_format` overrides let a single provider expose multiple credential conventions.
-- **`policy.yaml`** — configurations, API keys, rule library, resilience library, connectors. The admin write API edits the rules block live (`POST/PUT/DELETE /admin/api/v1/config/rules`) and persists changes atomically; every other block is YAML-only and applies on restart.
+- **`providers.yaml`** — the `providers` block. One entry per upstream provider: base URL, which protocols it speaks, and per-protocol auth (plus optional passthrough families for opaque surfaces). Providers are connections, not credential holders — the per-configuration `credentials` supply the key.
+- **`policy.yaml`** — `configurations`, `api_keys`, `rules`, `groups` (resilience targets, formerly `resilience_policies`), and `connectors`. Configurations carry the `bindings` that select a provider or group per (protocol, model). The admin write API edits the rules block live (`POST/PUT/DELETE /admin/api/v1/config/rules`) and persists changes atomically; every other block is YAML-only and applies on restart.
 - **`admin.yaml`** *(optional, v1.1)* — gates the management console. Off by default. When enabled, the gateway starts a second listener on `bind_addr` serving the embedded SPA at `/` and the control-plane API under `/api/v1/*`. Username is hardcoded to `admin`; the password is read from `SLUICE_ADMIN_PASSWORD` if set, otherwise from the yaml `password` field.
 
 End-of-request records can be shipped to external destinations (S3, Azure Blob, webhook) via the `connectors:` block in `policy.yaml`. Records are buffered on a disk spool (default `/var/lib/sluice/spool`) and uploaded out of band; see [docs/connectors.md](docs/connectors.md), [docs/connector-bindings.md](docs/connector-bindings.md), and [docs/spool.md](docs/spool.md).
+
+An optional **central telemetry service** (`cmd/telemetry`) collects gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from one or more gateways into Postgres and serves an operator console identical to the gateway's own dashboard. It is a separate binary with its own YAML config and two listeners (HTTP `:8686`, OTLP gRPC `:8687`). See [docs/telemetry-service.md](docs/telemetry-service.md), [docs/telemetry-service-api.md](docs/telemetry-service-api.md), and [docs/telemetry-webhook.md](docs/telemetry-webhook.md).
 
 See [config-dev/](config-dev/) for working examples and [docs/](docs/) for the operator + developer reference suite. Server-level configuration (`SLUICE_*` env vars) is documented in [docs/environment-variables.md](docs/environment-variables.md).
 
@@ -112,6 +112,7 @@ The full design — module layout, configuration schema, rule schema, resilience
 ```
 cmd/
   gateway/      data plane binary
+  telemetry/    central telemetry service (OTLP + HMAC Record-webhook ingest, Postgres, console)
   api/          control plane REST (v1.1, stub in v1.0)
   cli/          key generation, config validation
   mockllm/      Go mock LLM for tests + local dev
