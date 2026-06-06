@@ -42,7 +42,7 @@ From a fresh clone:
 make dev
 ```
 
-That single target brings up the mock LLM as a container, then runs the gateway natively via `go run ./cmd/gateway` so edits hot-reload on the next request through ctrl-C / re-run. The data plane binds on `:8585`, Prometheus scrape on `:9090`, admin console (off by default in native mode, enabled in compose mode) on `:8081`. The connector spool defaults to `/var/lib/sluice/spool/` in containers and to a local `./tmp/spool/` path when running natively.
+That single target brings up the mock LLM as a container, then runs the gateway natively via `go run ./cmd/gateway` so edits hot-reload on the next request through ctrl-C / re-run. The data plane binds on `:8585`, Prometheus scrape on `:9090`, admin console (off by default in native mode, enabled in compose mode) on `:8081`. The connector spool root defaults to `/var/lib/sluice/spool/` (`config.DefaultSpoolRoot`, `internal/config/env.go`) in **both** modes — the Makefile's `DEV_ENV` block does not override `SLUICE_SPOOL_ROOT`, so native `make dev` writes there too. To land segments under the working tree for easy inspection, set `SLUICE_SPOOL_ROOT=./tmp/spool` yourself when you run the gateway.
 
 ```mermaid
 flowchart LR
@@ -52,7 +52,7 @@ flowchart LR
     GoRun --> Data[":8585<br/>data plane"]
     GoRun --> Prom[":9090<br/>prometheus"]
     GoRun --> Mock
-    GoRun --> Spool[./tmp/spool/<br/>connector segments]
+    GoRun --> Spool["/var/lib/sluice/spool/<br/>connector segments<br/>(override via SLUICE_SPOOL_ROOT)"]
 ```
 
 Send your first request:
@@ -107,8 +107,8 @@ The base compose's gateway service mounts `./config-dev` read-only into `/etc/sl
 | File | Purpose |
 |---|---|
 | `admin.yaml` | Admin-console listener config (`enabled`, `bind_addr`, dev-only `password`). |
-| `providers.yaml` | Upstream provider definitions — base URLs (all point at `http://mockllm:5555` in dev), endpoint maps, per-endpoint auth overrides. |
-| `policy.yaml` | Configurations (`dev`, `production`), api keys, rules, resilience policies. |
+| `providers.yaml` | Upstream provider connections — base URLs (all point at `http://mockllm:5555` in dev), per-protocol paths + auth, and `passthrough` families. No credentials. |
+| `policy.yaml` | Configurations (`dev`, `production`) with their `credentials`, `bindings`, `passthrough_bindings`, `rule_names`, and `tags`; api keys; transform rules. |
 
 The provider base URLs in `config-dev/providers.yaml` all point at `http://mockllm:5555` so every provider lookup resolves to the mock LLM. The e2e harness rewrites this string at materialisation time to the dynamically-assigned port of its spawned mockllm instance.
 
@@ -125,19 +125,33 @@ admin:
 
 ### `policy.yaml`
 
-Loads two configurations plus their api keys, rules, and resilience policies:
+This file is **v2-shaped** (`contracts/config/model.go`): a configuration carries `credentials` (one key per provider), `bindings` (the router as data — `(protocol, models)` → `provider` or `group`), `passthrough_bindings` (path-pattern families), `rule_names`, and `tags`. The v1 `upstream_credentials` / `resilience_name` fields and the routing actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`) are gone — routing is bindings, and rules are pure request/response transforms (tags, header sets, body rewrites). It loads two configurations (`dev`, `production`) plus their api keys and rules:
 
 ```yaml
 configurations:
   dev:
-    upstream_credentials:
+    credentials:
       openai: sk-dev-mock
       anthropic: sk-ant-dev-mock
       gemini: dev-mock
+
+    bindings:
+      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], provider: openai }
+      - { protocol: responses, models: ["gpt-*"], provider: openai }
+      - { protocol: chat, models: ["claude-*"], provider: anthropic }
+      - { protocol: messages, models: ["claude-*"], provider: anthropic }
+      - { protocol: chat, models: ["gemini-*"], provider: gemini }
+      - { protocol: generate_content, models: ["gemini-*"], provider: gemini }
+
+    passthrough_bindings:
+      - { family: messages_batches, provider: anthropic }
+      - { family: models, provider: openai }
+      - { family: models, provider: gemini }
+
     rule_names:
-      - route-claude-models-to-anthropic
-      - route-gemini-models-to-gemini
-    resilience_name: high-availability
+      - tag-openai-chat
+      - redact-emails
+
     tags:
       tier: dev
 
@@ -148,33 +162,30 @@ api_keys:
     enabled: true
 
 rules:
-  - name: route-claude-models-to-anthropic
+  # Transform-only: condition on the resolved provider + protocol, attach a tag.
+  - name: tag-openai-chat
     condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: claude-
+      type: group
+      logicalOperator: And
+      children:
+        - { type: provider, operator: Equals, expectedProvider: openai }
+        - { type: endpoint, operator: Equals, expectedEndpoint: chat }
     actions:
-      - type: changeProvider
-        newProvider: anthropic
+      - { type: addTag, tag: surface:openai-chat }
     behavior: continue
 
-resilience_policies:
-  - name: high-availability
-    mode: failover
-    targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
-      - name: anthropic-fallback
-        provider: anthropic
-        order: 2
+  - name: redact-emails
+    condition: { type: provider, operator: Equals, expectedProvider: openai }
+    actions:
+      - { type: setHeader, headerName: X-Sluice-Redacted, headerAction: Set, headerValue: emails }
+    behavior: continue
 ```
 
-The api-key secret `sk_dev_local_development_only_not_for_production` is the one the e2e harness hardcodes; treat it as a known-good fixture, not a credential. Same for `sk_dev_replica_*` and the literal `ollama` secret — every value in the committed `policy.yaml` is intentionally non-sensitive.
+For a failover / load-balance example, define a top-level `groups:` block and point a binding at it with `group:` instead of `provider:` — see [`resilience.md`](./resilience.md) and the [FAQ](./faq.md#how-do-i-send-one-model-to-several-providers-with-failover-or-load-balancing). The api-key secret `sk_dev_local_development_only_not_for_production` is the one the e2e harness hardcodes; treat it as a known-good fixture, not a credential. Same for `sk_dev_replica_*` and the literal `ollama` secret — every value in the committed `policy.yaml` is intentionally non-sensitive.
 
 ### `providers.yaml`
 
-Five providers in dev: `openai`, `anthropic`, `gemini`, `gpt-oss`, `qwen36`, `qwen-ollama` — all pointing at the mock LLM in dev. Each declares its accepted paths, methods, per-endpoint auth overrides where the OpenAI-compat surfaces require them, and the `request_kind` that selects the body-capture deserializer. See [`providers.md`](./providers.md) for the full schema.
+Six providers in dev: `openai`, `anthropic`, `gemini`, `gpt-oss`, `qwen36`, `qwen-ollama` — all pointing at the mock LLM in dev. In the v2 model each provider is a connection: a `base_url`, a `protocols` map (each protocol declaring its upstream `path` and per-protocol `auth` header + format), optional `required_headers` / `query`, and optional `passthrough` families for path-pattern surfaces (e.g. `messages_batches`, `models`). Providers carry **no** credentials — the configuration supplies the key per provider. See [`providers.md`](./providers.md) and [`configuration-model.md`](./configuration-model.md) for the full schema.
 
 ### What's *not* in `config-dev/`
 
@@ -252,15 +263,16 @@ Every target in the `Makefile`, in the order they appear there:
 |---|---|---|---|---|
 | `all` | `lint vet test` | — | unit | The default. Matches what CI runs on every PR (minus e2e). |
 | `build` | `go build ./...` | `NO_WEB=1` skips the SPA bundle dependency | — | `make build` rebuilds the SPA via `make web` first. Use `NO_WEB=1` to skip when you've already built it. |
-| `web` | `npm run build` in `web/` | — | — | Vite build into `internal/admin/webdist/`. Clears generated files before invoking; preserves the committed `placeholder.html` and `.gitignore`. |
-| `web-install` | `npm install --silent` in `web/` | — | — | Idempotent; `web` and `web-dev` depend on it. |
+| `web` | `npm run build` in `web/` | — | — | Vite build of the **admin console** SPA into `internal/admin/webdist/`. Clears generated files before invoking; preserves the committed `placeholder.html` and `.gitignore`. |
+| `web-telemetry` | `npm run build:telemetry` in `web/` | — | — | Vite build of the **telemetry console** SPA into `internal/telemetry/server/webdist/`. Same emptyOutDir-off convention as `web`. Not declared in `.PHONY`. |
+| `web-install` | `npm install --silent` in `web/` | — | — | Idempotent; `web`, `web-telemetry`, and `web-dev` depend on it. |
 | `web-dev` | `npm run dev` in `web/` | — | — | Vite dev server with HMR. Proxies `/api/v1` to the gateway on `:8081`. Pair with a running `make dev-compose` for the full loop. |
 | `vet` | `go vet ./...` | — | unit | Cheap; runs in `all` and in CI. |
 | `fmt` | `go fmt ./...` + `goimports -local github.com/andyjmorgan/sluice-gateway` | — | — | Local convenience. CI fails on dirty diffs. |
 | `lint` | `golangci-lint run ./...` | — | unit | Non-negotiable before commit. Install with `brew install golangci-lint` if missing. |
 | `test` | `go test -race -coverprofile=coverage.out -covermode=atomic` | — | unit | Skips `web/node_modules`. Race detector on. |
 | `coverage` | `test` + `scripts/coverage-gate.sh coverage.out 95` | — | unit + gate | Same as `test`, then fails if total coverage is under 95%. |
-| `dev` | `docker compose up -d mockllm` + `go run ./cmd/gateway` | `SLUICE_CONFIG_DIR=./config-dev`, `SLUICE_HTTP_BIND=0.0.0.0:8585`, `SLUICE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLUICE_SPOOL_ROOT=./tmp/spool`, `SLUICE_LOG_LEVEL=debug` | — | The fast inner loop. Container infra + native gateway. |
+| `dev` | `docker compose up -d mockllm` + `go run ./cmd/gateway` | `SLUICE_CONFIG_DIR=./config-dev`, `SLUICE_HTTP_BIND=0.0.0.0:8585`, `SLUICE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLUICE_LOG_LEVEL=debug` (the Makefile `DEV_ENV` block — note it does **not** set `SLUICE_SPOOL_ROOT`, so the spool falls back to `/var/lib/sluice/spool`) | — | The fast inner loop. Container infra + native gateway. |
 | `dev-with-overlay` | `docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d` + `go run ./cmd/gateway` | same as `dev` | — | Requires `docker-compose.dev.yaml` (copy from `.example`). |
 | `dev-compose` | `docker compose up -d --build` | — | — | Builds the gateway image with the SPA embedded and brings up all three services. Slow iteration; matches production shape. Pair with `make web-dev` for SPA-only hot reload. |
 | `dev-compose-down` | `docker compose down` | — | — | Tears down the compose stack. |
@@ -272,7 +284,7 @@ Every target in the `Makefile`, in the order they appear there:
 | `clean` | `rm -f coverage.out coverage.html` | — | — | Drops coverage artefacts. |
 | `tools` | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` | — | — | One-shot installer for the lint toolchain. |
 
-Total: 21 phony targets.
+Total: 21 `.PHONY` targets, plus `web-telemetry` (a real target that isn't declared phony).
 
 ---
 
@@ -328,7 +340,7 @@ Integration tests live alongside the package they test; they're separated from u
 4. Spawns `cmd/gateway` as a subprocess pointing at the tmp config and the per-test spool root
 5. Drives real HTTP against the gateway, asserts on the response, captured spool records, and Prometheus scrape
 
-The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), connectors (`connectors/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`). Webhook receivers spin up a local `httptest.Server` per test; the `SLUICE_WEBHOOK_ALLOW_PRIVATE=true` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
+The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), the S3 and Azure connectors (`connector_s3/`, `connector_azure/`), record reporting (`reporting/`), telemetry (`telemetry/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`); `types/` holds shared fixtures. Webhook receivers spin up a local `httptest.Server` per test; the `SLUICE_WEBHOOK_ALLOW_PRIVATE=true` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
 
 `make e2e` runs the whole suite with the race detector and a 5-minute timeout. `TESTCONTAINERS_RYUK_DISABLED=true` keeps the reaper container from interfering on developer machines. Docker is required.
 
@@ -356,7 +368,7 @@ SLUICE_API_KEY=$SLUICE_API_KEY SLUICE_SMOKE_QWEN=true make smoke
 
 `SLUICE_BASE_URL` defaults to `https://sluice.donkeywork.dev`. Without `SLUICE_API_KEY`, every test skips cleanly — safe to wire into CI before secrets are configured. **Never echo the real key in chat, PR text, or commit messages — reference as `$SLUICE_API_KEY`.**
 
-Coverage spans: OpenAI chat + responses, Anthropic messages + chat-compat, Gemini generate + chat-compat, model-keyed `changeProvider` rules, and (opt-in via `SLUICE_SMOKE_QWEN=true`) the cluster-side qwen redirect tests.
+Coverage spans: OpenAI chat + responses, Anthropic messages + chat-compat, Gemini generate + chat-compat, model-keyed routing (the v2 binding selection that lands `claude-*` / `gemini-*` on their providers), and (opt-in via `SLUICE_SMOKE_QWEN=true`) the cluster-side qwen redirect tests.
 
 ---
 
@@ -378,11 +390,14 @@ If `golangci-lint` isn't installed (`command -v golangci-lint` returns nothing),
 
 ## Inspecting captured connector segments
 
-Connector segments are ndjson.zst files under the spool root (`./tmp/spool/` for `make dev`, the `sluice-spool` named volume for `make dev-compose`). Each line is one [`Record`](../contracts/connector/record.go); zstd-decompress and pipe through `jq` to inspect:
+Connector segments are ndjson.zst files under `<spool-root>/records/<connector>/sealed/` (`internal/spool/spool.go::Spool` builds the per-connector tree under `Options.Root`). The spool root defaults to `/var/lib/sluice/spool/` in both modes; for `make dev-compose` it lives on the `sluice-spool` named volume. To inspect segments from a native `make dev` run, point the spool at the working tree first (`SLUICE_SPOOL_ROOT=./tmp/spool`), then zstd-decompress and pipe through `jq`. Each line is one [`Record`](../contracts/connector/record.go):
 
 ```sh
-# native make dev
+# native make dev, with SLUICE_SPOOL_ROOT=./tmp/spool exported for the gateway
 zstd -dc ./tmp/spool/records/<connector>/sealed/*.ndjson.zst | jq .
+
+# default spool root (native make dev without an override) — may need sudo to read
+zstd -dc /var/lib/sluice/spool/records/<connector>/sealed/*.ndjson.zst | jq .
 
 # from inside the compose container's volume
 docker compose exec gateway sh -c 'zstd -dc /var/lib/sluice/spool/records/*/sealed/*.ndjson.zst' | jq .

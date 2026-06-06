@@ -23,7 +23,7 @@ Required or Conditionally-Required element missing or mis-conditioned.
 Attributes: `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.token.type`, `gen_ai.request.model`, `gen_ai.response.model`, `server.address`/`server.port`, `error.type`.
 
 ### Inference span (kind CLIENT, name `{operation.name} {request.model}`)
-Every Required/CR/Recommended attribute: operation/provider/request.model, response id/model/finish_reasons, request params (temperature, top_p, top_k, max_tokens, frequency/presence penalty, stop_sequences, seed, choice.count, stream), output.type, conversation.id, usage (input/output/cache_creation/cache_read/reasoning), response.time_to_first_chunk, server.address/port, error.type. Plus `openai.*` (request/response service_tier, system_fingerprint, api.type).
+Every Required/CR/Recommended attribute: operation/provider/request.model, response id/model/finish_reasons, request params (temperature, top_p, top_k, max_tokens, frequency/presence penalty, stop_sequences, seed, choice.count, stream), output.type, conversation.id, usage (input/output/cache_creation/cache_read/reasoning), response.time_to_first_chunk, server.address/port, error.type. Plus `openai.*` (request/response service_tier, system_fingerprint, api.type). The `openai.api.type` value comes from `cmd/gateway/handler.go::openAIAPIType`, which maps **only** the `chat` protocol to the well-known surface name `chat_completions`; every other protocol (`responses`, `embeddings`, …) passes through unchanged — there is no `responses`→`chat_completions` rewrite.
 
 ### Events (OTel logs pipeline)
 - `gen_ai.client.operation.exception` — on every failure (status ≥ 400 or transport error).
@@ -43,7 +43,7 @@ Every Required/CR/Recommended attribute: operation/provider/request.model, respo
 
 - **Dropping `sluice.requests.total` and the `sluice.tokens.cache*` counters.** These are spec-legal additive extras under the `sluice.*` namespace, and they back the admin console's request/cache aggregation (the console reads metrics, not spans/events). The cache *data* also rides the `gen_ai.usage.cache_*` span/event attributes, but those are per-request, not aggregatable in the console — so dropping the counters would regress the console for zero conformance benefit. Kept.
 - **OTLP-export integration test.** The export byte path is the OTel SDK's responsibility (upstream-tested); our emission logic is covered by in-memory recorders, the pipeline wiring is unit-tested, and `make e2e` covers the real binary.
-- **Cosmetic:** internal identifiers `MetricRequestTimeToFirstByte`/`RequestTimeToFirstByte` retain a "first byte" name; the emitted metric string is correctly `gen_ai.client.operation.time_to_first_chunk`.
+- **Cosmetic:** the internal identifiers have since been renamed to match the wire string — `MetricTimeToFirstChunk` / `TimeToFirstChunk` (`internal/observability/meters.go`), emitting `gen_ai.client.operation.time_to_first_chunk`. The earlier "first byte" identifier names are gone.
 
 ## Out of scope (correctly not emitted)
 Embeddings-specific attrs; agent/tool/workflow spans; `gen_ai.server.*` metrics (the gateway is a client, not the model server).

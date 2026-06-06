@@ -2,7 +2,7 @@
 
 Sluice's server config is loaded once at process start from `SLUICE_*` environment variables. There is no live-reload pathway for server-level settings — every value documented here lands on the in-memory `ServerEnv` (or the admin `Config`) at startup and is read-only thereafter. Restart to apply a change.
 
-Policy-level configuration (rules, configurations, api_keys, providers, resilience policies, connectors) is loaded from `SLUICE_CONFIG_DIR` and has a partial live-edit story: rules can be created / edited / deleted through the admin write API and apply to the next request without a restart (see [`docs/admin-console.md → Rules write API`](admin-console.md#rules-write-api)). Direct YAML edits and the other top-level blocks still require a restart. This page is scoped to env-var-driven server config only.
+Policy-level configuration (rules, configurations, api_keys, providers, resilience policies, connectors) is loaded from `SLUICE_CONFIG_DIR` and has a partial live-edit story: rules can be created / edited / deleted through the admin write API and apply to the next request without a restart (see [`docs/admin-console.md → Config write API`](admin-console.md#config-write-api)). Direct YAML edits and the other top-level blocks still require a restart. This page is scoped to env-var-driven server config only.
 
 This page is the operator's lookup reference. The big table below covers every `SLUICE_*` variable the gateway reads, with default, type, effect, and validation rules. The grouped tables that follow exist to give context — when you're tuning a knob, the group's prose tells you what neighbourhood you're in.
 
@@ -20,8 +20,10 @@ Ground truth lives in [`internal/config/env.go`](../internal/config/env.go) (the
 6. [Live feed and body capture](#live-feed-and-body-capture)
 7. [Rules engine](#rules-engine)
 8. [Shutdown and drain](#shutdown-and-drain)
-9. [Validation and error sentinels](#validation-and-error-sentinels)
-10. [Notes on parsing semantics](#notes-on-parsing-semantics)
+9. [Upstream forwarding](#upstream-forwarding)
+10. [Telemetry service](#telemetry-service)
+11. [Validation and error sentinels](#validation-and-error-sentinels)
+12. [Notes on parsing semantics](#notes-on-parsing-semantics)
 
 ---
 
@@ -36,7 +38,7 @@ Every `SLUICE_*` variable the gateway reads, in one table. Defaults are what `Lo
 | `SLUICE_ADMIN_LIVE_FEED_CAPACITY` | `100` | int | Size of the in-process ring of completed requests backing the admin live-messages pane. `0` disables the ring and degrades `/messages/*` endpoints to 503. | `>= 0` (0 disables). | [Live feed and body capture](#live-feed-and-body-capture) |
 | `SLUICE_ADMIN_PASSWORD` | _(empty)_ | string | HTTP Basic auth password for the admin console. Wins over `admin.password` in `admin.yaml` when both are set. Required when `admin.enabled: true`. | Non-empty when `admin.enabled: true`. No length/charset rules. | [Admin console](#admin-console) |
 | `SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS` | `300000` (5 min) | int (ms) | Cadence at which the admin dashboard's metric snapshotter reads the in-process registry. Production default gives the 24 h chart 288 sample points. E2E tests drop this to ~200 ms so dashboards react in test wall-clock. | `> 0`. | [Admin console](#admin-console) |
-| `SLUICE_CONFIG_DIR` | `/etc/sluice/` | string (path) | Policy + providers YAML directory. The loader accepts a closed allow-list of three filenames (`providers.yaml`, `policy.yaml`, `admin.yaml`); any other filename aborts the load. Each file may only carry the top-level keys allowed for its filename. The CLI's `--dir` flag overrides this for one-shot validation. | Path must exist and be a directory at load time. | `cmd/cli/validate.go`, [`internal/config/loader.go`](../internal/config/loader.go) |
+| `SLUICE_CONFIG_DIR` | `/etc/sluice/` | string (path) | Policy + providers YAML directory. The loader reads **every** `*.yaml` file in the directory (filenames are not significant) and merges them by top-level block key; a block set by two files is a duplicate-key error. The conventional `providers.yaml` / `policy.yaml` / `admin.yaml` split is a writer convention, not a loader constraint. Subdirectories and non-`.yaml` entries are skipped. The CLI's `--dir` flag overrides this for one-shot validation. | Path must exist and be a directory at load time. | `cmd/cli/validate.go`, [`internal/config/config_model.go::Load`](../internal/config/config_model.go), [`internal/config/loader.go::ListConfigFiles`](../internal/config/loader.go) |
 | `SLUICE_ENV` | _(empty)_ | string | Populates the OTel `deployment.environment` resource attribute. Set via downward API or Helm values in production; empty omits the attribute. | None. Free-form. | [Observability](#observability--otlp-prometheus-logging) |
 | `SLUICE_EXTERNAL_URL` | _(empty)_ | string (URL) | The gateway's externally reachable base URL (e.g. `https://sluice.example.com`). Resolves the `{external_url}` template reference in response-side body rewrites — chiefly rebasing provider-returned URLs (Anthropic batches `results_url`) back through the gateway. Empty leaves `{external_url}` unresolved, dropping any rewrite that depends on it. | None. Free-form; no trailing-slash normalisation. | [`docs/actions.md`](actions.md#rewritefield--removefield--appendfield) |
 | `SLUICE_HTTP_BIND` | `:8585` | string (host:port) | Data-plane listener address. `:8585` binds all interfaces; pin a host (`127.0.0.1:8585`) for loopback-only deployments. | Must parse as `host:port` with a numeric port. Empty host is allowed. | [Core listener and config](#core-listener-and-config) |
@@ -58,7 +60,7 @@ The CLI validator at `cmd/cli/validate.go` prints "N vars resolved" using `confi
 
 - `SLUICE_ADMIN_PASSWORD` is resolved by [`contracts/admin/admin.go::Config.ResolvePassword`](../contracts/admin/admin.go) at admin-block validation time, not by `LoadEnv`.
 - `SLUICE_ENV` is read by [`internal/observability/setup.go`](../internal/observability/setup.go) to populate the OTel `deployment.environment` resource attribute.
-- `SLUICE_WEBHOOK_ALLOW_PRIVATE` is read by [`internal/connector/webhook/connector.go`](../internal/connector/webhook/connector.go) at webhook-connector construction time. Test-only.
+- `SLUICE_WEBHOOK_ALLOW_PRIVATE` is read by [`contracts/config/connectors_validate.go::webhookAllowPrivateNetworks`](../contracts/config/connectors_validate.go) when a webhook connector resolves its destination, gating the per-call SSRF DNS guard. Test-only.
 
 Keeping the `LoadEnv` set and the per-package extras separate is what lets the validator print a stable count without claiming ownership of vars it doesn't parse.
 
@@ -75,7 +77,7 @@ These are the "where do I bind, where do I read YAML from" knobs. Almost every d
 
 The data plane (`SLUICE_HTTP_BIND`) is the listener clients hit with `POST /openai/v1/...`, `POST /anthropic/v1/...`, etc. The admin console binds a separate port — see [Admin console](#admin-console). The data plane never serves admin endpoints and vice versa; see CLAUDE.md's "Admin console architecture" note for the rationale.
 
-`SLUICE_CONFIG_DIR` is the only configuration-discovery knob. The loader accepts a closed allow-list of three filenames — `providers.yaml`, `policy.yaml`, and `admin.yaml` — and any other filename in the directory aborts the load. Each file may only carry the top-level keys allowed for its filename (the merge model assumes every key has exactly one canonical home, so duplicate-key collisions are impossible by construction). File contents are trusted (mounted from k8s Secrets or filesystem-permissioned). There is no `${VAR}` or `env:` substitution syntax inside YAML; treat the YAML file as a secret material and mount it from a Secret. See [`configuration-model.md`](configuration-model.md) for the full schema.
+`SLUICE_CONFIG_DIR` is the only configuration-discovery knob. The loader (`internal/config/config_model.go::Load`) reads every `*.yaml` file in the directory and merges them by top-level block key (`providers`, `groups`, `configurations`, `api_keys`, `rules`, `connectors`, `admin`, `telemetry`) — filenames carry no meaning to the loader. The same block set by two files is a duplicate-key error, so each block has exactly one canonical home across the directory. The conventional `providers.yaml` / `policy.yaml` / `admin.yaml` split is just how the writer lays blocks out; you may split or combine them however you like. Subdirectories and non-`.yaml` entries are skipped. File contents are trusted (mounted from k8s Secrets or filesystem-permissioned). There is no `${VAR}` or `env:` substitution syntax inside YAML; treat the YAML file as secret material and mount it from a Secret. See [`configuration-model.md`](configuration-model.md) for the full schema.
 
 ---
 
@@ -194,6 +196,19 @@ This maps to `net/http.Transport.ResponseHeaderTimeout` on every transport the p
 A provider under load can legitimately take more than a minute to emit the first byte of a long completion, so the default and enforced floor is `120`. `Validate` rejects anything below `120` (`MinUpstreamResponseHeaderTimeoutSeconds`) because a too-aggressive value surfaces as spurious `502 Bad Gateway` responses on slow-but-healthy upstreams — the transport cancels the connection mid-handshake and the proxy's `ErrorHandler` fires. Raise it (e.g. `300`) for providers or models with long pre-fill latencies; there is no upper bound.
 
 The connection-establishment timeouts (TCP dial 10 s, TLS handshake 10 s) and the idle keep-alive timeout (90 s) are not env-driven — they are fixed in [`internal/proxy/transport.go`](../internal/proxy/transport.go).
+
+---
+
+## Telemetry service
+
+The central telemetry service is a **separate binary** (`cmd/telemetry`), not the gateway. It does **not** read the `SLUICE_*` variables above — those land on the gateway's `ServerEnv`. The telemetry service takes a single YAML config file plus two environment variables, both consumed in [`cmd/telemetry/main.go`](../cmd/telemetry/main.go). Its YAML schema, listener defaults, and HMAC trust model are documented in [`telemetry-service.md`](telemetry-service.md); this table is only the env surface.
+
+| Variable | Default | Type | Effect |
+|---|---|---|---|
+| `SLUICE_TELEMETRY_CONFIG` | _(empty)_ | string (path) | Path to the telemetry service's YAML config file. Read as the default value of the `-config` flag (the flag wins when both are set). When neither is set, `config.Load` returns `ErrNoConfig` and the process exits non-zero — the service has no usable defaults without a Postgres DSN and gateway registry. |
+| `LOG_LEVEL` | `info` | enum string | Minimum slog level for the telemetry binary's JSON logger: `debug` / `info` / `warn` / `error` (case-insensitive; unknown values fall back to `info`). Note this is bare `LOG_LEVEL`, **not** the gateway's `SLUICE_LOG_LEVEL`. |
+
+Everything else the service needs — the HTTP and OTLP listener binds (defaults `0.0.0.0:8686` and `0.0.0.0:8687`), the Postgres DSN, the console Basic-auth credentials, the per-gateway HMAC secrets, and the gen_ai content cap (`content_max_bytes`, default 16 KiB) — comes from the YAML file, not env vars. Like the gateway, the file is trusted material with no `${VAR}` expansion. See [`telemetry-service.md`](telemetry-service.md) for the full reference and [`telemetry-webhook.md`](telemetry-webhook.md) for the Record ingest contract.
 
 ---
 

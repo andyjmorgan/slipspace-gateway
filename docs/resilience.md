@@ -1,8 +1,10 @@
-# Resilience Policies
+# Resilience Groups
 
-Sluice's resilience engine turns a single inbound request into one or more upstream attempts according to a named policy: failover walk-down, weighted load-balance, optional circuit breaker. Policies live in `gateway.yaml` (or any merged YAML under `SLUICE_CONFIG_DIR`); rules opt requests in via the `useResiliencePolicy` action.
+Sluice's resilience engine turns a single inbound request into one or more upstream attempts according to a named **group**: failover walk-down, weighted load-balance, optional circuit breaker. Groups live under the top-level `groups:` key in any merged YAML under `SLUICE_CONFIG_DIR`. A request opts into a group when a Configuration's **binding** points its `(protocol, model)` slot at a group instead of a single provider.
 
-This page is the operator's reference. It covers the full YAML schema, every mode, how requests flow through the orchestrator, what observability fires, and worked examples taken straight from production wiring.
+This page is the operator's reference. It covers the full v2 YAML schema, every mode, how requests flow through the orchestrator, what observability fires, and worked examples taken straight from production wiring.
+
+> **v2 note.** This document describes the v2 config model (providers + bindings + groups). The legacy top-level `resilience_policies:` key and the `useResiliencePolicy` rule action no longer drive routing — see [Binding a request to a group](#binding-a-request-to-a-group) and [What changed from v1](#what-changed-from-v1).
 
 ---
 
@@ -12,14 +14,14 @@ This page is the operator's reference. It covers the full YAML schema, every mod
 2. [Where it sits in the pipeline](#where-it-sits-in-the-pipeline)
 3. [Quick start](#quick-start)
 4. [YAML schema](#yaml-schema)
-5. [Binding a request to a policy](#binding-a-request-to-a-policy)
+5. [Binding a request to a group](#binding-a-request-to-a-group)
 6. [Modes](#modes)
-7. [Per-target Actions](#per-target-actions)
+7. [Per-target overrides](#per-target-overrides)
 8. [Failure status codes](#failure-status-codes)
 9. [Circuit breaker](#circuit-breaker)
 10. [Observability](#observability)
 11. [Worked examples](#worked-examples)
-12. [Forward-compat / legacy schema fields](#forward-compat--legacy-schema-fields)
+12. [What changed from v1](#what-changed-from-v1)
 13. [Known limitations](#known-limitations)
 14. [Troubleshooting](#troubleshooting)
 
@@ -27,13 +29,16 @@ This page is the operator's reference. It covers the full YAML schema, every mod
 
 ## Mental model
 
-> **Rules decide WHICH logical destination. Resilience decides HOW to robustly hit it.**
+> **Bindings decide WHICH logical destination. A group decides HOW to robustly hit it.**
 
-The rules engine runs first. It can rewrite the request (`changeProvider`, `changeModelName`, `changeUrl`, `setHeader`, ...), short-circuit (`returnStatusCode`, `llmImpersonation`), or — and this is what unlocks resilience — bind the request to a named policy via `useResiliencePolicy`. After rules finish, the resilience middleware reads the binding and dispatches by mode.
+Under v2, routing is config data. A Configuration's `bindings` list maps each `(protocol, model)` pair to a destination: either a single **provider** or a resilience **group**. Selection runs early in the pipeline, before rules, and resolves the binding once.
 
-A policy never re-routes by itself. It can only act on a request that a rule has already decided "yes, this one should be orchestrated against `qwen-load-balance`."
+- A binding that names a single `provider:` is single-shot — one attempt, no orchestration.
+- A binding that names a `group:` is orchestrated — the group's targets are walked according to its `mode` (failover, load-balance), with optional circuit breaking.
 
-If no rule fires `useResiliencePolicy`, resilience is a passthrough — the request goes single-shot to whatever the rules resolved. That's the path most v1.1-style traffic still takes.
+A group never re-routes by itself. It only acts on a request a binding has already routed to it. Groups are **protocol-preserving**: every target in a group must serve the binding's protocol, so there is no mid-failover protocol translation — failing over from OpenAI's `chat` to Anthropic's `chat` (OpenAI-compat) is fine; failing over to Anthropic's native `messages` from a `chat` binding is rejected at config-load.
+
+Rules still run, but in v2 they are pure request/response transforms (tags, header sets, body rewrites, short-circuits). They no longer choose providers or bind resilience.
 
 ---
 
@@ -41,20 +46,24 @@ If no rule fires `useResiliencePolicy`, resilience is a passthrough — the requ
 
 ```mermaid
 flowchart LR
-    A[Client request] --> B[routing]
-    B --> C[auth]
-    C --> D[bodycapture]
-    D --> E[rules]
-    E -- useResiliencePolicy<br/>sets state.PolicyRef --> F{resilience}
-    E -- no policy bound --> G[forwarder]
-    F -- failover --> F1[attempt 1<br/>target by Order asc]
+    A[Client request] --> B[protocol<br/>path → protocol]
+    B --> C[auth<br/>resolve configuration]
+    C --> D[bodycapture<br/>decode model]
+    D --> E[selection<br/>binding → provider or group]
+    E -- binding → group<br/>synthesise group config --> F{resilience}
+    E -- binding → single provider<br/>ModeNone --> F
+    F -- failover --> F1[attempt 1<br/>target by declaration order]
     F -- load_balance --> F2[weighted-random<br/>target pick]
-    F1 --> G[forwarder]
-    F2 --> G
+    F --> R[rules<br/>transforms only]
+    F1 --> R
+    F2 --> R
+    R --> G[forwarder]
     G --> H[upstream provider]
     H --> I[reporter:<br/>OTel + spool + live feed]
     F -. retry on failure_status_codes<br/>or transport error .-> F
 ```
+
+Selection synthesises the orchestrator's input from the chosen binding and stashes it on the request context; the resilience middleware reads that synthesised config directly (it does not look a policy up by name). A single-provider binding is synthesised as a degenerate `ModeNone` group of one target, so single-shot and orchestrated requests flow through the same machinery.
 
 For each attempt the orchestrator wraps the response writer in a `BufferingResponseWriter` so it can discard a failing attempt's bytes before the next one runs. The buffer flushes to the real `http.ResponseWriter` only on commit — the first non-retryable outcome.
 
@@ -62,63 +71,48 @@ For each attempt the orchestrator wraps the response writer in a `BufferingRespo
 
 ## Quick start
 
+A resilience group is two pieces of YAML: the group definition under `groups:`, and a binding on a Configuration that points at it. Providers are defined once under `providers:` (connection + per-protocol auth, no credentials); the Configuration supplies the credential per provider.
+
 ### 30-second failover
 
 ```yaml
 configurations:
   production:
-    upstream_credentials:
+    credentials:
       openai: sk-openai-mock
       anthropic: sk-ant-mock
-    rule_names:
-      - openai-with-anthropic-fallback
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], group: openai-failover }
 
-rules:
-  - name: openai-with-anthropic-fallback
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: useResiliencePolicy
-        policyName: openai-failover
-
-resilience_policies:
-  - name: openai-failover
+groups:
+  openai-failover:
     mode: failover
     failure_status_codes: [502, 503, 504]
     targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
-      - name: anthropic-backup
-        provider: anthropic
-        order: 2
-        actions:
-          - type: changeProvider
-            newProvider: anthropic
-          - type: changeModelName
-            newModelName: claude-3-5-sonnet
+      - { provider: openai }
+      - { provider: anthropic, alias: claude-3-5-sonnet }
 ```
 
 The literal credential values shown here are what the YAML loader sees; substitute via your secret manager before mount (see [`configuration-model.md`](configuration-model.md#why-no-var-substitution)).
 
-Every OpenAI-bound request now tries OpenAI first; on a 502/503/504 it falls over to Anthropic with a model rewrite. The client sees one response — either the OpenAI success or the Anthropic recovery.
+Every `chat` request for a `gpt-*` model now tries OpenAI first; on a 502/503/504 it falls over to Anthropic's OpenAI-compat `chat` surface, rewriting the body model to `claude-3-5-sonnet` via the target `alias`. The client sees one response — either the OpenAI success or the Anthropic recovery. Failover order is **declaration order**: `openai` is target 1, `anthropic` is target 2.
 
 ### 30-second weighted load-balance
 
 ```yaml
-resilience_policies:
-  - name: qwen-load-balance
+groups:
+  qwen-load-balance:
     mode: load_balance
     failure_status_codes: [502, 503, 504]
     targets:
-      - name: qwen-spark-incluster
-        provider: qwen-ollama
-        weight: 70
-      - name: qwen-standalone-69
-        provider: qwen-ollama-standalone
-        weight: 30
+      - { provider: qwen-ollama, weight: 70 }
+      - { provider: qwen-ollama-standalone, weight: 30 }
+```
+
+```yaml
+# on the configuration:
+bindings:
+  - { protocol: chat, models: ["qwen2.5-coder:7b"], group: qwen-load-balance }
 ```
 
 Roughly 70% of requests land on the in-cluster ollama; 30% on the standalone. On a retryable failure the orchestrator re-rolls from the remaining pool (LBWF — load-balance with failover). See [Modes](#modes) for the alternative `strict_weights` semantics used by canary mirroring.
@@ -127,18 +121,20 @@ Roughly 70% of requests land on the in-cluster ollama; 30% on the standalone. On
 
 ## YAML schema
 
-The full schema is in [`contracts/resilience/types.go`](../contracts/resilience/types.go). What follows is the operator-facing summary.
+The v2 group schema is defined in [`contracts/config/model.go`](../contracts/config/model.go) (`GroupsConfig` / `Group` / `Target`). What follows is the operator-facing summary.
 
 ### Top-level
 
+`groups:` is a map from **group name** to its definition (the name is the map key, not a field):
+
 ```yaml
-resilience_policies:
-  - name: <unique policy name>
+groups:
+  <group-name>:
     mode: failover | load_balance | load_balance_with_failover | none
-    strict_weights: false                # default; only meaningful for load_balance modes
-    failure_status_codes: [502, 503, 504] # policy-level default; targets can override
-    response_header_timeout_seconds: 20   # optional; overrides the gateway-wide time-to-first-byte cap for this policy
-    circuit_breaker:                      # optional; per-target can override
+    strict_weights: false                 # default; only meaningful for load_balance modes
+    failure_status_codes: [502, 503, 504]  # group-wide; empty falls back to default 5xx set
+    response_header_timeout_seconds: 20    # optional; overrides the gateway-wide time-to-first-byte cap for this group
+    circuit_breaker:                       # optional; group-wide (one breaker per target-provider)
       enabled: true
       failure_threshold: 5
       failure_rate_threshold: 0.5
@@ -147,46 +143,42 @@ resilience_policies:
       cooldown_seconds: 30
       half_open_success_threshold: 2
     targets:
-      - name: <target name, unique within policy>
-        provider: <provider name from providers.yaml>
-        order: 1                          # failover ordering; ignored in load_balance modes
-        weight: 50                        # load_balance share; ignored in failover
-        failure_status_codes: [503]       # optional target-level override
-        circuit_breaker: { ... }          # optional target-level override
-        actions:                          # optional; polymorphic, any rules.Action
-          - type: changeProvider
-            newProvider: anthropic
+      - provider: <provider name from providers.yaml>
+        alias: <model name to rewrite the body to when this target is selected>  # optional
+        weight: 50                          # load_balance share; ignored in failover
+        path: /custom/upstream/path         # optional per-target protocol-path override
+        query: { api-version: "2024-02-01" } # optional per-target query params (composed over provider query)
 ```
 
-### Policy fields
+### Group fields
 
 | Field | Required | Notes |
 |---|---|---|
-| `name` | yes | Unique across the whole `resilience_policies` library. Referenced by `useResiliencePolicy.policyName`. |
+| _map key_ | yes | The group name. Referenced by a binding's `group:`. Unique across the `groups:` block (duplicate top-level keys are a load error). |
 | `mode` | yes | See [Modes](#modes). |
-| `strict_weights` | no | Default `false`. Only meaningful in `load_balance` modes — see [strict_weights](#strict_weights-canary-mirroring). |
-| `failure_status_codes` | no | List of HTTP status codes that count as retryable for any target in this policy. Empty falls back to default `[500, 502, 503, 504]`. |
-| `response_header_timeout_seconds` | no | Per-policy override of the gateway-wide time-to-first-byte cap (`SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this policy; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance policies usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
-| `circuit_breaker` | no | Policy-level breaker config; applied to every target unless the target overrides. Omit for no breaker. |
-| `targets` | yes | At least one target. |
+| `strict_weights` | no | Default `false`. Only meaningful in `load_balance` modes — see [strict_weights](#canary-mirroring-with-strict_weights). |
+| `failure_status_codes` | no | Group-wide list of HTTP status codes that count as retryable. Empty falls back to default `[500, 502, 503, 504]`. There is no per-target override in the v2 group schema. |
+| `response_header_timeout_seconds` | no | Per-group override of the gateway-wide time-to-first-byte cap (`SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this group; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance groups usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
+| `circuit_breaker` | no | Group-wide breaker config; one breaker instance per `(group, target-provider)`. Omit for no breaker. The v2 group schema has no per-target breaker override. |
+| `targets` | yes | At least one target. Validation rejects an empty target list. |
 
 ### Target fields
 
 | Field | Required | Notes |
 |---|---|---|
-| `name` | yes | Unique within the policy. Surfaces on every metric and in the gateway.request event's `Attempts[].target`. |
-| `provider` | yes | Must match a provider declared in `providers.yaml`. The orchestrator looks the endpoint up on this provider post-rule. |
-| `order` | failover only | Lower is tried first. Stable on ties. Ignored in `load_balance` modes. |
-| `weight` | load_balance only | Positive integer share. Ignored in `failover`. The validator rejects a load_balance policy with no positive weights. |
-| `failure_status_codes` | no | Per-target override. Empty falls back to policy-level then default. |
-| `circuit_breaker` | no | Per-target override. `nil` falls back to policy-level. |
-| `actions` | no | Polymorphic list of `rules.Action`. Applied to a per-attempt clone of the post-rule state before the forwarder runs. See [Per-target Actions](#per-target-actions). |
+| `provider` | yes | Must match a provider declared in `providers.yaml`, and that provider must serve the binding's protocol (protocol-preserving; enforced at config-load). |
+| `alias` | no | Model-name rewrite: when this target is selected the request body's model field is rewritten to this value. This is the v2 replacement for the v1 `model_rewrite` scalar. Placing it on the target lets one group send a single logical model under a different upstream id per provider. |
+| `weight` | load_balance only | Relative selection share. `0` is treated as `1` (even weighting) by the orchestrator. Ignored in `failover` mode, where **declaration order** drives sequencing. |
+| `path` | no | Overrides the protocol's upstream path for this target only (e.g. an Azure deployment-specific path on a shared provider connection). |
+| `query` | no | Per-target query-string params, composed over the provider's default query (target wins). |
+
+There is no per-target `name`, `order`, `failure_status_codes`, `circuit_breaker`, or `actions` in the v2 group schema. Failover order is the declaration order of `targets`; the telemetry target label is the **provider name**.
 
 ### Circuit-breaker fields
 
 | Field | Default | Notes |
 |---|---|---|
-| `enabled` | `false` | Off by default — set `true` to opt the (policy, target) pair in. |
+| `enabled` | `false` | Off by default — set `true` to arm the breaker for the group. |
 | `failure_threshold` | 0 | Absolute count of failures inside the window required to trip. `0` means "rate-only". |
 | `failure_rate_threshold` | 0 | Proportional failure rate (0.0–1.0) required to trip. `0` means "absolute-only". |
 | `sampling_duration_seconds` | 60 | Sliding window. Older buckets roll off. |
@@ -198,27 +190,28 @@ If both `failure_threshold > 0` and `failure_rate_threshold > 0`, **both** must 
 
 ---
 
-## Binding a request to a policy
+## Binding a request to a group
 
-The bridge from "request matched a rule" to "orchestrator runs" is the **`useResiliencePolicy`** rule action:
+The bridge from "request arrived" to "orchestrator runs" is a **binding** on the resolved Configuration. A binding matches a `(protocol, model)` pair and names a destination:
 
 ```yaml
-rules:
-  - name: route-qwen-ollama
-    condition:
-      type: modelName
-      operator: Equals
-      expectedModelName: "qwen2.5-coder:7b"
-    actions:
-      - type: useResiliencePolicy
-        policyName: qwen-load-balance
+configurations:
+  production:
+    credentials:
+      qwen-ollama: ""
+      qwen-ollama-standalone: ""
+    bindings:
+      # single provider — single-shot, no orchestration
+      - { protocol: chat, models: ["gpt-*"], provider: openai }
+      # group — orchestrated
+      - { protocol: chat, models: ["qwen2.5-coder:7b"], group: qwen-load-balance }
 ```
 
-When the action fires it sets `state.PolicyRef` on the in-context `MutableState`. The resilience middleware reads `PolicyRef` after rules complete; if empty, resilience is a passthrough.
+Bindings are evaluated in order; the first whose protocol matches the inbound path and whose `models` patterns match the request's model wins. An empty `models` list is a catch-all for the protocol (default-permissive). Exactly one of `provider:` or `group:` is set per binding — config validation rejects a binding that sets both or neither.
 
-`useResiliencePolicy` is *non-terminating* — it does not stop rule evaluation. You can fire it alongside other actions in the same rule, but the usual idiom is one rule, one resilience binding.
+When the matched binding names a group, selection synthesises the group's orchestrator config and stashes it on the request context; the resilience middleware reads it directly. When the binding names a single provider, selection synthesises a degenerate one-target `ModeNone` config that flows through the same path (the `alias`/`query`/`path` sugar on a single-provider binding becomes that one target's overrides).
 
-If you accidentally point `policyName` at a non-existent policy, the orchestrator falls back to passthrough (single-shot) rather than failing the request. The validator catches unresolved references at config-load time; this only fires under a startup-after-rewrite race.
+> **`useResiliencePolicy` is superseded and inert in v2.** The v1 `useResiliencePolicy` rule action still parses (it remains in the rules action vocabulary), but nothing reads what it sets. It writes `state.PolicyRef`, and the v2 orchestrator ignores `state.PolicyRef` entirely: it always prefers the per-request config selection stashed on the context, and the name-keyed policy lookup it would otherwise consult is wired to `nil` (`cmd/gateway/handler.go`). Do not author it — bind to a group instead. See [What changed from v1](#what-changed-from-v1).
 
 ---
 
@@ -226,7 +219,7 @@ If you accidentally point `policyName` at a non-existent policy, the orchestrato
 
 ### `failover`
 
-Targets are sorted by `order` ascending. The orchestrator tries them in turn. The first non-retryable outcome (commit) writes the response to the client. On retryable failure, the orchestrator records the attempt and tries the next target.
+Targets are tried in **declaration order** (the order they appear under `targets:`). The orchestrator tries them in turn. The first non-retryable outcome (commit) writes the response to the client. On retryable failure, the orchestrator records the attempt and tries the next target.
 
 A retryable outcome is one of:
 
@@ -241,13 +234,13 @@ If every target fails:
 
 ```mermaid
 flowchart TB
-    Start[request enters resilience<br/>with PolicyRef set] --> Sort[sort targets by Order asc]
+    Start[request enters resilience<br/>with group config set] --> Sort[take targets in<br/>declaration order]
     Sort --> Loop{more targets?}
     Loop -- no --> Exhausted[write fallback status<br/>last status / 502 / 503]
     Loop -- yes --> CBCheck{CB Allow?}
     CBCheck -- no --> Record1[record cb_blocked]
     Record1 --> Loop
-    CBCheck -- yes --> Run[apply target.Actions<br/>to clone of state]
+    CBCheck -- yes --> Run[switch provider<br/>+ apply alias to clone of state]
     Run --> Forward[next.ServeHTTP<br/>via BufferingResponseWriter]
     Forward --> Decide{ShouldRetry?}
     Decide -- no --> Commit[flush buf to client<br/>record success]
@@ -257,7 +250,7 @@ flowchart TB
 
 ### `load_balance` / `load_balance_with_failover`
 
-Both modes pick a target by weighted-random selection: each target contributes its `weight` to a cumulative-sum distribution; `rand(0, total)` picks the slot. Long-run distribution converges to the weight ratio without any shared counter — every pod balances independently.
+Both modes pick a target by weighted-random selection: each target contributes its `weight` to a cumulative-sum distribution; `rand(0, total)` picks the slot. A `weight` of 0 is treated as 1 (even weighting). Long-run distribution converges to the weight ratio without any shared counter — every pod balances independently.
 
 The two mode names are aliases at the YAML level. The behaviour split is governed by `strict_weights`:
 
@@ -271,7 +264,7 @@ flowchart TB
     Filter --> Loop{pool non-empty?}
     Loop -- no --> Exhausted[503 if all CB-blocked<br/>else last status / 502]
     Loop -- yes --> Pick[weightedSelect from pool]
-    Pick --> Run[apply target.Actions<br/>+ forward]
+    Pick --> Run[switch provider + alias<br/>+ forward]
     Run --> Decide{ShouldRetry?}
     Decide -- no --> Commit[flush buf to client]
     Decide -- yes --> Strict{strict_weights?}
@@ -282,29 +275,24 @@ flowchart TB
 
 ### `none`
 
-Single-target degenerate. The orchestrator applies the first target's `Actions` (if any) to the post-rule state and forwards once. No retry. Useful when you want to attach Actions to a request via a policy reference but don't need the orchestration machinery — for example, header injection that's easier to express as a target than as a standalone rule.
+Single-target degenerate. The orchestrator switches to the (single) target's provider, applies its `alias` if any, and forwards once. No retry. This is the mode selection synthesises for a single-provider binding — it is what lets a single binding carry a model alias (e.g. `foundry-model-name` → the upstream deployment name) without a bespoke pre-forward rewrite stage. You do not normally author `mode: none` by hand; use a single-provider binding.
 
 ---
 
-## Per-target Actions
+## Per-target overrides
 
-A target's `actions` block is polymorphic — it accepts the same shapes the rules engine consumes. The orchestrator clones the post-rule `MutableState` once per attempt and applies the target's actions to the clone, so different attempts cannot stack their mutations.
+A v2 target is a provider reference plus a small set of per-use overrides that compose over the provider's own values (target wins):
 
-Supported action types:
-
-| Type | Effect |
+| Override | Effect |
 |---|---|
-| `changeProvider` | Sets `state.Provider`. Triggers post-rule endpoint re-resolution on the new provider (see invariant 7). |
-| `changeModelName` | Rewrites the body's model field via the typed-body re-marshal path. |
-| `changeUrl` | Overrides the upstream URL for this attempt. |
-| `changeApiKey` | Substitutes the upstream credential. |
-| `setHeader` | Adds, sets, or removes an outbound header. |
-| `appendQueryString` | Appends a key-value pair to the upstream URL's query string. |
-| `addTag` | Attaches a tag to the request (surfaces in `gateway.request.Tags` and `gateway.tags.applied.total`). |
+| `alias` | Rewrites the request body's model field to this value when the target is selected. The v2 replacement for the v1 `model_rewrite` scalar. |
+| `path` | Overrides the protocol's upstream path for this target only. |
+| `query` | Adds or overrides query-string params, composed over the provider's default query. |
+| `weight` | Relative load-balance share (ignored in failover). |
 
-Terminating actions (`returnStatusCode`, `llmImpersonation`) inside a target's `actions` block are not meaningful — they would short-circuit before the forwarder runs. The validator does not currently reject them, but the orchestrator's behaviour is undefined; don't put them there.
+There is no authorable per-target action block in v2. Internally, the orchestrator still applies the same per-attempt machinery the v1.2 engine used: selection synthesises an internal `changeProvider` (+ `changeModelName` when an `alias` is set) per target, clones the post-selection state once per attempt, and applies those internal actions to the clone — so different attempts cannot stack their mutations. `changeProvider` / `changeModelName` survive **only** as these internal synthesis primitives; they are no longer authorable in rules.
 
-**Why this matters for failover:** the destination of attempt N is *not* fixed at policy-load time. The post-rule state is the baseline; each target's actions rewrite from that baseline. This is what lets the model-keyed redirect pattern work — `claude-*` on `/openai/v1/chat/completions` lands on anthropic's `chat_completions` endpoint with anthropic's credential and auth header, all because `changeProvider` triggered the destination builder to re-resolve the endpoint on the new provider.
+**Why this matters for failover:** the destination of attempt N is *not* a fixed URL baked at config-load. Switching `state.Provider` triggers the final handler to re-resolve the endpoint, base URL, credential, and auth-header convention on the *new* provider (invariant 7). This is what lets a single group send the same logical model to providers with different credential conventions — e.g. OpenAI's `Authorization: Bearer` primary and Anthropic's OpenAI-compat `chat` surface as the backup, each authenticating correctly (invariant 6).
 
 ---
 
@@ -312,11 +300,10 @@ Terminating actions (`returnStatusCode`, `llmImpersonation`) inside a target's `
 
 Resolution order for "is this status retryable?":
 
-1. Target's `failure_status_codes` (if set).
-2. Policy's `failure_status_codes` (if set).
-3. Default `[500, 502, 503, 504]`.
+1. The group's `failure_status_codes` (if set).
+2. Default `[500, 502, 503, 504]`.
 
-Empty at every level falls through to the default so an operator cannot accidentally produce a "no status ever retries" configuration without explicitly meaning to. If you really want that, set an empty-but-non-default sentinel via a comment in your YAML — `failure_status_codes: []` won't get you there because it's indistinguishable from "unset" at the loader.
+The v2 group schema has no per-target `failure_status_codes` override — the retry set is group-wide. Empty falls through to the default so an operator cannot accidentally produce a "no status ever retries" configuration without explicitly meaning to.
 
 Status codes outside the configured set always commit. A `4xx` from a provider is not retried by default — client errors don't get better on retry, and the second attempt would burn quota for nothing.
 
@@ -324,7 +311,7 @@ Status codes outside the configured set always commit. A `4xx` from a provider i
 
 ## Circuit breaker
 
-The breaker is a per-(policy, target) state machine that protects a provider from a stampede when it's clearly unhealthy. State lives **per-pod**, in-memory; v1.3+ adds a Redis-backed implementation behind the same `BreakerStore` interface.
+The breaker is a per-`(group, target-provider)` state machine that protects a provider from a stampede when it's clearly unhealthy. The breaker store keys state by `group-name | provider-name`, so the same provider tracked under two different groups has two independent breakers. State lives **per-pod**, in-memory; a Redis-backed implementation behind the same `BreakerStore` interface is a later task.
 
 ```mermaid
 stateDiagram-v2
@@ -368,7 +355,7 @@ If every target is blocked, the orchestrator returns **503 Service Unavailable**
 
 ## Observability
 
-Every layer of the orchestrator emits signal. Three independent channels:
+Every layer of the orchestrator emits signal. Three independent channels. The OTel attribute keys are still `policy` and `target` — under v2, `policy` carries the **group name** (or `binding:<provider>` for a synthesised single-target config) and `target` carries the **provider name**.
 
 ### OTel metrics (Prometheus scrape + OTLP push)
 
@@ -385,26 +372,26 @@ Per-request meters (`gateway.requests.total`, `gateway.request.duration`) fire *
 
 ### Multi-attempt record shape
 
-Each request emits one [`Record`](../contracts/connector/record.go) per matched connector binding (see [connector-bindings.md](connector-bindings.md)). For requests bound to a resilience policy, the record carries:
+Each request emits one [`Record`](../contracts/connector/record.go) per matched connector binding (see [connector-bindings.md](connector-bindings.md)). For requests routed to a group, the record carries `policy_ref` (the group name) and the per-attempt history:
 
 ```jsonc
 {
   "correlation_id": "...",
   "provider": "openai",
-  "endpoint": "chat_completions",
+  "endpoint": "chat",
   "model": "qwen2.5-coder:7b",
   "upstream_status": 200,
   "policy_ref": "qwen-load-balance",
   "attempts": [
     {
-      "target": "qwen-spark-incluster",
+      "target": "qwen-ollama",
       "started_at_ns": 1747921632000000000,
       "duration_ms": 480,
       "status_code": 503,
       "outcome": "failure_status"
     },
     {
-      "target": "qwen-standalone-69",
+      "target": "qwen-ollama-standalone",
       "started_at_ns": 1747921632480000000,
       "duration_ms": 760,
       "status_code": 200,
@@ -414,15 +401,14 @@ Each request emits one [`Record`](../contracts/connector/record.go) per matched 
 }
 ```
 
-`PolicyRef` and `Attempts` are omitted for single-shot requests, so the wire shape for non-resilience traffic remains stable.
+`policy_ref` and `attempts` are omitted for single-shot requests (single-provider bindings / `ModeNone`), so the wire shape for non-orchestrated traffic remains stable.
 
 ### Admin console
 
-- **`/policies`** (read-only): one card per resilience policy, with the per-target weight/order table and a live circuit-breaker state badge per (policy, target).
-- **Live messages modal**: when an entry's `Attempts.length > 1`, a per-attempt breakdown table renders below the rule-match section. One row per attempt: target name, status code, duration, outcome chip.
-- **Dashboard** (planned): CB transitions tile, surfacing `gateway.cb.transitions.total` over the selected window.
+- **`/policies`** (read-only): one card per resilience group, with the per-target weight table and a live circuit-breaker state badge per `(group, provider)`.
+- **Live messages modal**: when an entry's `attempts.length > 1`, a per-attempt breakdown table renders below the rule-match section. One row per attempt: provider/target name, status code, duration, outcome chip.
 
-The admin endpoint behind `/policies` is `GET /admin/api/v1/policies` — same auth shape as the rest of the console. The wire DTO lives in [`contracts/admin/policies.go`](../contracts/admin/policies.go).
+The admin endpoint behind `/policies` is `GET /admin/api/v1/policies` — same auth shape as the rest of the console.
 
 ---
 
@@ -435,89 +421,60 @@ Goal: OpenAI primary, Anthropic backup with a model rewrite.
 ```yaml
 configurations:
   production:
-    upstream_credentials:
+    credentials:
       openai: sk-openai-mock
       anthropic: sk-ant-mock
-    rule_names:
-      - openai-with-anthropic-fallback
+    bindings:
+      - { protocol: chat, models: ["gpt-*"], group: openai-failover }
 
-rules:
-  - name: openai-with-anthropic-fallback
-    condition:
-      type: provider
-      operator: Equals
-      expectedProvider: openai
-    actions:
-      - type: useResiliencePolicy
-        policyName: openai-failover
-
-resilience_policies:
-  - name: openai-failover
+groups:
+  openai-failover:
     mode: failover
     failure_status_codes: [502, 503, 504]
     targets:
-      - name: openai-primary
-        provider: openai
-        order: 1
-      - name: anthropic-backup
-        provider: anthropic
-        order: 2
-        actions:
-          - type: changeProvider
-            newProvider: anthropic
-          - type: changeModelName
-            newModelName: claude-3-5-sonnet
+      - { provider: openai }
+      - { provider: anthropic, alias: claude-3-5-sonnet }
 ```
 
-Why this works: the backup target's `changeProvider` flips `state.Provider` post-target, which triggers the destination builder to look up the endpoint map on `anthropic`. The credential and auth-header convention follow automatically — see invariant 6 in `CLAUDE.md`.
+Why this works: the backup target switches `state.Provider` to `anthropic` post-selection, which triggers the final handler to re-resolve the endpoint, base URL, credential, and auth-header convention on `anthropic`'s OpenAI-compat `chat` surface. The `alias` rewrites the body model to `claude-3-5-sonnet`. See invariants 6 and 7 in `CLAUDE.md`.
 
 ### Weighted load-balance — qwen testbed
 
-Goal: split qwen2.5-coder:7b traffic across an in-cluster ollama on the spark node and a standalone host at `192.168.69.21`.
+Goal: split `qwen2.5-coder:7b` traffic across an in-cluster ollama on the spark node and a standalone host.
 
 ```yaml
-rules:
-  - name: route-qwen-ollama
-    condition:
-      type: modelName
-      operator: Equals
-      expectedModelName: "qwen2.5-coder:7b"
-    actions:
-      - type: useResiliencePolicy
-        policyName: qwen-load-balance
+configurations:
+  production:
+    credentials:
+      qwen-ollama: ""
+      qwen-ollama-standalone: ""
+    bindings:
+      - { protocol: chat, models: ["qwen2.5-coder:7b"], group: qwen-load-balance }
 
-resilience_policies:
-  - name: qwen-load-balance
+groups:
+  qwen-load-balance:
     mode: load_balance
     failure_status_codes: [502, 503, 504]
     targets:
-      - name: qwen-spark-incluster
-        provider: qwen-ollama
-        weight: 50
-      - name: qwen-standalone-69
-        provider: qwen-ollama-standalone
-        weight: 50
+      - { provider: qwen-ollama, weight: 50 }
+      - { provider: qwen-ollama-standalone, weight: 50 }
 ```
 
-Each request picks one target at 50/50. On a 502/503/504 the orchestrator removes the failed target and re-rolls from the remaining pool — single-pool failover absorbed in the same policy.
+Each request picks one target at 50/50. On a 502/503/504 the orchestrator removes the failed target and re-rolls from the remaining pool — single-pool failover absorbed in the same group. (An empty-string credential marks a no-credential provider: the gateway strips the credential header and forwards.)
 
 ### Canary mirroring with `strict_weights`
 
 Goal: 95% of traffic on the established provider, 5% on a new build whose failure rate must surface to the client.
 
 ```yaml
-resilience_policies:
-  - name: model-canary
+groups:
+  model-canary:
     mode: load_balance
     strict_weights: true
     failure_status_codes: [502, 503, 504]
     targets:
-      - name: stable
-        provider: openai-stable
-        weight: 95
-      - name: canary
-        provider: openai-canary
-        weight: 5
+      - { provider: openai-stable, weight: 95 }
+      - { provider: openai-canary, weight: 5 }
 ```
 
 `strict_weights: true` disables LBWF re-roll. If the canary is picked and it returns 503, the client sees the 503. That's the point — without it you'd silently absorb canary failures into the stable provider's apparent reliability.
@@ -527,8 +484,8 @@ resilience_policies:
 Goal: if a provider produces 5 failures in 60 seconds with at least 10 samples observed, take it out of rotation for 30 seconds.
 
 ```yaml
-resilience_policies:
-  - name: protected-pool
+groups:
+  protected-pool:
     mode: load_balance
     failure_status_codes: [502, 503, 504]
     circuit_breaker:
@@ -539,48 +496,28 @@ resilience_policies:
       cooldown_seconds: 30
       half_open_success_threshold: 2
     targets:
-      - name: a
-        provider: provider-a
-        weight: 50
-      - name: b
-        provider: provider-b
-        weight: 50
+      - { provider: provider-a, weight: 50 }
+      - { provider: provider-b, weight: 50 }
 ```
 
-The per-(policy, target) CB applies to both targets independently. If `provider-a` trips, the pool shrinks to just `b` until cooldown elapses; if `b` is also blocked, every request gets a 503 with `outcome=all_open`. After 30s the breaker probes HalfOpen — the next 2 consecutive successes close it; any failure reopens.
+The group-wide breaker applies to each `(group, provider)` independently. If `provider-a` trips, the pool shrinks to just `provider-b` until cooldown elapses; if `provider-b` is also blocked, every request gets a 503 with `outcome=all_open`. After 30s the breaker probes HalfOpen — the next 2 consecutive successes close it; any failure reopens.
 
 ---
 
-## Forward-compat / legacy schema fields
+## What changed from v1
 
-`contracts/resilience/types.go` carries a handful of fields the YAML loader will happily accept but the v1.2 orchestrator does not yet act on. They are parsed for forward compatibility — so YAML authored against a future control-plane build round-trips through this gateway without rejection — and to preserve the v1.0 schema shape that landed before per-target `Actions` did. Treat them as inert today; do not assume they take effect until a release note says otherwise.
+If you are migrating policy YAML authored against the v1 schema, these are the load-bearing differences:
 
-### `ResilienceConfig.TimeoutSeconds`
+| v1 | v2 |
+|---|---|
+| Top-level `resilience_policies:` (a list) | Top-level `groups:` (a map keyed by name) |
+| Policy `name:` field | Group name is the map key |
+| A rule fires `useResiliencePolicy` to bind a policy | A Configuration binding names a `group:` — selection routes; rules no longer bind resilience |
+| Targets carry `name`, `order`, per-target `failure_status_codes`, per-target `circuit_breaker`, an `actions:` block, `model_rewrite`, `timeout_seconds` | Targets carry `provider`, `alias`, `weight`, `path`, `query` only. Failover order is declaration order; the target's telemetry label is its provider name |
+| Per-target `actions:` (`changeProvider`, `changeModelName`, …) authored in YAML | No authorable target actions. Provider switch + alias rewrite are synthesised internally; `model_rewrite` is replaced by `alias` |
+| `timeout_seconds`, `retry:` blocks parsed (inert) on the policy/target | Not part of the v2 group schema — these keys are not recognised under `groups:` and have no effect |
 
-Top-level policy-wide timeout, parsed from `timeout_seconds`. Intended as a per-attempt **whole-attempt wall-clock** cap (distinct from `response_header_timeout_seconds`, which caps time-to-first-byte and *is* now honoured — see [Policy fields](#policy-fields)). The orchestrator does not currently honour `timeout_seconds`; the field is preserved on the wire so a future context-deadline path can read it without a schema migration.
-
-### `ResilienceTarget.TimeoutSeconds`
-
-Per-target override of the policy-wide `TimeoutSeconds`, parsed from `timeout_seconds` on the target. Same forward-compat story — parsed and validated, not enforced.
-
-### `ResilienceTarget.ModelRewrite`
-
-Legacy scalar form of "rewrite the body's model field when this target is selected", parsed from `model_rewrite`. Predates the polymorphic `Actions` block — operators authoring new policies should use `actions: [- type: changeModelName, newModelName: ...]` instead. The scalar remains on the contract so v1.0-era YAML keeps loading; when both `ModelRewrite` and a `changeModelName` action are present on the same target, `Actions` wins for the model field.
-
-### `RetryConfig` (`retry:` block)
-
-Parsed but inert in v1.2. Lives on `ResilienceConfig.Retry` and configures retry-with-backoff inside a single target rather than failover across targets. The v1.2 orchestrator's retry path is the failover walk — one attempt per target, no in-target retry. `RetryConfig` will activate once the resilience engine grows per-target retry budgets (post-v1.3).
-
-| Field | YAML | Default | Notes |
-|---|---|---|---|
-| `Enabled` | `enabled` | `false` | Master switch. The orchestrator currently treats this as always-false regardless of the YAML value. |
-| `MaxAttempts` | `max_attempts` | 0 | Total attempt budget including the initial call. Must be `> 0` when `Enabled` is true; validator enforces this even though the engine doesn't yet consume it. |
-| `BackoffType` | `backoff_type` | _(empty)_ | Inter-attempt delay curve. One of `constant`, `linear`, `exponential` (the `BackoffX` constants in `contracts/resilience/types.go`). |
-| `DelayMilliseconds` | `delay_ms` | 0 | Base delay between attempts. `BackoffType` scales subsequent delays. |
-| `MaxDelayMs` | `max_delay_ms` | 0 | Caps the per-attempt delay so exponential backoff cannot stretch beyond a bound. Zero means uncapped. |
-| `UseJitter` | `use_jitter` | `false` | Adds random jitter to each delay so synchronised clients don't retry in lockstep ("thundering herd"). |
-
-If you've authored YAML with any of the above set today, the gateway will load it, the validator will pass it, and the runtime will quietly ignore it. Don't rely on the behaviour they describe until the corresponding milestone ships.
+The `useResiliencePolicy`, `changeProvider`, `changeUrl`, and `changeApiKey` actions still exist in the rules action vocabulary for backward-compatible parsing, but routing is config data now: `changeProvider` / `changeModelName` survive only as internal selection primitives, and `useResiliencePolicy` is inert (its `state.PolicyRef` write is never read — see [Binding a request to a group](#binding-a-request-to-a-group)). Author bindings, not routing rules.
 
 ---
 
@@ -588,28 +525,26 @@ If you've authored YAML with any of the above set today, the gateway will load i
 
 These are documented intentionally — don't fix them without checking the milestone first.
 
-1. **Body-mutating per-target actions across multiple attempts may leak state.** The typed body is shared between attempts; if attempt 1's `changeModelName` mutates it, attempt 2 sees the mutation. Restoration via re-parse from `Captured.Raw` is deferred.
+1. **Body-mutating per-attempt rewrites across multiple attempts may leak state.** The typed body is shared between attempts; if attempt 1's internal `alias` rewrite (`changeModelName`) mutates it, attempt 2 sees the mutation. Restoration via re-parse from `Captured.Raw` is deferred.
 
-2. **`response_header_timeout_seconds` is honoured at the policy level only.** When a policy sets it, every attempt under that policy uses it as the time-to-first-byte cap (the forwarder keys a per-timeout transport off the attempt context). What's still deferred: a **per-target** header-timeout override, and the whole-attempt wall-clock `timeout_seconds` (a context-deadline path) — both scheduled for v1.3+.
+2. **`response_header_timeout_seconds` is honoured at the group level only.** When a group sets it, every attempt under that group uses it as the time-to-first-byte cap (the forwarder keys a per-timeout transport off the attempt context). A per-target header-timeout override and a whole-attempt wall-clock cap are not part of the v2 group schema.
 
 3. **"200 then die mid-stream" is invisible to the CB.** The breaker records an attempt as success at status-line commit. A stream that dies after headers will not trip the breaker.
 
-4. **CB state is per-pod and lost on restart.** Multi-pod deployments see independent breakers. The Redis-backed `BreakerStore` swap behind the existing interface is a v1.3+ task; the gauge already labels by `pod` so dashboards can disambiguate.
-
-5. **Terminating actions inside `targets[*].actions` have undefined behaviour.** The validator does not reject `returnStatusCode` or `llmImpersonation` in a target's action list. Don't put them there.
+4. **CB state is per-pod and lost on restart.** Multi-pod deployments see independent breakers, and the breaker is keyed by `(group, provider)` rather than globally per provider — the same provider in two groups has two breakers. The gauge labels by `pod` so dashboards can disambiguate.
 
 ---
 
 ## Troubleshooting
 
-**"My policy never fires."**
-Check the rules engine actually bound it. The admin console's live-messages modal shows `policy_ref` per request when set. If `policy_ref` is empty, your rule's `useResiliencePolicy` never ran — verify the rule's condition matches the traffic.
+**"My group never runs."**
+Check the binding actually selects it. The admin console's live-messages modal shows `policy_ref` per request when a group ran. If `policy_ref` is empty, the matched binding pointed at a single `provider:` (single-shot), not a `group:` — or no binding matched at all (the request 404s). Verify the binding's `protocol` matches the inbound path and its `models` patterns match the request model.
 
 **"My target shows `circuit_state: unknown` on the policies page."**
-The breaker has not observed any traffic on that (policy, target) pair yet. The gauge omits never-touched pairs. Send a request through the policy and refresh.
+The breaker has not observed any traffic on that `(group, provider)` pair yet. The gauge omits never-touched pairs. Send a request through the group and refresh.
 
 **"All my attempts come back 5xx and the client sees the upstream's body, not my fallback."**
-The orchestrator writes its 502/503 fallback **only** when every attempt was either a transport error (no headers) or all targets were CB-blocked. When some attempt got headers + a status that was in your retry set, the **last** attempt's status is what the client sees. If you want a custom fallback shape, add a terminating rule with `returnStatusCode` outside the policy.
+The orchestrator writes its 502/503 fallback **only** when every attempt was either a transport error (no headers) or all targets were CB-blocked. When some attempt got headers + a status that was in your retry set, the **last** attempt's status is what the client sees. If you want a custom fallback shape, add a terminating rule with `returnStatusCode`.
 
 **"My `gateway.requests.total` counter doubled."**
 Check whether you've inadvertently created two events. Multi-attempt requests should emit exactly one `gateway.request` event (and one `gateway_requests_total` increment). If you're seeing two, suspect a misconfigured upstream proxy retrying — the gateway's own retry is internal and never produces a second event.
@@ -617,5 +552,5 @@ Check whether you've inadvertently created two events. Multi-attempt requests sh
 **"My weighted distribution doesn't match the weights over a short window."**
 That's expected. Weighted-random selection converges in the long run; over 100 requests at 70/30 you'll see something like 68/32 or 73/27. Trust the `gateway.resilience.attempts.total` counter for the empirical ratio.
 
-**"How do I disable resilience for a specific request?"**
-Don't bind it. The presence of `useResiliencePolicy` is the trigger; requests that don't fire that action go single-shot.
+**"How do I disable resilience for a specific model?"**
+Bind it to a single `provider:` instead of a `group:`. A single-provider binding is single-shot — one attempt, no orchestration.

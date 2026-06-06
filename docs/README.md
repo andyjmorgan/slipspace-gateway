@@ -14,9 +14,9 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 
 | Doc | What it covers |
 |---|---|
-| [Configuration model](configuration-model.md) | YAML loader, file allow-list, top-level keys, configurations + api_keys binding |
-| [Providers](providers.md) | `providers.yaml` schema, endpoints, per-endpoint auth overrides, the OpenAI-compat surface |
-| [Routing](routing.md) | How inbound paths get matched to a (provider, endpoint), prefix rules, X-Sluice headers |
+| [Configuration model](configuration-model.md) | YAML loader (every `*.yaml` merged by top-level key), top-level blocks, configurations + bindings + api_keys |
+| [Providers](providers.md) | `providers` block schema — base URL, per-protocol auth, passthrough families, the OpenAI-compat surface |
+| [Routing](routing.md) | How inbound paths map to a protocol and select a target via bindings, passthrough matching, X-Sluice headers |
 | [Authentication](auth.md) | Managed vs passthrough modes, header discovery, upstream credential resolution |
 | [Rules](rules.md) | Rules engine + every condition type + behavior=continue/exit |
 | [Actions](actions.md) | Every rule action — `changeProvider`, `setHeader`, `useResiliencePolicy`, `returnStatusCode`, ... |
@@ -28,6 +28,10 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | [Admin console](admin-console.md) | Enabling, password, every API route, every SPA page, live messages, body capture |
 | [Environment variables](environment-variables.md) | Every `SLUICE_*` env var with default, type, validation, effect |
 | [Deployment](deployment.md) | Topology, container image, K8s shape, multi-pod considerations, graceful drain |
+| [Telemetry service](telemetry-service.md) | The optional central `cmd/telemetry` service — two-listener topology, YAML config, deploy, shutdown, HMAC trust, invariant #4 compliance |
+| [Telemetry service API](telemetry-service-api.md) | Console query API — dashboard, messages, events, sessions, facets, keyset pagination |
+| [Telemetry webhook](telemetry-webhook.md) | The Record ingest contract — `POST /api/v1/ingest/record`, headers, hex HMAC-SHA256, response codes |
+| [Telemetry database schema](telemetry-database-schema.md) | Postgres ERD, per-table columns/indexes, the two-feed COALESCE merge, migration history |
 
 ### Developers running and testing locally
 
@@ -35,6 +39,10 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 |---|---|
 | [Local development](local-development.md) | Every `make` target, dev compose, `config-dev/` bundle, the five test layers |
 | [Auxiliary binaries](auxiliary-binaries.md) | `sluice-cli`, `sluice-mockllm`, `sluice-api` — flags, subcommands, when to use each |
+| [Models](models.md) | The shared `models/` package — `DynamicProperties`, `PolymorphicRegistry`, unknown-field round-trip (invariant #1) |
+| [Provider models](provider-models.md) | The `protocols/` wire types per provider — OpenAI audio/file/refusal/Responses, Anthropic thinking blocks + signatures, Gemini thinking + grounding |
+| [Pipeline](pipeline.md) | The typed-message middleware pipeline — `Message` sum type, `Middleware`/`Chain`, body-capture + re-marshal stages, selection internals |
+| [GenAI conformance audit](genai-conformance-audit.md) | Per-protocol wire-conformance audit of the gen_ai span + content extraction against the OTel GenAI semconv |
 
 ---
 
@@ -59,11 +67,13 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | Run the smoke suite against a live deploy | [Local development → Testing layers → Smoke](local-development.md#testing-layers), [Deployment → Smoke tests](deployment.md#smoke-tests-against-a-live-deploy) |
 | Add a tag to every matching request | [Actions → `addTag`](actions.md#addtag), [Rules → `tag` condition](rules.md#tag) |
 | Use a client's own upstream token (passthrough) | [Authentication → Passthrough mode](auth.md#passthrough-mode) |
-| Add OTLP push to a Honeycomb / Tempo endpoint | [Environment variables → Observability](environment-variables.md#observability), [Observability → OTel pipeline](observability.md#otel-pipeline) |
-| Capture request and response bodies for one event | [Admin console → Body capture](admin-console.md#body-capture), [Environment variables → Live feed + body capture](environment-variables.md#live-feed--body-capture) |
+| Add OTLP push to a Honeycomb / Tempo endpoint | [Environment variables → Observability](environment-variables.md#observability--otlp-prometheus-logging), [Observability → OTel pipeline](observability.md#otel-pipeline) |
+| Capture request and response bodies for one event | [Admin console → Body capture](admin-console.md#body-capture), [Environment variables → Live feed + body capture](environment-variables.md#live-feed-and-body-capture) |
 | Ship every request to an S3 bucket | [Connectors → s3 connector](connectors.md#s3-connector), [Connector bindings → Worked examples](connector-bindings.md#worked-examples) |
 | Pipe a 5% sample of errors to a webhook | [Connectors → webhook connector](connectors.md#webhook-connector), [Connector bindings → Sampling](connector-bindings.md#sampling) |
 | Understand where records sit when a destination is down | [Spool → Lifecycle](spool.md#lifecycle), [Spool → Loss policy](spool.md#loss-policy) |
+| Ship every request record to a central telemetry service | [Telemetry service](telemetry-service.md), [Telemetry webhook → Record ingest](telemetry-webhook.md), [Connectors → webhook connector](connectors.md#webhook-connector) |
+| Query captured requests across gateways in one console | [Telemetry service API](telemetry-service-api.md), [Telemetry database schema](telemetry-database-schema.md) |
 
 ---
 
@@ -79,4 +89,4 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 
 ## Where the source-of-truth design notes live
 
-The repo docs cover **what is** — the implemented surface. The longer-form **why** for milestone-level design decisions (the v1.0/v1.1/v1.2 milestone plans, the pipeline + middleware design, the .NET-to-Go translation table, the OpenAI-compat quirks note) lives in DonkeyWork project `793a6cba-bd53-4b7e-8913-20fee7cb5f87`. See [`CLAUDE.md`](../CLAUDE.md) at the repo root for the index of those notes.
+The repo docs cover **what is** — the implemented surface. The longer-form **why** for milestone-level design decisions (the v1.0/v1.1/v1.2 milestone plans, the pipeline + middleware design, the .NET-to-Go translation table, the OpenAI-compat quirks note) lives in DonkeyWork project `522d9204-c3b6-4719-b0c9-8ef91b968314`. See [`CLAUDE.md`](../CLAUDE.md) at the repo root for the index of those notes.

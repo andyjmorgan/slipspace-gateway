@@ -37,10 +37,10 @@ The auth middleware ([`internal/middleware/auth/resolver.go`](../internal/middle
 
 | Mode | Inbound signal | Outbound credential |
 |---|---|---|
-| `managed` | A Sluice-issued secret discovered on `Authorization`, `x-api-key`, or `x-goog-api-key` | Minted by the destination builder from `Configuration.UpstreamCredentials[provider]`. |
+| `managed` | A Sluice-issued secret discovered on `Authorization`, `x-api-key`, or `x-goog-api-key` | Minted by the destination builder from the resolved selection target's credential (sourced from `Configuration.Credentials[provider]`). |
 | `passthrough` | A passthrough selector present — `X-Sluice-Identity: <sluice-secret>` (preferred) or `X-Sluice-Configuration: <name>` (deprecated) — while the client carries their own upstream token on `Authorization` | The inbound `Authorization` value, forwarded verbatim. |
 
-Resolution decides which **policy** runs — the Configuration's rules, resilience policy, tags. Resolution does *not* mint the upstream credential. That happens later in the destination builder, where the per-`(provider, endpoint)` auth-header convention is applied. Splitting identity-resolution from credential-injection is what lets a single rule (`changeProvider`, `changeApiKey`) retarget mid-pipeline without fragmenting the credential mint site (invariant 6 in [`CLAUDE.md`](../CLAUDE.md)).
+Resolution decides which **policy** runs — the Configuration's rules, resilience policy, tags. Resolution does *not* mint the upstream credential. That happens later in the destination builder ([`cmd/gateway/destination.go::buildDestination`](../cmd/gateway/destination.go)), where the resolved selection target's auth convention is applied at the single credential mint site, [`credentialHeaderFor`](../cmd/gateway/destination.go). Keeping identity-resolution separate from credential-injection is what keeps the credential mint site in one place (invariant 6 in [`CLAUDE.md`](../CLAUDE.md)). In the v2 config model the routing decision — which provider/endpoint a request lands on — is made by the selection module ahead of the destination builder, not by mid-pipeline rule actions.
 
 ---
 
@@ -108,7 +108,7 @@ flowchart LR
 2. The matched `APIKey` is looked up in `SecretIndex`. If `Enabled` is false, resolution fails 401.
 3. `APIKey.Configuration` names a Configuration. If the name is missing from `ConfigurationIndex`, resolution fails 403 with `unknown configuration`.
 4. `AuthResult.DropHeaders` is seeded with **both** selector headers (`X-Sluice-Identity`, `X-Sluice-Configuration` — always, they are policy-routing metadata never forwarded) plus the source header the Sluice secret was discovered on. The Sluice secret never leaves the gateway.
-5. Downstream of auth, the destination builder ([`cmd/gateway/handler.go::buildDestination`](../cmd/gateway/handler.go)) looks up `Configuration.UpstreamCredentials[state.Provider]` and mints the outbound header via [`resolveCredentialHeader`](../cmd/gateway/handler.go) — see [Outbound credential headers](#outbound-credential-headers).
+5. Downstream of auth, the destination builder ([`cmd/gateway/destination.go::buildDestination`](../cmd/gateway/destination.go)) reads the credential the selection module already resolved onto `target.Credential` (sourced from `Configuration.Credentials[provider]`) and mints the outbound header via [`credentialHeaderFor`](../cmd/gateway/destination.go) — see [Outbound credential headers](#outbound-credential-headers).
 
 ### Failure modes
 
@@ -119,7 +119,7 @@ flowchart LR
 | Bearer value not in SecretIndex | 401 `unauthorized` | `unknown_key` | |
 | Bearer value matches a key with `enabled: false` | 401 `unauthorized` | `disabled_key` | The audit log records `disabled_key` so an operator chasing a rejected client can tell the difference from "unknown secret" — the wire shape stays identical to avoid confirming key existence. |
 | Bearer resolves to an `APIKey` whose `configuration:` field references a name absent from the index | 403 `unknown configuration` | `unknown_configuration` | Only fires under load-time validation skew — the loader rejects this at startup. A live 403 here implies a config swap that the loader didn't validate. |
-| Bearer resolves cleanly but `Configuration.UpstreamCredentials[provider]` is empty | request forwarded with **no credential header** (`credStripNoSet` branch) | `success` | Auth succeeds; the destination builder strips every credential header and forwards without one. Use for private endpoints that gate themselves (e.g. in-cluster ollama on an unauthenticated NodePort). |
+| Bearer resolves cleanly but the resolved target's credential is empty (`Configuration.Credentials[provider]` absent or `""`) | request forwarded with **no credential header** (no-credential branch, [`destination.go:137`](../cmd/gateway/destination.go)) | `success` | Auth succeeds; the destination builder strips every credential header and forwards without one. Use for private endpoints that gate themselves (e.g. in-cluster ollama on an unauthenticated NodePort). |
 
 The disabled-key vs unknown-key distinction lives only in the structured log — the wire collapses both to 401 to deny enumeration. See `classifyResult` in [`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go).
 
@@ -144,7 +144,7 @@ flowchart LR
     B --> C[auth middleware]
     C -- resolve key → Configuration<br/>no credential swap --> D[bodycapture + rules + resilience]
     D --> E[destination builder]
-    E -- credStripNoSet OR<br/>credForwardInbound --> F[forwarder]
+    E -- passthrough branch:<br/>re-inject inbound Authorization --> F[forwarder]
     F -- Authorization: Bearer their-own-token<br/>both selector headers STRIPPED --> G[upstream]
 ```
 
@@ -153,7 +153,7 @@ flowchart LR
 1. The auth middleware reads `X-Sluice-Identity` first, trimming whitespace. A non-empty value is looked up in `SecretIndex`; the resolved key must be enabled, and its `configuration:` must name a known Configuration. Failures are 401 (unknown/disabled secret) or 403 (key references a missing configuration — a load-time validation skew). `AuthResult` is built with `Mode=passthrough` and `APIKey` set.
 2. Otherwise the middleware reads `X-Sluice-Configuration` and trims whitespace. Any non-empty value forces legacy passthrough regardless of any bearer also on the request. The name is looked up in `ConfigurationIndex`; if absent, resolution fails 403 `unknown configuration`. `AuthResult` is built with `Mode=passthrough`, `APIKey=nil`, `LegacyConfigurationHeader=true`.
 3. Either path leaves no managed-mode api_key swap — the upstream owns credential validation. `DropHeaders` always includes **both** selector headers (`X-Sluice-Identity`, `X-Sluice-Configuration`) regardless of which one drove resolution.
-4. Downstream, the destination builder takes the `credForwardInbound` branch by default for passthrough mode: the forwarder's `alwaysDropHeaders` strips inbound `Authorization` unconditionally, and the destination builder re-injects the inbound value via `OutgoingHeaders` so the upstream still sees it. (A rule firing `changeApiKey` shifts this to `credSetFromProvider` — see [`buildDestination`](../cmd/gateway/handler.go) for the full credential decision table.)
+4. Downstream, the destination builder takes the passthrough branch ([`destination.go:133`](../cmd/gateway/destination.go)): the forwarder's `alwaysDropHeaders` strips inbound `Authorization` unconditionally, and the destination builder re-injects the inbound value via `OutgoingHeaders` so the upstream still sees it. The branch is keyed purely on `auth.Mode == ModePassthrough`; no rule action overrides it (see the [`changeApiKey` note](#outbound-credential-headers) below — the action is currently inert in the v2 destination builder).
 
 ### Failure modes
 
@@ -193,13 +193,13 @@ Anything else the client sends is forwarded verbatim unless a rule strips it via
 
 ## Outbound credential headers
 
-In managed mode, the destination builder mints exactly one credential header per request via [`resolveCredentialHeader`](../cmd/gateway/handler.go). The header name and value format are picked from a three-level fallback stack:
+In managed mode, the destination builder mints exactly one credential header per request via [`credentialHeaderFor`](../cmd/gateway/destination.go) (`cmd/gateway/destination.go:163`). The header name and value format are read off the resolved selection target's `Auth` convention, with a per-provider default fallback:
 
-1. `endpoint.auth_header` + `endpoint.auth_format` (if set)
-2. `provider.auth_header` + `provider.auth_format` (if set)
-3. Per-provider default from [`auth.UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go)
+1. `target.Auth.Header` + `target.Auth.Format` (if `target.Auth != nil` and `Header` is set) — the format string's `{key}` placeholder is replaced with the credential.
+2. `target.Auth.Header` + the raw credential (if `Format` is empty).
+3. Per-provider default from [`auth.UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go) when `target.Auth` is nil or carries no header.
 
-The full override stack and worked examples live in [`docs/providers.md#auth-header-resolution`](providers.md#auth-header-resolution). The per-provider defaults applied when no override is in effect:
+`target.Auth` is the protocol/provider auth convention the **selection module** resolves at request top, ahead of the destination builder — so the endpoint vs provider override precedence is settled before `credentialHeaderFor` ever runs. The full override stack and worked examples live in [`docs/providers.md#per-protocol-auth-x-api-key-vs-bearer`](providers.md#per-protocol-auth-x-api-key-vs-bearer). The per-provider defaults applied when no override is in effect:
 
 | Provider name (literal match) | Default header | Default value | Source |
 |---|---|---|---|
@@ -208,15 +208,17 @@ The full override stack and worked examples live in [`docs/providers.md#auth-hea
 | `gemini` | `x-goog-api-key` | `<credential>` (raw) | [`auth.UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go) |
 | anything else | `Authorization` | `Bearer <credential>` | fallback branch in `UpstreamCredentialHeader` so retargeting a rule to an as-yet-unmodelled provider still produces a reasonable outgoing shape. |
 
-`UpstreamCredentialHeader` is also re-used by the rules engine's `changeApiKey` action so a rule that rewrites the credential post-rule cannot fragment the format table.
+`UpstreamCredentialHeader` is exported so the rules engine's `changeApiKey` action could re-mint a credential header without duplicating the format table. **Note:** in the v2 destination builder `changeApiKey` is currently inert — the action writes `state.UpstreamCredentialOverride` ([`internal/middleware/rules/actions.go:154`](../internal/middleware/rules/actions.go)) but `buildDestination` never reads that field, so a `changeApiKey` rule has no effect on the credential actually sent upstream. See [Cross-references](#cross-references).
 
-The destination builder defends the credential surface beyond just minting the right header. Its `credStrategy` decision (see [`buildDestination`](../cmd/gateway/handler.go)) chooses one of three outcomes:
+The destination builder defends the credential surface beyond just minting the right header. There is no named "strategy" type in the code; the logic is a three-way `switch` in [`buildDestination`](../cmd/gateway/destination.go) (`cmd/gateway/destination.go:132`), evaluated top to bottom:
 
-| Strategy | When | Effect on outbound headers |
+| Branch (`destination.go`) | When | Effect on outbound headers |
 |---|---|---|
-| `credSetFromProvider` | Managed mode with a usable credential in `Configuration.UpstreamCredentials[provider]`, OR any mode where `state.UpstreamCredentialOverride` is non-nil and non-empty (rule `changeApiKey` action) | Mints the new credential header for the resolved `(provider, endpoint)`; adds every *other* credential header name in the closed set (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) to `DropHeaders` so an inbound openai-style Bearer cannot leak to anthropic. |
-| `credStripNoSet` | Managed mode where the resolved Configuration has no credential for the resolved provider (private endpoint or missing mapping) | Strips every credential header; sets none. The upstream sees no credential — appropriate for endpoints the gateway is not authenticated against. |
-| `credForwardInbound` | Passthrough mode by default, OR any mode where a rule explicitly fired `changeApiKey` with the `UseSluiceKey` sentinel (empty-string pointer) | The forwarder's `alwaysDropHeaders` strips inbound `Authorization`; the destination builder re-injects the inbound value via `OutgoingHeaders` so the upstream still sees it. |
+| passthrough — line 133 (`mode == auth.ModePassthrough`) | Passthrough mode (any resolved target) | If the inbound request carried an `Authorization` header, re-injects that value verbatim via `OutgoingHeaders`. (The forwarder's `alwaysDropHeaders` had stripped it on the inbound edge.) No credential is minted; the upstream owns validation. |
+| no-credential — line 137 (`target.Credential == ""`) | Managed mode where the resolved target has no credential (`Configuration.Credentials[provider]` absent or `""`) | Adds every credential header name in the closed set (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) to `DropHeaders`; sets none. The upstream sees no credential — appropriate for endpoints the gateway is not authenticated against. |
+| credential-set — line 142 (`default`) | Managed mode with a non-empty `target.Credential` | Mints the header via `credentialHeaderFor(target)`; adds every *other* credential header name in the closed set to `DropHeaders` so an inbound openai-style Bearer cannot leak to anthropic. |
+
+The closed set `credentialHeaderNames` (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) is defined in [`cmd/gateway/handler.go:148`](../cmd/gateway/handler.go).
 
 ---
 
@@ -249,7 +251,7 @@ Content-Type: application/json
    ```
 5. `ConfigurationIndex["production"]` returns:
    ```yaml
-   upstream_credentials:
+   credentials:
      openai: sk-real-openai-pk-...
    ```
 6. `AuthResult`:
@@ -260,8 +262,8 @@ Content-Type: application/json
 
 ### Destination build
 
-1. `credentialStrategy` returns `credSetFromProvider` (managed, credential present).
-2. `resolveCredentialHeader` sees no `endpoint.auth_header` and no `provider.auth_header` override → falls back to `auth.UpstreamCredentialHeader("openai", "sk-real-openai-pk-...")` → returns `("Authorization", "Bearer sk-real-openai-pk-...")`.
+1. `buildDestination` falls to the credential-set branch (`destination.go:142` default — managed mode, `target.Credential` non-empty).
+2. `credentialHeaderFor` sees `target.Auth == nil` (no openai protocol auth override) → falls back to `auth.UpstreamCredentialHeader("openai", "sk-real-openai-pk-...")` → returns `("Authorization", "Bearer sk-real-openai-pk-...")`.
 3. The closed credential-header set adds `X-Api-Key` and `X-Goog-Api-Key` to `DropHeaders` (no-ops here since the inbound carried neither).
 
 ### Outbound
@@ -311,7 +313,7 @@ Content-Type: application/json
 
 ### Destination build
 
-1. `credentialStrategy` returns `credForwardInbound` (passthrough, no `UpstreamCredentialOverride` from rules).
+1. `buildDestination` takes the passthrough branch (`destination.go:133`, `mode == auth.ModePassthrough`).
 2. The forwarder's `alwaysDropHeaders` strips inbound `Authorization`.
 3. The destination builder re-injects the inbound `Authorization` value into `OutgoingHeaders`, so the forwarder sets it back on the outbound request.
 4. `X-Sluice-Configuration` is stripped via `DropHeaders` — the upstream never sees it.
@@ -352,7 +354,7 @@ It is also the **fallback** when a request needs the gateway's pipeline applied 
 
 The gateway never logs the literal `Authorization` value, nor any `x-api-key` or `x-goog-api-key`. The auth middleware logs `mode`, `api_key_id` (the key's `name` field, not its secret), `configuration`, `provider`, `endpoint`, `result`. The forwarder logs upstream URL and status but never request or response bodies — bodies flow to configured `connector_bindings` under each destination's own retention policy, and admin console body-capture is gated by `gateway.admin.enabled` and Basic auth.
 
-Upstream credentials minted by the destination builder also never reach logs — they live on `Configuration.UpstreamCredentials` in memory, are read once per request, and are injected into the outbound header without ever crossing the slog channel.
+Upstream credentials minted by the destination builder also never reach logs — they live on `Configuration.Credentials` in memory, are read once per request (resolved onto the selection target's `Credential`), and are injected into the outbound header without ever crossing the slog channel.
 
 If you see a Sluice secret in the log stream, you have a bug. Open an issue.
 
@@ -360,7 +362,7 @@ If you see a Sluice secret in the log stream, you have a bug. Open an issue.
 
 The admin console exposes a per-key reveal endpoint at `GET /admin/api/v1/config/api-keys/reveal?configuration=<name>&name=<key-name>` ([`docs/admin-console.md`](admin-console.md#api-routes)). Both query params are required; 400 on missing, 404 on no match. List endpoints stay redacted by default — reveal is opt-in, per-row, behind HTTP Basic auth.
 
-Upstream credentials (`Configuration.UpstreamCredentials`) are **never** revealed by the admin console — the configuration inspector and the export bundle both replace them with `***` via the redactor in [`internal/admin/configexport/redact.go`](../internal/admin/configexport/redact.go). Only the gateway-issued Sluice secrets can be revealed, and only by name.
+Upstream credentials (`Configuration.Credentials`) are intended to **never** be revealed by the admin console — the configuration inspector and the export bundle replace them with `***` via the redactor in [`internal/admin/configexport/redact.go`](../internal/admin/configexport/redact.go). Note: that redactor (`redactConfigurations`) currently matches the v1 YAML key `upstream_credentials`; the v2 `Configuration.Credentials` map serializes under the key `credentials`, so verify export redaction against your config shape (tracked as a code follow-up). Only the gateway-issued Sluice secrets can be revealed, and only by name.
 
 ### Key rotation
 
@@ -379,10 +381,12 @@ For passthrough mode there is no key rotation on the gateway side — the upstre
 ## Cross-references
 
 - **[`docs/configuration-model.md#api_keys-block`](configuration-model.md#api_keys-block)** — the `api_keys:` YAML block, `APIKey` field reference, and load-time validation (`ErrUnknownConfiguration`).
-- **[`docs/providers.md#auth-header-resolution`](providers.md#auth-header-resolution)** — the endpoint → provider → default override stack for the outbound credential header, with worked examples for the OpenAI-compat surfaces on Anthropic and Gemini.
+- **[`docs/providers.md#per-protocol-auth-x-api-key-vs-bearer`](providers.md#per-protocol-auth-x-api-key-vs-bearer)** — the endpoint → provider → default override stack for the outbound credential header, with worked examples for the OpenAI-compat surfaces on Anthropic and Gemini.
 - **[`docs/admin-console.md`](admin-console.md)** — the API-key reveal endpoint, Basic-auth password resolution, and redaction in the export bundle.
-- **[`docs/actions.md`](actions.md)** — the `changeApiKey` and `setHeader` rule actions that can override the credential mid-pipeline.
+- **[`docs/actions.md`](actions.md)** — the `setHeader` rule action (which can rewrite outbound headers, including a credential header, via `applyStateOverlays`) and the `changeApiKey` action (which writes `state.UpstreamCredentialOverride` but is currently inert in the v2 destination builder — see the codeFollowups note in this PR).
 - **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `Resolver`, `AuthResult`, `Mode`, the discovery walk, and `UpstreamCredentialHeader` per-provider defaults.
 - **[`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go)** — `HTTPHandler`, the typed error → wire status mapping in `writeAuthError`, and the `Result` audit tags.
-- **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — `buildDestination`, `credentialStrategy`, `resolveCredentialHeader`, and the closed `credentialHeaderNames` set.
+- **[`cmd/gateway/destination.go`](../cmd/gateway/destination.go)** — `buildDestination` (the three-way credential `switch`) and `credentialHeaderFor` (the single managed-mode mint site).
+- **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — the closed `credentialHeaderNames` set (`handler.go:148`), the `authFormatPlaceholder` (`{key}`) constant, and the data-plane handler composition.
+- **[`internal/selection/selection.go`](../internal/selection/selection.go)** — `Target` (carries the pre-resolved `Auth` convention and `Credential` the destination builder consumes).
 - **[`CLAUDE.md`](../CLAUDE.md)** — load-bearing invariant 6 (credential header lives in one place per `(provider, endpoint)`) and the *Authentication & Auth Modes* design summary.

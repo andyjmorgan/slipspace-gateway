@@ -1,384 +1,379 @@
 # Routing
 
-Sluice's router maps an inbound `(method, path)` pair to the `(provider, endpoint)` it belongs to. The match drives every downstream stage — auth uses it to pick the credential, bodycapture uses it to pick the typed request model, the forwarder uses it to build the upstream URL. Routes are declared in `providers.yaml` (or any merged YAML under `SLUICE_CONFIG_DIR`) as the `accepted_paths` list on each endpoint; the loader expands those into a flat route index that the router compiles into an exact-match map plus a sorted list of patterned routes.
+Under the v2 config model, Sluice does not have a path-to-endpoint route table. Routing is **config data**: the inbound path maps to a *protocol* (the wire shape), and the resolved configuration's *bindings* map `(protocol, model)` to a provider or a resilience group. There is no `RouteIndex`, no `accepted_paths`, no `prefix_required`/`prefix_optional`, and no `emitRoutes` — all of that was retired when routing moved into the configuration.
 
-This page is the operator's reference. It covers the resolution algorithm, every routing knob on `Endpoint` / `Provider`, the collision rules enforced at config-load time, and the worked examples that motivated the design.
+Two surfaces do the work:
+
+- **Generative protocols** (`chat`, `responses`, `messages`, `generate_content`, `embeddings`) — model-keyed. The path fixes the protocol; the model comes from the request body (or, for Gemini, from the path). `selection.Select` walks the configuration's bindings and returns a resolved destination.
+- **Passthrough families** (opaque/stateful surfaces like model catalogues and message batches) — path-pattern matched, not model-keyed. `selection.MatchPassthrough` claims the path and proxies the request verbatim.
+
+This page is the operator's reference: how a request is mapped to a protocol, how bindings select a destination, how passthrough families are matched, and the real error set. The engine lives in [`internal/selection`](../internal/selection); the middleware wiring lives in [`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) and [`cmd/gateway/handler.go`](../cmd/gateway/handler.go).
 
 ---
 
 ## Table of contents
 
-1. [What the router does](#what-the-router-does)
+1. [What routing does in v2](#what-routing-does-in-v2)
 2. [Where it sits in the pipeline](#where-it-sits-in-the-pipeline)
-3. [The resolution algorithm](#the-resolution-algorithm)
-4. [`accepted_paths`](#accepted_paths)
-5. [`prefix_required` vs `prefix_optional`](#prefix_required-vs-prefix_optional)
-6. [Path collisions and `ErrPathCollision`](#path-collisions-and-errpathcollision)
-7. [Method dispatch](#method-dispatch)
-8. [Path placeholders and captured params](#path-placeholders-and-captured-params)
-9. [The `request_kind` discriminator](#the-request_kind-discriminator)
-10. [X-Sluice headers](#x-sluice-headers)
-11. [Worked examples](#worked-examples)
-12. [Diagnostic errors](#diagnostic-errors)
+3. [Path → protocol (`ProtocolForPath`)](#path--protocol-protocolforpath)
+4. [Generative selection (`Select` / `ResolveTarget`)](#generative-selection-select--resolvetarget)
+5. [Binding model matching](#binding-model-matching)
+6. [Passthrough selection (`MatchPassthrough`)](#passthrough-selection-matchpassthrough)
+7. [`kindFromProtocol` — protocol drives body capture](#kindfromprotocol--protocol-drives-body-capture)
+8. [X-Sluice headers](#x-sluice-headers)
+9. [Worked examples](#worked-examples)
+10. [The error set](#the-error-set)
 
 ---
 
-## What the router does
+## What routing does in v2
 
-The router is the gateway's entry-point dispatcher. It owns one question: *given the inbound HTTP method and URL path, which provider's endpoint catalogue owns this request?* It does not authenticate, body-parse, rule-evaluate, or forward — those are downstream concerns. It does answer **path → (provider, endpoint, params)** in a single map lookup for exact paths or a single linear scan of compiled regexes for patterned ones, and returns one of three outcomes: a `Match`, `ErrNoRoute`, or `ErrMethodNotAllowed`.
+Routing answers two questions, in two stages:
 
-The route table is built once at startup from `resolved.RouteIndex`, which the config loader assembles by walking every `(provider, endpoint, accepted_path)` triple. Routes are partitioned at construction time: paths without `{name}` placeholders go into an exact-match map for O(1) lookup; placeholder-bearing paths go into a slice of compiled regexes, sorted lexicographically so two overlapping patterns resolve deterministically across restarts.
+1. **What wire shape is this?** [`selection.ProtocolForPath`](../internal/selection/protocol.go) maps the inbound URL path to one of the five generative protocol names, or reports "not a generative path" — in which case the request is a candidate for per-configuration passthrough matching. This mapping is **hardcoded**: there is exactly one canonical base path per wire shape (plus a no-version-segment alias for the OpenAI-style ones). No YAML configures it.
+
+2. **Where does it go?** Once auth has resolved the owning configuration and bodycapture has decoded the model, [`selectionMiddleware`](../cmd/gateway/pipeline.go) resolves the destination. For generative requests, [`selection.Select`](../internal/selection/selection.go) walks the configuration's `bindings` and returns the first binding whose `(protocol, model)` matches — a single provider target or a resilience group. For non-generative paths, [`selection.MatchPassthrough`](../internal/selection/selection.go) walks the configuration's `passthrough_bindings` and matches the path against each exposed family's patterns.
+
+The provider is therefore chosen **after** auth and bodycapture, not from the path. The same path (`/v1/chat/completions`) routes to OpenAI, Anthropic, or Gemini depending purely on the requested model and the bindings of the resolved configuration. The engine is a pure function of the v2 config; it does no I/O.
 
 ---
 
 ## Where it sits in the pipeline
 
-```mermaid
-flowchart LR
-    A[Client request<br/>method + path] --> B[routing]
-    B -- ErrNoRoute --> X[404]
-    B -- ErrMethodNotAllowed --> Y[405]
-    B -- Match --> C[auth]
-    C --> D[bodycapture<br/>typed by request_kind]
-    D --> E[rules]
-    E --> F[resilience]
-    F --> G[forwarder]
-    G --> H[upstream provider]
-```
-
-Routing is the **first** middleware in the chain. Every other stage reads its result from context — `auth` picks credentials by `(provider, endpoint)`; `bodycapture` picks the typed model by the endpoint's `request_kind`; the forwarder builds the upstream URL from the provider's `base_url` plus the endpoint's `path` (or the matched `accepted_path` when `path` is unset — see [`accepted_paths`](#accepted_paths)). If routing misses, the chain short-circuits with a 404 or 405; nothing downstream runs.
-
----
-
-## The resolution algorithm
+The data-plane chain is composed in [`cmd/gateway/handler.go::buildDataPlaneHandler`](../cmd/gateway/handler.go) (read top-to-bottom in execution order; the function wraps in reverse):
 
 ```mermaid
 flowchart TB
-    Start[Resolve method, path] --> Norm[upper-case method]
-    Norm --> Exact{path in exact map?}
-    Exact -- yes --> EM{method allowed?}
-    EM -- no --> ENA[ErrMethodNotAllowed]
-    EM -- yes --> EOk[Match: provider, endpoint, Params=nil]
-    Exact -- no --> Iter[iterate patterns<br/>lexicographic order]
-    Iter --> P{any pattern matches?}
-    P -- no --> NR[ErrNoRoute]
-    P -- yes --> PM{method allowed?}
-    PM -- no --> ENA
-    PM -- yes --> POk[Match: provider, endpoint,<br/>Params=captured group map]
+    A[Client request] --> P[protocolMiddleware<br/>path → protocol]
+    P --> AU[auth<br/>resolve configuration]
+    AU --> BC[bodycapture<br/>kindFromProtocol → typed body]
+    BC --> SEL[selection<br/>bindings → provider / group]
+    SEL --> RU[rules<br/>transforms only]
+    RU --> RE[resilience<br/>orchestrator]
+    RE --> F[final handler<br/>buildDestination + forward]
+    F --> U[upstream provider]
 ```
 
-Three invariants in this flow:
+The real order is **`protocol → auth → bodycapture → selection → rules → resilience → final`**. A few facts that the v1 doc got wrong and are load-bearing here:
 
-1. **Exact wins.** A literal path that also happens to match a pattern resolves to the exact entry. No probabilistic precedence — the partition is hard.
-2. **Method check is path-conditional.** A 405 fires only when the path matched. An unknown path with the wrong method still returns 404, not 405 — the gateway is not in the business of revealing routes that don't exist for the client's verb.
-3. **Pattern order is stable.** Patterns are sorted by their source `accepted_paths` string at `routing.New` time so two overlapping placeholder routes resolve identically across restarts. This is tested explicitly by `TestNew_DeterministicPatternOrder`.
+- **`protocolMiddleware` is first, and it always succeeds.** It only maps the path to a protocol and stashes a `protocolInfo` on the context; an unrecognised path is marked non-generative (`generative: false`) and falls through to passthrough matching downstream. There is no 404/405 at this stage — the protocol choice is never a routing failure.
+- **Bodycapture's typed kind comes from the protocol, not from routing.** [`kindFromProtocol`](../cmd/gateway/pipeline.go) maps the stashed protocol to a `bodycapture.RequestKind`. There is no `request_kind` field in the v2 YAML.
+- **`selection` is where 404/405 can fire**, and it runs *after* auth (which resolves the configuration) and bodycapture (which decodes the model). It is the only stage that picks a provider.
+- **The final handler builds the upstream URL** from the resolved `Target.Path` (provider protocol path ∪ per-target override), not from any endpoint declaration or matched path. See [`buildDestination`](../cmd/gateway/destination.go).
 
-Method comparison normalises to upper-case (`strings.ToUpper`), so `post`, `Post`, and `POST` all resolve identically — useful when curl-ing in lowercase by habit.
+`correlationMiddleware` ([`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go)) wraps the whole chain ahead of `protocolMiddleware`, so every stage shares one correlation ID — see [X-Sluice headers](#x-sluice-headers).
 
 ---
 
-## `accepted_paths`
+## Path → protocol (`ProtocolForPath`)
 
-Every endpoint declares one or more `accepted_paths` — the literal inbound path patterns the gateway claims for that endpoint. Each entry seeds one or more routes via [`emitRoutes`](#prefix_required-vs-prefix_optional) below.
+[`selection.ProtocolForPath`](../internal/selection/protocol.go) is the entire path-mapping surface. It is a `switch` over known literal paths plus one parser for Gemini's path-encoded operation:
 
-A single endpoint can declare multiple `accepted_paths` for the same logical operation. The canonical example is OpenAI's chat completions, which the gateway accepts at both `/v1/chat/completions` (the SDK's default base path) and `/chat/completions` (the same path without the version segment — convenient for clients that strip versions in their configured base URL):
+| Inbound path | Protocol | Path-derived params |
+|---|---|---|
+| `/v1/chat/completions`, `/chat/completions` | `chat` | none |
+| `/v1/responses`, `/responses` | `responses` | none |
+| `/v1/messages`, `/messages` | `messages` | none |
+| `/v1/embeddings`, `/embeddings` | `embeddings` | none |
+| `/v1beta/models/{model}:{op}` | `generate_content` | `{"model": <model>, "op": <op>}` |
+| anything else | — (`ok == false`, non-generative) | — |
+
+The function returns `(protocol, params, ok)`. When `ok` is false the path is not a recognised generative endpoint and the request becomes a passthrough candidate (the v2 fall-through, not a 404).
+
+**Gemini is the only protocol whose model is path-derived.** `generate_content` paths are parsed by `parseGenerateContent`: the prefix is the literal `/v1beta/models/`, the segment after it is `{model}:{op}`, the model must be a single non-slash path segment, and the operation must be one of the recognised ops:
+
+| `op` | Meaning |
+|---|---|
+| `generateContent` | Non-streaming generation |
+| `streamGenerateContent` | Streaming generation |
+
+So `/v1beta/models/gemini-2.5-flash:generateContent` yields `protocol = generate_content`, `params = {"model": "gemini-2.5-flash", "op": "generateContent"}`. Anything else under `/v1beta/models/...` (an unknown op, a slash inside the model segment, an empty model) returns `ok == false` and falls through to passthrough — which is exactly how the Gemini `models` catalogue (`GET /v1beta/models`) is served as a passthrough family rather than a generative protocol.
+
+For every protocol except `generate_content`, the model that drives binding selection comes from the **request body**, read by bodycapture via [`bodycapture.Model`](../internal/middleware/bodycapture). Gemini's path-derived model wins when present (`pi.params["model"]`), otherwise selection reads the body — see [`selectionMiddleware`](../cmd/gateway/pipeline.go).
+
+---
+
+## Generative selection (`Select` / `ResolveTarget`)
+
+For a generative request, [`selectionMiddleware`](../cmd/gateway/pipeline.go) calls:
+
+```go
+dest, err := selection.Select(protocol, model, cfg, providers, groups)
+```
+
+[`selection.Select`](../internal/selection/selection.go) walks `cfg.Bindings` **in declaration order** and returns the first binding where:
+
+1. `binding.Protocol == protocol`, **and**
+2. the model matches the binding's `Models` patterns (see [Binding model matching](#binding-model-matching)).
+
+The matched binding resolves to a `Destination` carrying exactly one of:
+
+- **`Single *Target`** — when the binding names a `provider`. The single provider plus the binding's `alias`/`query`/`path` sugar is composed into a fully resolved `Target`.
+- **`Group *Group`** — when the binding names a `group`. The group's resilience config (mode, failure-status set, circuit breaker, weights, header timeout) plus every target resolved against its provider. The resilience orchestrator expands the group across its targets downstream.
+
+A binding sets **exactly one** of `provider` or `group`; config validation rejects bindings that set both or neither. The matched binding's `Tags` are applied to the request for telemetry. **No binding match → `ErrNoBinding` → HTTP 404** (code `no_binding`). There is no fall-through to a default provider — a model not served on a protocol by this configuration is simply not served.
+
+### `resolveTarget` — composing provider + override
+
+Each target is composed by `resolveTarget` (the unexported worker behind both `Select` and the exported [`ResolveTarget`](../internal/selection/selection.go)):
+
+| `Target` field | Source |
+|---|---|
+| `BaseURL` | `provider.base_url` |
+| `Path` | the protocol's `path`, overridden by the target's `path` if set |
+| `Auth` | the protocol's `auth` (nil = provider-native default, resolved at the single mint site) |
+| `RequiredHeaders` | `provider.required_headers` |
+| `Query` | `provider.query` ∪ target `query` (target wins) |
+| `Credential` | `cfg.credentials[provider]` — the configuration holds the key, not the provider |
+| `Alias` | the binding's / target's model-rewrite alias (empty = no rewrite) |
+| `Weight` | the target's load-balance weight |
+
+`resolveTarget` errors (unknown provider, provider does not serve the protocol, configuration holds no credential entry for the provider) are validation-class faults — config validation rejects them before runtime, and they surface as HTTP 500 if they ever reach the request path.
+
+**`ResolveTarget` is re-called per attempt during group orchestration.** The orchestrator picks a provider; the final handler re-resolves that provider's transport for the request's protocol via `selection.ResolveTarget(pi.protocol, provider, "", cfg, providers)` — see [`buildFinalHandler`](../cmd/gateway/handler.go). This is the v2 equivalent of "re-resolve the endpoint on the new provider": the transport (path, auth, headers, credential) is always re-derived from the chosen provider, never carried over from the binding's first target.
+
+---
+
+## Binding model matching
+
+A binding's `Models` is a list of patterns. The matcher is [`matchesModelPatterns`](../internal/selection/selection.go), which mirrors `cmd/gateway/binding.go`:
+
+- **Empty `Models` → matches every model** for that protocol — the protocol catch-all. This is default-permissive and opt-in (invariant #1): an empty model set is *not* a default-deny.
+- **Trailing `*` → prefix match.** `gpt-*` matches `gpt-4o`, `gpt-4.1-mini`, `gpt-oss-120b`.
+- **No `*` → exact equality.** `qwen2.5-coder:7b` matches only that string.
+
+A binding matches if **any** pattern matches. Because bindings are evaluated in order and first-match-wins, place more specific bindings before catch-alls. Example from `config-dev/policy.yaml`'s `dev` configuration:
+
+```yaml
+configurations:
+  dev:
+    credentials:
+      openai: sk-dev-mock
+      anthropic: sk-ant-dev-mock
+      gemini: dev-mock
+    bindings:
+      - { protocol: chat,             models: ["gpt-*", "o1*", "o3*"], provider: openai }
+      - { protocol: responses,        models: ["gpt-*"],               provider: openai }
+      - { protocol: chat,             models: ["claude-*"],            provider: anthropic }
+      - { protocol: messages,         models: ["claude-*"],            provider: anthropic }
+      - { protocol: chat,             models: ["gemini-*"],            provider: gemini }
+      - { protocol: generate_content, models: ["gemini-*"],           provider: gemini }
+```
+
+Here `POST /v1/chat/completions` with `"model": "claude-sonnet-4"` matches the third binding and routes to `anthropic`; the same path with `"model": "gemini-2.5-flash"` matches the fifth and routes to `gemini`. The path is identical — the model and the binding order decide the destination.
+
+---
+
+## Passthrough selection (`MatchPassthrough`)
+
+Opaque/stateful surfaces — model catalogues, Anthropic message batches, file APIs — are not model-keyed and have no typed wire model. They are exposed as **passthrough families** on the provider and bound on the configuration via `passthrough_bindings`. The request is proxied verbatim (path forwarded as-is under the provider base URL, inbound query preserved with provider defaults overlaid); no typed parsing, no GenAI telemetry, no payload capture.
+
+When `ProtocolForPath` returns `ok == false`, [`selectionMiddleware`](../cmd/gateway/pipeline.go) calls:
+
+```go
+pm, err := selection.MatchPassthrough(method, path, cfg, providers)
+```
+
+[`MatchPassthrough`](../internal/selection/selection.go) walks `cfg.PassthroughBindings`, resolves each to its provider's named `PassthroughFamily`, and for each family path:
+
+1. Matches the inbound path against the pattern (`matchPath`).
+2. If the path matches, checks the method against that path's `methods` set (`hasMethod`, case-insensitive).
+
+Outcomes:
+
+| Condition | Result | HTTP |
+|---|---|---|
+| A family path matches, and the method is allowed | `PassthroughMatch` (provider, family, auth, captured params, tags) | proxied |
+| A family path matches, but **no** matching path allows the method | `ErrMethodNotAllowed` | 405 (`method_not_allowed`) |
+| No family path matches the inbound path | `ErrNoPassthrough` | 404 (`no_route`) |
+
+The 405-vs-404 distinction is **family-conditional**: a method check only happens for passthrough paths that matched. Generative requests never get a 405 — a model not served on its protocol is a 404 (`ErrNoBinding`), regardless of method.
+
+### Path patterns and captured params
+
+Passthrough path patterns may contain `{name}` placeholders. [`matchPath`](../internal/selection/selection.go) compiles a pattern with placeholders to an anchored regex on demand (each placeholder captures a single non-slash segment, `[^/]+`); a pattern with no `{` is an exact string compare. The captured params are returned on the `PassthroughMatch` and substituted into the upstream path. This regex machinery exists **only** for passthrough families — generative routing never compiles a regex.
+
+Example — Anthropic's message-batches family from `config-dev/providers.yaml`:
 
 ```yaml
 providers:
-  openai:
-    prefix: openai
-    prefix_required: false
-    endpoints:
-      chat_completions:
-        path: /v1/chat/completions
-        method: [POST]
-        accepted_paths:
-          - /v1/chat/completions
-          - /chat/completions
-        request_kind: chat
+  anthropic:
+    base_url: http://mockllm:5555
+    required_headers:
+      anthropic-version: "2023-06-01"
+    passthrough:
+      messages_batches:
+        auth:
+          header: x-api-key
+          format: "{key}"
+        paths:
+          - match: /v1/messages/batches
+            methods: [POST, GET]
+          - match: "/v1/messages/batches/{id}"
+            methods: [GET, DELETE]
+          - match: "/v1/messages/batches/{id}/results"
+            methods: [GET]
 ```
 
-Both entries resolve to the same `(openai, chat_completions)` pair. When `Endpoint.Path` is set, the forwarder uses it (not the matched `accepted_path`) when building the upstream URL, so all variants converge on the same upstream request — the gateway accepts permissively and forwards canonically.
-
-When `Endpoint.Path` is **empty**, the forwarder mirrors the matched (un-prefixed) `accepted_path` verbatim onto the upstream `base_url` instead — `state.MatchedPath` carries it from the router to the destination builder. This lets one endpoint entry serve several distinct upstream paths: declare the variants as `accepted_paths`, leave `path` unset, and each inbound path flows through unchanged. Set `path` only when you want every variant collapsed onto a single canonical upstream path.
-
-Patterned `accepted_paths` (entries with `{name}` placeholders) work the same way; they're just expanded into compiled regexes instead of map keys. See [Path placeholders and captured params](#path-placeholders-and-captured-params).
-
----
-
-## `prefix_required` vs `prefix_optional`
-
-Multiple providers will, sooner or later, claim the same `accepted_path` — three of them want `/v1/models`, two of them want `/v1/chat/completions`. The provider-level `prefix` plus a pair of opt-in/opt-out switches resolves the ambiguity at config-load time.
-
-The full emit table:
-
-| `provider.prefix_required` | `endpoint.prefix_optional` | Routes emitted per `accepted_path` `<ap>` |
-|---|---|---|
-| `false` (default) | `false` (default) | `/<prefix><ap>` AND `<ap>` |
-| `false` (default) | `true` | `/<prefix><ap>` AND `<ap>` (no effect — provider already bare) |
-| `true` | `false` (default) | `/<prefix><ap>` only |
-| `true` | `true` | `/<prefix><ap>` AND `<ap>` |
-
-A few things to read out of this:
-
-- `prefix_required: false` is "default provider, also reachable under its prefix". OpenAI in `config-dev` is the default for `/v1/chat/completions` and `/v1/models`; clients pointed at the bare gateway URL with no extra config get OpenAI, and clients that explicitly opt in via `/openai/...` still land on it.
-- `prefix_required: true` is "prefix-only — never reachable bare". Anthropic, Gemini, and every alternative LLM in `config-dev` use this so they don't collide with OpenAI's bare claims.
-- `prefix_optional: true` on a single endpoint *escapes* the provider-level `prefix_required` for that endpoint only. Anthropic's `messages` endpoint uses this so the native Anthropic SDK pointed at the gateway root works against `/v1/messages` directly, while Anthropic's OpenAI-compat surface at `/v1/chat/completions` stays prefix-only (where it would otherwise collide with OpenAI's bare claim on the same path).
-
-`prefix_required: true` with an empty `prefix` is a config-load error — the provider would be unreachable. The loader returns `ErrPrefixRequiredEmpty`.
-
-The router itself is agnostic to all of this; the routing table comes pre-expanded from the loader. The split lives in `internal/config/loader.go::emitRoutes`. From the router's perspective, every route in `RouteIndex` is just a literal path or a placeholder-bearing pattern.
-
----
-
-## Path collisions and `ErrPathCollision`
-
-A collision is when two different `(provider, endpoint)` pairs would emit the same fully-resolved route path. The loader detects this at startup and fails the boot with `ErrPathCollision`. The gateway never silently picks a winner — both claims are visible to the operator in the error message:
-
-```
-config: route "/v1/chat/completions" claimed by openai.chat and acme.chat: config: route path claimed by multiple endpoints
-```
-
-With prefix disambiguation in place, collisions are only possible in three shapes:
-
-| Shape | Example | Resolution |
-|---|---|---|
-| Two providers share an `accepted_path` AND both are `prefix_required: false` (or have no prefix) | Two providers both claim bare `/v1/models` as the default | Make one of them `prefix_required: true`. Only one provider may "own" a given bare path. |
-| Two providers share both the same `prefix` AND the same `accepted_path` | Two providers both set `prefix: openai` and both expose `/v1/chat/completions` | Different prefixes. The prefix is the disambiguator; collapsing it collapses the namespace. |
-| One endpoint declares two identical `accepted_paths` in the same list | `accepted_paths: [/v1/models, /v1/models]` | Drop the duplicate; the loader treats a self-collision identically. |
-
-The collision check runs in deterministic provider-name order (sorted alphabetically) so the error message names the same "first claimant" across runs — debuggable, scriptable.
-
-A non-collision worth calling out: two providers can both claim `/v1/models` if one is `prefix_required: false` (owning the bare form) and the other is `prefix_required: true` (only emitting `/<prefix>/v1/models`). The bare path belongs to the default, the prefixed form belongs to the second provider, and no entry in the route index has two claims on the same key. This is the `TestLoad_PrefixResolvesCollision` shape, and it's the standard pattern for "OpenAI is the default, everyone else is opt-in".
-
----
-
-## Method dispatch
-
-Every endpoint declares a `method` list — the set of HTTP verbs it accepts. The router pre-normalises the list to upper-case at construction time so `Resolve` only does a single map probe on the verb.
-
-When a path matches but the method does not, the router returns `ErrMethodNotAllowed` (HTTP 405), **not** `ErrNoRoute`. This is deliberate: a GET on `/v1/chat/completions` is a wrong-verb-for-a-known-route case, and the operator wants a 405 to surface that distinction in logs and dashboards. The `routing_middleware.go` adapter logs the miss as `routing method not allowed` and writes a typed JSON error with code `method_not_allowed`.
-
-| Endpoint declaration | Inbound | Outcome |
-|---|---|---|
-| `method: [POST]` | `POST /v1/chat/completions` | 200 — forwarded |
-| `method: [POST]` | `GET /v1/chat/completions` | 405 ErrMethodNotAllowed |
-| `method: [GET]` | `GET /v1/models` | 200 — forwarded |
-| `method: [GET]` | `POST /v1/models` | 405 ErrMethodNotAllowed |
-| (no route for path) | `GET /nope` | 404 ErrNoRoute |
-
-A path may map to only one `(provider, endpoint)` pair, so multi-method endpoints are rare in practice — `chat_completions` is `[POST]`, `models` is `[GET]`. Declaring an empty `method` list is a config-load error (`routing: new: <provider>.<endpoint> has no methods declared`).
-
----
-
-## Path placeholders and captured params
-
-An `accepted_paths` entry can contain `{name}` segments. The loader keeps the literal string in `RouteIndex`; the router compiles it to an anchored regex (`^.../([^/]+)...$`) and records the placeholder identifiers in left-to-right order.
+Bound on a configuration:
 
 ```yaml
-endpoints:
-  generate_content:
-    path: /v1beta/models/{model}:generateContent
-    accepted_paths:
-      - /v1beta/models/{model}:generateContent
-    method: [POST]
-    request_kind: generate_content
+configurations:
+  dev:
+    passthrough_bindings:
+      - { family: messages_batches, provider: anthropic }
+      - { family: models, provider: openai }
+      - { family: models, provider: gemini }
 ```
 
-A request to `/gemini/v1beta/models/gemini-1.5-flash-latest:generateContent` resolves to `(gemini, generate_content)` with `Params{"model": "gemini-1.5-flash-latest"}`. Two constraints on placeholders worth knowing:
-
-- Placeholder names are restricted to identifier characters (`[A-Za-z_][A-Za-z0-9_]*`) — the regex translator is deterministic and won't accept arbitrary content inside the braces.
-- Each placeholder captures a single non-slash segment (`[^/]+`). A path like `/v1beta/models/foo/bar:generateContent` won't match — the `/` inside terminates the capture before the `:generateContent` suffix.
-
-The captured `Params` map is propagated through context to the forwarder's URL builder, which substitutes them into `Endpoint.Path` when constructing the upstream request. Gemini's model name lives in the path, not the body, so this is the dispatch surface for "which model is being requested" on that provider — see `cmd/gateway/handler.go::outboundModel` for how telemetry reads it back.
+`GET /v1/messages/batches/batch_abc/results` matches the third path with `params = {"id": "batch_abc"}`; `POST` to the same path matches no path that allows `POST` on `/v1/messages/batches/{id}/results`, so it returns 405.
 
 ---
 
-## The `request_kind` discriminator
+## `kindFromProtocol` — protocol drives body capture
 
-`request_kind` is the bridge from "router matched this endpoint" to "bodycapture knows which typed model to deserialise into". It's a string on `Endpoint` whose accepted values are the constants defined in `internal/middleware/bodycapture`:
+Bodycapture needs to know which typed model to deserialise the body into. In v2 that decision is **derived from the protocol**, not from a config field. [`kindFromProtocol`](../cmd/gateway/pipeline.go) reads the stashed protocol and returns a `bodycapture.RequestKind`:
 
-| `request_kind` | Concrete body type | Used by |
+| Protocol | `bodycapture.RequestKind` | Concrete body type |
 |---|---|---|
-| `chat` | `*openaichat.ChatCompletionRequest` | OpenAI chat completions + every OpenAI-compat surface (Anthropic, Gemini, gpt-oss, ...) |
-| `responses` | `*openairesponses.ResponsesRequest` | OpenAI Responses API |
-| `messages` | `*messages.MessagesRequest` | Anthropic native messages |
-| `generate_content` | `*content.GenerateContentRequest` | Gemini native `:generateContent` |
-| `passthrough` | `nil` — body is `Raw`-only | GETs and any endpoint where the gateway does not type-model the body (e.g. `/v1/models`) |
-| (empty / unset) | `nil` — falls back to `passthrough` | Defensive default; the handler's `makeKindFromContext` treats empty as passthrough so a misconfigured YAML still forwards |
+| `chat` | `KindChat` | OpenAI chat-completions request |
+| `responses` | `KindResponses` | OpenAI Responses request |
+| `messages` | `KindMessages` | Anthropic Messages request |
+| `generate_content` | `KindGenerateContent` | Gemini generateContent request |
+| `embeddings` | `KindPassthrough` | none — buffered raw (no typed model in the providers package) |
+| non-generative (passthrough candidate) | `KindPassthrough` | none — buffered raw |
 
-The flow is: router stashes the `Match` on context → `makeKindFromContext` reads the matched endpoint's `RequestKind` → bodycapture's `Capture` allocates the matching concrete struct and `json.Unmarshal`s into it, preserving unknown fields via `DynamicProperties`. The typed value lands on context as `Captured.Body` for downstream consumers (rules, telemetry, the forwarder's optional re-marshal path).
-
-Two operational notes:
-
-- **`passthrough` does not skip body reading.** The middleware still buffers `Raw` up to `MaxBodyBytes` (10 MiB) so the forwarder has bytes to resend; it just doesn't pay the deserialise cost. Use `passthrough` for endpoints where the body shape is not load-bearing for the gateway's decisions.
-- **Adding a new typed kind requires three edits.** New constant in `bodycapture.RequestKind`, new case in `bodycapture.allocate`, and (if the body carries a model field) a new case in `bodycapture.Model`. Forgetting the third means the rules engine and telemetry can't read the model out of the new request shape.
+`KindPassthrough` still buffers the raw body (so the forwarder has bytes to resend) but skips the typed deserialise. `embeddings` routes only via catch-all bindings because it has no typed request model. The kind constants live in [`internal/middleware/bodycapture/bodycapture.go`](../internal/middleware/bodycapture/bodycapture.go); the protocol→kind switch is the only place they are selected at request time.
 
 ---
 
 ## X-Sluice headers
 
-Sluice owns three `X-Sluice-*` HTTP headers on the request/response surface. Two are observability hooks, one is the passthrough-mode auth selector.
+Sluice owns a small set of `X-Sluice-*` HTTP headers. Two are observability hooks set by `correlationMiddleware`; one selects the passthrough-mode configuration in auth.
 
 ### `X-Sluice-Correlation-Id`
 
-Per-request correlation token. Used to join captured connector records, structured logs, and admin-console message rows for the same request. Lives on [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) — the `correlationMiddleware` runs ahead of routing so every other middleware sees the same value.
+Per-request correlation token, joined across captured records, logs, and the admin console. Handled in [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) (`headerCorrelationID = "X-Sluice-Correlation-Id"`), which runs ahead of every data-plane stage so they all share one value.
 
 | Direction | Behaviour |
 |---|---|
-| Inbound (client → gateway) | Optional. When present, the gateway adopts the value verbatim and uses it as the correlation ID for the request. |
-| Inbound missing | The gateway mints a fresh UUIDv4 via [`observability.NewCorrelationID`](../internal/observability/correlation.go). |
-| Outbound (gateway → client) | **Always set** on the response, regardless of inbound state. Echoed value matches the in-process correlation ID exactly. |
-
-The "always echo" rule is what lets a client SDK retrieve the ID it needs to file a support ticket — even if it didn't send one on the way in, the response carries one it can log.
+| Inbound present | Adopted verbatim as the request's correlation ID. |
+| Inbound absent | A fresh ID is minted via [`observability.NewCorrelationID`](../internal/observability/correlation.go). |
+| Outbound | **Always set** on the response, regardless of inbound state. |
 
 ### `X-Sluice-Session-Id`
 
-Optional pass-through session marker. Sluice does not interpret the value — it just relays it. Both directions are simple:
+Optional session/bundle marker. [`observability.SluiceSessionHeader`](../internal/observability/session.go) (`"X-Sluice-Session-Id"`) is the authoritative session header; a [`SessionResolver`](../internal/observability/session.go) also honours configured client-specific aliases. The resolved session ID is promoted to context (onto records, spans, and the live feed) but **never** becomes an OTel metric label — it has unbounded cardinality.
 
 | Direction | Behaviour |
 |---|---|
-| Inbound | If present, the value is recorded on the per-request observer state and forwarded upstream verbatim. Absent inbound means no session id; the gateway does not synthesise one. |
-| Outbound (gateway → client) | When an inbound `X-Sluice-Session-Id` was present, the value is echoed back on the response. Absent inbound means absent outbound. |
+| Inbound | Resolved from the Sluice header (or a configured alias) and recorded on the request. |
+| Outbound | When a session ID was resolved, echoed back under `X-Sluice-Session-Id`. Absent inbound means absent outbound. |
 
-The intent is that an SDK or a UI tier above the gateway can stamp a session id and join its own logs against the same key Sluice surfaces in captured connector records and the admin console.
+### `X-Sluice-Identity` / `X-Sluice-Configuration`
 
-### `X-Sluice-Configuration`
-
-Passthrough-mode policy selector. The client tells the gateway "I'm bringing my own upstream credential — apply *this* named configuration on top of it." Lives on [`internal/middleware/auth/resolver.go::HeaderConfiguration`](../internal/middleware/auth/resolver.go).
+Passthrough-mode configuration selector: the client brings its own upstream credential and names the Sluice configuration to apply on top of it. [`auth.HeaderIdentity`](../internal/middleware/auth/resolver.go) (`"X-Sluice-Identity"`) is the current header; [`auth.HeaderConfiguration`](../internal/middleware/auth/resolver.go) (`"X-Sluice-Configuration"`) is the **deprecated** legacy spelling, still accepted. When both are present, `X-Sluice-Identity` wins and the legacy header is flagged.
 
 | Direction | Behaviour |
 |---|---|
-| Inbound | When set, the resolver enters passthrough mode unconditionally — even if a managed-mode bearer is also present, passthrough wins. The value names a configuration from `policy.yaml`; an unknown name fails the request with `ErrUnknownConfiguration`. |
-| Forwarded upstream | **Stripped.** Auth always adds `HeaderConfiguration` to the destination builder's `DropHeaders` set before forwarding, so the upstream provider never sees the Sluice-internal routing token. |
+| Inbound | When set, the resolver enters passthrough mode unconditionally — passthrough wins even if a managed-mode bearer is also present. The value names a configuration; an unknown name fails the request. |
+| Forwarded upstream | **Stripped.** Auth adds the identity/configuration header to the destination builder's `DropHeaders` set so the upstream provider never sees the Sluice-internal selector. |
 
-The strip is non-negotiable: leaking `X-Sluice-Configuration` to the upstream would expose policy-routing metadata to the provider, which has no use for it and might log it. The destination builder also drops whichever inbound header carried the Sluice secret in managed mode (Authorization, x-api-key, or x-goog-api-key); the principle is the same — gateway-internal tokens stay gateway-internal.
+The full resolution algorithm (managed vs passthrough, credential discovery order, drop-header set) is in [docs/auth.md](auth.md).
 
 ---
 
 ## Worked examples
 
-### Routing an OpenAI request through `/openai/v1/chat/completions`
+### One path, three providers — model-keyed selection
 
-`config-dev/providers.yaml` declares OpenAI with `prefix: openai`, `prefix_required: false`, and `accepted_paths: [/v1/chat/completions, /chat/completions]` on the `chat_completions` endpoint. The loader's `emitRoutes` expands this into four route-index entries:
+The `dev` configuration above binds `chat` for `gpt-*`, `claude-*`, and `gemini-*` to three different providers. Every request hits the *same* inbound path:
 
-| Inbound path | Resolves to |
-|---|---|
-| `/v1/chat/completions` | `(openai, chat_completions)` — bare default |
-| `/chat/completions` | `(openai, chat_completions)` — bare default, version-stripped variant |
-| `/openai/v1/chat/completions` | `(openai, chat_completions)` — explicit prefix |
-| `/openai/chat/completions` | `(openai, chat_completions)` — explicit prefix, version-stripped |
+```mermaid
+flowchart TB
+    A["POST /v1/chat/completions"] --> P["protocolMiddleware<br/>protocol = chat"]
+    P --> AU["auth<br/>configuration = dev"]
+    AU --> BC["bodycapture<br/>model from body"]
+    BC --> M{model?}
+    M -- "gpt-4o" --> O["binding 1 → openai"]
+    M -- "claude-sonnet-4" --> AN["binding 3 → anthropic"]
+    M -- "gemini-2.5-flash" --> G["binding 5 → gemini"]
+    M -- "nomatch-internal" --> NB["ErrNoBinding → 404"]
+```
 
-`POST /openai/v1/chat/completions` hits the exact-match map, picks up the `Methods: {POST}` allowlist, and returns `Match{Provider: "openai", Endpoint: "chat_completions"}` with no `Params`. The forwarder appends `/v1/chat/completions` (the endpoint's canonical `path`) to OpenAI's `base_url`. Bodycapture deserialises into `*openaichat.ChatCompletionRequest`.
+The protocol is fixed by the path; the provider is decided entirely by the model and the configuration's binding order. A model that no binding matches (`nomatch-internal`) is a 404 `no_binding`, not a fall-through to a default.
 
-### Same logical path on different providers via prefix disambiguation
+### Gemini — model rides in the path
 
-Both OpenAI and Anthropic want to expose chat completions at `/v1/chat/completions`. The collision is resolved by giving them different prefixes and pinning Anthropic to prefix-only:
+```mermaid
+flowchart TB
+    A["POST /v1beta/models/gemini-2.5-flash:generateContent"] --> P["ProtocolForPath"]
+    P --> PR["protocol = generate_content<br/>params = {model: gemini-2.5-flash, op: generateContent}"]
+    PR --> SEL["Select(generate_content, gemini-2.5-flash, …)"]
+    SEL --> B["binding 6 → gemini"]
+    B --> RT["ResolveTarget<br/>path /v1beta/models/{model}:{op}"]
+    RT --> SUB["substitutePlaceholders → /v1beta/models/gemini-2.5-flash:generateContent"]
+```
+
+Here the model comes from the path (`pi.params['model']`), not the body. The provider's protocol `path` is the template `"/v1beta/models/{model}:{op}"`; [`substitutePlaceholders`](../cmd/gateway/handler.go) fills `{model}` and `{op}` from the captured params when [`buildDestination`](../cmd/gateway/destination.go) mints the upstream URL.
+
+### Passthrough — the model catalogue
+
+`GET /v1beta/models` is **not** a generative path (`ProtocolForPath` returns `ok == false`), so it falls through to passthrough matching. The `dev` configuration binds the `models` family on both `openai` and `gemini`; the Gemini family claims `/v1beta/models` for `GET`:
+
+```mermaid
+flowchart TB
+    A["GET /v1beta/models"] --> P["ProtocolForPath → not generative"]
+    P --> MP["MatchPassthrough(GET, /v1beta/models, dev, …)"]
+    MP --> F["gemini.models family path matches, GET allowed"]
+    F --> PV["proxied verbatim → gemini base_url + /v1beta/models"]
+    A2["POST /v1beta/models"] --> MP2["MatchPassthrough(POST, …)"]
+    MP2 --> MM["path matched, POST not allowed"]
+    MM --> R405["ErrMethodNotAllowed → 405"]
+    A3["GET /nope"] --> MP3["MatchPassthrough(GET, /nope, …)"]
+    MP3 --> NR["no family claims path → ErrNoPassthrough → 404"]
+```
+
+### OpenAI-compat surface — same protocol, different upstream path & auth
+
+Anthropic and Gemini both expose an OpenAI-compatible `chat` surface alongside their native protocols. They are distinct entries in the provider's `protocols` map, each with its own `path` and `auth`:
 
 ```yaml
 providers:
-  openai:
-    prefix: openai
-    prefix_required: false        # bare /v1/chat/completions belongs here
-    endpoints:
-      chat_completions:
-        accepted_paths: [/v1/chat/completions]
-        method: [POST]
-        request_kind: chat
   anthropic:
-    prefix: anthropic
-    prefix_required: true         # only /anthropic/v1/chat/completions
-    endpoints:
-      chat_completions:
-        accepted_paths: [/v1/chat/completions]
-        method: [POST]
-        request_kind: chat
+    protocols:
+      messages:                       # native
+        path: /v1/messages
+        auth: { header: x-api-key, format: "{key}" }
+      chat:                           # OpenAI-compat surface
+        path: /v1/chat/completions
+        auth: { header: Authorization, format: "Bearer {key}" }
+  gemini:
+    protocols:
+      generate_content:               # native
+        path: "/v1beta/models/{model}:{op}"
+        auth: { header: x-goog-api-key, format: "{key}" }
+      chat:                           # OpenAI-compat surface
+        path: /v1beta/openai/chat/completions
+        auth: { header: Authorization, format: "Bearer {key}" }
 ```
 
-After loader expansion:
-
-| Inbound path | Resolves to |
-|---|---|
-| `/v1/chat/completions` | `(openai, chat_completions)` |
-| `/openai/v1/chat/completions` | `(openai, chat_completions)` |
-| `/anthropic/v1/chat/completions` | `(anthropic, chat_completions)` |
-
-No collision — the bare path belongs to the default provider, and the prefix is the disambiguator for everyone else. Flipping OpenAI to `prefix_required: true` (or adding a third provider that also goes default) would trip `ErrPathCollision` at boot.
-
-### Anthropic's OpenAI-compat surface
-
-Anthropic exposes both its native `/v1/messages` API and an OpenAI-shaped `/v1/chat/completions` surface that accepts an OpenAI ChatCompletionRequest body. The native endpoint also wants to be reachable bare (so the vanilla Anthropic SDK pointed at the gateway root works), but the OpenAI-compat surface must stay prefix-only to avoid colliding with OpenAI's bare `/v1/chat/completions` claim:
-
-```yaml
-anthropic:
-  prefix: anthropic
-  prefix_required: true
-  endpoints:
-    messages:
-      path: /v1/messages
-      method: [POST]
-      accepted_paths: [/v1/messages, /messages]
-      request_kind: messages
-      prefix_optional: true              # bare /v1/messages emits alongside /anthropic/v1/messages
-      auth_header: x-api-key
-      auth_format: "{key}"
-    chat_completions:
-      path: /v1/chat/completions
-      method: [POST]
-      accepted_paths: [/v1/chat/completions]
-      request_kind: chat                 # OpenAI body shape
-      auth_header: Authorization         # Anthropic's OpenAI-compat wants Bearer
-      auth_format: "Bearer {key}"
-```
-
-After expansion:
-
-| Inbound path | Resolves to | Body type (via `request_kind`) |
-|---|---|---|
-| `/v1/messages` | `(anthropic, messages)` | `*messages.MessagesRequest` |
-| `/messages` | `(anthropic, messages)` | `*messages.MessagesRequest` |
-| `/anthropic/v1/messages` | `(anthropic, messages)` | `*messages.MessagesRequest` |
-| `/anthropic/messages` | `(anthropic, messages)` | `*messages.MessagesRequest` |
-| `/anthropic/v1/chat/completions` | `(anthropic, chat_completions)` | `*openaichat.ChatCompletionRequest` |
-| `/v1/chat/completions` | `(openai, chat_completions)` | `*openaichat.ChatCompletionRequest` — OpenAI claims the bare form |
-
-`prefix_optional: true` is what lets `messages` emit bare while `chat_completions` on the same provider stays prefix-only. The per-endpoint `auth_header`/`auth_format` overrides are how the OpenAI-compat surface gets `Authorization: Bearer ...` instead of Anthropic's native `x-api-key`. See `docs/providers.md`'s OpenAI-compat section for the full credential resolution table.
-
-### Declaring a custom prefix-optional endpoint
-
-Gemini's `generate_content` endpoint uses the same pattern as Anthropic's `messages` — bare-reachable for SDK compatibility, sibling endpoints stay prefixed:
-
-```yaml
-gemini:
-  prefix: gemini
-  prefix_required: true
-  endpoints:
-    generate_content:
-      path: /v1beta/models/{model}:generateContent
-      method: [POST]
-      accepted_paths: ["/v1beta/models/{model}:generateContent"]
-      request_kind: generate_content
-      prefix_optional: true        # bare /v1beta/... also emits
-    models:
-      path: /v1beta/models
-      method: [GET]
-      accepted_paths: [/v1beta/models]
-      request_kind: passthrough    # /v1beta/models stays prefix-only
-```
-
-`prefix_optional: true` flips the bare emit on for `generate_content` only. The `models` endpoint stays prefix-only because nothing else on the gateway claims `/v1beta/models`, so there's no SDK-compatibility win in exposing it bare — and keeping it prefixed forces explicit intent if a second provider ever shows up wanting the same path. The bare `generate_content` route is a placeholder pattern, so the regex iteration path of `Resolve` handles it; the bare `models` route doesn't exist, so a `GET /v1beta/models` without the prefix returns 404.
+A `chat` request for `claude-*` resolves the `anthropic` provider's `chat` protocol: upstream path `/v1/chat/completions`, credential header `Authorization: Bearer <key>` — *not* the native `x-api-key`. The per-protocol `auth` override is the single mint point ([invariant #6](../CLAUDE.md)); [`credentialHeaderFor`](../cmd/gateway/destination.go) reads `Target.Auth` and falls back to the provider-native default ([`auth.UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go)) only when no override is set. See [docs/providers.md](providers.md) for the full credential table.
 
 ---
 
-## Diagnostic errors
+## The error set
 
-| Error | When it fires | Where to fix |
-|---|---|---|
-| `routing.ErrNoRoute` | No `accepted_paths` entry matches the inbound path | Add the path to an endpoint's `accepted_paths`, or check the prefix (a `prefix_required: true` provider is only reachable via `/<prefix>...`). |
-| `routing.ErrMethodNotAllowed` | Path matched but the verb is not in the endpoint's `method` list | Add the method to the endpoint's `method:` list, or fix the client. |
-| `config.ErrPathCollision` | Two `(provider, endpoint)` pairs emit the same fully-resolved route path | Disambiguate via prefix — see [Path collisions](#path-collisions-and-errpathcollision). |
-| `config.ErrPrefixRequiredEmpty` | A provider has `prefix_required: true` but no `prefix` value | Set a non-empty `prefix`, or drop `prefix_required`. |
-| `routing: new: route references unknown provider/endpoint` | The route index references a provider or endpoint not in the resolved providers map | Programming error — the loader normally prevents this. Means the loader wrote a `RouteIndex` entry without registering the underlying provider/endpoint; investigate the loader, not the YAML. |
-| `routing: new: <provider>.<endpoint> has no methods declared` | An endpoint's `method:` list is empty or missing | Add at least one HTTP verb. |
+Selection surfaces three sentinel errors, mapped to HTTP status + a typed JSON body via [`internal/httperr`](../internal/httperr). They are logged as client errors, not gateway faults.
 
-Routing errors surface as HTTP status + a typed JSON body via `internal/httperr` (`{"code":"no_route", ...}` / `{"code":"method_not_allowed", ...}`). Both are logged at info — they're client errors, not gateway faults — and counted on `gateway.requests.total` with the appropriate status label. See `docs/configuration-model.md` for the full YAML schema and `docs/providers.md` for per-provider auth/header behaviour.
+| Error | Fires when | HTTP / code | Operator fix |
+|---|---|---|---|
+| [`selection.ErrNoBinding`](../internal/selection/selection.go) | No generative binding matches `(protocol, model)` in the resolved configuration | 404 `no_binding` | Add a binding for the protocol + model, or check the model patterns. The model is simply not served on that protocol — there is no default fall-through. |
+| [`selection.ErrNoPassthrough`](../internal/selection/selection.go) | The path is non-generative and no exposed passthrough family claims it | 404 `no_route` | Expose the family via a `passthrough_binding`, or add the path pattern to the provider's family. |
+| [`selection.ErrMethodNotAllowed`](../internal/selection/selection.go) | A passthrough family claims the path but not the method | 405 `method_not_allowed` | Add the method to the family path's `methods` list, or fix the client verb. |
+
+Resolution-class errors from `resolveTarget`/`MatchPassthrough` (unknown provider, provider does not serve the protocol, missing credential entry, unknown group/family reference) are programming/validation faults that config validation rejects before runtime; if one reaches the request path it surfaces as HTTP 500. These are not part of the normal client-facing error set.
+
+> **Note on config-load errors.** `internal/config/errors.go` still defines some v1-era names (`ErrPathCollision`, `ErrPrefixRequiredEmpty`). These belong to the legacy v1 model and are **not** part of v2 routing — v2 has no path-based route table to collide and no provider prefixes. v2 config validation instead checks binding/provider/group references, protocol coverage, and credential presence. See [docs/configuration-model.md](configuration-model.md) for the validation surface.
+
+See [docs/pipeline.md](pipeline.md) for the full middleware chain, [docs/providers.md](providers.md) for per-provider protocol/auth shapes, and [docs/configuration-model.md](configuration-model.md) for the complete v2 YAML schema.

@@ -4,9 +4,13 @@
 // session_id, and serves an operator console identical to the gateway's own
 // dashboard + ring inspector.
 //
-// T1 stands up the skeleton — config load, Postgres connect + migrate, and the
-// auth-gated console shell with health/readiness probes. Ingest and the query
-// APIs land in later phases.
+// It binds two listeners: an HTTP surface (default :8686) carrying the
+// liveness/readiness probes, the open HMAC-trusted Record webhook, and the
+// Basic-auth operator console + query API; and an OTLP gRPC surface (default
+// :8687) ingesting gen_ai spans + sluice meters. Boot loads the config,
+// connects to Postgres and runs the forward-only migrations, then serves both
+// surfaces until SIGINT/SIGTERM triggers a bounded graceful shutdown. See
+// docs/telemetry-service.md for the operator overview.
 package main
 
 import (

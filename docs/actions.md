@@ -126,19 +126,20 @@ flowchart TB
 
 Actions write through a [`rules.MutableState`](../internal/middleware/rules/state.go) handle. This is the entire surface — anything not on `MutableState` cannot be reached from an action.
 
-| Field | Type | Written by |
-|---|---|---|
-| `Provider` | `string` | `changeProvider` |
-| `Endpoint` | `string` | (not directly writable in v1.0.x; re-resolved post-rule on the new provider) |
-| `UpstreamURL` | `*url.URL` | `changeUrl` |
-| `OutgoingHeaders` | `http.Header` | `setHeader` |
-| `UpstreamCredentialOverride` | `*string` | `changeApiKey` |
-| `PathParams` | `map[string]string` | `changeModelName` (writes `"model"` key) |
-| `BodyMutated` | `bool` | `changeModelName` (signals re-marshal) |
-| `QueryAdditions` | `[]QueryAddition` | `appendQueryString` |
-| `Tags` | `[]string` | `addTag` |
-| `PolicyRef` | `string` | `useResiliencePolicy` |
-| `BodyRewrites` | `[]bodypatch.Op` | `rewriteField`, `removeField`, `appendField` (applied post-rule by `BodyRewriteHandler`) |
+| Field | Type | Written by | Consumed by the v2 data plane? |
+|---|---|---|---|
+| `Provider` | `string` | `changeProvider` | **No (overwritten).** Read at [`handler.go`](../cmd/gateway/handler.go) line 102, but the resilience orchestrator rewrites it per attempt after rules run — see [`changeProvider`](#changeprovider). |
+| `UpstreamURL` | `*url.URL` | `changeUrl` | **No (inert).** `buildDestination` sets `dest.UpstreamURL` from the resolved target; `applyStateOverlays` never reads this field — see [`changeUrl`](#changeurl). |
+| `UpstreamCredentialOverride` | `*string` | `changeApiKey` | **No (inert).** Never read by the destination builder — see [`changeApiKey`](#changeapikey). |
+| `OutgoingHeaders` | `http.Header` | `setHeader` | Yes — layered onto the destination by `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 278-283). |
+| `QueryAdditions` | `[]QueryAddition` | `appendQueryString` | Yes — layered onto `dest.UpstreamURL` by `applyStateOverlays` (pipeline.go lines 271-277). |
+| `PathParams` | `map[string]string` | `changeModelName` (writes `"model"` key) | Yes — drives Gemini `{model}` path substitution and the outbound-model telemetry label. |
+| `BodyMutated` | `bool` | `changeModelName` (signals re-marshal) | Yes — read by `BodyRemarshalHandler`. |
+| `Tags` | `[]string` | `addTag` | Yes — drained onto the connector `Record`, the live-feed `Entry`, and `gateway.tags.applied.total`. |
+| `PolicyRef` | `string` | `useResiliencePolicy` | **No (inert).** The v2 selection middleware seeds `PolicyRef` from the chosen binding's synthesised policy and stashes the `ResilienceConfig` on context; the orchestrator reads that, the data plane wires the name lookup to `nil`, and the reported `PolicyRef` comes from the binding's policy name, not `state.PolicyRef`. A rule-authored write is ignored — see [`useResiliencePolicy`](#useresiliencepolicy). |
+| `BodyRewrites` / `ResponseRewrites` | `[]bodypatch.Op` | `rewriteField`, `removeField`, `appendField` | Yes — request ops applied post-rule by `BodyRewriteHandler`, response ops by the proxy's `ModifyResponse` hook. |
+
+> **v2 routing note (load-bearing).** Under v2 the *destination* — provider, upstream URL, and credential header — is resolved from the configuration's **bindings** by `selectionMiddleware` *before* rules run, and finalised by `buildDestination` in [`cmd/gateway/destination.go`](../cmd/gateway/destination.go) from the selected `selection.Target`. The destination builder's own godoc says it plainly: "there is no provider/endpoint lookup and no `changeProvider`/`changeUrl`/`changeApiKey` override table." Four state-mutating actions still parse, validate, and round-trip — they are authorable and registered in [`contracts/rules/action.go`](../contracts/rules/action.go) — but the v2 data plane does not consult the state fields they write, so they are **inert**: `changeUrl` and `changeApiKey` are written-but-never-read; `useResiliencePolicy` is ignored in favour of the binding-derived policy on context (and the data plane wires the name lookup to `nil`); `changeProvider` is **overwritten** per attempt by the orchestrator's binding-derived provider switch before the final handler reads `state.Provider`. The remaining actions (`setHeader`, `appendQueryString`, `changeModelName`, `addTag`, the body-rewrite trio, and the two terminating actions) are fully wired — note `changeModelName` survives as the orchestrator's internal alias-rewrite primitive, so a binding/group `alias` is the last writer of the body model. Each affected section below carries the specifics. The inert writes are tracked as code follow-ups; the route to a different provider/URL/credential/policy in v2 is a binding edit, not a rule.
 
 Two complementary side channels exist:
 
@@ -150,7 +151,9 @@ Two complementary side channels exist:
 
 ## `changeProvider`
 
-Rewrites the upstream provider for the request. Non-terminating.
+Writes `state.Provider`. Non-terminating.
+
+> **v2 status — superseded by bindings; the rule-authored write is overwritten.** Provider selection moved to the binding/selection layer in v2. `selectionMiddleware` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go)) walks the configuration's bindings to pick the provider (or resilience group) *before* rules run, then synthesises a resilience config whose per-attempt `Actions` switch `state.Provider` to the chosen provider. That synthesis runs through the orchestrator's `buildAttemptState` ([`internal/middleware/resilience/middleware.go`](../internal/middleware/resilience/middleware.go) line 683), which clones the post-rule state and applies the binding's provider switch onto the clone — *after* rule evaluation. The final handler then reads `state.Provider` from that clone ([`cmd/gateway/handler.go`](../cmd/gateway/handler.go) line 102). So a rule-authored `changeProvider` write is overwritten by the orchestrator before it reaches the destination builder, and the action does not change where the request lands. It still parses, validates, and round-trips (registered in [`contracts/rules/action.go`](../contracts/rules/action.go)). To route a model to a different provider in v2, author a binding — see [`docs/providers.md`](providers.md).
 
 ### YAML
 
@@ -164,40 +167,24 @@ Rewrites the upstream provider for the request. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `changeProvider`. |
-| `NewProvider` | `newProvider` | `new_provider` | yes | Provider name. Must exist in `providers.yaml`. Trimmed; empty rejected at evaluate time. |
+| `NewProvider` | `newProvider` | `new_provider` | yes | Provider name. Trimmed; empty rejected at evaluate time. |
 
 ### What it mutates
 
-- `state.Provider` = trimmed `NewProvider`.
+- `state.Provider` = trimmed `NewProvider` (see `applyChangeProvider` in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) line 91). In the v2 data plane this write is overwritten per attempt by the orchestrator's binding-derived provider switch, as described above.
 
-### Special behaviour — invariant 7
+### How v2 resolves the destination instead
 
-`changeProvider` does *not* re-resolve the endpoint at action time. Instead, **the destination builder reads `state.Provider` post-rule and looks up the endpoint map on the new provider, not the original.** This is what makes the model-keyed redirect pattern work: a request hitting `/openai/v1/chat/completions` with a `claude-*` model can be flipped to `provider: anthropic`, and the destination builder will then dial anthropic's `chat_completions` endpoint with anthropic's credential and auth header — all because the lookup happens against `state.Provider`, not against the route the request entered on.
+The destination builder is the single credential and transport mint site in v2 ([`buildDestination` in `cmd/gateway/destination.go`](../cmd/gateway/destination.go)). It reads the provider's base URL, protocol path, per-protocol auth convention, default query, and the configuration's credential straight off the resolved `selection.Target` — there is no provider/endpoint lookup table and no `changeProvider`/`changeUrl`/`changeApiKey` override applied at this stage. The credential header is formatted once by `credentialHeaderFor` (destination.go line 163), honouring [`CLAUDE.md`](../CLAUDE.md) invariant 6 (one mint site per provider/protocol).
 
-Bypassing this post-rule endpoint lookup (re-resolving in the action, hard-coding a URL, etc.) breaks the redirect pattern and is a hard no per `CLAUDE.md` invariant 7.
+The model-keyed redirect pattern (a `claude-*` model posted to an OpenAI-compat path landing on Anthropic) is therefore expressed as a binding from the OpenAI `chat` protocol to the `anthropic` provider, not as a rule. The internal `changeProvider`/`changeModelName` pair survives only as the orchestrator's selection primitive (`providerSwitchActions` in destination.go line 71) — "no longer authorable in rules" for routing purposes, in the words of that function's godoc.
 
-The credential header also re-resolves on the new provider: `resolveCredentialHeader` in `cmd/gateway/handler.go` walks endpoint override → provider override → `auth.UpstreamCredentialHeader` for `state.Provider`. This is invariant 6 — the destination builder is the single mint site for the credential header.
-
-### Worked example — model-keyed redirect
-
-```yaml
-rules:
-  - name: claude-on-openai-route
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: claude-
-    actions:
-      - type: changeProvider
-        newProvider: anthropic
-```
-
-A client posts `{"model": "claude-3-5-sonnet", ...}` to `/openai/v1/chat/completions`. The OpenAI-compat chat surface accepts the request; the rule fires; `state.Provider` becomes `anthropic`; the destination builder resolves anthropic's `chat_completions` endpoint (anthropic's OpenAI-compat surface), uses anthropic's credential, and applies anthropic's auth header convention. The client sees an anthropic completion in OpenAI chat shape, transparently.
+> **⚠️ Invariant #7 tension (tracked as a code follow-up).** [`CLAUDE.md`](../CLAUDE.md) invariant #7 states "`changeProvider` re-resolves the endpoint on the new provider … The destination builder reads `state.Provider` post-rule and looks up the endpoint map on that provider." That contract no longer holds for a **rule-authored** `changeProvider` in v2: (a) `buildDestination` does not read `state.Provider` at all — the *final handler* does, then resolves via `selection.ResolveTarget`; and (b) the orchestrator overwrites `state.Provider` from the binding-derived target before the final handler runs, so a rule's write is discarded. The invariant's mechanism survives only for the orchestrator's *internal* `providerSwitchActions`, not for rule authors. The invariant text and/or the action's authorability should be reconciled — see the code follow-ups accompanying this doc.
 
 ### Gotchas
 
-- The destination builder re-resolves the endpoint on the new provider. If the new provider does not have the endpoint name the original route resolved to, the request fails — pair `changeProvider` with a `changeUrl` when redirecting across providers that don't share endpoint names.
-- Pairing `changeProvider` with `changeModelName` in the same rule is the common idiom for cross-provider failover (see [resilience.md](resilience.md) for the per-target form).
+- Do not reach for `changeProvider` to redirect a request — it is inert for routing in v2. Use a binding.
+- Cross-provider failover is configured as a resilience **group** binding (multiple targets), not as a rule pairing `changeProvider` with `changeModelName`. See [resilience.md](resilience.md) for the per-target form.
 
 ---
 
@@ -267,7 +254,9 @@ Every inbound `gpt-4-turbo*` model name is rewritten to `gpt-4o` before the requ
 
 ## `changeUrl`
 
-Overrides the upstream URL for this request. Non-terminating.
+Writes `state.UpstreamURL`. Non-terminating.
+
+> **v2 status — currently inert.** `applyChangeUrl` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) line 141) parses `newUrl` and stores it on `state.UpstreamURL`, but **nothing in the v2 data plane reads that field.** `buildDestination` builds `dest.UpstreamURL` from the resolved `selection.Target` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) lines 107-114), and the only post-rule overlay step — `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 270-284) — touches only `QueryAdditions` and `OutgoingHeaders`. `state.UpstreamURL` is written, cloned, and never consulted. The action still parses, validates, and round-trips. Tracked as a code follow-up. To pin a region or override the host in v2, set the provider's base URL in `providers.yaml`.
 
 ### YAML
 
@@ -285,43 +274,20 @@ Overrides the upstream URL for this request. Non-terminating.
 
 ### What it mutates
 
-- `state.UpstreamURL` = `url.Parse(NewURL)`.
-
-The destination builder uses `UpstreamURL` verbatim when non-nil — it skips its usual `(Provider, Endpoint, PathParams)` resolution. Query additions from `appendQueryString` are still layered on top after this point.
-
-### Special behaviour
-
-- Per-request override only — does not persist beyond the single request.
-- Does not change `state.Provider` or the credential header binding. If you redirect to a host that needs a different credential, pair with `changeApiKey`; if it's a different provider's surface entirely, lead with `changeProvider` and let the destination builder do the work.
-
-### Worked example — pin a region
-
-```yaml
-rules:
-  - name: eu-tenant-region
-    condition:
-      type: header
-      keyOperator: Equals
-      keyPattern: X-Tenant-Region
-      valueOperator: Equals
-      valuePattern: eu-west-1
-    actions:
-      - type: changeUrl
-        newUrl: https://eu-west-1.api.openai.com
-```
-
-All requests from EU-tagged tenants exit through the European OpenAI region while keeping the OpenAI provider binding (and therefore OpenAI's auth header + credential lookup).
+- `state.UpstreamURL` = `url.Parse(NewURL)` — written but not read by the v2 destination builder (see the status note above).
 
 ### Gotchas
 
-- Parse failures are loud — a malformed `newUrl` returns an error at evaluate time and the rule's match record carries the parse error.
-- `changeUrl` bypasses path-template rendering. The URL you supply is dialled as-is; if the upstream expects `{model}` substitutions you must include them yourself or skip `changeUrl` in favour of `changeProvider`.
+- The action is inert in v2; do not author rules that rely on it. Per-region routing is a provider-level base-URL change.
+- Parse failures are still loud — a malformed `newUrl` returns an error at evaluate time and the rule's match record carries the parse error, even though a well-formed URL has no downstream effect.
 
 ---
 
 ## `changeApiKey`
 
-Substitutes the upstream API key, or signals "forward the inbound Sluice bearer verbatim" for passthrough scenarios. Non-terminating.
+Writes `state.UpstreamCredentialOverride`. Intended to substitute the upstream API key, or signal "forward the inbound Sluice bearer verbatim" for passthrough scenarios. Non-terminating.
+
+> **v2 status — currently inert.** `applyChangeApiKey` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) lines 154-169) writes `state.UpstreamCredentialOverride` (a non-empty pointer for a literal key, or a pointer to the empty string as the "forward inbound bearer" sentinel). **Nothing reads that field.** Credential selection in v2 is the switch in `buildDestination` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) lines 132-150), which decides purely on the auth `Mode` and the resolved `selection.Target.Credential` — it never consults `state.UpstreamCredentialOverride`. The override is written, cloned, and ignored. The action still parses, validates, and round-trips. Tracked as a code follow-up. To use a different upstream key in v2, point the configuration's binding at a provider whose credential differs.
 
 ### YAML
 
@@ -346,48 +312,28 @@ Substitutes the upstream API key, or signals "forward the inbound Sluice bearer 
 ### What it mutates
 
 - `state.UpstreamCredentialOverride` = `&trimmedAPIKey` when `UseSluiceKey=false`.
-- `state.UpstreamCredentialOverride` = `&""` (a pointer to the empty string) when `UseSluiceKey=true` — the destination builder treats the empty-string override as a sentinel meaning "forward inbound Authorization verbatim."
+- `state.UpstreamCredentialOverride` = `&""` (a pointer to the empty string) when `UseSluiceKey=true`.
 
-### Special behaviour
+Both writes are inert in v2 (see the status note above) — the destination builder never reads this field.
 
-The destination builder's credential strategy ([`cmd/gateway/handler.go::credentialStrategy`](../cmd/gateway/handler.go)) reads the override before consulting auth mode:
+### How v2 actually resolves the credential
+
+Credential selection is the three-way switch in `buildDestination` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) lines 132-150). It decides on the auth `Mode` and the resolved `selection.Target.Credential` only — there is no override branch. When a credential is set, the `(header, value)` is formatted by `credentialHeaderFor` (destination.go lines 160-171): the target's per-protocol auth convention (`target.Auth.Header` / `target.Auth.Format`) when present, falling back to the per-provider-name default in `auth.UpstreamCredentialHeader`. This is the single mint site that honours [`CLAUDE.md`](../CLAUDE.md) invariant 6.
 
 ```mermaid
 flowchart TB
-    Start[credentialStrategy] --> Override{Override<br/>set?}
-    Override -- "yes, empty string" --> Forward[credForwardInbound<br/>forward Authorization verbatim]
-    Override -- "yes, non-empty" --> Set[credSetFromProvider<br/>use override value]
-    Override -- no --> Mode{auth mode}
-    Mode -- passthrough --> Forward
-    Mode -- managed + no config --> Strip[credStripNoSet]
-    Mode -- managed + has cred --> Set
-    Mode -- managed + no cred --> Strip
+    Start[buildDestination switch] --> Mode{auth mode}
+    Mode -- passthrough --> Forward[set Authorization to the<br/>inbound bearer verbatim]
+    Mode -- "managed, target.Credential empty" --> Strip[strip every credential header,<br/>set none]
+    Mode -- "managed, target.Credential set" --> Set[credentialHeaderFor: set the<br/>provider/protocol header, drop<br/>the other credential headers]
 ```
 
-The override wins over auth mode. A managed-mode request whose rule fires `changeApiKey` ends up with the rule's key, even if the configuration has its own `upstream_credentials` entry for that provider.
-
-### Worked example — per-tenant key segregation
-
-```yaml
-rules:
-  - name: enterprise-tenant-dedicated-key
-    condition:
-      type: header
-      keyOperator: Equals
-      keyPattern: X-Tenant-Tier
-      valueOperator: Equals
-      valuePattern: enterprise
-    actions:
-      - type: changeApiKey
-        apiKey: sk-enterprise-openai
-```
-
-The configuration's default OpenAI key is used for the long tail of tenants; enterprise tenants get a dedicated key for billing isolation.
+The same switch is reused for passthrough-family requests in `buildPassthroughDestination` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 240-257).
 
 ### Gotchas
 
-- The empty-string sentinel is load-bearing — do not "tidy up" `UseSluiceKey` by writing `state.UpstreamCredentialOverride = nil` when set; the nil state means "no override, fall back to managed-mode lookup", which is a different semantic.
-- Sluice does not redact upstream keys in YAML it loads; treat the YAML file as a secret material. Mount from a k8s Secret, never check it in.
+- The action is inert in v2; do not author rules expecting a per-rule key swap. Per-tenant key segregation is achieved by pointing the tenant's configuration binding at a provider carrying the dedicated credential.
+- Sluice does not redact upstream keys in YAML it loads; treat the YAML file as secret material. Mount from a k8s Secret, never check it in.
 
 ---
 
@@ -428,7 +374,7 @@ Mutates an outgoing HTTP header on the upstream request. Non-terminating.
 
 - **Multi-value concatenation uses `", "` (comma + space).** RFC 7230 §3.2.2 specifies comma as the list separator for multi-value headers when serialised to the wire. The .NET predecessor concatenated without a separator (so `"a" + "b" = "ab"`), which is a deliberate divergence — the comma form is the standards-compliant one.
 - **Append/Prepend create the header when missing.** The .NET behaviour of "silently no-op on Append-to-missing" was a footgun; Sluice creates the header instead so the action's intent always lands.
-- The destination builder layers provider-required headers (e.g. `anthropic-version`) and the resolved auth header on top of `OutgoingHeaders` after rule evaluation. To force-override an auth header, set it via `setHeader` *and* know that the auth-header binding will still run — usually `changeApiKey` + the provider's auth-header convention is what you actually want.
+- **Rules win the last word on the wire.** `buildDestination` seeds the destination's headers first — the provider's required headers (e.g. `anthropic-version`) and the resolved credential header — and `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 278-283) then overlays `state.OutgoingHeaders` last, deleting and re-adding each named header. A `setHeader` therefore overrides a provider-required header (or even the credential header) of the same name. Use that deliberately; an accidental `setHeader Authorization: …` will clobber the minted credential for the request.
 
 ### Worked example — propagate a tenant tier downstream
 
@@ -541,7 +487,7 @@ Tags are both an **output** (surface in observability) and an **input** (downstr
 
 ```mermaid
 flowchart LR
-    A[rule A:<br/>condition matches<br/>action: addTag tier:gold] --> B[rule B:<br/>condition: tag eq tier:gold<br/>action: changeProvider premium]
+    A[rule A:<br/>condition matches<br/>action: addTag tier:gold] --> B[rule B:<br/>condition: tag eq tier:gold<br/>action: setHeader X-Tier: gold]
 ```
 
 This pattern lets a single classifier rule fan out into multiple downstream behaviours without re-deriving the classification.
@@ -550,7 +496,7 @@ The reporter drains `state.Tags` at request completion onto `Record.Tags` (the c
 
 This channel is rule-action-driven and request-scoped. It is **separate from** the static `configurations[].tags` map (see [`configuration-model.md`](configuration-model.md#configurations-block)): configuration-level tags carry as request context for logs and the admin configuration detail page, but they do NOT propagate to `Record.Tags` and do NOT bump `gateway.tags.applied.total`. If you want a tag to surface in audit and dashboards, fire an `addTag` action.
 
-### Worked example — classify then route
+### Worked example — classify then transform
 
 ```yaml
 rules:
@@ -565,17 +511,19 @@ rules:
       - type: addTag
         tag: "tier:enterprise"
 
-  - name: route-enterprise-to-premium
+  - name: mark-enterprise-upstream
     condition:
       type: tag
       operator: Equals
       expectedTag: "tier:enterprise"
     actions:
-      - type: changeProvider
-        newProvider: openai-premium
+      - type: setHeader
+        headerName: X-Upstream-Priority
+        headerAction: Set
+        headerValue: high
 ```
 
-The first rule attaches a tag; the second consumes it. Rule order in `Configuration.RuleNames` is the producer/consumer ordering — put the producer first.
+The first rule attaches a tag; the second consumes it. Rule order in `Configuration.RuleNames` is the producer/consumer ordering — put the producer first. (Note the consumer here uses `setHeader`, which is wired — a tag-gated `changeProvider` would be inert in v2; route by binding, not by a tag→provider rule.)
 
 ### Gotchas
 
@@ -587,6 +535,13 @@ The first rule attaches a tag; the second consumes it. Rule order in `Configurat
 ## `useResiliencePolicy`
 
 Binds the request to a named resilience policy. Non-terminating.
+
+> **v2 status — currently inert in the data plane.** A rule-authored `useResiliencePolicy` does **not** change which resilience policy the orchestrator runs, and does **not** surface on telemetry. Three facts compound:
+> 1. On the generative path `selectionMiddleware` always synthesises the per-request `ResilienceConfig` from the chosen binding/group and stashes it on context ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 186, 189). The orchestrator reads that context value in preference to any name lookup ([`internal/middleware/resilience/middleware.go`](../internal/middleware/resilience/middleware.go) lines 133-140), so `state.PolicyRef` is never consulted for policy selection.
+> 2. The data plane wires the orchestrator's `PolicyLookup` to `nil` ([`cmd/gateway/handler.go`](../cmd/gateway/handler.go) line 49), so even on the (unreached) context-miss branch the name lookup short-circuits to single-shot. The name-lookup machinery survives only for tests and any future non-binding caller; when wired it would resolve the name against `snap.Groups`.
+> 3. The reported `ev.PolicyRef` comes from the `AttemptBuffer` the orchestrator constructed with the *binding-derived* policy name (`abuf.PolicyRef()`, [`cmd/gateway/reporter.go`](../cmd/gateway/reporter.go) line 401), **not** from `state.PolicyRef`. So a rule-authored value does not even reach the connector record or the live feed.
+>
+> The action still parses, validates, and round-trips. Tracked as a code follow-up. To bind a request to a resilience group in v2, point the configuration's binding at a `group:` instead of a `provider:` — see [`docs/resilience.md`](resilience.md).
 
 ### YAML
 
@@ -600,11 +555,13 @@ Binds the request to a named resilience policy. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `useResiliencePolicy`. |
-| `PolicyName` | `policyName` | `policy_name` | conditional | Name of a `ResilienceConfig` in the top-level `resilience_policies:` library. Empty string explicitly clears any prior `PolicyRef`. |
+| `PolicyName` | `policyName` | `policy_name` | conditional | Name of a resilience **group** in the top-level `groups:` block (`snap.Groups`; there is no `resilience_policies:` block in v2). `PolicyRef` resolves against `snap.Groups` only on the name-lookup path, which the v2 data plane does not wire — see the v2-status note below. Empty string explicitly clears any prior `PolicyRef`. |
 
 ### What it mutates
 
-- `state.PolicyRef` = `strings.TrimSpace(PolicyName)`.
+- `state.PolicyRef` = `strings.TrimSpace(PolicyName)` (`applyUseResiliencePolicy` in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) line 334).
+
+> **v2 precedence note.** See the **v2 status** note at the top of this section: the binding-derived `ResilienceConfig` on context wins, the data plane wires `PolicyLookup` to `nil`, and the reported `PolicyRef` is the binding's policy name (not `state.PolicyRef`). The `state.PolicyRef` write drives only the name-lookup path used by tests and any future non-binding caller (which would resolve the name against `snap.Groups`); it has no effect in the v2 data plane.
 
 ### Pointer to detail
 
@@ -616,18 +573,20 @@ Multiple `useResiliencePolicy` actions in a rule chain follow last-writer-wins s
 
 ### Validation
 
-The config-load cross-validator (in `internal/config`) proves every non-empty `PolicyName` references a real policy by name. Unknown names are a startup error — they never reach the runtime as a "silent fall-through to passthrough" surprise.
+In v2 there is **no** config-load cross-validation of a rule's `PolicyName` against the `groups:` catalogue (`internal/config` does not reference `UseResiliencePolicyAction`). An unknown name does not fail startup; it is simply inert at runtime along with the rest of the action. Resilience-group *bindings* (`binding.group`) are cross-validated against `snap.Groups` at load — that is the supported way to attach a group, and the path that does get a startup error on a dangling reference.
 
 ### Gotchas
 
-- The action is non-terminating, so it composes with other actions in the same rule. Common pattern: `changeProvider` + `useResiliencePolicy` together for "redirect AND wrap in resilience."
-- Per-target actions inside the policy are layered on top of the post-rule `MutableState` — they don't replace it. The rules engine's mutations are the baseline; each target's actions clone from there. See [resilience.md — Per-target Actions](resilience.md#per-target-actions).
+- **The action is inert in the v2 data plane** (see the v2-status note at the top of this section). Do not pair it with `changeProvider` for "redirect AND wrap in resilience" — both are no-ops now. Attach a resilience group by pointing the binding at `group:` instead.
+- Per-target actions inside the policy are layered on top of the post-rule `MutableState` — they don't replace it. The rules engine's mutations are the baseline; each target's actions clone from there. See [resilience.md — Per-target overrides](resilience.md#per-target-overrides).
 
 ---
 
 ## `rewriteField` / `removeField` / `appendField`
 
 Operator-authored mutation of the request body. All three are non-terminating and operate at the **JSON-bytes** level: they record a body-patch op on `state.BodyRewrites`, and `BodyRewriteHandler` applies the batch with [`gjson`](https://github.com/tidwall/gjson)/[`sjson`](https://github.com/tidwall/sjson) after the typed re-marshal step — splicing the change into the serialized body so unknown provider fields and numeric precision survive byte-for-byte. The mutation engine lives in [`internal/bodypatch`](../internal/bodypatch/bodypatch.go).
+
+These three action types are the only actions whose wire contracts live **outside** `contracts/rules/action.go`: `RewriteFieldAction`, `RemoveFieldAction`, and `AppendFieldAction`, along with the target grammar (`ParseTarget`), `RewriteValue`, and the `request.body` / `response.body` scope constants, are defined in [`contracts/rules/rewrite.go`](../contracts/rules/rewrite.go) (lines 225-311). They are registered in the same `actionRegistry` in `action.go` (lines 385-387), so polymorphic dispatch is unchanged.
 
 Both scopes are supported. **`request.body.*`** targets apply on the request path (after the typed re-marshal, before the forwarder). **`response.body.*`** targets are phase-partitioned and applied to the upstream response in the proxy's `ModifyResponse` hook — non-streaming responses only; queued response rewrites are dropped with a `streaming_response` warn on server-sent-events responses. Predicate *reads* (the `bodyField` condition) are unconstrained; predicate *writes* are not supported — see [rules.md — `bodyField`](rules.md#bodyfield).
 
@@ -905,8 +864,10 @@ If you need a known action's no-op fallback (an action that does nothing on purp
 
 - [`docs/rules.md`](rules.md) — the condition side of the engine: conditions, operators, rule ordering, `Behavior: continue|exit`, evaluator mechanics, cascade vs single-pass semantics, tag conditions.
 - [`docs/resilience.md`](resilience.md) — the orchestrator that consumes `useResiliencePolicy`. Modes, per-target Actions, circuit breaker, attempt observability, end-to-end examples.
-- [`docs/providers.md`](providers.md) — provider registry, per-endpoint `auth_header` / `auth_format` overrides, OpenAI-compat surfaces, credential header resolution table consumed post-`changeProvider`.
-- [`contracts/rules/action.go`](../contracts/rules/action.go) — wire schema for every action.
+- [`docs/providers.md`](providers.md) — provider registry, per-protocol `auth_header` / `auth_format` conventions, OpenAI-compat surfaces, and the v2 bindings that resolve the destination (the route to a different provider/URL/credential/policy, now that `changeProvider` / `changeUrl` / `changeApiKey` / `useResiliencePolicy` are inert in the data plane).
+- [`contracts/rules/action.go`](../contracts/rules/action.go) — wire schema for most actions; the body-rewrite trio is in [`contracts/rules/rewrite.go`](../contracts/rules/rewrite.go).
 - [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) — runtime `ApplyAction` dispatch and per-action mutation logic.
 - [`internal/middleware/rules/state.go`](../internal/middleware/rules/state.go) — `MutableState` definition and the surface every action writes through.
-- [`cmd/gateway/handler.go`](../cmd/gateway/handler.go) — `resolveCredentialHeader` and `credentialStrategy`, the post-rule credential resolution that `changeProvider` and `changeApiKey` feed into. Load-bearing invariants 6 and 7.
+- [`cmd/gateway/destination.go`](../cmd/gateway/destination.go) — `buildDestination` (the credential mode switch) and `credentialHeaderFor`, the single v2 credential mint site. Load-bearing invariant 6.
+- [`cmd/gateway/handler.go`](../cmd/gateway/handler.go) — `buildFinalHandler`, which reads `state.Provider`, resolves the target via `selection.ResolveTarget`, and calls `buildDestination` + `applyStateOverlays`.
+- [`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) — `selectionMiddleware` (binding resolution, pre-rules) and `applyStateOverlays` (the only post-rule overlay: `setHeader` + `appendQueryString`).

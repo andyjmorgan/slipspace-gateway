@@ -66,10 +66,10 @@ The operator's local toolkit. Two responsibilities: minting new API keys and val
 go run ./cmd/cli <command> [flags]
 
 # Installed binary (after `go install ./cmd/cli`)
-sluice-cli <command> [flags]
+cli <command> [flags]
 ```
 
-The binary name when installed is `cli`. There is no `--config` global flag; per-subcommand flags are documented below.
+`go install ./cmd/cli` produces a binary named `cli` (Go names the binary after the `cmd/<name>` directory) — **not** `sluice-cli`. This page uses "sluice-cli" as the friendly product name, but the invocable command is `cli`. There is no `--config` global flag; per-subcommand flags are documented below.
 
 ### Top-level flags
 
@@ -98,7 +98,7 @@ The binary name when installed is `cli`. There is no `--config` global flag; per
 Mints a 32-byte (256-bit) random key, hex-encoded, with a configurable prefix.
 
 ```sh
-sluice-cli key new [--label <name>] [--configuration <name>] [--prefix <prefix>]
+cli key new [--label <name>] [--configuration <name>] [--prefix <prefix>]
 ```
 
 | Flag | Default | Notes |
@@ -116,7 +116,7 @@ Output goes to stdout: the raw key on line 1, blank line, then a YAML snippet st
 Loads the full `gateway.yaml` / `providers.yaml` / `configurations.yaml` / `api_keys.yaml` bundle through the same loader the gateway uses at startup, runs the same validators (route collision, prefix-required, unknown-configuration references, etc.), and reports the result.
 
 ```sh
-sluice-cli config validate [--dir <path>]
+cli config validate [--dir <path>]
 ```
 
 | Flag | Default | Notes |
@@ -125,7 +125,7 @@ sluice-cli config validate [--dir <path>]
 
 The env vars themselves (`SLUICE_LOG_LEVEL`, `SLUICE_HTTP_BIND`, etc.) are also validated — a bad `SLUICE_LOG_LEVEL=shouty` will block the file load with `FAIL: invalid_env:` before the directory is ever read.
 
-On success: `OK: env N vars resolved, K configuration(s), J api_keys, P providers, R routes`.
+On success: `OK: env N vars resolved, K configuration(s), J api_keys, P providers, B bindings` — where `B` is the total of every configuration's `bindings` plus `passthrough_bindings` (`cmd/cli/validate.go::runConfigValidate`).
 
 On failure: `FAIL: <category>: <error message>`. Exit code is `1`. The category is one of:
 
@@ -137,8 +137,8 @@ On failure: `FAIL: <category>: <error message>`. Exit code is `1`. The category 
 | `wrong_file_for_key` | A top-level key (`gateway`, `providers`, `configurations`, `api_keys`, ...) appears in a file the convention puts a different key in. |
 | `no_configurations` | The bundle parsed but defines zero configurations. |
 | `unknown_configuration` | An API key or rule references a configuration name that doesn't exist. |
-| `path_collision` | Two providers claim the same fully-resolved route path. See [routing.md](routing.md). |
-| `prefix_required_empty` | A provider with `prefix_required: true` has an empty `path_prefix`. |
+| `path_collision` | **Legacy (v1) code.** Defined in `cmd/cli/validate.go` but unreachable under the v2 schema — providers no longer carry `path_prefix`/route paths (routing is protocol + binding based; see [routing.md](routing.md)). Retained for back-compat; never emitted for a v2 bundle. |
+| `prefix_required_empty` | **Legacy (v1) code.** Same as above — the v2 provider schema has no `prefix_required`/`path_prefix` fields, so this can no longer fire. |
 | `invalid_bind` | A bind address (HTTP, admin, Prometheus) is malformed. |
 | `parse_error` | YAML failed to parse. |
 | `other` | A category not yet classified — file a bug. |
@@ -146,7 +146,7 @@ On failure: `FAIL: <category>: <error message>`. Exit code is `1`. The category 
 ### Worked example — mint a new managed-mode key
 
 ```sh
-$ sluice-cli key new --label "ci runner" --configuration internal-dev --prefix sk_dev_
+$ cli key new --label "ci runner" --configuration internal-dev --prefix sk_dev_
 sk_dev_8b1f...c3a4
 
 # yaml-snippet:
@@ -162,20 +162,20 @@ Paste the YAML block into `api_keys.yaml`, redeploy, and the key is live. The ra
 ### Worked example — validate before deploy
 
 ```sh
-$ SLUICE_CONFIG_DIR=./config-prod sluice-cli config validate
-OK: env 12 vars resolved, 3 configuration(s), 47 api_keys, 5 providers, 18 routes
+$ SLUICE_CONFIG_DIR=./config-prod cli config validate
+OK: env 12 vars resolved, 3 configuration(s), 47 api_keys, 5 providers, 18 bindings
 ```
 
 Failure case:
 
 ```sh
-$ sluice-cli config validate --dir ./config-broken
-FAIL: path_collision: config: route path claimed by multiple endpoints: /v1/chat/completions claimed by openai and anthropic-compat
+$ cli config validate --dir ./config-broken
+FAIL: unknown_configuration: api key "sk_live_..." references configuration "prod" that doesn't exist
 ```
 
 Exit code `1`. Pipe through `tee` or check `$?` from a deploy script.
 
-The recommended pre-deploy ritual: `sluice-cli config validate --dir <bundle>` exits `0`, **then** apply the new ConfigMap / mount.
+The recommended pre-deploy ritual: `cli config validate --dir <bundle>` exits `0`, **then** apply the new ConfigMap / mount.
 
 ---
 
@@ -374,5 +374,5 @@ If you find yourself reaching for `cmd/api` today, you almost certainly want the
 - [Local development](local-development.md) — how `mockllm` and the gateway compose together for dev iteration.
 - [Deployment](deployment.md) — how the published `gateway` image is rolled out and what auxiliary infrastructure is required.
 - [Configuration model](configuration-model.md) — the YAML schema that `sluice-cli config validate` enforces, including every error category the validator can return.
-- [Routing](routing.md) — the rules behind `path_collision` and `prefix_required_empty` errors from `config validate`.
+- [Routing](routing.md) — protocol + binding routing in v2 (the `path_collision` / `prefix_required_empty` codes are legacy v1 holdovers that no longer fire).
 - [Admin console](admin-console.md) — the read-only control surface that today fills the gap until `cmd/api` is real.
