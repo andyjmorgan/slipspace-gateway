@@ -288,7 +288,7 @@ func recordWith(correlationID string, req, resp string) cc.Record {
 		CorrelationID:  correlationID,
 		Configuration:  "dev",
 		Provider:       "anthropic",
-		Endpoint:       "messages",
+		Protocol:       "messages",
 		Model:          "claude-x",
 		Request:        cc.RequestPart{Method: "POST", Body: json.RawMessage(req)},
 		Response:       cc.ResponsePart{Status: 200, Body: json.RawMessage(resp), LastByteNs: 1_200_000_000},
@@ -565,7 +565,7 @@ func TestE2E_MessageBrowserFilters(t *testing.T) {
 	// to exactly these four. recordWith defaults are all overridden below.
 	mk := func(id, provider, model, cfg, endpoint, session string, tags []string) cc.Record {
 		r := recordWith(id, `{"q":"hi"}`, `{"a":"yo"}`)
-		r.Provider, r.Model, r.Configuration, r.Endpoint = provider, model, cfg, endpoint
+		r.Provider, r.Model, r.Configuration, r.Protocol = provider, model, cfg, endpoint
 		r.SessionID = session
 		r.Tags = append([]string{"mbf-all"}, tags...)
 		return r
@@ -656,7 +656,7 @@ func TestE2E_MessageBrowserFilters(t *testing.T) {
 		Providers      []string `json:"providers"`
 		Models         []string `json:"models"`
 		Configurations []string `json:"configurations"`
-		Endpoints      []string `json:"endpoints"`
+		Protocols      []string `json:"protocols"`
 		Tags           []string `json:"tags"`
 	}
 	if code := svc.getJSON(t, "/api/v1/facets", &facets); code != http.StatusOK {
@@ -675,8 +675,8 @@ func TestE2E_MessageBrowserFilters(t *testing.T) {
 			t.Errorf("providers %v missing %s", facets.Providers, v)
 		}
 	}
-	if !contains(facets.Endpoints, "mbf-chat") || !contains(facets.Endpoints, "mbf-generate") {
-		t.Errorf("endpoints = %v", facets.Endpoints)
+	if !contains(facets.Protocols, "mbf-chat") || !contains(facets.Protocols, "mbf-generate") {
+		t.Errorf("endpoints = %v", facets.Protocols)
 	}
 	if !contains(facets.Tags, "mbf-eu") || !contains(facets.Tags, "mbf-pii") {
 		t.Errorf("tags = %v", facets.Tags)

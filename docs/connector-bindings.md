@@ -134,7 +134,7 @@ Sampling is independent across bindings — a binding sampling at 100% and anoth
 ```yaml
 filter:
   providers: [openai, anthropic]
-  endpoints: [chat_completions]
+  protocols: [chat]
   models: ["claude-*", "gpt-4o"]
   status_min: 200
   status_max: 499
@@ -147,7 +147,7 @@ A record passes iff **every** populated predicate evaluates true:
 | Field | Type | Match semantics |
 |---|---|---|
 | `providers` | []string | Record's `Provider` (post-rule) is in the list. |
-| `endpoints` | []string | Record's `Endpoint` (post-rule) is in the list. |
+| `protocols` | []string | Record's `Protocol` (post-rule) is in the list. |
 | `models` | []string | Record's `Model` matches any pattern. Patterns are exact-equal unless they end in `*` (trailing wildcard); other wildcards are rejected by validation. |
 | `status_min`, `status_max` | int (HTTP status) | Record's status is in `[status_min, status_max]`. Defaults: `status_min=200`, `status_max=599`. Validation rejects out-of-`[100, 599]` and `min > max`. |
 | `tags_any` | []string | Record carries **any** of these tags. Empty = no constraint. |
@@ -272,7 +272,7 @@ configurations:
       - connector: billing-webhook          # successful chat completions
         sampling: 1.0
         filter:
-          endpoints: [chat_completions, messages, generate_content]
+          protocols: [chat, messages, generate_content]
           status_min: 200
           status_max: 299
           tags_any: [billable]

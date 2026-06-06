@@ -178,7 +178,7 @@ func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
 		"providers":      nonNil(f.Providers),
 		"models":         nonNil(f.Models),
 		"configurations": nonNil(f.Configurations),
-		"endpoints":      nonNil(f.Endpoints),
+		"protocols":      nonNil(f.Protocols),
 		"tags":           nonNil(f.Tags),
 	})
 }
@@ -246,7 +246,7 @@ func mapSummary(s store.DashboardSummary, window string, now time.Time, dur time
 		},
 		LatencyMs:       adminc.DashboardLatency{P50: s.Latency.P50, P95: s.Latency.P95, P99: s.Latency.P99},
 		ByProvider:      make([]adminc.DashboardProviderRow, 0, len(s.ByProvider)),
-		ByEndpoint:      make([]adminc.DashboardEndpointRow, 0, len(s.ByEndpoint)),
+		ByProtocol:      make([]adminc.DashboardProtocolRow, 0, len(s.ByProtocol)),
 		ByConfiguration: make([]adminc.DashboardConfigurationRow, 0, len(s.ByConfiguration)),
 		ByModel:         make([]adminc.DashboardModelRow, 0, len(s.ByModel)),
 		RulesFired:      make([]adminc.DashboardRuleFiredRow, 0, len(s.RulesFired)),
@@ -256,8 +256,8 @@ func mapSummary(s store.DashboardSummary, window string, now time.Time, dur time
 	for _, r := range s.ByProvider {
 		out.ByProvider = append(out.ByProvider, adminc.DashboardProviderRow{Provider: r.Key, Requests: r.Requests, P95LatencyMs: r.P95LatencyMs, ErrorRate: r.ErrorRate})
 	}
-	for _, r := range s.ByEndpoint {
-		out.ByEndpoint = append(out.ByEndpoint, adminc.DashboardEndpointRow{Provider: r.Provider, Endpoint: r.Endpoint, Requests: r.Requests, P95LatencyMs: r.P95LatencyMs, ErrorRate: r.ErrorRate})
+	for _, r := range s.ByProtocol {
+		out.ByProtocol = append(out.ByProtocol, adminc.DashboardProtocolRow{Provider: r.Provider, Protocol: r.Protocol, Requests: r.Requests, P95LatencyMs: r.P95LatencyMs, ErrorRate: r.ErrorRate})
 	}
 	for _, r := range s.ByConfiguration {
 		out.ByConfiguration = append(out.ByConfiguration, adminc.DashboardConfigurationRow{Configuration: r.Key, Requests: r.Requests, P95LatencyMs: r.P95LatencyMs, ErrorRate: r.ErrorRate})
@@ -369,7 +369,7 @@ func mapEntry(e store.RequestEvent) adminc.MessageEntry {
 		SessionID:           e.SessionID,
 		SessionIDSource:     e.SessionIDSource,
 		Provider:            e.Provider,
-		Endpoint:            e.Protocol,
+		Protocol:            e.Protocol,
 		Model:               e.Model,
 		Method:              e.Method,
 		Configuration:       e.Configuration,

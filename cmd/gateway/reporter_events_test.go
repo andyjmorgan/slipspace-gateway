@@ -75,13 +75,13 @@ func TestEmitEvents_ExceptionOnError(t *testing.T) {
 	r := &reporterRun{
 		factory:       &reporterFactory{eventLogger: rl},
 		provider:      "openai",
-		endpoint:      "chat_completions",
+		protocol:      "chat_completions",
 		configuration: "p",
 		started:       time.Now(),
 	}
 	r.emitEvents(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Protocol:   "chat_completions",
 		StatusCode: 503,
 	})
 
@@ -101,12 +101,12 @@ func TestEmitEvents_SuccessContentOffEmitsNothing(t *testing.T) {
 	rl := &recordingEventLogger{}
 	r := &reporterRun{
 		factory:  &reporterFactory{eventLogger: rl},
-		endpoint: "chat_completions",
+		protocol: "chat_completions",
 		started:  time.Now(),
 	}
 	r.emitEvents(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Protocol:   "chat_completions",
 		StatusCode: 200,
 	})
 	if len(rl.records) != 0 {
@@ -119,14 +119,14 @@ func TestEmitEvents_ContentRedacted(t *testing.T) {
 	r := &reporterRun{
 		factory:         &reporterFactory{eventLogger: rl, captureContent: true},
 		provider:        "openai",
-		endpoint:        "chat_completions",
+		protocol:        "chat_completions",
 		configuration:   "p",
 		started:         time.Now(),
 		respOutputParts: []genaiattr.Part{{Type: "text", Content: "your key is sk_live_supersecret1234567890 keep it safe"}},
 	}
 	r.emitEvents(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Protocol:   "chat_completions",
 		StatusCode: 200,
 	})
 
@@ -149,7 +149,7 @@ func TestEmitEvents_OperationDetailsWhenContentOn(t *testing.T) {
 	r := &reporterRun{
 		factory:         &reporterFactory{eventLogger: rl, captureContent: true},
 		provider:        "anthropic",
-		endpoint:        "messages",
+		protocol:        "messages",
 		model:           "claude-sonnet-4-6",
 		configuration:   "p",
 		started:         time.Now(),
@@ -158,7 +158,7 @@ func TestEmitEvents_OperationDetailsWhenContentOn(t *testing.T) {
 	}
 	r.emitEvents(context.Background(), events.Request{
 		Provider:   "anthropic",
-		Endpoint:   "messages",
+		Protocol:   "messages",
 		Model:      "claude-sonnet-4-6",
 		StatusCode: 200,
 	})

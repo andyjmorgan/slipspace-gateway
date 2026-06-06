@@ -91,8 +91,8 @@ func TestDashboardSummaryHandler_EmptySnapshotter(t *testing.T) {
 	if got.ByProvider == nil {
 		t.Error("ByProvider serialised as nil; SPA expects empty array")
 	}
-	if got.ByEndpoint == nil {
-		t.Error("ByEndpoint serialised as nil; SPA expects empty array")
+	if got.ByProtocol == nil {
+		t.Error("ByProtocol serialised as nil; SPA expects empty array")
 	}
 	if got.ByConfiguration == nil {
 		t.Error("ByConfiguration serialised as nil; SPA expects empty array")

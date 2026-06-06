@@ -266,7 +266,7 @@ func liveGatewayContext(initial GatewayContext, state *MutableState, body any) G
 	gc := initial
 	if state != nil {
 		gc.Provider = state.Provider
-		gc.Endpoint = state.Endpoint
+		gc.Protocol = state.Protocol
 		gc.Tags = state.Tags
 	}
 	gc.Body = body
@@ -339,18 +339,19 @@ func mergeRuleHeaders(inbound, outgoing http.Header) http.Header {
 //
 // Within Evaluate the gc handed to each Condition is rebuilt per
 // iteration via liveGatewayContext so the cascade semantic holds —
-// Provider, Endpoint, Model, and Headers always reflect the state
+// Provider, Protocol, Model, and Headers always reflect the state
 // every prior rule left behind.
 type GatewayContext struct {
 	// Provider is the routed upstream provider name (e.g. "openai").
 	Provider string
 
-	// Endpoint is the routed endpoint name under that provider (e.g.
-	// "chat_completions").
-	Endpoint string
+	// Protocol is the resolved protocol under that provider (e.g.
+	// "chat", "messages"), or the passthrough family name for opaque
+	// requests (e.g. "messages_batches").
+	Protocol string
 
 	// Model is the model identifier the client requested, read from
-	// the routing match or the decoded body. Empty for endpoints
+	// the routing match or the decoded body. Empty for protocols
 	// that carry no model.
 	Model string
 

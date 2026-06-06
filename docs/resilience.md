@@ -378,7 +378,7 @@ Each request emits one [`Record`](../contracts/connector/record.go) per matched 
 {
   "correlation_id": "...",
   "provider": "openai",
-  "endpoint": "chat",
+  "protocol": "chat",
   "model": "qwen2.5-coder:7b",
   "upstream_status": 200,
   "policy_ref": "qwen-load-balance",

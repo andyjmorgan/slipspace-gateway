@@ -65,12 +65,13 @@ type Record struct {
 	// Provider is the resolved (post-rule) upstream provider name.
 	Provider string `json:"provider"`
 
-	// Endpoint is the endpoint key on the provider (e.g. "chat_completions",
-	// "messages"). Resolved post-rule.
-	Endpoint string `json:"endpoint"`
+	// Protocol is the resolved (post-rule) protocol on the provider (e.g.
+	// "chat", "messages"), or the passthrough family name for opaque
+	// requests (e.g. "messages_batches").
+	Protocol string `json:"protocol"`
 
 	// Model is the resolved (post-rule) model name. May be empty for
-	// endpoints that don't carry a model (e.g. /v1/models).
+	// protocols that don't carry a model (e.g. /v1/models).
 	Model string `json:"model,omitempty"`
 
 	// Tags accumulated by addTag rule actions during evaluation.

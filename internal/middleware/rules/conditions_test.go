@@ -7,10 +7,10 @@ import (
 	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 )
 
-func ctxWith(provider, endpoint, model string, headers http.Header) GatewayContext {
+func ctxWith(provider, protocol, model string, headers http.Header) GatewayContext {
 	return GatewayContext{
 		Provider: provider,
-		Endpoint: endpoint,
+		Protocol: protocol,
 		Model:    model,
 		Headers:  headers,
 	}
@@ -74,36 +74,36 @@ func TestMatchProvider(t *testing.T) {
 	}
 }
 
-func TestMatchEndpoint(t *testing.T) {
+func TestMatchProtocol(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
 		name string
-		cond contractsrules.EndpointCondition
+		cond contractsrules.ProtocolCondition
 		gc   GatewayContext
 		want bool
 	}{
 		{
 			"equals match",
-			contractsrules.EndpointCondition{Operator: contractsrules.EnumEquals, ExpectedEndpoint: "chat_completions"},
+			contractsrules.ProtocolCondition{Operator: contractsrules.EnumEquals, ExpectedProtocol: "chat_completions"},
 			ctxWith("", "chat_completions", "", nil),
 			true,
 		},
 		{
 			"equals no match",
-			contractsrules.EndpointCondition{Operator: contractsrules.EnumEquals, ExpectedEndpoint: "chat_completions"},
+			contractsrules.ProtocolCondition{Operator: contractsrules.EnumEquals, ExpectedProtocol: "chat_completions"},
 			ctxWith("", "messages", "", nil),
 			false,
 		},
 		{
 			"Not inversion",
-			contractsrules.EndpointCondition{Operator: contractsrules.EnumEquals, ExpectedEndpoint: "chat_completions", Not: true},
+			contractsrules.ProtocolCondition{Operator: contractsrules.EnumEquals, ExpectedProtocol: "chat_completions", Not: true},
 			ctxWith("", "chat_completions", "", nil),
 			false,
 		},
 		{
 			"unknown operator returns false",
-			contractsrules.EndpointCondition{Operator: "Contains", ExpectedEndpoint: "chat"},
+			contractsrules.ProtocolCondition{Operator: "Contains", ExpectedProtocol: "chat"},
 			ctxWith("", "chat_completions", "", nil),
 			false,
 		},

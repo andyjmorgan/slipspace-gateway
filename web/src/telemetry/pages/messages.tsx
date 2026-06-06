@@ -51,7 +51,7 @@ const STATUS_CLASSES = [
   { value: "5xx", label: "5xx" },
 ] as const
 
-const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], endpoints: [], tags: [] }
+const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], protocols: [], tags: [] }
 
 // useDebounced delays propagating a fast-changing value (the id search boxes)
 // so each keystroke doesn't fire a query.
@@ -80,7 +80,7 @@ export function MessagesPage() {
   const [provider, setProvider] = useState("")
   const [model, setModel] = useState("")
   const [configuration, setConfiguration] = useState("")
-  const [endpoint, setEndpoint] = useState("")
+  const [protocol, setProtocol] = useState("")
   const [statusClass, setStatusClass] = useState("")
   const [tags, setTags] = useState<string[]>([])
   // Default the browse window to the last hour at 50 rows — the unbounded
@@ -93,14 +93,14 @@ export function MessagesPage() {
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
   // and must not run during render.
   const filters = useMemo<MessageFilters>(
-    () => ({ correlationId, sessionId, provider, model, configuration, endpoint, statusClass, tags }),
-    [correlationId, sessionId, provider, model, configuration, endpoint, statusClass, tags],
+    () => ({ correlationId, sessionId, provider, model, configuration, protocol, statusClass, tags }),
+    [correlationId, sessionId, provider, model, configuration, protocol, statusClass, tags],
   )
 
   const activeCount = useMemo(() => {
     const f = filters
     return (
-      [f.correlationId, f.sessionId, f.provider, f.model, f.configuration, f.endpoint, f.statusClass].filter(Boolean)
+      [f.correlationId, f.sessionId, f.provider, f.model, f.configuration, f.protocol, f.statusClass].filter(Boolean)
         .length +
       (f.tags?.length ?? 0) +
       (timeRange !== "all" ? 1 : 0)
@@ -188,7 +188,7 @@ export function MessagesPage() {
     setProvider("")
     setModel("")
     setConfiguration("")
-    setEndpoint("")
+    setProtocol("")
     setStatusClass("")
     setTags([])
     setTimeRange("all")
@@ -214,7 +214,7 @@ export function MessagesPage() {
             <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} />
             <Select label="Model" value={model} options={facets.models} onChange={setModel} />
             <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} />
-            <Select label="Endpoint" value={endpoint} options={facets.endpoints} onChange={setEndpoint} />
+            <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-44" />
@@ -247,7 +247,7 @@ export function MessagesPage() {
               <th className="text-left font-medium px-4 py-2">Time</th>
               <th className="text-left font-medium px-4 py-2">Status</th>
               <th className="text-left font-medium px-4 py-2">Provider</th>
-              <th className="text-left font-medium px-4 py-2">Endpoint</th>
+              <th className="text-left font-medium px-4 py-2">Protocol</th>
               <th className="text-left font-medium px-4 py-2">Model</th>
               <th className="text-left font-medium px-4 py-2">Configuration</th>
               <th className="text-left font-medium px-4 py-2">Tags</th>
@@ -265,7 +265,7 @@ export function MessagesPage() {
                 <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap">{shortTime(e.at)}</td>
                 <td className="px-4 py-2"><StatusPill code={e.status_code} /></td>
                 <td className="px-4 py-2">{e.provider ? <ProviderChip name={e.provider} /> : <Dash />}</td>
-                <td className="mono text-[12px] px-4 py-2">{e.endpoint || <Dash />}</td>
+                <td className="mono text-[12px] px-4 py-2">{e.protocol || <Dash />}</td>
                 <td className="mono text-[12px] px-4 py-2">{e.model || <Dash />}</td>
                 <td className="mono text-[12px] px-4 py-2">{e.configuration || <Dash />}</td>
                 <td className="px-4 py-2"><TagCell tags={e.tags} /></td>
@@ -488,7 +488,7 @@ function MetaGrid({ entry }: { entry: MessageEntry }) {
   )
   const items: [string, React.ReactNode][] = [
     ["Provider", entry.provider || "—"],
-    ["Endpoint", entry.endpoint || "—"],
+    ["Protocol", entry.protocol || "—"],
     ["Model", entry.model || "—"],
     ["Method", entry.method || "—"],
     ["Configuration", entry.configuration || "—"],
@@ -581,7 +581,7 @@ function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefi
 }
 
 // NoAssemblyNote fills the Response tab when a streamed response carried no
-// assembled rollup — the endpoint is outside the accumulator registry (e.g.
+// assembled rollup — the protocol is outside the accumulator registry (e.g.
 // /responses), the stream errored before any chunk parsed, or the gateway
 // predates the rollup-on-Record change. The raw bytes are still on the Raw
 // stream tab; say so rather than render a blank "No response" that reads as

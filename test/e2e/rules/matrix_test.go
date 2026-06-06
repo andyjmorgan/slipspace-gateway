@@ -81,14 +81,14 @@ func fireChat(t *testing.T, h *harness.Harness, extraHeaders http.Header) *harne
 
 // ─── Conditions ────────────────────────────────────────────────────
 
-func TestConditions_EndpointCondition_Matches(t *testing.T) {
+func TestConditions_ProtocolCondition_Matches(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
   - name: tag-on-chat
     condition:
-      type: endpoint
+      type: protocol
       operator: Equals
-      expectedEndpoint: chat
+      expectedProtocol: chat
     actions:
       - type: setHeader
         headerName: X-Test-Endpoint-Cond
@@ -101,7 +101,7 @@ func TestConditions_EndpointCondition_Matches(t *testing.T) {
 
 	cap := h.LastCapturedRequest()
 	if cap == nil || cap.Headers["X-Test-Endpoint-Cond"] != "matched" {
-		t.Fatalf("EndpointCondition did not fire; captured = %+v", cap)
+		t.Fatalf("ProtocolCondition did not fire; captured = %+v", cap)
 	}
 }
 

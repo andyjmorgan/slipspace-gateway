@@ -59,6 +59,14 @@ var ErrUnknownRuleName = errors.New("config: configuration references unknown ru
 // duplicates would make resolution ambiguous.
 var ErrDuplicateRuleName = errors.New("config: rule name defined more than once in the rules library")
 
+// ErrRetiredEndpointCondition is returned when a rule carries the retired
+// "endpoint" condition discriminator (renamed to "protocol"). Because the
+// condition registry decodes unknown discriminators to an inert
+// UnknownCondition, a stale "endpoint" rule would silently evaluate false
+// rather than error — this guard makes the breaking rename fail loud so
+// operators update their config instead of losing the rule.
+var ErrRetiredEndpointCondition = errors.New(`config: rule condition "endpoint" was renamed to "protocol"`)
+
 // ErrDuplicateRuleID is returned when two entries in the top-level rules
 // library share the same ID. Only entries with non-nil ID are compared —
 // nil ID is the default in operator-authored static config.

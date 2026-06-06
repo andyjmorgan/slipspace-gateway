@@ -241,9 +241,9 @@ type ConnectorFilter struct {
 	// Providers limits to the named providers (e.g. ["anthropic"]).
 	Providers []string `yaml:"providers,omitempty" json:"providers,omitempty"`
 
-	// Endpoints limits to the named endpoint keys
-	// (e.g. ["chat_completions", "messages"]).
-	Endpoints []string `yaml:"endpoints,omitempty" json:"endpoints,omitempty"`
+	// Protocols limits to the named protocols or passthrough families
+	// (e.g. ["chat", "messages", "messages_batches"]).
+	Protocols []string `yaml:"protocols,omitempty" json:"protocols,omitempty"`
 
 	// Models is a list of model-name patterns. A trailing "*" is the
 	// only wildcard form supported (e.g. "claude-*"). Other matches

@@ -38,11 +38,11 @@ type DashboardSummary struct {
 	// least one request in Window.
 	ByProvider []DashboardProviderRow `json:"by_provider"`
 
-	// ByEndpoint breaks requests + p95 + error rate down by the routed
-	// (provider, endpoint) pair — e.g. openai.chat_completions vs
-	// anthropic.messages. Cardinality is bounded by the providers map
-	// (a handful of named endpoints per provider).
-	ByEndpoint []DashboardEndpointRow `json:"by_endpoint"`
+	// ByProtocol breaks requests + p95 + error rate down by the resolved
+	// (provider, protocol) pair — e.g. openai.chat vs anthropic.messages.
+	// Cardinality is bounded by the providers map (a handful of protocols
+	// per provider).
+	ByProtocol []DashboardProtocolRow `json:"by_protocol"`
 
 	// ByConfiguration breaks requests + p95 + error rate down by the
 	// resolved configuration name. Cardinality is bounded by the
@@ -123,12 +123,12 @@ type DashboardProviderRow struct {
 	ErrorRate    float64 `json:"error_rate"`
 }
 
-// DashboardEndpointRow is one row of ByEndpoint. Provider is repeated
-// alongside Endpoint so the SPA can render a single readable label
-// (e.g. "openai · chat_completions") without joining tables.
-type DashboardEndpointRow struct {
+// DashboardProtocolRow is one row of ByProtocol. Provider is repeated
+// alongside Protocol so the SPA can render a single readable label
+// (e.g. "openai · chat") without joining tables.
+type DashboardProtocolRow struct {
 	Provider     string  `json:"provider"`
-	Endpoint     string  `json:"endpoint"`
+	Protocol     string  `json:"protocol"`
 	Requests     int64   `json:"requests"`
 	P95LatencyMs int64   `json:"p95_latency_ms"`
 	ErrorRate    float64 `json:"error_rate"`

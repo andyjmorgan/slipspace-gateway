@@ -125,6 +125,9 @@ func (r *ResolvedConfig) validateLibraries() error {
 		if err := rule.Validate(); err != nil {
 			return fmt.Errorf("config: rules[%d]: %w", i, err)
 		}
+		if conditionHasRetiredEndpoint(rule.Condition) {
+			return fmt.Errorf("config: rules[%d] %q: %w", i, rule.Name, ErrRetiredEndpointCondition)
+		}
 	}
 
 	connNames := make(map[string]int, len(r.Connectors))
@@ -139,6 +142,23 @@ func (r *ResolvedConfig) validateLibraries() error {
 		}
 	}
 	return nil
+}
+
+// conditionHasRetiredEndpoint reports whether cond (or, recursively, any child
+// of a RuleGroup) is the retired "endpoint" discriminator, which the condition
+// registry decodes to an inert UnknownCondition. See ErrRetiredEndpointCondition.
+func conditionHasRetiredEndpoint(cond rulescontract.Condition) bool {
+	switch c := cond.(type) {
+	case *rulescontract.UnknownCondition:
+		return c.Type == "endpoint"
+	case *rulescontract.RuleGroup:
+		for _, child := range c.Children {
+			if conditionHasRetiredEndpoint(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *ResolvedConfig) validateConfigurations() error {

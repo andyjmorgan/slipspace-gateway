@@ -35,11 +35,12 @@ type MutableState struct {
 	// happens in the destination builder, not here.
 	Provider string
 
-	// Endpoint is the endpoint name under Provider. Initialised from
-	// routing. v1.0.1 actions do not write this directly; provider
-	// changes that need a different endpoint name are paired with a
-	// ChangeUrlAction the rule author writes explicitly.
-	Endpoint string
+	// Protocol is the resolved protocol under Provider (e.g. "chat",
+	// "messages"), or the passthrough family name for opaque requests.
+	// Initialised from selection. v1.0.1 actions do not write this
+	// directly; provider changes that need a different protocol are
+	// paired with a ChangeUrlAction the rule author writes explicitly.
+	Protocol string
 
 	// MatchedPath is the un-prefixed accepted_paths value the router
 	// matched the inbound request to. Used by the destination builder
@@ -186,7 +187,7 @@ func (s *MutableState) Clone() *MutableState {
 	}
 	out := &MutableState{
 		Provider:    s.Provider,
-		Endpoint:    s.Endpoint,
+		Protocol:    s.Protocol,
 		MatchedPath: s.MatchedPath,
 		BodyMutated: s.BodyMutated,
 		PolicyRef:   s.PolicyRef,
@@ -225,8 +226,8 @@ func (s *MutableState) Clone() *MutableState {
 	return out
 }
 
-// NewMutableState builds a MutableState seeded with the routing
-// resolution (provider, endpoint, path params). OutgoingHeaders
+// NewMutableState builds a MutableState seeded with the selection
+// resolution (provider, protocol, path params). OutgoingHeaders
 // starts EMPTY — the destination builder layers provider-required
 // + auth-resolved headers on top of the auth defaults, and rule-set
 // values overlay those. The inbound header set is read-only and
@@ -236,7 +237,7 @@ func (s *MutableState) Clone() *MutableState {
 // caller's intent; the parameter is retained on the public API so
 // future evolutions (header echoing, audit) can opt in without a
 // signature break.
-func NewMutableState(provider, endpoint, matchedPath string, pathParams map[string]string, _ http.Header) *MutableState {
+func NewMutableState(provider, protocol, matchedPath string, pathParams map[string]string, _ http.Header) *MutableState {
 	params := make(map[string]string, len(pathParams))
 	for k, v := range pathParams {
 		params[k] = v
@@ -244,7 +245,7 @@ func NewMutableState(provider, endpoint, matchedPath string, pathParams map[stri
 
 	return &MutableState{
 		Provider:        provider,
-		Endpoint:        endpoint,
+		Protocol:        protocol,
 		MatchedPath:     matchedPath,
 		PathParams:      params,
 		OutgoingHeaders: make(http.Header),

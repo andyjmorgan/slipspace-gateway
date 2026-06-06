@@ -52,7 +52,7 @@ func BodyRewriteHandler(meters *observability.Meters, next http.Handler) http.Ha
 		refs := bodypatch.Refs{
 			PathParams: state.PathParams,
 			Provider:   state.Provider,
-			Endpoint:   state.Endpoint,
+			Protocol:   state.Protocol,
 		}
 		patched, results := bodypatch.Apply(body, state.BodyRewrites, refs)
 		recordRewriteResults(ctx, meters, results)
@@ -123,7 +123,7 @@ func ApplyResponseRewrites(ctx context.Context, meters *observability.Meters, ex
 		ExternalURL: externalURL,
 		RequestBody: reqBody,
 		Provider:    state.Provider,
-		Endpoint:    state.Endpoint,
+		Protocol:    state.Protocol,
 		PathParams:  state.PathParams,
 	}
 	patched, results := bodypatch.Apply(body, state.ResponseRewrites, refs)

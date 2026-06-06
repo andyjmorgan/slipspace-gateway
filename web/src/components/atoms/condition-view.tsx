@@ -20,8 +20,8 @@ export function ConditionView({ condition }: { condition: RawCondition }) {
   switch (t) {
     case "provider":
       return <ProviderConditionView c={condition} />
-    case "endpoint":
-      return <EndpointConditionView c={condition} />
+    case "protocol":
+      return <ProtocolConditionView c={condition} />
     case "modelName":
       return <ModelNameConditionView c={condition} />
     case "header":
@@ -48,12 +48,12 @@ function ProviderConditionView({ c }: { c: Record<string, unknown> }) {
   )
 }
 
-function EndpointConditionView({ c }: { c: Record<string, unknown> }) {
+function ProtocolConditionView({ c }: { c: Record<string, unknown> }) {
   return (
     <ConditionRow label="WHEN">
-      <FieldPill label="property">endpoint</FieldPill>
+      <FieldPill label="property">protocol</FieldPill>
       <FieldPill label="op">{String(c.operator ?? "Equals")}</FieldPill>
-      <FieldPill label="value"><span className="mono">{String(c.expected_endpoint ?? "")}</span></FieldPill>
+      <FieldPill label="value"><span className="mono">{String(c.expected_protocol ?? "")}</span></FieldPill>
       <NegatedFlag not={c.not} />
     </ConditionRow>
   )

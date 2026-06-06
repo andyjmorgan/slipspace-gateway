@@ -28,7 +28,7 @@ func traceHarness(t *testing.T) (*reporterRun, *tracetest.SpanRecorder) {
 	r := &reporterRun{
 		factory:       &reporterFactory{tracer: tp.Tracer("test")},
 		provider:      "openai",
-		endpoint:      "chat_completions",
+		protocol:      "chat_completions",
 		model:         "gpt-4o-mini",
 		configuration: "dev",
 		started:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -49,7 +49,7 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 	r, sr := traceHarness(t)
 	r.emitTrace(context.Background(), events.Request{
 		Provider:      "openai",
-		Endpoint:      "chat_completions",
+		Protocol:      "chat_completions",
 		Model:         "gpt-4o-mini",
 		StatusCode:    200,
 		DurationMs:    120,
@@ -79,11 +79,11 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 			t.Errorf("attr %s = %q (ok=%v), want %q", k, got.AsString(), ok, want)
 		}
 	}
-	// The gen_ai span carries no sluice.* beyond correlation_id — endpoint
+	// The gen_ai span carries no sluice.* beyond correlation_id — protocol
 	// and configuration now ride the Record (telemetry design channel
 	// boundary). Their presence on the span would re-smuggle gateway facts
 	// onto the GenAI feed.
-	for _, banned := range []string{observability.AttrSluiceEndpoint, observability.AttrSluiceConfiguration} {
+	for _, banned := range []string{observability.AttrSluiceProtocol, observability.AttrSluiceConfiguration} {
 		if _, ok := attrValue(attrs, banned); ok {
 			t.Errorf("attr %s must be absent from the gen_ai span (belongs on the Record)", banned)
 		}
@@ -110,7 +110,7 @@ func TestEmitTrace_ErrorStatusSetsErrorType(t *testing.T) {
 	r, sr := traceHarness(t)
 	r.emitTrace(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Protocol:   "chat_completions",
 		Model:      "gpt-4o-mini",
 		StatusCode: 503,
 		DurationMs: 10,
@@ -132,7 +132,7 @@ func TestEmitTrace_AttemptsBecomeChildSpans(t *testing.T) {
 	base := r.started
 	r.emitTrace(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Protocol:   "chat_completions",
 		Model:      "gpt-4o-mini",
 		StatusCode: 200,
 		DurationMs: 200,
@@ -181,7 +181,7 @@ func TestEmitTrace_ConversationID(t *testing.T) {
 	r.sessionID = "bundle-1"
 	r.emitTrace(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Protocol:   "chat_completions",
 		Model:      "gpt-4o-mini",
 		StatusCode: 200,
 		DurationMs: 10,
@@ -197,7 +197,7 @@ func TestEmitTrace_ConversationID(t *testing.T) {
 
 func TestEmitTrace_NoConversationIDWhenNoSession(t *testing.T) {
 	r, sr := traceHarness(t)
-	r.emitTrace(context.Background(), events.Request{Endpoint: "chat_completions", StatusCode: 200, DurationMs: 1})
+	r.emitTrace(context.Background(), events.Request{Protocol: "chat_completions", StatusCode: 200, DurationMs: 1})
 	if _, ok := attrValue(sr.Ended()[0].Attributes(), observability.AttrGenAIConversationID); ok {
 		t.Errorf("gen_ai.conversation.id should be absent when no session resolved")
 	}
@@ -213,7 +213,7 @@ func TestEmitTrace_ClientConformanceAttrs(t *testing.T) {
 	r := &reporterRun{
 		factory:           &reporterFactory{tracer: tp.Tracer("test")},
 		provider:          "gemini",
-		endpoint:          "generate_content",
+		protocol:          "generate_content",
 		model:             "gemini-2.0-flash",
 		configuration:     "prod",
 		serverAddress:     "generativelanguage.googleapis.com",
@@ -228,7 +228,7 @@ func TestEmitTrace_ClientConformanceAttrs(t *testing.T) {
 	}
 	r.emitTrace(context.Background(), events.Request{
 		Provider:            "gemini",
-		Endpoint:            "generate_content",
+		Protocol:            "generate_content",
 		Model:               "gemini-2.0-flash",
 		StatusCode:          200,
 		DurationMs:          300,
@@ -297,7 +297,7 @@ func TestEmitTrace_OpenAIProviderAttrs(t *testing.T) {
 	r := &reporterRun{
 		factory:               &reporterFactory{tracer: tp.Tracer("test")},
 		provider:              "openai",
-		endpoint:              "chat",
+		protocol:              "chat",
 		model:                 "gpt-4o",
 		configuration:         "prod",
 		started:               start,
@@ -306,7 +306,7 @@ func TestEmitTrace_OpenAIProviderAttrs(t *testing.T) {
 	}
 	r.emitTrace(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat",
+		Protocol:   "chat",
 		Model:      "gpt-4o",
 		StatusCode: 200,
 		DurationMs: 50,
@@ -337,7 +337,7 @@ func TestEmitTrace_ContentOnSpan(t *testing.T) {
 	r := &reporterRun{
 		factory:         &reporterFactory{tracer: tp.Tracer("test"), captureContent: true},
 		provider:        "openai",
-		endpoint:        "chat_completions",
+		protocol:        "chat_completions",
 		model:           "gpt-4o",
 		configuration:   "p",
 		started:         start,
@@ -348,7 +348,7 @@ func TestEmitTrace_ContentOnSpan(t *testing.T) {
 	})
 	r.emitTrace(ctx, events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Protocol:   "chat_completions",
 		Model:      "gpt-4o",
 		StatusCode: 200,
 		DurationMs: 10,
@@ -380,12 +380,12 @@ func TestEmitTrace_SpanContextReachesEvents(t *testing.T) {
 	r := &reporterRun{
 		factory:       &reporterFactory{tracer: tp.Tracer("t"), eventLogger: rl, captureContent: true},
 		provider:      "openai",
-		endpoint:      "chat_completions",
+		protocol:      "chat_completions",
 		model:         "gpt-4o",
 		configuration: "p",
 		started:       start,
 	}
-	ev := events.Request{Provider: "openai", Endpoint: "chat_completions", Model: "gpt-4o", StatusCode: 200, DurationMs: 5}
+	ev := events.Request{Provider: "openai", Protocol: "chat_completions", Model: "gpt-4o", StatusCode: 200, DurationMs: 5}
 	traceCtx := r.emitTrace(context.Background(), ev)
 	r.emitEvents(traceCtx, ev)
 
@@ -415,7 +415,7 @@ func TestEmitTrace_NonStreamingOmitsStreamAttrs(t *testing.T) {
 	r, sr := traceHarness(t) // openai, non-streaming, no upstream host captured
 	r.emitTrace(context.Background(), events.Request{
 		Provider:   "openai",
-		Endpoint:   "chat_completions",
+		Protocol:   "chat_completions",
 		Model:      "gpt-4o-mini",
 		StatusCode: 200,
 		DurationMs: 10,

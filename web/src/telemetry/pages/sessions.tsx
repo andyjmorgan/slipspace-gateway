@@ -179,7 +179,7 @@ function SessionBody({ sessionId }: { sessionId: string }) {
                 <th className="text-left font-medium px-4 py-2">Time</th>
                 <th className="text-left font-medium px-4 py-2">Status</th>
                 <th className="text-left font-medium px-4 py-2">Provider</th>
-                <th className="text-left font-medium px-4 py-2">Endpoint</th>
+                <th className="text-left font-medium px-4 py-2">Protocol</th>
                 <th className="text-left font-medium px-4 py-2">Model</th>
                 <th className="text-right font-medium px-4 py-2">Duration</th>
                 <th className="text-right font-medium px-4 py-2">Tokens</th>
@@ -195,7 +195,7 @@ function SessionBody({ sessionId }: { sessionId: string }) {
                   <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap">{fmt.shortTime(e.at)}</td>
                   <td className="px-4 py-2"><StatusPill code={e.status_code} /></td>
                   <td className="px-4 py-2">{e.provider ? <ProviderChip name={e.provider} /> : <Dash />}</td>
-                  <td className="mono text-[12px] px-4 py-2">{e.endpoint || <Dash />}</td>
+                  <td className="mono text-[12px] px-4 py-2">{e.protocol || <Dash />}</td>
                   <td className="mono text-[12px] px-4 py-2">{e.model || <Dash />}</td>
                   <td className="mono tnum text-[12px] text-right px-4 py-2">{fmt.ms(e.duration_ms)}</td>
                   <td className="mono tnum text-[11.5px] text-right px-4 py-2 text-[color:var(--text-3)]">

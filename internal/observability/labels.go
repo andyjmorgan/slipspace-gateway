@@ -2,7 +2,7 @@ package observability
 
 import "context"
 
-// RequestLabels carries the (provider, endpoint, model, configuration)
+// RequestLabels carries the (provider, protocol, model, configuration)
 // values resolved at destination-finalisation time. These are the canonical
 // labels the per-request reporter stamps on metrics and on the
 // gateway.request event so dashboards and audit feeds see a uniform
@@ -19,7 +19,7 @@ import "context"
 type RequestLabels struct {
 	Provider string
 
-	Endpoint string
+	Protocol string
 
 	Model string
 

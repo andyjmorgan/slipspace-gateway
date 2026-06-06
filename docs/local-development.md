@@ -169,7 +169,7 @@ rules:
       logicalOperator: And
       children:
         - { type: provider, operator: Equals, expectedProvider: openai }
-        - { type: endpoint, operator: Equals, expectedEndpoint: chat }
+        - { type: protocol, operator: Equals, expectedProtocol: chat }
     actions:
       - { type: addTag, tag: surface:openai-chat }
     behavior: continue

@@ -77,7 +77,7 @@ func recoverMiddleware(meters *observability.Meters, errs *httperr.Writer, next 
 					1,
 					metric.WithAttributes(
 						attribute.String("provider", labels.Provider),
-						attribute.String("endpoint", labels.Endpoint),
+						attribute.String("protocol", labels.Protocol),
 					),
 				)
 			}

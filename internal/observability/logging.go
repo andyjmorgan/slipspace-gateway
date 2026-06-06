@@ -18,7 +18,7 @@ const (
 	LogFieldAPIKeyID      = "api_key_id"
 	LogFieldConfiguration = "configuration"
 	LogFieldProvider      = "provider"
-	LogFieldEndpoint      = "endpoint"
+	LogFieldProtocol      = "protocol"
 	LogFieldModel         = "model"
 )
 

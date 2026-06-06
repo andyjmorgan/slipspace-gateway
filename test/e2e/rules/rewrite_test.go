@@ -53,9 +53,9 @@ rules:
         - type: provider
           operator: Equals
           expectedProvider: openai
-        - type: endpoint
+        - type: protocol
           operator: Equals
-          expectedEndpoint: chat
+          expectedProtocol: chat
         - type: bodyField
           target: request.body.stream
           operator: Equals

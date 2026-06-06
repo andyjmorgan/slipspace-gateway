@@ -16,8 +16,8 @@ func TestNewMutableState_SeedsFromRouting(t *testing.T) {
 	if s.Provider != "openai" {
 		t.Errorf("Provider = %q, want openai", s.Provider)
 	}
-	if s.Endpoint != "chat_completions" {
-		t.Errorf("Endpoint = %q, want chat_completions", s.Endpoint)
+	if s.Protocol != "chat_completions" {
+		t.Errorf("Protocol = %q, want chat_completions", s.Protocol)
 	}
 	if got := s.PathParams["model"]; got != "gpt-4o-mini" {
 		t.Errorf("PathParams[model] = %q, want gpt-4o-mini", got)

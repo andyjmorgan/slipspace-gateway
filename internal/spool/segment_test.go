@@ -254,7 +254,7 @@ func TestSegmentFilename_Format(t *testing.T) {
 
 // --- helpers ---
 
-func makeRecord(id string, tsNs int64, provider, endpoint string) cc.Record {
+func makeRecord(id string, tsNs int64, provider, protocol string) cc.Record {
 	return cc.Record{
 		V:             1,
 		ID:            id,
@@ -264,7 +264,7 @@ func makeRecord(id string, tsNs int64, provider, endpoint string) cc.Record {
 		CorrelationID: "corr-" + id,
 		Configuration: "test",
 		Provider:      provider,
-		Endpoint:      endpoint,
+		Protocol:      protocol,
 		Request:       cc.RequestPart{Method: "POST", Path: "/x"},
 		Response:      cc.ResponsePart{Status: 200},
 		SchemaVersion: cc.SchemaVersion,

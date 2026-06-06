@@ -15,9 +15,9 @@ type Facets struct {
 	Models []string
 	// Configurations is the distinct resolved policy bundle names.
 	Configurations []string
-	// Endpoints is the distinct post-rule wire protocol / endpoint values
-	// (the protocol column, surfaced as "endpoint" to operators).
-	Endpoints []string
+	// Protocols is the distinct post-rule protocol values (the protocol
+	// column), or passthrough family names.
+	Protocols []string
 	// Tags is the distinct post-rule tag set across all events.
 	Tags []string
 }
@@ -36,7 +36,7 @@ func (s *Store) Facets(ctx context.Context) (Facets, error) {
 		{"provider", &f.Providers},
 		{"model", &f.Models},
 		{"configuration", &f.Configurations},
-		{"protocol", &f.Endpoints},
+		{"protocol", &f.Protocols},
 	}
 	for _, c := range cols {
 		// Column name comes from this package-internal allowlist, never user

@@ -172,7 +172,7 @@ func TestQueryDashboardSummary_Success(t *testing.T) {
 // TestQueryDashboardSummary_StageErrors fails one sub-query at a time to cover
 // every error-propagation return in QueryDashboardSummary. Call order:
 // QueryRow #1 totals, #2 latency; Query #1 ByProvider, #2 ByConfiguration,
-// #3 ByEndpoint, #4 ByModel, #5 RulesFired, #6 TagsFired, #7 ProviderHealth.
+// #3 ByProtocol, #4 ByModel, #5 RulesFired, #6 TagsFired, #7 ProviderHealth.
 func TestQueryDashboardSummary_StageErrors(t *testing.T) {
 	rowStages := []int{1, 2}
 	for _, n := range rowStages {
@@ -202,7 +202,7 @@ func TestDashSubqueries_Errors(t *testing.T) {
 	// Query-backed: each has a query-error and a scan-error branch.
 	queryBacked := map[string]func(*Store) error{
 		"dimension": func(s *Store) error { _, e := s.queryDashDimension(ctx(), p, "provider"); return e },
-		"endpoint":  func(s *Store) error { _, e := s.queryDashEndpoint(ctx(), p); return e },
+		"protocol":  func(s *Store) error { _, e := s.queryDashProtocol(ctx(), p); return e },
 		"model":     func(s *Store) error { _, e := s.queryDashModel(ctx(), p); return e },
 		"fired":     func(s *Store) error { _, e := s.queryDashFired(ctx(), p, "tags"); return e },
 		"health":    func(s *Store) error { _, e := s.queryDashProviderHealth(ctx(), p); return e },

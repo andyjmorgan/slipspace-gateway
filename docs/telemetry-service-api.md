@@ -189,7 +189,7 @@ plus the full filter set. Returns `contracts/admin.DashboardSummary`
 | `totals` | `requests`, `requests_success`, `requests_errored`, `tokens_in/out/cached/cache_creation` |
 | `rates` | `requests_per_second`, `error_rate` |
 | `latency_ms` | `p50`, `p95`, `p99` (Postgres `percentile_cont`) |
-| `by_provider`, `by_endpoint`, `by_configuration`, `by_model` | per-dimension breakdown rows (requests, p95, error_rate; model rows carry token sums) |
+| `by_provider`, `by_protocol`, `by_configuration`, `by_model` | per-dimension breakdown rows (requests, p95, error_rate; model rows carry token sums) |
 | `rules_fired`, `tags_fired` | per-rule / per-tag fire counts + the configurations that produced them |
 | `provider_health` | a short trailing-window (`now-5m`) per-provider health snapshot |
 

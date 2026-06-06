@@ -104,14 +104,14 @@ function Body({ data: d, window }: { data: DashboardSummary; window: DashboardWi
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
         <Strip
-          title="Traffic by endpoint"
+          title="Traffic by protocol"
           sub={`requests · ${d.window}`}
-          rows={d.by_endpoint ?? []}
-          rowKey={(r) => `${r.provider}.${r.endpoint}`}
+          rows={d.by_protocol ?? []}
+          rowKey={(r) => `${r.provider}.${r.protocol}`}
           label={(r) => (
             <span className="flex items-center gap-2 min-w-0">
               <ProviderChip name={r.provider} />
-              <span className="mono text-[11.5px] text-[color:var(--text-3)] truncate">{r.endpoint}</span>
+              <span className="mono text-[11.5px] text-[color:var(--text-3)] truncate">{r.protocol}</span>
             </span>
           )}
         />
@@ -151,7 +151,7 @@ function Center({ children, tone }: { children: React.ReactNode; tone?: "err" })
   )
 }
 
-// Strip is the shared bar-row breakdown (provider / endpoint / configuration):
+// Strip is the shared bar-row breakdown (provider / protocol / configuration):
 // a label, a request-count bar, the count, error rate, and p95.
 type StripRow = { requests: number; error_rate: number; p95_latency_ms: number }
 function Strip<T extends StripRow>({ title, sub, rows, label, rowKey }: { title: string; sub: string; rows: T[]; label: (r: T) => React.ReactNode; rowKey: (r: T) => string }) {

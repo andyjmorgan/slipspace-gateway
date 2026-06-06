@@ -253,7 +253,7 @@ func TestMessages_BadParamsAndErrors(t *testing.T) {
 func TestFacets(t *testing.T) {
 	q := &fakeQueries{facets: store.Facets{
 		Providers: []string{"openai"}, Models: []string{"gpt-4o"},
-		Configurations: []string{"default"}, Endpoints: []string{"chat_completions"},
+		Configurations: []string{"default"}, Protocols: []string{"chat_completions"},
 		Tags: []string{"eu"},
 	}}
 	h := newQueryServer(t, q)
@@ -265,7 +265,7 @@ func TestFacets(t *testing.T) {
 		Providers      []string `json:"providers"`
 		Models         []string `json:"models"`
 		Configurations []string `json:"configurations"`
-		Endpoints      []string `json:"endpoints"`
+		Protocols      []string `json:"protocols"`
 		Tags           []string `json:"tags"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {

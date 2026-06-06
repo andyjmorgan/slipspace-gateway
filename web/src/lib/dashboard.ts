@@ -19,9 +19,9 @@ export type DashboardModelRow = {
   tokens_out: number
 }
 
-export type DashboardEndpointRow = {
+export type DashboardProtocolRow = {
   provider: string
-  endpoint: string
+  protocol: string
   requests: number
   p95_latency_ms: number
   error_rate: number
@@ -72,7 +72,7 @@ export type DashboardSummary = {
   }
   latency_ms: { p50: number; p95: number; p99: number }
   by_provider: DashboardProviderRow[]
-  by_endpoint: DashboardEndpointRow[]
+  by_protocol: DashboardProtocolRow[]
   by_configuration: DashboardConfigurationRow[]
   by_model: DashboardModelRow[]
   rules_fired: DashboardRuleFiredRow[]

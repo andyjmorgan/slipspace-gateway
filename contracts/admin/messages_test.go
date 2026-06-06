@@ -16,7 +16,7 @@ func TestMessageEntry_RoundTrip(t *testing.T) {
 		At:            time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC),
 		CorrelationID: "corr-1",
 		Provider:      "openai",
-		Endpoint:      "chat_completions",
+		Protocol:      "chat_completions",
 		Model:         "gpt-4o-mini",
 		Configuration: "production",
 		StatusCode:    200,
@@ -57,7 +57,7 @@ func TestMessageEntry_OmitsEmptyOptionalFields(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	s := string(b)
-	for _, banned := range []string{`"provider"`, `"endpoint"`, `"model"`, `"configuration"`, `"streaming"`, `"upstream_error"`, `"rules_matched"`, `"correlation_id"`} {
+	for _, banned := range []string{`"provider"`, `"protocol"`, `"model"`, `"configuration"`, `"streaming"`, `"upstream_error"`, `"rules_matched"`, `"correlation_id"`} {
 		if strings.Contains(s, banned) {
 			t.Errorf("unexpected key %s in %s", banned, s)
 		}

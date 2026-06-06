@@ -26,7 +26,7 @@ func TestSummariseCondition_AllConcreteTypes(t *testing.T) {
 		},
 		{
 			name:    "endpoint negated",
-			input:   &rulescontract.EndpointCondition{Type: "endpoint", Operator: rulescontract.EnumEquals, ExpectedEndpoint: "openai.chat_completions", Not: true},
+			input:   &rulescontract.ProtocolCondition{Type: "protocol", Operator: rulescontract.EnumEquals, ExpectedProtocol: "openai.chat_completions", Not: true},
 			wantSub: "(negated)",
 		},
 		{

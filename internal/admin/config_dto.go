@@ -223,8 +223,8 @@ func summariseCondition(c rulescontract.Condition) string {
 	switch v := c.(type) {
 	case *rulescontract.ProviderCondition:
 		return "provider " + opString(string(v.Operator)) + " " + v.ExpectedProvider + notSuffix(v.Not)
-	case *rulescontract.EndpointCondition:
-		return "endpoint " + opString(string(v.Operator)) + " " + v.ExpectedEndpoint + notSuffix(v.Not)
+	case *rulescontract.ProtocolCondition:
+		return "protocol " + opString(string(v.Operator)) + " " + v.ExpectedProtocol + notSuffix(v.Not)
 	case *rulescontract.ModelNameCondition:
 		return "model " + opString(string(v.Operator)) + " " + v.ExpectedModelName + notSuffix(v.Not)
 	case *rulescontract.HeaderCondition:

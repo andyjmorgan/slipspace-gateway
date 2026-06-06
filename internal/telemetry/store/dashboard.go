@@ -44,10 +44,10 @@ type DashboardDimensionRow struct {
 	ErrorRate    float64
 }
 
-// DashboardEndpointRow is one (provider, endpoint) breakdown row.
-type DashboardEndpointRow struct {
+// DashboardProtocolRow is one (provider, protocol) breakdown row.
+type DashboardProtocolRow struct {
 	Provider     string
-	Endpoint     string
+	Protocol     string
 	Requests     int64
 	P95LatencyMs int64
 	ErrorRate    float64
@@ -87,7 +87,7 @@ type DashboardSummary struct {
 	Totals          DashboardTotals
 	Latency         DashboardLatency
 	ByProvider      []DashboardDimensionRow
-	ByEndpoint      []DashboardEndpointRow
+	ByProtocol      []DashboardProtocolRow
 	ByConfiguration []DashboardDimensionRow
 	ByModel         []DashboardModelRow
 	RulesFired      []DashboardFiredRow
@@ -112,7 +112,7 @@ func (s *Store) QueryDashboardSummary(ctx context.Context, p DashboardParams) (D
 	if out.ByConfiguration, err = s.queryDashDimension(ctx, p, "configuration"); err != nil {
 		return DashboardSummary{}, err
 	}
-	if out.ByEndpoint, err = s.queryDashEndpoint(ctx, p); err != nil {
+	if out.ByProtocol, err = s.queryDashProtocol(ctx, p); err != nil {
 		return DashboardSummary{}, err
 	}
 	if out.ByModel, err = s.queryDashModel(ctx, p); err != nil {
@@ -223,7 +223,7 @@ ORDER BY COUNT(*) DESC, grp`, col, strings.Join(where, " AND "), col)
 	return out, rows.Err()
 }
 
-func (s *Store) queryDashEndpoint(ctx context.Context, p DashboardParams) ([]DashboardEndpointRow, error) {
+func (s *Store) queryDashProtocol(ctx context.Context, p DashboardParams) ([]DashboardProtocolRow, error) {
 	where, args := dashWindow(p)
 	q := `
 SELECT provider, protocol, COUNT(*),
@@ -237,19 +237,19 @@ ORDER BY COUNT(*) DESC, provider, protocol`
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("store: dashboard endpoint: %w", err)
+		return nil, fmt.Errorf("store: dashboard protocol: %w", err)
 	}
 	defer rows.Close()
 
-	var out []DashboardEndpointRow
+	var out []DashboardProtocolRow
 	for rows.Next() {
 		var (
-			r      DashboardEndpointRow
+			r      DashboardProtocolRow
 			p95    float64
 			errCnt int64
 		)
-		if err := rows.Scan(&r.Provider, &r.Endpoint, &r.Requests, &p95, &errCnt); err != nil {
-			return nil, fmt.Errorf("store: scan dashboard endpoint: %w", err)
+		if err := rows.Scan(&r.Provider, &r.Protocol, &r.Requests, &p95, &errCnt); err != nil {
+			return nil, fmt.Errorf("store: scan dashboard protocol: %w", err)
 		}
 		r.P95LatencyMs = round(p95)
 		r.ErrorRate = rate(errCnt, r.Requests)

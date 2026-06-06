@@ -34,7 +34,7 @@ func TestMutableState_Clone_DeepCopiesAllFields(t *testing.T) {
 	cred := "sk-test"
 	s := &rules.MutableState{
 		Provider:                   "openai",
-		Endpoint:                   "chat_completions",
+		Protocol:                   "chat_completions",
 		UpstreamURL:                u,
 		OutgoingHeaders:            http.Header{"X-A": []string{"1"}, "X-B": []string{"2"}},
 		UpstreamCredentialOverride: &cred,

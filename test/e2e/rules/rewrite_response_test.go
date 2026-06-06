@@ -44,9 +44,9 @@ rules:
         - type: provider
           operator: Equals
           expectedProvider: openai
-        - type: endpoint
+        - type: protocol
           operator: Equals
-          expectedEndpoint: chat
+          expectedProtocol: chat
     actions:
       - type: rewriteField
         target: response.body.result_url

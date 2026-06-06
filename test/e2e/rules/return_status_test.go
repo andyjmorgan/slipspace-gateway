@@ -96,8 +96,8 @@ func TestReturnStatusCode_E2E(t *testing.T) {
 	if reqEv.StatusCode != 429 {
 		t.Errorf("gateway.request.status_code = %d, want 429 (synthetic)", reqEv.StatusCode)
 	}
-	if reqEv.Provider != "openai" || reqEv.Endpoint != "chat" {
-		t.Errorf("gateway.request labels: provider=%q endpoint=%q", reqEv.Provider, reqEv.Endpoint)
+	if reqEv.Provider != "openai" || reqEv.Protocol != "chat" {
+		t.Errorf("gateway.request labels: provider=%q endpoint=%q", reqEv.Provider, reqEv.Protocol)
 	}
 	if reqEv.Model != "gpt-4o-mini" {
 		t.Errorf("gateway.request.model = %q", reqEv.Model)

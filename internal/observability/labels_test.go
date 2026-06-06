@@ -12,7 +12,7 @@ func TestRequestLabels_RoundTrip(t *testing.T) {
 
 	in := observability.RequestLabels{
 		Provider: "openai",
-		Endpoint: "chat_completions",
+		Protocol: "chat_completions",
 		Model:    "gpt-4o-mini",
 	}
 	ctx := observability.WithRequestLabels(context.Background(), in)

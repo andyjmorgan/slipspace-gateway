@@ -110,7 +110,7 @@ func TestBuildTimeseries_DispatchesAllNames(t *testing.T) {
 	}
 }
 
-func TestComputeByEndpoint_PartitionsByProviderEndpointPair(t *testing.T) {
+func TestComputeByProtocol_PartitionsByProviderProtocolPair(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Hour)
 	start := makeSample(t0)
@@ -122,20 +122,20 @@ func TestComputeByEndpoint_PartitionsByProviderEndpointPair(t *testing.T) {
 	}{
 		{[]attribute.KeyValue{
 			attribute.String(observability.AttrGenAIProviderName, "openai"),
-			attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+			attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
 			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 		}, 30},
 		{[]attribute.KeyValue{
 			attribute.String(observability.AttrGenAIProviderName, "openai"),
-			attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+			attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
 			attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 		}, 2},
 		{[]attribute.KeyValue{
 			attribute.String(observability.AttrGenAIProviderName, "anthropic"),
-			attribute.String(observability.AttrSluiceEndpoint, "messages"),
+			attribute.String(observability.AttrSluiceProtocol, "messages"),
 			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 		}, 10},
-		// missing endpoint label — must be skipped.
+		// missing protocol label — must be skipped.
 		{[]attribute.KeyValue{
 			attribute.String(observability.AttrGenAIProviderName, "openai"),
 			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
@@ -146,26 +146,26 @@ func TestComputeByEndpoint_PartitionsByProviderEndpointPair(t *testing.T) {
 	}
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
-	if len(sum.ByEndpoint) != 2 {
-		t.Fatalf("len(ByEndpoint) = %d, want 2", len(sum.ByEndpoint))
+	if len(sum.ByProtocol) != 2 {
+		t.Fatalf("len(ByProtocol) = %d, want 2", len(sum.ByProtocol))
 	}
 	// Sorted by requests desc — openai/chat_completions has 32, anthropic/messages has 10.
-	if sum.ByEndpoint[0].Provider != "openai" || sum.ByEndpoint[0].Endpoint != "chat_completions" {
-		t.Errorf("ByEndpoint[0] = %+v, want openai/chat_completions", sum.ByEndpoint[0])
+	if sum.ByProtocol[0].Provider != "openai" || sum.ByProtocol[0].Protocol != "chat_completions" {
+		t.Errorf("ByProtocol[0] = %+v, want openai/chat_completions", sum.ByProtocol[0])
 	}
-	if sum.ByEndpoint[0].Requests != 32 {
-		t.Errorf("ByEndpoint[0].Requests = %d, want 32", sum.ByEndpoint[0].Requests)
+	if sum.ByProtocol[0].Requests != 32 {
+		t.Errorf("ByProtocol[0].Requests = %d, want 32", sum.ByProtocol[0].Requests)
 	}
-	if got := sum.ByEndpoint[0].ErrorRate; got <= 0 || got > 0.1 {
-		t.Errorf("ByEndpoint[0].ErrorRate = %f, want roughly 2/32", got)
+	if got := sum.ByProtocol[0].ErrorRate; got <= 0 || got > 0.1 {
+		t.Errorf("ByProtocol[0].ErrorRate = %f, want roughly 2/32", got)
 	}
-	if sum.ByEndpoint[1].Provider != "anthropic" || sum.ByEndpoint[1].Endpoint != "messages" {
-		t.Errorf("ByEndpoint[1] = %+v, want anthropic/messages", sum.ByEndpoint[1])
+	if sum.ByProtocol[1].Provider != "anthropic" || sum.ByProtocol[1].Protocol != "messages" {
+		t.Errorf("ByProtocol[1] = %+v, want anthropic/messages", sum.ByProtocol[1])
 	}
 }
 
-func TestComputeByEndpoint_HistogramFolding(t *testing.T) {
-	// Exercise the histogram-folding path: end has a (provider, endpoint)
+func TestComputeByProtocol_HistogramFolding(t *testing.T) {
+	// Exercise the histogram-folding path: end has a (provider, protocol)
 	// pair with both a counter row and a histogram. The first histogram
 	// observation initialises the per-pair accumulator's Bounds/Counts
 	// slices; the second observation accumulates onto them.
@@ -177,12 +177,12 @@ func TestComputeByEndpoint_HistogramFolding(t *testing.T) {
 
 	attrs200 := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+		attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
 		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	attrs500 := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceEndpoint, "chat_completions"),
+		attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
 		attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 	}
 	setCounter(end, observability.MetricRequestsTotal, attrs200, 1)
@@ -191,17 +191,17 @@ func TestComputeByEndpoint_HistogramFolding(t *testing.T) {
 	setHistogram(end, attrs500, 1.8, 1, bounds, []uint64{0, 0, 1, 0})
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
-	if len(sum.ByEndpoint) != 1 {
-		t.Fatalf("len(ByEndpoint) = %d, want 1", len(sum.ByEndpoint))
+	if len(sum.ByProtocol) != 1 {
+		t.Fatalf("len(ByProtocol) = %d, want 1", len(sum.ByProtocol))
 	}
-	if sum.ByEndpoint[0].P95LatencyMs == 0 {
+	if sum.ByProtocol[0].P95LatencyMs == 0 {
 		t.Error("P95LatencyMs = 0; expected folded observations to be reflected")
 	}
 }
 
-func TestComputeByEndpoint_HistogramSkippedWhenNoCounter(t *testing.T) {
+func TestComputeByProtocol_HistogramSkippedWhenNoCounter(t *testing.T) {
 	// Defensive: a histogram label-set with no matching counter row in
-	// the same window should not produce a phantom endpoint row.
+	// the same window should not produce a phantom protocol row.
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Hour)
 	start := makeSample(t0)
@@ -210,19 +210,19 @@ func TestComputeByEndpoint_HistogramSkippedWhenNoCounter(t *testing.T) {
 
 	histOnly := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceEndpoint, "responses"),
+		attribute.String(observability.AttrSluiceProtocol, "responses"),
 		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
-	if len(sum.ByEndpoint) != 0 {
-		t.Fatalf("len(ByEndpoint) = %d, want 0 (no counter row)", len(sum.ByEndpoint))
+	if len(sum.ByProtocol) != 0 {
+		t.Fatalf("len(ByProtocol) = %d, want 0 (no counter row)", len(sum.ByProtocol))
 	}
 }
 
 func TestComputeByConfiguration_HistogramSkippedWhenNoCounter(t *testing.T) {
-	// Mirror of TestComputeByEndpoint_HistogramSkippedWhenNoCounter for
+	// Mirror of TestComputeByProtocol_HistogramSkippedWhenNoCounter for
 	// the configuration partition: histogram-only series must not
 	// produce a phantom configuration row.
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

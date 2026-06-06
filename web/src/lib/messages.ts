@@ -37,7 +37,7 @@ export type MessageEntry = {
   session_id?: string
   session_id_source?: string
   provider?: string
-  endpoint?: string
+  protocol?: string
   model?: string
   method?: string
   configuration?: string
@@ -74,7 +74,7 @@ export type MessageFilters = {
   provider?: string
   model?: string
   configuration?: string
-  endpoint?: string
+  protocol?: string
   statusClass?: string
   tags?: string[]
   from?: string
@@ -111,7 +111,7 @@ export async function fetchMessagesPage(
   put("provider", filters.provider)
   put("model", filters.model)
   put("configuration", filters.configuration)
-  put("protocol", filters.endpoint)
+  put("protocol", filters.protocol)
   put("status_class", filters.statusClass)
   put("from", filters.from)
   put("to", filters.to)
@@ -128,7 +128,7 @@ export type Facets = {
   providers: string[]
   models: string[]
   configurations: string[]
-  endpoints: string[]
+  protocols: string[]
   tags: string[]
 }
 

@@ -107,7 +107,7 @@ func emptySummary(providers []string, window time.Duration) adminc.DashboardSumm
 		Window:          formatWindow(window),
 		GeneratedAt:     time.Now().UTC(),
 		ByProvider:      []adminc.DashboardProviderRow{},
-		ByEndpoint:      []adminc.DashboardEndpointRow{},
+		ByProtocol:      []adminc.DashboardProtocolRow{},
 		ByConfiguration: []adminc.DashboardConfigurationRow{},
 		ByModel:         []adminc.DashboardModelRow{},
 		RulesFired:      []adminc.DashboardRuleFiredRow{},

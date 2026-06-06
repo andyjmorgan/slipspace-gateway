@@ -13,7 +13,7 @@
 #      mirrors what runs in the office cluster.
 #
 # Rule evaluation order is the rule_names list position. Rules condition on the
-# resolved provider (provider:), protocol (endpoint:), and client model
+# resolved provider (provider:), protocol (protocol:), and client model
 # (modelName:) — selection runs before rules.
 
 configurations:
@@ -96,9 +96,9 @@ rules:
         - type: provider
           operator: Equals
           expectedProvider: openai
-        - type: endpoint
+        - type: protocol
           operator: Equals
-          expectedEndpoint: chat
+          expectedProtocol: chat
     actions:
       - type: addTag
         tag: surface:openai-chat
@@ -112,9 +112,9 @@ rules:
         - type: provider
           operator: Equals
           expectedProvider: anthropic
-        - type: endpoint
+        - type: protocol
           operator: Equals
-          expectedEndpoint: messages
+          expectedProtocol: messages
     actions:
       - type: addTag
         tag: surface:anthropic-messages
