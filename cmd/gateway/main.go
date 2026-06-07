@@ -162,7 +162,7 @@ func run(ctx context.Context) error {
 		// cross-provider translation back to the client's protocol apply here,
 		// in the proxy's ModifyResponse hook. The adapter keeps internal/proxy
 		// decoupled from the rules and translate engines.
-		ResponseBodyTransform: newResponseBodyTransform(obs.Meters, env.ExternalURL),
+		ResponseBodyTransform: newResponseBodyTransform(obs.Meters, env.ExternalURL, env.TranslateLossyHeader),
 	})
 
 	evaluator := rules.NewEvaluator(store, env.RulesMaxGroupDepth, obs.Meters)

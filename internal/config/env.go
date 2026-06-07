@@ -89,6 +89,7 @@ const (
 	EnvOTLPEndpoint         = "SLUICE_OTLP_ENDPOINT"
 	EnvOTLPProtocol         = "SLUICE_OTLP_PROTOCOL"
 	EnvOTelCaptureContent   = "SLUICE_OTEL_CAPTURE_CONTENT"
+	EnvTranslateLossyHeader = "SLUICE_TRANSLATE_LOSSY_HEADER"
 	EnvConfigDir            = "SLUICE_CONFIG_DIR"
 	EnvSpoolRoot            = "SLUICE_SPOOL_ROOT"
 	EnvRulesMaxGroupDepth   = "SLUICE_RULES_MAX_GROUP_DEPTH"
@@ -117,6 +118,7 @@ var envVarNames = []string{
 	EnvOTLPEndpoint,
 	EnvOTLPProtocol,
 	EnvOTelCaptureContent,
+	EnvTranslateLossyHeader,
 	EnvConfigDir,
 	EnvSpoolRoot,
 	EnvRulesMaxGroupDepth,
@@ -173,6 +175,12 @@ type ServerEnv struct {
 	// definitions) on the GenAI operation-details event. Default false —
 	// content otherwise stays in the connector spool (invariant #4).
 	OTelCaptureContent bool
+
+	// TranslateLossyHeader, when true, emits an X-Sluice-Translation-Lossy
+	// response header listing source features dropped during cross-provider
+	// translation. Default false — the drop counter (operator telemetry) is
+	// always on, but the consumer-facing header is a developer/debug aid.
+	TranslateLossyHeader bool
 
 	// ConfigDir holds the policy + providers YAML directory loaded by
 	// Load. The CLI's --dir flag overrides this for the file load only.
@@ -335,6 +343,7 @@ func LoadEnv() (*ServerEnv, error) {
 		OTLPEndpoint:                         envString(EnvOTLPEndpoint, ""),
 		OTLPProtocol:                         envString(EnvOTLPProtocol, DefaultOTLPProtocol),
 		OTelCaptureContent:                   envBool(EnvOTelCaptureContent, false),
+		TranslateLossyHeader:                 envBool(EnvTranslateLossyHeader, false),
 		ConfigDir:                            envString(EnvConfigDir, DefaultConfigDir),
 		SpoolRoot:                            envString(EnvSpoolRoot, DefaultSpoolRoot),
 		RulesMaxGroupDepth:                   groupDepth,

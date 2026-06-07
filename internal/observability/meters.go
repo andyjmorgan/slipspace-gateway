@@ -61,6 +61,14 @@ const (
 	MetricTagsAppliedTotal    = "gateway.tags.applied.total"
 	MetricUnmappedFieldsTotal = "gateway.unmapped_fields.total"
 
+	// MetricTranslationFieldDropsTotal counts source features dropped during
+	// cross-provider translation because the target protocol has no
+	// equivalent, labelled by source/target protocol and dropped field. A
+	// field's count climbing is an early warning that a provider shipped a
+	// feature the translator does not yet carry. Cardinality is bounded by the
+	// modelled field set.
+	MetricTranslationFieldDropsTotal = "gateway.translation.field_drops.total"
+
 	// MetricRuleFiredTotal counts rules that fired on a request, labelled
 	// by rule_name + configuration. Distinct from gateway.rule.matches.total
 	// (evaluator-emitted, labelled rule_name/rule_id/terminated/action_count
@@ -211,6 +219,11 @@ type Meters struct {
 	TagsAppliedTotal metric.Int64Counter
 
 	UnmappedFieldsTotal metric.Int64Counter
+
+	// TranslationFieldDropsTotal counts cross-provider translation field drops
+	// (see MetricTranslationFieldDropsTotal).
+	TranslationFieldDropsTotal metric.Int64Counter
+
 	ConfigReloadTotal   metric.Int64Counter
 	UpstreamErrorsTotal metric.Int64Counter
 
@@ -350,6 +363,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricTokensCacheCreationTotal, "Sum of provider-reported cache-write tokens (Anthropic's chargeable cache-creation premium).", "1", &m.TokensCacheCreationTotal},
 		{MetricTagsAppliedTotal, "Count of AddTagAction applications labelled by tag name. Cardinality bounded by configured policy.", "1", &m.TagsAppliedTotal},
 		{MetricUnmappedFieldsTotal, "Provider fields this build does not model, detected on request and response payloads and labelled by field path and direction.", "1", &m.UnmappedFieldsTotal},
+		{MetricTranslationFieldDropsTotal, "Source features dropped during cross-provider translation, labelled by source/target protocol and dropped field.", "1", &m.TranslationFieldDropsTotal},
 		{MetricConfigReloadTotal, "Configuration reload attempts.", "1", &m.ConfigReloadTotal},
 		{MetricUpstreamErrorsTotal, "Errors returned by upstream providers.", "1", &m.UpstreamErrorsTotal},
 		{MetricErrorResponsesTotal, "JSON error responses written by the gateway middleware chain.", "1", &m.ErrorResponsesTotal},
