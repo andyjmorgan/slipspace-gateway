@@ -198,7 +198,7 @@ Marks the request for **cross-provider protocol translation**. Non-terminating. 
 
 An inbound request in one protocol (e.g. Anthropic Messages on `/v1/messages`) is rewritten to `targetProtocol` on the way upstream and the upstream response is translated back on the way out. Orthogonal to and composable with `changeProvider`: `translate` alone re-dialects on the same provider (a multi-protocol backend), `changeProvider` alone moves provider at the same dialect, and the two together move *and* translate.
 
-Shipped pair (v1.2): `messages` → `chat` (Anthropic Messages ↔ OpenAI Chat), non-streaming, streaming, tool calls, and error responses. Other pairs are registry-ready but unimplemented; an undeclared/unsupported pair **fails closed** (501), never silently forwarded.
+Shipped pairs (v1.2): `messages` → `chat` **and** `chat` → `messages` (Anthropic Messages ↔ OpenAI Chat, bidirectional) — request, non-streaming response, streaming, tool calls, and error responses on each arm. Each direction is its own registered translator (the matrix is direct pairwise, not a hub), so an OpenAI Chat client can target an Anthropic Messages upstream and vice versa. Other pairs are registry-ready but unimplemented; an undeclared/unsupported pair **fails closed** (501), never silently forwarded.
 
 ### YAML
 
