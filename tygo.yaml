@@ -1,0 +1,40 @@
+# Go -> TypeScript type generation (issue #235). Regenerate with `make generate`.
+# The generated files under web/src/lib/generated/ are the source of truth for
+# the admin console's wire DTOs; do not hand-edit them.
+packages:
+- path: "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+  output_path: "web/src/lib/generated/resilience.ts"
+  fallback_type: "unknown"
+  type_mappings: &m
+    "time.Time": "string"
+    "time.Duration": "number"
+    "json.RawMessage": "unknown"
+    "uuid.UUID": "string"
+    "rulescontract.Condition": "Record<string, unknown>"
+    "rulescontract.Action": "Record<string, unknown>"
+    "rulescontract.RuleBehavior": "string"
+    "rules.Condition": "Record<string, unknown>"
+    "rules.Action": "Record<string, unknown>"
+    "resilience.ResilienceMode": "string"
+    "models.DynamicProperties": "Record<string, never>"
+- path: "github.com/andyjmorgan/sluice-gateway/contracts/config"
+  output_path: "web/src/lib/generated/config.ts"
+  fallback_type: "unknown"
+  frontmatter: |
+    import type { CircuitBreakerConfig } from "./resilience";
+  type_mappings:
+    <<: *m
+    "resilience.CircuitBreakerConfig": "CircuitBreakerConfig"
+- path: "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+  output_path: "web/src/lib/generated/admin.ts"
+  fallback_type: "unknown"
+  type_mappings: *m
+- path: "github.com/andyjmorgan/sluice-gateway/internal/admin"
+  output_path: "web/src/lib/generated/admin_dto.ts"
+  include_files: ["config_dto.go", "redact.go"]
+  fallback_type: "unknown"
+  frontmatter: |
+    import type { ConnectorBinding } from "./config";
+  type_mappings:
+    <<: *m
+    "contractsconfig.ConnectorBinding": "ConnectorBinding"

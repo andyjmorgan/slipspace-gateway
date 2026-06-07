@@ -46,6 +46,31 @@ jobs:
           version: v2.12.2
           args: --timeout=5m
 
+  # Regenerate the frontend TypeScript types from the Go contracts and fail on
+  # a stale diff, so a DTO change that wasn't re-generated can't silently merge
+  # (issue #235). Inlined to mirror `make generate` — the office-cluster runner
+  # ships no `make`.
+  typegen:
+    runs-on: [self-hosted, office-cluster]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          check-latest: true
+          cache: true
+      - run: go mod download
+      - name: install tygo
+        run: go install github.com/gzuidhof/tygo@v0.2.21
+      - name: regenerate generated types
+        run: tygo generate
+      - name: fail on stale generated types
+        run: |
+          if ! git diff --exit-code -- web/src/lib/generated/; then
+            echo "::error::web/src/lib/generated/ is out of date — run 'make generate' and commit the result."
+            exit 1
+          fi
+
   test:
     runs-on: [self-hosted, office-cluster]
     steps:

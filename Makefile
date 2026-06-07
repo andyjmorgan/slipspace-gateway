@@ -16,7 +16,7 @@ DEV_ENV := \
 # checkout so go:embed has something to attach.
 WEB_OUT := internal/admin/webdist/index.html
 
-.PHONY: all build test lint fmt vet coverage dev dev-with-overlay dev-compose dev-compose-down dev-real dev-real-down e2e py-compat smoke clean tools web web-install web-dev
+.PHONY: all build test lint fmt vet coverage dev dev-with-overlay dev-compose dev-compose-down dev-real dev-real-down e2e py-compat smoke clean tools generate web web-install web-dev
 
 all: lint vet test
 
@@ -127,3 +127,11 @@ clean:
 
 tools:
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+	$(GO) install github.com/gzuidhof/tygo@v0.2.21
+
+# generate regenerates the frontend TypeScript types from the Go contracts
+# (issue #235). The output under web/src/lib/generated/ is the source of truth
+# for the admin console's wire DTOs and must be committed; CI fails on a stale
+# diff (see .github/workflows/ci.yaml). tygo is installed via `make tools`.
+generate:
+	tygo generate

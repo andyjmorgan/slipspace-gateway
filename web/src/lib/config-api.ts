@@ -6,134 +6,52 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import { apiFetch, UnauthorizedError } from "@/lib/api"
 
-export type RedactedSecret = {
-  length: number
-  last4: string
+// Read-only config-view DTOs are generated from the Go contracts
+// (internal/admin/config_dto.go + contracts/config). Do NOT hand-edit — run
+// `make generate`. Source of truth: web/src/lib/generated/.
+import type {
+  RedactedSecret,
+  ConfigurationSummary,
+  RuleAttachment,
+  APIKeySummary,
+  ConfigurationDetail,
+  RuleSummary,
+  RuleDetail,
+  ProviderSummary,
+  ProtocolRow,
+  PassthroughPathRow,
+  PassthroughFamilyRow,
+  ProviderDetail,
+  BindingRow,
+  PassthroughBindingRow,
+  APIKeyReveal,
+} from "./generated/admin_dto"
+import type { ConnectorBinding } from "./generated/config"
+
+export type {
+  RedactedSecret,
+  ConfigurationSummary,
+  RuleAttachment,
+  APIKeySummary,
+  ConfigurationDetail,
+  RuleSummary,
+  RuleDetail,
+  ProviderSummary,
+  ProtocolRow,
+  PassthroughPathRow,
+  PassthroughFamilyRow,
+  ProviderDetail,
+  BindingRow,
+  PassthroughBindingRow,
+  APIKeyReveal,
+  ConnectorBinding,
 }
 
-export type ConfigurationSummary = {
-  name: string
-  key_count: number
-  rule_count: number
-  tags?: Record<string, string>
-}
-
-export type RuleAttachment = {
-  name: string
-  condition_summary: string
-  action_types: string[]
-  behavior?: string
-}
-
-export type APIKeySummary = {
-  name: string
-  secret: RedactedSecret
-  enabled: boolean
-}
-
-// ConnectorBinding mirrors the contract type. The editor does not yet offer a
-// rich editor for these, but reads and round-trips them verbatim on save so a
-// full-replace PUT never drops a configuration's connector bindings.
-export type ConnectorBinding = {
-  connector: string
-  sampling?: number
-  sampling_key?: string
-  max_body_bytes?: number
-  oversize_behaviour?: string
-  filter?: unknown
-}
-
-export type ConfigurationDetail = {
-  name: string
-  credentials: Record<string, RedactedSecret>
-  bindings: BindingRow[]
-  passthrough_bindings: PassthroughBindingRow[]
-  rules: RuleAttachment[]
-  tags?: Record<string, string>
-  connector_bindings?: ConnectorBinding[]
-  api_keys: APIKeySummary[]
-}
-
-export type RuleSummary = {
-  name: string
-  condition_summary: string
-  action_types: string[]
-  behavior?: string
-  used_by: string[]
-}
-
-export type RuleDetail = {
-  name: string
-  behavior?: string
-  // Polymorphic — interrogated as-is by the SPA. The Go side already
-  // marshals the concrete condition/action shapes via the contract types'
-  // MarshalJSON, so this carries the discriminator + fields.
-  condition?: Record<string, unknown>
-  actions?: Record<string, unknown>[]
-  used_by: string[]
-}
-
-export type ProviderSummary = {
-  name: string
-  base_url: string
-  protocols: string[]
-  has_passthrough: boolean
-}
-
-export type ProtocolRow = {
-  name: string
-  path: string
-  auth_header?: string
-  auth_format?: string
-}
-
-export type PassthroughPathRow = {
-  match: string
-  methods: string[]
-}
-
-export type PassthroughFamilyRow = {
-  name: string
-  auth_header?: string
-  paths: PassthroughPathRow[]
-}
-
-export type ProviderDetail = {
-  name: string
-  base_url: string
-  required_headers?: Record<string, string>
-  query?: Record<string, string>
-  protocols: ProtocolRow[]
-  passthrough?: PassthroughFamilyRow[]
-}
-
-export type BindingRow = {
-  configuration?: string
-  protocol: string
-  models: string[]
-  provider?: string
-  group?: string
-  alias?: string
-  tags?: string[]
-}
-
-export type PassthroughBindingRow = {
-  configuration?: string
-  family: string
-  provider: string
-  tags?: string[]
-}
-
+// BindingsResponse stays hand-written: the bindings endpoint returns an
+// anonymous Go struct, so there is no named contract type to generate.
 export type BindingsResponse = {
   bindings: BindingRow[]
   passthrough_bindings: PassthroughBindingRow[]
-}
-
-export type APIKeyReveal = {
-  name: string
-  secret: string
-  enabled: boolean
-  configuration: string
 }
 
 // ---------------------------------------------------------------------------
@@ -144,68 +62,40 @@ export type APIKeyReveal = {
 // are redacted on the configuration detail and never travel on the provider /
 // group / connector shapes).
 
-export type ProviderAuth = {
-  header: string
-  format?: string
+// v2 write shapes are generated from contracts/config + contracts/resilience.
+// Do NOT hand-edit — run `make generate`. Source of truth: web/src/lib/generated/.
+import type {
+  ProviderAuth,
+  ProviderProtocol,
+  PassthroughPath,
+  PassthroughFamily,
+  Provider,
+  Target,
+  Group,
+  ConnectorAuth,
+  ConnectorRotation,
+  Connector,
+} from "./generated/config"
+import type { CircuitBreakerConfig } from "./generated/resilience"
+
+export type {
+  ProviderAuth,
+  ProviderProtocol,
+  PassthroughPath,
+  PassthroughFamily,
+  Provider,
+  CircuitBreakerConfig,
+  Target,
+  Group,
+  ConnectorAuth,
+  ConnectorRotation,
+  Connector,
 }
 
-export type ProviderProtocol = {
-  path?: string
-  auth?: ProviderAuth | null
-}
-
-export type PassthroughPath = {
-  match: string
-  methods: string[]
-}
-
-export type PassthroughFamily = {
-  auth?: ProviderAuth | null
-  paths: PassthroughPath[]
-}
-
-// Provider is the full editable provider connection. The GET /providers/{name}
-// detail endpoint returns the ProviderDetail DTO (protocols/passthrough as
-// arrays); the write body accepts the contract Provider (protocols/passthrough
-// as maps). The editor seeds from ProviderDetail and submits this map shape.
-export type Provider = {
-  base_url: string
-  required_headers?: Record<string, string>
-  query?: Record<string, string>
-  protocols?: Record<string, ProviderProtocol>
-  passthrough?: Record<string, PassthroughFamily>
-}
-
+// Frontend-only write wrappers: the generated base DTO plus the `name` the
+// editor carries in the path (not part of the wire body shape).
 export type ProviderWriteBody = Provider & {
   name: string
-}
-
-// CircuitBreakerConfig mirrors contracts/resilience.CircuitBreakerConfig.
-// The editor only toggles `enabled`; the remaining tuning fields round-trip
-// untouched (the read seeds and the write passes through whatever was set).
-export type CircuitBreakerConfig = {
-  enabled?: boolean
-  failure_threshold?: number
-  failure_rate_threshold?: number
-  cooldown_seconds?: number
-  half_open_success_threshold?: number
-}
-
-export type Target = {
-  provider: string
-  alias?: string
-  query?: Record<string, string>
-  path?: string
-  weight?: number
-}
-
-export type Group = {
-  mode: string
-  failure_status_codes?: number[]
-  circuit_breaker?: CircuitBreakerConfig | null
-  strict_weights?: boolean
-  response_header_timeout_seconds?: number
-  targets: Target[]
 }
 
 export type GroupView = Group & {
@@ -214,42 +104,6 @@ export type GroupView = Group & {
 
 export type GroupWriteBody = Group & {
   name: string
-}
-
-export type ConnectorAuth = {
-  mode: string
-  access_key_id_ref?: string
-  secret_access_key_ref?: string
-  role_arn?: string
-  external_id_ref?: string
-  sas_token_ref?: string
-  account_key_ref?: string
-}
-
-export type ConnectorRotation = {
-  max_bytes?: number
-  max_age_seconds?: number
-}
-
-// Connector is the full editable connector definition (s3 / azure_blob /
-// webhook). Carries no plaintext secrets — cloud + webhook credentials are
-// secret_ref indirections resolved at runtime — so it round-trips directly with
-// no mask/write-back.
-export type Connector = {
-  name: string
-  type: string
-  auth?: ConnectorAuth | null
-  rotation?: ConnectorRotation | null
-  bucket?: string
-  prefix?: string
-  region?: string
-  endpoint_url?: string
-  use_path_style?: boolean
-  account?: string
-  container?: string
-  url?: string
-  secret_ref?: string
-  timeout_ms?: number
 }
 
 export type APIKeyListItem = {
@@ -421,27 +275,15 @@ export function useAPIKey(id: string | undefined): ConfigFetchHandle<APIKeyListI
   return useConfigFetch<APIKeyListItem>(id ? `/api/v1/config/api-keys/${encodeURIComponent(id)}` : null)
 }
 
-export type PolicyTarget = {
-  name: string
-  provider?: string
-  order?: number
-  weight?: number
-  circuit_state: string
-}
+// Policy view DTOs are generated from contracts/admin/policies.go. Do NOT
+// hand-edit — run `make generate`. Source of truth: web/src/lib/generated/.
+import type {
+  PolicyTarget,
+  PolicySummary,
+  PoliciesResponse,
+} from "./generated/admin"
 
-export type PolicySummary = {
-  name: string
-  mode: string
-  strict_weights?: boolean
-  failure_status_codes?: number[]
-  circuit_breaker_enabled?: boolean
-  targets: PolicyTarget[]
-}
-
-export type PoliciesResponse = {
-  pod: string
-  policies: PolicySummary[]
-}
+export type { PolicyTarget, PolicySummary, PoliciesResponse }
 
 export function usePolicies(): ConfigFetchHandle<PoliciesResponse> {
   return useConfigFetch<PoliciesResponse>("/api/v1/policies")
