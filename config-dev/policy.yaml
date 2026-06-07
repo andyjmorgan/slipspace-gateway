@@ -42,6 +42,7 @@ configurations:
       - tag-large-prompt
       - redact-emails
       - translate-messages-to-chat
+      - translate-chat-to-messages
 
     tags:
       tier: dev
@@ -57,6 +58,7 @@ configurations:
 
     bindings:
       - { protocol: chat, models: ["gpt-oss*"], provider: gpt-oss }
+      - { protocol: messages, models: ["gpt-oss*"], provider: gpt-oss }
       - { protocol: chat, models: ["qwen3.6*"], provider: qwen36 }
       - { protocol: chat, models: ["qwen2.5-coder:7b"], provider: qwen-ollama }
       - { protocol: chat, models: ["claude-*"], provider: anthropic }
@@ -67,6 +69,7 @@ configurations:
       - tag-k3s-agentling
       - gpt-oss-chat
       - gpt-oss-from-messages
+      - gpt-oss-from-chat
 
     tags:
       tier: production
@@ -180,6 +183,25 @@ rules:
         targetProtocol: chat
     behavior: continue
 
+  # Reverse cross-provider translation, header-gated so it fires only for the
+  # wire-compat suite's explicit probe (x-sluice-translate: messages). An inbound
+  # OpenAI Chat request carrying that header is translated to the Anthropic
+  # Messages protocol and routed to anthropic's messages endpoint; the response
+  # is translated back to OpenAI Chat. Header-gated to keep every other dev
+  # request (and the e2e harness) on the native path.
+  - name: translate-chat-to-messages
+    condition:
+      type: header
+      keyOperator: Equals
+      keyPattern: x-sluice-translate
+      valueOperator: Equals
+      valuePattern: messages
+      caseInsensitive: true
+    actions:
+      - type: translate
+        targetProtocol: messages
+    behavior: continue
+
   # gpt-oss smoke-test models (production config). gpt-oss (Ollama, gpt-oss:20b)
   # serves chat/responses/messages natively and reasons + does tools, so it is a
   # self-validating oracle for translation. Both fake models resolve via the
@@ -206,4 +228,21 @@ rules:
         newModelName: "gpt-oss:20b"
       - type: translate
         targetProtocol: chat
+    behavior: continue
+
+  # Reverse oracle: an OpenAI Chat client whose body is rewritten to gpt-oss:20b
+  # and translated to the Anthropic Messages protocol, routed to gpt-oss's
+  # messages surface (gpt-oss serves messages natively), then translated back to
+  # OpenAI Chat. The mirror of gpt-oss-from-messages, exercising the chat->messages
+  # arm against the same self-validating model. See test/smoke/test_gptoss_translate.py.
+  - name: gpt-oss-from-chat
+    condition:
+      type: modelName
+      operator: Equals
+      expectedModelName: gpt-oss-from-chat
+    actions:
+      - type: changeModelName
+        newModelName: "gpt-oss:20b"
+      - type: translate
+        targetProtocol: messages
     behavior: continue

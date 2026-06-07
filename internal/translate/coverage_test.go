@@ -66,6 +66,63 @@ func TestResponseFieldCoverage_ChatToMessages(t *testing.T) {
 	assertFieldCoverage(t, reflect.TypeOf(chat.ChatCompletionResponse{}), responseFieldDisposition)
 }
 
+// chatRequestFieldDisposition classifies every exported field of
+// chat.ChatCompletionRequest for the chat->messages request mapper (the reverse
+// pair).
+var chatRequestFieldDisposition = map[string]string{
+	"Model":               dispMapped,  // -> messages.Model (verbatim)
+	"Messages":            dispMapped,  // -> system + user/assistant turns
+	"MaxTokens":           dispMapped,  // -> messages.MaxTokens
+	"MaxCompletionTokens": dispMapped,  // -> messages.MaxTokens (preferred)
+	"Temperature":         dispMapped,  // -> messages.Temperature
+	"TopP":                dispMapped,  // -> messages.TopP
+	"N":                   dispDropped, // Anthropic returns a single message
+	"Stream":              dispMapped,  // -> messages.Stream
+	"StreamOptions":       dispDropped, // Anthropic always emits stream usage
+	"Stop":                dispMapped,  // -> messages.StopSequences
+	"PresencePenalty":     dispDropped, // no Anthropic equivalent
+	"FrequencyPenalty":    dispDropped, // no Anthropic equivalent
+	"LogitBias":           dispDropped, // no Anthropic equivalent
+	"LogProbs":            dispDropped, // no Anthropic equivalent
+	"TopLogProbs":         dispDropped, // no Anthropic equivalent
+	"User":                dispMapped,  // -> messages.Metadata.UserID
+	"Tools":               dispMapped,  // -> messages.Tools
+	"ToolChoice":          dispMapped,  // -> messages.ToolChoice (+ disable_parallel)
+	"ResponseFormat":      dispDropped, // no Anthropic equivalent
+	"Seed":                dispDropped, // no Anthropic equivalent
+	"Modalities":          dispDropped, // no Anthropic equivalent
+	"ReasoningEffort":     dispMapped,  // -> messages.OutputConfig.Effort
+	"ServiceTier":         dispMapped,  // -> messages.ServiceTier
+	"Audio":               dispDropped, // no Anthropic equivalent
+	"Metadata":            dispDropped, // only user_id maps (via User); bag dropped
+	"Store":               dispDropped, // no Anthropic equivalent
+	"ParallelToolCalls":   dispMapped,  // -> messages.ToolChoice.DisableParallelToolUse
+}
+
+// messagesResponseFieldDisposition classifies every exported field of
+// messages.MessagesResponse for the messages->chat response mapper.
+var messagesResponseFieldDisposition = map[string]string{
+	"ID":                dispMapped,  // -> chat.ID
+	"Type":              dispDropped, // OpenAI envelope uses Object="chat.completion"
+	"Role":              dispMapped,  // -> choice message role
+	"Content":           dispMapped,  // text -> content, tool_use -> tool_calls
+	"Model":             dispMapped,  // -> chat.Model
+	"StopReason":        dispMapped,  // -> choice finish_reason
+	"StopSequence":      dispDropped, // OpenAI does not echo the matched stop string
+	"Usage":             dispMapped,  // -> chat.Usage
+	"Container":         dispDropped, // no OpenAI equivalent
+	"StopDetails":       dispDropped, // no OpenAI equivalent
+	"ContextManagement": dispDropped, // no OpenAI equivalent
+}
+
+func TestRequestFieldCoverage_ChatToMessages(t *testing.T) {
+	assertFieldCoverage(t, reflect.TypeOf(chat.ChatCompletionRequest{}), chatRequestFieldDisposition)
+}
+
+func TestResponseFieldCoverage_MessagesToChat(t *testing.T) {
+	assertFieldCoverage(t, reflect.TypeOf(messages.MessagesResponse{}), messagesResponseFieldDisposition)
+}
+
 // assertFieldCoverage fails when an exported, named field of typ is absent from
 // disposition (an unclassified field — must be mapped or dropped), or when
 // disposition carries a key that is no longer a field of typ (a stale entry).

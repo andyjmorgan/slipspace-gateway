@@ -6,11 +6,12 @@ translation: the same model answers a request routed straight to its chat
 surface AND a request translated from Anthropic Messages onto that chat surface,
 so the translated path is checkable against the direct path.
 
-Two fake models, resolved by the prod `production` config's `gpt-oss*` bindings
+Three fake models, resolved by the prod `production` config's `gpt-oss*` bindings
 and rewritten by model-keyed rules (see config-dev/policy.yaml):
 
-- `gpt-oss-chat`          → changeModelName(gpt-oss:20b)                — direct, no translation (oracle baseline)
-- `gpt-oss-from-messages` → changeModelName(gpt-oss:20b) + translate:chat — Anthropic Messages translated to chat and back
+- `gpt-oss-chat`          → changeModelName(gpt-oss:20b)                    — direct, no translation (oracle baseline)
+- `gpt-oss-from-messages` → changeModelName(gpt-oss:20b) + translate:chat     — Anthropic Messages translated to chat and back
+- `gpt-oss-from-chat`     → changeModelName(gpt-oss:20b) + translate:messages — OpenAI Chat translated to messages and back (reverse arm)
 
 These rules live on the cluster, so the test skips unless pointed at a deploy
 known to carry them. Set SLUICE_SMOKE_GPTOSS=true to enable.
@@ -18,6 +19,7 @@ known to carry them. Set SLUICE_SMOKE_GPTOSS=true to enable.
 
 from __future__ import annotations
 
+import json
 import os
 
 import anthropic
@@ -97,3 +99,57 @@ def test_gptoss_translate_messages_tools(base_url: str, api_key: str, gptoss_ena
     assert tool_uses, f"no tool_use block in translated response: {resp.content!r}"
     assert tool_uses[0].name == "get_weather"
     assert isinstance(tool_uses[0].input, dict)
+
+
+def test_gptoss_translate_chat_text(base_url: str, api_key: str, gptoss_enabled: bool) -> None:
+    """OpenAI Chat client → translate→messages → gpt-oss → translate back (reverse arm).
+
+    The openai SDK parsing the response is the differential: a malformed
+    translation would raise instead of returning a ChatCompletion.
+    """
+    if not gptoss_enabled:
+        pytest.skip("SLUICE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
+
+    client = openai.OpenAI(base_url=f"{base_url}/v1", api_key=api_key, max_retries=0, timeout=60)
+    resp = client.chat.completions.create(
+        model="gpt-oss-from-chat",
+        messages=[{"role": "user", "content": "Reply with exactly one word: pong"}],
+        max_tokens=64,
+        temperature=0,
+    )
+    assert resp.object == "chat.completion"
+    assert resp.model == REAL_MODEL, f"model={resp.model!r}, want {REAL_MODEL!r}"
+    assert resp.choices and resp.choices[0].finish_reason
+    assert resp.choices[0].message.content.strip(), f"empty translated content: {resp.choices[0]!r}"
+
+
+def test_gptoss_translate_chat_tools(base_url: str, api_key: str, gptoss_enabled: bool) -> None:
+    """Tool calls survive the chat↔messages translation against the real model."""
+    if not gptoss_enabled:
+        pytest.skip("SLUICE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
+
+    client = openai.OpenAI(base_url=f"{base_url}/v1", api_key=api_key, max_retries=0, timeout=60)
+    resp = client.chat.completions.create(
+        model="gpt-oss-from-chat",
+        max_tokens=128,
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the current weather for a city.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                        "required": ["city"],
+                    },
+                },
+            }
+        ],
+        messages=[{"role": "user", "content": "What is the weather in San Francisco? Use the get_weather tool."}],
+    )
+    assert resp.model == REAL_MODEL
+    tool_calls = resp.choices[0].message.tool_calls
+    assert tool_calls, f"no tool_calls in translated response: {resp.choices[0].message!r}"
+    assert tool_calls[0].function.name == "get_weather"
+    assert isinstance(json.loads(tool_calls[0].function.arguments), dict)
