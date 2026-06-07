@@ -247,6 +247,7 @@ func TestActionTypes_BlankImpl(t *testing.T) {
 		want string
 	}{
 		{"changeProvider", rules.ChangeProviderAction{}, "changeProvider"},
+		{"translate", rules.TranslateAction{}, "translate"},
 		{"changeModelName", rules.ChangeModelNameAction{}, "changeModelName"},
 		{"changeUrl", rules.ChangeUrlAction{}, "changeUrl"},
 		{"changeApiKey", rules.ChangeApiKeyAction{}, "changeApiKey"},

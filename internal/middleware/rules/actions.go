@@ -54,6 +54,8 @@ func applyAction(
 	switch a := act.(type) {
 	case *contractsrules.ChangeProviderAction:
 		return applyChangeProvider(*a, state)
+	case *contractsrules.TranslateAction:
+		return applyTranslate(*a, state)
 	case *contractsrules.ChangeModelNameAction:
 		return applyChangeModelName(*a, state, body)
 	case *contractsrules.ChangeUrlAction:
@@ -94,6 +96,26 @@ func applyChangeProvider(a contractsrules.ChangeProviderAction, state *MutableSt
 		return contractsrules.Outcome{}, fmt.Errorf("rules: changeProvider: %w", errEmptyValue)
 	}
 	state.Provider = v
+	return contractsrules.Outcome{}, nil
+}
+
+// applyTranslate marks the request for cross-provider translation. It records
+// the inbound protocol in SourceProtocol the first time so the response leg
+// knows what to translate the upstream reply back into, then overwrites
+// Protocol with the target so the destination builder resolves the upstream
+// endpoint under the target protocol. A second translate in the same chain
+// only moves the target; the recorded source is never overwritten. The
+// destination builder treats target == source as a no-op and is the sole site
+// that fails closed when no translator is registered for the pair.
+func applyTranslate(a contractsrules.TranslateAction, state *MutableState) (contractsrules.Outcome, error) {
+	target := strings.TrimSpace(a.TargetProtocol)
+	if target == "" {
+		return contractsrules.Outcome{}, fmt.Errorf("rules: translate: %w", errEmptyValue)
+	}
+	if state.SourceProtocol == "" {
+		state.SourceProtocol = state.Protocol
+	}
+	state.Protocol = target
 	return contractsrules.Outcome{}, nil
 }
 

@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -68,6 +69,57 @@ func (a *ChangeProviderAction) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a ChangeProviderAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
+// TranslateAction marks the request for cross-provider protocol translation:
+// the inbound request (in its source protocol) is rewritten to TargetProtocol
+// on the way upstream, and the upstream response is translated back to the
+// source protocol on the way out. Non-terminating and orthogonal to
+// changeProvider — translate alone retargets the dialect on the same provider
+// (a multi-protocol backend speaks several), changeProvider alone moves
+// provider at the same dialect, and the two compose for move-and-translate.
+//
+// The destination builder is the single site that detects source != target and
+// attaches the registered translator; an undeclared protocol mismatch (a
+// mismatch with no translate action) is a resolution error, never a silent
+// passthrough. Translation is never inferred — multi-protocol backends make
+// inference ambiguous, so it must be declared here.
+type TranslateAction struct {
+	// Type is the polymorphic discriminator; always "translate".
+	Type string `yaml:"type" json:"type"`
+
+	// TargetProtocol is the upstream wire protocol to translate the request
+	// into (e.g. "chat", "messages"). Must be a protocol the resolved provider
+	// serves and for which a translator from the source protocol is
+	// registered — both cross-checked fail-closed at destination resolution;
+	// only emptiness is rejected at config load.
+	TargetProtocol string `yaml:"targetProtocol" json:"target_protocol"`
+
+	models.DynamicProperties `yaml:",inline"`
+}
+
+// ActionType returns the "translate" discriminator.
+func (TranslateAction) ActionType() string { return "translate" }
+
+func (TranslateAction) isAction() {}
+
+// UnmarshalJSON routes unknown fields through DynamicProperties.
+func (a *TranslateAction) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, a)
+}
+
+// MarshalJSON merges DynamicProperties.Extra back into the wire payload.
+func (a TranslateAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
+// validate rejects an empty TargetProtocol at config load. The deeper
+// cross-references — provider serves the protocol, and a translator exists for
+// the source->target pair — need provider and registry context and are
+// enforced fail-closed when the destination is resolved.
+func (a *TranslateAction) validate() error {
+	if strings.TrimSpace(a.TargetProtocol) == "" {
+		return ErrEmptyTranslateTarget
+	}
+	return nil
+}
 
 // ChangeModelNameAction rewrites the model name in the request body.
 type ChangeModelNameAction struct {
@@ -373,6 +425,7 @@ var actionRegistry = models.PolymorphicRegistry[Action]{
 	DiscriminatorField: "type",
 	Factories: map[string]func() Action{
 		"changeProvider":      func() Action { return &ChangeProviderAction{} },
+		"translate":           func() Action { return &TranslateAction{} },
 		"changeModelName":     func() Action { return &ChangeModelNameAction{} },
 		"changeUrl":           func() Action { return &ChangeUrlAction{} },
 		"changeApiKey":        func() Action { return &ChangeApiKeyAction{} },
