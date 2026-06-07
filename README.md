@@ -1,6 +1,12 @@
+<div align="center">
+
+<img src="web/public/sluice.svg" alt="Sluice logo" width="104" height="104" />
+
 # sluice-gateway
 
 **One endpoint in front of every LLM provider — with the policy, observability, and durability your platform team actually needs.**
+
+</div>
 
 Sluice is a slim, fast AI provider gateway in Go. Point your SDKs at a single base URL and it routes to OpenAI, Anthropic, and Google Gemini — swapping in upstream credentials, applying per-tenant policy (auth, rules, resilience), translating between provider dialects, emitting GenAI-grade telemetry, and spooling an auditable record of every request to durable storage. All without ever blocking the request path or mangling a payload it doesn't understand.
 
