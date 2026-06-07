@@ -321,6 +321,13 @@ type ErrorEvent struct {
 	// Error describes the upstream error.
 	Error StreamError `json:"error"`
 
+	// RequestID is Anthropic's unique request identifier (prefixed
+	// "req_"), surfaced in error response bodies as request_id and via the
+	// request-id HTTP response header. Carried here so streaming error
+	// events that include it round-trip; empty when absent.
+	// Ref: https://docs.anthropic.com/en/api/errors
+	RequestID string `json:"request_id,omitempty"`
+
 	models.DynamicProperties
 }
 

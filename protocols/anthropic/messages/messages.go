@@ -197,6 +197,13 @@ func (m *Message) SetContentBlocks(blocks []ContentBlock) error {
 // Tool describes a callable tool exposed to the model on a MessagesRequest.
 // Unknown fields round-trip via the embedded DynamicProperties.
 type Tool struct {
+	// Type identifies an Anthropic-defined (pre-built) tool by its
+	// versioned discriminator (e.g. "web_search_20250305",
+	// "computer_20241022", "tool_search_tool_regex"). Omitted for custom
+	// tools defined purely by Name + InputSchema.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use
+	Type string `json:"type,omitempty"`
+
 	// Name is the tool identifier the model invokes when calling this
 	// tool.
 	Name string `json:"name"`
@@ -209,6 +216,13 @@ type Tool struct {
 	// arguments. Kept raw so callers build schemas without going through
 	// a typed schema model.
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+
+	// MaxUses caps how many times the model may invoke this tool within a
+	// single request. Primarily used with Anthropic server tools
+	// (web_search, code_execution, web_fetch, tool_search) to bound cost;
+	// nil leaves the limit unset.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+	MaxUses *int `json:"max_uses,omitempty"`
 
 	// CacheControl marks the tool definition as eligible for prompt
 	// caching at the configured tier.
@@ -313,14 +327,21 @@ func (b *SystemBlock) UnmarshalJSON(data []byte) error { return models.Unmarshal
 // resulting object.
 func (b SystemBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
 
-// OutputConfig carries Anthropic output controls on a MessagesRequest. Only
-// the reasoning-effort hint is modelled; other controls (e.g. a structured-
-// output "format" block) round-trip via the embedded DynamicProperties until
-// a captured sample justifies typing them.
+// OutputConfig carries Anthropic output controls on a MessagesRequest:
+// the reasoning-effort hint and the structured-output Format block. Any
+// further controls Anthropic ships round-trip via the embedded
+// DynamicProperties until a captured sample justifies typing them.
 type OutputConfig struct {
 	// Effort is the reasoning-effort hint ("low", "medium", "high",
 	// "xhigh", "max").
 	Effort string `json:"effort,omitempty"`
+
+	// Format constrains the model's output to a structured shape — the GA
+	// successor to the deprecated top-level output_format. Currently
+	// carries {"type":"json_schema","schema":{...}} for JSON-schema-
+	// constrained output. Nil leaves output unconstrained.
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+	Format *OutputFormat `json:"format,omitempty"`
 
 	models.DynamicProperties
 }
@@ -332,6 +353,31 @@ func (o *OutputConfig) UnmarshalJSON(data []byte) error { return models.Unmarsha
 // MarshalJSON encodes o and merges DynamicProperties.Extra back into the
 // resulting object.
 func (o OutputConfig) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(o) }
+
+// OutputFormat is the structured-output constraint carried by
+// OutputConfig.Format. Type selects the constraint kind (currently
+// "json_schema") and Schema carries the JSON-Schema document the output must
+// satisfy; Schema is kept raw so an arbitrary schema round-trips without a
+// typed schema model. Unknown fields round-trip via the embedded
+// DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+type OutputFormat struct {
+	// Type is the constraint kind, currently always "json_schema".
+	Type string `json:"type"`
+
+	// Schema is the JSON-Schema document the output must conform to.
+	Schema json.RawMessage `json:"schema,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into f, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (f *OutputFormat) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, f) }
+
+// MarshalJSON encodes f and merges DynamicProperties.Extra back into the
+// resulting object.
+func (f OutputFormat) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(f) }
 
 // CacheControl is the prompt-caching hint attached to system blocks, tools,
 // and content blocks. Unknown fields round-trip via the embedded

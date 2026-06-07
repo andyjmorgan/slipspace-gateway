@@ -12,6 +12,7 @@ func FuzzMessagesRequestUnmarshal(f *testing.F) {
 		[]byte(`{"max_tokens":1,"messages":[{"content":[{"type":"future","x":1}],"role":"user"}],"model":"m","metadata":{"user_id":"u","extra":1}}`),
 		[]byte(`{"future":"keep","max_tokens":1,"messages":[{"content":"hi","role":"user"}],"model":"m","system":[{"text":"s","type":"text"}]}`),
 		[]byte(`{"max_tokens":1,"messages":[{"content":"hi","role":"user"}],"model":"m","output_config":{"effort":"xhigh","format":{"schema":{"type":"object"},"type":"json_schema"}}}`),
+		[]byte(`{"max_tokens":1,"messages":[{"content":"hi","role":"user"}],"model":"m","tools":[{"max_uses":3,"name":"web_search","type":"web_search_20250305"}]}`),
 		[]byte(`{}`),
 	}
 	for _, s := range seeds {
@@ -48,6 +49,7 @@ func FuzzMessagesResponseUnmarshal(f *testing.F) {
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"future","p":1}],"usage":{"input_tokens":1,"output_tokens":1}}`),
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":1,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"output_tokens_details":{"thinking_tokens":0},"inference_geo":"not_available"}}`),
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"tool_use","id":"t1","name":"f","input":{},"caller":{"type":"direct"}}],"stop_reason":"tool_use","stop_details":null,"context_management":{"applied_edits":[]},"usage":{"input_tokens":1,"output_tokens":1}}`),
+		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"text","text":"hi","citations":[{"type":"web_search_result_location","cited_text":"c","url":"https://e.com","title":"T","encrypted_index":"z"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`),
 	}
 	for _, s := range seeds {
 		f.Add(s)
