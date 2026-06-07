@@ -65,6 +65,8 @@ configurations:
 
     rule_names:
       - tag-k3s-agentling
+      - gpt-oss-chat
+      - gpt-oss-from-messages
 
     tags:
       tier: production
@@ -174,6 +176,34 @@ rules:
       valuePattern: chat
       caseInsensitive: true
     actions:
+      - type: translate
+        targetProtocol: chat
+    behavior: continue
+
+  # gpt-oss smoke-test models (production config). gpt-oss (Ollama, gpt-oss:20b)
+  # serves chat/responses/messages natively and reasons + does tools, so it is a
+  # self-validating oracle for translation. Both fake models resolve via the
+  # existing `gpt-oss*` bindings; the rules rewrite the body model to the real
+  # gpt-oss:20b (and translate for the messages path). See
+  # test/smoke/test_gptoss_translate.py.
+  - name: gpt-oss-chat
+    condition:
+      type: modelName
+      operator: Equals
+      expectedModelName: gpt-oss-chat
+    actions:
+      - type: changeModelName
+        newModelName: "gpt-oss:20b"
+    behavior: continue
+
+  - name: gpt-oss-from-messages
+    condition:
+      type: modelName
+      operator: Equals
+      expectedModelName: gpt-oss-from-messages
+    actions:
+      - type: changeModelName
+        newModelName: "gpt-oss:20b"
       - type: translate
         targetProtocol: chat
     behavior: continue
