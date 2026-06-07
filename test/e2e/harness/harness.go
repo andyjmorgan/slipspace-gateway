@@ -3,6 +3,7 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -214,7 +216,12 @@ func (h *Harness) tryStartMockLLM(t *testing.T, repoRoot string) error {
 		return fmt.Errorf("free port for mockllm: %w", err)
 	}
 
-	cmd := exec.Command("go", "run", "./cmd/mockllm", "--port", strconv.Itoa(port)) //nolint:gosec // fixed argv, repo-controlled
+	bin, err := mockllmBinary(repoRoot)
+	if err != nil {
+		return fmt.Errorf("build mockllm: %w", err)
+	}
+
+	cmd := exec.Command(bin, "--port", strconv.Itoa(port)) //nolint:gosec // bin is a repo-built binary, fixed argv
 	cmd.Dir = repoRoot
 	cmd.Stdout = newTestLogWriter(t, "mockllm")
 	cmd.Stderr = newTestLogWriter(t, "mockllm")
@@ -238,6 +245,18 @@ func (h *Harness) tryStartMockLLM(t *testing.T, repoRoot string) error {
 		return fmt.Errorf("mockllm did not become ready on port %d: %w", port, err)
 	}
 
+	// Same freePort impostor guard as the gateway: a concurrent harness on
+	// the same picked port can answer /control/state with its own 200 while
+	// our mockllm exits from the bind collision. A staged-then-fooled mockllm
+	// is the worst case — the gateway forwards to the impostor, whose pool
+	// lacks our canned responses, surfacing as "no canned response" 404s. If
+	// our process exited just after readiness, re-pick a port (the caller's
+	// retry loop handles the returned error).
+	if subprocessExited(done, readinessConfirm) {
+		stopProcess(cmd, done)
+		return fmt.Errorf("mockllm exited just after readiness on port %d (impostor likely answered the probe)", port)
+	}
+
 	h.mockllmCmd = cmd
 	h.mockllmDone = done
 	h.MockLLMURL = url
@@ -247,17 +266,62 @@ func (h *Harness) tryStartMockLLM(t *testing.T, repoRoot string) error {
 func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 	t.Helper()
 
+	// Spool root + config dir are port-independent, so materialize them
+	// once outside the retry loop.
+	spoolRoot, err := os.MkdirTemp("", "sluice-e2e-spool-*")
+	if err != nil {
+		t.Fatalf("harness: tmp spool: %v", err)
+	}
+	h.spoolRoot = spoolRoot
+
+	configDir, err := h.materializeConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("harness: materialize config: %v", err)
+	}
+	h.configDir = configDir
+
+	// freePort hands the gateway subprocess a port we listened-on-0 then
+	// closed, leaving a TOCTOU window: a concurrently-running e2e package's
+	// harness (its capture httptest.Server or its own gateway/admin/prom
+	// listeners) can grab one of our three ports before the subprocess
+	// binds it, and the gateway then dies with "address already in use".
+	// startMockLLM already retries this exact race; the gateway path used
+	// to t.Fatalf on the first collision (issue #135). Retry with fresh
+	// ports on a bind collision, fail fast on any other startup error so a
+	// genuine config/boot failure still surfaces immediately.
+	const maxAttempts = 4
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		retryable, err := h.tryStartGateway(t, repoRoot, configDir)
+		if err == nil {
+			return
+		}
+		if !retryable || attempt == maxAttempts {
+			t.Fatalf("harness: gateway did not become ready (attempt %d/%d): %v", attempt, maxAttempts, err)
+		}
+		t.Logf("harness: gateway start attempt %d/%d hit a port collision, retrying with fresh ports: %v", attempt, maxAttempts, err)
+	}
+}
+
+// tryStartGateway allocates a fresh set of ports, starts the gateway
+// subprocess, and blocks until it reports ready. It returns (retryable,
+// err): retryable is true only when the subprocess died from a port-bind
+// collision, which the caller resolves by re-picking ports. Any other
+// failure (config error, boot panic) returns retryable=false so it surfaces
+// without burning the retry budget.
+func (h *Harness) tryStartGateway(t *testing.T, repoRoot, configDir string) (retryable bool, err error) {
+	t.Helper()
+
 	gwPort, err := freePort()
 	if err != nil {
-		t.Fatalf("harness: alloc gateway port: %v", err)
+		return false, fmt.Errorf("alloc gateway port: %w", err)
 	}
 	promPort, err := freePort()
 	if err != nil {
-		t.Fatalf("harness: alloc prometheus port: %v", err)
+		return false, fmt.Errorf("alloc prometheus port: %w", err)
 	}
 	adminPort, err := freePort()
 	if err != nil {
-		t.Fatalf("harness: alloc admin port: %v", err)
+		return false, fmt.Errorf("alloc admin port: %w", err)
 	}
 	h.gatewayBindPort = gwPort
 	h.promBindPort = promPort
@@ -271,27 +335,35 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 		h.AdminURL = fmt.Sprintf("http://127.0.0.1:%d/admin", adminPort)
 	}
 
-	spoolRoot, err := os.MkdirTemp("", "sluice-e2e-spool-*")
-	if err != nil {
-		t.Fatalf("harness: tmp spool: %v", err)
+	// admin.yaml bakes in the admin bind port (gateway + prometheus ports
+	// go via env), so it must be re-written with this attempt's freshly
+	// allocated port. materializeConfig wrote it once before any port was
+	// picked; re-emit it here so a retry's new admin port actually lands in
+	// the config the subprocess reads.
+	if err := h.writeAdminYAML(configDir); err != nil {
+		return false, fmt.Errorf("write admin.yaml: %w", err)
 	}
-	h.spoolRoot = spoolRoot
 
-	configDir, err := h.materializeConfig(repoRoot)
+	// cmd.Wait's error is just "exit status 1"; the actual "address already
+	// in use" line goes to the subprocess's stderr. Watch both streams for
+	// that signature so the caller can tell a port collision (retry with
+	// fresh ports) from a genuine boot failure (fail fast). One shared flag,
+	// two watchers — keeping a testLogWriter per stream avoids racing their
+	// line buffers across stdout/stderr.
+	var collided atomic.Bool
+	bin, err := gatewayBinary(repoRoot)
 	if err != nil {
-		t.Fatalf("harness: materialize config: %v", err)
+		return false, fmt.Errorf("build gateway: %w", err)
 	}
-	h.configDir = configDir
-
-	cmd := exec.Command("go", "run", "./cmd/gateway")
+	cmd := exec.Command(bin) //nolint:gosec // bin is a repo-built binary, no args
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(), h.gatewayEnv(configDir)...)
-	cmd.Stdout = newTestLogWriter(t, "gateway")
-	cmd.Stderr = newTestLogWriter(t, "gateway")
+	cmd.Stdout = &portCollisionWatcher{w: newTestLogWriter(t, "gateway"), flag: &collided}
+	cmd.Stderr = &portCollisionWatcher{w: newTestLogWriter(t, "gateway"), flag: &collided}
 	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("harness: start gateway: %v", err)
+		return false, fmt.Errorf("start gateway: %w", err)
 	}
 
 	done := make(chan struct{})
@@ -311,7 +383,7 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 	// default <500 so a colliding capture server (202) can't fool us.
 	if err := waitForHTTP(h.HTTP, h.GatewayURL+"/healthz", startupTimeout, done, exactly(200)); err != nil {
 		stopProcess(cmd, done)
-		t.Fatalf("harness: gateway did not become ready: %v", err)
+		return collided.Load(), fmt.Errorf("gateway did not become ready: %w", err)
 	}
 
 	if h.opts.AdminEnabled {
@@ -320,9 +392,81 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 		// reject anything else; a 202 would mean a port collision.
 		if err := waitForHTTP(h.HTTP, h.AdminURL+"/api/v1/auth/me", startupTimeout, done, oneOf(200, 401)); err != nil {
 			stopProcess(cmd, done)
-			t.Fatalf("harness: admin listener did not become ready: %v", err)
+			return collided.Load(), fmt.Errorf("admin listener did not become ready: %w", err)
 		}
 	}
+
+	// Guard the freePort TOCTOU across all three gateway listeners. Two
+	// distinct failure shapes, both invisible to the readiness probes:
+	//
+	//   - Main-port impostor: a concurrent harness holding our picked gateway
+	//     port answers /healthz with its own 200, masking that OUR gateway
+	//     lost the bind race and exited. Admin-enabled tests catch this (their
+	//     admin probe hits our own, uncollided admin port and fails), but
+	//     admin-disabled tests only probe /healthz and would then talk to the
+	//     impostor — which forwards to the impostor's mockllm and surfaces as
+	//     "no canned response" 404s.
+	//   - Prometheus/admin collision: those listeners start in goroutines just
+	//     before the main server, and a prometheus bind failure is non-fatal —
+	//     the gateway stays up and serves /healthz, so the only evidence is the
+	//     "address already in use" line the watcher captured. Metrics-scraping
+	//     tests then fail because nothing is on the prometheus port.
+	//
+	// Give the listeners a brief window to surface a late bind failure, then
+	// retry with fresh ports if any listener collided (collided is reliable:
+	// the goroutines log before/around the window, and once done closes
+	// cmd.Wait has drained the watchers) or if our process exited outright.
+	exited := subprocessExited(done, readinessConfirm)
+	switch {
+	case collided.Load():
+		stopProcess(cmd, done)
+		return true, errors.New("gateway hit a port-bind collision on a listener (gateway/prometheus/admin)")
+	case exited:
+		stopProcess(cmd, done)
+		return false, fmt.Errorf("gateway exited just after readiness: %w", h.gatewayExit())
+	}
+	return false, nil
+}
+
+// readinessConfirm is how long tryStartGateway/tryStartMockLLM wait after a
+// readiness probe passes to let the subprocess surface a late bind failure
+// before trusting the probe. Bounds the freePort impostor window; small
+// relative to startupTimeout so the happy-path tax is negligible.
+const readinessConfirm = 250 * time.Millisecond
+
+// subprocessExited reports whether done has closed within grace. Used to
+// confirm a just-probed subprocess is actually ours and still running.
+func subprocessExited(done <-chan struct{}, grace time.Duration) bool {
+	select {
+	case <-done:
+		return true
+	case <-time.After(grace):
+		return false
+	}
+}
+
+// gatewayExit reads the captured gateway exit error under its mutex.
+func (h *Harness) gatewayExit() error {
+	h.gatewayExitMu.Lock()
+	defer h.gatewayExitMu.Unlock()
+	return h.gatewayExitErr
+}
+
+// portCollisionWatcher tees a subprocess output stream to its wrapped
+// writer while flagging whether the stream ever carried an "address already
+// in use" bind error — the signature of the freePort TOCTOU race (issue
+// #135). flag is shared across the stdout and stderr watchers of one
+// subprocess; read it only after the subprocess has exited.
+type portCollisionWatcher struct {
+	w    io.Writer
+	flag *atomic.Bool
+}
+
+func (w *portCollisionWatcher) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "address already in use") {
+		w.flag.Store(true)
+	}
+	return w.w.Write(p)
 }
 
 // materializeConfig clones the policy + providers YAML from config-dev/ into
@@ -533,16 +677,95 @@ func oneOf(want ...int) func(int) bool {
 	}
 }
 
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+// Pre-built subprocess binaries, compiled once per test binary (the Once
+// is package-global, and each e2e package is its own `go test` process, so
+// this builds gateway + mockllm exactly once per package rather than once
+// per harness). Spawning `go run ./cmd/<x>` per test re-runs a compile+link
+// cycle every time; across the full 14-package parallel e2e suite that is
+// 100+ link steps competing for CPU, which is the dominant driver of the
+// startup/readiness flake family (#101/#135/#152/#156). Building once and
+// exec'ing the binary removes that contention.
+var (
+	gatewayBinOnce sync.Once
+	gatewayBinPath string
+	gatewayBinErr  error
+
+	mockllmBinOnce sync.Once
+	mockllmBinPath string
+	mockllmBinErr  error
+)
+
+// gatewayBinary returns the path to the once-built gateway binary.
+func gatewayBinary(repoRoot string) (string, error) {
+	gatewayBinOnce.Do(func() {
+		gatewayBinPath, gatewayBinErr = buildBinary(repoRoot, "gateway")
+	})
+	return gatewayBinPath, gatewayBinErr
+}
+
+// mockllmBinary returns the path to the once-built mockllm binary.
+func mockllmBinary(repoRoot string) (string, error) {
+	mockllmBinOnce.Do(func() {
+		mockllmBinPath, mockllmBinErr = buildBinary(repoRoot, "mockllm")
+	})
+	return mockllmBinPath, mockllmBinErr
+}
+
+// buildBinary compiles ./cmd/<pkg> to a per-package temp dir without the
+// race detector (matching the previous `go run` behaviour — the subprocess
+// was never race-instrumented) and returns the binary path. The temp dir is
+// unique per build so concurrent packages don't clobber a shared output.
+func buildBinary(repoRoot, pkg string) (string, error) {
+	dir, err := os.MkdirTemp("", "sluice-e2e-bin-*")
 	if err != nil {
-		return 0, err
+		return "", fmt.Errorf("mkdir tmp bin: %w", err)
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	if err := l.Close(); err != nil {
-		return 0, err
+	out := filepath.Join(dir, pkg)
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/"+pkg) //nolint:gosec // fixed argv, repo-controlled
+	cmd.Dir = repoRoot
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("build ./cmd/%s: %w: %s", pkg, err, stderr.String())
 	}
-	return port, nil
+	return out, nil
+}
+
+// claimedPorts records every port freePort has handed out in this test
+// process so it never hands out the same one twice. The resilience package
+// (and any package with many t.Parallel tests) allocates ports from many
+// goroutines at once; without this, two concurrent freePort calls in the
+// same process can read back the same kernel-recycled ephemeral port and
+// collide. This kills the intra-process arm of the freePort TOCTOU
+// (#135 family); the cross-process arm is handled by the readinessConfirm
+// impostor guard in tryStartGateway/tryStartMockLLM.
+var (
+	claimedPortsMu sync.Mutex
+	claimedPorts   = map[int]bool{}
+)
+
+func freePort() (int, error) {
+	const maxTries = 50
+	for try := 0; try < maxTries; try++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return 0, err
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		if err := l.Close(); err != nil {
+			return 0, err
+		}
+		claimedPortsMu.Lock()
+		seen := claimedPorts[port]
+		if !seen {
+			claimedPorts[port] = true
+		}
+		claimedPortsMu.Unlock()
+		if !seen {
+			return port, nil
+		}
+	}
+	return 0, errors.New("freePort: exhausted tries finding an unclaimed port")
 }
 
 // waitForHTTP polls url until the server responds with a status the
