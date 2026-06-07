@@ -25,7 +25,7 @@ The source of truth lives in [`internal/telemetry/store/`](../internal/telemetry
 
 > **Three feeds, one join key.** `correlation_id` ties a request's lean event row, its heavy captured payloads, and (indirectly, by label) its metric samples together.
 
-The telemetry service receives a request's observability from two independent channels — the **gen_ai OTLP trace feed** and the **gateway Record webhook feed** — that arrive in either order and converge onto one `request_events` row keyed by `correlation_id`. The bulky captured bodies and headers ride the Record webhook into `request_payloads`, one row per item. Numeric OTLP samples (counters, histograms, gauges) land in `metric_points` as a raw timeseries the dashboard aggregates.
+The telemetry service receives a request's observability from two independent channels — the **gen_ai OTLP trace feed** and the **gateway Record webhook feed** — that arrive in either order and converge onto one `request_events` row keyed by `correlation_id`. The bulky captured bodies and headers ride the Record webhook into `request_payloads`, one row per item. Numeric OTLP samples — **only number data points (gauges + sums/counters)** — land in `metric_points` as a raw timeseries the dashboard aggregates; histogram and summary metrics are skipped on ingest (see [`metric_points`](#metric_points)).
 
 There is no ORM and no schema-generation magic: the schema is forward-only SQL strings in [`internal/telemetry/store/migrations.go`](../internal/telemetry/store/migrations.go), applied by a hand-rolled runner ([`store.go::Migrate`](../internal/telemetry/store/store.go)) that records each step in `schema_migrations`.
 
@@ -126,10 +126,10 @@ The `detail` JSONB column carries the [`EventDetail`](../internal/telemetry/stor
   "tags": ["team-a", "prod"],
   "rules_fired": ["pin-haiku", "tag-team"],
   "rule_chain": [
-    { "name": "pin-haiku", "actions": ["changeModel"], "terminated": false, "error": "" }
+    { "name": "pin-haiku", "actions_applied": ["changeModel"] }
   ],
   "attempts": [
-    { "target": "anthropic-primary", "status": 200, "outcome": "success", "duration_ms": 412 }
+    { "target": "anthropic-primary", "status_code": 200, "outcome": "success", "duration_ms": 412 }
   ],
   "assembly_partial": false
 }
@@ -182,7 +182,9 @@ A secondary index `request_payloads_correlation (correlation_id)` backs the per-
 
 ## `metric_points`
 
-The raw OTLP numeric timeseries — counters, histograms, and gauges a gateway pushed over OTLP — that the dashboard aggregates into rate / token / latency panels. Defined in [`metrics.go::MetricPoint`](../internal/telemetry/store/metrics.go) and created by migration 1.
+The raw OTLP numeric timeseries — the **number data points** (gauges + sums/counters) a gateway pushed over OTLP — that the dashboard aggregates into rate / token panels. Defined in [`metrics.go::MetricPoint`](../internal/telemetry/store/metrics.go) and created by migration 1.
+
+Only number points land here. `PointsFromMetric` ([`ingest/otlp.go`](../internal/telemetry/ingest/otlp.go), lines 104-119) extracts a metric's gauge and sum data points; its `default:` branch returns nil, so **histogram and summary metrics are dropped on ingest**. The consequence: the gateway's latency *histograms* never reach `metric_points`. The dashboard's p50/p95/p99 latency comes from `request_events.latency_ms` via Postgres `percentile_cont`, not from a metric sample.
 
 | Column | Type | Default | Notes |
 |---|---|---|---|

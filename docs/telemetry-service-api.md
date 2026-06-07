@@ -109,10 +109,11 @@ messages/recent, events). Each maps to a column predicate in
 An absent or empty param adds no predicate on that dimension. All present
 predicates are AND-combined.
 
-> **Naming note.** The `protocol` filter and the `endpoints` facet are the same
-> `request_events.protocol` column; the SPA surfaces it as "endpoint". This is
-> intentional, not a bug — `store.Facets.Endpoints` documents the alias
-> (`facets.go`, lines 18-20).
+> **Naming note.** The `protocol` filter and the `protocols` facet are the same
+> `request_events.protocol` column, surfaced on the wire as `protocols`
+> (`store.Facets.Protocols`, `facets.go`, lines 18-20). If the SPA shows an
+> "endpoint" label for this column, that is a UI label only — the wire key is
+> `protocols`, and there is no `endpoints` field.
 
 ### Time window
 
@@ -235,13 +236,13 @@ live feed). Entry fields include the post-rule labels, status/latency, token
 counts, plus the inspector extras decoded from the event `detail` envelope:
 `tags`, `rules_matched` (`RuleHit{rule_name, actions_applied, terminated,
 error_message}`), and `attempts` (`AttemptHit{target, started_at, duration_ms,
-status_code, error, outcome}`) — see `mapEntry`, lines 340-395.
+status_code, error, outcome}`) — see `mapEntry`, lines 364-419.
 
 #### `GET /api/v1/messages/{id}/body`
 
 Handler `handleObsMessageBody` (lines 99-130). `{id}` is the correlation id.
 Returns `contracts/admin.MessageBodyDetail` assembled from the captured
-payloads (`mapBody`, lines 397-421): `request` / `response` bodies (+
+payloads (`mapBody`, lines 421-464): `request` / `response` bodies (+
 `*_total_bytes`), the assembled SSE `response_assembled`, decoded
 `request_headers` / `response_headers`, the bounded `gen_ai_content` lifted off
 the `request_events` row, and an `assembly_partial` flag when the streamed
@@ -260,13 +261,13 @@ values for the message browser:
   "providers": ["anthropic", "openai"],
   "models": ["claude-opus-4-1", "gpt-4o"],
   "configurations": ["team-a"],
-  "endpoints": ["chat_completions", "messages"],
+  "protocols": ["chat_completions", "messages"],
   "tags": ["billing", "internal"]
 }
 ```
 
 Each list is sorted, excludes the empty string, and renders as `[]` rather than
-`null` when empty (`nonNil`). `endpoints` is the `protocol` column (see the
+`null` when empty (`nonNil`). `protocols` is the `protocol` column (see the
 naming note above). `tags` is flattened out of every event's
 `detail->'tags'` (`store/facets.go::Facets`).
 

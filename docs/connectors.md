@@ -155,14 +155,14 @@ Cloud-storage-only fields (`bucket`, `region`, `endpoint_url`, `use_path_style`)
 The S3 connector partitions keys by instance and date so a per-pod, date-range scan against the bucket is cheap ([`internal/connector/s3/connector.go`](../internal/connector/s3/connector.go) `objectKey`):
 
 ```
-[<prefix>/]records/instance=<id>/date=YYYY-MM-DD/hour=HH/<unix_ns>-<seq>-<delivery_id>.ndjson.zst
+[<prefix>/]records/instance=<id>/date=YYYY-MM-DD/hour=HH/<unix_ns>-<seq>-<unix_ns>-<seq>.ndjson.zst
 ```
 
 - `<prefix>` — the optional `prefix:` field, slash-trimmed; omitted entirely when unset (the key then starts at `records/`).
 - `records/` — a fixed segment so audit objects share one root regardless of prefix.
 - `instance=<id>` — the gateway pod's stable `InstanceID` (`"local"` when unset). Concurrent replicas never collide because the instance partition differs.
-- `date=YYYY-MM-DD` / `hour=HH` — UTC, derived from the segment's earliest record timestamp (`TsMinNs`); the connector's clock is the fallback when a segment carries no timestamp.
-- `<unix_ns>-<seq>-<delivery_id>` — the segment filename stem. The on-disk segment is named `<unix_ns>-<seq>.ndjson.zst` ([`internal/spool/segment.go`](../internal/spool/segment.go) `segmentFilename`); the connector appends `-<delivery_id>` before the `.ndjson.zst` extension. `<delivery_id>` is the segment's stable delivery id, identical across upload retries, so a retried upload writes to the same key — S3's put-object semantics make this an idempotent overwrite, no duplicate object.
+- `date=YYYY-MM-DD` / `hour=HH` — UTC. These currently come from the **upload wall-clock time**, not the captured records. The connector prefers the segment's earliest record timestamp (`TsMinNs`) and falls back to its own clock when that is zero ([`internal/connector/s3/connector.go`](../internal/connector/s3/connector.go) `objectKey`) — but `TsMinNs` is not yet plumbed through: the spool builds every `SealedSegment` without setting it ([`internal/spool/track.go`](../internal/spool/track.go) `uploadOne`), so it is always zero and the clock fallback is always taken. The partition therefore reflects when the segment uploaded, which can lag record capture by up to a rotation window plus any retry delay.
+- `<unix_ns>-<seq>-<delivery_id>` — the **doubled** filename stem. The on-disk segment is named `<unix_ns>-<seq>.ndjson.zst` ([`internal/spool/segment.go`](../internal/spool/segment.go)); the connector strips the extension to recover the stem `<unix_ns>-<seq>`, then appends `-<delivery_id>` before re-adding `.ndjson.zst`. The catch: `<delivery_id>` **is** that same stem — `deliveryIDFromFilename` derives it by stripping `.ndjson.zst` off the filename ([`internal/spool/track.go`](../internal/spool/track.go)) — so the emitted object name repeats it verbatim: `<unix_ns>-<seq>-<unix_ns>-<seq>.ndjson.zst`. `<delivery_id>` is stable across upload retries, so a retried upload writes to the same key — S3's put-object semantics make this an idempotent overwrite, no duplicate object.
 
 ### s3 auth modes
 
@@ -233,10 +233,10 @@ Like s3, mixing cloud-storage fields with webhook fields aborts. The s3-specific
 Byte-for-byte the same shape as s3 ([`internal/connector/azureblob/connector.go`](../internal/connector/azureblob/connector.go) `blobName`):
 
 ```
-[<prefix>/]records/instance=<id>/date=YYYY-MM-DD/hour=HH/<unix_ns>-<seq>-<delivery_id>.ndjson.zst
+[<prefix>/]records/instance=<id>/date=YYYY-MM-DD/hour=HH/<unix_ns>-<seq>-<unix_ns>-<seq>.ndjson.zst
 ```
 
-The same partition fields and the same `<unix_ns>-<seq>-<delivery_id>` filename derivation as s3 (see [Object key layout](#object-key-layout) above). Azure Blob Storage's put-blob semantics make retried uploads idempotent overwrites. The upload streams the raw zstd segment via `UploadStream`; no `Content-Type` or blob metadata is set in v1.
+The same partition fields and the same doubled `<unix_ns>-<seq>-<delivery_id>` filename derivation as s3 ([`internal/connector/azureblob/connector.go`](../internal/connector/azureblob/connector.go) `blobName`) — including that the `date=` / `hour=` partition currently comes from the upload clock (`TsMinNs` is not plumbed through) and that `delivery_id` equals the segment stem, so the stem repeats in the blob name. See [Object key layout](#object-key-layout) above for the full explanation. Azure Blob Storage's put-blob semantics make retried uploads idempotent overwrites. The upload streams the raw zstd segment via `UploadStream`; no `Content-Type` or blob metadata is set in v1.
 
 ### azure_blob auth modes
 
@@ -335,6 +335,8 @@ There is no segment lifecycle, so there is no `uploading/` → `deadletter/` sta
 | queue full at `Enqueue` time | Dropped before the worker pool ever sees it. Bumps the `dropped` counter (distinct from `failed`). |
 
 `dropped`, `sent`, and `failed` are exposed as `Pusher.Dropped()` / `Sent()` / `Failed()` for the gateway's own telemetry meters. Because every non-success path just drops, webhook delivery is strictly at-most-once and lossy under pressure — by design, so the request path never stalls on a slow or wedged receiver.
+
+The worker pool and queue use built-in defaults ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go)): **2** workers drain a bounded channel of **1024** records, with a **5 s** per-push timeout fallback (in practice overridden by the connector's required `timeout_ms`). The `dropped` counter bumps whenever `Enqueue` finds those 1024 slots full, so the buffer depth **is** the drop-on-full threshold — a receiver that can't keep up with the inbound record rate starts shedding once 1024 records are in flight.
 
 ### SSRF guard
 

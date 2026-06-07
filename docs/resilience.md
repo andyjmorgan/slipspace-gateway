@@ -385,14 +385,14 @@ Each request emits one [`Record`](../contracts/connector/record.go) per matched 
   "attempts": [
     {
       "target": "qwen-ollama",
-      "started_at": "2025-05-22T13:47:12Z",
+      "started_at_ns": 1747921632000000000,
       "duration_ms": 480,
-      "status_code": 503,
-      "outcome": "failure_status"
+      "outcome": "transport_error",
+      "error": "dial tcp 10.0.0.5:11434: connect: connection refused"
     },
     {
       "target": "qwen-ollama-standalone",
-      "started_at": "2025-05-22T13:47:12.480Z",
+      "started_at_ns": 1747921632480000000,
       "duration_ms": 760,
       "status_code": 200,
       "outcome": "success"
@@ -400,6 +400,15 @@ Each request emits one [`Record`](../contracts/connector/record.go) per matched 
   ]
 }
 ```
+
+Per-attempt fields ([`contracts/connector/record.go`](../contracts/connector/record.go) `Attempt`):
+
+- `target` — the target's provider name.
+- `started_at_ns` — the attempt's wall-clock start as an **int64 of nanoseconds since the Unix epoch** (same encoding as the record's `ts_ns`), not an RFC3339 string.
+- `duration_ms` — orchestrator-measured wall-clock duration in milliseconds; zero for `cb_blocked` entries.
+- `status_code` — the upstream-reported HTTP status; omitted (zero) on a transport error or a `cb_blocked` skip.
+- `error` — the transport-level error string, set (and emitted) only when the attempt failed before headers; omitted on the success and `failure_status` paths.
+- `outcome` — one of `success`, `failure_status`, `transport_error`, `cb_blocked`.
 
 `policy_ref` and `attempts` are omitted for single-shot requests (single-provider bindings / `ModeNone`), so the wire shape for non-orchestrated traffic remains stable.
 

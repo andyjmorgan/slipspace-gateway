@@ -157,7 +157,7 @@ Sign and POST a record by hand (the gateway secret is `s3cr3t`, the gateway id i
 `edge-1`):
 
 ```bash
-BODY='{"correlation_id":"req-abc123","configuration":"default","provider":"anthropic","model":"claude-sonnet-4-5","endpoint":"messages","request":{"method":"POST"},"response":{"status":200}}'
+BODY='{"correlation_id":"req-abc123","configuration":"default","provider":"anthropic","model":"claude-sonnet-4-5","protocol":"messages","request":{"method":"POST"},"response":{"status":200}}'
 
 SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac 's3cr3t' -hex | sed 's/^.*= //')
 
