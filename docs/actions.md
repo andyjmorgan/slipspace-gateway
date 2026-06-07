@@ -12,7 +12,8 @@ For the predicate side of the engine, see [`docs/rules.md`](rules.md). For the r
 2. [Terminating vs non-terminating](#terminating-vs-non-terminating)
 3. [What an action can mutate](#what-an-action-can-mutate)
 4. [`changeProvider`](#changeprovider)
-5. [`changeModelName`](#changemodelname)
+5. [`translate`](#translate)
+6. [`changeModelName`](#changemodelname)
 6. [`changeUrl`](#changeurl)
 7. [`changeApiKey`](#changeapikey)
 8. [`setHeader`](#setheader)
@@ -87,6 +88,7 @@ type Outcome struct {
 | Action | Terminating? | Discriminator |
 |---|---|---|
 | `changeProvider` | no | `changeProvider` |
+| `translate` | no | `translate` |
 | `changeModelName` | no | `changeModelName` |
 | `changeUrl` | no | `changeUrl` |
 | `changeApiKey` | no | `changeApiKey` |
@@ -129,6 +131,8 @@ Actions write through a [`rules.MutableState`](../internal/middleware/rules/stat
 | Field | Type | Written by | Consumed by the v2 data plane? |
 |---|---|---|---|
 | `Provider` | `string` | `changeProvider` | **No (overwritten).** Read at [`handler.go`](../cmd/gateway/handler.go) line 102, but the resilience orchestrator rewrites it per attempt after rules run — see [`changeProvider`](#changeprovider). |
+| `Protocol` | `string` | `translate` | **Yes (wired).** Overwritten with the target protocol; the final handler resolves the upstream endpoint on it — see [`translate`](#translate). |
+| `SourceProtocol` | `string` | `translate` | **Yes (wired).** Records the inbound protocol so the response leg translates back — see [`translate`](#translate). |
 | `UpstreamURL` | `*url.URL` | `changeUrl` | **No (inert).** `buildDestination` sets `dest.UpstreamURL` from the resolved target; `applyStateOverlays` never reads this field — see [`changeUrl`](#changeurl). |
 | `UpstreamCredentialOverride` | `*string` | `changeApiKey` | **Yes (wired).** Read by `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), the single credential mint site, which honours it over the auth mode: a literal key is minted with the post-rule provider's header format, the `useSluiceKey` sentinel (empty string) forwards the inbound `Authorization` verbatim — see [`changeApiKey`](#changeapikey). |
 | `OutgoingHeaders` | `http.Header` | `setHeader` | Yes — layered onto the destination by `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 278-283). |
@@ -185,6 +189,45 @@ The model-keyed redirect pattern (a `claude-*` model posted to an OpenAI-compat 
 
 - Do not reach for `changeProvider` to redirect a request — it is inert for routing in v2. Use a binding.
 - Cross-provider failover is configured as a resilience **group** binding (multiple targets), not as a rule pairing `changeProvider` with `changeModelName`. See [resilience.md](resilience.md) for the per-target form.
+
+---
+
+## `translate`
+
+Marks the request for **cross-provider protocol translation**. Non-terminating. Writes `state.SourceProtocol` (the inbound protocol, recorded once) and overwrites `state.Protocol` with the target. Implemented in `internal/translate/`; see the "Cross-Provider Translation" design note.
+
+An inbound request in one protocol (e.g. Anthropic Messages on `/v1/messages`) is rewritten to `targetProtocol` on the way upstream and the upstream response is translated back on the way out. Orthogonal to and composable with `changeProvider`: `translate` alone re-dialects on the same provider (a multi-protocol backend), `changeProvider` alone moves provider at the same dialect, and the two together move *and* translate.
+
+Shipped pair (v1.2): `messages` → `chat` (Anthropic Messages ↔ OpenAI Chat), non-streaming, streaming, tool calls, and error responses. Other pairs are registry-ready but unimplemented; an undeclared/unsupported pair **fails closed** (501), never silently forwarded.
+
+### YAML
+
+```yaml
+- type: translate
+  targetProtocol: chat
+```
+
+### Fields
+
+| Field | YAML | JSON | Required | Notes |
+|---|---|---|---|---|
+| `Type` | `type` | `type` | yes | Discriminator; must be `translate`. |
+| `TargetProtocol` | `targetProtocol` | `target_protocol` | yes | Upstream wire protocol to translate into (e.g. `chat`). Trimmed; empty rejected at config load. Provider-serves-protocol + translator-registered are validated fail-closed at destination resolution. |
+
+### What it mutates
+
+- `state.SourceProtocol` = the inbound protocol, recorded the first time `translate` runs (so the response leg knows what to translate back into).
+- `state.Protocol` = `TargetProtocol`, so the destination builder resolves the upstream endpoint on the target protocol (invariant #7's spirit — re-resolve on post-rule state). See `applyTranslate` in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go).
+
+### How the data plane translates
+
+The final handler resolves the endpoint on `state.Protocol`, fails closed (501) if no translator is registered for the `(source, target)` pair, then translates the outgoing request body (per resilience attempt). The forwarder's `ModifyResponse` hook translates the response — non-streaming bodies buffered, streaming bodies wrapped in a pull-based translating reader, and error responses (`>= 400`) mapped to the source protocol's error shape. Features with no target equivalent (e.g. `top_k`, `thinking`) are dropped, counted on `gateway.translation.field_drops.total`, and — when `SLUICE_TRANSLATE_LOSSY_HEADER` is on — listed on the `X-Sluice-Translation-Lossy` response header.
+
+### Gotchas
+
+- Translation is never inferred — a multi-protocol backend makes inference ambiguous, so it must be declared with this action. A protocol mismatch with no `translate` fails closed.
+- Streaming translation requires a stream-capable translator; non-stream-capable pairs reject a streaming request with 501.
+- Deferred (post-MVP): Gemini, mixed-protocol resilience groups, base-config auto-mapping.
 
 ---
 

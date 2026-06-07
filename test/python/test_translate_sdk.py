@@ -135,6 +135,28 @@ def test_translate_tool_use(gateway_url: str, mockllm_url: str) -> None:
     assert tool_uses[0].input == {"city": "SF"}
 
 
+def test_translate_error(gateway_url: str, mockllm_url: str) -> None:
+    # An OpenAI error on the chat endpoint must come back as a well-formed
+    # Anthropic error — the SDK parses status + envelope into a typed exception.
+    stage_response(
+        mockllm_url,
+        method="POST",
+        path="/v1/chat/completions",
+        status=429,
+        body={"error": {"message": "slow down", "type": "rate_limit_exceeded"}},
+    )
+
+    client = _xlate_client(gateway_url)
+    with pytest.raises(anthropic.RateLimitError) as exc:
+        client.messages.create(
+            model="claude-3-5-sonnet-latest",
+            max_tokens=16,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    # The SDK decoded the translated Anthropic error envelope.
+    assert "slow down" in str(exc.value)
+
+
 def test_translate_streaming(gateway_url: str, mockllm_url: str) -> None:
     # Mock returns a natural OpenAI Chat SSE stream.
     chunks = [
