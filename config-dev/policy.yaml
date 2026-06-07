@@ -41,6 +41,7 @@ configurations:
       - tag-anthropic-messages
       - tag-large-prompt
       - redact-emails
+      - translate-messages-to-chat
 
     tags:
       tier: dev
@@ -156,4 +157,23 @@ rules:
         headerName: X-Sluice-Redacted
         headerAction: Set
         headerValue: emails
+    behavior: continue
+
+  # Cross-provider translation, header-gated so it fires only for the
+  # wire-compat suite's explicit probe (x-sluice-translate: chat). An inbound
+  # Anthropic Messages request carrying that header is translated to the
+  # OpenAI Chat protocol and routed to anthropic's chat endpoint; the response
+  # is translated back to Messages. Header-gated to keep every other dev
+  # request (and the e2e harness) on the native path.
+  - name: translate-messages-to-chat
+    condition:
+      type: header
+      keyOperator: Equals
+      keyPattern: x-sluice-translate
+      valueOperator: Equals
+      valuePattern: chat
+      caseInsensitive: true
+    actions:
+      - type: translate
+        targetProtocol: chat
     behavior: continue
