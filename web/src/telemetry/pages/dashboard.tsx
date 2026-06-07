@@ -7,6 +7,7 @@ import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Segmented } from "@/components/atoms/segmented"
 import { LineChart } from "@/components/atoms/line-chart"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { Skeleton, SkeletonTiles, SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
 import {
   useDashboardSummary,
@@ -58,10 +59,34 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {state.status === "loading" && <Notice text="Loading dashboard…" />}
+      {state.status === "loading" && <DashboardSkeleton />}
       {state.status === "error" && <Notice text={`Failed to load dashboard: ${state.message}`} tone="err" />}
       {state.status === "ok" && <Body data={state.data} window={range} />}
     </div>
+  )
+}
+
+// DashboardSkeleton mirrors the above-the-fold layout — the six KPI tiles and
+// the two series panels — so the first load holds the page shape instead of
+// flashing a centered "Loading…". Background polls keep the prior data (the
+// fetch hook never reverts to "loading"), so this only ever shows on first load.
+function DashboardSkeleton() {
+  return (
+    <>
+      <SkeletonTiles count={6} className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+        {[0, 1].map((i) => (
+          <PanelCard key={i}>
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-[color:var(--border)]">
+              <Skeleton className="h-3.5 w-36" />
+            </div>
+            <div className="px-4 pt-3 pb-2">
+              <SkeletonBlock height={180} />
+            </div>
+          </PanelCard>
+        ))}
+      </div>
+    </>
   )
 }
 
@@ -134,7 +159,7 @@ function SeriesPanel({ title, sub, series, window, formatY }: { title: string; s
     <PanelCard>
       <PanelHead title={title} sub={sub} />
       <div className="px-4 pt-3 pb-2 min-h-[180px]">
-        {state.status === "loading" && <Center>Loading…</Center>}
+        {state.status === "loading" && <SkeletonBlock height={180} />}
         {state.status === "error" && <Center tone="err">{state.message}</Center>}
         {state.status === "ok" && state.data.series.length === 0 && <Center>No samples in window.</Center>}
         {state.status === "ok" && state.data.series.length > 0 && <LineChart series={state.data.series} height={180} formatY={formatY} />}
