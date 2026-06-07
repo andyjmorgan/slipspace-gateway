@@ -2,7 +2,7 @@
 
 The **telemetry service** is a standalone binary (`cmd/telemetry`, image `sluice-telemetry`) that one or more Sluice gateways report into. It is the central, Postgres-backed home for everything a fleet of gateways emits: the gen_ai OTLP spans, the `sluice.*` OTel meters, and the full per-request **Record** (request/response bodies, headers, rule chain, resilience attempts). It stitches those feeds together by `correlation_id` / `session_id` and serves an operator console — the same dashboard + message inspector the gateway's own admin console exposes, but fleet-wide and with full-history retention.
 
-It is deployed **separately** from the gateway, with its **own Postgres**. The gateway data plane never depends on it: if the telemetry service is down, the gateway keeps forwarding traffic (OTLP export and Record push are best-effort, fire-and-forget). The service never sits on a request path and never signs receipts — it only ever *consumes* telemetry. This is the reverse of the scrapped control plane it replaces.
+It is deployed **separately** from the gateway, with its **own Postgres**. The gateway data plane never depends on it: if the telemetry service is down, the gateway keeps forwarding traffic (OTLP export and Record push are best-effort, fire-and-forget). The service never sits on a request path and never signs receipts — it only ever *consumes* telemetry.
 
 This page is the operator overview. For the wire-level detail:
 
@@ -158,6 +158,8 @@ gateways:
 
 `content_max_bytes` is modelled as a `*int` so the loader can distinguish "unset" (take the `16384` default) from an explicit `0` (unlimited). `Config.ContentCap` (`config.go:125`) resolves the effective value, which the trace receiver treats as "keep the whole content" when `<= 0`.
 
+When a span's assembled gen_ai content exceeds the effective cap, the service stores **no** content for that request — only a marker `{"truncated": true, "original_bytes": N}` (`internal/telemetry/ingest/content.go`). So an over-cap request still appears in the console with its metadata intact, but its message bodies in the inspector are replaced by that marker. The full bodies are unaffected on the **Record** feed — they still land in `request_payloads` for audit/replay; the cap only bounds the console's convenience copy taken from OTLP spans.
+
 ### Validation
 
 `Config.Validate` (`config.go:135`) runs after defaults are applied and rejects, with a specific error, any config that would leave the service unable to do its job:
@@ -227,6 +229,7 @@ The telemetry service is a **separate deployable** from the gateway, with its **
   Before first run, replace the `REPLACE_WITH_BCRYPT_HASH` and `REPLACE_WITH_SHARED_SECRET` placeholders in `deploy/compose/telemetry.yaml`. The console + webhook land on `:8686`, OTLP gRPC on `:8687`.
 - **Postgres** — the service expects a dedicated database reachable via `postgres.dsn`. It owns its schema end-to-end through the embedded migration runner; no external migration tooling is required. The pool is a plain `pgxpool` (`store/store.go:87`).
 - **Probes** — wire `GET /healthz` to liveness and `GET /readyz` to readiness; `/readyz` returns `503` while Postgres is unreachable.
+- **Data lifecycle / retention** — the service has **no built-in retention or pruning**. Every ingested span, metric point, and Record persists in Postgres indefinitely; the store layer has no TTL or `DELETE` path. `request_payloads` (full request/response bodies, headers, and SSE rollups) is by far the heaviest table and grows with fleet traffic. Operators own retention: size the database for the expected volume, and prune out of band — e.g. a scheduled job deleting `request_events` / `request_payloads` / `metric_points` rows older than a chosen window by `observed_at` / `captured_at`. Lowering `content_max_bytes` bounds the console copy but **not** the Record bodies in `request_payloads`, so it is not a substitute for pruning. Plan disk before pointing a busy fleet at it.
 
 On the gateway side, point its OTLP exporter at `telemetry-host:8687` and configure a Record-push (webhook) destination at `https://telemetry-host:8686/api/v1/ingest/record` with the matching `gateways[].id` / `hmac_secret`. See [telemetry-webhook.md](telemetry-webhook.md) for the push contract and [observability.md](observability.md) for the gateway's OTLP export configuration.
 

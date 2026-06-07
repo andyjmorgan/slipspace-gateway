@@ -111,7 +111,23 @@ The lean, queryable per-request row — post-rule labels, outcome, token counts,
 | `detail` | `JSONB` | `NULL` | Record | Structured fleet detail (`{tags, rules_fired, rule_chain, attempts, …}`). |
 | `observed_at` | `TIMESTAMPTZ` | `now()` | both | When the event was observed; a zero value defaults to server `now()` so every replica shares one clock. |
 
-The `detail` JSONB column carries the [`EventDetail`](../internal/telemetry/store/events.go) envelope — the per-request inspector's source: post-rule `tags`, the flat `rules_fired` list, the ordered `rule_chain` ([`RuleChainEntry`](../internal/telemetry/store/events.go): name, actions applied, terminated, error), the resilience `attempts` ([`AttemptDetail`](../internal/telemetry/store/events.go): target, timing, status, outcome), and an `assembly_partial` flag for partially reconstructed streams.
+The `detail` JSONB column carries the [`EventDetail`](../internal/telemetry/store/events.go) envelope — the per-request inspector's source: post-rule `tags`, the flat `rules_fired` list, the ordered `rule_chain` ([`RuleChainEntry`](../internal/telemetry/store/events.go): name, actions applied, terminated, error), the resilience `attempts` ([`AttemptDetail`](../internal/telemetry/store/events.go): target, timing, status, outcome), and an `assembly_partial` flag for partially reconstructed streams. Concretely:
+
+```json
+{
+  "tags": ["team-a", "prod"],
+  "rules_fired": ["pin-haiku", "tag-team"],
+  "rule_chain": [
+    { "name": "pin-haiku", "actions": ["changeModel"], "terminated": false, "error": "" }
+  ],
+  "attempts": [
+    { "target": "anthropic-primary", "status": 200, "outcome": "success", "duration_ms": 412 }
+  ],
+  "assembly_partial": false
+}
+```
+
+Empty/absent on a row means the Record feed hasn't landed yet (the gen_ai OTLP half can arrive first). Query it with the JSONB operators — e.g. `WHERE detail->'tags' @> '["prod"]'` (GIN-indexed) or `jsonb_array_elements_text(detail->'rules_fired')` to unnest fired rules.
 
 ### Indexes
 
