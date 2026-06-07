@@ -37,10 +37,18 @@ type MutableState struct {
 
 	// Protocol is the resolved protocol under Provider (e.g. "chat",
 	// "messages"), or the passthrough family name for opaque requests.
-	// Initialised from selection. v1.0.1 actions do not write this
-	// directly; provider changes that need a different protocol are
-	// paired with a ChangeUrlAction the rule author writes explicitly.
+	// Initialised from selection. TranslateAction overwrites it with the
+	// target (upstream) protocol; other provider changes that need a
+	// different protocol pair with a ChangeUrlAction the rule author writes.
 	Protocol string
+
+	// SourceProtocol is the inbound protocol the request arrived in,
+	// recorded by TranslateAction the first time translation is requested so
+	// the response leg knows what to translate the upstream reply back into.
+	// Empty when no translate action has run. Translation is active only when
+	// SourceProtocol != "" AND SourceProtocol != Protocol — a translate whose
+	// target equals the source is a no-op the destination builder ignores.
+	SourceProtocol string
 
 	// MatchedPath is the un-prefixed accepted_paths value the router
 	// matched the inbound request to. Used by the destination builder

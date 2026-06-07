@@ -53,6 +53,7 @@ func TestAllActions_MarshalRoundTrip(t *testing.T) {
 	_ = hv
 	cases := []rules.Action{
 		&rules.ChangeProviderAction{Type: "changeProvider", NewProvider: "anthropic"},
+		&rules.TranslateAction{Type: "translate", TargetProtocol: "chat"},
 		&rules.ChangeModelNameAction{Type: "changeModelName", NewModelName: "gpt-4o-mini"},
 		&rules.ChangeUrlAction{Type: "changeUrl", NewURL: "https://api.example.com"},
 		&rules.ChangeApiKeyAction{Type: "changeApiKey", APIKey: "k", UseSluiceKey: true},

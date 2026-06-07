@@ -22,6 +22,11 @@ var ErrNoCondition = errors.New("rules: rule condition required")
 // ErrNoActions is returned when a RuleContract has no actions in its list.
 var ErrNoActions = errors.New("rules: rule must have at least one action")
 
+// ErrEmptyTranslateTarget is returned when a TranslateAction carries an empty
+// target_protocol. The destination builder cannot resolve a translator without
+// it, so the rule is rejected at config load rather than failing per-request.
+var ErrEmptyTranslateTarget = errors.New("rules: translate target protocol required")
+
 // ErrUnknownConditionType is reserved for future strict-mode validation that
 // rejects an unknown condition discriminator instead of falling back to
 // UnknownCondition.
