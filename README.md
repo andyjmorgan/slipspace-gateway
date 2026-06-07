@@ -1,15 +1,33 @@
 # sluice-gateway
 
-A slim, observable AI provider gateway in Go. Intercepts API calls to OpenAI, Anthropic, and Google Gemini, applies per-tenant policy (auth, rules, resilience, telemetry), and forwards to the upstream provider after credential substitution.
+**One endpoint in front of every LLM provider — with the policy, observability, and durability your platform team actually needs.**
 
-Two coexisting auth modes:
+Sluice is a slim, fast AI provider gateway in Go. Point your SDKs at a single base URL and it routes to OpenAI, Anthropic, and Google Gemini — swapping in upstream credentials, applying per-tenant policy (auth, rules, resilience), translating between provider dialects, emitting GenAI-grade telemetry, and spooling an auditable record of every request to durable storage. All without ever blocking the request path or mangling a payload it doesn't understand.
 
-- **Managed** — client uses a Sluice-issued key (`Authorization: Bearer sk_live_…`); gateway swaps in the upstream provider credentials before forwarding.
-- **Passthrough** — client uses their own upstream token (e.g., Claude Code OAuth); gateway picks the policy via `X-Sluice-Configuration: <name>` and forwards the `Authorization` header verbatim.
+It speaks the providers' **native wire protocols** (plus their OpenAI-compatible surfaces), streams token-for-token, and forwards unknown fields **byte-for-byte** so it never falls behind a provider's API.
 
-## Protocol surface
+---
 
-The gateway is keyed by **protocol, not by provider**. The inbound path identifies the wire shape (the *protocol*); the upstream provider is chosen separately by the matched configuration's bindings (protocol + model) and can be overridden by a `changeProvider` rule. There is no `/<provider>/…` URL prefix — clients send the bare provider-native path and point their SDK at a single gateway base URL. Path → protocol mapping lives in [`internal/selection/protocol.go::ProtocolForPath`](internal/selection/protocol.go).
+## Why Sluice
+
+| | |
+|---|---|
+| **One base URL, every provider** | Protocol-keyed routing — clients send the bare provider-native path; bindings pick the upstream by `(protocol, model)`. No `/<provider>/` prefixes, no per-provider clients. Streaming and non-streaming, OpenAI · Anthropic · Gemini. |
+| **High-fidelity passthrough** | Every model type carries `DynamicProperties`; every polymorphic block has an `Unknown*` fallback. Fields Sluice has never heard of round-trip to the upstream **intact**. The day a provider ships a new param, your callers get it — no gateway release required. |
+| **GenAI telemetry, done right** | OpenTelemetry meters (Prometheus scrape *and* OTLP push) plus `gen_ai.*` spans following the OTel GenAI semconv — tokens, latency, model, provider, cost dimensions. Optional, redacted prompt/response capture. |
+| **Durable, non-blocking audit spool** | End-of-request records buffer to a disk-backed `ndjson.zst` spool and ship out-of-band to S3, Azure Blob, or webhooks. The client **never** waits on backpressure — full ring or full disk drops on the floor and bumps a counter. |
+| **Rich rules engine** | Match on provider, protocol, model, header, tag, or body field (with AND/OR groups); act with `changeProvider`, `changeModelName`, `setHeader`, `addTag`, `rewriteField`, `translate`, `returnStatusCode`, `useResiliencePolicy`, and more. Edit rules **live** through the admin API — no restart. |
+| **Cross-provider translation** | Bidirectional **Anthropic Messages ↔ OpenAI Chat** — request, streaming + non-streaming response, tool calls, and errors — triggered by an explicit `translate` rule. Fail-closed on unsupported pairs, with a lossy-translation header and drop counter. |
+| **Resilience built in** | Per-policy **failover** and **weighted load-balancing** across providers, with a **circuit breaker** that sheds load from a flapping upstream and a recorded attempt log on every request. |
+| **Horizontally scalable** | Stateless data plane — run as many replicas as you like behind one Service. Per-pod spool PVCs, graceful drain (`/healthz` flips to 503 before shutdown so load balancers bleed off in flight), and clean multi-pod record semantics. |
+| **DevOps-friendly** | A single multi-arch image (amd64 + arm64) with the admin SPA baked in. Config is a directory of trusted YAML; servers tune via `SLUICE_*` env vars. Turnkey Docker Compose stacks, a CLI for key-gen and config validation, and a `/metrics` endpoint out of the box. |
+| **Admin console** | An embedded React SPA: live dashboard, config inspector, real-time message feed, and a visual rule editor — served from the binary, no separate deploy. |
+
+---
+
+## One endpoint, every provider
+
+The gateway is keyed by **protocol, not provider**. The inbound path identifies the wire shape; the matched configuration's bindings pick the upstream by `(protocol, model)`, and a `changeProvider` rule can override it. Clients point a vanilla provider SDK at one Sluice base URL — no URL prefixes, no bespoke client.
 
 | Protocol | Inbound path(s) | Wire shape |
 |---|---|---|
@@ -19,100 +37,104 @@ The gateway is keyed by **protocol, not by provider**. The inbound path identifi
 | `generate_content` | `/v1beta/models/{model}:generateContent` *(also `:streamGenerateContent`)* | Gemini native |
 | `embeddings` | `/v1/embeddings` *(also `/embeddings`)* | Embeddings (model rides in the body; routed via catch-all bindings) |
 
-Any path that does **not** match one of the generative protocols above (provider model-lists, Anthropic message batches, and other opaque surfaces) falls through to per-configuration **passthrough** matching, where a configuration's passthrough families claim the path by method + pattern and forward it verbatim. See [docs/routing.md](docs/routing.md) for the full selection algorithm.
+Anything that isn't a generative protocol (provider model-lists, Anthropic message batches, other opaque surfaces) falls through to per-configuration **passthrough** matching and is forwarded verbatim. See [docs/routing.md](docs/routing.md) for the full selection algorithm.
 
-[^compat]: Anthropic and Gemini both accept OpenAI-shaped `chat.completions` requests on the `chat` protocol but expect `Authorization: Bearer <key>` rather than their native `x-api-key` / `x-goog-api-key`. The gateway applies the right credential format automatically whenever `chat` traffic resolves onto one of those providers — whether through a binding or a model-keyed `changeProvider` rule. See [config-dev/policy.yaml](config-dev/policy.yaml) for a working redirect example.
+[^compat]: Anthropic and Gemini both accept OpenAI-shaped `chat.completions` requests on the `chat` protocol but expect `Authorization: Bearer <key>` rather than their native `x-api-key` / `x-goog-api-key`. Sluice applies the right credential format automatically whenever `chat` traffic resolves onto one of those providers. See [config-dev/policy.yaml](config-dev/policy.yaml) for a working redirect.
+
+## Two auth models, one policy bundle
+
+- **Managed** — the client uses a Sluice-issued key (`Authorization: Bearer sk_live_…`, or the provider-native `x-api-key` / `x-goog-api-key`); the gateway swaps in the real upstream credentials before forwarding. Your provider keys never leave the gateway.
+- **Passthrough (BYOK)** — the client brings its own upstream token (e.g. Claude Code OAuth); the gateway selects policy via an `X-Sluice-Identity` header and forwards the client's `Authorization` verbatim.
+
+Both resolve to a named **Configuration** — a reusable policy bundle of upstream credentials, bindings, rules, and resilience. Many keys can share one configuration. See [docs/auth.md](docs/auth.md).
+
+## High fidelity: it never drops a field
+
+Provider APIs move constantly, and a dropped field is a *silent* failure — you forward, the provider responds, the client gets something subtly wrong, and nothing logs. Sluice is built so that can't happen: every wire type embeds `DynamicProperties` and every polymorphic base has an `Unknown*` fallback, so any field the gateway doesn't model is preserved and forwarded unchanged in **both** directions. New provider params work the day they ship — no waiting on a Sluice release. This is a load-bearing invariant backed by golden round-trip tests, fuzzing on every `UnmarshalJSON`, and a reflection meta-test that fails the build if a new field lacks a JSON tag. See [docs/models.md](docs/models.md) and [docs/provider-models.md](docs/provider-models.md).
+
+## Rules engine
+
+Per-configuration rules evaluate in order and short-circuit on `behavior: exit`. Conditions match on `provider`, `protocol`, `modelName`, `header`, `tag`, or `bodyField`, nested freely in AND/OR `group`s. Actions transform the request or response:
+
+- **Route** — `changeProvider`, `changeModelName`, `changeUrl`, `changeApiKey`
+- **Shape** — `setHeader`, `appendQueryString`, `rewriteField` (set / remove / append), `addTag`
+- **Translate** — `translate` between provider dialects (below)
+- **Control** — `useResiliencePolicy`, `returnStatusCode`
+
+Rules can be created, updated, and deleted **live** through the admin write API (`POST/PUT/DELETE /admin/api/v1/config/rules`): the change is validated, persisted to `policy.yaml`, and published atomically, so in-flight requests see either the old or new rule set — never a torn mix. See [docs/rules.md](docs/rules.md) and [docs/actions.md](docs/actions.md).
+
+## Cross-provider translation
+
+Send an Anthropic Messages request and have it served by OpenAI — or the reverse — without your client knowing. Sluice ships **bidirectional Anthropic Messages ↔ OpenAI Chat** translation covering the request, the non-streaming **and** streaming response, tool calls, and error responses, triggered by an explicit `translate` rule action. It's **fail-closed** on undeclared or unsupported pairs, surfaces a flag-gated `X-Sluice-Translation-Lossy` header, and counts any dropped fields. Proven by a Go differential matrix plus the official OpenAI **and** Anthropic Python SDK wire-compat suites. See [docs/actions.md → `translate`](docs/actions.md#translate).
+
+## Resilience
+
+Group multiple providers behind a resilience policy and Sluice will keep traffic flowing when one degrades:
+
+- **Failover** — try targets in order until one succeeds.
+- **Weighted load-balance** — distribute across targets (latency-biased or strict weights).
+- **Circuit breaker** — trip a flapping upstream out of rotation and recover it automatically.
+
+Every request carries a recorded attempt log. See [docs/resilience.md](docs/resilience.md).
+
+## Observability + the central telemetry service
+
+Telemetry and reporting are kept as **separate channels** by design (a Grafana panel never reads audit records from S3):
+
+- **Metrics & traces** — OpenTelemetry meters exposed on a Prometheus `/metrics` scrape endpoint *and/or* pushed over OTLP, plus `gen_ai.*` spans following the OTel GenAI semantic conventions (tokens, latency, model, provider). Prompt/response content capture is optional, redacted, and size-capped.
+- **Audit records** — the full end-of-request envelope (bodies, headers, post-rule tags, fired-rule chain, resilience attempts) flows through the spool to your destinations.
+
+An optional **central telemetry service** (`cmd/telemetry`) ingests gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from a whole fleet of gateways into Postgres and serves a unified operator console — keeping the two channels physically separate even as it converges them per request. See [docs/observability.md](docs/observability.md) and [docs/telemetry-service.md](docs/telemetry-service.md).
+
+## Durable, non-blocking spool
+
+End-of-request records buffer to a disk-backed, zstd-compressed `ndjson.zst` spool and ship out of band to **S3**, **Azure Blob**, or **webhook** destinations, with per-binding sampling, filtering, and body-size caps. The hot path is sacred: `Enqueue` is non-blocking, and a full ring buffer or a full disk drops the record and increments a counter rather than ever making a client wait. See [docs/connectors.md](docs/connectors.md), [docs/connector-bindings.md](docs/connector-bindings.md), and [docs/spool.md](docs/spool.md).
+
+## Built to a high bar
+
+- **95% coverage** on internal + schema packages, CI-enforced.
+- **E2E is the spec** — every feature has a black-box case proving it works through the real binary, with destination-side record assertions.
+- **Wire-compat suite** — the official OpenAI / Anthropic / Gemini Python SDKs run against a spawned stack; any failure is a release blocker.
+- **Fuzzed** — every `UnmarshalJSON`, the YAML loader, and route detection.
+- **Slim dependency graph**, stdlib-first, `-race` everywhere, goroutine-leak checked.
+
+---
 
 ## Quickstart
 
-Want a turnkey stack from the published images (no build, real providers)? See
-[`deploy/quickstart/`](deploy/quickstart/) — three copy-paste Compose stacks
-(gateway + console, gateway only, gateway + telemetry); set keys in `.env` and
-`docker compose up`.
+Turnkey stack from the **published images** (no build, real providers): see [`deploy/quickstart/`](deploy/quickstart/) — three copy-paste Compose stacks (gateway + console, gateway only, gateway + telemetry). Set keys in `.env` and `docker compose up`.
+
+```sh
+cd deploy/quickstart
+cp .env.example .env          # add your provider key(s)
+docker compose -f compose.admin.yaml up -d --wait
+curl http://localhost:8585/v1/chat/completions \
+  -H "Authorization: Bearer sk_quickstart_demo_key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
+```
 
 For local development against the mock LLM (build from source):
 
 ```sh
-# Bring up the gateway + mockllm.
-make dev
-
-# Run the wire-compat suite (spawns its own stack against the mock).
-make py-compat
-
-# Run end-to-end against the live binary (Docker required for testcontainers).
-make e2e
-
-# Smoke tests against a deployed instance.
-SLUICE_API_KEY=sk_live_... uv run --project test/smoke pytest -v
+make dev          # gateway + mockllm
+make py-compat    # official-SDK wire-compat suite against the mock
+make e2e          # end-to-end against the real binary (Docker required)
 ```
 
 ## Configuration
 
-YAML lives in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The loader merges **every** `*.yaml` file in the directory by top-level block key — filenames are a convention, not a constraint. The conventional split:
+Config lives in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The loader merges **every** `*.yaml` in the directory by top-level block key — filenames are convention, not constraint. File contents are trusted (mounted from Secrets/filesystem); there is no `${VAR}` expansion inside YAML. The conventional split:
 
-- **`providers.yaml`** — the `providers` block. One entry per upstream provider: base URL, which protocols it speaks, and per-protocol auth (plus optional passthrough families for opaque surfaces). Providers are connections, not credential holders — the per-configuration `credentials` supply the key.
-- **`policy.yaml`** — `configurations`, `api_keys`, `rules`, `groups` (resilience targets, formerly `resilience_policies`), and `connectors`. Configurations carry the `bindings` that select a provider or group per (protocol, model). The admin write API edits the rules block live (`POST/PUT/DELETE /admin/api/v1/config/rules`) and persists changes atomically; every other block is YAML-only and applies on restart.
-- **`admin.yaml`** *(optional, v1.1)* — gates the management console. Off by default. When enabled, the gateway starts a second listener on `bind_addr` serving the embedded SPA at `/` and the control-plane API under `/api/v1/*`. Username is hardcoded to `admin`; the password is read from `SLUICE_ADMIN_PASSWORD` if set, otherwise from the yaml `password` field.
+- **`providers.yaml`** — upstream connections: base URL, the protocols each speaks, per-protocol auth, and optional passthrough families. Providers hold no credentials.
+- **`policy.yaml`** — `configurations` (with their `bindings`), `api_keys`, `rules`, resilience `groups`, and `connectors`.
+- **`admin.yaml`** *(optional)* — gates the management console. Off by default.
 
-End-of-request records can be shipped to external destinations (S3, Azure Blob, webhook) via the `connectors:` block in `policy.yaml`. Records are buffered on a disk spool (default `/var/lib/sluice/spool`) and uploaded out of band; see [docs/connectors.md](docs/connectors.md), [docs/connector-bindings.md](docs/connector-bindings.md), and [docs/spool.md](docs/spool.md).
+See [config-dev/](config-dev/) for working examples, [docs/](docs/) for the full operator + developer reference, and [docs/environment-variables.md](docs/environment-variables.md) for every `SLUICE_*` knob.
 
-An optional **central telemetry service** (`cmd/telemetry`) collects gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from one or more gateways into Postgres and serves an operator console identical to the gateway's own dashboard. It is a separate binary with its own YAML config and two listeners (HTTP `:8686`, OTLP gRPC `:8687`). See [docs/telemetry-service.md](docs/telemetry-service.md), [docs/telemetry-service-api.md](docs/telemetry-service-api.md), and [docs/telemetry-webhook.md](docs/telemetry-webhook.md).
+## Management console
 
-See [config-dev/](config-dev/) for working examples and [docs/](docs/) for the operator + developer reference suite. Server-level configuration (`SLUICE_*` env vars) is documented in [docs/environment-variables.md](docs/environment-variables.md).
-
-## Management console (v1.1)
-
-The console is a Vite + React + shadcn SPA embedded into the gateway binary via `//go:embed`. Source lives in [`web/`](web/); build output lands at `internal/admin/webdist/`.
-
-```sh
-# Build the SPA into the gateway's embed FS.
-make web
-
-# Or build everything (SPA + binary) in one go.
-make build
-```
-
-### Local dev — full stack from docker-compose
-
-The fastest way to exercise the SPA + gateway together end-to-end:
-
-```sh
-make dev-compose          # builds + starts gateway, mockllm
-# open http://localhost:8081/admin and sign in:
-#   username: admin
-#   password: sluice-gateway   (override via SLUICE_ADMIN_PASSWORD env)
-make dev-compose-down     # tear it down
-```
-
-The gateway image bakes the SPA in at build time. Override the operator password by exporting `SLUICE_ADMIN_PASSWORD=...` before `make dev-compose`. Ports exposed on the host:
-
-| Host port | Container port | Surface |
-|---|---|---|
-| `8585` | `8585` | Data plane (provider proxy) |
-| `8081` | `8081` | Admin console (SPA + `/api/v1`) |
-| `9090` | `9090` | Prometheus scrape |
-
-### SPA hot-reload against a running gateway
-
-For SPA-only iteration without rebuilding the image, leave `make dev-compose` running and start the Vite dev server in a second terminal:
-
-```sh
-make web-dev   # Vite on :5180/admin, proxies /admin/api/v1 to localhost:8081
-```
-
-Open `http://localhost:5180`. Changes to `web/src/**` reload instantly; the compose-served gateway continues serving the API.
-
-### Pure-Go dev loop (no compose for the gateway)
-
-```sh
-make dev   # docker compose up -d mockllm; go run ./cmd/gateway
-```
-
-`config-dev/admin.yaml` has the console enabled on `127.0.0.1:8081` with the placeholder password. To iterate on Go code without rebuilding an image, this is the fastest path.
-
-## Where the canonical design lives
-
-The full design — module layout, configuration schema, rule schema, resilience schema, telemetry, connector + spool architecture, .NET → Go translation, testing strategy — lives in a DonkeyWork project. The design notes are the long-form; [CLAUDE.md](CLAUDE.md) is the standing brief for any agent or human working in this repo.
+A Vite + React + shadcn SPA embedded into the gateway binary via `//go:embed` — dashboard, config inspector, live message feed, and a visual rule editor. Enable it in `admin.yaml`, then open `http://localhost:8081/admin` (username `admin`, password from `SLUICE_ADMIN_PASSWORD`). Build with `make web` (SPA into the embed FS) or `make build` (SPA + binary). Full local-dev loops — compose, SPA hot-reload, pure-Go — are in [docs/local-development.md](docs/local-development.md) and [docs/admin-console.md](docs/admin-console.md).
 
 ## Repo layout
 
@@ -122,15 +144,20 @@ cmd/
   telemetry/    central telemetry service (OTLP + HMAC Record-webhook ingest, Postgres, console)
   cli/          key generation, config validation
   mockllm/      Go mock LLM for tests + local dev
-internal/       compiler-enforced private
-providers/      public — request/response/streaming models per provider
+internal/       compiler-enforced private engines
+protocols/      public — on-the-wire models per provider protocol
+models/         public — shared multimodal types + DynamicProperties
 contracts/      public — control-plane schemas (rules, resilience, config, connector)
-deploy/         dockerfile, helm chart
+deploy/         dockerfiles, compose stacks, quickstart bundle
 test/
   e2e/          black-box matrix against the real binary
-  python/       wire-compat: official SDKs against spawned stack
+  python/       wire-compat: official SDKs against a spawned stack
   smoke/        live-deploy liveness checks
 ```
+
+## Design & contributing
+
+The long-form design — module layout, configuration/rule/resilience schemas, the pipeline + middleware model, connector + spool architecture, testing strategy — lives in a DonkeyWork project; [CLAUDE.md](CLAUDE.md) is the standing brief for any agent or human in this repo and indexes those notes.
 
 ## License
 
