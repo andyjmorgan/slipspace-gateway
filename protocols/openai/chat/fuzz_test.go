@@ -87,6 +87,10 @@ func FuzzChatCompletionResponse(f *testing.F) {
 	seeds := []string{
 		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[]}`,
 		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+		// gpt-oss / Ollama qwen3 OpenAI-compat: choices[].message.reasoning.
+		`{"id":"x","object":"chat.completion","created":1,"model":"gpt-oss","choices":[{"index":0,"message":{"role":"assistant","content":"4","reasoning":"2+2 is 4"},"finish_reason":"stop"}]}`,
+		// older vLLM spelling "reasoning_content" rides along via DynamicProperties.
+		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi","reasoning_content":"legacy"},"finish_reason":"stop"}]}`,
 		`{}`,
 	}
 	for _, s := range seeds {
