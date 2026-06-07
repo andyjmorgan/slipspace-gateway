@@ -36,7 +36,7 @@ flowchart TD
     msgs["GET /api/v1/messages*"]
     facets["GET /api/v1/facets"]
     events["GET /api/v1/events*"]
-    sessions["GET /api/v1/sessions/{id}"]
+    sessions["GET /api/v1/sessions, /sessions/{id}"]
   end
   client --> open
   client --> hmac
@@ -321,6 +321,47 @@ tolerated (the view just omits them).
 Handler `handleEventBody` (lines 148-159). Returns just the latest-per-kind
 payload map (the `payloads` object above), keyed by `store.Kind*`. `404
 {"error":"no payloads"}` when there are none.
+
+#### `GET /api/v1/sessions`
+
+Handler `handleSessions`. The session-discovery list — a keyset page of session
+summaries for the **Sessions** console page. Query params:
+
+| Param | Meaning |
+|---|---|
+| `from` / `to` | RFC3339 window bounds (either omittable). A session is included when its **span overlaps** `[from, to)` — i.e. it was active during the window, even if it began before or continues after it. |
+| `configuration` | Exact-match configuration filter (`store.EventFilter`). |
+| `tags` (repeatable) | AND containment over the post-rule tag set. |
+| `cursor` | Opaque keyset cursor from a prior `next_cursor`. |
+| `limit` | Page size (default 100, capped 500). |
+
+The `configuration` / `tags` predicates are applied to the rows **before**
+aggregation, so a session appears when it has matching requests overlapping the
+window and the rollup (`messages` / `total_tokens` / `models` / `started_at` /
+`last_activity`) reflects only the matching subset. `started_at` / `last_activity`
+are the session's real bounds and may fall outside the window. Results are ordered
+by `last_activity DESC, session_id DESC`.
+
+```json
+{
+  "sessions": [
+    {
+      "session_id": "sess-123",
+      "messages": 4,
+      "total_tokens": 6000,
+      "models": ["claude-opus-4-8", "claude-haiku-4-5"],
+      "started_at": "2026-06-07T10:00:00Z",
+      "last_activity": "2026-06-07T10:42:00Z"
+    }
+  ],
+  "next_cursor": ""
+}
+```
+
+`next_cursor` is empty on the last page; `400 {"error":"invalid cursor"}` for a
+malformed cursor, `400 {"error":"invalid from"}` / `invalid to` for an
+unparseable bound. Like the dashboard facets, the underlying query is a
+whole-table grouped scan, so the console defaults it to a recent window.
 
 #### `GET /api/v1/sessions/{id}`
 

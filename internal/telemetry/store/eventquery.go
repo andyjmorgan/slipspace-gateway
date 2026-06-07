@@ -218,6 +218,156 @@ func (s *Store) ListEventsFiltered(ctx context.Context, p EventListParams) ([]Re
 	return out, next, nil
 }
 
+// SessionSummary is one row of the session list: a session's id plus the
+// rollup the discovery table renders. The aggregates cover only the rows that
+// match SessionListParams.Filter (the predicates are applied before the
+// GROUP BY), so a configuration/tag filter narrows both membership and the
+// displayed counts to the matching subset of the session.
+type SessionSummary struct {
+	// SessionID is the conversation/bundle id the requests share.
+	SessionID string
+	// Messages is the number of (matching) requests in the session.
+	Messages int
+	// TotalTokens is the summed tokens_in+tokens_out across those requests.
+	TotalTokens int64
+	// Models is the distinct requested model names, empty strings excluded.
+	Models []string
+	// Started / LastAt are the first and last observed_at across the matching
+	// rows — the session's real bounds, which may fall outside the query window.
+	Started time.Time
+	LastAt  time.Time
+}
+
+// SessionListParams is the input to ListSessions: an optional time window (the
+// session's span must overlap it), the shared row Filter applied before
+// aggregation, an opaque keyset Cursor, and a Limit. A zero From/To omits that
+// bound; Limit <= 0 defaults to eventListPageDefault and is capped at
+// eventListPageMax.
+type SessionListParams struct {
+	From   time.Time
+	To     time.Time
+	Filter EventFilter
+	Cursor string
+	Limit  int
+}
+
+// sessionCursor is the keyset position encoded into a session-list next_cursor:
+// the last row's (last_at, session_id), the tuple the DESC ordering seeks past.
+type sessionCursor struct {
+	LastAt    time.Time `json:"l"`
+	SessionID string    `json:"s"`
+}
+
+func encodeSessionCursor(c sessionCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeSessionCursor(s string) (sessionCursor, error) {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return sessionCursor{}, ErrInvalidCursor
+	}
+	var c sessionCursor
+	if err := json.Unmarshal(b, &c); err != nil {
+		return sessionCursor{}, ErrInvalidCursor
+	}
+	return c, nil
+}
+
+// ListSessions returns a page of session summaries ordered by
+// (last_at DESC, session_id DESC), narrowed to sessions whose span overlaps the
+// optional [From, To) window. The Filter predicates are applied to the rows in
+// the aggregating CTE — so a session is included when it has matching requests
+// overlapping the window and the rollup reflects only those rows. Pagination is
+// keyset: it fetches Limit+1 aggregated rows to learn whether a further page
+// exists; nextCursor encodes the last returned row's position, empty on the
+// last page. A malformed Cursor is ErrInvalidCursor.
+//
+// Like Facets, the CTE is a whole-table grouped scan; the result is bounded by
+// the page Limit but the aggregate spans every session, so this is a heavier
+// query than the keyset event list — callers default it to a recent window.
+func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]SessionSummary, string, error) {
+	limit := p.Limit
+	if limit <= 0 {
+		limit = eventListPageDefault
+	}
+	if limit > eventListPageMax {
+		limit = eventListPageMax
+	}
+
+	// Filter predicates bind first ($1..$k) and live in the CTE WHERE; the
+	// window + keyset predicates bind after and live in the outer WHERE, reading
+	// the aggregated started/last_at. The args slice is built in the same order
+	// the $N placeholders appear in the SQL text.
+	inner := []string{"session_id <> ''"}
+	inner, args := appendFilter(inner, nil, p.Filter)
+
+	var outer []string
+	if !p.From.IsZero() {
+		args = append(args, p.From)
+		outer = append(outer, fmt.Sprintf("last_at >= $%d", len(args)))
+	}
+	if !p.To.IsZero() {
+		args = append(args, p.To)
+		outer = append(outer, fmt.Sprintf("started < $%d", len(args)))
+	}
+	if p.Cursor != "" {
+		cur, err := decodeSessionCursor(p.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		args = append(args, cur.LastAt)
+		lIdx := len(args)
+		args = append(args, cur.SessionID)
+		outer = append(outer, fmt.Sprintf("(last_at, session_id) < ($%d, $%d)", lIdx, len(args)))
+	}
+
+	q := `WITH agg AS (
+  SELECT session_id,
+         COUNT(*) AS messages,
+         COALESCE(SUM(tokens_in + tokens_out), 0) AS total_tokens,
+         MIN(observed_at) AS started,
+         MAX(observed_at) AS last_at,
+         COALESCE(array_agg(DISTINCT model) FILTER (WHERE model <> ''), '{}') AS models
+  FROM request_events
+  WHERE ` + strings.Join(inner, " AND ") + `
+  GROUP BY session_id
+)
+SELECT session_id, messages, total_tokens, started, last_at, models FROM agg`
+	if len(outer) > 0 {
+		q += ` WHERE ` + strings.Join(outer, " AND ")
+	}
+	args = append(args, limit+1)
+	q += fmt.Sprintf(` ORDER BY last_at DESC, session_id DESC LIMIT $%d`, len(args))
+
+	rows, err := s.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("store: list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SessionSummary
+	for rows.Next() {
+		var sum SessionSummary
+		if serr := rows.Scan(&sum.SessionID, &sum.Messages, &sum.TotalTokens, &sum.Started, &sum.LastAt, &sum.Models); serr != nil {
+			return nil, "", fmt.Errorf("store: scan session summary: %w", serr)
+		}
+		out = append(out, sum)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+
+	next := ""
+	if len(out) > limit {
+		last := out[limit-1]
+		out = out[:limit]
+		next = encodeSessionCursor(sessionCursor{LastAt: last.LastAt, SessionID: last.SessionID})
+	}
+	return out, next, nil
+}
+
 // EventsBySession returns every event in a session, oldest first, so the
 // session view can render the conversation in order. The composite
 // (observed_at, correlation_id) keeps it deterministic.

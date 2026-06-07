@@ -38,3 +38,55 @@ export async function fetchSession(id: string): Promise<SessionView | null> {
     throw err
   }
 }
+
+// SessionSummary is one row of the session-discovery list (GET /api/v1/sessions).
+// Mirrors contracts/admin.SessionSummary. When the request carried tag/config
+// filters the counts + bounds reflect only the matching requests of the session.
+export type SessionSummary = {
+  session_id: string
+  messages: number
+  total_tokens: number
+  models: string[]
+  started_at: string
+  last_activity: string
+}
+
+// SessionListPage is one keyset page of the session list. nextCursor is empty on
+// the last page.
+export type SessionListPage = {
+  sessions: SessionSummary[]
+  nextCursor: string
+}
+
+type SessionListWire = {
+  sessions: SessionSummary[]
+  next_cursor: string
+}
+
+// SessionListFilters is the session list's filter set. Empty fields are omitted
+// from the query string; tags is AND containment. from is a resolved RFC3339
+// lower bound (the page computes it from a relative preset at fetch time).
+export type SessionListFilters = {
+  from?: string
+  configuration?: string
+  tags?: string[]
+}
+
+/**
+ * Fetches one keyset page of sessions active in the window, newest-activity
+ * first. Pass the previous page's nextCursor to advance; omit it for page one.
+ * Mirrors fetchMessagesPage's query-building.
+ */
+export async function fetchSessions(
+  filters: SessionListFilters,
+  opts: { cursor?: string; limit?: number } = {},
+): Promise<SessionListPage> {
+  const p = new URLSearchParams()
+  if (filters.from) p.set("from", filters.from)
+  if (filters.configuration) p.set("configuration", filters.configuration)
+  for (const t of filters.tags ?? []) p.append("tags", t)
+  if (opts.cursor) p.set("cursor", opts.cursor)
+  if (opts.limit && opts.limit > 0) p.set("limit", String(opts.limit))
+  const r = await apiFetch<SessionListWire>(`/api/v1/sessions?${p.toString()}`)
+  return { sessions: r.sessions ?? [], nextCursor: r.next_cursor ?? "" }
+}

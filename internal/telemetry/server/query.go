@@ -19,6 +19,7 @@ type Queries interface {
 	ListEventsFiltered(ctx context.Context, p store.EventListParams) ([]store.RequestEvent, string, error)
 	GetRequestEvent(ctx context.Context, correlationID string) (store.RequestEvent, error)
 	ListPayloads(ctx context.Context, correlationID string) ([]store.Payload, error)
+	ListSessions(ctx context.Context, p store.SessionListParams) ([]store.SessionSummary, string, error)
 	EventsBySession(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
 	Facets(ctx context.Context) (store.Facets, error)
 }
@@ -44,6 +45,7 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/events", gated(s.handleEvents))
 	mux.Handle("GET /api/v1/events/{id}", gated(s.handleEventInspector))
 	mux.Handle("GET /api/v1/events/{id}/body", gated(s.handleEventBody))
+	mux.Handle("GET /api/v1/sessions", gated(s.handleSessions))
 	mux.Handle("GET /api/v1/sessions/{id}", gated(s.handleSession))
 }
 
@@ -115,7 +117,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		To:     to,
 		Filter: filterFromQuery(r),
 		Cursor: q.Get("cursor"),
-		Limit:  intParam(r, "limit", 0),
+		Limit:  limitParam(r, 0),
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
@@ -160,6 +162,35 @@ func (s *Server) handleEventBody(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stitch.LatestPayloadsByKind(payloads))
 }
 
+// handleSessions serves the session-discovery list: a keyset page of session
+// summaries within an optional [from, to) window, narrowed by the shared
+// equality/tag filters (filterFromQuery — only configuration + tags are
+// surfaced in the console UI, but any dimension works). A session is included
+// when its matching-row span overlaps the window.
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
+	from, to, bad := parseWindowBounds(r)
+	if bad != "" {
+		writeError(w, http.StatusBadRequest, "invalid "+bad)
+		return
+	}
+	sessions, next, err := s.queries.ListSessions(r.Context(), store.SessionListParams{
+		From:   from,
+		To:     to,
+		Filter: filterFromQuery(r),
+		Cursor: r.URL.Query().Get("cursor"),
+		Limit:  limitParam(r, 0),
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrInvalidCursor) {
+			writeError(w, http.StatusBadRequest, "invalid cursor")
+			return
+		}
+		s.queryError(w, "list sessions", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, mapSessionList(sessions, next))
+}
+
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	events, err := s.queries.EventsBySession(r.Context(), id)
@@ -180,9 +211,11 @@ func (s *Server) queryError(w http.ResponseWriter, op string, err error) {
 	writeError(w, http.StatusInternalServerError, op)
 }
 
-// intParam reads an integer query param, returning def when absent or invalid.
-func intParam(r *http.Request, name string, def int) int {
-	v := r.URL.Query().Get(name)
+// limitParam reads the ?limit page-size query param, returning def when absent
+// or invalid. The list endpoints are the only paged surfaces, so limit is the
+// only integer query param the API takes.
+func limitParam(r *http.Request, def int) int {
+	v := r.URL.Query().Get("limit")
 	if v == "" {
 		return def
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -18,25 +19,31 @@ import (
 
 // fakeQueries is a programmable Queries (no DB).
 type fakeQueries struct {
-	summary    store.DashboardSummary
-	summaryErr error
-	series     []store.DashboardSeriesBucket
-	seriesErr  error
-	events     []store.RequestEvent
-	next       string
-	eventsErr  error
-	event      store.RequestEvent
-	eventErr   error
-	payloads   []store.Payload
-	payErr     error
-	session    []store.RequestEvent
-	sessionErr error
-	facets     store.Facets
-	facetsErr  error
-	facetsHits int
+	summary      store.DashboardSummary
+	summaryErr   error
+	series       []store.DashboardSeriesBucket
+	seriesErr    error
+	events       []store.RequestEvent
+	next         string
+	eventsErr    error
+	event        store.RequestEvent
+	eventErr     error
+	payloads     []store.Payload
+	payErr       error
+	session      []store.RequestEvent
+	sessionErr   error
+	sessions     []store.SessionSummary
+	sessionsNext string
+	sessionsErr  error
+	facets       store.Facets
+	facetsErr    error
+	facetsHits   int
 	// lastParams records the EventListParams of the most recent
 	// ListEventsFiltered call so filter-plumbing tests can assert on it.
 	lastParams store.EventListParams
+	// lastSessionParams records the SessionListParams of the most recent
+	// ListSessions call so the session-list filter-plumbing test can assert on it.
+	lastSessionParams store.SessionListParams
 }
 
 func (f *fakeQueries) QueryDashboardSummary(context.Context, store.DashboardParams) (store.DashboardSummary, error) {
@@ -61,6 +68,10 @@ func (f *fakeQueries) ListPayloads(context.Context, string) ([]store.Payload, er
 }
 func (f *fakeQueries) EventsBySession(context.Context, string) ([]store.RequestEvent, error) {
 	return f.session, f.sessionErr
+}
+func (f *fakeQueries) ListSessions(_ context.Context, p store.SessionListParams) ([]store.SessionSummary, string, error) {
+	f.lastSessionParams = p
+	return f.sessions, f.sessionsNext, f.sessionsErr
 }
 
 func newQueryServer(t *testing.T, q Queries) http.Handler {
@@ -343,5 +354,70 @@ func TestSession(t *testing.T) {
 	hErr := newQueryServer(t, &fakeQueries{sessionErr: errors.New("db")})
 	if resp := get(t, hErr, "/api/v1/sessions/s", true); resp.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", resp.Code)
+	}
+}
+
+func TestSessions_List(t *testing.T) {
+	// The list endpoint projects SessionSummary rows onto the tagged wire shape;
+	// a nil Models slice must render as [] not null.
+	q := &fakeQueries{
+		sessions: []store.SessionSummary{
+			{SessionID: "s1", Messages: 3, TotalTokens: 120, Models: []string{"claude-opus-4-8"},
+				Started: time.Unix(10, 0), LastAt: time.Unix(40, 0)},
+			{SessionID: "s2", Messages: 1, TotalTokens: 0, Models: nil,
+				Started: time.Unix(5, 0), LastAt: time.Unix(5, 0)},
+		},
+		sessionsNext: "cur2",
+	}
+	h := newQueryServer(t, q)
+	resp := get(t, h, "/api/v1/sessions?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z&limit=10", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if got := resp.Body.String(); !contains(got, `"models":[]`) {
+		t.Errorf("nil Models not rendered as []: %s", got)
+	}
+	var sl adminc.SessionList
+	if err := json.NewDecoder(resp.Body).Decode(&sl); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(sl.Sessions) != 2 || sl.NextCursor != "cur2" {
+		t.Fatalf("list = %+v", sl)
+	}
+	if sl.Sessions[0].SessionID != "s1" || sl.Sessions[0].Messages != 3 || sl.Sessions[0].TotalTokens != 120 {
+		t.Errorf("summary[0] = %+v", sl.Sessions[0])
+	}
+	// The window bounds reached the store as the params (proves plumbing).
+	if q.lastSessionParams.From.IsZero() || q.lastSessionParams.To.IsZero() || q.lastSessionParams.Limit != 10 {
+		t.Errorf("params not plumbed: %+v", q.lastSessionParams)
+	}
+}
+
+func TestSessions_ListFilters(t *testing.T) {
+	// configuration + repeated tags from the query string must reach ListSessions
+	// via filterFromQuery — the same path the message browser uses.
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	if resp := get(t, h, "/api/v1/sessions?configuration=prod&tags=a&tags=b", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	f := q.lastSessionParams.Filter
+	if f.Configuration != "prod" || len(f.Tags) != 2 || f.Tags[0] != "a" || f.Tags[1] != "b" {
+		t.Errorf("filter not plumbed: %+v", f)
+	}
+}
+
+func TestSessions_ListBadParamsAndErrors(t *testing.T) {
+	h := newQueryServer(t, &fakeQueries{})
+	if resp := get(t, h, "/api/v1/sessions?from=x", true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("bad from: %d", resp.Code)
+	}
+	hCur := newQueryServer(t, &fakeQueries{sessionsErr: store.ErrInvalidCursor})
+	if resp := get(t, hCur, "/api/v1/sessions?cursor=bad", true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("bad cursor: %d", resp.Code)
+	}
+	hErr := newQueryServer(t, &fakeQueries{sessionsErr: errors.New("db")})
+	if resp := get(t, hErr, "/api/v1/sessions", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("db err: %d", resp.Code)
 	}
 }
