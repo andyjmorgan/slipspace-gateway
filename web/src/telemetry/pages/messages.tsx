@@ -76,9 +76,11 @@ export function MessagesPage() {
   const [corrInput, setCorrInput] = useState("")
   const [sessInput, setSessInput] = useState("")
   const [agentInput, setAgentInput] = useState("")
+  const [userInput, setUserInput] = useState("")
   const correlationId = useDebounced(corrInput, 300)
   const sessionId = useDebounced(sessInput, 300)
   const agentId = useDebounced(agentInput, 300)
+  const userId = useDebounced(userInput, 300)
   const [provider, setProvider] = useState("")
   const [model, setModel] = useState("")
   const [configuration, setConfiguration] = useState("")
@@ -95,16 +97,24 @@ export function MessagesPage() {
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
   // and must not run during render.
   const filters = useMemo<MessageFilters>(
-    () => ({ correlationId, sessionId, agentId, provider, model, configuration, protocol, statusClass, tags }),
-    [correlationId, sessionId, agentId, provider, model, configuration, protocol, statusClass, tags],
+    () => ({ correlationId, sessionId, agentId, userId, provider, model, configuration, protocol, statusClass, tags }),
+    [correlationId, sessionId, agentId, userId, provider, model, configuration, protocol, statusClass, tags],
   )
 
   const activeCount = useMemo(() => {
     const f = filters
     return (
-      [f.correlationId, f.sessionId, f.agentId, f.provider, f.model, f.configuration, f.protocol, f.statusClass].filter(
-        Boolean,
-      ).length +
+      [
+        f.correlationId,
+        f.sessionId,
+        f.agentId,
+        f.userId,
+        f.provider,
+        f.model,
+        f.configuration,
+        f.protocol,
+        f.statusClass,
+      ].filter(Boolean).length +
       (f.tags?.length ?? 0) +
       (timeRange !== "all" ? 1 : 0)
     )
@@ -189,6 +199,7 @@ export function MessagesPage() {
     setCorrInput("")
     setSessInput("")
     setAgentInput("")
+    setUserInput("")
     setProvider("")
     setModel("")
     setConfiguration("")
@@ -212,10 +223,11 @@ export function MessagesPage() {
 
       <PanelCard>
         <div className="flex flex-col gap-2.5 p-3 border-b border-[color:var(--border)]">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-2">
             <Input placeholder="Correlation ID" value={corrInput} onChange={(e) => setCorrInput(e.target.value)} className="h-9 text-[12px] mono" />
             <Input placeholder="Session ID" value={sessInput} onChange={(e) => setSessInput(e.target.value)} className="h-9 text-[12px] mono" />
             <Input placeholder="Agent ID" value={agentInput} onChange={(e) => setAgentInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Input placeholder="User ID" value={userInput} onChange={(e) => setUserInput(e.target.value)} className="h-9 text-[12px] mono" />
             <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} />
             <Select label="Model" value={model} options={facets.models} onChange={setModel} />
             <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} />
@@ -504,6 +516,18 @@ function MetaGrid({ entry }: { entry: MessageEntry }) {
   ) : (
     "—"
   )
+  // User id is a leaf dimension (no per-user page yet): show it copyable, titled
+  // with its provenance header so the operator knows which header it came from.
+  const userNode = entry.user_id ? (
+    <span className="flex items-center gap-1 min-w-0">
+      <span className="truncate min-w-0" title={entry.user_id_source ? `from ${entry.user_id_source}` : entry.user_id}>
+        {entry.user_id}
+      </span>
+      <CopyButton value={entry.user_id} label="user id" />
+    </span>
+  ) : (
+    "—"
+  )
   const items: [string, React.ReactNode][] = [
     ["Provider", entry.provider || "—"],
     ["Protocol", entry.protocol || "—"],
@@ -514,6 +538,7 @@ function MetaGrid({ entry }: { entry: MessageEntry }) {
     ["Streaming", entry.streaming ? "yes" : "no"],
     ["Session", sessionNode],
     ["Agent", agentNode],
+    ["User", userNode],
     ["At", new Date(entry.at).toLocaleString()],
   ]
   return (

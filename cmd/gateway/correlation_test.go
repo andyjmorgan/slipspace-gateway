@@ -19,20 +19,24 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// ctxIDs captures the session + agent id/source resolved onto the downstream
-// request context by the middleware.
+// ctxIDs captures the session + agent + user id/source resolved onto the
+// downstream request context by the middleware.
 type ctxIDs struct {
 	sessionID, sessionSource string
 	agentID, agentSource     string
+	userID, userSource       string
 }
 
 // serveCorrelation runs the middleware against one request and returns the
-// recorder plus the session/agent id/source observed on the downstream context.
-// A nil agent resolver defaults to one with no operator extras.
-func serveCorrelation(t *testing.T, resolver *observability.SessionResolver, agents *observability.AgentResolver, redactor *headers.Redactor, setup func(*http.Request)) (*httptest.ResponseRecorder, ctxIDs) {
+// recorder plus the session/agent/user id/source observed on the downstream
+// context. A nil agent or user resolver defaults to one with no operator extras.
+func serveCorrelation(t *testing.T, resolver *observability.SessionResolver, agents *observability.AgentResolver, users *observability.UserResolver, redactor *headers.Redactor, setup func(*http.Request)) (*httptest.ResponseRecorder, ctxIDs) {
 	t.Helper()
 	if agents == nil {
 		agents = observability.NewAgentResolver(nil)
+	}
+	if users == nil {
+		users = observability.NewUserResolver(nil)
 	}
 	var got ctxIDs
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -40,9 +44,11 @@ func serveCorrelation(t *testing.T, resolver *observability.SessionResolver, age
 		got.sessionSource = observability.SessionIDSourceFromContext(r.Context())
 		got.agentID = observability.AgentIDFromContext(r.Context())
 		got.agentSource = observability.AgentIDSourceFromContext(r.Context())
+		got.userID = observability.UserIDFromContext(r.Context())
+		got.userSource = observability.UserIDSourceFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	})
-	mw := correlationMiddleware(quietLogger(), resolver, agents, redactor, next)
+	mw := correlationMiddleware(quietLogger(), resolver, agents, users, redactor, next)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	setup(req)
 	rec := httptest.NewRecorder()
@@ -60,7 +66,7 @@ func TestCorrelationMiddleware_ExtractsInboundTraceContext(t *testing.T) {
 		sc = trace.SpanContextFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	})
-	mw := correlationMiddleware(quietLogger(), observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), headers.NewRedactor(nil), next)
+	mw := correlationMiddleware(quietLogger(), observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), observability.NewUserResolver(nil), headers.NewRedactor(nil), next)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	req.Header.Set("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
 	mw.ServeHTTP(httptest.NewRecorder(), req)
@@ -78,7 +84,7 @@ func TestCorrelationMiddleware_ExtractsInboundTraceContext(t *testing.T) {
 
 func TestCorrelationMiddleware_ResolvesClientHeaderAndEchoes(t *testing.T) {
 	t.Parallel()
-	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, headers.NewRedactor(nil), func(r *http.Request) {
+	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, nil, headers.NewRedactor(nil), func(r *http.Request) {
 		r.Header.Set("Thread_id", "thread-42")
 	})
 	if got.sessionID != "thread-42" || got.sessionSource != "Thread_id" {
@@ -95,7 +101,7 @@ func TestCorrelationMiddleware_ResolvesClientHeaderAndEchoes(t *testing.T) {
 
 func TestCorrelationMiddleware_SluiceHeaderWins(t *testing.T) {
 	t.Parallel()
-	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, headers.NewRedactor(nil), func(r *http.Request) {
+	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, nil, headers.NewRedactor(nil), func(r *http.Request) {
 		r.Header.Set(observability.SluiceSessionHeader, "sess-authoritative")
 		r.Header.Set("Thread_id", "thread-42")
 	})
@@ -106,7 +112,7 @@ func TestCorrelationMiddleware_SluiceHeaderWins(t *testing.T) {
 
 func TestCorrelationMiddleware_NoSessionNoEcho(t *testing.T) {
 	t.Parallel()
-	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, headers.NewRedactor(nil), func(r *http.Request) {})
+	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, nil, headers.NewRedactor(nil), func(r *http.Request) {})
 	if got.sessionID != "" {
 		t.Errorf("session id = %q, want empty", got.sessionID)
 	}
@@ -120,7 +126,7 @@ func TestCorrelationMiddleware_RedactedSessionHeaderFallsThrough(t *testing.T) {
 	// Operator redacts the Sluice session header; resolution must skip it
 	// and fall through rather than promote a redacted value.
 	redactor := headers.NewRedactor([]string{"x-sluice-session-id"})
-	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, redactor, func(r *http.Request) {
+	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, nil, redactor, func(r *http.Request) {
 		r.Header.Set(observability.SluiceSessionHeader, "sess-secret")
 		r.Header.Set("Thread_id", "thread-42")
 	})
@@ -131,7 +137,7 @@ func TestCorrelationMiddleware_RedactedSessionHeaderFallsThrough(t *testing.T) {
 
 func TestCorrelationMiddleware_ResolvesAgentHeaderAndEchoes(t *testing.T) {
 	t.Parallel()
-	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), headers.NewRedactor(nil), func(r *http.Request) {
+	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), nil, headers.NewRedactor(nil), func(r *http.Request) {
 		r.Header.Set("X-Claude-Code-Agent-Id", "agt-42")
 	})
 	if got.agentID != "agt-42" || got.agentSource != "X-Claude-Code-Agent-Id" {
@@ -145,7 +151,7 @@ func TestCorrelationMiddleware_ResolvesAgentHeaderAndEchoes(t *testing.T) {
 
 func TestCorrelationMiddleware_SluiceAgentHeaderWins(t *testing.T) {
 	t.Parallel()
-	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), headers.NewRedactor(nil), func(r *http.Request) {
+	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), nil, headers.NewRedactor(nil), func(r *http.Request) {
 		r.Header.Set(observability.SluiceAgentHeader, "agt-authoritative")
 		r.Header.Set("X-Claude-Code-Agent-Id", "agt-42")
 	})
@@ -156,7 +162,7 @@ func TestCorrelationMiddleware_SluiceAgentHeaderWins(t *testing.T) {
 
 func TestCorrelationMiddleware_NoAgentNoEcho(t *testing.T) {
 	t.Parallel()
-	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), headers.NewRedactor(nil), func(r *http.Request) {})
+	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), nil, headers.NewRedactor(nil), func(r *http.Request) {})
 	if got.agentID != "" {
 		t.Errorf("agent id = %q, want empty", got.agentID)
 	}
@@ -170,11 +176,65 @@ func TestCorrelationMiddleware_RedactedAgentHeaderFallsThrough(t *testing.T) {
 	// Operator redacts the Sluice agent header; resolution must skip it and
 	// fall through to the client default rather than promote a redacted value.
 	redactor := headers.NewRedactor([]string{"x-sluice-agent-id"})
-	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), redactor, func(r *http.Request) {
+	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), nil, redactor, func(r *http.Request) {
 		r.Header.Set(observability.SluiceAgentHeader, "agt-secret")
 		r.Header.Set("X-Claude-Code-Agent-Id", "agt-42")
 	})
 	if got.agentID != "agt-42" || got.agentSource != "X-Claude-Code-Agent-Id" {
 		t.Errorf("agent = (%q, %q), want (agt-42, X-Claude-Code-Agent-Id) — redacted Sluice header must fall through", got.agentID, got.agentSource)
+	}
+}
+
+func TestCorrelationMiddleware_ResolvesUserHeaderAndEchoes(t *testing.T) {
+	t.Parallel()
+	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, observability.NewUserResolver(nil), headers.NewRedactor(nil), func(r *http.Request) {
+		r.Header.Set(observability.SluiceUserHeader, "usr-42")
+	})
+	if got.userID != "usr-42" || got.userSource != observability.SluiceUserHeader {
+		t.Errorf("context user = (%q, %q), want (usr-42, %s)", got.userID, got.userSource, observability.SluiceUserHeader)
+	}
+	// The resolved user id is echoed under the Sluice user header.
+	if h := rec.Header().Get(observability.SluiceUserHeader); h != "usr-42" {
+		t.Errorf("echoed user = %q, want usr-42", h)
+	}
+}
+
+func TestCorrelationMiddleware_ResolvesUserViaOperatorHeader(t *testing.T) {
+	t.Parallel()
+	// No client ships a default user header, so an operator extra is the only
+	// non-Sluice path. The resolved value is still echoed under the Sluice header.
+	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, observability.NewUserResolver([]string{"X-Acme-User-Id"}), headers.NewRedactor(nil), func(r *http.Request) {
+		r.Header.Set("X-Acme-User-Id", "acme-9")
+	})
+	if got.userID != "acme-9" || got.userSource != "X-Acme-User-Id" {
+		t.Errorf("user = (%q, %q), want (acme-9, X-Acme-User-Id)", got.userID, got.userSource)
+	}
+	if h := rec.Header().Get(observability.SluiceUserHeader); h != "acme-9" {
+		t.Errorf("echoed user = %q, want acme-9", h)
+	}
+}
+
+func TestCorrelationMiddleware_NoUserNoEcho(t *testing.T) {
+	t.Parallel()
+	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, observability.NewUserResolver(nil), headers.NewRedactor(nil), func(r *http.Request) {})
+	if got.userID != "" {
+		t.Errorf("user id = %q, want empty", got.userID)
+	}
+	if h := rec.Header().Get(observability.SluiceUserHeader); h != "" {
+		t.Errorf("no user resolved, but echoed %q", h)
+	}
+}
+
+func TestCorrelationMiddleware_RedactedUserHeaderFallsThrough(t *testing.T) {
+	t.Parallel()
+	// Operator redacts the Sluice user header; resolution must skip it and fall
+	// through to the operator extra rather than promote a redacted value.
+	redactor := headers.NewRedactor([]string{"x-sluice-user-id"})
+	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, observability.NewUserResolver([]string{"X-Acme-User-Id"}), redactor, func(r *http.Request) {
+		r.Header.Set(observability.SluiceUserHeader, "usr-secret")
+		r.Header.Set("X-Acme-User-Id", "acme-9")
+	})
+	if got.userID != "acme-9" || got.userSource != "X-Acme-User-Id" {
+		t.Errorf("user = (%q, %q), want (acme-9, X-Acme-User-Id) — redacted Sluice header must fall through", got.userID, got.userSource)
 	}
 }

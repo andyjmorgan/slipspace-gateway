@@ -208,6 +208,8 @@ func toMessageEntry(e livefeed.Entry) adminc.MessageEntry {
 		SessionIDSource:     e.SessionIDSource,
 		AgentID:             e.AgentID,
 		AgentIDSource:       e.AgentIDSource,
+		UserID:              e.UserID,
+		UserIDSource:        e.UserIDSource,
 		Provider:            e.Provider,
 		Protocol:            e.Protocol,
 		Model:               e.Model,

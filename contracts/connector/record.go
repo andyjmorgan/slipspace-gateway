@@ -7,9 +7,10 @@ import "encoding/json"
 //
 // v2 added the additive SessionID + SessionIDSource fields (session
 // bundling). v3 added the additive AgentID + AgentIDSource fields (agent
+// identification). v4 added the additive UserID + UserIDSource fields (end-user
 // identification). Older consumers reading a newer record simply ignore the
 // new keys; the change requires no migration.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Record is one captured request/response pair as it sits inside an
 // ndjson.zst batch. Consumers sort by (TsNs, InstanceID, Seq) and group by
@@ -65,6 +66,16 @@ type Record struct {
 	// "X-Sluice-Agent-Id", "X-Claude-Code-Agent-Id") — the provenance the
 	// console uses to label the agent. Empty when AgentID is empty.
 	AgentIDSource string `json:"agent_id_source,omitempty"`
+
+	// UserID is the resolved end-user id on whose behalf the request was made —
+	// orthogonal to SessionID and AgentID. Empty when no user header was
+	// present.
+	UserID string `json:"user_id,omitempty"`
+
+	// UserIDSource is the header name UserID was resolved from (e.g.
+	// "X-Sluice-User-Id") — the provenance the console uses to label the user.
+	// Empty when UserID is empty.
+	UserIDSource string `json:"user_id_source,omitempty"`
 
 	// Configuration is the resolved configuration name (e.g. "production").
 	Configuration string `json:"configuration"`

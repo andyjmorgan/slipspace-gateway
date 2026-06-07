@@ -363,6 +363,7 @@ Per-request enrichment, in the order it gets layered on:
 | `correlation_id` | auth middleware / routing middleware | As early as routing can resolve a request ID. Sourced from the inbound `X-Sluice-Correlation-Id` if present, otherwise a fresh UUIDv4 via `NewCorrelationID`. Also echoed back on the response as `X-Sluice-Correlation-Id`. |
 | `session_id` | correlation middleware | When a session header resolves (see [Session bundling](#session-bundling)). Empty when none is present. One level above `correlation_id` — groups every request of one conversation. |
 | `agent_id` | correlation middleware | When an agent header resolves (see [Agent id](#agent-id)). Empty when none is present. Identifies the agent/sub-agent that issued the request — one axis below `session_id`. |
+| `user_id` | correlation middleware | When a user header resolves (see [User id](#user-id)). Empty when none is present. Identifies the end user on whose behalf the request was made — orthogonal to `session_id` / `agent_id`. |
 | `api_key_id` | auth middleware | After managed-mode API-key resolution. Empty for passthrough-mode requests. |
 | `configuration` | auth middleware | After the request's named configuration has been resolved. Bounded cardinality — operator-defined names. |
 | `provider`, `protocol`, `model` | the cmd/gateway final handler (forwarded path) / rules middleware (synthetic path) | At destination-finalisation time, after all rule mutations. Both writers call `WithRequestLabels(ctx, …)` and re-derive the per-request logger so reporters and downstream code see the post-rule values. |
@@ -391,7 +392,8 @@ The `Record` shape is the wire format every connector destination sees. Key fiel
 
 - `correlation_id`, `provider`, `protocol`, `model`, `configuration`, `api_key_name` — the post-rule resolved labels.
 - `session_id`, `session_id_source` — the resolved session/bundle id and the header it came from (see [Session bundling](#session-bundling)). Both omitted when no session header was present.
-- `agent_id`, `agent_id_source` — the resolved agent id and the header it came from (see [Agent id](#agent-id)). Both omitted when no agent header was present. `schema_version` is `3` once these ship (`2` carried only the session fields).
+- `agent_id`, `agent_id_source` — the resolved agent id and the header it came from (see [Agent id](#agent-id)). Both omitted when no agent header was present.
+- `user_id`, `user_id_source` — the resolved end-user id and the header it came from (see [User id](#user-id)). Both omitted when no user header was present. `schema_version` is `4` once these ship (`3` carried session + agent, `2` session only).
 - `request`, `response` — method, path, headers, sha256, byte length, and either inline `body` or `body_omitted: true` (set when oversize behaviour stripped the body).
 - `tokens` — provider-reported usage when the upstream returned one.
 - `tags` — the set of tags `addTag` actions attached, in first-attach order, deduplicated.
@@ -445,6 +447,23 @@ The first header that is **present, non-empty, and not redacted** wins; the head
 **Where it surfaces.** The resolved id is echoed back on the response under `X-Sluice-Agent-Id`, enriches the per-request logger (`agent_id`), and is stamped onto the connector `Record` (`agent_id` + `agent_id_source`), the OTel span and operation-details event as **`gen_ai.agent.id`** (the GenAI-semconv home for an agent identifier), the admin live-messages entry, and the telemetry service's `request_events` row (where it is an indexed drill-down/filter dimension).
 
 **Not a metric label.** Like `session_id`, agent id has unbounded cardinality and is deliberately kept off OTel meters — it rides records / spans / events / the live feed / the telemetry DB, never a meter dimension (see [the reporting-vs-telemetry separation](#three-channels)).
+
+---
+
+## User id
+
+Alongside the session and agent, the correlation middleware resolves a **user id** — the identifier of the end user on whose behalf the request was made, *orthogonal* to `session_id` and `agent_id`. It mirrors agent id exactly: same Sluice-first resolution, same redaction handling, same off-the-meters cardinality rule.
+
+**Resolution order.** Sluice-first, then a fallback chain walked top-down:
+
+1. `X-Sluice-User-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
+2. Operator extras from [`SLUICE_USER_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's user header is promoted with no code change. Unlike session/agent id there is **no shipped client default** — no client emits a standard end-user header — so without operator extras only the authoritative header resolves.
+
+The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `user_id_source` (the provenance the console labels the user with). A candidate matching the redactor (built-ins plus `SLUICE_REDACT_EXTRA_HEADERS`) counts as *absent* and resolution falls through, so a promoted `user_id` can never resurface a redacted value.
+
+**Where it surfaces.** The resolved id is echoed back on the response under `X-Sluice-User-Id`, enriches the per-request logger (`user_id`), and is stamped onto the connector `Record` (`user_id` + `user_id_source`), the OTel span and operation-details event as **`enduser.id`** (the GenAI semconv defines no user attribute, so the end user rides the general `enduser` namespace), the admin live-messages entry, and the telemetry service's `request_events` row (where it is an indexed drill-down/filter dimension).
+
+**Not a metric label.** Like `session_id` and `agent_id`, user id has unbounded cardinality and is deliberately kept off OTel meters — it rides records / spans / events / the live feed / the telemetry DB, never a meter dimension (see [the reporting-vs-telemetry separation](#three-channels)).
 
 ---
 

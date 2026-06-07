@@ -136,6 +136,8 @@ func eventFromRecord(rec cc.Record, gatewayID string) store.RequestEvent {
 		SessionIDSource: rec.SessionIDSource,
 		AgentID:         rec.AgentID,
 		AgentIDSource:   rec.AgentIDSource,
+		UserID:          rec.UserID,
+		UserIDSource:    rec.UserIDSource,
 		APIKeyName:      rec.APIKeyName,
 		PolicyRef:       rec.PolicyRef,
 		Streaming:       rec.Response.StreamChunks > 0,

@@ -81,6 +81,7 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 			intKV(attrCacheCreationTokens, 2),
 			strKV(attrConversationID, "sess-9"),
 			strKV(attrAgentID, "agt-9"),
+			strKV(attrEnduserID, "usr-9"),
 			boolKV(attrRequestStream, true),
 		},
 	}
@@ -102,6 +103,9 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 	}
 	if e.AgentID != "agt-9" {
 		t.Errorf("agent id = %q, want agt-9", e.AgentID)
+	}
+	if e.UserID != "usr-9" {
+		t.Errorf("user id = %q, want usr-9", e.UserID)
 	}
 	// Gateway columns must stay empty — they are the Record feed's to fill.
 	if e.Configuration != "" || e.Protocol != "" || e.Method != "" || e.GatewayID != "" || e.Detail != nil {

@@ -31,6 +31,9 @@ type EventFilter struct {
 	// AgentID is an exact-match lookup for the message browser's agent search
 	// box; empty means no predicate.
 	AgentID string
+	// UserID is an exact-match lookup for the message browser's user search
+	// box; empty means no predicate.
+	UserID string
 	// Tags narrows to events whose post-rule tag set contains ALL listed tags
 	// (JSONB containment). Empty/nil means no predicate.
 	Tags []string
@@ -50,6 +53,7 @@ func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 		{"session_id", f.SessionID},
 		{"correlation_id", f.CorrelationID},
 		{"agent_id", f.AgentID},
+		{"user_id", f.UserID},
 	}
 	for _, e := range eq {
 		if e.val == "" {

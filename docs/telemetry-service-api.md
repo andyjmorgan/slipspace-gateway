@@ -103,6 +103,7 @@ messages/recent, events). Each maps to a column predicate in
 | `session_id` | `session_id` | exact match |
 | `correlation_id` | `correlation_id` | exact match |
 | `agent_id` | `agent_id` | exact match (the resolved agent/sub-agent id) |
+| `user_id` | `user_id` | exact match (the resolved end-user id) |
 | `tags` | `detail->'tags'` | **repeatable**; `?tags=a&tags=b` requires the event's post-rule tag set to contain **ALL** listed tags (JSONB `@>` containment, lines 60-64). Blank values are dropped (`nonEmpty`). |
 
 An absent or empty param adds no predicate on that dimension. All present

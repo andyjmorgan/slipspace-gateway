@@ -239,7 +239,7 @@ func newTestEnvWithMeters(t *testing.T) *meterEnv {
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
-	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), nil, dataPlane)
+	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), observability.NewUserResolver(nil), nil, dataPlane)
 
 	gateway := httptest.NewServer(root)
 

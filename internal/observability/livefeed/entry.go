@@ -35,6 +35,12 @@ type Entry struct {
 	AgentID       string
 	AgentIDSource string
 
+	// UserID is the resolved end-user id on whose behalf this request was
+	// made; UserIDSource is the header it came from. Both empty when no user
+	// header was present. Lets the console filter the live pane by end user.
+	UserID       string
+	UserIDSource string
+
 	// Provider, Protocol, Model are the routed labels after rule
 	// mutation — same values that hit the connector pipeline's
 	// Record.

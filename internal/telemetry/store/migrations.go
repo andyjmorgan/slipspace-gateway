@@ -136,4 +136,17 @@ ALTER TABLE request_events ADD COLUMN IF NOT EXISTS agent_id        TEXT NOT NUL
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS agent_id_source TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS request_events_agent ON request_events (agent_id);`,
 	},
+	{
+		version: 5,
+		name:    "add_user_id",
+		// End-user identification rides the same rails as session/agent: the
+		// gateway resolves a user id (X-Sluice-User-Id / custom) and emits it as
+		// enduser.id on the span and user_id on the Record. Additive columns + a
+		// single-column index so the message browser can drill down by end user,
+		// mirroring request_events_agent.
+		sql: `
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS user_id        TEXT NOT NULL DEFAULT '';
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS user_id_source TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS request_events_user ON request_events (user_id);`,
+	},
 }

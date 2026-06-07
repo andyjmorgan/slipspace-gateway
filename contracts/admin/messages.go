@@ -36,6 +36,13 @@ type MessageEntry struct {
 
 	AgentIDSource string `json:"agent_id_source,omitempty"`
 
+	// UserID is the resolved end-user id on whose behalf this request was made;
+	// UserIDSource is the header it came from. Both omitted when no user header
+	// was present.
+	UserID string `json:"user_id,omitempty"`
+
+	UserIDSource string `json:"user_id_source,omitempty"`
+
 	// Provider, Protocol, Model carry the routed labels (post rule
 	// mutation).
 	Provider string `json:"provider,omitempty"`

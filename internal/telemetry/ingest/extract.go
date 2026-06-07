@@ -38,6 +38,7 @@ const (
 	attrCacheCreationTokens = "gen_ai.usage.cache_creation.input_tokens" //nolint:gosec // OTLP attribute key, not a credential
 	attrConversationID      = "gen_ai.conversation.id"
 	attrAgentID             = "gen_ai.agent.id"
+	attrEnduserID           = "enduser.id"
 	attrRequestStream       = "gen_ai.request.stream"
 )
 
@@ -71,6 +72,7 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 		TokensCacheCreation: intAttr(attrs, attrCacheCreationTokens),
 		SessionID:           strAttr(attrs, attrConversationID),
 		AgentID:             strAttr(attrs, attrAgentID),
+		UserID:              strAttr(attrs, attrEnduserID),
 		Streaming:           boolAttr(attrs, attrRequestStream),
 		GenAIContent:        captureContent(span, contentMaxBytes),
 	}, true

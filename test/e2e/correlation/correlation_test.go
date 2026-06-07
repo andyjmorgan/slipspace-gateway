@@ -124,3 +124,43 @@ func TestCorrelation_AgentID_NotEchoed_WhenAbsent(t *testing.T) {
 		t.Errorf("X-Sluice-Agent-Id=%q, want empty when not supplied", got)
 	}
 }
+
+func TestCorrelation_UserID_Echoed(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"x"}`,
+	})
+
+	// There is no shipped client default for user id, so send it under the
+	// authoritative Sluice header; the gateway resolves and echoes it.
+	const uid = "user-abc-123"
+	resp := h.PostJSON("/v1/chat/completions",
+		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}},
+		http.Header{"X-Sluice-User-Id": []string{uid}})
+
+	if got := resp.Header.Get("X-Sluice-User-Id"); got != uid {
+		t.Fatalf("X-Sluice-User-Id=%q want %q", got, uid)
+	}
+}
+
+func TestCorrelation_UserID_NotEchoed_WhenAbsent(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"x"}`,
+	})
+
+	resp := h.PostJSON("/v1/chat/completions",
+		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
+
+	if got := resp.Header.Get("X-Sluice-User-Id"); got != "" {
+		t.Errorf("X-Sluice-User-Id=%q, want empty when not supplied", got)
+	}
+}

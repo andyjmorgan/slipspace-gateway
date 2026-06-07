@@ -62,6 +62,7 @@ func filterFromQuery(r *http.Request) store.EventFilter {
 		SessionID:     q.Get("session_id"),
 		CorrelationID: q.Get("correlation_id"),
 		AgentID:       q.Get("agent_id"),
+		UserID:        q.Get("user_id"),
 		Tags:          nonEmpty(q["tags"]),
 	}
 }

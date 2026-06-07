@@ -95,6 +95,8 @@ func sampleRecord() cc.Record {
 		PolicyRef:     "pol-1",
 		AgentID:       "agt-1",
 		AgentIDSource: "X-Claude-Code-Agent-Id",
+		UserID:        "usr-1",
+		UserIDSource:  "X-Sluice-User-Id",
 		Tags:          []string{"a", "b"},
 		Request: cc.RequestPart{
 			Method:  "POST",
@@ -152,6 +154,9 @@ func TestRecord_Valid(t *testing.T) {
 	}
 	if e.AgentID != "agt-1" || e.AgentIDSource != "X-Claude-Code-Agent-Id" {
 		t.Errorf("agent id = (%q, %q), want (agt-1, X-Claude-Code-Agent-Id)", e.AgentID, e.AgentIDSource)
+	}
+	if e.UserID != "usr-1" || e.UserIDSource != "X-Sluice-User-Id" {
+		t.Errorf("user id = (%q, %q), want (usr-1, X-Sluice-User-Id)", e.UserID, e.UserIDSource)
 	}
 	if e.StatusCode != 200 || e.UpstreamStatus != 200 || e.LatencyMs != 500 {
 		t.Errorf("outcome = status %d/%d latency %d", e.StatusCode, e.UpstreamStatus, e.LatencyMs)
