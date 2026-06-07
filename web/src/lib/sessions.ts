@@ -5,25 +5,18 @@
 // renders, so the session page reuses the messages row + GenAI inspector.
 
 import { apiFetch } from "@/lib/api"
-import type { MessageEntry } from "@/lib/messages"
+// Wire DTOs are generated from the Go contracts (contracts/admin). Do NOT
+// hand-edit — run `make generate`. Source of truth: web/src/lib/generated/.
+// SessionTotals = header-tile rollup; SessionView = GET /sessions/{id};
+// SessionSummary = one session-list row; SessionList = the wire list page.
+import type {
+  SessionTotals,
+  SessionView,
+  SessionSummary,
+  SessionList as SessionListWire,
+} from "./generated/admin"
 
-// SessionTotals is the header-tile rollup over a session's requests. An error
-// is any request with status >= 400. Latency percentiles and cached-token sums
-// are intentionally absent — the page derives those client-side from requests.
-export type SessionTotals = {
-  requests: number
-  errors: number
-  tokens_in: number
-  tokens_out: number
-}
-
-// SessionView is the GET /api/v1/sessions/{id} response: every request in the
-// session as a MessageEntry (oldest-first) plus the aggregate totals.
-export type SessionView = {
-  session_id: string
-  totals: SessionTotals
-  requests: MessageEntry[]
-}
+export type { SessionTotals, SessionView, SessionSummary }
 
 /**
  * Fetches one session's requests + totals. Returns null when the session id is
@@ -39,28 +32,13 @@ export async function fetchSession(id: string): Promise<SessionView | null> {
   }
 }
 
-// SessionSummary is one row of the session-discovery list (GET /api/v1/sessions).
-// Mirrors contracts/admin.SessionSummary. When the request carried tag/config
-// filters the counts + bounds reflect only the matching requests of the session.
-export type SessionSummary = {
-  session_id: string
-  messages: number
-  total_tokens: number
-  models: string[]
-  started_at: string
-  last_activity: string
-}
-
-// SessionListPage is one keyset page of the session list. nextCursor is empty on
-// the last page.
+// SessionListPage is one keyset page of the session list, client-shaped:
+// nextCursor (camelCase) is remapped from the wire's next_cursor by fetchSessions
+// and is empty on the last page. The wire shape itself is the generated
+// SessionListWire (= contracts/admin.SessionList) imported above.
 export type SessionListPage = {
   sessions: SessionSummary[]
   nextCursor: string
-}
-
-type SessionListWire = {
-  sessions: SessionSummary[]
-  next_cursor: string
 }
 
 // SessionListFilters is the session list's filter set. Empty fields are omitted

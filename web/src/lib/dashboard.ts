@@ -4,96 +4,34 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { apiFetch, UnauthorizedError } from "@/lib/api"
 
-export type DashboardProviderRow = {
-  provider: string
-  requests: number
-  p95_latency_ms: number
-  error_rate: number
-}
+// Wire DTOs are generated from the Go contracts (contracts/admin/dashboard.go).
+// Do NOT hand-edit — run `make generate`. Source of truth: web/src/lib/generated/.
+import type {
+  DashboardProviderRow,
+  DashboardModelRow,
+  DashboardProtocolRow,
+  DashboardConfigurationRow,
+  DashboardRuleFiredRow,
+  DashboardTagFiredRow,
+  DashboardProviderHealth,
+  DashboardSummary,
+  DashboardPoint,
+  DashboardSeries,
+  DashboardTimeseries,
+} from "./generated/admin"
 
-export type DashboardModelRow = {
-  model: string
-  provider: string
-  requests: number
-  tokens_in: number
-  tokens_out: number
-}
-
-export type DashboardProtocolRow = {
-  provider: string
-  protocol: string
-  requests: number
-  p95_latency_ms: number
-  error_rate: number
-}
-
-export type DashboardConfigurationRow = {
-  configuration: string
-  requests: number
-  p95_latency_ms: number
-  error_rate: number
-}
-
-export type DashboardRuleFiredRow = {
-  rule_name: string
-  fire_count: number
-  used_by_configurations: string[]
-}
-
-export type DashboardTagFiredRow = {
-  tag: string
-  apply_count: number
-  used_by_configurations: string[]
-}
-
-export type DashboardProviderHealth = {
-  provider: string
-  healthy: boolean
-  error_rate_5m: number
-  requests_5m: number
-}
-
-export type DashboardSummary = {
-  window: string
-  generated_at: string
-  gateway_started_at: string
-  totals: {
-    requests: number
-    requests_success: number
-    requests_errored: number
-    tokens_in: number
-    tokens_out: number
-    tokens_cached: number
-    tokens_cache_creation: number
-  }
-  rates: {
-    requests_per_second: number
-    error_rate: number
-  }
-  latency_ms: { p50: number; p95: number; p99: number }
-  by_provider: DashboardProviderRow[]
-  by_protocol: DashboardProtocolRow[]
-  by_configuration: DashboardConfigurationRow[]
-  by_model: DashboardModelRow[]
-  rules_fired: DashboardRuleFiredRow[]
-  tags_fired: DashboardTagFiredRow[]
-  provider_health: DashboardProviderHealth[]
-}
-
-export type DashboardPoint = {
-  timestamp: string
-  value: number
-}
-
-export type DashboardSeries = {
-  name: string
-  unit?: string
-  labels?: Record<string, string>
-  points: DashboardPoint[]
-}
-
-export type DashboardTimeseries = {
-  series: DashboardSeries[]
+export type {
+  DashboardProviderRow,
+  DashboardModelRow,
+  DashboardProtocolRow,
+  DashboardConfigurationRow,
+  DashboardRuleFiredRow,
+  DashboardTagFiredRow,
+  DashboardProviderHealth,
+  DashboardSummary,
+  DashboardPoint,
+  DashboardSeries,
+  DashboardTimeseries,
 }
 
 export type FetchState<T> =

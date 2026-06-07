@@ -14,54 +14,24 @@
 import { apiFetch } from "@/lib/api"
 import { auth } from "@/lib/auth"
 
-export type RuleHit = {
-  rule_name: string
-  actions_applied?: string[]
-  terminated?: boolean
-  error_message?: string
-}
+// Wire DTOs are generated from contracts/admin/messages.go. Do NOT hand-edit —
+// run `make generate`. Source of truth: web/src/lib/generated/. The GenAI*,
+// MessagesPage, and Facets shapes further down stay hand-written: they have no
+// named Go contract struct yet (the gateway emits them as inline JSON).
+import type {
+  RuleHit,
+  AttemptHit,
+  MessageEntry,
+  MessagesRecentResponse,
+  MessageBodyDetail,
+} from "./generated/admin"
 
-export type AttemptHit = {
-  target: string
-  started_at: string
-  duration_ms?: number
-  status_code?: number
-  error?: string
-  outcome: string
-}
-
-export type MessageEntry = {
-  event_id: string
-  at: string
-  correlation_id?: string
-  session_id?: string
-  session_id_source?: string
-  agent_id?: string
-  agent_id_source?: string
-  user_id?: string
-  user_id_source?: string
-  provider?: string
-  protocol?: string
-  model?: string
-  method?: string
-  configuration?: string
-  status_code: number
-  duration_ms: number
-  streaming?: boolean
-  upstream_error?: string
-  tokens_in?: number
-  tokens_out?: number
-  tokens_cached?: number
-  tokens_cache_creation?: number
-  tags?: string[]
-  rules_matched?: RuleHit[]
-  policy_ref?: string
-  attempts?: AttemptHit[]
-}
-
-export type MessagesRecentResponse = {
-  capacity: number
-  entries: MessageEntry[]
+export type {
+  RuleHit,
+  AttemptHit,
+  MessageEntry,
+  MessagesRecentResponse,
+  MessageBodyDetail,
 }
 
 /** Fetches the current ring contents (oldest-first). */
@@ -190,24 +160,9 @@ export type GenAIContent = {
   original_bytes?: number
 }
 
-export type MessageBodyDetail = {
-  event_id: string
-  request?: string
-  request_total_bytes: number
-  request_truncated?: boolean
-  response?: string
-  response_total_bytes: number
-  response_truncated?: boolean
-  response_assembled?: string
-  assembly_partial?: boolean
-  request_headers?: Record<string, string[]>
-  response_headers?: Record<string, string[]>
-  // gen_ai_content is the bounded gen_ai.* content captured when content
-  // capture is enabled, delivered as a JSON string (the contract field is a
-  // string; parse with parseGenAIContent). Empty otherwise. Telemetry inspector
-  // only.
-  gen_ai_content?: string
-}
+// MessageBodyDetail is generated (imported at the top of this file). The
+// gen_ai_content field is a JSON string the body endpoint returns; parse it
+// with parseGenAIContent into the hand-written GenAIContent shape below.
 
 // parseGenAIContent parses the gen_ai_content JSON string the body endpoint
 // returns into a structured GenAIContent. Returns null when absent or

@@ -120,9 +120,13 @@ function toWriteBody(form: GroupFormState): GroupWriteBody {
     .filter((n) => Number.isFinite(n) && n > 0)
   if (codes.length > 0) body.failure_status_codes = codes
   if (form.strictWeights) body.strict_weights = true
-  if (form.cbEnabled) {
-    // Preserve any existing tuning (thresholds, cooldown); only flip enabled.
-    body.circuit_breaker = { ...(form.cbConfig ?? {}), enabled: true }
+  if (form.cbEnabled && form.cbConfig) {
+    // Preserve the existing tuning (thresholds, cooldown, sampling window);
+    // only flip enabled. A breaker needs tuning to be valid (the server
+    // rejects all-zero thresholds), so without an existing cbConfig there is
+    // nothing valid to attach — tuning is authored in YAML, the editor only
+    // toggles enable/disable and round-trips the rest.
+    body.circuit_breaker = { ...form.cbConfig, enabled: true }
   }
   if (form.responseHeaderTimeoutSeconds != null && form.responseHeaderTimeoutSeconds > 0) {
     body.response_header_timeout_seconds = form.responseHeaderTimeoutSeconds
