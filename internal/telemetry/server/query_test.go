@@ -192,7 +192,7 @@ func TestMessages_FiltersAndPaging(t *testing.T) {
 	h := newQueryServer(t, q)
 	resp := get(t, h,
 		"/api/v1/messages?provider=openai&model=gpt-4o&configuration=default&protocol=chat_completions"+
-			"&session_id=sess-1&correlation_id=corr-1&status_class=2xx&tags=eu&tags=pii"+
+			"&session_id=sess-1&correlation_id=corr-1&agent_id=agt-1&user_id=usr-1&status_class=2xx&tags=eu&tags=pii"+
 			"&from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z&cursor=cur1&limit=25", true)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d", resp.Code)
@@ -218,7 +218,7 @@ func TestMessages_FiltersAndPaging(t *testing.T) {
 	f := got.Filter
 	if f.Provider != "openai" || f.Model != "gpt-4o" || f.Configuration != "default" ||
 		f.Protocol != "chat_completions" || f.SessionID != "sess-1" || f.CorrelationID != "corr-1" ||
-		f.StatusClass != "2xx" {
+		f.AgentID != "agt-1" || f.UserID != "usr-1" || f.StatusClass != "2xx" {
 		t.Errorf("scalar filters not plumbed: %+v", f)
 	}
 	if len(f.Tags) != 2 || f.Tags[0] != "eu" || f.Tags[1] != "pii" {

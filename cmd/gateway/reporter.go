@@ -198,6 +198,10 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 			serverPort:      serverPort,
 			sessionID:       observability.SessionIDFromContext(ctx),
 			sessionIDSource: observability.SessionIDSourceFromContext(ctx),
+			agentID:         observability.AgentIDFromContext(ctx),
+			agentIDSource:   observability.AgentIDSourceFromContext(ctx),
+			userID:          observability.UserIDFromContext(ctx),
+			userIDSource:    observability.UserIDSourceFromContext(ctx),
 		}
 	}
 }
@@ -238,6 +242,20 @@ type reporterRun struct {
 	// live-feed entry — never on a metric label (unbounded cardinality).
 	sessionID       string
 	sessionIDSource string
+
+	// agentID + agentIDSource are the resolved agent id and its provenance
+	// header, captured from context at construction time. Stamped on the
+	// Record, the span (gen_ai.agent.id), and the live-feed entry — never on
+	// a metric label (unbounded cardinality), mirroring sessionID.
+	agentID       string
+	agentIDSource string
+
+	// userID + userIDSource are the resolved end-user id and its provenance
+	// header, captured from context at construction time. Stamped on the
+	// Record, the span (enduser.id), and the live-feed entry — never on a
+	// metric label (unbounded cardinality), mirroring sessionID.
+	userID       string
+	userIDSource string
 
 	// method is the inbound HTTP verb captured at construction time.
 	// Stamped on the event / Record / live-feed Entry but never on a
@@ -627,6 +645,10 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 		CorrelationID:   ev.CorrelationID,
 		SessionID:       r.sessionID,
 		SessionIDSource: r.sessionIDSource,
+		AgentID:         r.agentID,
+		AgentIDSource:   r.agentIDSource,
+		UserID:          r.userID,
+		UserIDSource:    r.userIDSource,
 		Configuration:   r.configuration,
 		APIKeyName:      r.apiKeyName,
 		Provider:        ev.Provider,
@@ -818,6 +840,10 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		CorrelationID:       ev.CorrelationID,
 		SessionID:           r.sessionID,
 		SessionIDSource:     r.sessionIDSource,
+		AgentID:             r.agentID,
+		AgentIDSource:       r.agentIDSource,
+		UserID:              r.userID,
+		UserIDSource:        r.userIDSource,
 		Provider:            ev.Provider,
 		Protocol:            ev.Protocol,
 		Model:               ev.Model,
@@ -1089,6 +1115,12 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 	if r.sessionID != "" {
 		attrs = append(attrs, attribute.String(observability.AttrGenAIConversationID, r.sessionID))
 	}
+	if r.agentID != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIAgentID, r.agentID))
+	}
+	if r.userID != "" {
+		attrs = append(attrs, attribute.String(observability.AttrEnduserID, r.userID))
+	}
 	if ev.TokensIn > 0 {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageInputTokens, ev.TokensIn))
 	}
@@ -1248,6 +1280,12 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	}
 	if r.sessionID != "" {
 		attrs = append(attrs, otellog.String(observability.AttrGenAIConversationID, r.sessionID))
+	}
+	if r.agentID != "" {
+		attrs = append(attrs, otellog.String(observability.AttrGenAIAgentID, r.agentID))
+	}
+	if r.userID != "" {
+		attrs = append(attrs, otellog.String(observability.AttrEnduserID, r.userID))
 	}
 
 	// The event is "operation details": carry the same request/response/

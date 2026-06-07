@@ -570,18 +570,20 @@ func TestE2E_MessageBrowserFilters(t *testing.T) {
 	// prefix so exact-match filters return only this test's records, and tag
 	// every seeded record with a shared "mbf-all" so the paging assertions scope
 	// to exactly these four. recordWith defaults are all overridden below.
-	mk := func(id, provider, model, cfg, endpoint, session string, tags []string) cc.Record {
+	mk := func(id, provider, model, cfg, endpoint, session, agent, user string, tags []string) cc.Record {
 		r := recordWith(id, `{"q":"hi"}`, `{"a":"yo"}`)
 		r.Provider, r.Model, r.Configuration, r.Protocol = provider, model, cfg, endpoint
 		r.SessionID = session
+		r.AgentID = agent
+		r.UserID = user
 		r.Tags = append([]string{"mbf-all"}, tags...)
 		return r
 	}
 	seed := []cc.Record{
-		mk("mb-1", "mbf-anthropic", "mbf-claude", "mbf-dev", "mbf-messages", "mbf-sess-A", []string{"mbf-eu", "mbf-pii"}),
-		mk("mb-2", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-A", []string{"mbf-eu"}),
-		mk("mb-3", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-B", []string{"mbf-pii"}),
-		mk("mb-4", "mbf-gemini", "mbf-gemini2", "mbf-dev", "mbf-generate", "mbf-sess-B", []string{"mbf-eu", "mbf-pii"}),
+		mk("mb-1", "mbf-anthropic", "mbf-claude", "mbf-dev", "mbf-messages", "mbf-sess-A", "mbf-agent-A", "mbf-user-A", []string{"mbf-eu", "mbf-pii"}),
+		mk("mb-2", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-A", "mbf-agent-B", "mbf-user-B", []string{"mbf-eu"}),
+		mk("mb-3", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-B", "mbf-agent-A", "mbf-user-A", []string{"mbf-pii"}),
+		mk("mb-4", "mbf-gemini", "mbf-gemini2", "mbf-dev", "mbf-generate", "mbf-sess-B", "mbf-agent-B", "mbf-user-B", []string{"mbf-eu", "mbf-pii"}),
 	}
 	for _, r := range seed {
 		if resp := svc.postRecord(t, testGatewayID, testSecret, r); resp.StatusCode != http.StatusOK {
@@ -620,6 +622,8 @@ func TestE2E_MessageBrowserFilters(t *testing.T) {
 	hasExactly(page("configuration=mbf-prod"), "mb-2", "mb-3")
 	hasExactly(page("protocol=mbf-messages"), "mb-1")
 	hasExactly(page("session_id=mbf-sess-A"), "mb-1", "mb-2")
+	hasExactly(page("agent_id=mbf-agent-A"), "mb-1", "mb-3")
+	hasExactly(page("user_id=mbf-user-A"), "mb-1", "mb-3")
 	hasExactly(page("correlation_id=mb-3"), "mb-3")
 
 	// Tags AND: only records carrying BOTH mbf-eu and mbf-pii.

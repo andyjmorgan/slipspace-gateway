@@ -53,6 +53,10 @@ erDiagram
         BIGINT      tokens_cache_creation
         TEXT        session_id
         TEXT        session_id_source
+        TEXT        agent_id
+        TEXT        agent_id_source
+        TEXT        user_id
+        TEXT        user_id_source
         TEXT        api_key_name
         TEXT        policy_ref
         BOOLEAN     streaming
@@ -104,6 +108,10 @@ The lean, queryable per-request row — post-rule labels, outcome, token counts,
 | `tokens_cache_creation` | `BIGINT` | `0` | gen_ai | Prompt-cache write tokens the provider billed. |
 | `session_id` | `TEXT` | `''` | both | Resolved session/conversation bundle id. |
 | `session_id_source` | `TEXT` | `''` | Record | Header the session id was bundled from. |
+| `agent_id` | `TEXT` | `''` | both | Resolved agent id (the agent/sub-agent that issued the request). Added by migration 4. |
+| `agent_id_source` | `TEXT` | `''` | Record | Header the agent id was resolved from. Added by migration 4. |
+| `user_id` | `TEXT` | `''` | both | Resolved end-user id (orthogonal to session/agent). Added by migration 5. |
+| `user_id_source` | `TEXT` | `''` | Record | Header the user id was resolved from. Added by migration 5. |
 | `api_key_name` | `TEXT` | `''` | Record | Resolved Sluice API-key name (managed mode); empty in passthrough. |
 | `policy_ref` | `TEXT` | `''` | Record | Resilience policy the rules engine bound; empty for single-shot requests. |
 | `streaming` | `BOOLEAN` | `FALSE` | gen_ai | True iff the upstream response was an SSE stream. |
@@ -139,6 +147,8 @@ Created by migration 1 unless noted. The dashboard time-range scans and the mess
 | `request_events_observed_corr` | `(observed_at DESC, correlation_id DESC)` | Keyset pagination + the dashboard stats range scan in one index — no separate sort. |
 | `request_events_filter` | `(observed_at DESC, configuration, provider, model, gateway_id, protocol)` | Dashboard filters paired with a time range; `observed_at` leads so the range bound stays index-driven and the equality filters narrow within it. (Migration 2 rewrites the `backend` term to `provider` automatically.) |
 | `request_events_session` | `(session_id)` | Session grouping / lookup. |
+| `request_events_agent` | `(agent_id)` | Agent lookup / drill-down. Added by migration 4. |
+| `request_events_user` | `(user_id)` | End-user lookup / drill-down. Added by migration 5. |
 | `request_events_tags` | `GIN ((detail->'tags'))` | Tag containment filter (`detail->'tags' @> …`) and the distinct-tag dropdown scan. Added by migration 3. |
 
 ---
@@ -199,10 +209,10 @@ flowchart LR
 
 | Feed | Entry point | `SET` clause | Owns |
 |---|---|---|---|
-| gen_ai OTLP trace | [`UpsertRequestEvent`](../internal/telemetry/store/events.go) | `genAISetClause` | `provider`, `model`, `latency_ms`, the four `tokens_*`, `session_id`, `streaming`, `gen_ai_content` |
-| gateway Record webhook | [`UpsertGatewayRecord`](../internal/telemetry/store/events.go) | `gatewaySetClause` | `gateway_id`, `configuration`, `provider`, `model`, `protocol`, `method`, `status_code`, `upstream_status`, `session_id`, `session_id_source`, `api_key_name`, `policy_ref`, `detail` |
+| gen_ai OTLP trace | [`UpsertRequestEvent`](../internal/telemetry/store/events.go) | `genAISetClause` | `provider`, `model`, `latency_ms`, the four `tokens_*`, `session_id`, `agent_id`, `user_id`, `streaming`, `gen_ai_content` |
+| gateway Record webhook | [`UpsertGatewayRecord`](../internal/telemetry/store/events.go) | `gatewaySetClause` | `gateway_id`, `configuration`, `provider`, `model`, `protocol`, `method`, `status_code`, `upstream_status`, `session_id`, `session_id_source`, `agent_id`, `agent_id_source`, `user_id`, `user_id_source`, `api_key_name`, `policy_ref`, `detail` |
 
-A column absent from a feed's `SET` is left **untouched** on conflict, so the gen_ai feed never wipes the gateway columns and vice-versa. Within each clause, string and content columns merge with `COALESCE(NULLIF(EXCLUDED.col, ''), request_events.col)` — an empty or absent value in one delivery never clobbers a value the other feed (or an earlier delivery) already set. The shared dims `provider`, `model`, and `session_id` appear in **both** clauses precisely so whichever feed arrives first seeds them and the second only fills gaps. Numeric usage and latency take the latest `EXCLUDED` value (a gen_ai span always carries them meaningfully); `status_code` / `upstream_status` likewise take the Record's value.
+A column absent from a feed's `SET` is left **untouched** on conflict, so the gen_ai feed never wipes the gateway columns and vice-versa. Within each clause, string and content columns merge with `COALESCE(NULLIF(EXCLUDED.col, ''), request_events.col)` — an empty or absent value in one delivery never clobbers a value the other feed (or an earlier delivery) already set. The shared dims `provider`, `model`, `session_id`, `agent_id`, and `user_id` appear in **both** clauses precisely so whichever feed arrives first seeds them and the second only fills gaps (the OTLP span carries `agent_id` from `gen_ai.agent.id` and `user_id` from `enduser.id`; the Record additionally owns `agent_id_source` / `user_id_source`). Numeric usage and latency take the latest `EXCLUDED` value (a gen_ai span always carries them meaningfully); `status_code` / `upstream_status` likewise take the Record's value.
 
 The `NULL`-landing mechanism is the two helpers in [`scan.go`](../internal/telemetry/store/scan.go): `nullTime` turns the zero time into SQL `NULL` (so the `COALESCE($22, now())` default applies to `observed_at`) and `nullJSON` turns empty bytes into `NULL` (so `gen_ai_content` / `detail` stay absent rather than empty, letting the conflict's `COALESCE` prefer the existing value).
 
@@ -239,6 +249,8 @@ Migrations are a forward-only, append-only ordered set in [`migrations.go`](../i
 | 1 | `telemetry_core` | Creates `request_events`, `request_payloads`, `metric_points` and their indexes. | Lays down the three feeds in one step. |
 | 2 | `rename_backend_to_provider` | `ALTER TABLE request_events RENAME COLUMN backend TO provider;` | Vocabulary unification — the configured upstream is "provider" everywhere else (config schema, admin API, gen_ai OTel label), so the telemetry dimension follows. A hard cut with no dual-read window: post-migration the gateway emits `sluice.provider` and ingest reads `provider`. Postgres rewrites the `request_events_filter` index definition to the new column name automatically, so only the rename is needed. |
 | 3 | `tags_gin_index` | `CREATE INDEX … request_events_tags … USING gin ((detail->'tags'));` | The message browser filters by post-rule tags (`detail->'tags' @> …`) and enumerates the distinct tag set for its dropdown; the GIN index makes both the containment filter and the `jsonb_array_elements_text` scan index-backed instead of a full table scan as the event table grows. |
+| 4 | `add_agent_id` | `ALTER TABLE request_events ADD COLUMN agent_id … ; ADD COLUMN agent_id_source … ; CREATE INDEX request_events_agent …` | Adds the additive `agent_id` / `agent_id_source` columns and a single-column lookup index so the message browser can drill down by agent, mirroring `request_events_session`. Populated from `gen_ai.agent.id` (OTLP feed) and `agent_id` (Record feed). |
+| 5 | `add_user_id` | `ALTER TABLE request_events ADD COLUMN user_id … ; ADD COLUMN user_id_source … ; CREATE INDEX request_events_user …` | Adds the additive `user_id` / `user_id_source` columns and a single-column lookup index so the message browser can drill down by end user, mirroring `request_events_agent`. Populated from `enduser.id` (OTLP feed) and `user_id` (Record feed). |
 
 > The `backend → provider` rename (migration 2) is why older field/label references to `backend` should be read as `provider` throughout the telemetry surface. There is no compatibility shim; a gateway emitting the legacy `backend` label after this migration would land its provider dimension in the row's default empty `provider` column.
 

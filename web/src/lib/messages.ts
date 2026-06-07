@@ -36,6 +36,10 @@ export type MessageEntry = {
   correlation_id?: string
   session_id?: string
   session_id_source?: string
+  agent_id?: string
+  agent_id_source?: string
+  user_id?: string
+  user_id_source?: string
   provider?: string
   protocol?: string
   model?: string
@@ -71,6 +75,8 @@ export async function fetchRecentMessages(limit?: number): Promise<MessagesRecen
 export type MessageFilters = {
   correlationId?: string
   sessionId?: string
+  agentId?: string
+  userId?: string
   provider?: string
   model?: string
   configuration?: string
@@ -108,6 +114,8 @@ export async function fetchMessagesPage(
   }
   put("correlation_id", filters.correlationId)
   put("session_id", filters.sessionId)
+  put("agent_id", filters.agentId)
+  put("user_id", filters.userId)
   put("provider", filters.provider)
   put("model", filters.model)
   put("configuration", filters.configuration)

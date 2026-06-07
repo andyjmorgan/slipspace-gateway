@@ -51,6 +51,14 @@ type RequestEvent struct {
 	// names the header it was bundled from.
 	SessionID       string
 	SessionIDSource string
+	// AgentID is the resolved agent id (the agent or sub-agent that issued the
+	// request); AgentIDSource names the header it was resolved from.
+	AgentID       string
+	AgentIDSource string
+	// UserID is the resolved end-user id on whose behalf the request was made;
+	// UserIDSource names the header it was resolved from.
+	UserID       string
+	UserIDSource string
 	// APIKeyName is the resolved Sluice API-key name (managed mode), empty in
 	// passthrough.
 	APIKeyName string
@@ -116,7 +124,7 @@ type AttemptDetail struct {
 	Outcome     string `json:"outcome"`
 }
 
-const requestEventColumns = `correlation_id, gateway_id, configuration, provider, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at`
+const requestEventColumns = `correlation_id, gateway_id, configuration, provider, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, agent_id, agent_id_source, user_id, user_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at`
 
 // insertEventSQL is the shared INSERT … ON CONFLICT prefix for the two feed
 // upserts. Both insert the full row (so whichever feed creates the row stamps
@@ -126,8 +134,8 @@ const requestEventColumns = `correlation_id, gateway_id, configuration, provider
 // the Record feed never clobbers gen_ai columns — the two converge on one row
 // in either arrival order.
 const insertEventSQL = `
-INSERT INTO request_events (correlation_id, gateway_id, configuration, provider, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,COALESCE($22, now()))
+INSERT INTO request_events (correlation_id, gateway_id, configuration, provider, model, protocol, method, status_code, upstream_status, latency_ms, tokens_in, tokens_out, tokens_cached, tokens_cache_creation, session_id, session_id_source, agent_id, agent_id_source, user_id, user_id_source, api_key_name, policy_ref, streaming, gen_ai_content, detail, observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,COALESCE($26, now()))
 ON CONFLICT (correlation_id) DO UPDATE SET `
 
 // genAISetClause names the columns the gen_ai OTLP feed owns: model / provider /
@@ -148,6 +156,8 @@ const genAISetClause = `
   tokens_cached         = EXCLUDED.tokens_cached,
   tokens_cache_creation = EXCLUDED.tokens_cache_creation,
   session_id            = COALESCE(NULLIF(EXCLUDED.session_id, ''), request_events.session_id),
+  agent_id              = COALESCE(NULLIF(EXCLUDED.agent_id, ''), request_events.agent_id),
+  user_id               = COALESCE(NULLIF(EXCLUDED.user_id, ''), request_events.user_id),
   streaming             = EXCLUDED.streaming,
   gen_ai_content        = COALESCE(EXCLUDED.gen_ai_content, request_events.gen_ai_content)`
 
@@ -170,6 +180,10 @@ const gatewaySetClause = `
   upstream_status       = EXCLUDED.upstream_status,
   session_id            = COALESCE(NULLIF(EXCLUDED.session_id, ''), request_events.session_id),
   session_id_source     = COALESCE(NULLIF(EXCLUDED.session_id_source, ''), request_events.session_id_source),
+  agent_id              = COALESCE(NULLIF(EXCLUDED.agent_id, ''), request_events.agent_id),
+  agent_id_source       = COALESCE(NULLIF(EXCLUDED.agent_id_source, ''), request_events.agent_id_source),
+  user_id               = COALESCE(NULLIF(EXCLUDED.user_id, ''), request_events.user_id),
+  user_id_source        = COALESCE(NULLIF(EXCLUDED.user_id_source, ''), request_events.user_id_source),
   api_key_name          = COALESCE(NULLIF(EXCLUDED.api_key_name, ''), request_events.api_key_name),
   policy_ref            = COALESCE(NULLIF(EXCLUDED.policy_ref, ''), request_events.policy_ref),
   detail                = COALESCE(EXCLUDED.detail, request_events.detail)`
@@ -202,7 +216,7 @@ func (s *Store) execEventUpsert(ctx context.Context, e RequestEvent, setClause s
 	_, err := s.db.Exec(ctx, insertEventSQL+setClause,
 		e.CorrelationID, e.GatewayID, e.Configuration, e.Provider, e.Model, e.Protocol, e.Method,
 		e.StatusCode, e.UpstreamStatus, e.LatencyMs, e.TokensIn, e.TokensOut, e.TokensCached, e.TokensCacheCreation,
-		e.SessionID, e.SessionIDSource, e.APIKeyName, e.PolicyRef, e.Streaming, nullJSON(e.GenAIContent), nullJSON(e.Detail), nullTime(e.ObservedAt))
+		e.SessionID, e.SessionIDSource, e.AgentID, e.AgentIDSource, e.UserID, e.UserIDSource, e.APIKeyName, e.PolicyRef, e.Streaming, nullJSON(e.GenAIContent), nullJSON(e.Detail), nullTime(e.ObservedAt))
 	return err
 }
 
@@ -246,7 +260,7 @@ func scanRequestEvent(s rowScanner) (RequestEvent, error) {
 	var e RequestEvent
 	if err := s.Scan(&e.CorrelationID, &e.GatewayID, &e.Configuration, &e.Provider, &e.Model, &e.Protocol, &e.Method,
 		&e.StatusCode, &e.UpstreamStatus, &e.LatencyMs, &e.TokensIn, &e.TokensOut, &e.TokensCached, &e.TokensCacheCreation,
-		&e.SessionID, &e.SessionIDSource, &e.APIKeyName, &e.PolicyRef, &e.Streaming, &e.GenAIContent, &e.Detail, &e.ObservedAt); err != nil {
+		&e.SessionID, &e.SessionIDSource, &e.AgentID, &e.AgentIDSource, &e.UserID, &e.UserIDSource, &e.APIKeyName, &e.PolicyRef, &e.Streaming, &e.GenAIContent, &e.Detail, &e.ObservedAt); err != nil {
 		return RequestEvent{}, fmt.Errorf("store: scan request event: %w", err)
 	}
 	return e, nil

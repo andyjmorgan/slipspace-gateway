@@ -48,6 +48,23 @@ const (
 	// the span builder has a single key reference once that lands.
 	AttrGenAIConversationID = "gen_ai.conversation.id"
 
+	// AttrGenAIAgentID is the spec home for the GenAI agent identifier (see
+	// the GenAI agent-spans convention). Sluice resolves it from
+	// X-Sluice-Agent-Id (or a configured fallback such as
+	// X-Claude-Code-Agent-Id) and stamps it on the request span and the
+	// operation-details event — never on a metric label (unbounded
+	// cardinality), mirroring gen_ai.conversation.id.
+	AttrGenAIAgentID = "gen_ai.agent.id"
+
+	// AttrEnduserID is the end-user identifier. The GenAI semconv defines no
+	// user attribute (only gen_ai.conversation.id and gen_ai.agent.id), so the
+	// end user rides the general-purpose `enduser` namespace (enduser.id,
+	// recently un-deprecated). Sluice resolves it from X-Sluice-User-Id (or a
+	// configured fallback) and stamps it on the request span and the
+	// operation-details event — never on a metric label (unbounded
+	// cardinality), mirroring gen_ai.conversation.id / gen_ai.agent.id.
+	AttrEnduserID = "enduser.id"
+
 	// AttrGenAIUsageInputTokens and AttrGenAIUsageOutputTokens are the
 	// spec gen_ai.usage.* span attributes carrying per-request token
 	// counts. Span-only — the metric form is the token-usage histogram.

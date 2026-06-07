@@ -100,6 +100,8 @@ const (
 	EnvAdminLiveFeedBodyMaxBytes            = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
 	EnvRedactExtraHeaders                   = "SLUICE_REDACT_EXTRA_HEADERS"
 	EnvSessionIDHeaders                     = "SLUICE_SESSION_ID_HEADERS"
+	EnvAgentIDHeaders                       = "SLUICE_AGENT_ID_HEADERS"
+	EnvUserIDHeaders                        = "SLUICE_USER_ID_HEADERS"
 	EnvExternalURL                          = "SLUICE_EXTERNAL_URL"
 )
 
@@ -125,6 +127,8 @@ var envVarNames = []string{
 	EnvAdminLiveFeedBodyMaxBytes,
 	EnvRedactExtraHeaders,
 	EnvSessionIDHeaders,
+	EnvAgentIDHeaders,
+	EnvUserIDHeaders,
 	EnvExternalURL,
 }
 
@@ -237,6 +241,26 @@ type ServerEnv struct {
 	// during resolution so a promoted session id can't bypass redaction.
 	SessionIDHeaders []string
 
+	// AgentIDHeaders is the operator-supplied addendum to the built-in
+	// agent-id fallback chain (observability.DefaultAgentIDHeaders). Each
+	// entry is a header name appended, in order, after the shipped defaults
+	// (X-Claude-Code-Agent-Id); the authoritative X-Sluice-Agent-Id is
+	// always tried first regardless. Lets an operator bundle a custom
+	// client's agent header without a code change. A header also present in
+	// RedactExtraHeaders is skipped during resolution so a promoted agent id
+	// can't bypass redaction.
+	AgentIDHeaders []string
+
+	// UserIDHeaders is the operator-supplied addendum to the built-in
+	// user-id fallback chain (observability.DefaultUserIDHeaders, which is
+	// empty — no client ships a standard end-user header). Each entry is a
+	// header name appended, in order, after the (empty) defaults; the
+	// authoritative X-Sluice-User-Id is always tried first regardless. Lets
+	// an operator promote a custom client's user header without a code
+	// change. A header also present in RedactExtraHeaders is skipped during
+	// resolution so a promoted user id can't bypass redaction.
+	UserIDHeaders []string
+
 	// ExternalURL is the gateway's externally reachable base URL (e.g.
 	// https://sluice.example.com), used to resolve the {external_url}
 	// template reference in response-side body rewrites — chiefly
@@ -321,6 +345,8 @@ func LoadEnv() (*ServerEnv, error) {
 		AdminLiveFeedBodyMaxBytes:            bodyMaxBytes,
 		RedactExtraHeaders:                   envCSVList(EnvRedactExtraHeaders),
 		SessionIDHeaders:                     envCSVList(EnvSessionIDHeaders),
+		AgentIDHeaders:                       envCSVList(EnvAgentIDHeaders),
+		UserIDHeaders:                        envCSVList(EnvUserIDHeaders),
 		ExternalURL:                          envString(EnvExternalURL, ""),
 	}, nil
 }

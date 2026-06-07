@@ -55,10 +55,12 @@ func TestAppendFilter_SessionCorrelationTags(t *testing.T) {
 	where, args := appendFilter(nil, nil, EventFilter{
 		SessionID:     "s1",
 		CorrelationID: "c1",
+		AgentID:       "a1",
+		UserID:        "u1",
 		Tags:          []string{"eu", "pii"},
 	})
-	// session_id + correlation_id + the single jsonb tags param.
-	if len(args) != 3 {
+	// session_id + correlation_id + agent_id + user_id + the single jsonb tags param.
+	if len(args) != 5 {
 		t.Fatalf("args = %v", args)
 	}
 	joined := ""
@@ -66,13 +68,13 @@ func TestAppendFilter_SessionCorrelationTags(t *testing.T) {
 		joined += w + " "
 	}
 	if !contains(joined, "session_id =") || !contains(joined, "correlation_id =") ||
-		!contains(joined, "detail->'tags' @>") {
+		!contains(joined, "agent_id =") || !contains(joined, "user_id =") || !contains(joined, "detail->'tags' @>") {
 		t.Errorf("where = %q", joined)
 	}
 	// The tags arg is a JSON array string binding both tags.
-	tagArg, ok := args[2].(string)
+	tagArg, ok := args[4].(string)
 	if !ok || !contains(tagArg, `"eu"`) || !contains(tagArg, `"pii"`) {
-		t.Errorf("tags arg = %#v", args[2])
+		t.Errorf("tags arg = %#v", args[4])
 	}
 }
 

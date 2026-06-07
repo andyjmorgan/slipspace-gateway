@@ -63,6 +63,72 @@ def test_session_id_echoed_when_sent(gateway_url: str, mockllm_url: str) -> None
     assert resp.headers.get("X-Sluice-Session-Id") == "sess-abc-123"
 
 
+def test_agent_id_echoed_when_sent_via_default_header(gateway_url: str, mockllm_url: str) -> None:
+    # Sent under the shipped client default header; the gateway resolves it and
+    # echoes it under the authoritative Sluice agent header.
+    _stage_chat_ok(mockllm_url)
+    resp = requests.post(
+        f"{gateway_url}/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+            "X-Claude-Code-Agent-Id": "agt-abc-123",
+        },
+        data=json.dumps({"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "x"}]}),
+        timeout=15,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("X-Sluice-Agent-Id") == "agt-abc-123"
+
+
+def test_agent_id_not_echoed_when_absent(gateway_url: str, mockllm_url: str) -> None:
+    _stage_chat_ok(mockllm_url)
+    resp = requests.post(
+        f"{gateway_url}/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps({"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "x"}]}),
+        timeout=15,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("X-Sluice-Agent-Id") is None
+
+
+def test_user_id_echoed_when_sent(gateway_url: str, mockllm_url: str) -> None:
+    # There is no shipped client default for user id, so it is sent under the
+    # authoritative Sluice header; the gateway resolves and echoes it.
+    _stage_chat_ok(mockllm_url)
+    resp = requests.post(
+        f"{gateway_url}/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+            "X-Sluice-User-Id": "user-abc-123",
+        },
+        data=json.dumps({"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "x"}]}),
+        timeout=15,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("X-Sluice-User-Id") == "user-abc-123"
+
+
+def test_user_id_not_echoed_when_absent(gateway_url: str, mockllm_url: str) -> None:
+    _stage_chat_ok(mockllm_url)
+    resp = requests.post(
+        f"{gateway_url}/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps({"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "x"}]}),
+        timeout=15,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("X-Sluice-User-Id") is None
+
+
 def test_correlation_id_generated_when_absent(gateway_url: str, mockllm_url: str) -> None:
     _stage_chat_ok(mockllm_url)
     resp = requests.post(
