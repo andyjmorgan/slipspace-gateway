@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel/metric/noop"
@@ -98,6 +100,27 @@ func newTranslateEnv(t *testing.T) *testEnv {
 		cap.body = body
 		cap.count++
 		cap.mu.Unlock()
+
+		// When the (translated) request asks for streaming, reply with an OpenAI
+		// Chat SSE stream; otherwise a non-streaming OpenAI Chat response. The
+		// response leg translates either back to Anthropic Messages shape.
+		if bytes.Contains(body, []byte(`"stream":true`)) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			fl, _ := w.(http.Flusher)
+			for _, c := range []string{
+				`{"id":"c1","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"}}]}`,
+				`{"choices":[{"index":0,"delta":{"content":"hi stream"}}]}`,
+				`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+				`[DONE]`,
+			} {
+				_, _ = w.Write([]byte("data: " + c + "\n\n"))
+				if fl != nil {
+					fl.Flush()
+				}
+			}
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -225,7 +248,7 @@ func TestGateway_TranslateRoundTrip(t *testing.T) {
 	}
 }
 
-func TestGateway_TranslateStreamingRejected(t *testing.T) {
+func TestGateway_TranslateStreamingRoundTrip(t *testing.T) {
 	env := newTranslateEnv(t)
 
 	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/messages", `{"model":"claude-x","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
@@ -233,13 +256,43 @@ func TestGateway_TranslateStreamingRejected(t *testing.T) {
 	resp := doReq(t, req)
 	defer closeBody(resp)
 
-	// Streaming translation is not yet supported: reject before forwarding.
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("status = %d, want 501 for streaming translation", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if _, _, _, _, count := env.upstream.snapshot(); count != 0 {
-		t.Errorf("upstream hits = %d, want 0 (rejected before forward)", count)
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
 	}
+
+	// The upstream must have received a streaming OpenAI Chat request.
+	_, path, _, upBody, _ := env.upstream.snapshot()
+	if path != "/v1/chat/completions" {
+		t.Errorf("upstream path = %q, want /v1/chat/completions", path)
+	}
+	if !bytes.Contains(upBody, []byte(`"stream":true`)) {
+		t.Errorf("upstream request not streaming: %s", upBody)
+	}
+
+	// The client must receive an Anthropic Messages SSE stream.
+	body, _ := io.ReadAll(resp.Body)
+	got := sseEventTypes(string(body))
+	want := []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("client SSE event types = %v\nwant %v", got, want)
+	}
+	if !strings.Contains(string(body), `"text":"hi stream"`) {
+		t.Errorf("client stream missing translated text delta:\n%s", body)
+	}
+}
+
+// sseEventTypes extracts the ordered `event:` labels from an SSE body.
+func sseEventTypes(raw string) []string {
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.HasPrefix(line, "event: ") {
+			out = append(out, strings.TrimPrefix(line, "event: "))
+		}
+	}
+	return out
 }
 
 func TestGateway_TranslateFailClosedNoTranslator(t *testing.T) {

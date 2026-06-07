@@ -71,18 +71,36 @@ func translateRequestBody(state *rules.MutableState, r *http.Request) (streaming
 	return bodyWantsStream(out), nil
 }
 
-// translateResponseBody rewrites a non-streaming upstream response body from the
-// target protocol back into the source protocol when translation is active. It
-// runs from the forwarder's ModifyResponse hook (decision #2). Streaming
-// responses are a defensive no-op: an active+streaming request is rejected at
-// request time, so the upstream is never contacted for one.
+// translateResponseBody rewrites an upstream response body from the target
+// protocol back into the source protocol when translation is active. It runs
+// from the forwarder's ModifyResponse hook (decision #2).
+//
+// Non-streaming responses are buffered, translated, and replaced. Streaming
+// responses are wrapped in a pull-based translating reader so SSE latency is
+// preserved; this requires a StreamCapable translator (the request-time guard
+// rejects streaming when the pair is not stream-capable, so this is reachable
+// only for capable pairs).
 func translateResponseBody(ctx context.Context, resp *http.Response, streaming bool) error {
 	state := rules.MutableStateFromContext(ctx)
-	if !translationActive(state) || streaming {
+	if !translationActive(state) {
 		return nil
 	}
 	tr, ok := translate.Lookup(state.SourceProtocol, state.Protocol)
 	if !ok {
+		return nil
+	}
+
+	if streaming {
+		sc, ok := tr.(translate.StreamCapable)
+		if !ok {
+			// Not stream-capable: the request-time guard should have rejected
+			// this, so leave the body untranslated rather than buffer a stream.
+			return nil
+		}
+		resp.Body = translate.NewStreamingReader(resp.Body, sc.NewStreamTranslator())
+		resp.ContentLength = -1
+		resp.Header.Del("Content-Length")
+		resp.Header.Set("Content-Type", "text/event-stream")
 		return nil
 	}
 
@@ -100,6 +118,17 @@ func translateResponseBody(ctx context.Context, resp *http.Response, streaming b
 	resp.ContentLength = int64(len(out))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(out)))
 	return nil
+}
+
+// streamCapable reports whether the registered translator for an active
+// translation can translate streaming responses.
+func streamCapable(state *rules.MutableState) bool {
+	tr, ok := translate.Lookup(state.SourceProtocol, state.Protocol)
+	if !ok {
+		return false
+	}
+	_, ok = tr.(translate.StreamCapable)
+	return ok
 }
 
 // newResponseBodyTransform builds the forwarder's ModifyResponse transform:

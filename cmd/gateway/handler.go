@@ -131,8 +131,8 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
-		if streamingXlate {
-			errs.Write(ctx, w, http.StatusNotImplemented, "handler", "translate_streaming_unsupported", "streaming translation not yet supported")
+		if streamingXlate && !streamCapable(state) {
+			errs.Write(ctx, w, http.StatusNotImplemented, "handler", "translate_streaming_unsupported", "streaming translation not supported for this protocol pair")
 			return
 		}
 

@@ -27,6 +27,13 @@ func (anthropicOpenAIChat) TranslateResponse(body []byte) ([]byte, []Drop, error
 	return translateChatResponseToMessages(body)
 }
 
+// NewStreamTranslator returns a fresh stateful translator for one streaming
+// OpenAI Chat response, satisfying StreamCapable so the gateway can translate
+// streaming responses (not just non-streaming ones).
+func (anthropicOpenAIChat) NewStreamTranslator() StreamTranslator {
+	return &chatToMessagesStream{}
+}
+
 // init registers the (messages, chat) translator with the default registry —
 // the one permitted use of init in this codebase (polymorphic/translator
 // registration).
