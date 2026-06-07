@@ -1,0 +1,49 @@
+# Quickstart policy TEMPLATE.
+#
+# This file is NOT read by the gateway directly. The `init` service in each
+# compose stack runs `envsubst` over it and writes the rendered result to
+# /etc/sluice/policy.yaml in a shared volume BEFORE the gateway starts. The
+# gateway therefore only ever reads a fully-literal file — no ${VAR} reaches it,
+# preserving the "config files are trusted, no interpolation" invariant.
+#
+# The ${...} tokens below are the placeholder credentials, replaced from your
+# .env at startup. See .env.example.
+
+configurations:
+  default:
+    # Upstream provider credentials. Substituted from .env by the init service.
+    credentials:
+      openai: ${OPENAI_API_KEY}
+      anthropic: ${ANTHROPIC_API_KEY}
+      gemini: ${GEMINI_API_KEY}
+
+    # Routing: (protocol, model glob) -> provider. The inbound path picks the
+    # protocol; the model in the body picks the provider via these bindings.
+    bindings:
+      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], provider: openai }
+      - { protocol: responses, models: ["gpt-*"], provider: openai }
+      - { protocol: chat, models: ["claude-*"], provider: anthropic }
+      - { protocol: messages, models: ["claude-*"], provider: anthropic }
+      - { protocol: chat, models: ["gemini-*"], provider: gemini }
+      - { protocol: generate_content, models: ["gemini-*"], provider: gemini }
+
+    # Opaque GET surfaces forwarded verbatim. Model-list only — batches are
+    # intentionally not bound.
+    passthrough_bindings:
+      - { family: models, provider: openai }
+      - { family: models, provider: gemini }
+
+    tags:
+      tier: quickstart
+
+# The client-facing key. Clients send `Authorization: Bearer <this>` (or the
+# provider-native x-api-key / x-goog-api-key header); the gateway swaps in the
+# upstream credential above. Substituted from .env by the init service.
+api_keys:
+  - secret: ${SLUICE_CLIENT_API_KEY}
+    name: "Quickstart client key"
+    configuration: default
+    enabled: true
+
+# No transform rules in the quickstart — routing is bindings.
+rules: []

@@ -305,6 +305,14 @@ The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts
 
 ## docker-compose local dev
 
+> **Just want to run Sluice from the published images?** Use the turnkey
+> quickstart bundle at [`deploy/quickstart/`](../deploy/quickstart/) instead of
+> the dev composes below. It ships three copy-paste stacks (gateway + console,
+> gateway only, gateway + telemetry) that pull `ghcr.io/andyjmorgan/sluice-*`,
+> proxy the real providers, and are configured entirely from a `.env` file — no
+> source checkout or build toolchain. The composes in *this* section build from
+> source and target the mock LLM for development.
+
 The committed [`docker-compose.yaml`](../docker-compose.yaml) brings up the gateway image + the published `sluice-mockllm`, mounted against `config-dev/` for the policy bundle. This is the path that mirrors production layout most closely — the same image, the same mount conventions, the same env vars.
 
 ```sh

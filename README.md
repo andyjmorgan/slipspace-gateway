@@ -25,6 +25,13 @@ Any path that does **not** match one of the generative protocols above (provider
 
 ## Quickstart
 
+Want a turnkey stack from the published images (no build, real providers)? See
+[`deploy/quickstart/`](deploy/quickstart/) — three copy-paste Compose stacks
+(gateway + console, gateway only, gateway + telemetry); set keys in `.env` and
+`docker compose up`.
+
+For local development against the mock LLM (build from source):
+
 ```sh
 # Bring up the gateway + mockllm.
 make dev

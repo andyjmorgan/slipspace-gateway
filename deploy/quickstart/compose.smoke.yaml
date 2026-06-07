@@ -1,0 +1,33 @@
+# Smoke/verification overlay — NOT for real use.
+#
+# Layers on top of any quickstart stack to make it key-free: swaps the real
+# upstreams for the in-stack sluice-mockllm (canned, SDK-valid responses) so the
+# whole bundle (init render -> gateway boot -> v2 bindings -> credential mint ->
+# round-trip) can be exercised by the smoke suite with no provider credentials.
+#
+#   docker compose -f compose.admin.yaml -f compose.smoke.yaml up -d --wait
+#   SLUICE_BASE_URL=http://localhost:8585 SLUICE_API_KEY=sk_quickstart_demo_key \
+#     make -C ../.. smoke
+#
+# The .env placeholder keys are fine here — mockllm ignores credential values.
+name: sluice-quickstart
+
+services:
+  init:
+    environment:
+      # Render against the mock-pointed providers instead of the real ones.
+      PROVIDERS_FILE: providers.mock.yaml
+
+  gateway:
+    depends_on:
+      mockllm:
+        condition: service_started
+
+  mockllm:
+    image: ghcr.io/andyjmorgan/sluice-mockllm:${SLUICE_IMAGE_TAG:-latest}
+    # Reached by the gateway at mockllm:5555 (matches providers.mock.yaml).
+    # Published to the host so the verification harness can stage canned
+    # responses via POST /control/responses before running the smoke suite.
+    ports:
+      - "5555:5555"
+    restart: unless-stopped

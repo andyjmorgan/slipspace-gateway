@@ -1,0 +1,64 @@
+# Mock-pointed providers, used ONLY by compose.smoke.yaml for key-free
+# verification. Identical protocol/auth shapes to providers.yaml, but every
+# base_url points at the in-stack sluice-mockllm service instead of the real
+# upstreams. Not part of any real stack.
+providers:
+  openai:
+    base_url: http://mockllm:5555
+    protocols:
+      chat:
+        path: /v1/chat/completions
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+      responses:
+        path: /v1/responses
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
+      models:
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+        paths:
+          - match: /v1/models
+            methods: [GET]
+
+  anthropic:
+    base_url: http://mockllm:5555
+    required_headers:
+      anthropic-version: "2023-06-01"
+    protocols:
+      messages:
+        path: /v1/messages
+        auth:
+          header: x-api-key
+          format: "{key}"
+      chat:
+        path: /v1/chat/completions
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+
+  gemini:
+    base_url: http://mockllm:5555
+    protocols:
+      generate_content:
+        path: "/v1beta/models/{model}:{op}"
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
+      chat:
+        path: /v1beta/openai/chat/completions
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
+      models:
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
+        paths:
+          - match: /v1beta/models
+            methods: [GET]
