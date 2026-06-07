@@ -9,6 +9,7 @@ import { ProviderChip } from "@/components/atoms/provider-chip"
 import { JsonViewer } from "@/components/atoms/json-viewer"
 import { InspectorModal } from "@/components/atoms/inspector-modal"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { SkeletonRows } from "@/components/atoms/skeleton"
 import { Segmented } from "@/components/atoms/segmented"
 import { Select } from "@/components/atoms/select"
 import { MultiSelect } from "@/components/atoms/multi-select"
@@ -272,8 +273,14 @@ export function MessagesPage() {
               <th className="text-right font-medium px-4 py-2">Tokens</th>
             </tr>
           </thead>
-          <tbody>
-            {entries.map((e, i) => (
+          <tbody aria-busy={status === "loading"}>
+            {status === "loading" && (
+              <SkeletonRows
+                rows={Math.min(limit, 12)}
+                cols={[{ w: "5rem" }, { w: "2.5rem" }, { w: "4rem" }, { w: "3.5rem" }, { w: "6rem" }, { w: "5rem" }, { w: "5rem" }, { w: "3rem", align: "right" }, { w: "3.5rem", align: "right" }]}
+              />
+            )}
+            {status !== "loading" && entries.map((e, i) => (
               <tr
                 key={e.event_id}
                 onClick={() => setSelected(i)}

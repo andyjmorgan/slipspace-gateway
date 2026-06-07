@@ -18,6 +18,7 @@ import { KPI } from "@/components/atoms/kpi"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { Skeleton, SkeletonRows, SkeletonTiles, SkeletonBlock } from "@/components/atoms/skeleton"
 import { Segmented } from "@/components/atoms/segmented"
 import { Select } from "@/components/atoms/select"
 import { MultiSelect } from "@/components/atoms/multi-select"
@@ -246,8 +247,14 @@ function SessionsList() {
               <th className="text-left font-medium px-4 py-2">Last activity</th>
             </tr>
           </thead>
-          <tbody>
-            {sessions.map((s) => (
+          <tbody aria-busy={status === "loading"}>
+            {status === "loading" && (
+              <SkeletonRows
+                rows={Math.min(limit, 12)}
+                cols={[{ w: "12rem" }, { w: "2.5rem", align: "right" }, { w: "3rem", align: "right" }, { w: "8rem" }, { w: "9rem" }, { w: "4rem" }]}
+              />
+            )}
+            {status !== "loading" && sessions.map((s) => (
               <tr
                 key={s.session_id}
                 onClick={() => nav(`/sessions/${encodeURIComponent(s.session_id)}`)}
@@ -327,6 +334,39 @@ function Placeholder({ text, tone }: { text: string; tone?: "err" }) {
   )
 }
 
+// SessionDetailSkeleton traces the loaded layout — KPI tiles, the graphs panel,
+// and the messages table — so the page holds its shape while the session loads
+// rather than flashing a single centered spinner.
+function SessionDetailSkeleton() {
+  return (
+    <>
+      <SkeletonTiles count={6} className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 shrink-0" />
+      <div className="flex flex-col gap-3.5 flex-1 min-h-0">
+        <PanelCard className="shrink-0">
+          <div className="flex items-center px-4 h-[42px] border-b border-[color:var(--border)]">
+            <Skeleton className="h-3.5 w-24" />
+          </div>
+          <div className="p-4 flex flex-col gap-4">
+            <SkeletonBlock height={200} />
+            <SkeletonBlock height={150} />
+          </div>
+        </PanelCard>
+        <PanelCard className="flex-1 min-h-0 flex flex-col">
+          <PanelHead title="Messages" sub="loading…" />
+          <TableScroll>
+            <tbody aria-busy="true">
+              <SkeletonRows
+                rows={8}
+                cols={[{ w: "5rem" }, { w: "2.5rem" }, { w: "4rem" }, { w: "3.5rem" }, { w: "6rem" }, { w: "4rem", align: "right" }, { w: "4rem", align: "right" }]}
+              />
+            </tbody>
+          </TableScroll>
+        </PanelCard>
+      </div>
+    </>
+  )
+}
+
 const GRAPHS_COLLAPSED_KEY = "telemetry.sessions.graphsCollapsed"
 
 function SessionBody({ sessionId }: { sessionId: string }) {
@@ -336,6 +376,11 @@ function SessionBody({ sessionId }: { sessionId: string }) {
   const [err, setErr] = useState("")
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(GRAPHS_COLLAPSED_KEY) === "1")
   const [selected, setSelected] = useState<number | null>(null)
+  // The whole session loads at once (the graphs plot the full series), so the
+  // messages table paginates client-side over the already-fetched requests —
+  // a long conversation otherwise renders hundreds of rows in one scroll.
+  const [pageSize, setPageSize] = useState<number>(SESSION_DEFAULT_PAGE_SIZE)
+  const [pageIndex, setPageIndex] = useState(0)
 
   const toggleCollapsed = () => {
     setCollapsed((c) => {
@@ -349,6 +394,7 @@ function SessionBody({ sessionId }: { sessionId: string }) {
     let cancelled = false
     setStatus("loading")
     setSelected(null)
+    setPageIndex(0)
     fetchSession(sessionId)
       .then((v) => {
         if (cancelled) return
@@ -378,10 +424,26 @@ function SessionBody({ sessionId }: { sessionId: string }) {
   const requests = useMemo(() => view?.requests ?? [], [view])
   const newestFirst = useMemo(() => requests.slice().reverse(), [requests])
 
-  if (status === "loading") return <Placeholder text="Loading session…" />
+  // selectAt opens the inspector at an absolute index into newestFirst and pulls
+  // that row's page into view, so inspector prev/next can walk across page
+  // boundaries without the table lagging behind.
+  const selectAt = (idx: number) => {
+    setSelected(idx)
+    setPageIndex(Math.floor(idx / pageSize))
+  }
+
+  if (status === "loading") return <SessionDetailSkeleton />
   if (status === "missing") return <Placeholder text={`No telemetry for session ${sessionId}.`} />
   if (status === "error") return <Placeholder text={`Failed to load session: ${err}`} tone="err" />
   if (!view) return null
+
+  // Client-side paging over the newest-first rows. pageIndex is clamped so a
+  // page-size bump (which shrinks the page count) can't strand the view past the
+  // last page.
+  const pageCount = Math.max(1, Math.ceil(newestFirst.length / pageSize))
+  const page = Math.min(pageIndex, pageCount - 1)
+  const pageStart = page * pageSize
+  const pageRows = newestFirst.slice(pageStart, pageStart + pageSize)
 
   return (
     <>
@@ -427,25 +489,51 @@ function SessionBody({ sessionId }: { sessionId: string }) {
               </tr>
             </thead>
             <tbody>
-              {newestFirst.map((e, i) => (
-                <tr
-                  key={e.event_id}
-                  onClick={() => setSelected(i)}
-                  className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)]"
-                >
-                  <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap">{fmt.shortTime(e.at)}</td>
-                  <td className="px-4 py-2"><StatusPill code={e.status_code} /></td>
-                  <td className="px-4 py-2">{e.provider ? <ProviderChip name={e.provider} /> : <Dash />}</td>
-                  <td className="mono text-[12px] px-4 py-2">{e.protocol || <Dash />}</td>
-                  <td className="mono text-[12px] px-4 py-2">{e.model || <Dash />}</td>
-                  <td className="mono tnum text-[12px] text-right px-4 py-2">{fmt.ms(e.duration_ms)}</td>
-                  <td className="mono tnum text-[11.5px] text-right px-4 py-2 text-[color:var(--text-3)]">
-                    {(e.tokens_in ?? 0) + (e.tokens_out ?? 0) > 0 ? `${fmt.compact(e.tokens_in ?? 0)}/${fmt.compact(e.tokens_out ?? 0)}` : <Dash />}
-                  </td>
-                </tr>
-              ))}
+              {pageRows.map((e, i) => {
+                const idx = pageStart + i
+                return (
+                  <tr
+                    key={e.event_id}
+                    onClick={() => selectAt(idx)}
+                    className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)]"
+                  >
+                    <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap">{fmt.shortTime(e.at)}</td>
+                    <td className="px-4 py-2"><StatusPill code={e.status_code} /></td>
+                    <td className="px-4 py-2">{e.provider ? <ProviderChip name={e.provider} /> : <Dash />}</td>
+                    <td className="mono text-[12px] px-4 py-2">{e.protocol || <Dash />}</td>
+                    <td className="mono text-[12px] px-4 py-2">{e.model || <Dash />}</td>
+                    <td className="mono tnum text-[12px] text-right px-4 py-2">{fmt.ms(e.duration_ms)}</td>
+                    <td className="mono tnum text-[11.5px] text-right px-4 py-2 text-[color:var(--text-3)]">
+                      {(e.tokens_in ?? 0) + (e.tokens_out ?? 0) > 0 ? `${fmt.compact(e.tokens_in ?? 0)}/${fmt.compact(e.tokens_out ?? 0)}` : <Dash />}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </TableScroll>
+
+          {newestFirst.length > pageSize && (
+            <div className="flex items-center gap-3 px-4 py-2.5 border-t border-[color:var(--border)] mt-auto">
+              <div className="flex items-center gap-1.5 text-[11px] text-[color:var(--text-4)]">
+                <span>Rows</span>
+                <Segmented
+                  value={String(pageSize)}
+                  onChange={(v) => {
+                    setPageSize(Number(v))
+                    setPageIndex(0)
+                  }}
+                  options={SESSION_PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+                />
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-[11px] text-[color:var(--text-4)] mono">
+                  {pageStart + 1}–{Math.min(pageStart + pageSize, newestFirst.length)} of {newestFirst.length}
+                </span>
+                <Button variant="ghost" size="icon-xs" onClick={() => setPageIndex(page - 1)} disabled={page === 0} aria-label="Previous page"><ChevronLeft /></Button>
+                <Button variant="ghost" size="icon-xs" onClick={() => setPageIndex(page + 1)} disabled={page >= pageCount - 1} aria-label="Next page"><ChevronRight /></Button>
+              </div>
+            </div>
+          )}
         </PanelCard>
       </div>
 
@@ -454,8 +542,8 @@ function SessionBody({ sessionId }: { sessionId: string }) {
           entry={newestFirst[selected]}
           position={`${selected + 1} / ${newestFirst.length}`}
           onClose={() => setSelected(null)}
-          onPrev={selected > 0 ? () => setSelected(selected - 1) : undefined}
-          onNext={selected < newestFirst.length - 1 ? () => setSelected(selected + 1) : undefined}
+          onPrev={selected > 0 ? () => selectAt(selected - 1) : undefined}
+          onNext={selected < newestFirst.length - 1 ? () => selectAt(selected + 1) : undefined}
         />
       )}
     </>
