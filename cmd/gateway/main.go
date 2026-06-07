@@ -158,12 +158,11 @@ func run(ctx context.Context) error {
 		ObserverFactory:       observerFactory,
 		Redactor:              redactor,
 		ResponseHeaderTimeout: time.Duration(env.UpstreamResponseHeaderTimeoutSeconds) * time.Second,
-		// Response-phase body rewrites (response.body.* rule targets)
-		// apply here, in the proxy's ModifyResponse hook. The adapter
-		// keeps internal/proxy decoupled from the rules engine.
-		ResponseBodyTransform: func(ctx context.Context, resp *http.Response, streaming bool) error {
-			return rules.ApplyResponseRewrites(ctx, obs.Meters, env.ExternalURL, resp, streaming)
-		},
+		// Response-phase body rewrites (response.body.* rule targets) then
+		// cross-provider translation back to the client's protocol apply here,
+		// in the proxy's ModifyResponse hook. The adapter keeps internal/proxy
+		// decoupled from the rules and translate engines.
+		ResponseBodyTransform: newResponseBodyTransform(obs.Meters, env.ExternalURL),
 	})
 
 	evaluator := rules.NewEvaluator(store, env.RulesMaxGroupDepth, obs.Meters)
