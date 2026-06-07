@@ -364,7 +364,7 @@ If you see a Sluice secret in the log stream, you have a bug. Open an issue.
 
 The admin console exposes a per-key reveal endpoint at `GET /admin/api/v1/config/api-keys/reveal?configuration=<name>&name=<key-name>` ([`docs/admin-console.md`](admin-console.md#api-routes)). Both query params are required; 400 on missing, 404 on no match. List endpoints stay redacted by default — reveal is opt-in, per-row, behind HTTP Basic auth.
 
-Upstream credentials (`Configuration.Credentials`) are intended to **never** be revealed by the admin console — the configuration inspector and the export bundle replace them with `***` via the redactor in [`internal/admin/configexport/redact.go`](../internal/admin/configexport/redact.go). Note: that redactor (`redactConfigurations`) currently matches the v1 YAML key `upstream_credentials`; the v2 `Configuration.Credentials` map serializes under the key `credentials`, so verify export redaction against your config shape (tracked as a code follow-up). Only the gateway-issued Sluice secrets can be revealed, and only by name.
+Upstream credentials (`Configuration.Credentials`) are intended to **never** be revealed by the admin console — the configuration inspector and the export bundle replace them with `***` via the redactor in [`internal/admin/configexport/redact.go`](../internal/admin/configexport/redact.go). The redactor (`redactConfigurations`) redacts both the v2 key `credentials` and the legacy v1 key `upstream_credentials`, so v2 Configuration.Credentials values are masked in the export bundle. Only the gateway-issued Sluice secrets can be revealed, and only by name.
 
 ### Key rotation
 

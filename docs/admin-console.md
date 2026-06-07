@@ -255,7 +255,7 @@ The console writes most of the policy YAML. Each mutating handler runs the same 
 Common behaviour across every write resource:
 
 - **503** when `SLUICE_CONFIG_DIR` is empty (the `writableGuard` in `rules_write.go`) — the data plane runs fine, but admin writes are disabled. The on-disk write also requires the config dir to be writable; see [deployment.md → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api).
-- **400** on a malformed / empty body or a missing name; the body cap is 256 KiB (`maxConfigBodyBytes`).
+- **400** on a malformed / empty body or a missing name; the body cap is 256 KiB (`maxRuleBodyBytes`).
 - **409** (shape `{error, name}`, with `used_by:[...]` added on referential-integrity refusals) on a duplicate name (POST), a rename attempt (PUT), or a delete blocked by referrers.
 - **422** (shape `{error, detail}`) when `RevalidateAndIndex` rejects the clone (unknown provider/group reference, invalid binding, empty group targets, …).
 - **204** on a successful DELETE; **201** on a successful POST; **200** on a successful PUT/PATCH.
