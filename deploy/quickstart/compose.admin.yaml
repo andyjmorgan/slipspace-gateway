@@ -1,0 +1,60 @@
+# Quickstart stack 1 — gateway + admin console.
+#
+#   cp .env.example .env      # then edit in your provider keys
+#   docker compose -f compose.admin.yaml up -d --wait
+#
+# Data plane:    http://localhost:8585   (point your SDK base URL here)
+# Admin console: http://localhost:8081   (login: admin / $SLUICE_ADMIN_PASSWORD)
+#
+# Pulls published images from GHCR — no source checkout or build toolchain
+# needed. See README.md for the full guide.
+name: sluice-quickstart
+
+services:
+  # Renders policy.yaml from the template (substituting the .env credentials)
+  # and stages the config dir into the shared volume BEFORE the gateway starts.
+  # The gateway only ever reads fully-literal YAML.
+  init:
+    image: alpine:3
+    env_file: .env
+    volumes:
+      - ./config:/in:ro
+      - sluice-config:/out
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache gettext >/dev/null
+        rm -f /out/*.yaml
+        cp "/in/$${PROVIDERS_FILE:-providers.yaml}" /out/providers.yaml
+        cp /in/admin.yaml /out/admin.yaml
+        envsubst '$$OPENAI_API_KEY $$ANTHROPIC_API_KEY $$GEMINI_API_KEY $$SLUICE_CLIENT_API_KEY' \
+          < /in/policy.template.yaml > /out/policy.yaml
+        echo "rendered /etc/sluice: $$(ls /out)"
+
+  gateway:
+    image: ghcr.io/andyjmorgan/sluice-gateway:${SLUICE_IMAGE_TAG:-latest}
+    env_file: .env
+    environment:
+      SLUICE_CONFIG_DIR: /etc/sluice
+      SLUICE_HTTP_BIND: 0.0.0.0:8585
+      SLUICE_SPOOL_ROOT: /var/lib/sluice/spool
+      SLUICE_LOG_FORMAT: json
+      SLUICE_LOG_LEVEL: ${SLUICE_LOG_LEVEL:-info}
+      # Wins over the placeholder in admin.yaml.
+      SLUICE_ADMIN_PASSWORD: ${SLUICE_ADMIN_PASSWORD:-sluice-gateway}
+    ports:
+      - "8585:8585" # data plane
+      - "8081:8081" # admin console (SPA + /api/v1)
+    volumes:
+      - sluice-config:/etc/sluice:ro
+      - sluice-spool:/var/lib/sluice/spool
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  sluice-config:
+  sluice-spool:
