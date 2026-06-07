@@ -86,7 +86,7 @@ func (s *Server) handleObsTimeseries(w http.ResponseWriter, r *http.Request) {
 // handleObsMessagesRecent emits contracts/admin.MessagesRecentResponse mapped
 // from the most recent events (oldest-first, matching the gateway live feed).
 func (s *Server) handleObsMessagesRecent(w http.ResponseWriter, r *http.Request) {
-	limit := intParam(r, "limit", 200)
+	limit := limitParam(r, 200)
 	events, _, err := s.queries.ListEventsFiltered(r.Context(), store.EventListParams{
 		Filter: filterFromQuery(r), Limit: limit,
 	})
@@ -147,7 +147,7 @@ func (s *Server) handleObsMessages(w http.ResponseWriter, r *http.Request) {
 		To:     to,
 		Filter: filterFromQuery(r),
 		Cursor: q.Get("cursor"),
-		Limit:  intParam(r, "limit", 0),
+		Limit:  limitParam(r, 0),
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
@@ -359,6 +359,35 @@ func mapSession(sessionID string, events []store.RequestEvent) adminc.SessionVie
 		out.Requests = append(out.Requests, mapEntry(e))
 	}
 	return out
+}
+
+// mapSessionList projects a keyset page of session summaries onto the tagged
+// SessionList wire shape. Models defaults to a non-nil slice so the JSON is
+// `[]` rather than `null` for a session with no recorded model.
+func mapSessionList(sessions []store.SessionSummary, nextCursor string) adminc.SessionList {
+	out := adminc.SessionList{
+		Sessions:   make([]adminc.SessionSummary, 0, len(sessions)),
+		NextCursor: nextCursor,
+	}
+	for _, s := range sessions {
+		out.Sessions = append(out.Sessions, mapSessionSummary(s))
+	}
+	return out
+}
+
+func mapSessionSummary(s store.SessionSummary) adminc.SessionSummary {
+	models := s.Models
+	if models == nil {
+		models = []string{}
+	}
+	return adminc.SessionSummary{
+		SessionID:    s.SessionID,
+		Messages:     s.Messages,
+		TotalTokens:  s.TotalTokens,
+		Models:       models,
+		StartedAt:    s.Started.UTC(),
+		LastActivity: s.LastAt.UTC(),
+	}
 }
 
 func mapEntry(e store.RequestEvent) adminc.MessageEntry {

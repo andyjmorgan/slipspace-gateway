@@ -80,6 +80,77 @@ func TestDecodeCursor_BadJSON(t *testing.T) {
 	}
 }
 
+// --- ListSessions ---
+
+func TestListSessions_Page(t *testing.T) {
+	q := &fakeQuerier{query: rowsN(2)}
+	out, next, err := newStore(q).ListSessions(ctx(), SessionListParams{Limit: 5})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(out) != 2 || next != "" {
+		t.Fatalf("out=%d next=%q", len(out), next)
+	}
+}
+
+func TestListSessions_NextCursor(t *testing.T) {
+	// Limit 1 but 2 rows -> a further page exists, so next cursor is set.
+	q := &fakeQuerier{query: rowsN(2)}
+	out, next, err := newStore(q).ListSessions(ctx(), SessionListParams{Limit: 1})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(out) != 1 || next == "" {
+		t.Fatalf("expected 1 row + next cursor, got %d/%q", len(out), next)
+	}
+}
+
+func TestListSessions_WindowAndFilterAndCap(t *testing.T) {
+	// Window bounds + a tag + configuration filter + the limit cap branch all in
+	// one call, so the args/placeholder numbering across the CTE and outer WHERE
+	// is exercised together.
+	q := &fakeQuerier{query: rowsN(1)}
+	_, _, err := newStore(q).ListSessions(ctx(), SessionListParams{
+		From:   time.Unix(1, 0),
+		To:     time.Unix(2, 0),
+		Filter: EventFilter{Configuration: "prod", Tags: []string{"agent:x"}},
+		Limit:  10000, // exercises the cap branch
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestListSessions_ValidCursor(t *testing.T) {
+	cur := encodeSessionCursor(sessionCursor{LastAt: time.Unix(5, 0), SessionID: "s"})
+	q := &fakeQuerier{query: rowsN(1)}
+	if _, _, err := newStore(q).ListSessions(ctx(), SessionListParams{Cursor: cur, Limit: 5}); err != nil {
+		t.Fatalf("valid cursor: %v", err)
+	}
+}
+
+func TestListSessions_Errors(t *testing.T) {
+	if _, _, err := newStore(&fakeQuerier{}).ListSessions(ctx(), SessionListParams{Cursor: "!!!"}); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("want ErrInvalidCursor, got %v", err)
+	}
+	if _, _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).ListSessions(ctx(), SessionListParams{}); err == nil {
+		t.Fatal("want query error")
+	}
+	if _, _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).ListSessions(ctx(), SessionListParams{}); err == nil {
+		t.Fatal("want scan error")
+	}
+	if _, _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{nil}, finalErr: errors.New("rows")}}).ListSessions(ctx(), SessionListParams{}); err == nil {
+		t.Fatal("want rows.Err")
+	}
+}
+
+func TestDecodeSessionCursor_BadJSON(t *testing.T) {
+	// valid base64 but not JSON -> ErrInvalidCursor (covers the unmarshal branch)
+	if _, err := decodeSessionCursor("YWJj"); !errors.Is(err, ErrInvalidCursor) { // "abc"
+		t.Fatalf("want ErrInvalidCursor, got %v", err)
+	}
+}
+
 // --- EventsBySession ---
 
 func TestEventsBySession(t *testing.T) {

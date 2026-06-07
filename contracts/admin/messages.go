@@ -188,6 +188,41 @@ type SessionView struct {
 	Requests []MessageEntry `json:"requests"`
 }
 
+// SessionSummary is one row of the session-discovery list returned by
+// GET /api/v1/sessions: a session's id plus the rollup the table renders. When
+// the request carries tag/configuration filters the aggregates cover only the
+// matching requests, so Messages/TotalTokens/Models and the StartedAt/
+// LastActivity bounds reflect that subset of the session.
+type SessionSummary struct {
+	// SessionID is the conversation/bundle id the requests share.
+	SessionID string `json:"session_id"`
+
+	// Messages is the number of (matching) requests in the session.
+	Messages int `json:"messages"`
+
+	// TotalTokens is the summed tokens_in+tokens_out across those requests.
+	TotalTokens int64 `json:"total_tokens"`
+
+	// Models is the distinct requested model names (empty strings excluded).
+	Models []string `json:"models"`
+
+	// StartedAt / LastActivity are the first and last request times — the
+	// session's real bounds, which may fall outside the query window.
+	StartedAt    time.Time `json:"started_at"`
+	LastActivity time.Time `json:"last_activity"`
+}
+
+// SessionList is the JSON shape returned by GET /api/v1/sessions: a keyset page
+// of session summaries (newest activity first) plus the cursor for the next
+// page. NextCursor is empty on the last page.
+type SessionList struct {
+	// Sessions is the page of session summaries, ordered by last activity desc.
+	Sessions []SessionSummary `json:"sessions"`
+
+	// NextCursor advances to the next page; empty means the last page.
+	NextCursor string `json:"next_cursor"`
+}
+
 // MessageBodyDetail is the JSON shape returned by
 // GET /admin/api/v1/messages/{event_id}/body. Holds the captured
 // request and response bodies plus, for streamed responses, the
