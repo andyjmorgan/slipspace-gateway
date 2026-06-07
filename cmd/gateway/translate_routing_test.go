@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,8 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
+	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
 )
 
 // writeTranslateConfig writes a config whose `dev`/`bad` configurations bind the
@@ -98,7 +101,9 @@ func newTranslateEnv(t *testing.T) *testEnv {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		// A valid OpenAI Chat Completions response so the response leg can
+		// translate it back to Anthropic Messages shape.
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hello from openai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}`))
 	}))
 
 	dir := writeTranslateConfig(t, upstream.URL)
@@ -120,7 +125,7 @@ func newTranslateEnv(t *testing.T) *testEnv {
 		t.Fatalf("NewMeters: %v", err)
 	}
 	reporter := newReporterFactory(nil, nil, logger, meters, nil, nil, nil, nil, false, testDefaultCaps(), nil)
-	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()})
+	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory(), ResponseBodyTransform: newResponseBodyTransform(meters, "")})
 	evaluator := rules.NewEvaluator(store, 8, meters)
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
@@ -163,6 +168,77 @@ func TestGateway_TranslateResolvesTargetEndpoint(t *testing.T) {
 	}
 	if path != "/v1/chat/completions" {
 		t.Errorf("upstream path = %q, want /v1/chat/completions (translate->chat endpoint)", path)
+	}
+}
+
+func TestGateway_TranslateRoundTrip(t *testing.T) {
+	env := newTranslateEnv(t)
+
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/messages", `{"model":"claude-x","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+	req.Header.Set("Authorization", "Bearer sk_xlate_local_only")
+	resp := doReq(t, req)
+	defer closeBody(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// The upstream must have received an OpenAI Chat request (translated from
+	// the inbound Anthropic Messages body).
+	_, path, _, upBody, _ := env.upstream.snapshot()
+	if path != "/v1/chat/completions" {
+		t.Errorf("upstream path = %q, want /v1/chat/completions", path)
+	}
+	var chatReq openaichat.ChatCompletionRequest
+	if err := json.Unmarshal(upBody, &chatReq); err != nil {
+		t.Fatalf("upstream body is not an OpenAI chat request: %v\nbody: %s", err, upBody)
+	}
+	if len(chatReq.Messages) != 1 || chatReq.Messages[0].Role() != "user" {
+		t.Errorf("upstream messages = %+v, want one user message", chatReq.Messages)
+	}
+	if chatReq.MaxTokens == nil || *chatReq.MaxTokens != 16 {
+		t.Errorf("upstream max_tokens = %v, want 16", chatReq.MaxTokens)
+	}
+
+	// The client must have received an Anthropic Messages response (translated
+	// back from the OpenAI Chat response).
+	clientBody, _ := io.ReadAll(resp.Body)
+	var msgResp messages.MessagesResponse
+	if err := json.Unmarshal(clientBody, &msgResp); err != nil {
+		t.Fatalf("client body is not an Anthropic Messages response: %v\nbody: %s", err, clientBody)
+	}
+	if msgResp.Type != "message" || msgResp.Role != "assistant" {
+		t.Errorf("client envelope = %q/%q, want message/assistant", msgResp.Type, msgResp.Role)
+	}
+	if len(msgResp.Content) != 1 {
+		t.Fatalf("client content blocks = %d, want 1", len(msgResp.Content))
+	}
+	tb, ok := msgResp.Content[0].(*messages.TextBlock)
+	if !ok || tb.Text != "hello from openai" {
+		t.Errorf("client content[0] = %+v, want TextBlock 'hello from openai'", msgResp.Content[0])
+	}
+	if msgResp.StopReason == nil || *msgResp.StopReason != "end_turn" {
+		t.Errorf("client stop_reason = %v, want end_turn", msgResp.StopReason)
+	}
+	if msgResp.Usage.InputTokens != 5 || msgResp.Usage.OutputTokens != 3 {
+		t.Errorf("client usage = %d/%d, want 5/3", msgResp.Usage.InputTokens, msgResp.Usage.OutputTokens)
+	}
+}
+
+func TestGateway_TranslateStreamingRejected(t *testing.T) {
+	env := newTranslateEnv(t)
+
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/messages", `{"model":"claude-x","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	req.Header.Set("Authorization", "Bearer sk_xlate_local_only")
+	resp := doReq(t, req)
+	defer closeBody(resp)
+
+	// Streaming translation is not yet supported: reject before forwarding.
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501 for streaming translation", resp.StatusCode)
+	}
+	if _, _, _, _, count := env.upstream.snapshot(); count != 0 {
+		t.Errorf("upstream hits = %d, want 0 (rejected before forward)", count)
 	}
 }
 

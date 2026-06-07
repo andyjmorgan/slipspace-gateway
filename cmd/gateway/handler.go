@@ -122,6 +122,20 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 			return
 		}
 
+		// Translate the outgoing request body when a translate rule is active.
+		// Runs per attempt (resilience re-enters this handler) after
+		// BodyRemarshal has re-encoded any rule body mutations.
+		streamingXlate, err := translateRequestBody(state, r)
+		if err != nil {
+			log.ErrorContext(ctx, "forwarder: translate request", "err", err.Error())
+			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
+			return
+		}
+		if streamingXlate {
+			errs.Write(ctx, w, http.StatusNotImplemented, "handler", "translate_streaming_unsupported", "streaming translation not yet supported")
+			return
+		}
+
 		// Resolve the endpoint on the post-rule protocol so a translate action
 		// lands on the target protocol's endpoint (invariant #7's spirit:
 		// re-resolve on post-rule state). Equals pi.protocol when no translate.
