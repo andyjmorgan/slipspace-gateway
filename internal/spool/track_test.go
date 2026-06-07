@@ -223,6 +223,142 @@ func TestTrack_DrainQueueProcessesAllPendingRecords(t *testing.T) {
 	}
 }
 
+func TestTrack_RunDrainExitsOnContextCancel(t *testing.T) {
+	// Pin runDrain's exit to the ctx.Done branch by cancelling the context
+	// and never touching stopCh, so the select has exactly one ready case.
+	// The integration Stop path leaves BOTH ctx.Done and stopCh ready at the
+	// same instant and Go's select picks one at random, so coverage of this
+	// branch (track.go runDrain ctx.Done → sealCurrentBestEffort) was flaky
+	// and dipped the package under 95% under full-suite load (#113). A large
+	// MaxAge keeps the rotation timer from racing the cancel.
+	tr := newTestTrack(t, trackOptions{
+		conn:     &namedFake{name: "x"},
+		rotation: RotationOpts{MaxAge: time.Hour, MaxBytes: 1 << 30},
+	})
+	if err := tr.writeRecord(makeTestRecord("a", 1)); err != nil {
+		t.Fatalf("writeRecord: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		tr.runDrain(ctx)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runDrain did not exit on ctx cancel")
+	}
+
+	// The ctx.Done branch seals best-effort, so the written record lands in
+	// sealed/.
+	sealed, _ := tr.manager.ListSealed()
+	if len(sealed) != 1 {
+		t.Errorf("expected 1 sealed segment after ctx-cancel drain, got %d", len(sealed))
+	}
+}
+
+func TestTrack_RunDrainExitsOnStopCh(t *testing.T) {
+	// Pin runDrain's exit to the stopCh branch (drainQueue + seal + return):
+	// close stopCh with a live context, empty queue, and the rotation timer
+	// parked, so the select has exactly one ready case. This is the branch
+	// (track.go:147-150) whose coverage flipped under full-suite load (#113) —
+	// at integration Stop both ctx.Done and stopCh are ready and the select
+	// picks at random.
+	tr := newTestTrack(t, trackOptions{
+		conn:     &namedFake{name: "x"},
+		rotation: RotationOpts{MaxAge: time.Hour, MaxBytes: 1 << 30},
+	})
+	// writeRecord opens the segment directly (queue stays empty), so the
+	// stopCh branch's drainQueue is a no-op and only the seal has work — keeps
+	// the select deterministic (no queue case racing stopCh).
+	if err := tr.writeRecord(makeTestRecord("a", 1)); err != nil {
+		t.Fatalf("writeRecord: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		tr.runDrain(context.Background())
+		close(done)
+	}()
+	close(tr.stopCh)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runDrain did not exit on stopCh")
+	}
+	sealed, _ := tr.manager.ListSealed()
+	if len(sealed) != 1 {
+		t.Errorf("expected 1 sealed segment after stopCh drain, got %d", len(sealed))
+	}
+}
+
+func TestTrack_SealCurrentDropsKickWhenChannelFull(t *testing.T) {
+	// Drive sealCurrent's default (kick-dropped) branch by pre-filling the
+	// buffered uploadKick so the non-blocking send finds no room. A dropped
+	// kick is safe — the uploader's periodic poll still finds the sealed
+	// segment. This default branch (track.go:243) was the flaky one under
+	// load (#113); the send branch is covered by the sibling test above.
+	tr := newTestTrack(t, trackOptions{conn: &namedFake{name: "x"}})
+	tr.uploadKick <- struct{}{} // fill the buffer-1 channel
+	if err := tr.writeRecord(makeTestRecord("a", 1)); err != nil {
+		t.Fatalf("writeRecord: %v", err)
+	}
+	if err := tr.sealCurrent(); err != nil {
+		t.Fatalf("sealCurrent: %v", err)
+	}
+	// The seal's send was dropped, so the channel still holds exactly the one
+	// we pre-loaded (not two, and not drained).
+	if got := len(tr.uploadKick); got != 1 {
+		t.Errorf("expected uploadKick to still hold 1 after a dropped kick, got %d", got)
+	}
+}
+
+func TestTrack_RunUploaderExitsOnStopCh(t *testing.T) {
+	// Pin runUploader's exit to the stopCh branch: close stopCh while the
+	// context stays live and the poll ticker is parked far in the future, so
+	// the select has exactly one ready case. Same root cause as #113 — at
+	// integration Stop both ctx.Done and stopCh are ready and the select
+	// picks at random, leaving this branch's coverage load-dependent.
+	tr := newTestTrack(t, trackOptions{
+		conn:       &namedFake{name: "x"},
+		uploadPoll: time.Hour,
+	})
+	done := make(chan struct{})
+	go func() {
+		tr.runUploader(context.Background())
+		close(done)
+	}()
+	close(tr.stopCh)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runUploader did not exit on stopCh")
+	}
+}
+
+func TestTrack_SealCurrentKicksUploaderOnNonEmptySeal(t *testing.T) {
+	// Sealing a non-empty segment sends on the buffered uploadKick so the
+	// uploader wakes without waiting for its poll. With a fresh (empty) kick
+	// channel the send always succeeds; the integration path covered this
+	// branch only when the uploader hadn't already drained the kick, so it
+	// was flaky under load (#113, track.go sealCurrent uploadKick send).
+	tr := newTestTrack(t, trackOptions{conn: &namedFake{name: "x"}})
+	if err := tr.writeRecord(makeTestRecord("a", 1)); err != nil {
+		t.Fatalf("writeRecord: %v", err)
+	}
+	if err := tr.sealCurrent(); err != nil {
+		t.Fatalf("sealCurrent: %v", err)
+	}
+	select {
+	case <-tr.uploadKick:
+		// kick delivered — the send branch ran
+	default:
+		t.Error("sealCurrent did not kick the uploader after sealing a non-empty segment")
+	}
+}
+
 func TestTrack_SealCurrentBestEffortLogsAndSwallows(t *testing.T) {
 	// Force sealCurrent to error by manually closing the segment's
 	// underlying file mid-flight. sealCurrentBestEffort should log the

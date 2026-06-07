@@ -86,8 +86,14 @@ def _wait_for_http(url: str, timeout: float = STARTUP_TIMEOUT) -> None:
 
 
 def _ensure_binary(bin_path: Path, source_pkg: str) -> Path:
-    if bin_path.exists():
-        return bin_path
+    # Always rebuild. `go build` is incremental (cache-backed), so this is
+    # near-free when nothing changed, and it guarantees the binary matches the
+    # working tree. The previous `if bin_path.exists(): return` short-circuit
+    # silently tested a stale /tmp binary that predated the source — a pre-#286
+    # build lacking the reverse translator passed the forward wire-compat tests
+    # and 501'd the reverse ones until `rm -f /tmp/sluice-gateway` forced a
+    # rebuild (#287). A false green (stale binary that still happens to pass)
+    # is the more dangerous failure mode, so never trust an existing file.
     print(f"[stack] building {bin_path} from {source_pkg}", file=sys.stderr)
     subprocess.run(
         ["go", "build", "-o", str(bin_path), source_pkg],

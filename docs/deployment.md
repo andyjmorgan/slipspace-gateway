@@ -334,7 +334,7 @@ Two overlays sit alongside the committed compose. Both are stacked with `-f dock
 
 ### Pure-Go dev loop
 
-For Go iteration without an image rebuild, `make dev` brings up only `mockllm` via compose and runs `go run ./cmd/gateway` natively on the host. The native gateway reads `./config-dev/admin.yaml` (binds `127.0.0.1:8081`) rather than the compose overlay, and writes the spool under `./tmp/spool/` so the host filesystem stays tidy. Faster than `make dev-compose` because the SPA isn't rebuilt; useful when you're iterating on the data-plane Go code and the SPA bundle is already built into `internal/admin/webdist/`.
+For Go iteration without an image rebuild, `make dev` brings up only `mockllm` via compose and runs `go run ./cmd/gateway` natively on the host. The native gateway reads `./config-dev/admin.yaml` (binds `127.0.0.1:8081`) rather than the compose overlay, and writes the spool to its default `/var/lib/sluice/spool/` — the `DEV_ENV` block does **not** set `SLUICE_SPOOL_ROOT`, so export `SLUICE_SPOOL_ROOT=./tmp/spool` yourself to keep segments under the working tree (see [local-development.md](./local-development.md)). Faster than `make dev-compose` because the SPA isn't rebuilt; useful when you're iterating on the data-plane Go code and the SPA bundle is already built into `internal/admin/webdist/`.
 
 For SPA-only iteration, leave `make dev-compose` running and start `make web-dev` in a second terminal — Vite serves on `:5180/admin` and proxies `/admin/api/v1` to the running gateway on `:8081`.
 

@@ -48,10 +48,27 @@ def test_gemini_generate_content(
 
     assert resp.candidates, "no candidates returned"
     cand = resp.candidates[0]
-    assert cand.content and cand.content.parts, "no content parts returned"
-    assert cand.content.parts[0].text and cand.content.parts[0].text.strip()
     assert cand.finish_reason in {
         types.FinishReason.STOP,
         types.FinishReason.MAX_TOKENS,
     }
     assert resp.usage_metadata and resp.usage_metadata.total_token_count > 0
+
+    # gemini-2.5-flash is a thinking model: even with real headroom it can
+    # occasionally spend the whole output budget on reasoning and return
+    # MAX_TOKENS with no visible text part (#117). That's a model-side budget
+    # outcome, not a gateway fault — the candidate, finish_reason, and usage
+    # asserted above already prove the gateway forwarded and round-tripped the
+    # request. Only demand a real text part when the model stopped on its own;
+    # skip the content check on the empty-MAX_TOKENS path rather than flaking
+    # the whole smoke run.
+    if cand.finish_reason == types.FinishReason.MAX_TOKENS and not (
+        cand.content and cand.content.parts
+    ):
+        pytest.skip(
+            "gemini hit MAX_TOKENS before emitting a text part (reasoning budget); "
+            "gateway path already verified"
+        )
+
+    assert cand.content and cand.content.parts, "no content parts returned"
+    assert cand.content.parts[0].text and cand.content.parts[0].text.strip()
