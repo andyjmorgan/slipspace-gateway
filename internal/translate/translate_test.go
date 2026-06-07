@@ -12,10 +12,14 @@ type stubTranslator struct {
 	src, target string
 }
 
-func (s stubTranslator) Source() translate.Protocol                 { return s.src }
-func (s stubTranslator) Target() translate.Protocol                 { return s.target }
-func (s stubTranslator) TranslateRequest(b []byte) ([]byte, error)  { return b, nil }
-func (s stubTranslator) TranslateResponse(b []byte) ([]byte, error) { return b, nil }
+func (s stubTranslator) Source() translate.Protocol { return s.src }
+func (s stubTranslator) Target() translate.Protocol { return s.target }
+func (s stubTranslator) TranslateRequest(b []byte) ([]byte, []translate.Drop, error) {
+	return b, nil, nil
+}
+func (s stubTranslator) TranslateResponse(b []byte) ([]byte, []translate.Drop, error) {
+	return b, nil, nil
+}
 
 func TestRegistry_RegisterAndLookup(t *testing.T) {
 	r := translate.NewRegistry()
@@ -67,10 +71,11 @@ func TestRegistry_IdentityPanics(t *testing.T) {
 }
 
 func TestDefaultRegistry_LookupMissByDefault(t *testing.T) {
-	// No concrete translators are registered yet, so the default registry must
-	// miss every real pair — translation is fail-closed until a translator ships.
-	if _, ok := translate.Lookup("messages", "chat"); ok {
-		t.Error("default Lookup(messages, chat) resolved; no translators registered yet")
+	// A pair with no registered translator must miss — translation is
+	// fail-closed. (messages->chat IS registered, so probe an unregistered
+	// pair to assert the fail-closed signal.)
+	if _, ok := translate.Lookup("messages", "responses"); ok {
+		t.Error("default Lookup(messages, responses) resolved; that pair has no translator")
 	}
 }
 

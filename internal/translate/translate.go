@@ -28,6 +28,11 @@ type Protocol = string
 // Every method must round-trip unknown fields intact (invariant #1):
 // implementations decode into the typed protocol models, which preserve unknown
 // fields via DynamicProperties / Unknown* fallbacks rather than dropping them.
+//
+// TranslateRequest and TranslateResponse return the source features that had no
+// target-protocol equivalent as a []Drop alongside the translated bytes — never
+// silently dropped (decision #5). The middleware layer feeds the Drops to the
+// lossy counter and the flag-gated lossy header (decision #6).
 type Translator interface {
 	// Source is the protocol the inbound request is written in.
 	Source() Protocol
@@ -36,12 +41,12 @@ type Translator interface {
 	Target() Protocol
 
 	// TranslateRequest rewrites an inbound source-protocol request body into
-	// the target protocol.
-	TranslateRequest(body []byte) ([]byte, error)
+	// the target protocol, returning any dropped source features.
+	TranslateRequest(body []byte) ([]byte, []Drop, error)
 
 	// TranslateResponse rewrites a non-streaming target-protocol response body
-	// back into the source protocol.
-	TranslateResponse(body []byte) ([]byte, error)
+	// back into the source protocol, returning any dropped target features.
+	TranslateResponse(body []byte) ([]byte, []Drop, error)
 }
 
 // StreamCapable is the optional extension a Translator implements when it can
