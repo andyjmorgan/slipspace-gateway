@@ -38,7 +38,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | Doc | What it covers |
 |---|---|
 | [Local development](local-development.md) | Every `make` target, dev compose, `config-dev/` bundle, the five test layers |
-| [Auxiliary binaries](auxiliary-binaries.md) | `sluice-cli`, `sluice-mockllm`, `sluice-api` — flags, subcommands, when to use each |
+| [Auxiliary binaries](auxiliary-binaries.md) | `sluice-cli`, `sluice-mockllm` — flags, subcommands, when to use each |
 | [Models](models.md) | The shared `models/` package — `DynamicProperties`, `PolymorphicRegistry`, unknown-field round-trip (invariant #1) |
 | [Provider models](provider-models.md) | The `protocols/` wire types per provider — OpenAI audio/file/refusal/Responses, Anthropic thinking blocks + signatures, Gemini thinking + grounding |
 | [Pipeline](pipeline.md) | The typed-message middleware pipeline — `Message` sum type, `Middleware`/`Chain`, body-capture + re-marshal stages, selection internals |

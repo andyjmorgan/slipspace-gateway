@@ -1,6 +1,6 @@
 # Auxiliary Binaries
 
-Sluice ships four binaries from this repo. `cmd/gateway` is the data plane — every other doc in this directory is about it. This page covers `cmd/cli` (operator toolkit) and `cmd/mockllm` (test upstream surrogate). The fourth binary, `cmd/api`, is an inert 501 stub — covered only briefly at the end.
+Sluice ships three binaries from this repo. `cmd/gateway` is the data plane — every other doc in this directory is about it. This page covers the other two: `cmd/cli` (operator toolkit) and `cmd/mockllm` (test upstream surrogate).
 
 This page is the reference. It documents every flag, every subcommand, every exit code, plus when an operator or developer would actually reach for each.
 
@@ -12,8 +12,7 @@ This page is the reference. It documents every flag, every subcommand, every exi
 2. [What gets baked into images](#what-gets-baked-into-images)
 3. [`sluice-cli`](#sluice-cli)
 4. [`sluice-mockllm`](#sluice-mockllm)
-5. [`sluice-api` (inert stub)](#sluice-api)
-6. [Cross-references](#cross-references)
+5. [Cross-references](#cross-references)
 
 ---
 
@@ -24,9 +23,8 @@ This page is the reference. It documents every flag, every subcommand, every exi
 | `gateway` | data plane: proxies provider traffic, runs rules + resilience, serves admin console | operators, every deployment | shipping |
 | `cli` | local toolkit: generate API keys, validate config bundles | operators, anyone editing YAML | shipping |
 | `mockllm` | test upstream: deterministic canned responses + behaviour primitives for e2e and dev | developers, e2e harness, local docker-compose | shipping (dev-only image) |
-| `api` | inert stub — binds `:8484`, returns `501` to every request; nothing runs against it | nobody | inert stub |
 
-`cli` and `mockllm` are real tools you use today. `api` is an inert placeholder that prints `501 Not Implemented`; it exists only so the binary slot stays reserved and CI keeps compiling it.
+`cli` and `mockllm` are real tools you use today.
 
 ```mermaid
 flowchart LR
@@ -35,7 +33,6 @@ flowchart LR
     GW -->|provider traffic| Up[real upstreams]
     Dev[developer / e2e harness] -->|"go run ./cmd/mockllm"| MOCK[mockllm]
     GW -. dev / e2e .-> MOCK
-    GW -. reserved slot .-> API[api stub<br/>:8484 returns 501]
 ```
 
 ---
@@ -49,7 +46,6 @@ The published images are narrowly scoped — only the binaries that need to run 
 | `gateway` | [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile) | `ghcr.io/andyjmorgan/sluice-gateway` | Scratch image with the SPA bundle embedded. Exposes `:8585` (data plane) + `:8081` (admin). Runs as `65532:65532`. |
 | `mockllm` | [`deploy/docker/Dockerfile.mockllm`](../deploy/docker/Dockerfile.mockllm) | `ghcr.io/andyjmorgan/sluice-mockllm` | Scratch image. Exposes `:5555`. Dev/test only — **never** for production traffic. |
 | `cli` | none | none | Runs locally via `go run ./cmd/cli` or as a `go install`'d binary. No container shape — it's an operator tool. |
-| `api` | none | none | Inert stub — never containerised. |
 
 The local `docker-compose.yaml` references `sluice-mockllm:dev` (built from `Dockerfile.mockllm`) for the dev harness; the upstream `ghcr.io/andyjmorgan/sluice-mockllm` tag is the same shape, pre-built.
 
@@ -317,14 +313,6 @@ The mockllm-side ordering is deterministic: the first two matching primary calls
 ### Cross-link
 
 For the dev compose layout and how mockllm fits in alongside the gateway, see [local development](local-development.md).
-
----
-
-## `sluice-api`
-
-`cmd/api` is an **inert stub**. It binds `0.0.0.0:8484` and answers every request with `501 Not Implemented`; nothing runs against it, and it is never containerised. It exists only so the binary slot stays reserved (CI keeps compiling it, and `:8484` stays earmarked so existing port automation — Helm values, NetworkPolicies, firewall rules — doesn't churn).
-
-There is nothing to configure and no reason to run it. For fleet history use the standalone [telemetry service](telemetry-service.md); for config inspection use the read-only [admin console](admin-console.md) embedded in `cmd/gateway`.
 
 ---
 

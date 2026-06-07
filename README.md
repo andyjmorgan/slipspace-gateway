@@ -113,7 +113,6 @@ The full design — module layout, configuration schema, rule schema, resilience
 cmd/
   gateway/      data plane binary
   telemetry/    central telemetry service (OTLP + HMAC Record-webhook ingest, Postgres, console)
-  api/          inert 501 stub (reserved slot, returns 501)
   cli/          key generation, config validation
   mockllm/      Go mock LLM for tests + local dev
 internal/       compiler-enforced private
