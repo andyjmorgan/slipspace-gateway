@@ -707,14 +707,17 @@ function GenAIContentView({ content }: { content: GenAIContent }) {
   }
   return (
     <div className="flex flex-col gap-4">
-      {(content.system_instructions?.length ?? 0) > 0 && (
-        <GenAIPartsSection label="System instructions" parts={content.system_instructions ?? []} />
-      )}
       {(content.input_messages?.length ?? 0) > 0 && (
         <GenAIMessagesSection label="Input messages" messages={content.input_messages ?? []} />
       )}
       {(content.output_messages?.length ?? 0) > 0 && (
         <GenAIMessagesSection label="Response" messages={content.output_messages ?? []} />
+      )}
+      {/* System instructions sit below the request/response — they're usually a
+          large, static preamble, so they're ordered after the live turns and
+          collapsed by default — and above the tool definitions. */}
+      {(content.system_instructions?.length ?? 0) > 0 && (
+        <GenAIPartsSection label="System instructions" parts={content.system_instructions ?? []} defaultOpen={false} />
       )}
       {(content.tool_definitions?.length ?? 0) > 0 && (
         <GenAIToolDefsSection defs={content.tool_definitions ?? []} />
@@ -746,9 +749,17 @@ function GenAIMessagesSection({ label, messages }: { label: string; messages: Ge
 // GenAIPartsSection renders a bare parts array (system instructions have no
 // role wrapper). Each part is its own collapsible panel so multi-part system
 // prompts are visibly split rather than running together as one block.
-function GenAIPartsSection({ label, parts }: { label: string; parts: GenAIMessagePart[] }) {
+function GenAIPartsSection({
+  label,
+  parts,
+  defaultOpen = true,
+}: {
+  label: string
+  parts: GenAIMessagePart[]
+  defaultOpen?: boolean
+}) {
   return (
-    <CollapsibleSection label={label} count={parts.length}>
+    <CollapsibleSection label={label} count={parts.length} defaultOpen={defaultOpen}>
       {parts.length === 0 ? (
         <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
       ) : (
