@@ -68,8 +68,24 @@ func TestRegistry_IdentityPanics(t *testing.T) {
 
 func TestDefaultRegistry_LookupMissByDefault(t *testing.T) {
 	// No concrete translators are registered yet, so the default registry must
-	// miss every pair — translation is fail-closed until a translator ships.
+	// miss every real pair — translation is fail-closed until a translator ships.
 	if _, ok := translate.Lookup("messages", "chat"); ok {
 		t.Error("default Lookup(messages, chat) resolved; no translators registered yet")
+	}
+}
+
+func TestDefaultRegistry_PackageRegisterAndLookup(t *testing.T) {
+	// Exercises the package-level Register/Lookup wrappers against the
+	// process-wide default registry. Synthetic protocol names are used so this
+	// never collides with a real pair (or the fail-closed-by-default check).
+	const src, target = "test-src-proto", "test-dst-proto"
+	translate.Register(stubTranslator{src: src, target: target})
+
+	got, ok := translate.Lookup(src, target)
+	if !ok {
+		t.Fatalf("default Lookup(%q, %q) = _, false; want the just-registered translator", src, target)
+	}
+	if got.Source() != src || got.Target() != target {
+		t.Errorf("default Lookup returned %q->%q; want %q->%q", got.Source(), got.Target(), src, target)
 	}
 }
