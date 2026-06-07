@@ -148,7 +148,8 @@ func newTranslateEnv(t *testing.T) *testEnv {
 		t.Fatalf("NewMeters: %v", err)
 	}
 	reporter := newReporterFactory(nil, nil, logger, meters, nil, nil, nil, nil, false, testDefaultCaps(), nil)
-	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory(), ResponseBodyTransform: newResponseBodyTransform(meters, "")})
+	// Lossy header enabled in tests so drop reporting is observable.
+	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory(), ResponseBodyTransform: newResponseBodyTransform(meters, "", true)})
 	evaluator := rules.NewEvaluator(store, 8, meters)
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
@@ -197,13 +198,19 @@ func TestGateway_TranslateResolvesTargetEndpoint(t *testing.T) {
 func TestGateway_TranslateRoundTrip(t *testing.T) {
 	env := newTranslateEnv(t)
 
-	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/messages", `{"model":"claude-x","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+	// top_k has no OpenAI equivalent — it must be dropped and reported.
+	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/messages", `{"model":"claude-x","max_tokens":16,"top_k":40,"messages":[{"role":"user","content":"hi"}]}`)
 	req.Header.Set("Authorization", "Bearer sk_xlate_local_only")
 	resp := doReq(t, req)
 	defer closeBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// The dropped feature is reported on the lossy header (enabled in tests).
+	if lossy := resp.Header.Get("X-Sluice-Translation-Lossy"); !strings.Contains(lossy, "top_k") {
+		t.Errorf("X-Sluice-Translation-Lossy = %q, want it to list top_k", lossy)
 	}
 
 	// The upstream must have received an OpenAI Chat request (translated from

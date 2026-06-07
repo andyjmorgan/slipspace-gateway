@@ -111,29 +111,33 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
-		// Fail closed on an active translation with no registered translator:
-		// an undeclared/unsupported protocol pair must never forward silently
-		// (decision #3). When translation is inactive, state.Protocol equals the
+		// Cross-provider translation (active only when a translate rule fired).
+		// Fail closed on an unregistered pair — an undeclared/unsupported
+		// protocol pair must never forward silently (decision #3). Install a
+		// drop sink so the response phase can count/report dropped features,
+		// translate the outgoing request body (runs per resilience attempt
+		// after BodyRemarshal), and reject streaming for non-stream-capable
+		// pairs. When translation is inactive, state.Protocol equals the
 		// inbound protocol, so resolution below is unchanged.
-		if translationActive(state) && !translatorRegistered(state) {
-			log.ErrorContext(ctx, "forwarder: no translator for protocol pair",
-				"source_protocol", state.SourceProtocol, "target_protocol", state.Protocol)
-			errs.Write(ctx, w, http.StatusNotImplemented, "handler", "translate_unsupported", "no translator for requested protocol translation")
-			return
-		}
-
-		// Translate the outgoing request body when a translate rule is active.
-		// Runs per attempt (resilience re-enters this handler) after
-		// BodyRemarshal has re-encoded any rule body mutations.
-		streamingXlate, err := translateRequestBody(state, r)
-		if err != nil {
-			log.ErrorContext(ctx, "forwarder: translate request", "err", err.Error())
-			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
-			return
-		}
-		if streamingXlate && !streamCapable(state) {
-			errs.Write(ctx, w, http.StatusNotImplemented, "handler", "translate_streaming_unsupported", "streaming translation not supported for this protocol pair")
-			return
+		if translationActive(state) {
+			if !translatorRegistered(state) {
+				log.ErrorContext(ctx, "forwarder: no translator for protocol pair",
+					"source_protocol", state.SourceProtocol, "target_protocol", state.Protocol)
+				errs.Write(ctx, w, http.StatusNotImplemented, "handler", "translate_unsupported", "no translator for requested protocol translation")
+				return
+			}
+			ctx = withDropSink(ctx)
+			r = r.WithContext(ctx)
+			streamingXlate, terr := translateRequestBody(state, r)
+			if terr != nil {
+				log.ErrorContext(ctx, "forwarder: translate request", "err", terr.Error())
+				errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
+				return
+			}
+			if streamingXlate && !streamCapable(state) {
+				errs.Write(ctx, w, http.StatusNotImplemented, "handler", "translate_streaming_unsupported", "streaming translation not supported for this protocol pair")
+				return
+			}
 		}
 
 		// Resolve the endpoint on the post-rule protocol so a translate action

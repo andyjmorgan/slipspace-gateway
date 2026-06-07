@@ -217,6 +217,17 @@ const (
 	// AttrSluiceUnmappedDirection is "request" or "response", marking which
 	// side of the exchange carried the unmapped field.
 	AttrSluiceUnmappedDirection = "sluice.unmapped_direction"
+
+	// AttrSluiceTranslateSource and AttrSluiceTranslateTarget are the source
+	// and target wire protocols of a cross-provider translation — the
+	// pair dimensions on gateway.translation.field_drops.total.
+	AttrSluiceTranslateSource = "sluice.translate_source"
+	AttrSluiceTranslateTarget = "sluice.translate_target"
+
+	// AttrSluiceTranslateField is the dotted source-side path of a feature
+	// dropped in translation — the per-field dimension on
+	// gateway.translation.field_drops.total. Bounded by the modelled field set.
+	AttrSluiceTranslateField = "sluice.translate_field"
 )
 
 // gen_ai.operation.name values (spec-defined).
