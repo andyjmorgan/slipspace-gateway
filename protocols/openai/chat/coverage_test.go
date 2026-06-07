@@ -175,3 +175,44 @@ func TestChat_RequestMessages_UnmarshalJSONError(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
+
+// TestChat_ResponseMessageReasoningRoundTrip pins the OpenAI-compat
+// choices[].message.reasoning field (gpt-oss / Ollama qwen3 / vLLM). The typed
+// "reasoning" key surfaces on the struct; the older vLLM "reasoning_content"
+// spelling rides along untyped via DynamicProperties. Both must round-trip
+// byte-equivalent (modulo key order).
+func TestChat_ResponseMessageReasoningRoundTrip(t *testing.T) {
+	in := []byte(`{"content":"4","reasoning":"2+2 is 4","role":"assistant"}`)
+	var m ResponseMessage
+	if err := json.Unmarshal(in, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m.Reasoning == nil || *m.Reasoning != "2+2 is 4" {
+		t.Fatalf("reasoning not typed: %+v", m.Reasoning)
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("drift\n in: %s\nout: %s", in, out)
+	}
+
+	// Legacy "reasoning_content" spelling is preserved via DynamicProperties
+	// without being claimed by the typed field.
+	legacy := []byte(`{"content":"hi","reasoning_content":"legacy trace","role":"assistant"}`)
+	var lm ResponseMessage
+	if err := json.Unmarshal(legacy, &lm); err != nil {
+		t.Fatalf("legacy unmarshal: %v", err)
+	}
+	if lm.Reasoning != nil {
+		t.Fatalf("legacy spelling must not bind the typed field: %+v", lm.Reasoning)
+	}
+	lout, err := json.Marshal(lm)
+	if err != nil {
+		t.Fatalf("legacy marshal: %v", err)
+	}
+	if !jsonValueEqual(t, legacy, lout) {
+		t.Fatalf("legacy drift\n in: %s\nout: %s", legacy, lout)
+	}
+}

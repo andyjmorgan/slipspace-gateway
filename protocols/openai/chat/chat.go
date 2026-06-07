@@ -536,6 +536,21 @@ type ResponseMessage struct {
 	// to answer. Nil when not refused.
 	Refusal *string `json:"refusal,omitempty"`
 
+	// Reasoning carries the model's surfaced chain-of-thought / reasoning text
+	// on OpenAI-compatible providers (gpt-oss, vLLM, DeepSeek, Ollama qwen3).
+	// This is an OpenAI-compat convention, NOT native OpenAI Chat Completions —
+	// native reasoning models surface summaries via the Responses API's
+	// reasoning.summary instead. The wire field migrated from
+	// "reasoning_content" to "reasoning" in vLLM; we model the current
+	// "reasoning" spelling and let any older "reasoning_content" sibling
+	// round-trip via DynamicProperties. Pointer so an explicit empty string is
+	// preserved distinctly from an absent field.
+	// Sources: vLLM reasoning-outputs docs
+	// (https://docs.vllm.ai/en/latest/features/reasoning_outputs.html);
+	// OpenAI reasoning-models guide
+	// (https://platform.openai.com/docs/guides/reasoning); LangChain issue #35059.
+	Reasoning *string `json:"reasoning,omitempty"`
+
 	// Audio carries the assistant's audio reply when audio modality is
 	// enabled.
 	Audio *AudioMessage `json:"audio,omitempty"`
