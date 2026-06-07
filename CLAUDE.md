@@ -102,7 +102,7 @@ Keep the dep graph small. Approved deps:
 
 Conditionally approved (decide on first use):
 
-- `github.com/go-chi/chi/v5` — routing. Not currently imported. Reach for it if `cmd/api`'s control-plane REST routes need pattern matching beyond stdlib `http.ServeMux`; otherwise drop from this list when v1.1 lands.
+- `github.com/go-chi/chi/v5` — routing. Not currently imported, and now unlikely to be: the `cmd/api` control plane was dropped (the telemetry service shipped instead), so the control-plane routes that might have justified it won't be written. Drop candidate.
 
 Anything else needs justification in the PR description.
 
@@ -121,7 +121,7 @@ Anything else needs justification in the PR description.
 
 Flat layout: public packages at the repo root, private under `internal/` (compiler-enforced privacy). Full tree + rationale is in the *Module Layout* design note. The load-bearing split:
 
-- `cmd/` — `gateway` (data plane), `api` (control plane), `cli`, `mockllm`. One binary per dir.
+- `cmd/` — `gateway` (data plane), `telemetry` (central telemetry service), `api` (inert 501 stub — the central control plane was dropped in favour of `telemetry`), `cli`, `mockllm`. One binary per dir.
 - `internal/` — engines: `proxy`, `pipeline`, `middleware/{auth,bodycapture,rules,resilience,guardrails,forwarder}`, `config`, `keys`, `spool`, `connector`, `observability`, `routing`, `server`.
 - `protocols/` (PUBLIC) — on-the-wire models, one per protocol a provider speaks: `openai/{chat,responses,models}`, `anthropic/{messages,models}`, `gemini/{content,models}`.
 - `models/` (PUBLIC) — shared multimodal types + `dynamic.go` (`DynamicProperties`).

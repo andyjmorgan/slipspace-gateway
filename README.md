@@ -113,7 +113,7 @@ The full design — module layout, configuration schema, rule schema, resilience
 cmd/
   gateway/      data plane binary
   telemetry/    central telemetry service (OTLP + HMAC Record-webhook ingest, Postgres, console)
-  api/          control plane REST (v1.1, stub in v1.0)
+  api/          inert 501 stub — control plane dropped, superseded by cmd/telemetry
   cli/          key generation, config validation
   mockllm/      Go mock LLM for tests + local dev
 internal/       compiler-enforced private

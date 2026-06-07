@@ -1,6 +1,6 @@
 # Auxiliary Binaries
 
-Sluice ships four binaries from this repo. `cmd/gateway` is the data plane — every other doc in this directory is about it. This page covers the other three: `cmd/cli` (operator toolkit), `cmd/mockllm` (test upstream surrogate), and `cmd/api` (control-plane REST stub). Each has its own purpose, lifecycle, and audience.
+Sluice ships four binaries from this repo. `cmd/gateway` is the data plane — every other doc in this directory is about it. This page covers the other three: `cmd/cli` (operator toolkit), `cmd/mockllm` (test upstream surrogate), and `cmd/api` (an inert control-plane REST stub — the control plane it was reserved for was dropped). Each has its own purpose, lifecycle, and audience.
 
 This page is the reference. It documents every flag, every subcommand, every exit code, plus when an operator or developer would actually reach for each.
 
@@ -24,9 +24,9 @@ This page is the reference. It documents every flag, every subcommand, every exi
 | `gateway` | data plane: proxies provider traffic, runs rules + resilience, serves admin console | operators, every deployment | shipping |
 | `cli` | local toolkit: generate API keys, validate config bundles | operators, anyone editing YAML | shipping |
 | `mockllm` | test upstream: deterministic canned responses + behaviour primitives for e2e and dev | developers, e2e harness, local docker-compose | shipping (dev-only image) |
-| `api` | control-plane REST stub: planned mutation surface for the v1.2+ control plane | nobody yet — the binary returns 501 | stub |
+| `api` | inert control-plane REST stub — the central control plane it was reserved for was **dropped** in favour of the telemetry service (`cmd/telemetry`) | nobody — returns 501 | inert stub |
 
-`cli` and `mockllm` are real tools you use today. `api` is a placeholder that prints `501 Not Implemented` so the binary slot exists and CI compiles it; the actual control-plane endpoints land in v1.2+.
+`cli` and `mockllm` are real tools you use today. `api` is a placeholder that prints `501 Not Implemented` so the binary slot exists and CI compiles it; there are **no control-plane endpoints coming** — that central control plane was dropped in favour of the standalone telemetry service (`cmd/telemetry`).
 
 ```mermaid
 flowchart LR
@@ -35,7 +35,7 @@ flowchart LR
     GW -->|provider traffic| Up[real upstreams]
     Dev[developer / e2e harness] -->|"go run ./cmd/mockllm"| MOCK[mockllm]
     GW -. dev / e2e .-> MOCK
-    GW -. v1.2+ planned .-> API[api stub<br/>:8484 returns 501]
+    GW -. reserved slot, CP dropped .-> API[api stub<br/>:8484 returns 501]
 ```
 
 ---
@@ -49,7 +49,7 @@ The published images are narrowly scoped — only the binaries that need to run 
 | `gateway` | [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile) | `ghcr.io/andyjmorgan/sluice-gateway` | Scratch image with the SPA bundle embedded. Exposes `:8585` (data plane) + `:8081` (admin). Runs as `65532:65532`. |
 | `mockllm` | [`deploy/docker/Dockerfile.mockllm`](../deploy/docker/Dockerfile.mockllm) | `ghcr.io/andyjmorgan/sluice-mockllm` | Scratch image. Exposes `:5555`. Dev/test only — **never** for production traffic. |
 | `cli` | none | none | Runs locally via `go run ./cmd/cli` or as a `go install`'d binary. No container shape — it's an operator tool. |
-| `api` | none | none | Stub binary. Containerising waits until the control-plane API is real. |
+| `api` | none | none | Inert stub. The central control plane was dropped, so it is never containerised. |
 
 The local `docker-compose.yaml` references `sluice-mockllm:dev` (built from `Dockerfile.mockllm`) for the dev harness; the upstream `ghcr.io/andyjmorgan/sluice-mockllm` tag is the same shape, pre-built.
 
@@ -322,7 +322,7 @@ For the dev compose layout and how mockllm fits in alongside the gateway, see [l
 
 ## `sluice-api`
 
-The planned home for the v1.2+ control-plane REST surface: configuration mutation, key rotation, route management, anything that today requires editing YAML and redeploying. Today the binary is a placeholder — it compiles, binds a listener, and answers every request with `501 Not Implemented`.
+Once earmarked as the home for a future control-plane REST surface (configuration mutation, key rotation, route management — anything that today requires editing YAML and redeploying). That **central control plane was dropped**: the standalone telemetry service (`cmd/telemetry`) shipped instead for fleet observability, and the read-only admin console embedded in `cmd/gateway` covers config inspection. The binary survives only as an inert placeholder — it compiles, binds a listener, and answers every request with `501 Not Implemented`.
 
 ### Current status
 
@@ -335,7 +335,7 @@ Content-Type: text/plain; charset=utf-8
 control plane not implemented until v1.1
 ```
 
-The literal message text says "v1.1" but the milestone schedule (see `CLAUDE.md`) parks the actual control plane at v1.2+. The v1.1 work shipped instead as the read-only admin console embedded inside `cmd/gateway` on `:8081`. Treat the binary as scaffolding — the listener slot is reserved so existing operators don't have to renumber ports when the real surface lands.
+The literal message text still says "v1.1", but there is no control plane coming — it was **dropped** in favour of the telemetry service (`cmd/telemetry`). The management work shipped instead as the read-only admin console embedded inside `cmd/gateway` on `:8081`. Treat the binary as a vestigial reserved slot, not scaffolding for upcoming work.
 
 ### How to run it
 
@@ -355,14 +355,14 @@ sluice-api
 
 ### Default bind address
 
-`0.0.0.0:8484`. Not configurable via a flag yet — when the real control plane lands it will pick up `SLUICE_API_BIND` (or equivalent) the same way `cmd/gateway` consumes its environment.
+`0.0.0.0:8484`, hardcoded. There is no plan to make it configurable now that the control plane is dropped; the slot is kept only so existing port automation doesn't churn.
 
 ### When operators should run it
 
 Today, no one. The binary returns 501 for every URL, so there is nothing useful you can call against it. The reasons it exists at all:
 
 - **CI compiles every `cmd/`** — keeping the stub in tree means the build pipeline catches dependency drift early.
-- **Reserved listener slot** — `:8484` is the chosen port for the control plane; downstream automation (Helm values, k8s NetworkPolicies, firewall rules) can be authored against it now and the URL will not move.
+- **Reserved listener slot** — `:8484` was earmarked for the (now dropped) control plane; the slot is kept so downstream automation (Helm values, k8s NetworkPolicies, firewall rules) doesn't churn, but nothing will ever serve on it.
 - **Shape exemplar** — the binary's `main.go` follows the same SIGTERM + signal-context shutdown idiom as `gateway` and `mockllm`, so when the real handlers are written they slot into a familiar lifecycle.
 
 If you find yourself reaching for `cmd/api` today, you almost certainly want the **admin console** that's embedded inside the gateway binary instead — same v1.1-era read-only surface, but actually wired up. See [admin console](admin-console.md).
@@ -375,4 +375,4 @@ If you find yourself reaching for `cmd/api` today, you almost certainly want the
 - [Deployment](deployment.md) — how the published `gateway` image is rolled out and what auxiliary infrastructure is required.
 - [Configuration model](configuration-model.md) — the YAML schema that `sluice-cli config validate` enforces, including every error category the validator can return.
 - [Routing](routing.md) — protocol + binding routing in v2 (the `path_collision` / `prefix_required_empty` codes are legacy v1 holdovers that no longer fire).
-- [Admin console](admin-console.md) — the read-only control surface that today fills the gap until `cmd/api` is real.
+- [Admin console](admin-console.md) — the read-only control surface; the `cmd/api` control plane was dropped, so this (plus the telemetry service) is the management surface.
