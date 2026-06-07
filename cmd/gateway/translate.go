@@ -135,6 +135,31 @@ func translateResponseBody(ctx context.Context, resp *http.Response, streaming b
 		return nil
 	}
 
+	// Error responses (>=400) carry an error body, not a success envelope or
+	// SSE — and an upstream error to a streaming request comes back as a JSON
+	// error (Content-Type not event-stream), so this branch handles both. The
+	// forwarder preserves the status code; only the body shape is translated.
+	if resp.StatusCode >= 400 {
+		et, ok := tr.(translate.ErrorTranslator)
+		if !ok {
+			return nil
+		}
+		in, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		out, err := et.TranslateError(resp.StatusCode, in)
+		if err != nil {
+			return err
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(out))
+		resp.ContentLength = int64(len(out))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(out)))
+		resp.Header.Set("Content-Type", "application/json")
+		return nil
+	}
+
 	if streaming {
 		sc, ok := tr.(translate.StreamCapable)
 		if !ok {

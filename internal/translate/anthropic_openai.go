@@ -34,6 +34,12 @@ func (anthropicOpenAIChat) NewStreamTranslator() StreamTranslator {
 	return &chatToMessagesStream{}
 }
 
+// TranslateError maps an OpenAI error response body to the Anthropic error
+// envelope, satisfying ErrorTranslator.
+func (anthropicOpenAIChat) TranslateError(status int, body []byte) ([]byte, error) {
+	return translateChatErrorToMessages(status, body)
+}
+
 // init registers the (messages, chat) translator with the default registry —
 // the one permitted use of init in this codebase (polymorphic/translator
 // registration).

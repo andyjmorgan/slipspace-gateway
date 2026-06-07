@@ -49,6 +49,16 @@ type Translator interface {
 	TranslateResponse(body []byte) ([]byte, []Drop, error)
 }
 
+// ErrorTranslator is the optional extension a Translator implements when it can
+// translate an upstream error response (HTTP status >= 400) from the target
+// protocol's error shape into the source protocol's. Translators without it
+// leave error bodies untranslated.
+type ErrorTranslator interface {
+	// TranslateError rewrites a target-protocol error body (at the given HTTP
+	// status) into the source protocol's error shape.
+	TranslateError(status int, body []byte) ([]byte, error)
+}
+
 // StreamCapable is the optional extension a Translator implements when it can
 // translate a streaming response. Translators without streaming support omit
 // it; the caller fails closed when a streaming request resolves to a

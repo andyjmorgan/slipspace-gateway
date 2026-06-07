@@ -238,6 +238,140 @@ func TestTranslateE2E_StreamingRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTranslateE2E_ErrorResponse(t *testing.T) {
+	h := newTranslateHarness(t)
+	h.StageMockResponse(harness.CannedResponse{
+		Method:  http.MethodPost,
+		Path:    "/v1/chat/completions",
+		Status:  http.StatusTooManyRequests,
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Body:    `{"error":{"message":"slow down","type":"rate_limit_exceeded"}}`,
+	})
+
+	resp := h.PostJSON("/v1/messages", map[string]any{
+		"model": "claude-x", "max_tokens": 16,
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, nil)
+
+	// Status preserved; body translated to the Anthropic error envelope.
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", resp.StatusCode)
+	}
+	var env struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body, &env); err != nil {
+		t.Fatalf("client body is not an Anthropic error envelope: %v\nbody: %s", err, resp.Body)
+	}
+	if env.Type != "error" || env.Error.Type != "rate_limit_error" || env.Error.Message != "slow down" {
+		t.Errorf("error envelope = %+v, want error/rate_limit_error/'slow down'", env)
+	}
+}
+
+func TestTranslateE2E_MultipleToolCalls(t *testing.T) {
+	h := newTranslateHarness(t)
+	h.StageMockResponse(harness.CannedResponse{
+		Method:  http.MethodPost,
+		Path:    "/v1/chat/completions",
+		Status:  http.StatusOK,
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Body: `{"id":"c1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[` +
+			`{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"SF\"}"}},` +
+			`{"id":"call_2","type":"function","function":{"name":"get_time","arguments":"{\"tz\":\"PT\"}"}}` +
+			`]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}`,
+	})
+
+	resp := h.PostJSON("/v1/messages", map[string]any{
+		"model": "claude-x", "max_tokens": 16,
+		"messages": []map[string]any{{"role": "user", "content": "weather + time?"}},
+	}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, resp.Body)
+	}
+
+	var msg messages.MessagesResponse
+	if err := json.Unmarshal(resp.Body, &msg); err != nil {
+		t.Fatalf("client body not Anthropic Messages: %v\n%s", err, resp.Body)
+	}
+	var names []string
+	for _, b := range msg.Content {
+		if tu, ok := b.(*messages.ToolUseBlock); ok {
+			names = append(names, tu.Name)
+		}
+	}
+	if len(names) != 2 || names[0] != "get_weather" || names[1] != "get_time" {
+		t.Errorf("tool_use blocks = %v, want [get_weather get_time] in order", names)
+	}
+}
+
+func TestTranslateE2E_StreamNonStreamParity(t *testing.T) {
+	h := newTranslateHarness(t)
+
+	// Non-streaming: full text in one response.
+	h.StageMockResponse(harness.CannedResponse{
+		Method:  http.MethodPost,
+		Path:    "/v1/chat/completions",
+		Status:  http.StatusOK,
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Body:    `{"id":"c1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"the quick brown fox"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":4,"total_tokens":5}}`,
+	})
+	resp := h.PostJSON("/v1/messages", map[string]any{
+		"model": "claude-x", "max_tokens": 16,
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, nil)
+	var msg messages.MessagesResponse
+	if err := json.Unmarshal(resp.Body, &msg); err != nil {
+		t.Fatalf("non-stream body not Anthropic Messages: %v\n%s", err, resp.Body)
+	}
+	nonStreamText := msg.Content[0].(*messages.TextBlock).Text
+
+	// Streaming: the same text fragmented across deltas.
+	h.ResetMockResponses()
+	h.StageMockResponse(harness.CannedResponse{
+		Method:    http.MethodPost,
+		Path:      "/v1/chat/completions",
+		Status:    http.StatusOK,
+		Streaming: true,
+		Headers:   map[string]string{"Content-Type": "text/event-stream"},
+		StreamChunks: []harness.CannedStreamChunk{
+			{Data: `{"id":"c1","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"}}]}`},
+			{Data: `{"choices":[{"index":0,"delta":{"content":"the quick "}}]}`},
+			{Data: `{"choices":[{"index":0,"delta":{"content":"brown fox"}}]}`},
+			{Data: `{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`},
+			{Data: "[DONE]"},
+		},
+	})
+	stream := h.PostStream("/v1/messages", map[string]any{
+		"model": "claude-x", "max_tokens": 16, "stream": true,
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, nil)
+	defer func() { _ = stream.Close() }()
+	var streamText string
+	for _, c := range stream.CollectAll(5 * time.Second) {
+		if c.Event == "content_block_delta" {
+			streamText += deltaText(c.Data)
+		}
+	}
+
+	if streamText != nonStreamText {
+		t.Errorf("stream/non-stream parity broken: stream=%q non-stream=%q", streamText, nonStreamText)
+	}
+}
+
+func deltaText(data string) string {
+	var d struct {
+		Delta struct {
+			Text string `json:"text"`
+		} `json:"delta"`
+	}
+	_ = json.Unmarshal([]byte(data), &d)
+	return d.Delta.Text
+}
+
 func containsText(data, want string) bool {
 	var d struct {
 		Delta struct {

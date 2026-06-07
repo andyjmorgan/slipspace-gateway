@@ -57,6 +57,16 @@ func (s *chatToMessagesStream) Translate(frame []byte) ([]byte, error) {
 	if len(frame) == 0 {
 		return nil, nil
 	}
+	// An OpenAI error delivered mid-stream (a chunk carrying a top-level
+	// "error") becomes an Anthropic SSE error event.
+	if msg, ok := errorChunk(frame); ok {
+		var out bytes.Buffer
+		s.emit(&out, messages.ErrorEvent{Type: "error", Error: messages.StreamError{Type: "api_error", Message: msg}})
+		if s.err != nil {
+			return nil, s.err
+		}
+		return out.Bytes(), nil
+	}
 	var chunk chat.ChatCompletionChunk
 	if err := json.Unmarshal(frame, &chunk); err != nil {
 		// A chunk we cannot decode is skipped rather than aborting the stream;

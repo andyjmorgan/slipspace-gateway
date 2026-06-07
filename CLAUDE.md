@@ -46,7 +46,9 @@ When in doubt, check the notes — they're the long-form. This file is the index
 
 Shipped through **v1.1.18**: data plane forwarding for all three providers (streaming + non-streaming), rules engine, resilience orchestrator (failover + load_balance, circuit breaker), connector spool (s3 / azure_blob / webhook), admin console (dashboard + config inspector + live messages), and the rules read-write API + visual editor. OpenAI-compat chat surfaces on Anthropic + Gemini.
 
-**Queued:** v1.0.3 real `llmImpersonation` synthesisers; v1.2+ cross-provider translation, DLP guardrails, Bedrock, hot reload, RBAC.
+**Cross-provider translation (v1.2):** shipped for **Anthropic Messages ↔ OpenAI Chat** — request, non-streaming + streaming response, tool calls, and error responses — triggered by the explicit `translate` rule action (`internal/translate/`), fail-closed on undeclared/unsupported pairs, with a drop counter + flag-gated `X-Sluice-Translation-Lossy` header. Proven by a Go e2e differential matrix, the native Anthropic Python SDK wire-compat suite, and a property-coverage meta-test. See [docs/actions.md → `translate`](docs/actions.md#translate). Deferred post-MVP: Gemini translation, mixed-protocol resilience groups (cross-dialect failover), base-config auto-mapping.
+
+**Queued:** v1.0.3 real `llmImpersonation` synthesisers; v1.2+ DLP guardrails, Bedrock, hot reload, RBAC.
 
 The per-milestone changelog (acceptance criteria, what shipped when) lives in the DonkeyWork milestones — fetch via `mcp__donkeywork__milestones_list`. Don't track milestone history here.
 
