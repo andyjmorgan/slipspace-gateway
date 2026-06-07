@@ -27,8 +27,14 @@ const (
 	azuriteBlobPort = "10000/tcp"
 	azuriteAccount  = "devstoreaccount1"
 	// Azurite ships this key with its README; not a real credential.
-	azuriteAccKey  = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" //nolint:gosec // G101: Azurite's documented public default key
-	startupTimeout = 60 * time.Second
+	azuriteAccKey = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" //nolint:gosec // G101: Azurite's documented public default key
+	// startupTimeout covers the Azurite image pull + emulator cold-start +
+	// the port-listening readiness wait, all under the same ctx. Under the
+	// full parallel e2e suite the testcontainer runtime is contended (MinIO,
+	// Azurite, and the gateway/mockllm processes all spinning up at once), so
+	// 60s timed out at ~63s (#158). Matches the s3 connector's 180s (#129);
+	// in isolation Azurite is up in ~5s, so this is pure headroom for load.
+	startupTimeout = 180 * time.Second
 )
 
 // startAzurite spins up the Azurite emulator with the blob service
