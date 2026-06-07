@@ -527,54 +527,77 @@ function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefi
   if (body === null) return <div className="text-[12px] text-[color:var(--text-4)]">No captured bodies (rolled off or capture disabled).</div>
 
   const hasGenAI = genAI !== null && genAIContentHasParts(genAI)
-  // For streaming responses the Response tab shows the accumulator's
-  // assembled JSON (the rollup) and the raw SSE event bytes live on a
-  // separate Raw stream tab. For non-streaming there is no raw/assembled
+  // Two top-level groups: Telemetry (the gateway's gen_ai content channel) and
+  // Report (the spool-captured wire bytes + headers). Each group nests a
+  // line-variant sub-tab strip:
+  //   Telemetry → Simplified (the structured view) | Raw (the captured JSON)
+  //   Report    → Request | Response | SSE stream (streaming only) | Headers
+  // For streaming responses the Response sub-tab shows the accumulator's
+  // assembled JSON (the rollup) and the raw SSE event bytes live on the
+  // separate SSE stream sub-tab. For non-streaming there is no raw/assembled
   // split — Response is the full body. This mirrors the gateway admin
   // inspector so the two surfaces never disagree.
   return (
-    <Tabs defaultValue={hasGenAI ? "genai" : "request"} className="flex flex-col gap-2">
+    <Tabs defaultValue={hasGenAI ? "telemetry" : "report"} className="flex flex-col gap-2">
       <TabsList>
-        {hasGenAI && <TabsTrigger value="genai">Telemetry</TabsTrigger>}
-        <TabsTrigger value="request">Request</TabsTrigger>
-        <TabsTrigger value="response">Response</TabsTrigger>
-        {streaming && <TabsTrigger value="raw">Raw stream</TabsTrigger>}
-        <TabsTrigger value="headers">Headers</TabsTrigger>
+        {hasGenAI && <TabsTrigger value="telemetry">Telemetry</TabsTrigger>}
+        <TabsTrigger value="report">Report</TabsTrigger>
       </TabsList>
       {hasGenAI && (
-        <TabsContent value="genai">
-          <GenAIContentView content={genAI} />
+        <TabsContent value="telemetry">
+          <Tabs defaultValue="simplified" className="flex flex-col gap-2">
+            <TabsList variant="line">
+              <TabsTrigger value="simplified">Simplified</TabsTrigger>
+              <TabsTrigger value="raw">Raw</TabsTrigger>
+            </TabsList>
+            <TabsContent value="simplified">
+              <GenAIContentView content={genAI} />
+            </TabsContent>
+            <TabsContent value="raw">
+              <BodyView label="GenAI content" text={body.gen_ai_content} />
+            </TabsContent>
+          </Tabs>
         </TabsContent>
       )}
-      <TabsContent value="request">
-        <BodyView label="Request body" text={body.request} bytes={body.request_total_bytes} truncated={body.request_truncated} />
-      </TabsContent>
-      <TabsContent value="response">
-        {streaming ? (
-          body.response_assembled ? (
-            <BodyView
-              label="Response (assembled)"
-              text={body.response_assembled}
-              bytes={body.response_total_bytes}
-              truncated={body.response_truncated}
-              partial={body.assembly_partial}
-            />
-          ) : (
-            <NoAssemblyNote />
-          )
-        ) : (
-          <BodyView label="Response body" text={body.response} bytes={body.response_total_bytes} truncated={body.response_truncated} />
-        )}
-      </TabsContent>
-      {streaming && (
-        <TabsContent value="raw">
-          <BodyView label="Raw SSE bytes" text={body.response} bytes={body.response_total_bytes} truncated={body.response_truncated} />
-        </TabsContent>
-      )}
-      <TabsContent value="headers">
-        <Headers label="Request headers" headers={body.request_headers} />
-        <div className="h-2" />
-        <Headers label="Response headers" headers={body.response_headers} />
+      <TabsContent value="report">
+        <Tabs defaultValue="request" className="flex flex-col gap-2">
+          <TabsList variant="line">
+            <TabsTrigger value="request">Request</TabsTrigger>
+            <TabsTrigger value="response">Response</TabsTrigger>
+            {streaming && <TabsTrigger value="sse">SSE stream</TabsTrigger>}
+            <TabsTrigger value="headers">Headers</TabsTrigger>
+          </TabsList>
+          <TabsContent value="request">
+            <BodyView label="Request body" text={body.request} bytes={body.request_total_bytes} truncated={body.request_truncated} />
+          </TabsContent>
+          <TabsContent value="response">
+            {streaming ? (
+              body.response_assembled ? (
+                <BodyView
+                  label="Response (assembled)"
+                  text={body.response_assembled}
+                  bytes={body.response_total_bytes}
+                  truncated={body.response_truncated}
+                  partial={body.assembly_partial}
+                />
+              ) : (
+                <NoAssemblyNote />
+              )
+            ) : (
+              <BodyView label="Response body" text={body.response} bytes={body.response_total_bytes} truncated={body.response_truncated} />
+            )}
+          </TabsContent>
+          {streaming && (
+            <TabsContent value="sse">
+              <BodyView label="Raw SSE bytes" text={body.response} bytes={body.response_total_bytes} truncated={body.response_truncated} />
+            </TabsContent>
+          )}
+          <TabsContent value="headers">
+            <Headers label="Request headers" headers={body.request_headers} />
+            <div className="h-2" />
+            <Headers label="Response headers" headers={body.response_headers} />
+          </TabsContent>
+        </Tabs>
       </TabsContent>
     </Tabs>
   )
@@ -583,7 +606,7 @@ function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefi
 // NoAssemblyNote fills the Response tab when a streamed response carried no
 // assembled rollup — the protocol is outside the accumulator registry (e.g.
 // /responses), the stream errored before any chunk parsed, or the gateway
-// predates the rollup-on-Record change. The raw bytes are still on the Raw
+// predates the rollup-on-Record change. The raw bytes are still on the SSE
 // stream tab; say so rather than render a blank "No response" that reads as
 // data loss.
 function NoAssemblyNote() {
@@ -592,7 +615,7 @@ function NoAssemblyNote() {
       <div className="text-[10.5px] text-[color:var(--text-4)]">Response (assembled)</div>
       <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-3 text-[12px] text-[color:var(--text-3)]">
         No assembled response — the gateway accumulator did not reconstruct this stream. The raw
-        SSE bytes are on the <span className="font-mono">Raw stream</span> tab.
+        SSE bytes are on the <span className="font-mono">SSE stream</span> tab.
       </div>
     </div>
   )
