@@ -445,8 +445,8 @@ func TestMessagesResponse_CallerAndContextMgmtRoundTrip(t *testing.T) {
 }
 
 func TestMessagesRequest_OutputConfigRoundTrip(t *testing.T) {
-	// effort is modelled; the structured-output "format" block is not, so it
-	// must survive via DynamicProperties.Extra rather than being dropped.
+	// Both effort and the GA structured-output "format" block are modelled;
+	// neither should leak into DynamicProperties.Extra.
 	in := []byte(`{"max_tokens":1024,"messages":[{"content":"hi","role":"user"}],"model":"claude-opus-4-7","output_config":{"effort":"xhigh","format":{"schema":{"type":"object"},"type":"json_schema"}}}`)
 	var req MessagesRequest
 	if err := json.Unmarshal(in, &req); err != nil {
@@ -455,8 +455,14 @@ func TestMessagesRequest_OutputConfigRoundTrip(t *testing.T) {
 	if req.OutputConfig == nil || req.OutputConfig.Effort != "xhigh" {
 		t.Fatalf("output_config = %+v", req.OutputConfig)
 	}
-	if string(req.OutputConfig.Extra["format"]) != `{"schema":{"type":"object"},"type":"json_schema"}` {
-		t.Fatalf("format did not round-trip via Extra: %v", req.OutputConfig.Extra)
+	if req.OutputConfig.Format == nil || req.OutputConfig.Format.Type != "json_schema" {
+		t.Fatalf("output_config.format = %+v", req.OutputConfig.Format)
+	}
+	if string(req.OutputConfig.Format.Schema) != `{"type":"object"}` {
+		t.Fatalf("format.schema = %s", req.OutputConfig.Format.Schema)
+	}
+	if _, ok := req.OutputConfig.Extra["format"]; ok {
+		t.Fatalf("format leaked into Extra instead of typed Format: %v", req.OutputConfig.Extra)
 	}
 	out, err := json.Marshal(req)
 	if err != nil {
@@ -464,6 +470,33 @@ func TestMessagesRequest_OutputConfigRoundTrip(t *testing.T) {
 	}
 	if !jsonValueEqual(t, in, out) {
 		t.Fatalf("round-trip drift\n in: %s\nout: %s", in, out)
+	}
+}
+
+// TestTool_ServerToolFieldsRoundTrip covers the Anthropic server-tool fields
+// type (a versioned pre-built-tool discriminator) and max_uses (the
+// per-request invocation cap) — both decode typed with nothing left in Extra.
+func TestTool_ServerToolFieldsRoundTrip(t *testing.T) {
+	in := []byte(`{"max_uses":5,"name":"web_search","type":"web_search_20250305"}`)
+	var tool Tool
+	if err := json.Unmarshal(in, &tool); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if tool.Type != "web_search_20250305" || tool.Name != "web_search" {
+		t.Fatalf("tool = %+v", tool)
+	}
+	if tool.MaxUses == nil || *tool.MaxUses != 5 {
+		t.Fatalf("max_uses = %v", tool.MaxUses)
+	}
+	if len(tool.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked: %v", tool.Extra)
+	}
+	out, err := json.Marshal(tool)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("tool drift\n in: %s\nout: %s", in, out)
 	}
 }
 
@@ -478,6 +511,7 @@ func TestMessages_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(SystemBlock{}),
 		reflect.TypeOf(CacheControl{}),
 		reflect.TypeOf(OutputConfig{}),
+		reflect.TypeOf(OutputFormat{}),
 		reflect.TypeOf(MessagesResponse{}),
 		reflect.TypeOf(Usage{}),
 		reflect.TypeOf(ServerToolUseUsage{}),

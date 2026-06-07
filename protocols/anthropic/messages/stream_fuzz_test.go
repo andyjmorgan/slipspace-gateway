@@ -19,6 +19,7 @@ func FuzzUnmarshalStreamEvent(f *testing.F) {
 		[]byte(`{"type":"message_stop"}`),
 		[]byte(`{"type":"ping"}`),
 		[]byte(`{"type":"error","error":{"type":"overloaded_error","message":"x"}}`),
+		[]byte(`{"type":"error","error":{"type":"api_error","message":"x"},"request_id":"req_011Cabc"}`),
 		[]byte(`{"type":"future_event","payload":1}`),
 	}
 	for _, s := range seeds {

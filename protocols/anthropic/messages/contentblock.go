@@ -47,8 +47,46 @@ type TextBlock struct {
 	// Text is the block's literal text content.
 	Text string `json:"text"`
 
+	// Citations lists the source citations Anthropic attaches to this text
+	// when the request enabled citations on a document or search_result
+	// input block ({"citations":{"enabled":true}}). Nil/omitted otherwise.
+	// Ref: https://docs.anthropic.com/en/docs/build-with-claude/citations
+	Citations []Citation `json:"citations,omitempty"`
+
 	models.DynamicProperties
 }
+
+// Citation is one source reference Anthropic attaches to a TextBlock when
+// citations are enabled on an input document or search result. The concrete
+// shape varies by Type (e.g. "char_location", "page_location",
+// "content_block_location", "web_search_result_location"); the common fields
+// are modelled and any location-specific fields (start/end indices, document
+// index, etc.) round-trip via the embedded DynamicProperties.
+// Ref: https://docs.anthropic.com/en/docs/build-with-claude/citations
+type Citation struct {
+	// Type is the citation kind (e.g. "web_search_result_location",
+	// "char_location", "page_location").
+	Type string `json:"type"`
+
+	// CitedText is the exact source span the model cited.
+	CitedText string `json:"cited_text,omitempty"`
+
+	// URL is the cited source URL (present on web_search_result_location).
+	URL string `json:"url,omitempty"`
+
+	// Title is the cited source title when the source carries one.
+	Title string `json:"title,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into c, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (c *Citation) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, c) }
+
+// MarshalJSON encodes c and merges DynamicProperties.Extra back into the
+// resulting object.
+func (c Citation) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
 
 // BlockType returns the "text" discriminator.
 func (TextBlock) BlockType() string { return "text" }

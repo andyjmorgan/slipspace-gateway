@@ -47,6 +47,37 @@ func TestUnmarshalContentBlock_Image(t *testing.T) {
 	roundTrip(t, in, v)
 }
 
+// TestUnmarshalContentBlock_TextWithCitations covers the citations array
+// Anthropic attaches to a text block when citations are enabled on a document
+// or search_result input. Common fields decode typed; location-specific
+// fields round-trip via the citation's DynamicProperties.
+func TestUnmarshalContentBlock_TextWithCitations(t *testing.T) {
+	in := []byte(`{"citations":[{"cited_text":"the sky is blue","encrypted_index":"abc","title":"Sky Facts","type":"web_search_result_location","url":"https://example.com"}],"text":"The sky is blue.","type":"text"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tb, ok := v.(*TextBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if len(tb.Citations) != 1 {
+		t.Fatalf("citations len = %d", len(tb.Citations))
+	}
+	c := tb.Citations[0]
+	if c.Type != "web_search_result_location" || c.CitedText != "the sky is blue" ||
+		c.URL != "https://example.com" || c.Title != "Sky Facts" {
+		t.Fatalf("citation = %+v", c)
+	}
+	if string(c.Extra["encrypted_index"]) != `"abc"` {
+		t.Fatalf("location-specific field not preserved in Extra: %v", c.Extra)
+	}
+	if len(tb.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked on block: %v", tb.Extra)
+	}
+	roundTrip(t, in, v)
+}
+
 func TestUnmarshalContentBlock_ToolUse(t *testing.T) {
 	in := []byte(`{"id":"tool_1","input":{"q":"weather"},"name":"search","type":"tool_use"}`)
 	v, err := UnmarshalContentBlock(in)
@@ -262,6 +293,7 @@ func TestUnmarshalContentBlocks_NonArray(t *testing.T) {
 func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeOf(TextBlock{}),
+		reflect.TypeOf(Citation{}),
 		reflect.TypeOf(ImageBlock{}),
 		reflect.TypeOf(ImageSource{}),
 		reflect.TypeOf(ToolUseBlock{}),

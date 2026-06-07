@@ -194,7 +194,10 @@ func TestUnmarshalStreamEvent_Ping(t *testing.T) {
 }
 
 func TestUnmarshalStreamEvent_Error(t *testing.T) {
-	in := []byte(`{"error":{"message":"oops","type":"overloaded_error"},"type":"error"}`)
+	// request_id is the top-level "req_"-prefixed identifier Anthropic
+	// surfaces in error bodies alongside the error object; it decodes typed
+	// and round-trips.
+	in := []byte(`{"error":{"message":"oops","type":"overloaded_error"},"request_id":"req_011Cabc","type":"error"}`)
 	streamRoundTrip(t, in, "error", func(ev StreamEvent) {
 		ee, ok := ev.(*ErrorEvent)
 		if !ok {
@@ -202,6 +205,12 @@ func TestUnmarshalStreamEvent_Error(t *testing.T) {
 		}
 		if ee.Error.Type != "overloaded_error" || ee.Error.Message != "oops" {
 			t.Fatalf("error = %+v", ee.Error)
+		}
+		if ee.RequestID != "req_011Cabc" {
+			t.Fatalf("request_id = %q", ee.RequestID)
+		}
+		if len(ee.Extra) != 0 {
+			t.Fatalf("unmapped fields leaked: %v", ee.Extra)
 		}
 	})
 }
