@@ -121,7 +121,7 @@ Anything else needs justification in the PR description.
 
 Flat layout: public packages at the repo root, private under `internal/` (compiler-enforced privacy). Full tree + rationale is in the *Module Layout* design note. The load-bearing split:
 
-- `cmd/` — `gateway` (data plane), `telemetry` (central telemetry service), `api` (inert 501 stub), `cli`, `mockllm`. One binary per dir.
+- `cmd/` — `gateway` (data plane), `telemetry` (central telemetry service), `cli`, `mockllm`. One binary per dir.
 - `internal/` — engines: `proxy`, `pipeline`, `middleware/{auth,bodycapture,rules,resilience,guardrails,forwarder}`, `config`, `keys`, `spool`, `connector`, `observability`, `routing`, `server`.
 - `protocols/` (PUBLIC) — on-the-wire models, one per protocol a provider speaks: `openai/{chat,responses,models}`, `anthropic/{messages,models}`, `gemini/{content,models}`.
 - `models/` (PUBLIC) — shared multimodal types + `dynamic.go` (`DynamicProperties`).
