@@ -35,6 +35,7 @@ func TestMutableState_Clone_DeepCopiesAllFields(t *testing.T) {
 	s := &rules.MutableState{
 		Provider:                   "openai",
 		Protocol:                   "chat_completions",
+		SourceProtocol:             "messages",
 		UpstreamURL:                u,
 		OutgoingHeaders:            http.Header{"X-A": []string{"1"}, "X-B": []string{"2"}},
 		UpstreamCredentialOverride: &cred,
@@ -46,6 +47,13 @@ func TestMutableState_Clone_DeepCopiesAllFields(t *testing.T) {
 	}
 
 	clone := s.Clone()
+
+	// SourceProtocol must survive the clone — it is load-bearing for the
+	// translate path's per-attempt response leg (regression: it was missing
+	// from Clone when first added).
+	if clone.SourceProtocol != "messages" {
+		t.Errorf("clone.SourceProtocol = %q; want messages", clone.SourceProtocol)
+	}
 
 	// Mutate the clone and prove the original is untouched.
 	clone.Provider = "anthropic"

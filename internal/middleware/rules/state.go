@@ -194,11 +194,12 @@ func (s *MutableState) Clone() *MutableState {
 		return nil
 	}
 	out := &MutableState{
-		Provider:    s.Provider,
-		Protocol:    s.Protocol,
-		MatchedPath: s.MatchedPath,
-		BodyMutated: s.BodyMutated,
-		PolicyRef:   s.PolicyRef,
+		Provider:       s.Provider,
+		Protocol:       s.Protocol,
+		SourceProtocol: s.SourceProtocol,
+		MatchedPath:    s.MatchedPath,
+		BodyMutated:    s.BodyMutated,
+		PolicyRef:      s.PolicyRef,
 	}
 	if s.UpstreamURL != nil {
 		u := *s.UpstreamURL

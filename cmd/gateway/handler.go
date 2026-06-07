@@ -111,9 +111,23 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
-		target, err := selection.ResolveTarget(pi.protocol, provider, "", *authResult.Configuration, snap.Providers)
+		// Fail closed on an active translation with no registered translator:
+		// an undeclared/unsupported protocol pair must never forward silently
+		// (decision #3). When translation is inactive, state.Protocol equals the
+		// inbound protocol, so resolution below is unchanged.
+		if translationActive(state) && !translatorRegistered(state) {
+			log.ErrorContext(ctx, "forwarder: no translator for protocol pair",
+				"source_protocol", state.SourceProtocol, "target_protocol", state.Protocol)
+			errs.Write(ctx, w, http.StatusNotImplemented, "handler", "translate_unsupported", "no translator for requested protocol translation")
+			return
+		}
+
+		// Resolve the endpoint on the post-rule protocol so a translate action
+		// lands on the target protocol's endpoint (invariant #7's spirit:
+		// re-resolve on post-rule state). Equals pi.protocol when no translate.
+		target, err := selection.ResolveTarget(state.Protocol, provider, "", *authResult.Configuration, snap.Providers)
 		if err != nil {
-			log.ErrorContext(ctx, "forwarder: resolve target", "provider", provider, "err", err.Error())
+			log.ErrorContext(ctx, "forwarder: resolve target", "provider", provider, "protocol", state.Protocol, "err", err.Error())
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")
 			return
 		}
