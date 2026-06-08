@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,11 +87,18 @@ type fakeQuerier struct {
 	pingErr     error
 	closed      bool
 	execCalls   int
+	execFailAt  int // fail the Nth Exec call (1-based); 0 = use execErr for all
 	beginCalls  int
 }
 
 func (q *fakeQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	q.execCalls++
+	if q.execFailAt != 0 {
+		if q.execCalls == q.execFailAt {
+			return pgconn.CommandTag{}, errors.New("exec boom")
+		}
+		return pgconn.CommandTag{}, nil
+	}
 	return pgconn.CommandTag{}, q.execErr
 }
 func (q *fakeQuerier) Query(context.Context, string, ...any) (rows, error) {
@@ -193,14 +201,9 @@ func TestMigrate_Success(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	// fakeRow scans version=1, so every migration with version > 1 (re)applies.
-	want := 0
-	for _, m := range migrations {
-		if m.version > 1 {
-			want++
-		}
-	}
-	if q.beginCalls != want {
-		t.Errorf("begins = %d, want %d", q.beginCalls, want)
+	// noTx migrations run with autocommit (no Begin), so they don't count.
+	if q.beginCalls != txMigrationsAbove(1) {
+		t.Errorf("begins = %d, want %d", q.beginCalls, txMigrationsAbove(1))
 	}
 }
 
@@ -210,9 +213,22 @@ func TestMigrate_AppliesFromZero(t *testing.T) {
 	if err := newStore(q).Migrate(ctx()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if q.beginCalls != len(migrations) {
-		t.Errorf("begins = %d, want %d", q.beginCalls, len(migrations))
+	// All migrations apply; only the transactional ones call Begin.
+	if q.beginCalls != txMigrationsAbove(0) {
+		t.Errorf("begins = %d, want %d", q.beginCalls, txMigrationsAbove(0))
 	}
+}
+
+// txMigrationsAbove counts migrations newer than v that run in a transaction
+// (i.e. excluding noTx steps, which use autocommit and never call Begin).
+func txMigrationsAbove(v int) int {
+	n := 0
+	for _, m := range migrations {
+		if m.version > v && !m.noTx {
+			n++
+		}
+	}
+	return n
 }
 
 // zeroRow scans a 0 schema version so all migrations apply.
@@ -231,6 +247,67 @@ func TestMigrate_ApplyError(t *testing.T) {
 	if err := newStore(q).Migrate(ctx()); err == nil {
 		t.Fatal("want error from failed migration apply")
 	}
+}
+
+func TestSplitStatements(t *testing.T) {
+	cases := map[string]struct {
+		in   string
+		want []string
+	}{
+		"empty":              {"", nil},
+		"semicolons only":    {";;\n;", nil},
+		"single no trailing": {"CREATE A", []string{"CREATE A"}},
+		"trailing semicolon": {"CREATE A;", []string{"CREATE A"}},
+		"multi with blanks":  {"\nCREATE A;\n\nCREATE B;\n", []string{"CREATE A", "CREATE B"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := splitStatements(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len = %d (%v), want %d (%v)", len(got), got, len(tc.want), tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("stmt[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestApplyMigrationNoTx(t *testing.T) {
+	// SQL with two statements; applyMigrationNoTx Execs each then the version
+	// insert — three Exec calls, no Begin.
+	m := migration{version: 99, name: "notx", noTx: true, sql: "CREATE A;\nCREATE B"}
+
+	t.Run("success", func(t *testing.T) {
+		q := &fakeQuerier{}
+		if err := newStore(q).applyMigrationNoTx(ctx(), m); err != nil {
+			t.Fatalf("applyMigrationNoTx: %v", err)
+		}
+		if q.execCalls != 3 {
+			t.Errorf("execCalls = %d, want 3 (2 statements + version insert)", q.execCalls)
+		}
+		if q.beginCalls != 0 {
+			t.Errorf("beginCalls = %d, want 0 (autocommit)", q.beginCalls)
+		}
+	})
+
+	t.Run("statement error", func(t *testing.T) {
+		q := &fakeQuerier{execFailAt: 1}
+		err := newStore(q).applyMigrationNoTx(ctx(), m)
+		if err == nil || !strings.Contains(err.Error(), "apply migration 99") {
+			t.Fatalf("want apply-migration error, got %v", err)
+		}
+	})
+
+	t.Run("record error", func(t *testing.T) {
+		q := &fakeQuerier{execFailAt: 3} // two statements ok, version insert fails
+		err := newStore(q).applyMigrationNoTx(ctx(), m)
+		if err == nil || !strings.Contains(err.Error(), "record migration 99") {
+			t.Fatalf("want record-migration error, got %v", err)
+		}
+	})
 }
 
 func TestMigrate_EnsureTableError(t *testing.T) {

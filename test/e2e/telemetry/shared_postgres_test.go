@@ -43,7 +43,11 @@ func startPostgres() (dsn string, terminate func(), err error) {
 	ctx := context.Background()
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "postgres:16-alpine",
+			// TimescaleDB (not plain postgres) so migration 0007's CREATE
+			// EXTENSION + continuous aggregates apply — same image + preload flag
+			// as the attic deployment, so the test exercises the real engine.
+			Image:        "timescale/timescaledb:2.27.2-pg16",
+			Cmd:          []string{"-c", "shared_preload_libraries=timescaledb"},
 			ExposedPorts: []string{"5432/tcp"},
 			Env:          map[string]string{"POSTGRES_PASSWORD": "test", "POSTGRES_DB": "telemetry"},
 			WaitingFor: wait.ForAll(
