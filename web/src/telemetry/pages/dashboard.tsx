@@ -66,14 +66,14 @@ export function DashboardPage() {
   )
 }
 
-// DashboardSkeleton mirrors the above-the-fold layout — the six KPI tiles and
+// DashboardSkeleton mirrors the above-the-fold layout — the five KPI tiles and
 // the two series panels — so the first load holds the page shape instead of
 // flashing a centered "Loading…". Background polls keep the prior data (the
 // fetch hook never reverts to "loading"), so this only ever shows on first load.
 function DashboardSkeleton() {
   return (
     <>
-      <SkeletonTiles count={6} className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" />
+      <SkeletonTiles count={5} className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3" />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
         {[0, 1].map((i) => (
           <PanelCard key={i}>
@@ -108,10 +108,9 @@ function Body({ data: d, window }: { data: DashboardSummary; window: DashboardWi
 
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         <KPI label="Requests" value={fmt.compact(d.totals.requests)} sub={`${fmt.compact(d.totals.requests_success)} ok · ${fmt.compact(d.totals.requests_errored)} err`} />
         <KPI label="Error rate" value={fmt.pct(d.rates.error_rate)} sub={`${(successRate * 100).toFixed(2)}% success`} accent={errAccent} />
-        <KPI label="p95 latency" value={fmt.ms(d.latency_ms.p95)} sub={`p50 ${fmt.ms(d.latency_ms.p50)} · p99 ${fmt.ms(d.latency_ms.p99)}`} />
         <KPI label="Requests / sec" value={d.rates.requests_per_second.toFixed(2)} sub={`avg · ${d.window}`} accent="ok" />
         <KPI label="Tokens in" value={fmt.compact(d.totals.tokens_in)} sub={fmt.compact(d.totals.tokens_cached) + " cached"} />
         <KPI label="Tokens out" value={fmt.compact(d.totals.tokens_out)} sub="completion" />
@@ -177,8 +176,8 @@ function Center({ children, tone }: { children: React.ReactNode; tone?: "err" })
 }
 
 // Strip is the shared bar-row breakdown (provider / protocol / configuration):
-// a label, a request-count bar, the count, error rate, and p95.
-type StripRow = { requests: number; error_rate: number; p95_latency_ms: number }
+// a label, a request-count bar, the count, and the error rate.
+type StripRow = { requests: number; error_rate: number }
 function Strip<T extends StripRow>({ title, sub, rows, label, rowKey }: { title: string; sub: string; rows: T[]; label: (r: T) => React.ReactNode; rowKey: (r: T) => string }) {
   if (!rows.length) return <Empty title={title} sub={sub} message="No traffic recorded yet." />
   const max = Math.max(...rows.map((r) => r.requests))
@@ -187,14 +186,13 @@ function Strip<T extends StripRow>({ title, sub, rows, label, rowKey }: { title:
       <PanelHead title={title} sub={sub} />
       <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
-          <div key={rowKey(r)} className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3 min-w-[28rem]">
+          <div key={rowKey(r)} className="grid grid-cols-[170px_1fr_auto_auto] items-center gap-3 min-w-[24rem]">
             <div className="min-w-0">{label(r)}</div>
             <div className="h-2 rounded-full bg-[color:var(--bg-2)] overflow-hidden">
               <div className="h-full rounded-full" style={{ width: `${(r.requests / max) * 100}%`, background: "var(--accent)" }} />
             </div>
             <div className="mono tnum text-[12px] text-right w-14">{fmt.compact(r.requests)}</div>
             <div className="mono tnum text-[11.5px] text-right w-12" style={{ color: r.error_rate > 0.04 ? "var(--err)" : "var(--text-3)" }}>{fmt.pct(r.error_rate, 1)}</div>
-            <div className="mono tnum text-[11.5px] text-right w-12 text-[color:var(--text-3)]">{fmt.ms(r.p95_latency_ms)}</div>
           </div>
         ))}
       </div>
