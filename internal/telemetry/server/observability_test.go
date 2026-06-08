@@ -9,6 +9,7 @@ import (
 	"time"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
@@ -102,8 +103,8 @@ func TestObsMessagesRecent(t *testing.T) {
 	// "rich" exercises the full rule chain + attempts from the Record feed;
 	// "flat" exercises the rules_fired-names fallback (no rule_chain).
 	q := &fakeQueries{events: []store.RequestEvent{
-		{CorrelationID: "rich", Provider: "anthropic", Protocol: "messages", StatusCode: 200, Detail: []byte(`{"tags":["x"],"rule_chain":[{"name":"r1","actions_applied":["changeProvider"],"terminated":true}],"attempts":[{"target":"primary","outcome":"success","status_code":200,"started_at_ns":1000000000}]}`)},
-		{CorrelationID: "flat", Provider: "openai", Detail: []byte(`{"rules_fired":["r2"]}`)},
+		{CorrelationID: "rich", Provider: "anthropic", Protocol: "messages", StatusCode: 200, SpanEvent: []byte(`{"tags":["x"],"rule_chain":[{"name":"r1","actions_applied":["changeProvider"],"terminated":true}],"attempts":[{"target":"primary","outcome":"success","status_code":200,"started_at_ns":1000000000}]}`)},
+		{CorrelationID: "flat", Provider: "openai", SpanEvent: []byte(`{"rules_fired":["r2"]}`)},
 	}}
 	h := newQueryServer(t, q)
 	got := decodeAdmin[adminc.MessagesRecentResponse](t, get(t, h, "/api/v1/messages/recent?limit=50", true))
@@ -140,27 +141,30 @@ func TestObsMessagesRecent(t *testing.T) {
 }
 
 func TestObsMessageBody(t *testing.T) {
+	// The bodies/headers/assembled rollup come from the lazily-joined record
+	// blob; the gen_ai content comes from the entity's span_event blob.
+	rec := cc.Record{
+		CorrelationID: "c",
+		Request:       cc.RequestPart{Body: json.RawMessage(`{"req":1}`), Headers: map[string]string{"content-type": "application/json"}},
+		Response: cc.ResponsePart{
+			Body:            json.RawMessage(`{"resp":1}`),
+			Assembled:       json.RawMessage(`{"assembled":1}`),
+			AssemblyPartial: true,
+		},
+	}
+	recJSON, _ := json.Marshal(rec)
 	q := &fakeQueries{
-		payloads: []store.Payload{
-			{Kind: store.KindRequestBody, Body: []byte(`{"req":1}`)},
-			{Kind: store.KindResponseBody, Body: []byte(`{"resp":1}`)},
-			{Kind: store.KindSSERollup, Body: []byte(`{"assembled":1}`)},
-			{Kind: store.KindRequestHeaders, Body: []byte(`{"content-type":"application/json"}`)},
-			{Kind: store.KindResponseHeaders, Body: []byte("not json")}, // malformed → nil, no crash
-		},
-		event: store.RequestEvent{
-			GenAIContent: []byte(`{"input_messages":[]}`),
-			Detail:       []byte(`{"assembly_partial":true}`),
-		},
+		recordBody: recJSON,
+		event:      store.RequestEvent{CorrelationID: "c", SpanEvent: []byte(`{"gen_ai_content":{"input_messages":[]}}`)},
 	}
 	h := newQueryServer(t, q)
 	got := decodeAdmin[adminc.MessageBodyDetail](t, get(t, h, "/api/v1/messages/c/body", true))
 	if got.Request != `{"req":1}` || got.Response != `{"resp":1}` || got.ResponseAssembled != `{"assembled":1}` {
 		t.Errorf("body = %+v", got)
 	}
-	// The partial flag is sourced from the event detail, not a payload.
+	// The partial flag is sourced from the record.
 	if !got.AssemblyPartial {
-		t.Errorf("AssemblyPartial = false, want true (from event detail)")
+		t.Errorf("AssemblyPartial = false, want true (from record)")
 	}
 	if got.RequestTotalBytes == 0 || got.ResponseTotalBytes == 0 {
 		t.Errorf("byte totals not set: %+v", got)
@@ -168,19 +172,21 @@ func TestObsMessageBody(t *testing.T) {
 	if len(got.RequestHeaders["content-type"]) != 1 || got.RequestHeaders["content-type"][0] != "application/json" {
 		t.Errorf("request headers = %+v", got.RequestHeaders)
 	}
-	if got.ResponseHeaders != nil {
-		t.Errorf("malformed response headers should decode to nil, got %+v", got.ResponseHeaders)
-	}
 	if got.GenAIContent != `{"input_messages":[]}` {
 		t.Errorf("gen_ai content = %q", got.GenAIContent)
 	}
-	// not found
-	hNF := newQueryServer(t, &fakeQueries{payErr: store.ErrPayloadNotFound})
+	// Record present but no entity: still 200 (body renders from the record).
+	hRecOnly := newQueryServer(t, &fakeQueries{recordBody: recJSON, eventErr: store.ErrRequestEventNotFound})
+	if resp := get(t, hRecOnly, "/api/v1/messages/c/body", true); resp.Code != http.StatusOK {
+		t.Fatalf("record-only status = %d, want 200", resp.Code)
+	}
+	// Neither entity nor record -> 404.
+	hNF := newQueryServer(t, &fakeQueries{eventErr: store.ErrRequestEventNotFound, recordErr: store.ErrRecordNotFound})
 	if resp := get(t, hNF, "/api/v1/messages/c/body", true); resp.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.Code)
 	}
-	// hard error
-	hErr := newQueryServer(t, &fakeQueries{payErr: errors.New("db")})
+	// Record hard error.
+	hErr := newQueryServer(t, &fakeQueries{recordErr: errors.New("db")})
 	if resp := get(t, hErr, "/api/v1/messages/c/body", true); resp.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", resp.Code)
 	}
@@ -202,10 +208,11 @@ func TestMapBodyDecodesEscapedSSE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	got := mapBody("c", []store.Payload{
-		{Kind: store.KindRequestBody, Body: []byte(`{"model":"x"}`)},
-		{Kind: store.KindResponseBody, Body: wrapped},
-	}, nil, false)
+	rec := &cc.Record{
+		Request:  cc.RequestPart{Body: json.RawMessage(`{"model":"x"}`)},
+		Response: cc.ResponsePart{Body: json.RawMessage(wrapped)},
+	}
+	got := mapBody("c", rec, nil)
 
 	if got.Response != rawSSE {
 		t.Errorf("response = %q, want decoded raw SSE %q", got.Response, rawSSE)

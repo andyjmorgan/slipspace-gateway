@@ -18,7 +18,7 @@ type Queries interface {
 	QueryDashboardSeries(ctx context.Context, p store.DashboardSeriesParams) ([]store.DashboardSeriesBucket, error)
 	ListEventsFiltered(ctx context.Context, p store.EventListParams) ([]store.RequestEvent, string, error)
 	GetRequestEvent(ctx context.Context, correlationID string) (store.RequestEvent, error)
-	ListPayloads(ctx context.Context, correlationID string) ([]store.Payload, error)
+	GetRecordBody(ctx context.Context, correlationID string) ([]byte, error)
 	ListSessions(ctx context.Context, p store.SessionListParams) ([]store.SessionSummary, string, error)
 	EventsBySession(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
 	Facets(ctx context.Context) (store.Facets, error)
@@ -141,25 +141,25 @@ func (s *Server) handleEventInspector(w http.ResponseWriter, r *http.Request) {
 		s.queryError(w, "get event", err)
 		return
 	}
-	payloads, err := s.queries.ListPayloads(r.Context(), id)
-	if err != nil && !errors.Is(err, store.ErrPayloadNotFound) {
-		s.queryError(w, "list payloads", err)
+	rec, err := s.recordFor(r.Context(), id)
+	if err != nil {
+		s.queryError(w, "get record", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, stitch.BuildRequestView(event, payloads))
+	writeJSON(w, http.StatusOK, stitch.BuildRequestView(event, rec))
 }
 
 func (s *Server) handleEventBody(w http.ResponseWriter, r *http.Request) {
-	payloads, err := s.queries.ListPayloads(r.Context(), r.PathValue("id"))
+	rec, err := s.recordFor(r.Context(), r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, store.ErrPayloadNotFound) {
-			writeError(w, http.StatusNotFound, "no payloads")
-			return
-		}
-		s.queryError(w, "list payloads", err)
+		s.queryError(w, "get record", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, stitch.LatestPayloadsByKind(payloads))
+	if rec == nil {
+		writeError(w, http.StatusNotFound, "no record")
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
 }
 
 // handleSessions serves the session-discovery list: a keyset page of session

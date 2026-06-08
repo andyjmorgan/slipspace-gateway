@@ -46,7 +46,6 @@ type EventFilter struct {
 func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 	eq := []struct{ col, val string }{
 		{"configuration", f.Configuration},
-		{"gateway_id", f.Gateway},
 		{"model", f.Model},
 		{"provider", f.Provider},
 		{"protocol", f.Protocol},
@@ -62,13 +61,21 @@ func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 		args = append(args, e.val)
 		where = append(where, fmt.Sprintf("%s = $%d", e.col, len(args)))
 	}
-	// Tags is an AND containment: the event's detail->'tags' array must contain
-	// every requested tag. We bind the requested set as a single jsonb array
-	// param so the @> operator can use the GIN index on (detail->'tags').
+	// gateway_id has no promoted column (single-writer design lifts it from the
+	// resource attribute into the blob); filter via the JSONB path. Rare enough
+	// that an index isn't warranted yet — promote on demand.
+	if f.Gateway != "" {
+		args = append(args, f.Gateway)
+		where = append(where, fmt.Sprintf("span_event->>'gateway_id' = $%d", len(args)))
+	}
+	// Tags is an AND containment: the event's span_event->'tags' array must
+	// contain every requested tag. We bind the requested set as a single jsonb
+	// array param so the @> operator can use the GIN index on
+	// (span_event->'tags').
 	if len(f.Tags) > 0 {
 		tagsJSON, _ := json.Marshal(f.Tags)
 		args = append(args, string(tagsJSON))
-		where = append(where, fmt.Sprintf("detail->'tags' @> $%d::jsonb", len(args)))
+		where = append(where, fmt.Sprintf("span_event->'tags' @> $%d::jsonb", len(args)))
 	}
 	if lo, hi, ok := statusClassBounds(f.StatusClass); ok {
 		args = append(args, lo)
@@ -323,10 +330,15 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
 		outer = append(outer, fmt.Sprintf("(last_at, session_id) < ($%d, $%d)", lIdx, len(args)))
 	}
 
+	// total_tokens sums the input+output usage out of the span_event blob
+	// (no promoted token columns); a missing/non-numeric value reads as 0.
 	q := `WITH agg AS (
   SELECT session_id,
          COUNT(*) AS messages,
-         COALESCE(SUM(tokens_in + tokens_out), 0) AS total_tokens,
+         COALESCE(SUM(
+           COALESCE((span_event->>'gen_ai.usage.input_tokens')::bigint, 0) +
+           COALESCE((span_event->>'gen_ai.usage.output_tokens')::bigint, 0)
+         ), 0) AS total_tokens,
          MIN(observed_at) AS started,
          MAX(observed_at) AS last_at,
          COALESCE(array_agg(DISTINCT model) FILTER (WHERE model <> ''), '{}') AS models

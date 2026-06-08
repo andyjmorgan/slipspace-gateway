@@ -28,8 +28,8 @@ type fakeQueries struct {
 	eventsErr    error
 	event        store.RequestEvent
 	eventErr     error
-	payloads     []store.Payload
-	payErr       error
+	recordBody   []byte
+	recordErr    error
 	session      []store.RequestEvent
 	sessionErr   error
 	sessions     []store.SessionSummary
@@ -63,8 +63,8 @@ func (f *fakeQueries) Facets(context.Context) (store.Facets, error) {
 func (f *fakeQueries) GetRequestEvent(context.Context, string) (store.RequestEvent, error) {
 	return f.event, f.eventErr
 }
-func (f *fakeQueries) ListPayloads(context.Context, string) ([]store.Payload, error) {
-	return f.payloads, f.payErr
+func (f *fakeQueries) GetRecordBody(context.Context, string) ([]byte, error) {
+	return f.recordBody, f.recordErr
 }
 func (f *fakeQueries) EventsBySession(context.Context, string) ([]store.RequestEvent, error) {
 	return f.session, f.sessionErr
@@ -152,8 +152,8 @@ func TestEvents_BadParamsAndErrors(t *testing.T) {
 
 func TestEventInspector(t *testing.T) {
 	q := &fakeQueries{
-		event:    store.RequestEvent{CorrelationID: "c"},
-		payloads: []store.Payload{{Kind: store.KindRequestBody, Body: []byte(`{"a":1}`)}},
+		event:      store.RequestEvent{CorrelationID: "c"},
+		recordBody: []byte(`{"correlation_id":"c","provider":"anthropic"}`),
 	}
 	h := newQueryServer(t, q)
 	resp := get(t, h, "/api/v1/events/c", true)
@@ -165,9 +165,9 @@ func TestEventInspector(t *testing.T) {
 	if resp := get(t, hNF, "/api/v1/events/x", true); resp.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.Code)
 	}
-	// payload-not-found is tolerated (event still returned)
-	hNoPay := newQueryServer(t, &fakeQueries{event: store.RequestEvent{CorrelationID: "c"}, payErr: store.ErrPayloadNotFound})
-	if resp := get(t, hNoPay, "/api/v1/events/c", true); resp.Code != http.StatusOK {
+	// record-not-found is tolerated (event still returned, record nil)
+	hNoRec := newQueryServer(t, &fakeQueries{event: store.RequestEvent{CorrelationID: "c"}, recordErr: store.ErrRecordNotFound})
+	if resp := get(t, hNoRec, "/api/v1/events/c", true); resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.Code)
 	}
 	// event error
@@ -175,24 +175,25 @@ func TestEventInspector(t *testing.T) {
 	if resp := get(t, hErr, "/api/v1/events/c", true); resp.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", resp.Code)
 	}
-	// payload hard error
-	hPayErr := newQueryServer(t, &fakeQueries{event: store.RequestEvent{CorrelationID: "c"}, payErr: errors.New("db")})
-	if resp := get(t, hPayErr, "/api/v1/events/c", true); resp.Code != http.StatusInternalServerError {
+	// record hard error
+	hRecErr := newQueryServer(t, &fakeQueries{event: store.RequestEvent{CorrelationID: "c"}, recordErr: errors.New("db")})
+	if resp := get(t, hRecErr, "/api/v1/events/c", true); resp.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", resp.Code)
 	}
 }
 
 func TestEventBody(t *testing.T) {
-	q := &fakeQueries{payloads: []store.Payload{{Kind: store.KindResponseBody, Body: []byte(`{}`)}}}
+	q := &fakeQueries{recordBody: []byte(`{"correlation_id":"c"}`)}
 	h := newQueryServer(t, q)
 	if resp := get(t, h, "/api/v1/events/c/body", true); resp.Code != http.StatusOK {
 		t.Fatalf("status = %d", resp.Code)
 	}
-	hNF := newQueryServer(t, &fakeQueries{payErr: store.ErrPayloadNotFound})
+	// no record -> 404
+	hNF := newQueryServer(t, &fakeQueries{recordErr: store.ErrRecordNotFound})
 	if resp := get(t, hNF, "/api/v1/events/c/body", true); resp.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.Code)
 	}
-	hErr := newQueryServer(t, &fakeQueries{payErr: errors.New("db")})
+	hErr := newQueryServer(t, &fakeQueries{recordErr: errors.New("db")})
 	if resp := get(t, hErr, "/api/v1/events/c/body", true); resp.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", resp.Code)
 	}
@@ -314,12 +315,13 @@ func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestSession(t *testing.T) {
 	// EventsBySession returns oldest-first; the handler must preserve that order
-	// and project each event onto the tagged MessageEntry shape (parsed tags,
-	// not raw base64 Detail) with totals over the session.
+	// and project each event onto the tagged MessageEntry shape (parsed from the
+	// span_event blob, not a column) with totals over the session.
 	q := &fakeQueries{session: []store.RequestEvent{
-		{CorrelationID: "1", SessionID: "s", Model: "claude-opus-4-8", StatusCode: 200, TokensIn: 100, TokensOut: 10,
-			Detail: []byte(`{"tags":["Claude-Code"],"rules_fired":["tag-claude-code"]}`)},
-		{CorrelationID: "2", SessionID: "s", Model: "claude-haiku-4-5", StatusCode: 404, TokensIn: 5, TokensOut: 0},
+		{CorrelationID: "1", SessionID: "s", Model: "claude-opus-4-8", StatusCode: 200,
+			SpanEvent: []byte(`{"gen_ai.usage.input_tokens":100,"gen_ai.usage.output_tokens":10,"tags":["Claude-Code"],"rules_fired":["tag-claude-code"]}`)},
+		{CorrelationID: "2", SessionID: "s", Model: "claude-haiku-4-5", StatusCode: 404,
+			SpanEvent: []byte(`{"gen_ai.usage.input_tokens":5}`)},
 	}}
 	h := newQueryServer(t, q)
 	resp := get(t, h, "/api/v1/sessions/s", true)

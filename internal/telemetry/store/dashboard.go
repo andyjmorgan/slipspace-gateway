@@ -7,6 +7,20 @@ import (
 	"time"
 )
 
+// Measurement values (latency, token usage) no longer have promoted columns —
+// they live in the span_event blob. These SQL expressions project them back out
+// as bigints for the dashboard's count/sum/percentile rollups; a missing or
+// non-numeric value reads as 0. The dashboard "reads over the entity" (the
+// design's interim stance until the Timescale CAGGs land); it never reads
+// records or the spool (invariant #4).
+const (
+	exprLatencyMs           = `COALESCE((span_event->>'sluice.latency_ms')::bigint, 0)`
+	exprTokensIn            = `COALESCE((span_event->>'gen_ai.usage.input_tokens')::bigint, 0)`                //nolint:gosec // SQL fragment over a JSONB path, not a credential
+	exprTokensOut           = `COALESCE((span_event->>'gen_ai.usage.output_tokens')::bigint, 0)`               //nolint:gosec // SQL fragment over a JSONB path, not a credential
+	exprTokensCached        = `COALESCE((span_event->>'gen_ai.usage.cache_read.input_tokens')::bigint, 0)`     //nolint:gosec // SQL fragment over a JSONB path, not a credential
+	exprTokensCacheCreation = `COALESCE((span_event->>'gen_ai.usage.cache_creation.input_tokens')::bigint, 0)` //nolint:gosec // SQL fragment over a JSONB path, not a credential
+)
+
 // DashboardParams is the input to the dashboard rollups: a half-open [From, To)
 // window narrowed by the shared Filter. RecentFrom bounds the short trailing
 // window (typically To-5m) the provider-health snapshot is computed over.
@@ -145,10 +159,10 @@ SELECT
   COUNT(*),
   COALESCE(SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END), 0),
   COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0),
-  COALESCE(SUM(tokens_in), 0),
-  COALESCE(SUM(tokens_out), 0),
-  COALESCE(SUM(tokens_cached), 0),
-  COALESCE(SUM(tokens_cache_creation), 0)
+  COALESCE(SUM(` + exprTokensIn + `), 0),
+  COALESCE(SUM(` + exprTokensOut + `), 0),
+  COALESCE(SUM(` + exprTokensCached + `), 0),
+  COALESCE(SUM(` + exprTokensCacheCreation + `), 0)
 FROM request_events
 WHERE ` + strings.Join(where, " AND ")
 
@@ -166,9 +180,9 @@ func (s *Store) queryDashLatency(ctx context.Context, p DashboardParams) (Dashbo
 	where, args := dashWindow(p)
 	q := `
 SELECT
-  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms), 0),
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0),
-  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms), 0)
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY ` + exprLatencyMs + `), 0),
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ` + exprLatencyMs + `), 0),
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY ` + exprLatencyMs + `), 0)
 FROM request_events
 WHERE ` + strings.Join(where, " AND ")
 
@@ -193,12 +207,12 @@ func (s *Store) queryDashDimension(ctx context.Context, p DashboardParams, dim s
 	where, args := dashWindow(p)
 	q := fmt.Sprintf(`
 SELECT %s AS grp, COUNT(*),
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0),
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY %s), 0),
   COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
 FROM request_events
 WHERE %s AND %s <> ''
 GROUP BY grp
-ORDER BY COUNT(*) DESC, grp`, col, strings.Join(where, " AND "), col)
+ORDER BY COUNT(*) DESC, grp`, col, exprLatencyMs, strings.Join(where, " AND "), col)
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -227,7 +241,7 @@ func (s *Store) queryDashProtocol(ctx context.Context, p DashboardParams) ([]Das
 	where, args := dashWindow(p)
 	q := `
 SELECT provider, protocol, COUNT(*),
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0),
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ` + exprLatencyMs + `), 0),
   COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
 FROM request_events
 WHERE ` + strings.Join(where, " AND ") + `
@@ -262,7 +276,7 @@ func (s *Store) queryDashModel(ctx context.Context, p DashboardParams) ([]Dashbo
 	where, args := dashWindow(p)
 	q := `
 SELECT model, COALESCE(MAX(provider), ''), COUNT(*),
-  COALESCE(SUM(tokens_in), 0), COALESCE(SUM(tokens_out), 0)
+  COALESCE(SUM(` + exprTokensIn + `), 0), COALESCE(SUM(` + exprTokensOut + `), 0)
 FROM request_events
 WHERE ` + strings.Join(where, " AND ") + `
   AND model <> ''
@@ -312,8 +326,8 @@ var dashFiredMeters = map[string]dashFiredMeter{
 }
 
 // queryDashFired aggregates a fired-row panel from the sluice meter rollups in
-// metric_points — NOT from a request_events.detail scan (invariant #4:
-// dashboards read meters, never record scans). The gateway exports these
+// metric_points — NOT from a span_event blob scan (invariant #4: dashboards
+// read meters, never record scans). The gateway exports these
 // counters with delta temporality, so SUM(value) over the window is the exact
 // count. Only the window + configuration filter apply; the meters carry no
 // provider/model/status dimension, so those filters don't narrow these panels.
@@ -429,11 +443,11 @@ WITH buckets AS (
 SELECT b.ts,
   COUNT(e.correlation_id),
   COALESCE(SUM(CASE WHEN e.status_code >= 400 THEN 1 ELSE 0 END), 0),
-  COALESCE(SUM(e.tokens_in), 0),
-  COALESCE(SUM(e.tokens_out), 0),
-  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY e.latency_ms), 0),
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY e.latency_ms), 0),
-  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY e.latency_ms), 0)
+  COALESCE(SUM(COALESCE((e.span_event->>'gen_ai.usage.input_tokens')::bigint, 0)), 0),
+  COALESCE(SUM(COALESCE((e.span_event->>'gen_ai.usage.output_tokens')::bigint, 0)), 0),
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY COALESCE((e.span_event->>'sluice.latency_ms')::bigint, 0)), 0),
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY COALESCE((e.span_event->>'sluice.latency_ms')::bigint, 0)), 0),
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY COALESCE((e.span_event->>'sluice.latency_ms')::bigint, 0)), 0)
 FROM buckets b
 LEFT JOIN request_events e
   ON e.observed_at >= b.ts AND e.observed_at < b.ts + ($%d * INTERVAL '1 second') AND %s

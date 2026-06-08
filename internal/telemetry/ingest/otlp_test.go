@@ -26,6 +26,15 @@ func intKV(k string, v int64) *commonpb.KeyValue {
 func boolKV(k string, v bool) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_BoolValue{BoolValue: v}}}
 }
+func strSliceKV(k string, vs ...string) *commonpb.KeyValue {
+	vals := make([]*commonpb.AnyValue, len(vs))
+	for i, v := range vs {
+		vals[i] = &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}
+	}
+	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{
+		Value: &commonpb.AnyValue_ArrayValue{ArrayValue: &commonpb.ArrayValue{Values: vals}},
+	}}
+}
 
 // --- stub stores ---
 
@@ -63,10 +72,12 @@ const testContentCap = 16 * 1024
 // --- EventFromSpan ---
 
 func TestEventFromSpan_GenAIAttributes(t *testing.T) {
-	// A gen_ai span carries GenAI semconv + correlation_id only. The gateway
-	// columns (configuration, protocol, method, detail, ...) are NOT on the
-	// span — they arrive via the Record feed — so the extracted event leaves
-	// them zero.
+	// Single-writer model: the span carries GenAI semconv AND the gateway facts
+	// (sluice.*). EventFromSpan projects provider/model/configuration/protocol/
+	// status/identity to columns and stores the COMPLETE span (every attribute +
+	// content + derived latency/tags) into SpanEvent. The measurement values
+	// (tokens, latency, streaming, method) are read back out of the blob via
+	// SpanFields, not off dedicated columns.
 	span := &tracepb.Span{
 		StartTimeUnixNano: 1_000_000_000,
 		EndTimeUnixNano:   1_500_000_000, // 500ms
@@ -74,6 +85,9 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 			strKV(attrCorrelationID, "corr-1"),
 			strKV(attrGenAIProvider, "anthropic"),
 			strKV(attrModel, "claude-x"),
+			strKV(attrSluiceConfiguration, "dev"),
+			strKV(attrSluiceProtocol, "messages"),
+			strKV("sluice.method", "POST"),
 			intKV(attrStatusCode, 200),
 			intKV(attrInputTokens, 10),
 			intKV(attrOutputTokens, 20),
@@ -83,33 +97,139 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 			strKV(attrAgentID, "agt-9"),
 			strKV(attrEnduserID, "usr-9"),
 			boolKV(attrRequestStream, true),
+			strKV(attrResourceGatewayID, "gw-9"),
 		},
 	}
 	e, ok := EventFromSpan(nil, span, testContentCap)
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
+	// Projected columns.
 	if e.CorrelationID != "corr-1" || e.Provider != "anthropic" || e.Model != "claude-x" {
 		t.Errorf("gen_ai dims = %+v", e)
 	}
-	if e.LatencyMs != 500 {
-		t.Errorf("latency = %d, want 500", e.LatencyMs)
+	if e.Configuration != "dev" || e.Protocol != "messages" || e.StatusCode != 200 {
+		t.Errorf("gateway columns = %+v", e)
 	}
-	if e.TokensIn != 10 || e.TokensOut != 20 || e.TokensCached != 5 || e.TokensCacheCreation != 2 {
-		t.Errorf("tokens = %+v", e)
+	if e.SessionID != "sess-9" || e.AgentID != "agt-9" || e.UserID != "usr-9" {
+		t.Errorf("identity columns = %+v", e)
 	}
-	if e.SessionID != "sess-9" || !e.Streaming {
-		t.Errorf("session/streaming = %q/%v", e.SessionID, e.Streaming)
+	// observed_at is the SPAN START time, not ingest now().
+	if e.ObservedAt.UnixNano() != 1_000_000_000 {
+		t.Errorf("observed_at = %d, want span start 1e9", e.ObservedAt.UnixNano())
 	}
-	if e.AgentID != "agt-9" {
-		t.Errorf("agent id = %q, want agt-9", e.AgentID)
+	// Measurements + method + streaming + tags + gateway id ride the blob.
+	f := e.DecodeSpanFields()
+	if f.LatencyMs != 500 {
+		t.Errorf("latency = %d, want 500", f.LatencyMs)
 	}
-	if e.UserID != "usr-9" {
-		t.Errorf("user id = %q, want usr-9", e.UserID)
+	if f.TokensIn != 10 || f.TokensOut != 20 || f.TokensCached != 5 || f.TokensCacheCreation != 2 {
+		t.Errorf("tokens = %+v", f)
 	}
-	// Gateway columns must stay empty — they are the Record feed's to fill.
-	if e.Configuration != "" || e.Protocol != "" || e.Method != "" || e.GatewayID != "" || e.Detail != nil {
-		t.Errorf("gateway columns leaked onto the gen_ai event: %+v", e)
+	if !f.Streaming || f.Method != "POST" || f.GatewayID != "gw-9" {
+		t.Errorf("blob fields = %+v", f)
+	}
+}
+
+func TestEventFromSpan_TagsAndRulesToBlob(t *testing.T) {
+	// sluice.tags / sluice.rules_fired arrays normalise into JSON arrays in the
+	// blob so the GIN @> filter + the facet unnest see real arrays.
+	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
+		strKV(attrCorrelationID, "corr-tags"),
+		strSliceKV(attrSluiceTags, "eu", "pii"),
+		strSliceKV(attrSluiceRulesFired, "redirect"),
+	}}
+	e, ok := EventFromSpan(nil, span, testContentCap)
+	if !ok {
+		t.Fatal("ok = false")
+	}
+	f := e.DecodeSpanFields()
+	if len(f.Tags) != 2 || f.Tags[0] != "eu" || f.Tags[1] != "pii" {
+		t.Errorf("tags = %+v", f.Tags)
+	}
+	if len(f.RulesFired) != 1 || f.RulesFired[0] != "redirect" {
+		t.Errorf("rules_fired = %+v", f.RulesFired)
+	}
+}
+
+func TestAnyValueNative_Kinds(t *testing.T) {
+	cases := []struct {
+		v    *commonpb.AnyValue
+		want any
+	}{
+		{nil, nil},
+		{&commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "x"}}, "x"},
+		{&commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: 7}}, int64(7)},
+		{&commonpb.AnyValue{Value: &commonpb.AnyValue_DoubleValue{DoubleValue: 1.5}}, 1.5},
+		{&commonpb.AnyValue{Value: &commonpb.AnyValue_BoolValue{BoolValue: true}}, true},
+		{&commonpb.AnyValue{Value: &commonpb.AnyValue_BytesValue{BytesValue: []byte("z")}}, nil},
+	}
+	for _, c := range cases {
+		if got := anyValueNative(c.v); got != c.want {
+			t.Errorf("anyValueNative(%v) = %v, want %v", c.v, got, c.want)
+		}
+	}
+	// Array of strings.
+	arr := &commonpb.AnyValue{Value: &commonpb.AnyValue_ArrayValue{ArrayValue: &commonpb.ArrayValue{
+		Values: []*commonpb.AnyValue{{Value: &commonpb.AnyValue_StringValue{StringValue: "a"}}},
+	}}}
+	if got, ok := anyValueNative(arr).([]any); !ok || len(got) != 1 || got[0] != "a" {
+		t.Errorf("array native = %v", anyValueNative(arr))
+	}
+	// Kvlist (nested object).
+	kv := &commonpb.AnyValue{Value: &commonpb.AnyValue_KvlistValue{KvlistValue: &commonpb.KeyValueList{
+		Values: []*commonpb.KeyValue{strKV("k", "v")},
+	}}}
+	if got, ok := anyValueNative(kv).(map[string]any); !ok || got["k"] != "v" {
+		t.Errorf("kvlist native = %v", anyValueNative(kv))
+	}
+}
+
+func TestStrSliceAttr(t *testing.T) {
+	attrs := map[string]*commonpb.AnyValue{
+		"arr":   strSliceKV("x", "a", "b").Value,
+		"empty": strSliceKV("x").Value,
+		"one":   {Value: &commonpb.AnyValue_StringValue{StringValue: "solo"}},
+		"blank": {Value: &commonpb.AnyValue_StringValue{StringValue: ""}},
+		"int":   {Value: &commonpb.AnyValue_IntValue{IntValue: 1}},
+	}
+	if got := strSliceAttr(attrs, "arr"); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("array = %v", got)
+	}
+	if strSliceAttr(attrs, "empty") != nil {
+		t.Error("empty array -> nil")
+	}
+	if got := strSliceAttr(attrs, "one"); len(got) != 1 || got[0] != "solo" {
+		t.Errorf("single string = %v", got)
+	}
+	if strSliceAttr(attrs, "blank") != nil || strSliceAttr(attrs, "int") != nil || strSliceAttr(attrs, "missing") != nil {
+		t.Error("blank/int/missing -> nil")
+	}
+}
+
+func TestBuildSpanEvent_ContentAndDerived(t *testing.T) {
+	// A span with content attributes + no end time: the blob carries the content
+	// under gen_ai_content and a zero derived latency.
+	span := &tracepb.Span{
+		StartTimeUnixNano: 1_000_000_000,
+		Attributes: []*commonpb.KeyValue{
+			strKV(attrCorrelationID, "c"),
+			strKV(attrInputMessages, `[{"role":"user"}]`),
+		},
+	}
+	e, ok := EventFromSpan(nil, span, testContentCap)
+	if !ok {
+		t.Fatal("ok = false")
+	}
+	var blob map[string]json.RawMessage
+	if err := json.Unmarshal(e.SpanEvent, &blob); err != nil {
+		t.Fatalf("blob decode: %v", err)
+	}
+	if _, ok := blob["gen_ai_content"]; !ok {
+		t.Errorf("content not folded into blob: %s", e.SpanEvent)
+	}
+	if _, ok := blob["sluice.latency_ms"]; !ok {
+		t.Errorf("derived latency missing: %s", e.SpanEvent)
 	}
 }
 

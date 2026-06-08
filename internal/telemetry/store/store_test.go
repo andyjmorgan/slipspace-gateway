@@ -318,41 +318,26 @@ func TestListRecentRequestEvents(t *testing.T) {
 	}
 }
 
-// --- payloads ---
+// --- record (lazy verbatim blob) ---
 
-func TestUpsertPayload(t *testing.T) {
-	if err := newStore(&fakeQuerier{}).UpsertPayload(ctx(), Payload{CorrelationID: "c", Kind: KindRequestBody}); err != nil {
+func TestUpsertRecord(t *testing.T) {
+	if err := newStore(&fakeQuerier{}).UpsertRecord(ctx(), "c", time.Now(), []byte(`{"correlation_id":"c"}`)); err != nil {
 		t.Fatalf("ok: %v", err)
 	}
-	if err := newStore(&fakeQuerier{execErr: errors.New("x")}).UpsertPayload(ctx(), Payload{}); err == nil {
+	if err := newStore(&fakeQuerier{execErr: errors.New("x")}).UpsertRecord(ctx(), "c", time.Time{}, []byte(`{}`)); err == nil {
 		t.Fatal("want exec error")
 	}
 }
 
-func TestListPayloads(t *testing.T) {
-	q := &fakeQuerier{query: &fakeRows{scanErrs: []error{nil}}}
-	got, err := newStore(q).ListPayloads(ctx(), "c")
-	if err != nil {
+func TestGetRecordBody(t *testing.T) {
+	if _, err := newStore(&fakeQuerier{row: fakeRow{}}).GetRecordBody(ctx(), "c"); err != nil {
 		t.Fatalf("ok: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("got %d", len(got))
+	if _, err := newStore(&fakeQuerier{row: fakeRow{err: pgx.ErrNoRows}}).GetRecordBody(ctx(), "c"); !errors.Is(err, ErrRecordNotFound) {
+		t.Fatalf("want ErrRecordNotFound, got %v", err)
 	}
-	// empty -> ErrPayloadNotFound
-	if _, err := newStore(&fakeQuerier{query: &fakeRows{}}).ListPayloads(ctx(), "c"); !errors.Is(err, ErrPayloadNotFound) {
-		t.Fatalf("want ErrPayloadNotFound, got %v", err)
-	}
-	// query error
-	if _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).ListPayloads(ctx(), "c"); err == nil {
-		t.Fatal("want query error")
-	}
-	// scan error
-	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).ListPayloads(ctx(), "c"); err == nil {
+	if _, err := newStore(&fakeQuerier{row: fakeRow{err: errors.New("db")}}).GetRecordBody(ctx(), "c"); err == nil {
 		t.Fatal("want scan error")
-	}
-	// rows.Err() error after iteration
-	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{nil}, finalErr: errors.New("rows")}}).ListPayloads(ctx(), "c"); err == nil {
-		t.Fatal("want rows.Err error")
 	}
 }
 

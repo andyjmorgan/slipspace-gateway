@@ -1,19 +1,20 @@
 // Package ingest maps the feeds gateways push — gen_ai OTLP spans and metrics,
 // and the HMAC-trusted Record webhook — into the telemetry store. This file is
 // the pure extraction layer: a gen_ai OTLP span (plus its resource attributes)
-// becomes the gen_ai half of a store.RequestEvent.
+// becomes a store.RequestEvent.
 //
-// Channel boundary (telemetry design): a gen_ai span carries GenAI semconv only
-// (model / provider / usage / duration) plus the single Sluice-specific
-// attribute correlation_id — the stitch join key. Every other gateway fact
-// (configuration, protocol, method, rule chain, attempts, api-key, ...) arrives
-// on the Record feed (see record.go), not the span. The two feeds converge on
-// one request_events row by correlation_id: the OTLP upsert owns the gen_ai
-// columns, the Record upsert owns the gateway columns, either order (no clobber).
+// Single-writer model (Telemetry Rearchitecture design note): the OTel span
+// owns request_events outright. EventFromSpan stores the COMPLETE span verbatim
+// into span_event — nothing is dropped — and projects the filter columns out of
+// it. The Record feed (record.go) no longer writes the entity; it lands a lazy
+// verbatim blob keyed by the same correlation_id. observed_at is the gateway
+// request-start (the span START time), not ingest now().
 package ingest
 
 import (
+	"encoding/json"
 	"strconv"
+	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -22,33 +23,57 @@ import (
 )
 
 const (
-	// attrCorrelationID is the only Sluice-specific attribute read off a
-	// gen_ai span — the join key that stitches the OTLP feed to the Record.
+	// attrCorrelationID is the join key — the only attribute whose absence makes
+	// a span unusable (no entity key, no record join).
 	attrCorrelationID = "sluice.correlation_id"
 
+	// gen_ai semconv attributes the columns project from.
 	attrModel         = "gen_ai.request.model"
 	attrGenAIProvider = "gen_ai.provider.name"
-	attrInputTokens   = "gen_ai.usage.input_tokens"  //nolint:gosec // OTLP attribute key, not a credential
-	attrOutputTokens  = "gen_ai.usage.output_tokens" //nolint:gosec // OTLP attribute key, not a credential
 	attrStatusCode    = "http.response.status_code"
 
-	// Cache-token + session + streaming attributes carried on the gen_ai
-	// span — all GenAI semconv, all part of the gen_ai channel.
+	attrInputTokens         = "gen_ai.usage.input_tokens"                //nolint:gosec // OTLP attribute key, not a credential
+	attrOutputTokens        = "gen_ai.usage.output_tokens"               //nolint:gosec // OTLP attribute key, not a credential
 	attrCacheReadTokens     = "gen_ai.usage.cache_read.input_tokens"     //nolint:gosec // OTLP attribute key, not a credential
 	attrCacheCreationTokens = "gen_ai.usage.cache_creation.input_tokens" //nolint:gosec // OTLP attribute key, not a credential
 	attrConversationID      = "gen_ai.conversation.id"
 	attrAgentID             = "gen_ai.agent.id"
 	attrEnduserID           = "enduser.id"
 	attrRequestStream       = "gen_ai.request.stream"
+
+	// Gateway facts the gateway now emits on the span (relaxed channel boundary).
+	// These are the EXACT string keys the destination/reporter writes — the
+	// telemetry service only consumes them, never mints them. configuration and
+	// protocol project to columns; method / api_key_name / upstream_status ride
+	// the blob under their own keys (read back via store.SpanFields), so they
+	// need no dedicated const here; tags / rules_fired are normalised to JSON
+	// arrays for the GIN filters.
+	attrSluiceConfiguration = "sluice.configuration"
+	attrSluiceProtocol      = "sluice.protocol"
+	attrSluiceTags          = "sluice.tags"
+	attrSluiceRulesFired    = "sluice.rules_fired"
+
+	// attrResourceGatewayID is the resource attribute the gateway id is lifted
+	// from; folded into span_event (no promoted column unless a filter needs it).
+	attrResourceGatewayID = "gateway_id"
+
+	// span_event JSON keys for the projected/derived values. These mirror the
+	// store.SpanFields tags so a drill-down decode reads them back.
+	keyGatewayID = "gateway_id"
+	keyLatencyMs = "sluice.latency_ms"
+	keyTags      = "tags"
+	keyRules     = "rules_fired"
+	keyContent   = "gen_ai_content"
 )
 
-// EventFromSpan extracts the gen_ai half of a request event from a span and its
-// resource attributes. Resource attributes are merged under the span's own
-// (span wins). Returns ok=false when the span carries no correlation id — the
-// key everything joins on. Only gen_ai semconv columns are populated; the
-// gateway columns (configuration, protocol, method, detail, ...) are left zero
-// for the Record feed to fill via UpsertGatewayRecord. contentMaxBytes bounds
-// the captured gen_ai content (<= 0 keeps it whole).
+// EventFromSpan extracts a request event from a span and its resource
+// attributes. Resource attributes are merged under the span's own (span wins).
+// Returns ok=false only when the span carries no correlation id — the key
+// everything joins on. The COMPLETE merged attribute set (every value, not an
+// allowlist) plus the derived gateway id, latency, tags/rules arrays, and the
+// gen_ai content lands in store.RequestEvent.SpanEvent; the scalar columns are
+// projected from it. contentMaxBytes bounds the captured gen_ai content
+// (<= 0 keeps it whole).
 func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, contentMaxBytes int) (store.RequestEvent, bool) {
 	if span == nil {
 		return store.RequestEvent{}, false
@@ -61,21 +86,53 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 	}
 
 	return store.RequestEvent{
-		CorrelationID:       corr,
-		Provider:            strAttr(attrs, attrGenAIProvider),
-		Model:               strAttr(attrs, attrModel),
-		StatusCode:          int(intAttr(attrs, attrStatusCode)),
-		LatencyMs:           spanLatencyMs(span),
-		TokensIn:            intAttr(attrs, attrInputTokens),
-		TokensOut:           intAttr(attrs, attrOutputTokens),
-		TokensCached:        intAttr(attrs, attrCacheReadTokens),
-		TokensCacheCreation: intAttr(attrs, attrCacheCreationTokens),
-		SessionID:           strAttr(attrs, attrConversationID),
-		AgentID:             strAttr(attrs, attrAgentID),
-		UserID:              strAttr(attrs, attrEnduserID),
-		Streaming:           boolAttr(attrs, attrRequestStream),
-		GenAIContent:        captureContent(span, contentMaxBytes),
+		CorrelationID: corr,
+		ObservedAt:    spanStart(span),
+		SessionID:     strAttr(attrs, attrConversationID),
+		AgentID:       strAttr(attrs, attrAgentID),
+		UserID:        strAttr(attrs, attrEnduserID),
+		Provider:      strAttr(attrs, attrGenAIProvider),
+		Model:         strAttr(attrs, attrModel),
+		Configuration: strAttr(attrs, attrSluiceConfiguration),
+		Protocol:      strAttr(attrs, attrSluiceProtocol),
+		StatusCode:    int(intAttr(attrs, attrStatusCode)),
+		SpanEvent:     buildSpanEvent(attrs, span, contentMaxBytes),
 	}, true
+}
+
+// buildSpanEvent serializes the complete span as the immutable JSONB blob: every
+// merged attribute keyed by its OTLP name (so nothing is discarded — invariant
+// #1's telemetry analogue), the derived sluice.latency_ms, the tags / rules_fired
+// arrays parsed from sluice.tags / sluice.rules_fired, and the bounded gen_ai
+// content under gen_ai_content. The string keys the projection + drill-down
+// (store.SpanFields) read are stamped here.
+func buildSpanEvent(attrs map[string]*commonpb.AnyValue, span *tracepb.Span, contentMaxBytes int) []byte {
+	out := make(map[string]any, len(attrs)+4)
+	for k, v := range attrs {
+		out[k] = anyValueNative(v)
+	}
+	// Derived: request wall time from the span bounds (the gateway also emits it,
+	// but deriving keeps a value even if the attribute is absent).
+	out[keyLatencyMs] = spanLatencyMs(span)
+	if gw := strAttr(attrs, attrResourceGatewayID); gw != "" {
+		out[keyGatewayID] = gw
+	}
+	// tags / rules_fired are emitted as string arrays; normalise to []string so
+	// the GIN @> filter and jsonb_array_elements_text facet see a JSON array.
+	if tags := strSliceAttr(attrs, attrSluiceTags); tags != nil {
+		out[keyTags] = tags
+	}
+	if rules := strSliceAttr(attrs, attrSluiceRulesFired); rules != nil {
+		out[keyRules] = rules
+	}
+	if c := captureContent(span, contentMaxBytes); c != nil {
+		out[keyContent] = json.RawMessage(c)
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
 }
 
 func mergeAttrs(resource, span []*commonpb.KeyValue) map[string]*commonpb.AnyValue {
@@ -126,6 +183,72 @@ func intAttr(attrs map[string]*commonpb.AnyValue, key string) int64 {
 	}
 }
 
+// strSliceAttr reads a string-array attribute (sluice.tags / sluice.rules_fired)
+// into a []string. A single string value is accepted as a one-element slice.
+// Returns nil when absent so the key is omitted from the blob entirely.
+func strSliceAttr(attrs map[string]*commonpb.AnyValue, key string) []string {
+	v := attrs[key]
+	if v == nil {
+		return nil
+	}
+	switch x := v.GetValue().(type) {
+	case *commonpb.AnyValue_ArrayValue:
+		vals := x.ArrayValue.GetValues()
+		out := make([]string, 0, len(vals))
+		for _, el := range vals {
+			if s, ok := el.GetValue().(*commonpb.AnyValue_StringValue); ok && s.StringValue != "" {
+				out = append(out, s.StringValue)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case *commonpb.AnyValue_StringValue:
+		if x.StringValue == "" {
+			return nil
+		}
+		return []string{x.StringValue}
+	default:
+		return nil
+	}
+}
+
+// anyValueNative converts an OTLP AnyValue to a Go value json.Marshal renders
+// as the natural JSON type, so the blob round-trips the wire shape (strings as
+// strings, ints as numbers, arrays as arrays). An unsupported kind yields nil.
+func anyValueNative(v *commonpb.AnyValue) any {
+	if v == nil {
+		return nil
+	}
+	switch x := v.GetValue().(type) {
+	case *commonpb.AnyValue_StringValue:
+		return x.StringValue
+	case *commonpb.AnyValue_IntValue:
+		return x.IntValue
+	case *commonpb.AnyValue_DoubleValue:
+		return x.DoubleValue
+	case *commonpb.AnyValue_BoolValue:
+		return x.BoolValue
+	case *commonpb.AnyValue_ArrayValue:
+		vals := x.ArrayValue.GetValues()
+		out := make([]any, 0, len(vals))
+		for _, el := range vals {
+			out = append(out, anyValueNative(el))
+		}
+		return out
+	case *commonpb.AnyValue_KvlistValue:
+		kvs := x.KvlistValue.GetValues()
+		out := make(map[string]any, len(kvs))
+		for _, kv := range kvs {
+			out[kv.GetKey()] = anyValueNative(kv.GetValue())
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 // boolAttr reads a bool-valued attribute. A string "true" is also accepted —
 // some SDKs serialise booleans as strings — but any other kind is false.
 func boolAttr(attrs map[string]*commonpb.AnyValue, key string) bool {
@@ -141,6 +264,16 @@ func boolAttr(attrs map[string]*commonpb.AnyValue, key string) bool {
 	default:
 		return false
 	}
+}
+
+// spanStart returns the span's start time as the event's observed_at. A zero
+// start time yields the zero time, which the store defaults to now().
+func spanStart(span *tracepb.Span) time.Time {
+	ns := span.GetStartTimeUnixNano()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, int64(ns)).UTC() //nolint:gosec // a span start unix-nano never overflows int64
 }
 
 func spanLatencyMs(span *tracepb.Span) int64 {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -56,21 +57,16 @@ func TestMigrate_AppliesAndIsIdempotent(t *testing.T) {
 func TestRequestEvent_RoundTrip(t *testing.T) {
 	st := migratedStore(t)
 	ctx := context.Background()
+	span := []byte(`{"sluice.method":"POST","gen_ai.usage.input_tokens":10,"gen_ai.usage.output_tokens":20,"tags":["a"],"gen_ai_content":{"input_messages":[]}}`)
 	e := store.RequestEvent{
 		CorrelationID: "evt-rt-1",
-		GatewayID:     "gw-a",
 		Provider:      "anthropic",
 		Model:         "claude-x",
 		StatusCode:    200,
-		TokensIn:      10,
-		TokensOut:     20,
 		SessionID:     "sess-1",
 		AgentID:       "agt-1",
-		AgentIDSource: "X-Claude-Code-Agent-Id",
 		UserID:        "usr-1",
-		UserIDSource:  "X-Sluice-User-Id",
-		GenAIContent:  []byte(`{"input_messages":[]}`),
-		Detail:        []byte(`{"tags":["a"]}`),
+		SpanEvent:     span,
 	}
 	if err := st.UpsertRequestEvent(ctx, e); err != nil {
 		t.Fatalf("UpsertRequestEvent: %v", err)
@@ -79,37 +75,39 @@ func TestRequestEvent_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRequestEvent: %v", err)
 	}
-	if got.Provider != "anthropic" || got.TokensIn != 10 || got.SessionID != "sess-1" {
+	if got.Provider != "anthropic" || got.SessionID != "sess-1" {
 		t.Errorf("got = %+v", got)
 	}
-	if got.AgentID != "agt-1" || got.AgentIDSource != "X-Claude-Code-Agent-Id" {
-		t.Errorf("agent id round-trip = (%q, %q), want (agt-1, X-Claude-Code-Agent-Id)", got.AgentID, got.AgentIDSource)
+	if got.AgentID != "agt-1" || got.UserID != "usr-1" {
+		t.Errorf("identity round-trip = agent %q user %q", got.AgentID, got.UserID)
 	}
-	if got.UserID != "usr-1" || got.UserIDSource != "X-Sluice-User-Id" {
-		t.Errorf("user id round-trip = (%q, %q), want (usr-1, X-Sluice-User-Id)", got.UserID, got.UserIDSource)
+	// Measurement values live in the blob; decode them out.
+	f := got.DecodeSpanFields()
+	if f.TokensIn != 10 || f.TokensOut != 20 || f.Method != "POST" {
+		t.Errorf("span fields = %+v", f)
 	}
 	if got.ObservedAt.IsZero() {
 		t.Error("ObservedAt should default to now()")
 	}
 }
 
-// TestRequestEvent_TwoFeedMerge proves the gen_ai (OTLP) and gateway (Record)
-// feeds converge on one row by correlation_id without clobbering each other's
-// columns, in either arrival order. UpsertRequestEvent owns the gen_ai columns;
-// UpsertGatewayRecord owns the gateway columns.
-func TestRequestEvent_TwoFeedMerge(t *testing.T) {
+// TestRequestEvent_SingleWriterReplace proves the single-writer entity replaces
+// the row wholesale on conflict (no cross-feed merge): a second span for the
+// same correlation_id overwrites the columns and the blob.
+func TestRequestEvent_SingleWriterReplace(t *testing.T) {
 	st := migratedStore(t)
 	ctx := context.Background()
 
-	// gen_ai feed first: tokens + content + provider.
 	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
-		CorrelationID: "evt-up", Provider: "anthropic", TokensIn: 7, GenAIContent: []byte(`{"x":1}`),
+		CorrelationID: "evt-up", Provider: "anthropic", StatusCode: 200,
+		SpanEvent: []byte(`{"gen_ai.usage.input_tokens":7}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// gateway feed adds the gateway columns; must NOT clobber the gen_ai ones.
-	if err := st.UpsertGatewayRecord(ctx, store.RequestEvent{
-		CorrelationID: "evt-up", Configuration: "dev", StatusCode: 200, Detail: []byte(`{"tags":["a"]}`),
+	// Re-export of the same span (refined) replaces the row.
+	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
+		CorrelationID: "evt-up", Provider: "anthropic", Configuration: "dev", StatusCode: 200,
+		SpanEvent: []byte(`{"gen_ai.usage.input_tokens":9,"tags":["a"]}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -117,27 +115,42 @@ func TestRequestEvent_TwoFeedMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.StatusCode != 200 || got.Configuration != "dev" || len(got.Detail) == 0 {
-		t.Errorf("gateway columns not applied: %+v", got)
+	if got.Configuration != "dev" || got.StatusCode != 200 {
+		t.Errorf("columns not replaced: %+v", got)
 	}
-	if got.TokensIn != 7 || got.Provider != "anthropic" || len(got.GenAIContent) == 0 {
-		t.Errorf("gen_ai columns clobbered by the gateway feed: %+v", got)
+	f := got.DecodeSpanFields()
+	if f.TokensIn != 9 || len(f.Tags) != 1 || f.Tags[0] != "a" {
+		t.Errorf("blob not replaced: %+v", f)
 	}
+}
 
-	// A later gen_ai refresh that omits content must preserve content AND must
-	// not clobber the gateway-owned status_code/configuration/detail.
-	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{CorrelationID: "evt-up", TokensIn: 9}); err != nil {
-		t.Fatal(err)
+// TestRecord_RoundTrip proves the lazy record blob stores + reads back verbatim,
+// keyed by correlation_id, idempotent on re-push.
+func TestRecord_RoundTrip(t *testing.T) {
+	st := migratedStore(t)
+	ctx := context.Background()
+	body := []byte(`{"correlation_id":"rec-1","provider":"anthropic"}`)
+	if err := st.UpsertRecord(ctx, "rec-1", time.Now(), body); err != nil {
+		t.Fatalf("UpsertRecord: %v", err)
 	}
-	got, err = st.GetRequestEvent(ctx, "evt-up")
+	got, err := st.GetRecordBody(ctx, "rec-1")
 	if err != nil {
+		t.Fatalf("GetRecordBody: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Errorf("body = %s, want %s", got, body)
+	}
+	// Re-push overwrites in place.
+	body2 := []byte(`{"correlation_id":"rec-1","provider":"openai"}`)
+	if err := st.UpsertRecord(ctx, "rec-1", time.Now(), body2); err != nil {
 		t.Fatal(err)
 	}
-	if got.TokensIn != 9 || len(got.GenAIContent) == 0 {
-		t.Errorf("gen_ai refresh wrong: tokens=%d content=%dB", got.TokensIn, len(got.GenAIContent))
+	got, _ = st.GetRecordBody(ctx, "rec-1")
+	if string(got) != string(body2) {
+		t.Errorf("re-push body = %s, want %s", got, body2)
 	}
-	if got.StatusCode != 200 || got.Configuration != "dev" || len(got.Detail) == 0 {
-		t.Errorf("gateway columns clobbered by a later gen_ai refresh: %+v", got)
+	if _, err := st.GetRecordBody(ctx, "absent"); !errors.Is(err, store.ErrRecordNotFound) {
+		t.Errorf("absent record = %v, want ErrRecordNotFound", err)
 	}
 }
 
@@ -180,10 +193,12 @@ func TestListSessions(t *testing.T) {
 
 	base := time.Date(2023, 3, 15, 12, 0, 0, 0, time.UTC)
 	seed := func(id, sess, cfg, model, tag string, in, out int64, at time.Time) {
+		span := fmt.Sprintf(
+			`{"gen_ai.usage.input_tokens":%d,"gen_ai.usage.output_tokens":%d,"tags":["%s"]}`,
+			in, out, tag)
 		if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
 			CorrelationID: id, SessionID: sess, Configuration: cfg, Model: model,
-			StatusCode: 200, TokensIn: in, TokensOut: out, ObservedAt: at,
-			Detail: []byte(`{"tags":["` + tag + `"]}`),
+			StatusCode: 200, ObservedAt: at, SpanEvent: []byte(span),
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
@@ -295,62 +310,6 @@ func TestListSessions(t *testing.T) {
 			t.Fatalf("page 2 = %+v (page 1 was %+v)", p2, p1)
 		}
 	})
-}
-
-func TestPayloads_OrderedByCompositeKey(t *testing.T) {
-	st := migratedStore(t)
-	ctx := context.Background()
-	// Insert out of order; expect (ts_ns, instance_id, seq) ordering on read.
-	items := []store.Payload{
-		{CorrelationID: "p1", Kind: store.KindResponseBody, InstanceID: "b", Seq: 1, TsNs: 200, Body: []byte("z")},
-		{CorrelationID: "p1", Kind: store.KindRequestBody, InstanceID: "a", Seq: 1, TsNs: 100, Body: []byte("x")},
-		{CorrelationID: "p1", Kind: store.KindSSERollup, InstanceID: "a", Seq: 2, TsNs: 150, Body: []byte("y")},
-	}
-	for _, it := range items {
-		if err := st.UpsertPayload(ctx, it); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, err := st.ListPayloads(ctx, "p1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("got %d payloads", len(got))
-	}
-	wantOrder := []int64{100, 150, 200}
-	for i, p := range got {
-		if p.TsNs != wantOrder[i] {
-			t.Errorf("payload[%d].TsNs = %d, want %d", i, p.TsNs, wantOrder[i])
-		}
-	}
-}
-
-func TestPayloads_UpsertIdempotent(t *testing.T) {
-	st := migratedStore(t)
-	ctx := context.Background()
-	p := store.Payload{CorrelationID: "p2", Kind: store.KindRequestBody, InstanceID: "a", Seq: 1, Body: []byte("v1")}
-	if err := st.UpsertPayload(ctx, p); err != nil {
-		t.Fatal(err)
-	}
-	p.Body = []byte("v2")
-	if err := st.UpsertPayload(ctx, p); err != nil {
-		t.Fatal(err)
-	}
-	got, err := st.ListPayloads(ctx, "p2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || string(got[0].Body) != "v2" {
-		t.Fatalf("expected one upserted row v2, got %+v", got)
-	}
-}
-
-func TestPayloads_NotFound(t *testing.T) {
-	st := migratedStore(t)
-	if _, err := st.ListPayloads(context.Background(), "none"); !errors.Is(err, store.ErrPayloadNotFound) {
-		t.Fatalf("err = %v, want ErrPayloadNotFound", err)
-	}
 }
 
 func TestMetricPoints_InsertAndList(t *testing.T) {

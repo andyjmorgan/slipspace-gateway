@@ -186,6 +186,18 @@ func intKV(k string, v int64) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: v}}}
 }
 
+// strSliceKV builds a string-array attribute (the shape sluice.tags /
+// sluice.rules_fired ride on the span).
+func strSliceKV(k string, vs ...string) *commonpb.KeyValue {
+	vals := make([]*commonpb.AnyValue, len(vs))
+	for i, v := range vs {
+		vals[i] = &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}
+	}
+	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{
+		Value: &commonpb.AnyValue_ArrayValue{ArrayValue: &commonpb.ArrayValue{Values: vals}},
+	}}
+}
+
 // sendSpan exports one gen_ai span carrying GenAI semconv attributes plus the
 // sluice.correlation_id join key (the only sluice.* the extractor reads), then
 // closes the connection.
@@ -199,13 +211,16 @@ func (s *service) sendSpan(t *testing.T, attrs ...*commonpb.KeyValue) {
 	client := collectortrace.NewTraceServiceClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// observed_at is the span START time (single-writer design), so stamp the
+	// span "now" — a fixed 1970 start would fall outside the dashboard window.
+	start := time.Now()
 	_, err = client.Export(ctx, &collectortrace.ExportTraceServiceRequest{
 		ResourceSpans: []*tracepb.ResourceSpans{{
 			ScopeSpans: []*tracepb.ScopeSpans{{
 				Spans: []*tracepb.Span{{
 					Name:              "gen_ai.request",
-					StartTimeUnixNano: 1_000_000_000,
-					EndTimeUnixNano:   1_200_000_000,
+					StartTimeUnixNano: uint64(start.UnixNano()),                             //nolint:gosec // test timestamp
+					EndTimeUnixNano:   uint64(start.Add(200 * time.Millisecond).UnixNano()), //nolint:gosec // test timestamp
 					Attributes:        attrs,
 				}},
 			}},
@@ -326,8 +341,20 @@ func TestE2E_RecordTrust(t *testing.T) {
 	}
 }
 
+// TestE2E_RecordDetailEnriched proves the lazy-record split: the span carries
+// the post-rule fired-rule NAMES (sluice.rules_fired) onto the entity for the
+// list view, while the full rule lifecycle (actions / terminated / attempts) and
+// the raw headers ride the verbatim record blob, surfaced by the body endpoint.
 func TestE2E_RecordDetailEnriched(t *testing.T) {
 	svc := startService(t)
+
+	// The span is the single writer of the entity; it carries the fired-rule
+	// names so the list view can show which rules matched.
+	svc.sendSpan(t,
+		strKV("sluice.correlation_id", "enriched-1"),
+		strKV("gen_ai.provider.name", "anthropic"),
+		strSliceKV("sluice.rules_fired", "redirect", "stop"),
+	)
 
 	rec := recordWith("enriched-1", `{"q":"hi"}`, `{"a":"yo"}`)
 	rec.Request.Headers = map[string]string{"content-type": "application/json"}
@@ -344,8 +371,7 @@ func TestE2E_RecordDetailEnriched(t *testing.T) {
 		t.Fatalf("post record status = %d", resp.StatusCode)
 	}
 
-	// The recent-messages entry surfaces the full rule chain + attempts (not
-	// just rule names) and the parity body surfaces the request headers.
+	// The recent-messages entry (entity = span) surfaces the fired-rule names.
 	var msgs adminc.MessagesRecentResponse
 	if code := svc.getJSON(t, "/api/v1/messages/recent?limit=50", &msgs); code != http.StatusOK {
 		t.Fatalf("messages status = %d", code)
@@ -359,37 +385,51 @@ func TestE2E_RecordDetailEnriched(t *testing.T) {
 	if e == nil {
 		t.Fatalf("enriched-1 not found in %+v", msgs.Entries)
 	}
-	if len(e.RulesMatched) != 2 || e.RulesMatched[0].RuleName != "redirect" ||
-		len(e.RulesMatched[0].ActionsApplied) != 1 || e.RulesMatched[0].ActionsApplied[0] != "changeProvider" ||
-		!e.RulesMatched[1].Terminated {
-		t.Errorf("rule chain not surfaced: %+v", e.RulesMatched)
-	}
-	if len(e.Attempts) != 2 || e.Attempts[0].Target != "primary" || e.Attempts[1].Outcome != "success" {
-		t.Errorf("attempts not surfaced: %+v", e.Attempts)
+	if len(e.RulesMatched) != 2 || e.RulesMatched[0].RuleName != "redirect" || e.RulesMatched[1].RuleName != "stop" {
+		t.Errorf("fired-rule names not surfaced on the entity: %+v", e.RulesMatched)
 	}
 
-	var body adminc.MessageBodyDetail
-	svc.getJSON(t, "/api/v1/messages/enriched-1/body", &body)
-	if len(body.RequestHeaders["content-type"]) != 1 || body.RequestHeaders["content-type"][0] != "application/json" {
-		t.Errorf("request headers not surfaced: %+v", body.RequestHeaders)
+	// The full rule lifecycle + attempts + raw headers ride the lazy record blob,
+	// returned verbatim by the telemetry-native events body endpoint as the
+	// cc.Record. (The parity /messages/{id}/body endpoint returns the projected
+	// MessageBodyDetail shape; the raw record lives on /events/{id}/body.)
+	var rrec cc.Record
+	if code := svc.getJSON(t, "/api/v1/events/enriched-1/body", &rrec); code != http.StatusOK {
+		t.Fatalf("record body status = %d", code)
+	}
+	if len(rrec.RulesFired) != 2 || rrec.RulesFired[0].Name != "redirect" ||
+		len(rrec.RulesFired[0].ActionsApplied) != 1 || rrec.RulesFired[0].ActionsApplied[0] != "changeProvider" ||
+		!rrec.RulesFired[1].Terminated {
+		t.Errorf("rule lifecycle not on the record: %+v", rrec.RulesFired)
+	}
+	if len(rrec.Attempts) != 2 || rrec.Attempts[0].Target != "primary" || rrec.Attempts[1].Outcome != "success" {
+		t.Errorf("attempts not on the record: %+v", rrec.Attempts)
+	}
+	if rrec.Request.Headers["content-type"] != "application/json" {
+		t.Errorf("request headers not on the record: %+v", rrec.Request.Headers)
 	}
 }
 
 func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 	svc := startService(t)
 
-	// gen_ai OTLP feed: GenAI semconv + correlation_id only (the join key).
-	// model / provider / tokens land on the request_events row's gen_ai columns.
+	// Single-writer entity: the gen_ai span owns request_events. The relaxed
+	// channel boundary means the gateway facts (configuration, protocol, tags)
+	// ride the span too, alongside the GenAI semconv. The whole span lands in
+	// span_event; the columns + tags project out of it.
 	svc.sendSpan(t,
 		strKV("sluice.correlation_id", "otlp-1"),
 		strKV("gen_ai.provider.name", "anthropic"),
 		strKV("gen_ai.request.model", "claude-x"),
+		strKV("sluice.configuration", "dev"),
+		strKV("sluice.protocol", "messages"),
+		strSliceKV("sluice.tags", "alpha", "beta"),
 		intKV("http.response.status_code", 200),
 		intKV("gen_ai.usage.input_tokens", 10),
 		intKV("gen_ai.usage.output_tokens", 20),
 	)
-	// Record feed: the gateway columns (configuration, protocol, tags) + bodies
-	// for the same correlation id. The two feeds merge by correlation_id.
+	// Record feed: the lazy verbatim blob carrying the raw bodies for the same
+	// correlation id, joined only when the inspector body tab opens.
 	rec := recordWith("otlp-1", `{"q":"hi"}`, `{"a":"yo"}`)
 	rec.Tags = []string{"alpha", "beta"}
 	svc.postRecord(t, testGatewayID, testSecret, rec)
@@ -565,31 +605,32 @@ func ids(p messagesPage) []string {
 func TestE2E_MessageBrowserFilters(t *testing.T) {
 	svc := startService(t)
 
-	// The package shares one Postgres database across tests, so sibling tests'
-	// events are present too. Namespace every filter dimension with an "mbf-"
-	// prefix so exact-match filters return only this test's records, and tag
-	// every seeded record with a shared "mbf-all" so the paging assertions scope
-	// to exactly these four. recordWith defaults are all overridden below.
-	mk := func(id, provider, model, cfg, endpoint, session, agent, user string, tags []string) cc.Record {
-		r := recordWith(id, `{"q":"hi"}`, `{"a":"yo"}`)
-		r.Provider, r.Model, r.Configuration, r.Protocol = provider, model, cfg, endpoint
-		r.SessionID = session
-		r.AgentID = agent
-		r.UserID = user
-		r.Tags = append([]string{"mbf-all"}, tags...)
-		return r
-	}
-	seed := []cc.Record{
-		mk("mb-1", "mbf-anthropic", "mbf-claude", "mbf-dev", "mbf-messages", "mbf-sess-A", "mbf-agent-A", "mbf-user-A", []string{"mbf-eu", "mbf-pii"}),
-		mk("mb-2", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-A", "mbf-agent-B", "mbf-user-B", []string{"mbf-eu"}),
-		mk("mb-3", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-B", "mbf-agent-A", "mbf-user-A", []string{"mbf-pii"}),
-		mk("mb-4", "mbf-gemini", "mbf-gemini2", "mbf-dev", "mbf-generate", "mbf-sess-B", "mbf-agent-B", "mbf-user-B", []string{"mbf-eu", "mbf-pii"}),
-	}
-	for _, r := range seed {
-		if resp := svc.postRecord(t, testGatewayID, testSecret, r); resp.StatusCode != http.StatusOK {
-			t.Fatalf("post %s: status %d", r.CorrelationID, resp.StatusCode)
+	// The single-writer entity is the span, so the browser is fed by spans (not
+	// records). The package shares one Postgres database across tests, so sibling
+	// tests' events are present too. Namespace every filter dimension with an
+	// "mbf-" prefix so exact-match filters return only this test's events, and tag
+	// every seeded event with a shared "mbf-all" so the paging assertions scope to
+	// exactly these four.
+	mk := func(id, provider, model, cfg, endpoint, session, agent, user string, tags []string) {
+		all := append([]string{"mbf-all"}, tags...)
+		attrs := []*commonpb.KeyValue{
+			strKV("sluice.correlation_id", id),
+			strKV("gen_ai.provider.name", provider),
+			strKV("gen_ai.request.model", model),
+			strKV("sluice.configuration", cfg),
+			strKV("sluice.protocol", endpoint),
+			strKV("gen_ai.conversation.id", session),
+			strKV("gen_ai.agent.id", agent),
+			strKV("enduser.id", user),
+			strSliceKV("sluice.tags", all...),
+			intKV("http.response.status_code", 200),
 		}
+		svc.sendSpan(t, attrs...)
 	}
+	mk("mb-1", "mbf-anthropic", "mbf-claude", "mbf-dev", "mbf-messages", "mbf-sess-A", "mbf-agent-A", "mbf-user-A", []string{"mbf-eu", "mbf-pii"})
+	mk("mb-2", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-A", "mbf-agent-B", "mbf-user-B", []string{"mbf-eu"})
+	mk("mb-3", "mbf-openai", "mbf-gpt", "mbf-prod", "mbf-chat", "mbf-sess-B", "mbf-agent-A", "mbf-user-A", []string{"mbf-pii"})
+	mk("mb-4", "mbf-gemini", "mbf-gemini2", "mbf-dev", "mbf-generate", "mbf-sess-B", "mbf-agent-B", "mbf-user-B", []string{"mbf-eu", "mbf-pii"})
 
 	// Helper: fetch a page and require 200.
 	page := func(query string) messagesPage {

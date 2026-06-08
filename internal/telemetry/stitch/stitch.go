@@ -1,42 +1,29 @@
-// Package stitch assembles the correlated views the console renders from the
-// separate feeds the store holds: a per-request view (the request_event joined
-// to its large payloads, keyed by correlation_id) and a per-session rollup
-// (every request sharing a session_id, plus aggregate totals). The join keys
-// are correlation_id (one request) and session_id (a conversation); ordering of
-// payloads across instances follows the stable (ts_ns, instance_id, seq) key
-// the store already applies (invariant #8).
+// Package stitch assembles the correlated views the console renders. In the
+// single-writer model the entity (request_events) is the OTel span; the Record
+// is a lazy verbatim blob joined by correlation_id only when an inspector tab
+// opens. This package builds the per-request inspector view (the event + the
+// optionally-present decoded record) and the per-session rollup (every request
+// sharing a session_id, plus aggregate totals).
 package stitch
 
 import (
-	"encoding/json"
-
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
-// RequestView is one request stitched together: the lean event plus the latest
-// captured payload of each kind. Payloads maps a store.Kind* to the raw body.
+// RequestView is one request stitched together for the inspector: the entity
+// event (span scalars + the span_event blob) plus the lazily-joined record. The
+// record is the gateway's verbatim cc.Record — present only when reporting
+// forwarding was on for the request; nil otherwise.
 type RequestView struct {
-	Event    store.RequestEvent         `json:"event"`
-	Payloads map[string]json.RawMessage `json:"payloads,omitempty"`
+	Event  store.RequestEvent `json:"event"`
+	Record *cc.Record         `json:"record,omitempty"`
 }
 
-// LatestPayloadsByKind picks the most recent payload per kind. The store returns
-// payloads already in (ts_ns, instance_id, seq) order, so the last one seen for
-// a kind is the most complete (e.g. the final response over a retried one).
-func LatestPayloadsByKind(payloads []store.Payload) map[string]json.RawMessage {
-	if len(payloads) == 0 {
-		return nil
-	}
-	out := make(map[string]json.RawMessage, len(payloads))
-	for _, p := range payloads {
-		out[p.Kind] = json.RawMessage(p.Body)
-	}
-	return out
-}
-
-// BuildRequestView stitches an event and its payloads into a RequestView.
-func BuildRequestView(event store.RequestEvent, payloads []store.Payload) RequestView {
-	return RequestView{Event: event, Payloads: LatestPayloadsByKind(payloads)}
+// BuildRequestView stitches an event and its (optional) decoded record into a
+// RequestView. A nil record means reporting was off / the push hasn't arrived.
+func BuildRequestView(event store.RequestEvent, record *cc.Record) RequestView {
+	return RequestView{Event: event, Record: record}
 }
 
 // SessionTotals is the aggregate rollup over a session's requests.
@@ -55,7 +42,8 @@ type SessionView struct {
 }
 
 // BuildSessionView groups a session's events (assumed oldest-first) and computes
-// its totals. A request with status >= 400 counts as an error.
+// its totals. A request with status >= 400 counts as an error; token totals are
+// read out of each event's span_event blob (no promoted token columns).
 func BuildSessionView(sessionID string, events []store.RequestEvent) SessionView {
 	v := SessionView{SessionID: sessionID, Requests: events}
 	for _, e := range events {
@@ -63,8 +51,9 @@ func BuildSessionView(sessionID string, events []store.RequestEvent) SessionView
 		if e.StatusCode >= 400 {
 			v.Totals.Errors++
 		}
-		v.Totals.TokensIn += e.TokensIn
-		v.Totals.TokensOut += e.TokensOut
+		f := e.DecodeSpanFields()
+		v.Totals.TokensIn += f.TokensIn
+		v.Totals.TokensOut += f.TokensOut
 	}
 	return v
 }
