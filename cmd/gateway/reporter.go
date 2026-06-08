@@ -962,8 +962,9 @@ func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 
 // populateTokens reads the captured response (when present) and writes
 // the extracted token snapshot onto ev, the gen_ai.client.token.usage
-// histogram (input/output, keyed by gen_ai.token.type), and the two
-// sluice.tokens.* cache counters.
+// histogram (input/output, keyed by gen_ai.token.type), and the four
+// sluice.tokens.* counters (input/output mirrors for the telemetry service,
+// plus the cache-read/cache-creation counters).
 func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	if len(r.responseFrames) == 0 {
 		return
@@ -992,6 +993,15 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	if snap.Output > 0 && r.factory.meters.TokenUsage != nil {
 		r.factory.meters.TokenUsage.Record(ctx, int64(snap.Output),
 			metric.WithAttributes(append(base, attribute.String(observability.AttrGenAITokenType, observability.TokenTypeOutput))...))
+	}
+	// Counter mirrors of the histogram above: the central telemetry service
+	// ingests counters, not histograms, so its dashboard token-sum aggregates
+	// read these. Same base dimensions (no token.type — the name carries it).
+	if snap.Input > 0 && r.factory.meters.TokensInputTotal != nil {
+		r.factory.meters.TokensInputTotal.Add(ctx, int64(snap.Input), metric.WithAttributes(base...))
+	}
+	if snap.Output > 0 && r.factory.meters.TokensOutputTotal != nil {
+		r.factory.meters.TokensOutputTotal.Add(ctx, int64(snap.Output), metric.WithAttributes(base...))
 	}
 	if snap.Cached > 0 && r.factory.meters.TokensCachedTotal != nil {
 		r.factory.meters.TokensCachedTotal.Add(ctx, int64(snap.Cached), metric.WithAttributes(base...))
