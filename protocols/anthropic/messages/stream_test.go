@@ -117,6 +117,20 @@ func TestUnmarshalStreamEvent_ContentBlockDelta_Signature(t *testing.T) {
 	})
 }
 
+func TestUnmarshalStreamEvent_ContentBlockDelta_Citations(t *testing.T) {
+	in := []byte(`{"delta":{"citation":{"cited_text":"the sky is blue","title":"Sky","type":"web_search_result_location","url":"https://e.com"},"type":"citations_delta"},"index":0,"type":"content_block_delta"}`)
+	streamRoundTrip(t, in, "content_block_delta", func(ev StreamEvent) {
+		cbd := ev.(*ContentBlockDeltaEvent)
+		cd, ok := cbd.Delta.(*CitationsDelta)
+		if !ok {
+			t.Fatalf("delta = %T %+v", cbd.Delta, cbd.Delta)
+		}
+		if cd.Citation.Type != "web_search_result_location" || cd.Citation.URL != "https://e.com" || cd.Citation.CitedText != "the sky is blue" {
+			t.Fatalf("citation = %+v", cd.Citation)
+		}
+	})
+}
+
 func TestUnmarshalStreamEvent_ContentBlockDelta_UnknownDelta(t *testing.T) {
 	in := []byte(`{"delta":{"future":"keep","type":"future_delta"},"index":0,"type":"content_block_delta"}`)
 	streamRoundTrip(t, in, "content_block_delta", func(ev StreamEvent) {
@@ -288,6 +302,7 @@ func TestStream_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(InputJSONDelta{}),
 		reflect.TypeOf(ThinkingDelta{}),
 		reflect.TypeOf(SignatureDelta{}),
+		reflect.TypeOf(CitationsDelta{}),
 		reflect.TypeOf(UnknownContentBlockDelta{}),
 	}
 	for _, rt := range types {
@@ -331,7 +346,7 @@ func TestStream_RegistryCoversAllConcreteTypes(t *testing.T) {
 		t.Fatalf("event registry must have a fallback")
 	}
 
-	wantDelta := map[string]bool{"text_delta": false, "input_json_delta": false, "thinking_delta": false, "signature_delta": false}
+	wantDelta := map[string]bool{"text_delta": false, "input_json_delta": false, "thinking_delta": false, "signature_delta": false, "citations_delta": false}
 	for k := range contentBlockDeltaRegistry.Factories {
 		if _, ok := wantDelta[k]; !ok {
 			t.Errorf("unexpected delta registry key %q", k)
@@ -378,6 +393,7 @@ func TestContentBlockDelta_DeltaTypeAccessors(t *testing.T) {
 		{InputJSONDelta{}, "input_json_delta"},
 		{ThinkingDelta{}, "thinking_delta"},
 		{SignatureDelta{}, "signature_delta"},
+		{CitationsDelta{}, "citations_delta"},
 		{UnknownContentBlockDelta{Type: "x"}, "x"},
 	}
 	for _, c := range cases {

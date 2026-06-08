@@ -543,6 +543,34 @@ func (d *SignatureDelta) UnmarshalJSON(data []byte) error { return models.Unmars
 // resulting object.
 func (d SignatureDelta) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(d) }
 
+// CitationsDelta carries one source citation appended to a text block as the
+// model streams cited / web-search results. The non-streaming response
+// collects these into TextBlock.Citations, so the rollup must accumulate them
+// rather than drop them. Unknown fields round-trip via the embedded
+// DynamicProperties.
+type CitationsDelta struct {
+	// Type is the wire "type" discriminator, always "citations_delta".
+	Type string `json:"type"`
+
+	// Citation is the single citation this delta appends to the block.
+	Citation Citation `json:"citation"`
+
+	models.DynamicProperties
+}
+
+// DeltaType returns the "citations_delta" discriminator.
+func (CitationsDelta) DeltaType() string { return "citations_delta" }
+
+func (CitationsDelta) isContentBlockDelta() {}
+
+// UnmarshalJSON decodes data into d, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (d *CitationsDelta) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, d) }
+
+// MarshalJSON encodes d and merges DynamicProperties.Extra back into the
+// resulting object.
+func (d CitationsDelta) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(d) }
+
 // UnknownContentBlockDelta preserves any delta whose "type" discriminator
 // this package has not modelled. Type carries the unknown discriminator
 // verbatim and every other JSON field lands in DynamicProperties.Extra so
@@ -576,6 +604,7 @@ var contentBlockDeltaRegistry = models.PolymorphicRegistry[ContentBlockDelta]{
 		"input_json_delta": func() ContentBlockDelta { return &InputJSONDelta{} },
 		"thinking_delta":   func() ContentBlockDelta { return &ThinkingDelta{} },
 		"signature_delta":  func() ContentBlockDelta { return &SignatureDelta{} },
+		"citations_delta":  func() ContentBlockDelta { return &CitationsDelta{} },
 	},
 	Fallback: func(disc string) ContentBlockDelta { return &UnknownContentBlockDelta{Type: disc} },
 }

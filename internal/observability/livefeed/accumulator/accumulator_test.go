@@ -714,3 +714,145 @@ func TestAccumulate_OpenAIChat_RoleFallsThroughFromFirstDelta(t *testing.T) {
 		t.Errorf("Content=%q expected absent", resp.Choices[0].Message.Content)
 	}
 }
+
+// --- regression coverage for the rollup-fidelity audit (modeled-field loss) ---
+
+// TestAccumulate_AnthropicMessages_AccumulatesCitations proves citations_delta
+// events are collected onto TextBlock.Citations rather than dropped.
+func TestAccumulate_AnthropicMessages_AccumulatesCitations(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The sky is blue."}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://e.com","title":"Sky","cited_text":"blue"}}}` + "\n\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	resp := parseAnthropic(t, got.Assembled)
+	tb, ok := resp.Content[0].(*messages.TextBlock)
+	if !ok {
+		t.Fatalf("block[0] = %T", resp.Content[0])
+	}
+	if len(tb.Citations) != 1 {
+		t.Fatalf("citations = %d want 1 (citations_delta dropped)", len(tb.Citations))
+	}
+	if tb.Citations[0].URL != "https://e.com" || tb.Citations[0].CitedText != "blue" {
+		t.Errorf("citation = %+v", tb.Citations[0])
+	}
+}
+
+// TestAccumulate_AnthropicMessages_PreservesToolCaller proves the modeled
+// ToolUseBlock.Caller (a typed field, not DynamicProperties) survives assembly.
+func TestAccumulate_AnthropicMessages_PreservesToolCaller(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Edit","input":{},"caller":{"type":"direct"}}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":1}"}}` + "\n\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	resp := parseAnthropic(t, got.Assembled)
+	tu, ok := resp.Content[0].(*messages.ToolUseBlock)
+	if !ok {
+		t.Fatalf("block[0] = %T", resp.Content[0])
+	}
+	if tu.Caller == nil {
+		t.Fatalf("tool caller dropped on assembly")
+	}
+	callerJSON, _ := json.Marshal(tu.Caller)
+	if string(callerJSON) != `{"type":"direct"}` {
+		t.Errorf("caller = %s", callerJSON)
+	}
+	if string(tu.Input) != `{"a":1}` {
+		t.Errorf("input = %s", tu.Input)
+	}
+}
+
+// TestAccumulate_AnthropicMessages_UsageBreakdownsSurvive proves the modeled
+// output_tokens_details and server_tool_use, plus unmodeled usage fields
+// (iterations, via DynamicProperties), survive the terminal message_delta.
+func TestAccumulate_AnthropicMessages_UsageBreakdownsSurvive(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		`data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"x","content":[],"usage":{"input_tokens":5,"output_tokens":1}}}` + "\n\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42,"output_tokens_details":{"thinking_tokens":7},"server_tool_use":{"web_search_requests":3},"iterations":[{"output_tokens":42}]}}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	resp := parseAnthropic(t, got.Assembled)
+	if resp.Usage.OutputTokensDetails == nil || resp.Usage.OutputTokensDetails.ThinkingTokens == nil || *resp.Usage.OutputTokensDetails.ThinkingTokens != 7 {
+		t.Errorf("output_tokens_details dropped: %+v", resp.Usage.OutputTokensDetails)
+	}
+	if resp.Usage.ServerToolUse == nil || resp.Usage.ServerToolUse.WebSearchRequests == nil || *resp.Usage.ServerToolUse.WebSearchRequests != 3 {
+		t.Errorf("server_tool_use dropped: %+v", resp.Usage.ServerToolUse)
+	}
+	if len(resp.Usage.Extra["iterations"]) == 0 {
+		t.Errorf("unmodeled usage field 'iterations' dropped: %v", resp.Usage.Extra)
+	}
+}
+
+// TestAccumulate_AnthropicMessages_UsageIsCumulativeNotSummed is the billing
+// guard: message_delta.usage carries final cumulative totals, so values must
+// REPLACE the message_start placeholders, never accumulate. A "+=" regression
+// would double cache_read (identical in both events) and over-count output.
+func TestAccumulate_AnthropicMessages_UsageIsCumulativeNotSummed(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		`data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"x","content":[],"usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":2000}}}` + "\n\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":10,"output_tokens":50,"cache_read_input_tokens":2000}}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	resp := parseAnthropic(t, got.Assembled)
+	if resp.Usage.OutputTokens != 50 {
+		t.Errorf("output_tokens = %d want 50 (terminal value)", resp.Usage.OutputTokens)
+	}
+	if resp.Usage.InputTokens != 10 {
+		t.Errorf("input_tokens = %d want 10 (not summed to 20)", resp.Usage.InputTokens)
+	}
+	if resp.Usage.CacheReadInputTokens == nil || *resp.Usage.CacheReadInputTokens != 2000 {
+		t.Errorf("cache_read = %v want 2000 (a += regression would double it to 4000 — billing corruption)", resp.Usage.CacheReadInputTokens)
+	}
+}
+
+// TestAccumulate_AnthropicMessages_TruncatedToolInputStaysValidJSON proves a
+// stream truncated mid input_json_delta does not emit a structurally-invalid
+// body: the unterminated fragment is rejected in favour of valid JSON.
+func TestAccumulate_AnthropicMessages_TruncatedToolInputStaysValidJSON(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	resp := parseAnthropic(t, got.Assembled) // would fail if body were invalid JSON
+	tu, ok := resp.Content[0].(*messages.ToolUseBlock)
+	if !ok {
+		t.Fatalf("block[0] = %T", resp.Content[0])
+	}
+	if !json.Valid(tu.Input) {
+		t.Fatalf("truncated tool input is not valid JSON: %s", tu.Input)
+	}
+}
+
+// TestAssemble_DefensiveFallbacksWhenRawMissing exercises the assemble()
+// fallback paths that build a fresh block when no content_block_start was
+// observed for an index (raw == nil) — a truncated/garbled capture. White-box
+// because the SSE path always seeds raw for tool_use/thinking.
+func TestAssemble_DefensiveFallbacksWhenRawMissing(t *testing.T) {
+	t.Parallel()
+	s := newAnthropicState()
+	for i, kind := range map[int]string{0: "text", 1: "tool_use", 2: "thinking"} {
+		s.blocks[i] = &anthropicBlockState{kind: kind} // raw nil on purpose
+		s.blockOrder = append(s.blockOrder, i)
+	}
+	resp := s.assemble()
+	if len(resp.Content) != 3 {
+		t.Fatalf("content = %d want 3", len(resp.Content))
+	}
+	for _, blk := range resp.Content {
+		switch b := blk.(type) {
+		case *messages.TextBlock:
+		case *messages.ToolUseBlock:
+			if string(b.Input) != "{}" {
+				t.Errorf("tool_use fallback input = %s want {}", b.Input)
+			}
+		case *messages.ThinkingBlock:
+		default:
+			t.Errorf("unexpected block type %T", blk)
+		}
+	}
+}
