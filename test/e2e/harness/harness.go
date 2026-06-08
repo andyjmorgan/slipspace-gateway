@@ -563,9 +563,16 @@ func (h *Harness) injectWebhookConnector(dst string) error {
 	// Inject the binding as the FIRST subkey under `  dev:\n` so the
 	// match works against both config-dev/policy.yaml and any
 	// test-supplied PolicyYAML that defines the same configuration.
+	//
+	// The binding sub-keys align under `connector` (8 spaces); an explicit
+	// per-binding cap is appended only when the test asks for one, so the
+	// default path keeps the cap unset (no cap under the current policy).
 	const devKey = "  dev:\n"
-	const devBindingInsert = devKey + "    connector_bindings:\n      - connector: harness-webhook\n"
-	content = strings.Replace(content, devKey, devBindingInsert, 1)
+	binding := devKey + "    connector_bindings:\n      - connector: harness-webhook\n"
+	if h.opts.WebhookMaxBodyBytes > 0 {
+		binding += fmt.Sprintf("        max_body_bytes: %d\n", h.opts.WebhookMaxBodyBytes)
+	}
+	content = strings.Replace(content, devKey, binding, 1)
 
 	// The webhook connector is a real-time, non-spooled pusher: it POSTs one
 	// cc.Record JSON per request to the capture server (no rotation — that's a
