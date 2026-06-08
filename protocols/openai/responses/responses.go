@@ -30,9 +30,10 @@ type ResponsesRequest struct {
 	// Instructions is the system-style prompt prefixed to the conversation.
 	Instructions *string `json:"instructions,omitempty"`
 
-	// Tools advertises the function/built-in tool catalogue the model may
-	// call.
-	Tools []Tool `json:"tools,omitempty"`
+	// Tools advertises the function/built-in/custom tool catalogue the model
+	// may call. The array is polymorphic on each tool's "type"; ToolList
+	// dispatches to the concrete ToolDefinition variants (see tool.go).
+	Tools ToolList `json:"tools,omitempty"`
 
 	// ToolChoice is OpenAI's polymorphic tool-selection field: either a
 	// string ("auto"/"none"/"required") or an object pinning a specific
@@ -295,41 +296,6 @@ func (r *ResponsesResponse) UnmarshalJSON(data []byte) error {
 // MarshalJSON encodes r and merges DynamicProperties.Extra back into the
 // resulting object.
 func (r ResponsesResponse) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(r) }
-
-// Tool is one tool exposed to the model on a ResponsesRequest — a function
-// declaration, a built-in tool, or a custom tool kind OpenAI adds later.
-// Unknown fields round-trip via the embedded DynamicProperties.
-type Tool struct {
-	// Type is the tool discriminator (e.g., "function", "web_search",
-	// "code_interpreter").
-	Type string `json:"type"`
-
-	// Name is the function identifier when Type == "function".
-	Name string `json:"name,omitempty"`
-
-	// Description is the natural-language description the model uses to
-	// decide when to call the tool.
-	Description string `json:"description,omitempty"`
-
-	// Parameters is the JSON-Schema document describing the function's
-	// arguments when Type == "function". Kept raw so callers can build or
-	// inspect schemas without going through a typed schema model.
-	Parameters json.RawMessage `json:"parameters,omitempty"`
-
-	// Strict requests strict JSON-Schema enforcement on the model's
-	// generated arguments.
-	Strict *bool `json:"strict,omitempty"`
-
-	models.DynamicProperties
-}
-
-// UnmarshalJSON decodes data into t, routing any field not declared on the
-// struct into DynamicProperties.Extra.
-func (t *Tool) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, t) }
-
-// MarshalJSON encodes t and merges DynamicProperties.Extra back into the
-// resulting object.
-func (t Tool) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(t) }
 
 // ReasoningOptions configures the model's reasoning behaviour on a
 // ResponsesRequest. Unknown fields round-trip via the embedded

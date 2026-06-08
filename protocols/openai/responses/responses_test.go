@@ -41,8 +41,12 @@ func TestResponsesRequest_ArrayInputWithReasoning(t *testing.T) {
 	if req.Reasoning == nil || req.Reasoning.Effort != "low" {
 		t.Fatalf("reasoning = %+v", req.Reasoning)
 	}
-	if len(req.Tools) != 1 || req.Tools[0].Name != "search" {
+	if len(req.Tools) != 1 {
 		t.Fatalf("tools = %+v", req.Tools)
+	}
+	fn, ok := req.Tools[0].(*FunctionTool)
+	if !ok || fn.Name != "search" {
+		t.Fatalf("tools[0] = %#v", req.Tools[0])
 	}
 	roundTripJSON(t, in, &req)
 }
@@ -416,7 +420,13 @@ func TestResponses_AllExportedFieldsHaveJSONTag(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeOf(ResponsesRequest{}),
 		reflect.TypeOf(ResponsesResponse{}),
-		reflect.TypeOf(Tool{}),
+		reflect.TypeOf(FunctionTool{}),
+		reflect.TypeOf(CustomTool{}),
+		reflect.TypeOf(CustomToolFormat{}),
+		reflect.TypeOf(ToolSearchTool{}),
+		reflect.TypeOf(WebSearchTool{}),
+		reflect.TypeOf(ImageGenerationTool{}),
+		reflect.TypeOf(UnknownTool{}),
 		reflect.TypeOf(ReasoningOptions{}),
 		reflect.TypeOf(ReasoningOutput{}),
 		reflect.TypeOf(Billing{}),
