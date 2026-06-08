@@ -31,12 +31,40 @@ func FuzzUnmarshalStreamEvent(f *testing.F) {
 	})
 }
 
+func FuzzUnmarshalTool(f *testing.F) {
+	seeds := []string{
+		`{"type":"function","name":"exec_command","strict":false,"parameters":{"type":"object"}}`,
+		`{"type":"custom","name":"apply_patch","format":{"type":"grammar","syntax":"lark","definition":"start: x"}}`,
+		`{"type":"tool_search","execution":"client","parameters":{"type":"object"}}`,
+		`{"type":"web_search","external_web_access":false,"search_content_types":["text","image"]}`,
+		`{"type":"image_generation","output_format":"png"}`,
+		`{"type":"future_tool","knob":1}`,
+		`{}`,
+		`null`,
+		`[]`,
+		`"string"`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, in string) {
+		v, err := UnmarshalTool([]byte(in))
+		if err != nil {
+			return
+		}
+		if _, err := json.Marshal(v); err != nil {
+			t.Fatalf("marshal after parse: %v\nin: %s", err, in)
+		}
+	})
+}
+
 func FuzzResponsesRequest(f *testing.F) {
 	seeds := []string{
 		`{"model":"m","input":"hi"}`,
 		`{"model":"m","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]}`,
 		`{"model":"m","input":"hi","reasoning":{"effort":"low"},"max_output_tokens":10}`,
 		`{"model":"m","input":"hi","parallel_tool_calls":true,"top_logprobs":5,"max_tool_calls":3,"service_tier":"flex","prompt_cache_key":"k","prompt_cache_retention":"24h","safety_identifier":"s","include":["reasoning.encrypted_content"],"text":{"format":{"type":"text"}}}`,
+		`{"model":"m","input":"hi","tools":[{"type":"function","name":"f"},{"type":"custom","name":"apply_patch","format":{"type":"grammar"}},{"type":"web_search"},{"type":"future_tool","k":1}]}`,
 		`{}`,
 	}
 	for _, s := range seeds {
