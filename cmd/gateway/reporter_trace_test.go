@@ -56,7 +56,7 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 		CorrelationID: "corr-1",
 		TokensIn:      10,
 		TokensOut:     5,
-	})
+	}, nil)
 
 	spans := sr.Ended()
 	if len(spans) != 1 {
@@ -79,14 +79,18 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 			t.Errorf("attr %s = %q (ok=%v), want %q", k, got.AsString(), ok, want)
 		}
 	}
-	// The gen_ai span carries no sluice.* beyond correlation_id — protocol
-	// and configuration now ride the Record (telemetry design channel
-	// boundary). Their presence on the span would re-smuggle gateway facts
-	// onto the GenAI feed.
-	for _, banned := range []string{observability.AttrSluiceProtocol, observability.AttrSluiceConfiguration} {
-		if _, ok := attrValue(attrs, banned); ok {
-			t.Errorf("attr %s must be absent from the gen_ai span (belongs on the Record)", banned)
-		}
+	// The gen_ai span now carries the bounded sluice.* gateway facts the
+	// central telemetry ingest reads to fill its request_events gen_ai-owned
+	// columns (it joins span↔Record by correlation_id). configuration +
+	// protocol ride the span; the full rule chain stays on the Record.
+	if v, ok := attrValue(attrs, observability.AttrSluiceConfiguration); !ok || v.AsString() != "dev" {
+		t.Errorf("sluice.configuration = %q (ok=%v), want dev", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceProtocol); !ok || v.AsString() != "chat_completions" {
+		t.Errorf("sluice.protocol = %q (ok=%v), want chat_completions", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceUpstreamStatus); !ok || v.AsInt64() != 200 {
+		t.Errorf("sluice.upstream_status = %d (ok=%v), want 200", v.AsInt64(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrGenAIUsageInputTokens); !ok || v.AsInt64() != 10 {
 		t.Errorf("input tokens = %d (ok=%v), want 10", v.AsInt64(), ok)
@@ -106,6 +110,74 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 	}
 }
 
+func TestEmitTrace_SluiceFactAttrs(t *testing.T) {
+	r, sr := traceHarness(t)
+	r.apiKeyName = "team-key"
+	r.method = "POST"
+	r.emitTrace(context.Background(), events.Request{
+		Provider:   "openai",
+		Protocol:   "chat",
+		Model:      "gpt-4o-mini",
+		Method:     "POST",
+		StatusCode: 200,
+		DurationMs: 10,
+		Tags:       []string{"billable", "team:research"},
+	}, []events.RuleMatched{
+		{RuleName: "redirect-qwen"},
+		{RuleName: "tag-billable"},
+		{RuleName: ""}, // empty names are skipped
+	})
+
+	attrs := sr.Ended()[0].Attributes()
+	if v, ok := attrValue(attrs, observability.AttrSluiceMethod); !ok || v.AsString() != "POST" {
+		t.Errorf("sluice.method = %q (ok=%v), want POST", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceAPIKeyName); !ok || v.AsString() != "team-key" {
+		t.Errorf("sluice.api_key_name = %q (ok=%v), want team-key", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceProtocol); !ok || v.AsString() != "chat" {
+		t.Errorf("sluice.protocol = %q (ok=%v), want chat", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceUpstreamStatus); !ok || v.AsInt64() != 200 {
+		t.Errorf("sluice.upstream_status = %d (ok=%v), want 200", v.AsInt64(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceTags); !ok {
+		t.Errorf("sluice.tags absent")
+	} else if got := v.AsStringSlice(); len(got) != 2 || got[0] != "billable" || got[1] != "team:research" {
+		t.Errorf("sluice.tags = %v, want [billable team:research]", got)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceRulesFired); !ok {
+		t.Errorf("sluice.rules_fired absent")
+	} else if got := v.AsStringSlice(); len(got) != 2 || got[0] != "redirect-qwen" || got[1] != "tag-billable" {
+		t.Errorf("sluice.rules_fired = %v, want [redirect-qwen tag-billable] (empty names skipped)", got)
+	}
+}
+
+func TestEmitTrace_SluiceFactAttrs_OmittedWhenAbsent(t *testing.T) {
+	// No api-key, no method, no tags, no rules — those attrs stay off the span.
+	r, sr := traceHarness(t)
+	r.apiKeyName = ""
+	r.method = ""
+	r.emitTrace(context.Background(), events.Request{
+		Provider:   "openai",
+		Protocol:   "chat_completions",
+		Model:      "gpt-4o-mini",
+		StatusCode: 200,
+		DurationMs: 5,
+	}, nil)
+	attrs := sr.Ended()[0].Attributes()
+	for _, k := range []string{
+		observability.AttrSluiceMethod,
+		observability.AttrSluiceAPIKeyName,
+		observability.AttrSluiceTags,
+		observability.AttrSluiceRulesFired,
+	} {
+		if _, ok := attrValue(attrs, k); ok {
+			t.Errorf("attr %s should be absent when its source is empty", k)
+		}
+	}
+}
+
 func TestEmitTrace_ErrorStatusSetsErrorType(t *testing.T) {
 	r, sr := traceHarness(t)
 	r.emitTrace(context.Background(), events.Request{
@@ -114,7 +186,7 @@ func TestEmitTrace_ErrorStatusSetsErrorType(t *testing.T) {
 		Model:      "gpt-4o-mini",
 		StatusCode: 503,
 		DurationMs: 10,
-	})
+	}, nil)
 	spans := sr.Ended()
 	if len(spans) != 1 {
 		t.Fatalf("len(spans) = %d, want 1", len(spans))
@@ -140,7 +212,7 @@ func TestEmitTrace_AttemptsBecomeChildSpans(t *testing.T) {
 			{Target: "primary", StartedAt: base, DurationMs: 80, StatusCode: 503, Outcome: "failure_status"},
 			{Target: "backup", StartedAt: base.Add(80 * time.Millisecond), DurationMs: 100, StatusCode: 200, Outcome: "success"},
 		},
-	})
+	}, nil)
 
 	spans := sr.Ended()
 	// Two children end before the parent.
@@ -185,7 +257,7 @@ func TestEmitTrace_ConversationID(t *testing.T) {
 		Model:      "gpt-4o-mini",
 		StatusCode: 200,
 		DurationMs: 10,
-	})
+	}, nil)
 	spans := sr.Ended()
 	if len(spans) != 1 {
 		t.Fatalf("len(spans) = %d, want 1", len(spans))
@@ -197,7 +269,7 @@ func TestEmitTrace_ConversationID(t *testing.T) {
 
 func TestEmitTrace_NoConversationIDWhenNoSession(t *testing.T) {
 	r, sr := traceHarness(t)
-	r.emitTrace(context.Background(), events.Request{Protocol: "chat_completions", StatusCode: 200, DurationMs: 1})
+	r.emitTrace(context.Background(), events.Request{Protocol: "chat_completions", StatusCode: 200, DurationMs: 1}, nil)
 	if _, ok := attrValue(sr.Ended()[0].Attributes(), observability.AttrGenAIConversationID); ok {
 		t.Errorf("gen_ai.conversation.id should be absent when no session resolved")
 	}
@@ -237,7 +309,7 @@ func TestEmitTrace_ClientConformanceAttrs(t *testing.T) {
 		TokensOut:           40,
 		TokensCached:        2000,
 		TokensCacheCreation: 50,
-	})
+	}, nil)
 
 	spans := sr.Ended()
 	if len(spans) != 1 {
@@ -310,7 +382,7 @@ func TestEmitTrace_OpenAIProviderAttrs(t *testing.T) {
 		Model:      "gpt-4o",
 		StatusCode: 200,
 		DurationMs: 50,
-	})
+	}, nil)
 
 	attrs := sr.Ended()[0].Attributes()
 	if v, ok := attrValue(attrs, observability.AttrOpenAIResponseServiceTier); !ok || v.AsString() != "default" {
@@ -352,7 +424,7 @@ func TestEmitTrace_ContentOnSpan(t *testing.T) {
 		Model:      "gpt-4o",
 		StatusCode: 200,
 		DurationMs: 10,
-	})
+	}, nil)
 
 	attrs := sr.Ended()[0].Attributes()
 	// On a span, content rides as JSON-string attributes. system_instructions
@@ -386,7 +458,7 @@ func TestEmitTrace_SpanContextReachesEvents(t *testing.T) {
 		started:       start,
 	}
 	ev := events.Request{Provider: "openai", Protocol: "chat_completions", Model: "gpt-4o", StatusCode: 200, DurationMs: 5}
-	traceCtx := r.emitTrace(context.Background(), ev)
+	traceCtx := r.emitTrace(context.Background(), ev, nil)
 	r.emitEvents(traceCtx, ev)
 
 	if sc := trace.SpanContextFromContext(traceCtx); !sc.IsValid() {
@@ -406,7 +478,7 @@ func TestEmitTrace_SpanContextReachesEvents(t *testing.T) {
 func TestEmitTrace_NilTracerReturnsOriginalCtx(t *testing.T) {
 	r := &reporterRun{factory: &reporterFactory{}, started: time.Now()}
 	ctx := context.Background()
-	if got := r.emitTrace(ctx, events.Request{}); got != ctx {
+	if got := r.emitTrace(ctx, events.Request{}, nil); got != ctx {
 		t.Error("nil tracer should return the original ctx unchanged")
 	}
 }
@@ -419,7 +491,7 @@ func TestEmitTrace_NonStreamingOmitsStreamAttrs(t *testing.T) {
 		Model:      "gpt-4o-mini",
 		StatusCode: 200,
 		DurationMs: 10,
-	})
+	}, nil)
 	attrs := sr.Ended()[0].Attributes()
 	if _, ok := attrValue(attrs, observability.AttrGenAIRequestStream); ok {
 		t.Error("gen_ai.request.stream should be absent on a non-streaming request")
@@ -435,12 +507,12 @@ func TestEmitTrace_NonStreamingOmitsStreamAttrs(t *testing.T) {
 func TestEmitTrace_NoTracerOrNoStartNoOp(t *testing.T) {
 	// nil tracer.
 	r := &reporterRun{factory: &reporterFactory{}, started: time.Now()}
-	r.emitTrace(context.Background(), events.Request{StatusCode: 200}) // must not panic
+	r.emitTrace(context.Background(), events.Request{StatusCode: 200}, nil) // must not panic
 
 	// zero start time.
 	r2, sr := traceHarness(t)
 	r2.started = time.Time{}
-	r2.emitTrace(context.Background(), events.Request{StatusCode: 200})
+	r2.emitTrace(context.Background(), events.Request{StatusCode: 200}, nil)
 	if got := len(sr.Ended()); got != 0 {
 		t.Errorf("spans = %d, want 0 when start time is zero", got)
 	}

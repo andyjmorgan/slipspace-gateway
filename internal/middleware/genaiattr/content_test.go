@@ -241,6 +241,192 @@ func TestExtractContent_PartEdgeCases(t *testing.T) {
 	}
 }
 
+// toolResponseOf returns the first tool_call_response part of the input turn,
+// or a zero Part when none is present.
+func toolResponseOf(c genaiattr.Content) genaiattr.Part {
+	if c.InputMessage == nil {
+		return genaiattr.Part{}
+	}
+	for _, p := range c.InputMessage.Parts {
+		if p.Type == "tool_call_response" {
+			return p
+		}
+	}
+	return genaiattr.Part{}
+}
+
+// TestExtractContent_ToolResponseCapture asserts a tool result is recorded as
+// a tool_call_response part on every protocol, using the REAL captured wire
+// shapes of a tool-continuation request (the turn where the client feeds the
+// tool's output back to the model). Pre-fix the OpenAI chat tool turn and the
+// Responses function_call_output were silently dropped; Gemini under role
+// "function" was dropped; Anthropic already worked (regression guard).
+func TestExtractContent_ToolResponseCapture(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		endpoint   string
+		raw        string
+		wantID     string
+		wantResult string // substring expected in Result
+	}{
+		{
+			// Real OpenAI chat capture: trailing role:"tool" message.
+			name:     "openai_chat",
+			endpoint: "chat_completions",
+			raw: `{
+				"messages": [
+					{"role": "user", "content": "What's the weather in Paris? Use the tool."},
+					{"role": "assistant", "annotations": [], "tool_calls": [{"id": "call_noziK0eYcDqsVyWYFAan0uXI", "function": {"arguments": "{\"location\":\"Paris\"}", "name": "get_weather"}, "type": "function"}]},
+					{"role": "tool", "tool_call_id": "call_noziK0eYcDqsVyWYFAan0uXI", "content": "18C and sunny"}
+				],
+				"model": "gpt-4o-mini",
+				"tools": [{"type": "function", "function": {"name": "get_weather", "description": "Get current weather for a city.", "parameters": {"type": "object"}}}]
+			}`,
+			wantID:     "call_noziK0eYcDqsVyWYFAan0uXI",
+			wantResult: "18C and sunny",
+		},
+		{
+			// Real OpenAI Responses capture: type:"function_call_output" item
+			// (no role), preceded by user + function_call items.
+			name:     "openai_responses",
+			endpoint: "responses",
+			raw: `{
+				"input": [
+					{"role": "user", "content": "What's the weather in Paris? Use the tool."},
+					{"arguments": "{\"location\":\"Paris\"}", "call_id": "call_E94IoACfD2nvIxqrFRJxwQEQ", "name": "get_weather", "type": "function_call", "id": "fc_0e91", "status": "completed"},
+					{"type": "function_call_output", "call_id": "call_E94IoACfD2nvIxqrFRJxwQEQ", "output": "18C and sunny"}
+				],
+				"model": "gpt-4o-mini"
+			}`,
+			wantID:     "call_E94IoACfD2nvIxqrFRJxwQEQ",
+			wantResult: "18C and sunny",
+		},
+		{
+			// Real Gemini capture: functionResponse part under role "user".
+			name:     "gemini_user_role",
+			endpoint: "generate_content",
+			raw: `{
+				"contents": [
+					{"parts": [{"text": "What's the weather in Paris? Use the tool."}], "role": "user"},
+					{"parts": [{"functionCall": {"args": {"location": "Paris"}, "name": "get_weather"}}], "role": "model"},
+					{"parts": [{"functionResponse": {"name": "get_weather", "response": {"result": "18C and sunny"}}}], "role": "user"}
+				]
+			}`,
+			wantID:     "",
+			wantResult: "18C and sunny",
+		},
+		{
+			// Gemini under the explicit "function" role (some clients use it).
+			name:     "gemini_function_role",
+			endpoint: "generate_content",
+			raw: `{
+				"contents": [
+					{"parts": [{"functionResponse": {"name": "get_weather", "response": {"result": "18C and sunny"}}}], "role": "function"}
+				]
+			}`,
+			wantID:     "",
+			wantResult: "18C and sunny",
+		},
+		{
+			// Anthropic tool_result block in a user turn (regression guard).
+			name:     "anthropic",
+			endpoint: "messages",
+			raw: `{
+				"messages": [
+					{"role": "user", "content": "What's the weather in Paris? Use the tool."},
+					{"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": {"location": "Paris"}}]},
+					{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01", "content": "18C and sunny"}]}
+				]
+			}`,
+			wantID:     "toolu_01",
+			wantResult: "18C and sunny",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := genaiattr.ExtractContent(tc.endpoint, []byte(tc.raw))
+			p := toolResponseOf(c)
+			if p.Type != "tool_call_response" {
+				t.Fatalf("no tool_call_response part captured; input turn = %+v", c.InputMessage)
+			}
+			if p.ID != tc.wantID {
+				t.Errorf("tool_call_response ID = %q, want %q", p.ID, tc.wantID)
+			}
+			if !strings.Contains(p.Result, tc.wantResult) {
+				t.Errorf("tool_call_response Result = %q, want substring %q", p.Result, tc.wantResult)
+			}
+		})
+	}
+}
+
+// TestExtractContent_OpenAIChat_MultipleToolResults asserts that a parallel
+// tool-call continuation — a contiguous trailing run of several role:"tool"
+// messages — captures every tool result as its own tool_call_response part in
+// the single input turn.
+func TestExtractContent_OpenAIChat_MultipleToolResults(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"messages":[
+		{"role":"user","content":"weather in two cities"},
+		{"role":"assistant","tool_calls":[{"id":"call_a","type":"function","function":{"name":"w","arguments":"{}"}},{"id":"call_b","type":"function","function":{"name":"w","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_a","content":"sunny"},
+		{"role":"tool","tool_call_id":"call_b","content":"rainy"}
+	]}`)
+	c := genaiattr.ExtractContent("chat_completions", raw)
+	if c.InputMessage == nil || len(c.InputMessage.Parts) != 2 {
+		t.Fatalf("want 2 tool_call_response parts, got %+v", c.InputMessage)
+	}
+	for i, want := range []struct{ id, result string }{{"call_a", "sunny"}, {"call_b", "rainy"}} {
+		p := c.InputMessage.Parts[i]
+		if p.Type != "tool_call_response" || p.ID != want.id || p.Result != want.result {
+			t.Errorf("part %d = %+v, want id=%q result=%q", i, p, want.id, want.result)
+		}
+	}
+}
+
+// TestExtractContent_OpenAIChat_UserAfterToolWins asserts the accumulator
+// resolves to the last input turn: a user message following a tool run resets
+// the group and becomes the input turn.
+func TestExtractContent_OpenAIChat_UserAfterToolWins(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"messages":[
+		{"role":"tool","tool_call_id":"call_a","content":"sunny"},
+		{"role":"user","content":"and tomorrow?"}
+	]}`)
+	c := genaiattr.ExtractContent("chat_completions", raw)
+	if userText(c) != "and tomorrow?" {
+		t.Errorf("user turn after tool run should win, got %+v", c.InputMessage)
+	}
+	if p := toolResponseOf(c); p.Type == "tool_call_response" {
+		t.Errorf("tool turn should have been superseded by the trailing user turn, got %+v", p)
+	}
+}
+
+// FuzzExtractContent asserts ExtractContent never panics across the four
+// protocols for arbitrary bodies, seeded with the real tool-continuation wire
+// shapes whose value spaces this change touched (trailing tool-message runs,
+// function_call_output items, function-role functionResponse turns).
+func FuzzExtractContent(f *testing.F) {
+	f.Add("chat_completions", `{"messages":[{"role":"tool","tool_call_id":"c","content":"r"}]}`)
+	f.Add("responses", `{"input":[{"type":"function_call_output","call_id":"c","output":"r"}]}`)
+	f.Add("generate_content", `{"contents":[{"role":"function","parts":[{"functionResponse":{"name":"f","response":{"result":"r"}}}]}]}`)
+	f.Add("messages", `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"r"}]}]}`)
+	f.Add("chat_completions", `{"messages":[{"role":"tool"},{"role":"tool"},{"role":"user","content":"x"}]}`)
+	f.Add("responses", `{"input":[{"type":"function_call_output"},{"role":"user","content":"x"}]}`)
+	f.Add("chat_completions", `not json`)
+	f.Fuzz(func(t *testing.T, endpoint, raw string) {
+		// Property: parsing arbitrary input never panics; the result is a
+		// well-formed Content (an input turn, when present, is non-nil).
+		c := genaiattr.ExtractContent(endpoint, []byte(raw))
+		_ = c.SystemInstructions
+		_ = c.ToolDefinitions
+		if c.InputMessage != nil {
+			_ = c.InputMessage.Parts
+		}
+	})
+}
+
 func TestExtractContent_EdgeCases(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
