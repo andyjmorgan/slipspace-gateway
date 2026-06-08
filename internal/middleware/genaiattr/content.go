@@ -111,8 +111,9 @@ func ExtractContent(endpoint string, requestRaw []byte) Content {
 func openAIChatContent(raw []byte) Content {
 	var body struct {
 		Messages []struct {
-			Role    string          `json:"role"`
-			Content json.RawMessage `json:"content"`
+			Role       string          `json:"role"`
+			Content    json.RawMessage `json:"content"`
+			ToolCallID string          `json:"tool_call_id"`
 		} `json:"messages"`
 		Tools json.RawMessage `json:"tools"`
 	}
@@ -120,14 +121,36 @@ func openAIChatContent(raw []byte) Content {
 		return Content{}
 	}
 	c := Content{ToolDefinitions: openAIToolDefs(body.Tools)}
+	// The latest input turn is either the last user message or the contiguous
+	// trailing run of role:"tool" messages (a tool-continuation request, where
+	// the input turn the assistant is responding to is that run of tool
+	// results). The accumulator keeps the last of whichever appeared most
+	// recently — a user message resets any in-progress tool group, and a tool
+	// message appends to the group, replacing a prior user turn.
+	var toolTurn *Message
 	for _, m := range body.Messages {
 		switch m.Role {
 		case "system", "developer":
 			c.SystemInstructions = append(c.SystemInstructions, contentParts(m.Content)...)
 		case "user":
 			// Latest user turn wins; keep overwriting so the last user
-			// message is what survives (bounded to one turn).
+			// message is what survives (bounded to one turn). A user turn ends
+			// any trailing tool-message group seen so far.
 			c.InputMessage = &Message{Role: "user", Parts: contentParts(m.Content)}
+			toolTurn = nil
+		case "tool":
+			// role:"tool" carries one tool result ({tool_call_id, content}).
+			// Accumulate the contiguous trailing run into a single tool turn;
+			// the run wins over any earlier user turn (it is the latest input).
+			if toolTurn == nil {
+				toolTurn = &Message{Role: "tool"}
+			}
+			toolTurn.Parts = append(toolTurn.Parts, Part{Type: "tool_call_response", ID: m.ToolCallID, Result: textFromContent(m.Content)})
+			c.InputMessage = toolTurn
+		default:
+			// assistant (or any other) message breaks the contiguous tool run
+			// without becoming the input turn.
+			toolTurn = nil
 		}
 	}
 	return c
@@ -158,15 +181,40 @@ func openAIResponsesContent(raw []byte) Content {
 	}
 	var items []struct {
 		Role    string          `json:"role"`
+		Type    string          `json:"type"`
+		CallID  string          `json:"call_id"`
+		Output  json.RawMessage `json:"output"`
 		Content json.RawMessage `json:"content"`
 	}
 	if json.Unmarshal(body.Input, &items) == nil {
+		// As with chat, the latest input turn is either the last user item or
+		// the contiguous trailing run of function_call_output items (a tool-
+		// continuation request). function_call_output items carry no role —
+		// they are identified by type — so they must be matched before the
+		// role-keyed branches, which would otherwise clobber the input turn
+		// with empty parts.
+		var toolTurn *Message
 		for _, it := range items {
+			if it.Type == "function_call_output" {
+				// {type:"function_call_output", call_id, output}.
+				if toolTurn == nil {
+					toolTurn = &Message{Role: "tool"}
+				}
+				toolTurn.Parts = append(toolTurn.Parts, Part{Type: "tool_call_response", ID: it.CallID, Result: textFromContent(it.Output)})
+				c.InputMessage = toolTurn
+				continue
+			}
 			switch it.Role {
 			case "system", "developer":
 				c.SystemInstructions = append(c.SystemInstructions, contentParts(it.Content)...)
+				toolTurn = nil
 			case "user", "":
 				c.InputMessage = &Message{Role: "user", Parts: contentParts(it.Content)}
+				toolTurn = nil
+			default:
+				// function_call items (the assistant's tool call) and any other
+				// typed item break the contiguous tool-output run.
+				toolTurn = nil
 			}
 		}
 	}
@@ -216,8 +264,12 @@ func geminiContent(raw []byte) Content {
 		c.SystemInstructions = geminiParts(body.SystemInstruction.Parts)
 	}
 	for _, m := range body.Contents {
-		// Gemini uses "user" for the human turn; the model turn is "model".
-		if m.Role == "user" || m.Role == "" {
+		// Gemini uses "user" for the human turn and "model" for the model turn.
+		// A tool-continuation request's input turn carries functionResponse
+		// parts under role "user" (the SDK convention) or, on some clients,
+		// the explicit "function" role — accept both so the tool result is
+		// captured rather than dropped.
+		if m.Role == "user" || m.Role == "" || m.Role == "function" {
 			c.InputMessage = &Message{Role: "user", Parts: geminiParts(m.Parts)}
 		}
 	}

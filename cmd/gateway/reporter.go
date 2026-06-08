@@ -535,7 +535,7 @@ func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Reques
 	entryID := r.appendLiveFeed(ev, matches)
 	r.captureBody(ctx, entryID, assembled, assemblyPartial)
 	r.enqueueRecord(ctx, ev, matches, assembled, assemblyPartial)
-	traceCtx := r.emitTrace(ctx, ev)
+	traceCtx := r.emitTrace(ctx, ev, matches)
 	r.emitEvents(traceCtx, ev)
 
 	logger := observability.FromContext(ctx)
@@ -1079,20 +1079,23 @@ func (r *reporterRun) serverAttrs() []attribute.KeyValue {
 // events within it — the log records then pick up the span's trace_id/span_id
 // for native trace↔logs correlation. Returns the original ctx unchanged when
 // no span is recorded.
-func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.Context {
+func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches []events.RuleMatched) context.Context {
 	if r.factory.tracer == nil || r.started.IsZero() {
 		return ctx
 	}
 	op := observability.OperationNameForProtocol(ev.Protocol)
 	model := sanitiseModelLabel(ev.Model)
 
-	// The gen_ai span carries GenAI semconv only (model / provider /
-	// operation / usage / duration) plus the standard server.* and HTTP
-	// status. The sole Sluice-specific attribute permitted is
-	// correlation_id, the stitch join key — every other gateway fact
-	// (endpoint, configuration, rules, attempts, api-key, ...) rides the
-	// Record (channel 3), not the span. See the telemetry design note's
-	// "Channel boundary": no other sluice.* is smuggled onto a gen_ai span.
+	// The gen_ai span carries GenAI semconv (model / provider / operation /
+	// usage / duration) plus the standard server.* and HTTP status, and a
+	// bounded set of sluice.* gateway facts the central telemetry ingest reads
+	// to populate the gen_ai-owned columns of its request_events view. The
+	// ingest COALESCEs the span feed with the Record feed by correlation_id
+	// (invariant #4) — correlation_id is the join key, and the gateway scalars
+	// below (configuration, protocol, method, api-key, upstream status, tags,
+	// fired-rule names) ride the span so a span-only consumer still renders the
+	// console row. The Record remains the audit-grade carrier with the full
+	// rule chain, bodies, and attempts; the span carries names/scalars only.
 	attrs := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIOperationName, op),
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),
@@ -1100,6 +1103,7 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 		attribute.Int(observability.AttrHTTPResponseStatusCode, ev.StatusCode),
 	}
 	attrs = append(attrs, r.serverAttrs()...)
+	attrs = r.appendSluiceFactAttrs(attrs, ev, matches)
 	// gen_ai.request.stream is conditionally required iff the request is
 	// streaming; gen_ai.response.time_to_first_chunk is the streaming-only
 	// span companion to the TTFC metric.
@@ -1172,6 +1176,55 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request) context.
 	// The SpanContext remains valid in parentCtx after End; emitting the log
 	// events with it attaches trace_id/span_id to the records.
 	return parentCtx
+}
+
+// appendSluiceFactAttrs adds the bounded set of gateway facts the central
+// telemetry ingest reads off the span to fill its request_events
+// gen_ai-owned columns: the resolved configuration, the precise protocol, the
+// inbound method, the api-key name, the upstream status, the post-rule tag
+// set, and the fired-rule names. correlation_id (the stitch join key) is
+// appended by the caller. Each field is emitted only when populated so the
+// span stays sparse for requests that bypassed rules / carried no key name.
+// Names/scalars only — the full rule chain (actions, termination) stays on the
+// Record (invariant #4).
+func (r *reporterRun) appendSluiceFactAttrs(attrs []attribute.KeyValue, ev events.Request, matches []events.RuleMatched) []attribute.KeyValue {
+	if r.configuration != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceConfiguration, r.configuration))
+	}
+	if ev.Protocol != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceProtocol, ev.Protocol))
+	}
+	if ev.Method != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceMethod, ev.Method))
+	}
+	if r.apiKeyName != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceAPIKeyName, r.apiKeyName))
+	}
+	if ev.StatusCode != 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrSluiceUpstreamStatus, ev.StatusCode))
+	}
+	if len(ev.Tags) > 0 {
+		attrs = append(attrs, attribute.StringSlice(observability.AttrSluiceTags, ev.Tags))
+	}
+	if names := ruleNames(matches); len(names) > 0 {
+		attrs = append(attrs, attribute.StringSlice(observability.AttrSluiceRulesFired, names))
+	}
+	return attrs
+}
+
+// ruleNames extracts the ordered fired-rule names from the drained match set,
+// names only — the span carries the names; the Record carries the full chain.
+func ruleNames(matches []events.RuleMatched) []string {
+	if len(matches) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if m.RuleName != "" {
+			names = append(names, m.RuleName)
+		}
+	}
+	return names
 }
 
 // emitAttemptSpan synthesises one child span for a resilience attempt,
