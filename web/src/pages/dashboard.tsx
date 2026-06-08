@@ -100,7 +100,7 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
 
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         <KPI
           label="Requests"
           value={fmt.compact(d.totals.requests)}
@@ -111,11 +111,6 @@ function DashboardBody({ data: d, window }: { data: DashboardSummary; window: Da
           value={fmt.pct(d.rates.error_rate)}
           sub={`${(successRate * 100).toFixed(2)}% success`}
           accent={errAccent}
-        />
-        <KPI
-          label="p95 latency"
-          value={fmt.ms(d.latency_ms.p95)}
-          sub={`p50 ${fmt.ms(d.latency_ms.p50)} · p99 ${fmt.ms(d.latency_ms.p99)}`}
         />
         <KPI
           label="Requests / sec"
@@ -255,7 +250,7 @@ function ByProviderStrip({ rows }: { rows: DashboardProviderRow[] }) {
       <PanelHead title="Traffic by provider" sub="requests · 24h" />
       <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
-          <div key={r.provider} className="grid grid-cols-[110px_1fr_auto_auto_auto] items-center gap-3">
+          <div key={r.provider} className="grid grid-cols-[110px_1fr_auto_auto] items-center gap-3">
             <div>
               <ProviderChip name={r.provider} />
             </div>
@@ -275,9 +270,6 @@ function ByProviderStrip({ rows }: { rows: DashboardProviderRow[] }) {
             >
               {fmt.pct(r.error_rate, 1)}
             </div>
-            <div className="mono tnum text-[11.5px] text-right w-12 text-[color:var(--text-3)]">
-              {fmt.ms(r.p95_latency_ms)}
-            </div>
           </div>
         ))}
       </div>
@@ -296,7 +288,7 @@ function ByProtocolStrip({ rows, window }: { rows: DashboardProtocolRow[]; windo
         {rows.map((r) => (
           <div
             key={`${r.provider}.${r.protocol}`}
-            className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3 min-w-[30rem]"
+            className="grid grid-cols-[170px_1fr_auto_auto] items-center gap-3 min-w-[26rem]"
           >
             <div className="flex items-center gap-2 min-w-0">
               <ProviderChip name={r.provider} />
@@ -318,9 +310,6 @@ function ByProtocolStrip({ rows, window }: { rows: DashboardProtocolRow[]; windo
             >
               {fmt.pct(r.error_rate, 1)}
             </div>
-            <div className="mono tnum text-[11.5px] text-right w-12 text-[color:var(--text-3)]">
-              {fmt.ms(r.p95_latency_ms)}
-            </div>
           </div>
         ))}
       </div>
@@ -339,7 +328,7 @@ function ByConfigurationStrip({ rows, window }: { rows: DashboardConfigurationRo
       <PanelHead title="Traffic by configuration" sub={sub} />
       <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
         {rows.map((r) => (
-          <div key={r.configuration} className="grid grid-cols-[170px_1fr_auto_auto_auto] items-center gap-3 min-w-[30rem]">
+          <div key={r.configuration} className="grid grid-cols-[170px_1fr_auto_auto] items-center gap-3 min-w-[26rem]">
             <div className="mono text-[12px] truncate" title={r.configuration}>
               {r.configuration}
             </div>
@@ -358,9 +347,6 @@ function ByConfigurationStrip({ rows, window }: { rows: DashboardConfigurationRo
               style={{ color: r.error_rate > 0.04 ? "var(--err)" : "var(--text-3)" }}
             >
               {fmt.pct(r.error_rate, 1)}
-            </div>
-            <div className="mono tnum text-[11.5px] text-right w-12 text-[color:var(--text-3)]">
-              {fmt.ms(r.p95_latency_ms)}
             </div>
           </div>
         ))}
