@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -115,6 +116,87 @@ func TestAPIAuthMatrix(t *testing.T) {
 				t.Errorf("401 carried WWW-Authenticate %q; must be a bare 401", resp.Header().Get("WWW-Authenticate"))
 			}
 		})
+	}
+}
+
+// TestAuthCache_MemoizesSuccess proves the bcrypt result is cached: after one
+// successful verify we rotate the stored hash out from under the server, and the
+// already-verified credential still passes (it can only do so by skipping the
+// now-mismatched bcrypt), while the new password also works via a fresh hash.
+func TestAuthCache_MemoizesSuccess(t *testing.T) {
+	s := newTestServer(t, nil)
+
+	if !s.credentialsValid("admin", "hunter2") {
+		t.Fatal("correct credential rejected")
+	}
+	// Rotate the configured hash to a DIFFERENT password. bcrypt against this
+	// hash would now reject "hunter2".
+	rotated, err := bcrypt.GenerateFromPassword([]byte("changed"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	s.console.PasswordHash = string(rotated)
+
+	if !s.credentialsValid("admin", "hunter2") {
+		t.Error("previously-verified credential rejected after hash rotation; cache not consulted")
+	}
+	if !s.credentialsValid("admin", "changed") {
+		t.Error("new password rejected; bcrypt miss path broken")
+	}
+}
+
+// TestAuthCache_OnlyCachesSuccess confirms wrong credentials never populate the
+// cache, so an attacker cannot grow the map with distinct guesses.
+func TestAuthCache_OnlyCachesSuccess(t *testing.T) {
+	s := newTestServer(t, nil)
+
+	for _, pass := range []string{"nope", "wrong", "guess"} {
+		if s.credentialsValid("admin", pass) {
+			t.Fatalf("wrong password %q accepted", pass)
+		}
+	}
+	if n := len(s.auth.entries); n != 0 {
+		t.Errorf("cache holds %d entries after only-failed attempts, want 0", n)
+	}
+	if !s.credentialsValid("admin", "hunter2") {
+		t.Fatal("correct credential rejected")
+	}
+	if n := len(s.auth.entries); n != 1 {
+		t.Errorf("cache holds %d entries after one success, want 1", n)
+	}
+}
+
+// TestAuthCache_Expiry covers the lazy-expiry lookup: a live entry is valid, an
+// expired one reports invalid and is dropped, a missing key is invalid.
+func TestAuthCache_Expiry(t *testing.T) {
+	var c authCache
+	if c.valid("absent") {
+		t.Error("missing key reported valid")
+	}
+	c.store("live", time.Now().Add(time.Minute))
+	if !c.valid("live") {
+		t.Error("live entry reported invalid")
+	}
+	c.store("stale", time.Now().Add(-time.Second))
+	if c.valid("stale") {
+		t.Error("expired entry reported valid")
+	}
+	if _, ok := c.entries["stale"]; ok {
+		t.Error("expired entry not dropped on lookup")
+	}
+}
+
+// TestCredentialKey_Distinct verifies the NUL-join prevents (user, pass) pairs
+// that concatenate to the same string from colliding.
+func TestCredentialKey_Distinct(t *testing.T) {
+	first := credentialKey("admin", "hunter2")
+	again := credentialKey("admin", "hunter2")
+	if first != again {
+		t.Error("same credential produced different keys")
+	}
+	// Without the NUL separator, ("ab","c") and ("a","bc") would collide.
+	if credentialKey("ab", "c") == credentialKey("a", "bc") {
+		t.Error("ambiguous concatenation collided")
 	}
 }
 

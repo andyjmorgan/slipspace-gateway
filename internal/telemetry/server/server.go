@@ -7,10 +7,13 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -41,6 +44,11 @@ type Server struct {
 	// the event table on every request; refreshed once past its TTL. See
 	// cachedFacets.
 	facets facetsCache
+	// auth memoizes successful credential verifications so the cost-10 bcrypt
+	// doesn't run on every console request. The SPA sends the Authorization
+	// header on every fetch; without this, each call paid ~one bcrypt of pure
+	// CPU. See credentialsValid / authCache.
+	auth authCache
 }
 
 // New builds the console server. store backs the readiness probe; queries backs
@@ -117,13 +125,74 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 	})
 }
 
-// credentialsValid checks user/pass against the configured console creds.
+// authCacheTTL bounds how long a verified credential stays cached before its
+// next request re-runs bcrypt. Short enough that rotating the console password
+// takes effect within minutes, long enough that a browsing session pays bcrypt
+// at most once per window rather than once per fetch.
+const authCacheTTL = 5 * time.Minute
+
+// authCache memoizes successful credential verifications behind a mutex, keyed
+// by a SHA-256 of the presented credential. Only successes are cached: a wrong
+// password always pays the full bcrypt, which preserves brute-force cost and
+// bounds the map to the number of valid credentials (one, plus any in-flight
+// rotation) rather than letting an attacker grow it with distinct guesses.
+type authCache struct {
+	mu      sync.Mutex
+	entries map[string]time.Time // credential digest -> expiry
+}
+
+// credentialsValid checks user/pass against the configured console creds. A
+// previously-verified credential is served from authCache without re-hashing;
+// the bcrypt (and constant-time username compare) only runs on a cache miss.
 func (s *Server) credentialsValid(user, pass string) bool {
+	key := credentialKey(user, pass)
+	if s.auth.valid(key) {
+		return true
+	}
 	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(s.console.Username)) == 1
 	passErr := bcrypt.CompareHashAndPassword([]byte(s.console.PasswordHash), []byte(pass))
 	// Evaluate both branches regardless so a wrong username and a wrong
 	// password cost the same.
-	return userOK && passErr == nil
+	ok := userOK && passErr == nil
+	if ok {
+		s.auth.store(key, time.Now().Add(authCacheTTL))
+	}
+	return ok
+}
+
+// credentialKey derives the cache key for a credential. The username and
+// password are joined by a NUL (which cannot appear in either) so distinct
+// pairs cannot collide, then hashed so the plaintext password never lives in
+// the cache map.
+func credentialKey(user, pass string) string {
+	sum := sha256.Sum256([]byte(user + "\x00" + pass))
+	return hex.EncodeToString(sum[:])
+}
+
+// valid reports whether key has a live (unexpired) cache entry. Expired entries
+// are dropped lazily on lookup.
+func (c *authCache) valid(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	exp, ok := c.entries[key]
+	if !ok {
+		return false
+	}
+	if !time.Now().Before(exp) {
+		delete(c.entries, key)
+		return false
+	}
+	return true
+}
+
+// store records key as valid until exp, allocating the map on first use.
+func (c *authCache) store(key string, exp time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[string]time.Time)
+	}
+	c.entries[key] = exp
 }
 
 // writePlain is the single text/plain response helper.
