@@ -18,7 +18,7 @@ import (
 //     model, empty Content, partial Usage)
 //   - content_block_start      (block of kind text|tool_use|thinking)
 //   - content_block_delta      (text_delta | input_json_delta |
-//     thinking_delta | signature_delta)
+//     thinking_delta | signature_delta | citations_delta)
 //   - content_block_stop
 //   - message_delta            (terminal stop_reason / stop_sequence /
 //     final Usage)
@@ -89,6 +89,9 @@ type anthropicBlockState struct {
 	// kind == "thinking".
 	thinkingBuf strings.Builder
 	signature   string
+	// citations accumulates citations_delta entries for a text block; the
+	// non-streaming response carries them on TextBlock.Citations.
+	citations []messages.Citation
 	// raw holds the original block as emitted by content_block_start;
 	// kept so unknown block kinds (and any DynamicProperties that
 	// rode in on the start event) survive assembly.
@@ -160,6 +163,8 @@ func (s *anthropicState) absorbBlockDelta(index int, delta messages.ContentBlock
 		st.thinkingBuf.WriteString(d.Thinking)
 	case *messages.SignatureDelta:
 		st.signature = d.Signature
+	case *messages.CitationsDelta:
+		st.citations = append(st.citations, d.Citation)
 	}
 }
 
@@ -192,6 +197,26 @@ func (s *anthropicState) absorbMessageDelta(e *messages.MessageDeltaEvent) {
 		v := *e.Usage.CacheReadInputTokens
 		s.base.Usage.CacheReadInputTokens = &v
 	}
+	// These modeled usage breakdowns appear only on the terminal
+	// message_delta, so message_start never seeds them; the terminal value
+	// is authoritative (override any stale message_start value too).
+	if e.Usage.OutputTokensDetails != nil {
+		s.base.Usage.OutputTokensDetails = e.Usage.OutputTokensDetails
+	}
+	if e.Usage.ServerToolUse != nil {
+		s.base.Usage.ServerToolUse = e.Usage.ServerToolUse
+	}
+	// Unmodeled usage fields (e.g. "iterations") ride in on the terminal
+	// message_delta usage via DynamicProperties. A non-streaming decode keeps
+	// them; merge so the rollup matches rather than dropping them.
+	if len(e.Usage.Extra) > 0 {
+		if s.base.Usage.Extra == nil {
+			s.base.Usage.Extra = make(map[string]json.RawMessage, len(e.Usage.Extra))
+		}
+		for k, v := range e.Usage.Extra {
+			s.base.Usage.Extra[k] = v
+		}
+	}
 }
 
 func (s *anthropicState) assemble() messages.MessagesResponse {
@@ -209,35 +234,48 @@ func (s *anthropicState) assemble() messages.MessagesResponse {
 		st := s.blocks[idx]
 		switch st.kind {
 		case "text":
-			block := &messages.TextBlock{Type: "text", Text: st.textBuf.String()}
-			if existing, ok := st.raw.(*messages.TextBlock); ok && existing != nil {
-				block.DynamicProperties = existing.DynamicProperties
+			// Reuse the block from content_block_start so every modeled
+			// field (Citations, and any field added later) survives — only
+			// the streamed Text/Citations are overwritten/appended. A fresh
+			// struct here would silently drop typed fields that do not live
+			// in DynamicProperties.
+			block, ok := st.raw.(*messages.TextBlock)
+			if !ok || block == nil {
+				block = &messages.TextBlock{}
+			}
+			block.Type = "text"
+			block.Text = st.textBuf.String()
+			if len(st.citations) > 0 {
+				block.Citations = append(block.Citations, st.citations...)
 			}
 			content = append(content, block)
 		case "tool_use":
-			input := json.RawMessage("{}")
-			if s := st.toolArgs.String(); s != "" {
-				input = json.RawMessage(s)
+			block, ok := st.raw.(*messages.ToolUseBlock)
+			if !ok || block == nil {
+				block = &messages.ToolUseBlock{}
 			}
-			block := &messages.ToolUseBlock{
-				Type:  "tool_use",
-				ID:    st.toolID,
-				Name:  st.toolName,
-				Input: input,
-			}
-			if existing, ok := st.raw.(*messages.ToolUseBlock); ok && existing != nil {
-				block.DynamicProperties = existing.DynamicProperties
+			block.Type = "tool_use"
+			block.ID = st.toolID
+			block.Name = st.toolName
+			// Only overwrite Input with the accumulated tool arguments when
+			// they form valid JSON. A stream truncated mid input_json_delta
+			// leaves an unterminated fragment; splicing it verbatim would
+			// emit a structurally-invalid response body. Fall back to the
+			// start block's Input, or "{}".
+			if frag := st.toolArgs.String(); frag != "" && json.Valid([]byte(frag)) {
+				block.Input = json.RawMessage(frag)
+			} else if len(block.Input) == 0 {
+				block.Input = json.RawMessage("{}")
 			}
 			content = append(content, block)
 		case "thinking":
-			block := &messages.ThinkingBlock{
-				Type:      "thinking",
-				Thinking:  st.thinkingBuf.String(),
-				Signature: st.signature,
+			block, ok := st.raw.(*messages.ThinkingBlock)
+			if !ok || block == nil {
+				block = &messages.ThinkingBlock{}
 			}
-			if existing, ok := st.raw.(*messages.ThinkingBlock); ok && existing != nil {
-				block.DynamicProperties = existing.DynamicProperties
-			}
+			block.Type = "thinking"
+			block.Thinking = st.thinkingBuf.String()
+			block.Signature = st.signature
 			content = append(content, block)
 		default:
 			if st.raw != nil {
