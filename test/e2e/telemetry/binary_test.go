@@ -462,13 +462,39 @@ func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 		t.Errorf("body not stitched: %+v", body)
 	}
 
-	// Dashboard summary counts the request.
+	// The dashboard rollups now read the sluice meter feed (the continuous
+	// aggregates over metric_points), NOT the request_events span — see
+	// invariant #4 + the @100 rearchitecture. So drive the dashboard with the
+	// matching request/token counters the gateway emits alongside the span; the
+	// real-time CAGG view surfaces them without an explicit refresh.
+	svc.sendCounter(t, "sluice.requests.total",
+		counterDP(1,
+			strKV("gen_ai.provider.name", "anthropic"),
+			strKV("gen_ai.request.model", "claude-x"),
+			strKV("sluice.configuration", "dev"),
+			strKV("sluice.protocol", "messages"),
+			strKV("http.response.status_code", "200"),
+		),
+	)
+	svc.sendCounter(t, "sluice.tokens.input.total",
+		counterDP(10,
+			strKV("gen_ai.provider.name", "anthropic"),
+			strKV("gen_ai.request.model", "claude-x"),
+			strKV("sluice.configuration", "dev"),
+			strKV("sluice.protocol", "messages"),
+		),
+	)
+
+	// Dashboard summary counts the request (from cagg_requests_1m).
 	var sum adminc.DashboardSummary
 	if code := svc.getJSON(t, "/api/v1/dashboard/summary?window=24h", &sum); code != http.StatusOK {
 		t.Fatalf("summary status = %d", code)
 	}
 	if sum.Totals.Requests < 1 {
 		t.Errorf("summary requests = %d, want >= 1", sum.Totals.Requests)
+	}
+	if sum.Totals.TokensIn < 10 {
+		t.Errorf("summary tokens_in = %d, want >= 10", sum.Totals.TokensIn)
 	}
 
 	// Timeseries returns the named series.

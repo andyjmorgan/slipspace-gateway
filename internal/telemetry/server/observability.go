@@ -263,7 +263,6 @@ func mapSummary(s store.DashboardSummary, window string, now time.Time, dur time
 			RequestsPerSecond: ratePerSecond(s.Totals.Requests, secs),
 			ErrorRate:         ratio(s.Totals.RequestsErrored, s.Totals.Requests),
 		},
-		LatencyMs:       adminc.DashboardLatency{P50: s.Latency.P50, P95: s.Latency.P95, P99: s.Latency.P99},
 		ByProvider:      make([]adminc.DashboardProviderRow, 0, len(s.ByProvider)),
 		ByProtocol:      make([]adminc.DashboardProtocolRow, 0, len(s.ByProtocol)),
 		ByConfiguration: make([]adminc.DashboardConfigurationRow, 0, len(s.ByConfiguration)),
@@ -273,13 +272,13 @@ func mapSummary(s store.DashboardSummary, window string, now time.Time, dur time
 		ProviderHealth:  make([]adminc.DashboardProviderHealth, 0, len(s.ProviderHealth)),
 	}
 	for _, r := range s.ByProvider {
-		out.ByProvider = append(out.ByProvider, adminc.DashboardProviderRow{Provider: r.Key, Requests: r.Requests, P95LatencyMs: r.P95LatencyMs, ErrorRate: r.ErrorRate})
+		out.ByProvider = append(out.ByProvider, adminc.DashboardProviderRow{Provider: r.Key, Requests: r.Requests, ErrorRate: r.ErrorRate})
 	}
 	for _, r := range s.ByProtocol {
-		out.ByProtocol = append(out.ByProtocol, adminc.DashboardProtocolRow{Provider: r.Provider, Protocol: r.Protocol, Requests: r.Requests, P95LatencyMs: r.P95LatencyMs, ErrorRate: r.ErrorRate})
+		out.ByProtocol = append(out.ByProtocol, adminc.DashboardProtocolRow{Provider: r.Provider, Protocol: r.Protocol, Requests: r.Requests, ErrorRate: r.ErrorRate})
 	}
 	for _, r := range s.ByConfiguration {
-		out.ByConfiguration = append(out.ByConfiguration, adminc.DashboardConfigurationRow{Configuration: r.Key, Requests: r.Requests, P95LatencyMs: r.P95LatencyMs, ErrorRate: r.ErrorRate})
+		out.ByConfiguration = append(out.ByConfiguration, adminc.DashboardConfigurationRow{Configuration: r.Key, Requests: r.Requests, ErrorRate: r.ErrorRate})
 	}
 	for _, r := range s.ByModel {
 		out.ByModel = append(out.ByModel, adminc.DashboardModelRow{Model: r.Model, Provider: r.Provider, Requests: r.Requests, TokensIn: r.TokensIn, TokensOut: r.TokensOut})
@@ -309,12 +308,6 @@ func seriesValue(b store.DashboardSeriesBucket, name string, bucketSecs float64)
 		return float64(b.Requests) / bucketSecs
 	case "error_rate":
 		return ratio(b.Errored, b.Requests)
-	case "p50":
-		return float64(b.P50LatencyMs)
-	case "p95":
-		return float64(b.P95LatencyMs)
-	case "p99":
-		return float64(b.P99LatencyMs)
 	case "tokens_in":
 		return float64(b.TokensIn)
 	case "tokens_out":
@@ -330,8 +323,6 @@ func seriesUnit(name string) string {
 		return "req/s"
 	case "error_rate":
 		return "%"
-	case "p50", "p95", "p99":
-		return "ms"
 	default:
 		return ""
 	}

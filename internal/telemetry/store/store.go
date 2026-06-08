@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -124,7 +125,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if m.version <= current {
 			continue
 		}
-		if err := s.applyMigration(ctx, m); err != nil {
+		apply := s.applyMigration
+		if m.noTx {
+			apply = s.applyMigrationNoTx
+		}
+		if err := apply(ctx, m); err != nil {
 			return err
 		}
 	}
@@ -148,6 +153,40 @@ func (s *Store) applyMigration(ctx context.Context, m migration) error {
 		return fmt.Errorf("store: record migration %d: %w", m.version, err)
 	}
 	return commit(ctx, tx)
+}
+
+// applyMigrationNoTx runs a migration's statements with autocommit (no
+// enclosing transaction) — required for TimescaleDB continuous-aggregate DDL,
+// which cannot run inside a transaction block. Statements are split on `;` and
+// executed in order; the version row is recorded only after all succeed, so a
+// mid-batch failure re-runs the whole (idempotent) step rather than leaving
+// schema_migrations claiming a half-applied version.
+func (s *Store) applyMigrationNoTx(ctx context.Context, m migration) error {
+	for _, stmt := range splitStatements(m.sql) {
+		if _, err := s.db.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("store: apply migration %d (%s): %w", m.version, m.name, err)
+		}
+	}
+	if _, err := s.db.Exec(ctx,
+		`INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`, m.version, m.name); err != nil {
+		return fmt.Errorf("store: record migration %d: %w", m.version, err)
+	}
+	return nil
+}
+
+// splitStatements breaks a semicolon-separated SQL batch into individual
+// statements, trimming whitespace and dropping empties. noTx migrations carry
+// no embedded semicolons (no dollar-quoted bodies/strings), so a plain split is
+// safe — see the migration.noTx contract.
+func splitStatements(sql string) []string {
+	parts := strings.Split(sql, ";")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // SchemaVersion returns the highest applied migration version, or 0 if none.

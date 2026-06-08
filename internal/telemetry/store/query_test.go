@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -271,10 +272,72 @@ func TestQueryDashboardSummary_Success(t *testing.T) {
 	}
 }
 
+// TestAppendCaggFilter covers the dashboard-scoped filter applier: every CAGG
+// equality dimension binds a predicate, the dropped dimensions (tags/gateway/id
+// boxes) are ignored, and each status class produces the right band (the open
+// 5xx upper bound vs the bounded 2xx/4xx). It asserts on the rendered WHERE
+// fragments + bound args rather than going through SQL.
+func TestAppendCaggFilter(t *testing.T) {
+	f := EventFilter{
+		Configuration: "c", Model: "m", Provider: "p", Protocol: "pr",
+		// All of these are message-browser-only and must NOT appear.
+		Gateway: "g", SessionID: "s", CorrelationID: "cid", AgentID: "a", UserID: "u",
+		Tags: []string{"t1"},
+	}
+	where, args := appendCaggFilter([]string{"bucket >= $1", "bucket < $2"}, []any{1, 2}, f)
+	// 2 window + 4 equality predicates; 6 args (2 window + 4 equality), no tag/id.
+	if len(where) != 6 || len(args) != 6 {
+		t.Fatalf("where=%d args=%d, want 6/6 (no tag/gateway/id predicates)", len(where), len(args))
+	}
+	joined := strings.Join(where, " ")
+	for _, banned := range []string{"tag", "gateway", "session", "correlation", "agent", "user"} {
+		if strings.Contains(strings.ToLower(joined), banned) {
+			t.Errorf("dashboard filter leaked a message-browser dimension %q: %s", banned, joined)
+		}
+	}
+
+	// 5xx: open upper bound (>= 500), one extra arg.
+	w5, a5 := appendCaggFilter(nil, nil, EventFilter{StatusClass: "5xx"})
+	if len(w5) != 1 || len(a5) != 1 || !strings.Contains(w5[0], ">=") {
+		t.Errorf("5xx band = %v args %v, want one open >= predicate", w5, a5)
+	}
+	// 2xx: bounded band (BETWEEN), two extra args.
+	w2, a2 := appendCaggFilter(nil, nil, EventFilter{StatusClass: "2xx"})
+	if len(w2) != 1 || len(a2) != 2 || !strings.Contains(w2[0], "BETWEEN") {
+		t.Errorf("2xx band = %v args %v, want one BETWEEN predicate with two bounds", w2, a2)
+	}
+}
+
+// TestQueryDashFired_ConfigurationFilter exercises the configuration-equality
+// branch of queryDashFired (the only filter the rule/tag CAGGs honor).
+func TestQueryDashFired_ConfigurationFilter(t *testing.T) {
+	p := dashParams()
+	p.Filter = EventFilter{Configuration: "prod"}
+	q := &fakeQuerier{query: rowsN(1)}
+	if _, err := newStore(q).queryDashFired(ctx(), p, "rules"); err != nil {
+		t.Fatalf("fired with config filter: %v", err)
+	}
+}
+
+// TestQueryDashboardSeries_Filtered drives QueryDashboardSeries with a fully
+// populated filter so the request-side status band and the token-side
+// (status-stripped) filter both render.
+func TestQueryDashboardSeries_Filtered(t *testing.T) {
+	q := &fakeQuerier{query: rowsN(1)}
+	_, err := newStore(q).QueryDashboardSeries(ctx(), DashboardSeriesParams{
+		From: time.Unix(0, 0), To: time.Unix(60, 0), BucketSeconds: 30,
+		Filter: EventFilter{Configuration: "c", Provider: "p", StatusClass: "5xx"},
+	})
+	if err != nil {
+		t.Fatalf("series filtered: %v", err)
+	}
+}
+
 // TestQueryDashboardSummary_StageErrors fails one sub-query at a time to cover
 // every error-propagation return in QueryDashboardSummary. Call order:
-// QueryRow #1 totals, #2 latency; Query #1 ByProvider, #2 ByConfiguration,
-// #3 ByProtocol, #4 ByModel, #5 RulesFired, #6 TagsFired, #7 ProviderHealth.
+// QueryRow #1 totals (requests CAGG), #2 totals (tokens CAGG); Query #1
+// ByProvider, #2 ByConfiguration, #3 ByProtocol, #4 ByModel, #5 RulesFired,
+// #6 TagsFired, #7 ProviderHealth.
 func TestQueryDashboardSummary_StageErrors(t *testing.T) {
 	rowStages := []int{1, 2}
 	for _, n := range rowStages {
@@ -293,12 +356,15 @@ func TestDashSubqueries_Errors(t *testing.T) {
 	p := dashParams()
 	st := func(q *fakeQuerier) *Store { return newStore(q) }
 
-	// QueryRow-backed: totals, latency.
+	// QueryRow-backed: totals issues two QueryRows (requests, then tokens); the
+	// first erroring row fails it.
 	if _, err := st(&fakeQuerier{row: fakeRow{err: errors.New("x")}}).queryDashTotals(ctx(), p); err == nil {
 		t.Error("totals")
 	}
-	if _, err := st(&fakeQuerier{row: fakeRow{err: errors.New("x")}}).queryDashLatency(ctx(), p); err == nil {
-		t.Error("latency")
+	// Cover the token-totals QueryRow error path specifically: first row scans
+	// clean, second errors.
+	if _, err := st(&fakeQuerier{rowFailAt: 2}).queryDashTotals(ctx(), p); err == nil {
+		t.Error("token totals")
 	}
 
 	// Query-backed: each has a query-error and a scan-error branch.

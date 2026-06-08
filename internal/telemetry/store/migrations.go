@@ -6,6 +6,16 @@ type migration struct {
 	version int
 	name    string
 	sql     string
+	// noTx runs the migration's statements with autocommit instead of inside a
+	// single transaction. TimescaleDB forbids creating a continuous aggregate
+	// (CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)) inside a
+	// transaction block, so migration 0007 sets this. noTx SQL is split on `;`
+	// and each statement executed in turn, so it MUST NOT contain embedded
+	// semicolons (no dollar-quoted bodies/strings) and every statement MUST be
+	// idempotent (IF NOT EXISTS / if_not_exists) — a mid-batch failure re-runs
+	// the whole step, since the version row is recorded only after all
+	// statements succeed.
+	noTx bool
 }
 
 // createSchemaMigrations bootstraps the bookkeeping table the runner reads
@@ -222,5 +232,99 @@ CREATE TABLE record (
 );
 
 CREATE INDEX record_received_at ON record (received_at);`,
+	},
+	{
+		version: 7,
+		name:    "metric_points_hypertable_caggs",
+		noTx:    true,
+		// Telemetry Rearchitecture (metrics plane): the dashboard stops scanning
+		// the request_events entity for rollups and reads pre-aggregated
+		// TimescaleDB continuous aggregates instead — the scale fix. metric_points
+		// becomes a hypertable; four CAGGs bucket the meter feed at 1 minute with
+		// count/sum only (NO percentiles for MVP — plain timescaledb, no toolkit).
+		// The dashboard rolls these 1-minute buckets up to its requested
+		// granularity with an outer time_bucket.
+		//
+		// CAGG dimensions are projected from the meter labels JSONB (->> is
+		// immutable, so it is legal in a continuous-aggregate GROUP BY):
+		//   - cagg_requests_1m: sluice.requests.total, keyed by
+		//     provider/model/configuration/protocol/status_code → request counts,
+		//     error rate (status_code), and every By* / ProviderHealth panel.
+		//   - cagg_tokens_1m: the four token COUNTERS (input/output added by the
+		//     gateway alongside the existing cached/cache_creation) keyed by
+		//     provider/model/configuration/protocol → token sums (Totals, ByModel)
+		//     without an entity scan. (input/output rows appear once the gateway
+		//     emits the new counters; the view is correct from creation.)
+		//   - cagg_rules_1m / cagg_tags_1m: the rule.fired / tags.applied meters
+		//     for the RulesFired / TagsFired panels.
+		//
+		// CREATE EXTENSION lives here (not the @75 GitOps image swap): it is
+		// idempotent, superuser-capable via the telemetry role, and co-located
+		// with the DDL that needs it. Created WITH NO DATA + a refresh policy so
+		// the first materialization runs in the background, not in the migration.
+		sql: `
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+SELECT create_hypertable('metric_points', 'observed_at', if_not_exists => TRUE, migrate_data => TRUE);
+
+CREATE INDEX IF NOT EXISTS metric_points_name_labels_time ON metric_points (metric_name, observed_at DESC);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS cagg_requests_1m
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT time_bucket('1 minute', observed_at)        AS bucket,
+       labels->>'gen_ai.provider.name'             AS provider,
+       labels->>'gen_ai.request.model'             AS model,
+       labels->>'sluice.configuration'             AS configuration,
+       labels->>'sluice.protocol'                  AS protocol,
+       labels->>'http.response.status_code'        AS status_code,
+       sum(value)                                  AS requests
+FROM metric_points
+WHERE metric_name = 'sluice.requests.total'
+GROUP BY bucket, provider, model, configuration, protocol, status_code
+WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS cagg_tokens_1m
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT time_bucket('1 minute', observed_at)        AS bucket,
+       metric_name                                 AS metric_name,
+       labels->>'gen_ai.provider.name'             AS provider,
+       labels->>'gen_ai.request.model'             AS model,
+       labels->>'sluice.configuration'             AS configuration,
+       labels->>'sluice.protocol'                  AS protocol,
+       sum(value)                                  AS tokens
+FROM metric_points
+WHERE metric_name IN ('sluice.tokens.input.total', 'sluice.tokens.output.total', 'sluice.tokens.cached.total', 'sluice.tokens.cache_creation.total')
+GROUP BY bucket, metric_name, provider, model, configuration, protocol
+WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS cagg_rules_1m
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT time_bucket('1 minute', observed_at)        AS bucket,
+       labels->>'rule_name'                        AS rule_name,
+       labels->>'sluice.configuration'             AS configuration,
+       sum(value)                                  AS fired
+FROM metric_points
+WHERE metric_name = 'sluice.rule.fired'
+GROUP BY bucket, rule_name, configuration
+WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS cagg_tags_1m
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT time_bucket('1 minute', observed_at)        AS bucket,
+       labels->>'tag'                              AS tag,
+       labels->>'sluice.configuration'             AS configuration,
+       sum(value)                                  AS applied
+FROM metric_points
+WHERE metric_name = 'gateway.tags.applied.total'
+GROUP BY bucket, tag, configuration
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy('cagg_requests_1m', start_offset => INTERVAL '3 hours', end_offset => INTERVAL '1 minute', schedule_interval => INTERVAL '1 minute', if_not_exists => TRUE);
+
+SELECT add_continuous_aggregate_policy('cagg_tokens_1m', start_offset => INTERVAL '3 hours', end_offset => INTERVAL '1 minute', schedule_interval => INTERVAL '1 minute', if_not_exists => TRUE);
+
+SELECT add_continuous_aggregate_policy('cagg_rules_1m', start_offset => INTERVAL '3 hours', end_offset => INTERVAL '1 minute', schedule_interval => INTERVAL '1 minute', if_not_exists => TRUE);
+
+SELECT add_continuous_aggregate_policy('cagg_tags_1m', start_offset => INTERVAL '3 hours', end_offset => INTERVAL '1 minute', schedule_interval => INTERVAL '1 minute', if_not_exists => TRUE);`,
 	},
 }

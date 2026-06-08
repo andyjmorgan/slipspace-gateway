@@ -68,31 +68,6 @@ func TestComputeRulesFired_SkipsAbsentName(t *testing.T) {
 	}
 }
 
-func TestComputeByProvider_StartHistogramShorterThanEnd(t *testing.T) {
-	// Defensive case: the start sample has no histogram entry for a
-	// label-set the end sample carries (e.g. the series appeared mid-
-	// window). subtractHistogram should treat the missing entries as
-	// zero.
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	t1 := t0.Add(time.Hour)
-	start := makeSample(t0)
-	end := makeSample(t1)
-	bounds := []float64{0.5, 1, 2}
-	one := []uint64{0, 1, 0, 0}
-	setCounter(end, observability.MetricRequestsTotal,
-		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 1)
-	setHistogram(end,
-		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai")}, 1, 1, bounds, one)
-
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
-	if len(sum.ByProvider) != 1 {
-		t.Fatalf("len(ByProvider) = %d, want 1", len(sum.ByProvider))
-	}
-	if sum.ByProvider[0].P95LatencyMs == 0 {
-		t.Error("P95LatencyMs = 0; expected the lone observation to be reflected")
-	}
-}
-
 func TestBuildTimeseries_DispatchesAllNames(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	samples := []observability.Sample{
@@ -164,86 +139,6 @@ func TestComputeByProtocol_PartitionsByProviderProtocolPair(t *testing.T) {
 	}
 }
 
-func TestComputeByProtocol_HistogramFolding(t *testing.T) {
-	// Exercise the histogram-folding path: end has a (provider, protocol)
-	// pair with both a counter row and a histogram. The first histogram
-	// observation initialises the per-pair accumulator's Bounds/Counts
-	// slices; the second observation accumulates onto them.
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	t1 := t0.Add(time.Hour)
-	start := makeSample(t0)
-	end := makeSample(t1)
-	bounds := []float64{0.5, 1, 2}
-
-	attrs200 := []attribute.KeyValue{
-		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
-		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
-	}
-	attrs500 := []attribute.KeyValue{
-		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
-		attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
-	}
-	setCounter(end, observability.MetricRequestsTotal, attrs200, 1)
-	setCounter(end, observability.MetricRequestsTotal, attrs500, 1)
-	setHistogram(end, attrs200, 0.6, 1, bounds, []uint64{0, 1, 0, 0})
-	setHistogram(end, attrs500, 1.8, 1, bounds, []uint64{0, 0, 1, 0})
-
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
-	if len(sum.ByProtocol) != 1 {
-		t.Fatalf("len(ByProtocol) = %d, want 1", len(sum.ByProtocol))
-	}
-	if sum.ByProtocol[0].P95LatencyMs == 0 {
-		t.Error("P95LatencyMs = 0; expected folded observations to be reflected")
-	}
-}
-
-func TestComputeByProtocol_HistogramSkippedWhenNoCounter(t *testing.T) {
-	// Defensive: a histogram label-set with no matching counter row in
-	// the same window should not produce a phantom protocol row.
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	t1 := t0.Add(time.Hour)
-	start := makeSample(t0)
-	end := makeSample(t1)
-	bounds := []float64{0.5, 1, 2}
-
-	histOnly := []attribute.KeyValue{
-		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceProtocol, "responses"),
-		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
-	}
-	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
-
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
-	if len(sum.ByProtocol) != 0 {
-		t.Fatalf("len(ByProtocol) = %d, want 0 (no counter row)", len(sum.ByProtocol))
-	}
-}
-
-func TestComputeByConfiguration_HistogramSkippedWhenNoCounter(t *testing.T) {
-	// Mirror of TestComputeByProtocol_HistogramSkippedWhenNoCounter for
-	// the configuration partition: histogram-only series must not
-	// produce a phantom configuration row.
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	t1 := t0.Add(time.Hour)
-	start := makeSample(t0)
-	end := makeSample(t1)
-	bounds := []float64{0.5, 1, 2}
-
-	histOnly := []attribute.KeyValue{
-		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceConfiguration, "production"),
-		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
-	}
-	setHistogram(end, histOnly, 0.4, 1, bounds, []uint64{1, 0, 0, 0})
-
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
-	if len(sum.ByConfiguration) != 0 {
-		t.Fatalf("len(ByConfiguration) = %d, want 0 (no counter row)", len(sum.ByConfiguration))
-	}
-}
-
 func TestComputeByConfiguration_SkipsMissingConfigurationLabel(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Hour)
@@ -274,27 +169,102 @@ func TestComputeByConfiguration_SkipsMissingConfigurationLabel(t *testing.T) {
 	}
 }
 
-func TestComputeByConfiguration_HistogramFolding(t *testing.T) {
+func TestComputeTagsFired_GroupsAndJoinsConfigs(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Hour)
 	start := makeSample(t0)
 	end := makeSample(t1)
 
-	bounds := []float64{0.5, 1, 2}
-	attrs := []attribute.KeyValue{
-		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceConfiguration, "production"),
-		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
+	// Two tags plus a delta with no tag label (must be skipped). "agent:x" has a
+	// configuration attachment; "unattached" has none (nil -> []).
+	setCounter(end, observability.MetricTagsAppliedTotal,
+		[]attribute.KeyValue{attribute.String("tag", "agent:x")}, 7)
+	setCounter(end, observability.MetricTagsAppliedTotal,
+		[]attribute.KeyValue{attribute.String("tag", "unattached")}, 2)
+	setCounter(end, observability.MetricTagsAppliedTotal,
+		[]attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai")}, 99)
+
+	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil,
+		map[string][]string{"agent:x": {"prod"}}, nil, nil)
+
+	if len(sum.TagsFired) != 2 {
+		t.Fatalf("len(TagsFired) = %d, want 2 (no-tag delta skipped)", len(sum.TagsFired))
 	}
-	setCounter(end, observability.MetricRequestsTotal, attrs, 1)
-	setHistogram(end, attrs, 0.75, 1, bounds, []uint64{0, 1, 0, 0})
+	// Sorted by apply count desc: agent:x (7) then unattached (2).
+	if sum.TagsFired[0].Tag != "agent:x" || sum.TagsFired[0].ApplyCount != 7 {
+		t.Errorf("TagsFired[0] = %+v, want agent:x/7", sum.TagsFired[0])
+	}
+	if len(sum.TagsFired[0].UsedByConfigurations) != 1 || sum.TagsFired[0].UsedByConfigurations[0] != "prod" {
+		t.Errorf("agent:x configs = %v, want [prod]", sum.TagsFired[0].UsedByConfigurations)
+	}
+	if sum.TagsFired[1].Tag != "unattached" || len(sum.TagsFired[1].UsedByConfigurations) != 0 {
+		t.Errorf("TagsFired[1] = %+v, want unattached with empty configs", sum.TagsFired[1])
+	}
+}
+
+func TestComputeByConfiguration_ErrorBranch(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	start := makeSample(t0)
+	end := makeSample(t1)
+
+	cfg := func(status string) []attribute.KeyValue {
+		return []attribute.KeyValue{
+			attribute.String(observability.AttrSluiceConfiguration, "prod"),
+			attribute.String(observability.AttrHTTPResponseStatusCode, status),
+		}
+	}
+	setCounter(end, observability.MetricRequestsTotal, cfg("200"), 8)
+	setCounter(end, observability.MetricRequestsTotal, cfg("500"), 2) // exercises the 5xx error branch
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 	if len(sum.ByConfiguration) != 1 {
-		t.Fatalf("len(ByConfiguration) = %d", len(sum.ByConfiguration))
+		t.Fatalf("len(ByConfiguration) = %d, want 1", len(sum.ByConfiguration))
 	}
-	if sum.ByConfiguration[0].P95LatencyMs == 0 {
-		t.Error("P95LatencyMs = 0; expected the lone observation to be reflected")
+	row := sum.ByConfiguration[0]
+	if row.Requests != 10 || row.ErrorRate < 0.19 || row.ErrorRate > 0.21 {
+		t.Errorf("ByConfiguration[0] = %+v, want requests=10 errorRate~0.2", row)
+	}
+}
+
+// TestQuantile covers the histogram quantile interpolation edge cases that the
+// gateway timeseries p95-by-provider series depends on: empty histogram,
+// leftmost bucket, +Inf clamp, and interior interpolation.
+func TestQuantile(t *testing.T) {
+	if quantile(observability.HistogramSnapshot{}, 0.95) != 0 {
+		t.Error("empty histogram -> 0")
+	}
+	bounds := []float64{0.5, 1, 2}
+	// All mass in the leftmost (-Inf, 0.5] bucket -> returns Bounds[0].
+	left := observability.HistogramSnapshot{Count: 1, Bounds: bounds, Counts: []uint64{1, 0, 0, 0}}
+	if got := quantile(left, 0.95); got != 0.5 {
+		t.Errorf("leftmost bucket = %v, want 0.5", got)
+	}
+	// All mass in the +Inf bucket -> clamps to the max bound.
+	inf := observability.HistogramSnapshot{Count: 1, Bounds: bounds, Counts: []uint64{0, 0, 0, 1}}
+	if got := quantile(inf, 0.95); got != 2 {
+		t.Errorf("+Inf bucket = %v, want 2 (clamp)", got)
+	}
+	// Interior bucket interpolation: 2 obs in (0.5,1], target rank 1 -> lands at 0.5.
+	mid := observability.HistogramSnapshot{Count: 2, Bounds: bounds, Counts: []uint64{0, 2, 0, 0}}
+	if got := quantile(mid, 0.5); got < 0.5 || got > 1 {
+		t.Errorf("interior bucket = %v, want within (0.5,1]", got)
+	}
+}
+
+// TestSubtractHistogram covers the element-wise delta, including the defensive
+// branch where the start sample has fewer bucket counts than the end (a series
+// that appeared mid-window).
+func TestSubtractHistogram(t *testing.T) {
+	bounds := []float64{0.5, 1}
+	start := observability.HistogramSnapshot{Sum: 1, Count: 2, Bounds: bounds, Counts: []uint64{1}} // shorter
+	end := observability.HistogramSnapshot{Sum: 5, Count: 6, Bounds: bounds, Counts: []uint64{3, 1, 0}}
+	d := subtractHistogram(start, end)
+	if d.Sum != 4 || d.Count != 4 {
+		t.Errorf("delta sum/count = %v/%v, want 4/4", d.Sum, d.Count)
+	}
+	if len(d.Counts) != 3 || d.Counts[0] != 2 || d.Counts[1] != 1 || d.Counts[2] != 0 {
+		t.Errorf("delta counts = %v, want [2 1 0]", d.Counts)
 	}
 }
 

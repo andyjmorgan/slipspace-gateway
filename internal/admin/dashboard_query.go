@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -40,11 +39,9 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 	tokensCachedTotal := sumCounter(counterDelta(start, end, observability.MetricTokensCachedTotal))
 	tokensCacheCreationTotal := sumCounter(counterDelta(start, end, observability.MetricTokensCacheCreationTotal))
 
-	p50, p95, p99 := allLatencyQuantiles(start, end, observability.MetricRequestDuration)
-
-	byProvider := computeByProvider(requestDeltas, start, end)
-	byProtocol := computeByProtocol(requestDeltas, start, end)
-	byConfiguration := computeByConfiguration(requestDeltas, start, end)
+	byProvider := computeByProvider(requestDeltas)
+	byProtocol := computeByProtocol(requestDeltas)
+	byConfiguration := computeByConfiguration(requestDeltas)
 	byModel := computeByModel(requestDeltas, tokensInDeltas, tokensOutDeltas)
 	rulesFired := computeRulesFired(start, end, ruleAttachments)
 	tagsFired := computeTagsFired(start, end, tagAttachments)
@@ -65,15 +62,6 @@ func BuildDashboardSummary(start, end observability.Sample, realised time.Durati
 		Rates: adminc.DashboardRates{
 			RequestsPerSecond: rps,
 			ErrorRate:         errRate,
-		},
-		LatencyMs: adminc.DashboardLatency{
-			// Round to nearest ms — quantile interpolation is
-			// float-precision-imperfect (0.95 * 100 stores as
-			// 94.999... in IEEE-754, which would otherwise return
-			// 1999ms instead of 2000ms for a clean p95-on-boundary).
-			P50: int64(math.Round(p50 * 1000)),
-			P95: int64(math.Round(p95 * 1000)),
-			P99: int64(math.Round(p99 * 1000)),
 		},
 		ByProvider:      byProvider,
 		ByProtocol:      byProtocol,
@@ -159,27 +147,6 @@ func safeRatio(num, denom int64) float64 {
 	return float64(num) / float64(denom)
 }
 
-// allLatencyQuantiles sums histogram bucket deltas across all label
-// combinations and returns p50/p95/p99 in seconds. Returns zeros when
-// the histogram has no observations in the window.
-func allLatencyQuantiles(start, end observability.Sample, metric string) (p50, p95, p99 float64) {
-	deltas := histogramDelta(start, end, metric)
-	merged := mergeHistograms(deltas)
-	if merged.Count == 0 {
-		return 0, 0, 0
-	}
-	return quantile(merged, 0.50), quantile(merged, 0.95), quantile(merged, 0.99)
-}
-
-func histogramDelta(start, end observability.Sample, metric string) []observability.HistogramSnapshot {
-	out := make([]observability.HistogramSnapshot, 0, len(end.Histograms[metric]))
-	for key, e := range end.Histograms[metric] {
-		s := start.HistogramValue(metric, key)
-		out = append(out, subtractHistogram(s, e))
-	}
-	return out
-}
-
 // subtractHistogram computes end - start element-wise. Bounds come from
 // end; the SDK guarantees a stable bucket layout across a process
 // lifetime so start.Bounds matches end.Bounds when both are populated.
@@ -196,24 +163,6 @@ func subtractHistogram(start, end observability.HistogramSnapshot) observability
 			s = start.Counts[i]
 		}
 		out.Counts[i] = end.Counts[i] - s
-	}
-	return out
-}
-
-// mergeHistograms folds a slice of per-label-set delta histograms into
-// one aggregated histogram. Caller must ensure all entries share the
-// same Bounds — the OTel SDK guarantees this for a single instrument.
-func mergeHistograms(hs []observability.HistogramSnapshot) observability.HistogramSnapshot {
-	if len(hs) == 0 {
-		return observability.HistogramSnapshot{}
-	}
-	out := observability.HistogramSnapshot{Bounds: hs[0].Bounds, Counts: make([]uint64, len(hs[0].Counts))}
-	for _, h := range hs {
-		out.Sum += h.Sum
-		out.Count += h.Count
-		for i, c := range h.Counts {
-			out.Counts[i] += c
-		}
 	}
 	return out
 }
@@ -256,14 +205,13 @@ func quantile(h observability.HistogramSnapshot, q float64) float64 {
 	return h.Bounds[len(h.Bounds)-1]
 }
 
-// computeByProvider partitions request deltas + latency histogram
-// deltas by the provider label, producing one row per provider that
-// saw traffic.
-func computeByProvider(requestDeltas map[observability.LabelKey]int64, start, end observability.Sample) []adminc.DashboardProviderRow {
+// computeByProvider partitions request deltas by the provider label,
+// producing one row per provider that saw traffic. Latency percentiles
+// were dropped (MVP: the dashboard contract no longer carries them).
+func computeByProvider(requestDeltas map[observability.LabelKey]int64) []adminc.DashboardProviderRow {
 	type acc struct {
 		requests int64
 		errored  int64
-		hist     observability.HistogramSnapshot
 	}
 	perProvider := map[string]*acc{}
 	for key, v := range requestDeltas {
@@ -283,55 +231,27 @@ func computeByProvider(requestDeltas map[observability.LabelKey]int64, start, en
 		}
 	}
 
-	// Latency histograms: group label-keys by provider, then sum.
-	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
-		p := key.Get(observability.AttrGenAIProviderName)
-		if p == "" {
-			continue
-		}
-		a := perProvider[p]
-		if a == nil {
-			continue
-		}
-		s := start.HistogramValue(observability.MetricRequestDuration, key)
-		delta := subtractHistogram(s, eHist)
-		if len(a.hist.Counts) == 0 {
-			a.hist = observability.HistogramSnapshot{
-				Bounds: delta.Bounds,
-				Counts: make([]uint64, len(delta.Counts)),
-			}
-		}
-		a.hist.Sum += delta.Sum
-		a.hist.Count += delta.Count
-		for i, c := range delta.Counts {
-			a.hist.Counts[i] += c
-		}
-	}
-
 	out := make([]adminc.DashboardProviderRow, 0, len(perProvider))
 	for name, a := range perProvider {
-		row := adminc.DashboardProviderRow{
-			Provider:     name,
-			Requests:     a.requests,
-			ErrorRate:    safeRatio(a.errored, a.requests),
-			P95LatencyMs: int64(quantile(a.hist, 0.95) * 1000),
-		}
-		out = append(out, row)
+		out = append(out, adminc.DashboardProviderRow{
+			Provider:  name,
+			Requests:  a.requests,
+			ErrorRate: safeRatio(a.errored, a.requests),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Requests > out[j].Requests })
 	return out
 }
 
-// computeByProtocol partitions request deltas + latency histogram
-// deltas by the (provider, protocol) pair. Protocol is repeated on
-// each provider that exposes it (openai.chat vs anthropic.chat are
-// distinct rows) so model-keyed changeProvider rules don't collapse
-// into a single bucket.
-func computeByProtocol(requestDeltas map[observability.LabelKey]int64, start, end observability.Sample) []adminc.DashboardProtocolRow {
+// computeByProtocol partitions request deltas by the (provider,
+// protocol) pair. Protocol is repeated on each provider that exposes it
+// (openai.chat vs anthropic.chat are distinct rows) so model-keyed
+// changeProvider rules don't collapse into a single bucket. Latency
+// percentiles were dropped (MVP: the contract no longer carries them).
+func computeByProtocol(requestDeltas map[observability.LabelKey]int64) []adminc.DashboardProtocolRow {
 	type acc struct {
 		requests int64
 		errored  int64
-		hist     observability.HistogramSnapshot
 	}
 	type groupKey struct {
 		provider, protocol string
@@ -353,49 +273,27 @@ func computeByProtocol(requestDeltas map[observability.LabelKey]int64, start, en
 			a.errored += v
 		}
 	}
-	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
-		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), protocol: key.Get(observability.AttrSluiceProtocol)}
-		a := perProtocol[gk]
-		if a == nil {
-			continue
-		}
-		s := start.HistogramValue(observability.MetricRequestDuration, key)
-		delta := subtractHistogram(s, eHist)
-		if len(a.hist.Counts) == 0 {
-			a.hist = observability.HistogramSnapshot{
-				Bounds: delta.Bounds,
-				Counts: make([]uint64, len(delta.Counts)),
-			}
-		}
-		a.hist.Sum += delta.Sum
-		a.hist.Count += delta.Count
-		for i, c := range delta.Counts {
-			a.hist.Counts[i] += c
-		}
-	}
 	out := make([]adminc.DashboardProtocolRow, 0, len(perProtocol))
 	for gk, a := range perProtocol {
 		out = append(out, adminc.DashboardProtocolRow{
-			Provider:     gk.provider,
-			Protocol:     gk.protocol,
-			Requests:     a.requests,
-			ErrorRate:    safeRatio(a.errored, a.requests),
-			P95LatencyMs: int64(quantile(a.hist, 0.95) * 1000),
+			Provider:  gk.provider,
+			Protocol:  gk.protocol,
+			Requests:  a.requests,
+			ErrorRate: safeRatio(a.errored, a.requests),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Requests > out[j].Requests })
 	return out
 }
 
-// computeByConfiguration partitions request deltas + latency histogram
-// deltas by the resolved configuration name. Series with no
-// configuration attribute (request lifecycle aborted before auth
-// resolved one) are dropped.
-func computeByConfiguration(requestDeltas map[observability.LabelKey]int64, start, end observability.Sample) []adminc.DashboardConfigurationRow {
+// computeByConfiguration partitions request deltas by the resolved
+// configuration name. Series with no configuration attribute (request
+// lifecycle aborted before auth resolved one) are dropped. Latency
+// percentiles were dropped (MVP: the contract no longer carries them).
+func computeByConfiguration(requestDeltas map[observability.LabelKey]int64) []adminc.DashboardConfigurationRow {
 	type acc struct {
 		requests int64
 		errored  int64
-		hist     observability.HistogramSnapshot
 	}
 	perConfig := map[string]*acc{}
 	for key, v := range requestDeltas {
@@ -414,36 +312,12 @@ func computeByConfiguration(requestDeltas map[observability.LabelKey]int64, star
 			a.errored += v
 		}
 	}
-	for key, eHist := range end.Histograms[observability.MetricRequestDuration] {
-		c := key.Get(observability.AttrSluiceConfiguration)
-		if c == "" {
-			continue
-		}
-		a := perConfig[c]
-		if a == nil {
-			continue
-		}
-		s := start.HistogramValue(observability.MetricRequestDuration, key)
-		delta := subtractHistogram(s, eHist)
-		if len(a.hist.Counts) == 0 {
-			a.hist = observability.HistogramSnapshot{
-				Bounds: delta.Bounds,
-				Counts: make([]uint64, len(delta.Counts)),
-			}
-		}
-		a.hist.Sum += delta.Sum
-		a.hist.Count += delta.Count
-		for i, c := range delta.Counts {
-			a.hist.Counts[i] += c
-		}
-	}
 	out := make([]adminc.DashboardConfigurationRow, 0, len(perConfig))
 	for name, a := range perConfig {
 		out = append(out, adminc.DashboardConfigurationRow{
 			Configuration: name,
 			Requests:      a.requests,
 			ErrorRate:     safeRatio(a.errored, a.requests),
-			P95LatencyMs:  int64(quantile(a.hist, 0.95) * 1000),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Requests > out[j].Requests })

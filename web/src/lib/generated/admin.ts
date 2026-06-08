@@ -93,24 +93,20 @@ export interface DashboardSummary {
    */
   rates: DashboardRates;
   /**
-   * LatencyMs is the duration-histogram quantile set.
-   */
-  latency_ms: DashboardLatency;
-  /**
-   * ByProvider breaks requests + p95 + error rate down by provider.
+   * ByProvider breaks requests + error rate down by provider.
    * Each entry corresponds to one configured provider that saw at
    * least one request in Window.
    */
   by_provider: DashboardProviderRow[];
   /**
-   * ByProtocol breaks requests + p95 + error rate down by the resolved
+   * ByProtocol breaks requests + error rate down by the resolved
    * (provider, protocol) pair — e.g. openai.chat vs anthropic.messages.
    * Cardinality is bounded by the providers map (a handful of protocols
    * per provider).
    */
   by_protocol: DashboardProtocolRow[];
   /**
-   * ByConfiguration breaks requests + p95 + error rate down by the
+   * ByConfiguration breaks requests + error rate down by the
    * resolved configuration name. Cardinality is bounded by the
    * operator-defined configurations YAML; never client-derived.
    */
@@ -181,22 +177,11 @@ export interface DashboardRates {
   error_rate: number /* float64 */;
 }
 /**
- * DashboardLatency is the request-duration quantile set, in
- * milliseconds — Prometheus stores seconds, the handler converts so
- * the SPA can use ms throughout.
- */
-export interface DashboardLatency {
-  p50: number /* int64 */;
-  p95: number /* int64 */;
-  p99: number /* int64 */;
-}
-/**
  * DashboardProviderRow is one row of ByProvider.
  */
 export interface DashboardProviderRow {
   provider: string;
   requests: number /* int64 */;
-  p95_latency_ms: number /* int64 */;
   error_rate: number /* float64 */;
 }
 /**
@@ -208,7 +193,6 @@ export interface DashboardProtocolRow {
   provider: string;
   protocol: string;
   requests: number /* int64 */;
-  p95_latency_ms: number /* int64 */;
   error_rate: number /* float64 */;
 }
 /**
@@ -218,7 +202,6 @@ export interface DashboardProtocolRow {
 export interface DashboardConfigurationRow {
   configuration: string;
   requests: number /* int64 */;
-  p95_latency_ms: number /* int64 */;
   error_rate: number /* float64 */;
 }
 /**
