@@ -52,6 +52,13 @@ type Options struct {
 	// resolving the {external_url} template reference used by
 	// response-side body rewrites. Empty leaves it unset.
 	ExternalURL string
+
+	// WebhookMaxBodyBytes, when > 0, sets max_body_bytes on the injected
+	// harness-webhook connector binding so a test can exercise the explicit
+	// per-binding cap. 0 (default) leaves the binding's cap unset, which under
+	// the no-default-cap policy means bodies ship intact. Ignored when
+	// reporting is disabled.
+	WebhookMaxBodyBytes int
 }
 
 // BoolPtr returns a pointer to b. Convenience for the Options.ReportingEnabled

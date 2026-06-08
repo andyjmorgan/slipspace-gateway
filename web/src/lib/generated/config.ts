@@ -288,14 +288,15 @@ export interface ConnectorBinding {
    * MaxBodyBytes caps the larger of the per-record request/response
    * body that ships to this destination. A pointer so the unset case
    * is distinguishable from an explicit zero:
-   *   - nil (unset) → apply the connector-type default. webhook
-   *     defaults to 1 MiB because receivers process deliveries
-   *     synchronously; s3/azure_blob default to no cap (they ingest
-   *     large objects out of band).
-   *   - 0 → no cap (the explicit override that opts a webhook binding
-   *     out of the protective default).
+   *   - nil (unset) → apply the connector-type default, which is no cap
+   *     for every type (DefaultMaxBodyBytes). The bodycapture middleware
+   *     already bounds inbound bodies, so the per-type webhook default
+   *     was pure footgun and was dropped.
+   *   - 0 → no cap (same as unset; kept distinguishable for clarity).
    *   - >0 → cap at that many bytes.
-   * Bodies are bounded upstream regardless by the bodycapture
+   * Operators who need a tighter per-binding cap (e.g. a webhook receiver
+   * that processes deliveries synchronously) set max_body_bytes
+   * explicitly. Bodies are bounded upstream regardless by the bodycapture
    * middleware's 10 MiB inbound read limit. Negative is a config error.
    */
   max_body_bytes?: number /* int */;
