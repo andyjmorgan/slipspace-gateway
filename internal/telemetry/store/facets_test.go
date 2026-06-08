@@ -68,7 +68,7 @@ func TestAppendFilter_SessionCorrelationTags(t *testing.T) {
 		joined += w + " "
 	}
 	if !contains(joined, "session_id =") || !contains(joined, "correlation_id =") ||
-		!contains(joined, "agent_id =") || !contains(joined, "user_id =") || !contains(joined, "detail->'tags' @>") {
+		!contains(joined, "agent_id =") || !contains(joined, "user_id =") || !contains(joined, "span_event->'tags' @>") {
 		t.Errorf("where = %q", joined)
 	}
 	// The tags arg is a JSON array string binding both tags.

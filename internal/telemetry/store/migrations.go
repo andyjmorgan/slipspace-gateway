@@ -21,18 +21,13 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 // migrations is the ordered set of schema steps. Append-only; never edit or
 // renumber a shipped entry.
 //
-// 0001 lays down the telemetry store's three feeds:
-//
-//   - request_events — the lean, queryable per-request row both the gen_ai and
-//     sluice OTLP feeds stitch into. Join key correlation_id; session_id groups
-//     a session. This is the recent-history + drill-down surface.
-//   - request_payloads — the heavy large-payload feed, ONE ROW PER ITEM (a kind
-//     discriminator separates request body / response body / assembled-SSE
-//     rollup), joined to an event by correlation_id. Webhook-pushed, HMAC-
-//     trusted. Cross-instance order uses (ts_ns, instance_id, seq) — invariant
-//     #8, never receive order.
-//   - metric_points — raw OTLP numeric samples (the timeseries feed) the
-//     dashboard aggregates into rate/token/latency panels.
+// 0001–0005 laid down the original three-feed model (request_events upserted by
+// both OTLP and Record, request_payloads, metric_points) and the identity
+// columns. 0006 re-architects to the single-writer model (Telemetry
+// Rearchitecture design note): the OTel span owns request_events outright
+// (complete span in span_event + projected columns), the Record feed lands a
+// lazy verbatim blob in `record`, and request_payloads is dropped. metric_points
+// is the timeseries feed the dashboard aggregates; it is unchanged here.
 var migrations = []migration{
 	{
 		version: 1,
@@ -148,5 +143,84 @@ CREATE INDEX IF NOT EXISTS request_events_agent ON request_events (agent_id);`,
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS user_id        TEXT NOT NULL DEFAULT '';
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS user_id_source TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS request_events_user ON request_events (user_id);`,
+	},
+	{
+		version: 6,
+		name:    "single_writer_span_event",
+		// Re-architecture (Telemetry Rearchitecture design note): the OTel span
+		// feed becomes the SINGLE writer of request_events; the Record feed stops
+		// writing the entity and lands a lazy verbatim blob in `record`.
+		//
+		// request_events is rebuilt around an immutable `span_event JSONB` that
+		// holds the COMPLETE span (every attribute + the gen_ai content). The
+		// scalar columns (provider/model/configuration/protocol/status_code,
+		// the identity ids) are a materialized index over that blob —
+		// projected at ingest, backfillable by re-projecting from span_event,
+		// never the source of truth. The measurement columns (latency_ms,
+		// tokens_*, the two id_source columns, api_key_name, policy_ref,
+		// streaming) and the gen_ai_content / detail JSONB columns are dropped:
+		// they now live inside span_event. tags / rules_fired live in the blob,
+		// filtered via GIN expression indexes on (span_event->'tags') and
+		// (span_event->'rules_fired'), faceted via jsonb_array_elements_text.
+		//
+		// request_payloads is dropped — the Record's bodies/headers ride the
+		// verbatim `record.body` blob, deserialized lazily when the record tab
+		// opens. metric_points is unchanged here (the Timescale CAGG work is a
+		// separate stream).
+		//
+		// observed_at is the gateway request-start (span start), not ingest
+		// now() — load-bearing for ordering, pagination, retention.
+		//
+		// Forward-only rebuild: DROP + CREATE rather than a column-by-column
+		// ALTER. Migration source backfill (last 14 days from spans / records) is
+		// a separate operational step, not part of the schema migration.
+		sql: `
+DROP TABLE IF EXISTS request_payloads;
+DROP TABLE IF EXISTS request_events;
+
+CREATE TABLE request_events (
+    correlation_id   TEXT PRIMARY KEY,
+    observed_at      TIMESTAMPTZ NOT NULL,
+    session_id       TEXT NOT NULL DEFAULT '',
+    agent_id         TEXT NOT NULL DEFAULT '',
+    user_id          TEXT NOT NULL DEFAULT '',
+    provider         TEXT NOT NULL DEFAULT '',
+    model            TEXT NOT NULL DEFAULT '',
+    configuration    TEXT NOT NULL DEFAULT '',
+    protocol         TEXT NOT NULL DEFAULT '',
+    status_code      INT  NOT NULL DEFAULT 0,
+    span_event       JSONB NOT NULL
+);
+
+-- Keyset pagination and the dashboard time-range scans order by
+-- (observed_at DESC, correlation_id DESC); the composite serves the page seek
+-- and the stats range scan without a separate sort.
+CREATE INDEX request_events_observed_corr
+    ON request_events (observed_at DESC, correlation_id DESC);
+
+-- The faceted filters (configuration / provider / model / protocol / status)
+-- almost always pair with a time range, so put observed_at first to keep the
+-- range bound index-driven and let the equality filters narrow within it.
+CREATE INDEX request_events_filter
+    ON request_events (observed_at DESC, configuration, provider, model, protocol, status_code);
+
+CREATE INDEX request_events_session ON request_events (session_id);
+CREATE INDEX request_events_agent   ON request_events (agent_id);
+CREATE INDEX request_events_user    ON request_events (user_id);
+
+-- tags + rules_fired stay in the blob; the GIN expression indexes back both the
+-- @> containment filter and the jsonb_array_elements_text facet scan.
+CREATE INDEX request_events_tags
+    ON request_events USING gin ((span_event->'tags'));
+CREATE INDEX request_events_rules
+    ON request_events USING gin ((span_event->'rules_fired'));
+
+CREATE TABLE record (
+    correlation_id  TEXT PRIMARY KEY,
+    received_at     TIMESTAMPTZ NOT NULL,
+    body            BYTEA NOT NULL
+);
+
+CREATE INDEX record_received_at ON record (received_at);`,
 	},
 }

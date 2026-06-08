@@ -207,6 +207,37 @@ func TestAppendFilter_BetweenAndEquality(t *testing.T) {
 	}
 }
 
+func TestDecodeSpanFields(t *testing.T) {
+	// Empty blob -> zero fields.
+	if f := (RequestEvent{}).DecodeSpanFields(); f.TokensIn != 0 || f.Tags != nil {
+		t.Errorf("empty blob -> %+v", f)
+	}
+	// Malformed blob -> zero fields (no panic).
+	if f := (RequestEvent{SpanEvent: []byte("not json")}).DecodeSpanFields(); f.LatencyMs != 0 {
+		t.Errorf("malformed blob -> %+v", f)
+	}
+	// Valid blob projects the drill-down fields.
+	e := RequestEvent{SpanEvent: []byte(`{"sluice.method":"POST","sluice.latency_ms":42,"gen_ai.usage.input_tokens":10,"gen_ai.request.stream":true,"tags":["a"],"rules_fired":["r1"]}`)}
+	f := e.DecodeSpanFields()
+	if f.Method != "POST" || f.LatencyMs != 42 || f.TokensIn != 10 || !f.Streaming {
+		t.Errorf("fields = %+v", f)
+	}
+	if len(f.Tags) != 1 || f.Tags[0] != "a" || len(f.RulesFired) != 1 || f.RulesFired[0] != "r1" {
+		t.Errorf("tags/rules = %+v", f)
+	}
+}
+
+func TestAppendFilter_GatewayBlobPath(t *testing.T) {
+	// gateway_id has no column — it filters via the span_event JSONB path.
+	where, args := appendFilter(nil, nil, EventFilter{Gateway: "gw-9"})
+	if len(args) != 1 || args[0] != "gw-9" {
+		t.Fatalf("args = %v", args)
+	}
+	if len(where) != 1 || !contains(where[0], "span_event->>'gateway_id' =") {
+		t.Errorf("where = %v", where)
+	}
+}
+
 func TestRate(t *testing.T) {
 	if rate(0, 0) != 0 {
 		t.Error("den 0 -> 0")

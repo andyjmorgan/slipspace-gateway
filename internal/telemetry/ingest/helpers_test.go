@@ -159,7 +159,7 @@ func TestRecord_TooLarge(t *testing.T) {
 	if resp.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", resp.Code)
 	}
-	if st.events != 0 {
+	if st.stored != 0 {
 		t.Error("nothing should be stored")
 	}
 }

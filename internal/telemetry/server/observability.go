@@ -9,6 +9,7 @@ import (
 	"time"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/stitch"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
@@ -97,37 +98,55 @@ func (s *Server) handleObsMessagesRecent(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, mapMessages(events, limit))
 }
 
-// handleObsMessageBody emits contracts/admin.MessageBodyDetail mapped from the
-// captured payloads for a correlation id.
+// handleObsMessageBody emits contracts/admin.MessageBodyDetail for a
+// correlation id. The raw bodies/headers + assembled rollup come from the
+// lazily-joined record (present iff reporting forwarding was on); the gen_ai
+// content comes from the entity's span_event blob (present iff content capture
+// was on). 404 only when neither the entity nor a record exists.
 func (s *Server) handleObsMessageBody(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	payloads, err := s.queries.ListPayloads(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, store.ErrPayloadNotFound) {
-			writeError(w, http.StatusNotFound, "no body")
-			return
+
+	var genAI []byte
+	event, evErr := s.queries.GetRequestEvent(r.Context(), id)
+	if evErr != nil && !errors.Is(evErr, store.ErrRequestEventNotFound) {
+		s.queryError(w, "message body", evErr)
+		return
+	}
+	if evErr == nil {
+		if c := event.DecodeSpanFields().GenAIContent; len(c) > 0 {
+			genAI = c
 		}
+	}
+
+	rec, err := s.recordFor(r.Context(), id)
+	if err != nil {
 		s.queryError(w, "message body", err)
 		return
 	}
-	// gen_ai content + the assembly-partial flag live on the request_events
-	// row, not a payload — fetch the event best-effort so the inspector's
-	// GenAI tab and the "partial" badge can render alongside the bodies. A
-	// missing event just leaves both empty.
-	var (
-		genAI   []byte
-		partial bool
-	)
-	if ev, evErr := s.queries.GetRequestEvent(r.Context(), id); evErr == nil {
-		genAI = ev.GenAIContent
-		if len(ev.Detail) > 0 {
-			var d store.EventDetail
-			if json.Unmarshal(ev.Detail, &d) == nil {
-				partial = d.AssemblyPartial
-			}
-		}
+	// Neither feed produced anything for this id — nothing to inspect.
+	if rec == nil && errors.Is(evErr, store.ErrRequestEventNotFound) {
+		writeError(w, http.StatusNotFound, "no body")
+		return
 	}
-	writeJSON(w, http.StatusOK, mapBody(id, payloads, genAI, partial))
+	writeJSON(w, http.StatusOK, mapBody(id, rec, genAI))
+}
+
+// recordFor fetches a correlation id's verbatim record blob and decodes it into
+// a *cc.Record. Missing (reporting off / not arrived) or malformed is (nil, nil)
+// so callers degrade to the entity-only view.
+func (s *Server) recordFor(ctx context.Context, correlationID string) (*cc.Record, error) {
+	body, err := s.queries.GetRecordBody(ctx, correlationID)
+	if err != nil {
+		if errors.Is(err, store.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var rec cc.Record
+	if json.Unmarshal(body, &rec) != nil {
+		return nil, nil
+	}
+	return &rec, nil
 }
 
 // handleObsMessages serves the message browser: a filtered, keyset-paged page of
@@ -390,102 +409,106 @@ func mapSessionSummary(s store.SessionSummary) adminc.SessionSummary {
 	}
 }
 
+// mapEntry projects an entity event onto the tagged MessageEntry shape. The
+// scalars (ids, provider, model, configuration, protocol, status) come straight
+// off the row's columns; everything else (source headers, method, outcome
+// measurements, streaming, tags, rule chain, attempts) is decoded from the
+// span_event blob via SpanFields. The whole span is in the blob (single-writer
+// model), so the entry no longer depends on a Record having arrived.
 func mapEntry(e store.RequestEvent) adminc.MessageEntry {
+	f := e.DecodeSpanFields()
 	entry := adminc.MessageEntry{
 		EventID:             e.CorrelationID,
 		At:                  e.ObservedAt.UTC(),
 		CorrelationID:       e.CorrelationID,
 		SessionID:           e.SessionID,
-		SessionIDSource:     e.SessionIDSource,
+		SessionIDSource:     f.SessionIDSource,
 		AgentID:             e.AgentID,
-		AgentIDSource:       e.AgentIDSource,
+		AgentIDSource:       f.AgentIDSource,
 		UserID:              e.UserID,
-		UserIDSource:        e.UserIDSource,
+		UserIDSource:        f.UserIDSource,
 		Provider:            e.Provider,
 		Protocol:            e.Protocol,
 		Model:               e.Model,
-		Method:              e.Method,
+		Method:              f.Method,
 		Configuration:       e.Configuration,
 		StatusCode:          e.StatusCode,
-		DurationMs:          e.LatencyMs,
-		Streaming:           e.Streaming,
-		TokensIn:            int(e.TokensIn),
-		TokensOut:           int(e.TokensOut),
-		TokensCached:        int(e.TokensCached),
-		TokensCacheCreation: int(e.TokensCacheCreation),
-		PolicyRef:           e.PolicyRef,
+		DurationMs:          f.LatencyMs,
+		Streaming:           f.Streaming,
+		TokensIn:            int(f.TokensIn),
+		TokensOut:           int(f.TokensOut),
+		TokensCached:        int(f.TokensCached),
+		TokensCacheCreation: int(f.TokensCacheCreation),
+		PolicyRef:           f.PolicyRef,
+		Tags:                f.Tags,
 	}
-	if len(e.Detail) > 0 {
-		var d store.EventDetail
-		if json.Unmarshal(e.Detail, &d) == nil {
-			entry.Tags = d.Tags
-			// Prefer the full rule chain (actions / terminated / error) the
-			// Record feed carries; fall back to the flat name list when only
-			// names are present (e.g. an older record).
-			if len(d.RuleChain) > 0 {
-				for _, r := range d.RuleChain {
-					entry.RulesMatched = append(entry.RulesMatched, adminc.RuleHit{
-						RuleName:       r.Name,
-						ActionsApplied: r.ActionsApplied,
-						Terminated:     r.Terminated,
-						ErrorMessage:   r.ErrorMessage,
-					})
-				}
-			} else {
-				for _, r := range d.RulesFired {
-					entry.RulesMatched = append(entry.RulesMatched, adminc.RuleHit{RuleName: r})
-				}
-			}
-			for _, a := range d.Attempts {
-				entry.Attempts = append(entry.Attempts, adminc.AttemptHit{
-					Target:     a.Target,
-					StartedAt:  time.Unix(0, a.StartedAtNs).UTC(),
-					DurationMs: a.DurationMs,
-					StatusCode: a.StatusCode,
-					Error:      a.Error,
-					Outcome:    a.Outcome,
-				})
-			}
+	// Prefer the full rule chain (actions / terminated / error) when present;
+	// fall back to the flat name list (older records carry names only).
+	if len(f.RuleChain) > 0 {
+		for _, r := range f.RuleChain {
+			entry.RulesMatched = append(entry.RulesMatched, adminc.RuleHit{
+				RuleName:       r.Name,
+				ActionsApplied: r.ActionsApplied,
+				Terminated:     r.Terminated,
+				ErrorMessage:   r.ErrorMessage,
+			})
 		}
+	} else {
+		for _, r := range f.RulesFired {
+			entry.RulesMatched = append(entry.RulesMatched, adminc.RuleHit{RuleName: r})
+		}
+	}
+	for _, a := range f.Attempts {
+		entry.Attempts = append(entry.Attempts, adminc.AttemptHit{
+			Target:     a.Target,
+			StartedAt:  time.Unix(0, a.StartedAtNs).UTC(),
+			DurationMs: a.DurationMs,
+			StatusCode: a.StatusCode,
+			Error:      a.Error,
+			Outcome:    a.Outcome,
+		})
 	}
 	return entry
 }
 
-func mapBody(correlationID string, payloads []store.Payload, genAIContent []byte, assemblyPartial bool) adminc.MessageBodyDetail {
+// mapBody projects the lazily-joined record (raw bodies/headers + assembled
+// rollup) and the entity's gen_ai content onto MessageBodyDetail. A nil record
+// (reporting off / not arrived) leaves the body/header fields empty; the gen_ai
+// content still renders from the span blob.
+func mapBody(correlationID string, rec *cc.Record, genAIContent []byte) adminc.MessageBodyDetail {
 	detail := adminc.MessageBodyDetail{EventID: correlationID}
-	for _, p := range payloads {
-		switch p.Kind {
-		case store.KindRequestBody:
-			detail.Request = decodeInlineBody(p.Body)
+	if rec != nil {
+		if !rec.Request.BodyOmitted && len(rec.Request.Body) > 0 {
+			detail.Request = decodeInlineBody(rec.Request.Body)
 			detail.RequestTotalBytes = int64(len(detail.Request))
-		case store.KindResponseBody:
-			detail.Response = decodeInlineBody(p.Body)
-			detail.ResponseTotalBytes = int64(len(detail.Response))
-		case store.KindSSERollup:
-			detail.ResponseAssembled = string(p.Body)
-		case store.KindRequestHeaders:
-			detail.RequestHeaders = decodeHeaders(p.Body)
-		case store.KindResponseHeaders:
-			detail.ResponseHeaders = decodeHeaders(p.Body)
 		}
+		if !rec.Response.BodyOmitted && len(rec.Response.Body) > 0 {
+			detail.Response = decodeInlineBody(rec.Response.Body)
+			detail.ResponseTotalBytes = int64(len(detail.Response))
+		}
+		if len(rec.Response.Assembled) > 0 {
+			detail.ResponseAssembled = string(rec.Response.Assembled)
+		}
+		detail.AssemblyPartial = rec.Response.AssemblyPartial
+		detail.RequestHeaders = expandHeaders(rec.Request.Headers)
+		detail.ResponseHeaders = expandHeaders(rec.Response.Headers)
 	}
 	if len(genAIContent) > 0 {
 		detail.GenAIContent = string(genAIContent)
 	}
-	// Only meaningful alongside an assembled rollup; harmless otherwise.
-	detail.AssemblyPartial = assemblyPartial
 	return detail
 }
 
-// decodeInlineBody renders a Record inline-body payload (the connector
-// contract's RequestPart/ResponsePart Body) back to display text. The gateway's
-// jsonBodyOrEscaped (cmd/gateway/reporter.go) stores JSON bodies verbatim but
-// wraps non-JSON bodies — SSE streams, plain text — as a JSON string token so
-// they're valid inside the json.RawMessage field. Reverse that here: a JSON
-// string token decodes back to its raw text, so a streamed response shows real
-// `event:` / `data:` lines on the Raw stream tab instead of a quoted, escaped
-// blob. JSON objects/arrays (non-streaming bodies) don't start with a quote and
-// pass through unchanged; a malformed string token falls back to the raw bytes.
+// decodeInlineBody renders a Record inline body (the connector contract's
+// RequestPart/ResponsePart Body, a json.RawMessage) back to display text. The
+// gateway's jsonBodyOrEscaped (cmd/gateway/reporter.go) stores JSON bodies
+// verbatim but wraps non-JSON bodies — SSE streams, plain text — as a JSON
+// string token so they're valid inside the json.RawMessage field. Reverse that
+// here: a JSON string token decodes back to its raw text, so a streamed
+// response shows real `event:` / `data:` lines on the Raw stream tab instead of
+// a quoted, escaped blob. JSON objects/arrays (non-streaming bodies) don't start
+// with a quote and pass through unchanged; a malformed string token falls back
+// to the raw bytes.
 func decodeInlineBody(b []byte) string {
 	if len(b) > 0 && b[0] == '"' {
 		var s string
@@ -496,13 +519,11 @@ func decodeInlineBody(b []byte) string {
 	return string(b)
 }
 
-// decodeHeaders parses a Record-feed header payload — a JSON object of
-// single-value headers ({name: value}) — into the contract's multi-value
-// shape ({name: [value]}). Returns nil on malformed input so the tab simply
-// renders empty rather than erroring.
-func decodeHeaders(body []byte) map[string][]string {
-	var flat map[string]string
-	if json.Unmarshal(body, &flat) != nil || len(flat) == 0 {
+// expandHeaders converts the Record's flat single-value header map
+// ({name: value}) into the contract's multi-value shape ({name: [value]}).
+// Returns nil for an empty map so the tab renders empty.
+func expandHeaders(flat map[string]string) map[string][]string {
+	if len(flat) == 0 {
 		return nil
 	}
 	out := make(map[string][]string, len(flat))

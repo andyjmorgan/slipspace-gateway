@@ -7,7 +7,7 @@ import (
 
 // Facets is the set of distinct dimension values the message browser's dropdowns
 // offer. Each slice is sorted ascending and excludes the empty string; Tags is
-// flattened out of every event's detail->'tags' array. Populated by Facets.
+// flattened out of every event's span_event->'tags' array. Populated by Facets.
 type Facets struct {
 	// Providers is the distinct post-rule upstream provider names.
 	Providers []string
@@ -24,8 +24,8 @@ type Facets struct {
 
 // Facets returns the distinct values per filter dimension for the dropdowns.
 // The scalar columns use SELECT DISTINCT (empty strings excluded); Tags unnests
-// detail->'tags' (GIN-indexed) so the AND tag filter and its dropdown share one
-// source. The result is small and cacheable — the server layer holds it behind
+// span_event->'tags' (GIN-indexed) so the AND tag filter and its dropdown share
+// one source. The result is small and cacheable — the server layer holds it behind
 // a short TTL so a dropdown open is instant after the first scan.
 func (s *Store) Facets(ctx context.Context) (Facets, error) {
 	var f Facets
@@ -49,7 +49,7 @@ func (s *Store) Facets(ctx context.Context) (Facets, error) {
 		*c.dst = vals
 	}
 	tags, err := s.distinctStrings(ctx,
-		`SELECT DISTINCT t FROM request_events, LATERAL jsonb_array_elements_text(detail->'tags') AS t WHERE detail ? 'tags' ORDER BY 1`)
+		`SELECT DISTINCT t FROM request_events, LATERAL jsonb_array_elements_text(span_event->'tags') AS t WHERE span_event ? 'tags' ORDER BY 1`)
 	if err != nil {
 		return Facets{}, fmt.Errorf("store: facets tags: %w", err)
 	}
