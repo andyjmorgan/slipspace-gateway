@@ -104,7 +104,7 @@ messages/recent, events). Each maps to a column predicate in
 | `correlation_id` | `correlation_id` | exact match |
 | `agent_id` | `agent_id` | exact match (the resolved agent/sub-agent id) |
 | `user_id` | `user_id` | exact match (the resolved end-user id) |
-| `tags` | `detail->'tags'` | **repeatable**; `?tags=a&tags=b` requires the event's post-rule tag set to contain **ALL** listed tags (JSONB `@>` containment, lines 60-64). Blank values are dropped (`nonEmpty`). |
+| `tags` | `span_event->'tags'` | **repeatable**; `?tags=a&tags=b` requires the event's post-rule tag set to contain **ALL** listed tags (JSONB `@>` containment against the GIN-indexed blob path). Blank values are dropped (`nonEmpty`). |
 
 An absent or empty param adds no predicate on that dimension. All present
 predicates are AND-combined.
@@ -191,26 +191,38 @@ plus the full filter set. Returns `contracts/admin.DashboardSummary`
 | `generated_at`, `gateway_started_at` | server time (UTC) |
 | `totals` | `requests`, `requests_success`, `requests_errored`, `tokens_in/out/cached/cache_creation` |
 | `rates` | `requests_per_second`, `error_rate` |
-| `latency_ms` | `p50`, `p95`, `p99` (Postgres `percentile_cont`) |
-| `by_provider`, `by_protocol`, `by_configuration`, `by_model` | per-dimension breakdown rows (requests, p95, error_rate; model rows carry token sums) |
+| `by_provider`, `by_protocol`, `by_configuration`, `by_model` | per-dimension breakdown rows (requests, error_rate; model rows carry token sums) |
 | `rules_fired`, `tags_fired` | per-rule / per-tag fire counts + the configurations that produced them |
 | `provider_health` | a short trailing-window (`now-5m`) per-provider health snapshot |
 
-> **Invariant #4.** The `rules_fired` / `tags_fired` panels are aggregated from
-> the `metric_points` meter rollups (`sluice.rule.fired`,
-> `gateway.tags.applied.total`), **not** from a scan of captured records —
-> `store/dashboard.go::queryDashFired`, lines 314-360. Dashboards read meters;
-> the record `detail` envelope is the inspector's source only.
+> **Latency percentiles dropped for MVP.** Earlier builds returned a `latency_ms`
+> object (`p50`/`p95`/`p99` via Postgres `percentile_cont`) and per-dimension p95.
+> The dashboard now reads the TimescaleDB continuous aggregates over `metric_points`
+> (count/sum only, plain `timescaledb` without the percentile toolkit), and the
+> latency histograms never reach `metric_points`, so the summary exposes **no
+> latency quantiles**. Per-request `latency_ms` is still available in the inspector
+> (decoded from the event's `span_event` blob). Quantiles return when the toolkit
+> is adopted post-MVP.
+
+> **Invariant #4.** Every dashboard panel aggregates a continuous aggregate over
+> the meter feed: the request/outcome/`by_*` panels over `cagg_requests_1m`, token
+> totals over `cagg_tokens_1m`, and `rules_fired` / `tags_fired` over
+> `cagg_rules_1m` / `cagg_tags_1m` (`sluice.rule.fired`,
+> `gateway.tags.applied.total`) — `store/dashboard.go::queryDashFired`. Dashboards
+> read meters, never a scan of the `request_events` entity or the captured record.
 
 #### `GET /api/v1/dashboard/timeseries`
 
-Handler `handleObsTimeseries` (lines 67-83). Accepts `?window`, the filter set,
-and `?series` — one of `requests` (default), `rps`, `error_rate`, `p50`, `p95`,
-`p99`, `tokens_in`, `tokens_out` (`seriesValue`, lines 283-305). The bucket
-width auto-scales to ~60 points across the window (`bucketFor`). Returns
-`contracts/admin.DashboardTimeseries`: one named `series` with `points` of
-`{timestamp, value}`, zero-filled across empty buckets so the axis stays
-continuous (`store/dashboard.go::QueryDashboardSeries`).
+Handler `handleObsTimeseries`. Accepts `?window`, the filter set, and `?series`
+— one of `requests` (default), `rps`, `error_rate`, `tokens_in`, `tokens_out`
+(`seriesValue`). The latency series (`p50`/`p95`/`p99`) are **gone** with the
+MVP percentile drop — each `DashboardSeriesBucket` carries volume, errored count,
+and the two token curves only. The bucket width auto-scales across the window.
+Returns `contracts/admin.DashboardTimeseries`: one named `series` with `points`
+of `{timestamp, value}`, zero-filled across empty buckets so the axis stays
+continuous. The series re-buckets the 1-minute `cagg_requests_1m` /
+`cagg_tokens_1m` continuous aggregates up to the requested width
+(`store/dashboard.go::QueryDashboardSeries`).
 
 ### Messages (gateway-parity surface)
 
@@ -228,26 +240,31 @@ newest-first store order).
 
 #### `GET /api/v1/messages`
 
-Handler `handleObsMessages` (lines 132-165). The full message browser: filter
-set + `?from`/`?to` (RFC3339) + `?cursor` + `?limit`. Returns
-`{"entries":[…], "next_cursor":"…"}` where each entry is a
-`contracts/admin.MessageEntry` — **newest-first** (browser order, unlike the
-live feed). Entry fields include the post-rule labels, status/latency, token
-counts, plus the inspector extras decoded from the event `detail` envelope:
-`tags`, `rules_matched` (`RuleHit{rule_name, actions_applied, terminated,
-error_message}`), and `attempts` (`AttemptHit{target, started_at, duration_ms,
-status_code, error, outcome}`) — see `mapEntry`, lines 364-419.
+Handler `handleObsMessages`. The full message browser: filter set + `?from`/`?to`
+(RFC3339) + `?cursor` + `?limit`. Returns `{"entries":[…], "next_cursor":"…"}`
+where each entry is a `contracts/admin.MessageEntry` — **newest-first** (browser
+order, unlike the live feed). Entry fields include the projected filter columns
+(provider/model/configuration/protocol/status), plus the rich extras decoded from
+the event's `span_event` blob (`store.SpanFields`): latency, token counts, the
+streaming flag, the post-rule `tags`, `rules_matched` (`RuleHit{rule_name,
+actions_applied, terminated, error_message}`), and `attempts` (`AttemptHit{target,
+started_at, duration_ms, status_code, error, outcome}`) — see `mapEntry`. A list
+page returns rendered rows, so it does read `span_event`; the cost is bounded by
+the page `LIMIT`, not the whole table (the pure-aggregate scans — dashboard
+rollups, facet unnest — still touch columns only).
 
 #### `GET /api/v1/messages/{id}/body`
 
-Handler `handleObsMessageBody` (lines 99-130). `{id}` is the correlation id.
-Returns `contracts/admin.MessageBodyDetail` assembled from the captured
-payloads (`mapBody`, lines 421-464): `request` / `response` bodies (+
-`*_total_bytes`), the assembled SSE `response_assembled`, decoded
-`request_headers` / `response_headers`, the bounded `gen_ai_content` lifted off
-the `request_events` row, and an `assembly_partial` flag when the streamed
-response could only be partially reconstructed. `404 {"error":"no body"}` when
-the correlation id has no stored payloads (`store.ErrPayloadNotFound`).
+Handler `handleObsMessageBody`. `{id}` is the correlation id. Returns
+`contracts/admin.MessageBodyDetail` (`mapBody`) assembled from **two lazily-joined
+sources**: the raw bodies/headers + assembled SSE rollup come from the verbatim
+`record` blob (`request` / `response` bodies + `*_total_bytes`,
+`response_assembled`, decoded `request_headers` / `response_headers`,
+`assembly_partial`) — present **iff** reporting forwarding was on; the bounded
+`gen_ai_content` comes from the entity's `span_event` blob — present **iff**
+content capture was on. `404 {"error":"no body"}` only when **neither** the entity
+nor a record exists for the id; if the entity exists but no record was pushed, the
+response carries the gen_ai content with the raw bodies empty.
 
 ### Facets
 
@@ -269,7 +286,8 @@ values for the message browser:
 Each list is sorted, excludes the empty string, and renders as `[]` rather than
 `null` when empty (`nonNil`). `protocols` is the `protocol` column (see the
 naming note above). `tags` is flattened out of every event's
-`detail->'tags'` (`store/facets.go::Facets`).
+`span_event->'tags'` — GIN-indexed inside the blob, not a promoted column
+(`store/facets.go::Facets`).
 
 **Caching.** Facets are memoized behind a mutex with a **30-second TTL**
 (`facetsTTL`, `observability.go` lines 194-223). The lock is held *across* the
@@ -285,42 +303,38 @@ shapes (`store` / `stitch`) rather than `contracts/admin`.
 
 #### `GET /api/v1/events`
 
-Handler `handleEvents` (`query.go`, lines 102-127). Same filter + `?from`/`?to`
-+ `?cursor` + `?limit` as `/messages`, but returns the raw
-`store.RequestEvent` rows: `{"events":[…], "next_cursor":"…"}`. Newest-first,
-keyset-paged. Like `/messages` it omits the default window unless `from`/`to`
-are given.
+Handler `handleEvents` (`query.go`). Same filter + `?from`/`?to` + `?cursor` +
+`?limit` as `/messages`, but returns the raw `store.RequestEvent` rows (scalar
+columns + the `span_event` blob): `{"events":[…], "next_cursor":"…"}`.
+Newest-first, keyset-paged. Like `/messages` it omits the default window unless
+`from`/`to` are given.
 
 #### `GET /api/v1/events/{id}`
 
-Handler `handleEventInspector` (lines 129-146). `{id}` is the correlation id.
-Returns a `stitch.RequestView` — the lean event joined to its latest captured
-payload per kind:
+Handler `handleEventInspector` (`query.go`). `{id}` is the correlation id.
+Returns a `stitch.RequestView` — the single-writer entity joined lazily to its
+(optional) verbatim record:
 
 ```json
 {
-  "event": { "...": "store.RequestEvent fields" },
-  "payloads": {
-    "request_body": { },
-    "response_body": { },
-    "sse_rollup": { },
-    "request_headers": { },
-    "response_headers": { }
-  }
+  "event": { "...": "store.RequestEvent fields, incl. span_event" },
+  "record": { "...": "the decoded cc.Record (omitted when none was pushed)" }
 }
 ```
 
-`payloads` keys are the `store.Kind*` discriminators; the value is the latest
-payload of that kind in the stable `(ts_ns, instance_id, seq)` order (invariant
-#8 — `stitch.LatestPayloadsByKind`). `404 {"error":"event not found"}` when no
-event matches (`store.ErrRequestEventNotFound`); a missing-payloads error is
-tolerated (the view just omits them).
+`event` is the entity the OTel span wrote; `record` is the gateway's verbatim
+`cc.Record`, present **only** when reporting forwarding was on and the push has
+arrived (`stitch.BuildRequestView`). `404 {"error":"event not found"}` when no
+event matches (`store.ErrRequestEventNotFound`); a missing or malformed record is
+tolerated — the view simply omits `record` and the inspector renders the entity's
+`span_event` (rule chain, tags, gen_ai content) alone.
 
 #### `GET /api/v1/events/{id}/body`
 
-Handler `handleEventBody` (lines 148-159). Returns just the latest-per-kind
-payload map (the `payloads` object above), keyed by `store.Kind*`. `404
-{"error":"no payloads"}` when there are none.
+Handler `handleEventBody` (`query.go`). Returns just the decoded verbatim
+`cc.Record` for the correlation id (request/response bodies, headers, rule chain,
+attempts). `404 {"error":"no record"}` when none was pushed (reporting forwarding
+off, or not yet arrived).
 
 #### `GET /api/v1/sessions`
 
@@ -382,9 +396,9 @@ A request with `status_code >= 400` counts as an error
 carries that session id.
 
 > **Invariant #4 compliance.** `sessions/{id}` and `events/{id}` assemble their
-> views from the `request_events` + `request_payloads` tables the ingest
-> listeners populate — never from the connector spool or S3. The console is a
-> read view over the telemetry store, not a record-scan reader.
+> views from the `request_events` entity (and, for `events/{id}`, the lazily-joined
+> `record` blob) the ingest listeners populate — never from the connector spool or
+> S3. The console is a read view over the telemetry store, not a record-scan reader.
 
 ## Error reference
 
@@ -393,7 +407,7 @@ carries that session id.
 | `400` | `{"error":"invalid from"}` / `invalid to` | unparseable RFC3339 window bound |
 | `400` | `{"error":"invalid cursor"}` | malformed/tampered keyset cursor |
 | `401` | `unauthorized\n` (text/plain) | missing/wrong Basic credentials — note: no `WWW-Authenticate` |
-| `404` | `{"error":"event not found"}` etc. | unknown correlation/session id, or no payloads |
+| `404` | `{"error":"event not found"}` / `no body` / `no record` / `session not found` | unknown correlation/session id, or no stored record for the id |
 | `500` | `{"error":"<op>"}` | query failed; detail logged server-side only (`queryError`) |
 
 ## See also
@@ -403,4 +417,5 @@ carries that session id.
 - [telemetry-webhook.md](telemetry-webhook.md) — the `POST /api/v1/ingest/record`
   HMAC webhook that feeds the store this API reads.
 - [telemetry-database-schema.md](telemetry-database-schema.md) —
-  `request_events`, `request_payloads`, `metric_points` table shapes.
+  `request_events` (single-writer entity + `span_event`), the lazy `record` blob,
+  and `metric_points` + continuous aggregates.

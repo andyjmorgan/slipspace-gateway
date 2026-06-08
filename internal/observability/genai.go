@@ -199,14 +199,14 @@ const (
 	// AttrSluiceMethod, AttrSluiceAPIKeyName, AttrSluiceUpstreamStatus,
 	// AttrSluiceTags, and AttrSluiceRulesFired are the gateway facts the
 	// central telemetry ingest reads off the gen_ai span to populate the
-	// request_events gen_ai-owned columns (it COALESCEs them with the Record
-	// feed by correlation_id — invariant #4). These ride the span deliberately:
-	// the ingest joins span↔Record on correlation_id, and carrying the
-	// already-computed gateway scalars on the span lets a span-only consumer
-	// (no Record feed configured) still render the console row. They stay off
-	// every meter label — method/api-key/rule names are unbounded cardinality.
-	// The ingest reads these keys as string literals; do not rename without
-	// rolling the telemetry service in lockstep.
+	// request_events gateway-owned columns. The span is the SINGLE writer of
+	// that entity — the Record feed lands only a lazy verbatim blob, joined by
+	// correlation_id when an operator opens the inspector (invariant #4) — so
+	// carrying the already-computed gateway scalars on the span is what lets the
+	// console render a row from the span alone. They stay off every meter label
+	// — method/api-key/rule names are unbounded cardinality. The ingest reads
+	// these keys as string literals; do not rename without rolling the telemetry
+	// service in lockstep.
 	AttrSluiceMethod         = "sluice.method"
 	AttrSluiceAPIKeyName     = "sluice.api_key_name" //nolint:gosec // G101 false positive: attribute key naming the API key, not its secret value
 	AttrSluiceUpstreamStatus = "sluice.upstream_status"

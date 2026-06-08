@@ -34,7 +34,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | [Telemetry service](telemetry-service.md) | The optional central `cmd/telemetry` service — two-listener topology, YAML config, deploy, shutdown, HMAC trust, invariant #4 compliance |
 | [Telemetry service API](telemetry-service-api.md) | Console query API — dashboard, messages, events, sessions, facets, keyset pagination |
 | [Telemetry webhook](telemetry-webhook.md) | The Record ingest contract — `POST /api/v1/ingest/record`, headers, hex HMAC-SHA256, response codes |
-| [Telemetry database schema](telemetry-database-schema.md) | Postgres ERD, per-table columns/indexes, the two-feed COALESCE merge, migration history |
+| [Telemetry database schema](telemetry-database-schema.md) | TimescaleDB ERD, per-table columns/indexes, the single-writer `span_event` projection, the lazy `record` blob, the CAGG metrics plane, migration history |
 
 ### Developers running and testing locally
 
