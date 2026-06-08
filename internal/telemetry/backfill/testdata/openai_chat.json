@@ -1,0 +1,49 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's the weather in Paris? Use the tool."
+    },
+    {
+      "role": "assistant",
+      "annotations": [],
+      "tool_calls": [
+        {
+          "id": "call_noziK0eYcDqsVyWYFAan0uXI",
+          "function": {
+            "arguments": "{\"location\":\"Paris\"}",
+            "name": "get_weather"
+          },
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_noziK0eYcDqsVyWYFAan0uXI",
+      "content": "18C and sunny"
+    }
+  ],
+  "model": "gpt-4o-mini",
+  "temperature": 0,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get current weather for a city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "location"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "What's the weather in Paris? Use the tool."
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "functionCall": {
+            "args": {
+              "location": "Paris"
+            },
+            "name": "get_weather"
+          },
+          "thoughtSignature": "CtACAQw51scg-YbEPmodGmpQL8vLotss1gqeWJc_hE5utCCMA4iDKAN6FFEI2S44QWb0l7IkOSM8wWjvH3XVd29C8FE86-GRzsxrckRIti6iZJJBOb96EPrVImtRy0kACGCVFRFyu3Y0RCT93XtjSrMAe3Hknv9HU5a4oc46LtVrcLm-xE2nKIFKo2HFIb2l6bV0k652dvgNYPFAbZK-wYPwNnoBYksDO3P637rpZvq4uPBJagRBdk5aB52a2Tt8wg3SLcVQB6K-fwalxiW6duthWkYGGOsQBSXzdRDV49eROSIJlEKijoPKUZFUlVT3LkRewDn_2wvxlel5cwmB7IY9DoJ3HkPtLVuSu4zIO42z7Wvf8eLt6iyIIvCTlqvkKIfY3th9ZjMSHq7xMUh5FiUGTYxmKZwK0tHM40XVDlcTIwMxD0u1iIgHww2p0YHBN_mu"
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "get_weather",
+            "response": {
+              "result": "18C and sunny"
+            }
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "description": "Get current weather for a city.",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "location": {
+                "type": "STRING"
+              }
+            },
+            "required": [
+              "location"
+            ],
+            "type": "OBJECT"
+          }
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 512
+  }
+}
