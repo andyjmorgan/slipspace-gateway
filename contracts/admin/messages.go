@@ -307,4 +307,13 @@ type MessageBodyDetail struct {
 	// was enabled on the gateway. Empty otherwise. Sourced from the
 	// request_events.gen_ai_content column, not a payload row.
 	GenAIContent string `json:"gen_ai_content,omitempty"`
+
+	// SpanEvent is the COMPLETE OTel gen_ai span as captured — every
+	// attribute the gateway emitted (model, provider, usage, request
+	// params, response metadata, sluice.* facts, server/service, the
+	// gen_ai content) as a raw JSON object. The console's raw telemetry
+	// pane renders this verbatim so operators see the whole span, not just
+	// the gen_ai content. Sourced from the request_events.span_event
+	// column; empty when the request had no OTLP span (record-only).
+	SpanEvent string `json:"span_event,omitempty"`
 }

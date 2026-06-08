@@ -211,7 +211,8 @@ func TestMapBodyDecodesEscapedSSE(t *testing.T) {
 		Request:  cc.RequestPart{Body: json.RawMessage(`{"model":"x"}`)},
 		Response: cc.ResponsePart{Body: json.RawMessage(wrapped)},
 	}
-	got := mapBody("c", rec, nil)
+	span := []byte(`{"gen_ai.request.model":"x","sluice.configuration":"production"}`)
+	got := mapBody("c", rec, nil, span)
 
 	if got.Response != rawSSE {
 		t.Errorf("response = %q, want decoded raw SSE %q", got.Response, rawSSE)
@@ -222,6 +223,10 @@ func TestMapBodyDecodesEscapedSSE(t *testing.T) {
 	// A native JSON body is left untouched (no quote prefix → no unwrap).
 	if got.Request != `{"model":"x"}` {
 		t.Errorf("request = %q, want JSON body passed through verbatim", got.Request)
+	}
+	// The complete span rides through verbatim for the raw telemetry pane.
+	if got.SpanEvent != string(span) {
+		t.Errorf("span_event = %q, want %q", got.SpanEvent, span)
 	}
 }
 
