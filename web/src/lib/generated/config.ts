@@ -67,13 +67,6 @@ export const ConnectorTypeAzureBlob = "azure_blob";
  */
 export const ConnectorTypeWebhook = "webhook";
 /**
- * WebhookDefaultMaxBodyBytes caps webhook deliveries when the binding
- * leaves max_body_bytes unset. Webhook receivers process a delivery
- * synchronously, so an unbounded body can stall the receiver; blob
- * stores ingest large objects out of band and so have no default cap.
- */
-export const WebhookDefaultMaxBodyBytes = 1 << 20; // 1 MiB
-/**
  * Auth modes for cloud-bucket connectors (s3, azure_blob). The set of
  * valid modes is type-specific; validation enforces.
  */

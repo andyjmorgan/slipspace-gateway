@@ -425,10 +425,10 @@ func TestConnectorBinding_Validate_ExplicitZeroMaxBodyOK(t *testing.T) {
 }
 
 func TestDefaultMaxBodyBytes(t *testing.T) {
-	if got := DefaultMaxBodyBytes(ConnectorTypeWebhook); got != WebhookDefaultMaxBodyBytes {
-		t.Errorf("webhook default = %d, want %d", got, WebhookDefaultMaxBodyBytes)
-	}
-	for _, ct := range []string{ConnectorTypeS3, ConnectorTypeAzureBlob, "", "unknown"} {
+	// No connector type caps by default — unset means no cap everywhere
+	// (the inbound bodycapture buffer is the real bound). Webhook used to
+	// default to 1 MiB and silently truncate large bodies; it no longer does.
+	for _, ct := range []string{ConnectorTypeWebhook, ConnectorTypeS3, ConnectorTypeAzureBlob, "", "unknown"} {
 		if got := DefaultMaxBodyBytes(ct); got != 0 {
 			t.Errorf("DefaultMaxBodyBytes(%q) = %d, want 0 (no cap)", ct, got)
 		}

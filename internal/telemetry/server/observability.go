@@ -21,7 +21,7 @@ import (
 // (the components take an injected client), so only the shapes are load-bearing.
 
 // allowedWindows maps the SPA's window tokens to durations. Unknown tokens fall
-// back to 24h.
+// back to 1h.
 var allowedWindows = map[string]time.Duration{
 	"15m": 15 * time.Minute,
 	"1h":  time.Hour,
@@ -30,13 +30,15 @@ var allowedWindows = map[string]time.Duration{
 	"7d":  7 * 24 * time.Hour,
 }
 
-// parseWindow resolves the ?window token to (token, duration), defaulting to 24h.
+// parseWindow resolves the ?window token to (token, duration), defaulting to 1h
+// — the recent slice operators look at most often, and the only window that
+// stays meaningful right after a fresh deploy when little history exists.
 func parseWindow(r *http.Request) (string, time.Duration) {
 	tok := r.URL.Query().Get("window")
 	if d, ok := allowedWindows[tok]; ok {
 		return tok, d
 	}
-	return "24h", 24 * time.Hour
+	return "1h", time.Hour
 }
 
 // clockSkewMargin pads the window's upper bound. observed_at is assigned by
