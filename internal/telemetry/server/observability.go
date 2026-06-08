@@ -106,7 +106,7 @@ func (s *Server) handleObsMessagesRecent(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleObsMessageBody(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var genAI []byte
+	var genAI, spanEvent []byte
 	event, evErr := s.queries.GetRequestEvent(r.Context(), id)
 	if evErr != nil && !errors.Is(evErr, store.ErrRequestEventNotFound) {
 		s.queryError(w, "message body", evErr)
@@ -116,6 +116,9 @@ func (s *Server) handleObsMessageBody(w http.ResponseWriter, r *http.Request) {
 		if c := event.DecodeSpanFields().GenAIContent; len(c) > 0 {
 			genAI = c
 		}
+		// The complete span verbatim, so the raw telemetry pane shows every
+		// field on the span (not just the gen_ai content sub-object).
+		spanEvent = event.SpanEvent
 	}
 
 	rec, err := s.recordFor(r.Context(), id)
@@ -128,7 +131,7 @@ func (s *Server) handleObsMessageBody(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no body")
 		return
 	}
-	writeJSON(w, http.StatusOK, mapBody(id, rec, genAI))
+	writeJSON(w, http.StatusOK, mapBody(id, rec, genAI, spanEvent))
 }
 
 // recordFor fetches a correlation id's verbatim record blob and decodes it into
@@ -466,7 +469,7 @@ func mapEntry(e store.RequestEvent) adminc.MessageEntry {
 // rollup) and the entity's gen_ai content onto MessageBodyDetail. A nil record
 // (reporting off / not arrived) leaves the body/header fields empty; the gen_ai
 // content still renders from the span blob.
-func mapBody(correlationID string, rec *cc.Record, genAIContent []byte) adminc.MessageBodyDetail {
+func mapBody(correlationID string, rec *cc.Record, genAIContent, spanEvent []byte) adminc.MessageBodyDetail {
 	detail := adminc.MessageBodyDetail{EventID: correlationID}
 	if rec != nil {
 		if !rec.Request.BodyOmitted && len(rec.Request.Body) > 0 {
@@ -486,6 +489,11 @@ func mapBody(correlationID string, rec *cc.Record, genAIContent []byte) adminc.M
 	}
 	if len(genAIContent) > 0 {
 		detail.GenAIContent = string(genAIContent)
+	}
+	// The whole span verbatim — every attribute, not just the gen_ai content —
+	// so the console's raw telemetry pane can show all fields on the span.
+	if len(spanEvent) > 0 {
+		detail.SpanEvent = string(spanEvent)
 	}
 	return detail
 }

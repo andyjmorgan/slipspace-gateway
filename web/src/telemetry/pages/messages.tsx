@@ -578,10 +578,16 @@ function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefi
   if (body === null) return <div className="text-[12px] text-[color:var(--text-4)]">No captured bodies (rolled off or capture disabled).</div>
 
   const hasGenAI = genAI !== null && genAIContentHasParts(genAI)
-  // Two top-level groups: Telemetry (the gateway's gen_ai content channel) and
-  // Report (the spool-captured wire bytes + headers). Each group nests a
-  // line-variant sub-tab strip:
-  //   Telemetry → Simplified (the structured view) | Raw (the captured JSON)
+  // The complete OTel span — every attribute the gateway emitted (model,
+  // provider, usage, request params, sluice.* facts, the gen_ai content, …),
+  // pretty-printed for the raw telemetry pane.
+  const spanRaw = prettyJSON(body.span_event)
+  const hasSpan = spanRaw !== ""
+  const hasTelemetry = hasGenAI || hasSpan
+  // Two top-level groups: Telemetry (the gen_ai span — a structured Simplified
+  // view plus the whole-span Raw view) and Report (the spool-captured wire
+  // bytes + headers). Each group nests a line-variant sub-tab strip:
+  //   Telemetry → Simplified (structured gen_ai) | Raw (the entire span)
   //   Report    → Request | Response | SSE stream (streaming only) | Headers
   // For streaming responses the Response sub-tab shows the accumulator's
   // assembled JSON (the rollup) and the raw SSE event bytes live on the
@@ -589,23 +595,25 @@ function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefi
   // split — Response is the full body. This mirrors the gateway admin
   // inspector so the two surfaces never disagree.
   return (
-    <Tabs defaultValue={hasGenAI ? "telemetry" : "report"} className="flex flex-col gap-2">
+    <Tabs defaultValue={hasTelemetry ? "telemetry" : "report"} className="flex flex-col gap-2">
       <TabsList>
-        {hasGenAI && <TabsTrigger value="telemetry">Telemetry</TabsTrigger>}
+        {hasTelemetry && <TabsTrigger value="telemetry">Telemetry</TabsTrigger>}
         <TabsTrigger value="report">Report</TabsTrigger>
       </TabsList>
-      {hasGenAI && (
+      {hasTelemetry && (
         <TabsContent value="telemetry">
-          <Tabs defaultValue="simplified" className="flex flex-col gap-2">
+          <Tabs defaultValue={hasGenAI ? "simplified" : "raw"} className="flex flex-col gap-2">
             <TabsList variant="line">
-              <TabsTrigger value="simplified">Simplified</TabsTrigger>
+              {hasGenAI && <TabsTrigger value="simplified">Simplified</TabsTrigger>}
               <TabsTrigger value="raw">Raw</TabsTrigger>
             </TabsList>
-            <TabsContent value="simplified">
-              <GenAIContentView content={genAI} />
-            </TabsContent>
+            {hasGenAI && (
+              <TabsContent value="simplified">
+                <GenAIContentView content={genAI} />
+              </TabsContent>
+            )}
             <TabsContent value="raw">
-              <BodyView label="GenAI content" text={body.gen_ai_content} />
+              <BodyView label="OTel span" text={hasSpan ? spanRaw : body.gen_ai_content} />
             </TabsContent>
           </Tabs>
         </TabsContent>
@@ -682,6 +690,17 @@ function BodyView({ label, text, bytes, truncated, partial }: { label: string; t
       <JsonViewer text={text} maxHeightClassName="max-h-[60vh]" />
     </div>
   )
+}
+
+// prettyJSON pretty-prints a JSON string for display; returns "" for an empty
+// input and the original string when it does not parse as JSON.
+function prettyJSON(s: string | undefined): string {
+  if (!s) return ""
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2)
+  } catch {
+    return s
+  }
 }
 
 // genAIContentHasParts reports whether the captured content carries any
