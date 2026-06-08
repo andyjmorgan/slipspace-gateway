@@ -13,21 +13,20 @@ const (
 	ConnectorTypeWebhook   = "webhook"
 )
 
-// WebhookDefaultMaxBodyBytes caps webhook deliveries when the binding
-// leaves max_body_bytes unset. Webhook receivers process a delivery
-// synchronously, so an unbounded body can stall the receiver; blob
-// stores ingest large objects out of band and so have no default cap.
-const WebhookDefaultMaxBodyBytes = 1 << 20 // 1 MiB
-
 // DefaultMaxBodyBytes is the body cap applied to a binding whose
-// MaxBodyBytes is nil (unset), keyed by the bound connector's type.
-// Zero means no cap. This is the single authority for the per-type
-// default — the runtime ([cmd/gateway/binding.go]) reads it, never
-// hardcodes the value.
-func DefaultMaxBodyBytes(connectorType string) int {
-	if connectorType == ConnectorTypeWebhook {
-		return WebhookDefaultMaxBodyBytes
-	}
+// MaxBodyBytes is nil (unset). Zero means no cap, for every connector type:
+// an unset binding captures the full body. The inbound bodycapture buffer
+// ([internal/middleware/bodycapture].MaxBodyBytes) already bounds what any
+// connector can ever see, so there is no per-type default truncation — a
+// previous 1 MiB webhook default silently dropped large request bodies
+// (e.g. long-context model calls) from webhook deliveries, which is exactly
+// what an operator wiring a "full payloads" webhook does not want. Operators
+// who need a tighter per-binding cap set max_body_bytes explicitly.
+//
+// The connector type is retained in the signature as the single authority
+// for any future per-type default — the runtime ([cmd/gateway/binding.go])
+// reads it, never hardcodes the value.
+func DefaultMaxBodyBytes(_ string) int {
 	return 0
 }
 

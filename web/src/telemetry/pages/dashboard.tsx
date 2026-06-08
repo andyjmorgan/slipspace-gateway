@@ -23,7 +23,7 @@ import {
 // from the DB-backed summary; the rules/tags panels are meter rollups
 // (invariant #4).
 export function DashboardPage() {
-  const [range, setRange] = useState<DashboardWindow>("24h")
+  const [range, setRange] = useState<DashboardWindow>("1h")
   const { state, refetch } = useDashboardSummary(range)
   const nav = useNavigate()
 

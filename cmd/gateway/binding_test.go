@@ -323,30 +323,19 @@ func TestApplyOversize_UnknownBehaviourShipsAsIs(t *testing.T) {
 
 // ---------- per-type default + zero override ----------
 
-func TestApplyOversize_WebhookDefaultCapStripsOversize(t *testing.T) {
-	// A webhook binding that leaves max_body_bytes unset inherits the
-	// 1 MiB protective default — a 2 MiB body trips metadata_only.
+func TestApplyOversize_WebhookUnsetCapHasNoDefault(t *testing.T) {
+	// A webhook binding that leaves max_body_bytes unset has NO default cap
+	// (same as blob): a 2 MiB body ships intact. This used to inherit a
+	// 1 MiB protective default that silently stripped large request bodies
+	// from webhook deliveries — the regression behind missing raw payloads.
 	rec := makeRec()
 	rec.Request.BodyBytes = 2 << 20
 	out, ship, ov := applyOversize(rec, contractsconfig.ConnectorBinding{Connector: "hook"}, contractsconfig.ConnectorTypeWebhook)
-	if !ship {
-		t.Fatal("metadata_only default should still ship")
-	}
-	if !out.Request.BodyOmitted {
-		t.Errorf("webhook default cap should strip a 2 MiB body: %+v", out.Request)
-	}
-	if !ov.Triggered || ov.Dropped || ov.CapBytes != contractsconfig.WebhookDefaultMaxBodyBytes {
-		t.Errorf("oversize outcome = %+v, want triggered + cap=%d", ov, contractsconfig.WebhookDefaultMaxBodyBytes)
-	}
-}
-
-func TestApplyOversize_WebhookUnderDefaultCapShips(t *testing.T) {
-	rec := makeRec()
-	rec.Request.BodyBytes = 512 << 10 // 512 KiB, under the 1 MiB default
-	rec.Response.BodyBytes = 0
-	out, ship, _ := applyOversize(rec, contractsconfig.ConnectorBinding{Connector: "hook"}, contractsconfig.ConnectorTypeWebhook)
 	if !ship || out.Request.BodyOmitted {
-		t.Errorf("a body under the webhook default should ship intact: %+v", out.Request)
+		t.Errorf("unset webhook cap should ship a 2 MiB body intact: %+v", out.Request)
+	}
+	if ov.Triggered {
+		t.Errorf("no-cap default should not trigger oversize: %+v", ov)
 	}
 }
 

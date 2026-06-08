@@ -65,8 +65,8 @@ func TestObsSummary_ParityShape(t *testing.T) {
 func TestObsSummary_DefaultWindowAndError(t *testing.T) {
 	h := newQueryServer(t, &fakeQueries{})
 	got := decodeAdmin[adminc.DashboardSummary](t, get(t, h, "/api/v1/dashboard/summary?window=bogus", true))
-	if got.Window != "24h" {
-		t.Errorf("unknown window should default to 24h, got %q", got.Window)
+	if got.Window != "1h" {
+		t.Errorf("unknown window should default to 1h, got %q", got.Window)
 	}
 	hErr := newQueryServer(t, &fakeQueries{summaryErr: errors.New("db")})
 	if resp := get(t, hErr, "/api/v1/dashboard/summary", true); resp.Code != http.StatusInternalServerError {
