@@ -22,13 +22,18 @@ func setCounter(s observability.Sample, metric string, attrs []attribute.KeyValu
 	s.Counters[metric][observability.EncodeLabels(attrs)] = value
 }
 
-// setHistogram seeds the request-duration histogram on a Sample. Today
-// every test uses the same metric name; if a future test needs a
-// different histogram, take metric back as a parameter.
-func setHistogram(s observability.Sample, attrs []attribute.KeyValue, sum float64, count uint64, bounds []float64, counts []uint64) {
+// setHistogram seeds the request-duration histogram on a Sample. Count is
+// derived from the per-bucket counts (their sum) so callers describe the
+// distribution once. Today every test uses the same metric name; if a future
+// test needs a different histogram, take metric back as a parameter.
+func setHistogram(s observability.Sample, attrs []attribute.KeyValue, sum float64, bounds []float64, counts []uint64) {
 	const metric = observability.MetricRequestDuration
 	if s.Histograms[metric] == nil {
 		s.Histograms[metric] = map[observability.LabelKey]observability.HistogramSnapshot{}
+	}
+	var count uint64
+	for _, c := range counts {
+		count += c
 	}
 	s.Histograms[metric][observability.EncodeLabels(attrs)] = observability.HistogramSnapshot{
 		Sum: sum, Count: count, Bounds: bounds, Counts: counts,
@@ -96,34 +101,6 @@ func TestBuildDashboardSummary_TotalsAndRates(t *testing.T) {
 	}
 }
 
-func TestBuildDashboardSummary_LatencyQuantiles(t *testing.T) {
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	t1 := t0.Add(time.Hour)
-	start := makeSample(t0)
-	end := makeSample(t1)
-	bounds := []float64{0.1, 0.5, 1, 2, 5}
-	// 100 observations spread across the buckets: 10/40/30/15/4/1
-	// cumulative bucket counts at end (per-bucket, not running):
-	// (-Inf,0.1]=10, (0.1,0.5]=40, (0.5,1]=30, (1,2]=15, (2,5]=4, (5,+Inf]=1
-	endCounts := []uint64{10, 40, 30, 15, 4, 1}
-	setHistogram(end, nil, 100, 100, bounds, endCounts)
-
-	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
-
-	// Total=100. p50 → rank 50, falls in (0.1, 0.5] (cum 10..50). frac = (50-10)/40 = 1.0 → 0.5.
-	// p95 → rank 95, falls in (1, 2] (cum 80..95). frac = (95-80)/15 = 1.0 → 2.0.
-	// p99 → rank 99, falls in (2, 5] (cum 95..99). frac = (99-95)/4 = 1.0 → 5.0.
-	if got := sum.LatencyMs.P50; got != 500 {
-		t.Errorf("P50 = %d ms, want 500", got)
-	}
-	if got := sum.LatencyMs.P95; got != 2000 {
-		t.Errorf("P95 = %d ms, want 2000", got)
-	}
-	if got := sum.LatencyMs.P99; got != 5000 {
-		t.Errorf("P99 = %d ms, want 5000", got)
-	}
-}
-
 func TestBuildDashboardSummary_ByProviderSortedDescending(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Hour)
@@ -136,8 +113,8 @@ func TestBuildDashboardSummary_ByProviderSortedDescending(t *testing.T) {
 	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "200")}, 200)
 	setCounter(end, observability.MetricRequestsTotal, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai"), attribute.String(observability.AttrHTTPResponseStatusCode, "500")}, 10)
 
-	setHistogram(end, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai")}, 1, 1, bounds, one)
-	setHistogram(end, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "anthropic")}, 1, 1, bounds, one)
+	setHistogram(end, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "openai")}, 1, bounds, one)
+	setHistogram(end, []attribute.KeyValue{attribute.String(observability.AttrGenAIProviderName, "anthropic")}, 1, bounds, one)
 
 	sum := BuildDashboardSummary(start, end, time.Hour, nil, nil, nil, nil, nil)
 

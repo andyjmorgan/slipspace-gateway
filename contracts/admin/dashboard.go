@@ -30,21 +30,18 @@ type DashboardSummary struct {
 	// and the error rate over Window.
 	Rates DashboardRates `json:"rates"`
 
-	// LatencyMs is the duration-histogram quantile set.
-	LatencyMs DashboardLatency `json:"latency_ms"`
-
-	// ByProvider breaks requests + p95 + error rate down by provider.
+	// ByProvider breaks requests + error rate down by provider.
 	// Each entry corresponds to one configured provider that saw at
 	// least one request in Window.
 	ByProvider []DashboardProviderRow `json:"by_provider"`
 
-	// ByProtocol breaks requests + p95 + error rate down by the resolved
+	// ByProtocol breaks requests + error rate down by the resolved
 	// (provider, protocol) pair — e.g. openai.chat vs anthropic.messages.
 	// Cardinality is bounded by the providers map (a handful of protocols
 	// per provider).
 	ByProtocol []DashboardProtocolRow `json:"by_protocol"`
 
-	// ByConfiguration breaks requests + p95 + error rate down by the
+	// ByConfiguration breaks requests + error rate down by the
 	// resolved configuration name. Cardinality is bounded by the
 	// operator-defined configurations YAML; never client-derived.
 	ByConfiguration []DashboardConfigurationRow `json:"by_configuration"`
@@ -106,32 +103,21 @@ type DashboardRates struct {
 	ErrorRate         float64 `json:"error_rate"`
 }
 
-// DashboardLatency is the request-duration quantile set, in
-// milliseconds — Prometheus stores seconds, the handler converts so
-// the SPA can use ms throughout.
-type DashboardLatency struct {
-	P50 int64 `json:"p50"`
-	P95 int64 `json:"p95"`
-	P99 int64 `json:"p99"`
-}
-
 // DashboardProviderRow is one row of ByProvider.
 type DashboardProviderRow struct {
-	Provider     string  `json:"provider"`
-	Requests     int64   `json:"requests"`
-	P95LatencyMs int64   `json:"p95_latency_ms"`
-	ErrorRate    float64 `json:"error_rate"`
+	Provider  string  `json:"provider"`
+	Requests  int64   `json:"requests"`
+	ErrorRate float64 `json:"error_rate"`
 }
 
 // DashboardProtocolRow is one row of ByProtocol. Provider is repeated
 // alongside Protocol so the SPA can render a single readable label
 // (e.g. "openai · chat") without joining tables.
 type DashboardProtocolRow struct {
-	Provider     string  `json:"provider"`
-	Protocol     string  `json:"protocol"`
-	Requests     int64   `json:"requests"`
-	P95LatencyMs int64   `json:"p95_latency_ms"`
-	ErrorRate    float64 `json:"error_rate"`
+	Provider  string  `json:"provider"`
+	Protocol  string  `json:"protocol"`
+	Requests  int64   `json:"requests"`
+	ErrorRate float64 `json:"error_rate"`
 }
 
 // DashboardConfigurationRow is one row of ByConfiguration. The
@@ -139,7 +125,6 @@ type DashboardProtocolRow struct {
 type DashboardConfigurationRow struct {
 	Configuration string  `json:"configuration"`
 	Requests      int64   `json:"requests"`
-	P95LatencyMs  int64   `json:"p95_latency_ms"`
 	ErrorRate     float64 `json:"error_rate"`
 }
 

@@ -25,8 +25,7 @@ func decodeAdmin[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 func TestObsSummary_ParityShape(t *testing.T) {
 	q := &fakeQueries{summary: store.DashboardSummary{
 		Totals:          store.DashboardTotals{Requests: 10, RequestsErrored: 2, TokensIn: 100, TokensOut: 50},
-		Latency:         store.DashboardLatency{P50: 1, P95: 9, P99: 20},
-		ByProvider:      []store.DashboardDimensionRow{{Key: "anthropic", Requests: 8, P95LatencyMs: 9, ErrorRate: 0.1}},
+		ByProvider:      []store.DashboardDimensionRow{{Key: "anthropic", Requests: 8, ErrorRate: 0.1}},
 		ByProtocol:      []store.DashboardProtocolRow{{Provider: "anthropic", Protocol: "messages", Requests: 8}},
 		ByConfiguration: []store.DashboardDimensionRow{{Key: "default", Requests: 10}},
 		ByModel:         []store.DashboardModelRow{{Model: "claude-x", Provider: "anthropic", Requests: 8, TokensIn: 100}},
@@ -77,10 +76,10 @@ func TestObsSummary_DefaultWindowAndError(t *testing.T) {
 
 func TestObsTimeseries(t *testing.T) {
 	ts := time.Unix(1000, 0)
-	q := &fakeQueries{series: []store.DashboardSeriesBucket{{Ts: ts, Requests: 120, Errored: 12, P95LatencyMs: 42}}}
+	q := &fakeQueries{series: []store.DashboardSeriesBucket{{Ts: ts, Requests: 120, Errored: 12, TokensIn: 42}}}
 	h := newQueryServer(t, q)
-	got := decodeAdmin[adminc.DashboardTimeseries](t, get(t, h, "/api/v1/dashboard/timeseries?series=p95&window=1h", true))
-	if len(got.Series) != 1 || got.Series[0].Name != "p95" || got.Series[0].Unit != "ms" {
+	got := decodeAdmin[adminc.DashboardTimeseries](t, get(t, h, "/api/v1/dashboard/timeseries?series=tokens_in&window=1h", true))
+	if len(got.Series) != 1 || got.Series[0].Name != "tokens_in" {
 		t.Fatalf("series = %+v", got.Series)
 	}
 	if len(got.Series[0].Points) != 1 || got.Series[0].Points[0].Value != 42 {
@@ -227,13 +226,10 @@ func TestMapBodyDecodesEscapedSSE(t *testing.T) {
 }
 
 func TestSeriesValueAndUnit(t *testing.T) {
-	b := store.DashboardSeriesBucket{Requests: 60, Errored: 6, TokensIn: 7, TokensOut: 8, P50LatencyMs: 1, P95LatencyMs: 2, P99LatencyMs: 3}
+	b := store.DashboardSeriesBucket{Requests: 60, Errored: 6, TokensIn: 7, TokensOut: 8}
 	cases := map[string]float64{
 		"rps":        1, // 60 / 60s
 		"error_rate": 0.1,
-		"p50":        1,
-		"p95":        2,
-		"p99":        3,
 		"tokens_in":  7,
 		"tokens_out": 8,
 		"requests":   60,
@@ -247,7 +243,7 @@ func TestSeriesValueAndUnit(t *testing.T) {
 	if seriesValue(b, "rps", 0) != 0 {
 		t.Error("rps with zero bucket -> 0")
 	}
-	for name, want := range map[string]string{"rps": "req/s", "error_rate": "%", "p95": "ms", "requests": ""} {
+	for name, want := range map[string]string{"rps": "req/s", "error_rate": "%", "requests": ""} {
 		if got := seriesUnit(name); got != want {
 			t.Errorf("seriesUnit(%q) = %q, want %q", name, got, want)
 		}

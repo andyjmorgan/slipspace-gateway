@@ -7,18 +7,27 @@ import (
 	"time"
 )
 
-// Measurement values (latency, token usage) no longer have promoted columns —
-// they live in the span_event blob. These SQL expressions project them back out
-// as bigints for the dashboard's count/sum/percentile rollups; a missing or
-// non-numeric value reads as 0. The dashboard "reads over the entity" (the
-// design's interim stance until the Timescale CAGGs land); it never reads
-// records or the spool (invariant #4).
+// Dashboard rollups read the TimescaleDB continuous aggregates (migration 0007),
+// never the request_events entity. Each CAGG buckets the sluice meter feed at one
+// minute (count/sum only — no percentiles; MVP runs plain timescaledb without the
+// percentile toolkit, so latency quantiles are dropped entirely). The dashboard
+// re-buckets those 1-minute rows up to the requested width. This stays inside
+// invariant #4: the meters are the dashboard's data, never the record spool.
+//
+// cagg_requests_1m carries status_code as TEXT (the JSONB label value). The
+// outcome split casts it to int (see exprStatusInt) so a missing or blank label
+// reads as 0 and never matches the 200-299 / >=400 bands.
 const (
-	exprLatencyMs           = `COALESCE((span_event->>'sluice.latency_ms')::bigint, 0)`
-	exprTokensIn            = `COALESCE((span_event->>'gen_ai.usage.input_tokens')::bigint, 0)`                //nolint:gosec // SQL fragment over a JSONB path, not a credential
-	exprTokensOut           = `COALESCE((span_event->>'gen_ai.usage.output_tokens')::bigint, 0)`               //nolint:gosec // SQL fragment over a JSONB path, not a credential
-	exprTokensCached        = `COALESCE((span_event->>'gen_ai.usage.cache_read.input_tokens')::bigint, 0)`     //nolint:gosec // SQL fragment over a JSONB path, not a credential
-	exprTokensCacheCreation = `COALESCE((span_event->>'gen_ai.usage.cache_creation.input_tokens')::bigint, 0)` //nolint:gosec // SQL fragment over a JSONB path, not a credential
+	// exprStatusInt projects cagg_requests_1m.status_code (TEXT) to an int for
+	// the outcome-band filters; blank/non-numeric reads as 0.
+	exprStatusInt = `COALESCE(NULLIF(status_code, '')::int, 0)`
+
+	// Token metric_name discriminators in cagg_tokens_1m. The "total" suffix
+	// trips gosec's credential heuristic; these are OTel meter names, not secrets.
+	metricTokensIn            = "sluice.tokens.input.total"          //nolint:gosec // OTel meter name, not a credential
+	metricTokensOut           = "sluice.tokens.output.total"         //nolint:gosec // OTel meter name, not a credential
+	metricTokensCached        = "sluice.tokens.cached.total"         //nolint:gosec // OTel meter name, not a credential
+	metricTokensCacheCreation = "sluice.tokens.cache_creation.total" //nolint:gosec // OTel meter name, not a credential
 )
 
 // DashboardParams is the input to the dashboard rollups: a half-open [From, To)
@@ -42,29 +51,20 @@ type DashboardTotals struct {
 	TokensCacheCreation int64
 }
 
-// DashboardLatency is the request-duration quantile set in milliseconds.
-type DashboardLatency struct {
-	P50 int64
-	P95 int64
-	P99 int64
-}
-
 // DashboardDimensionRow is one breakdown row keyed by a single dimension
 // (provider, configuration).
 type DashboardDimensionRow struct {
-	Key          string
-	Requests     int64
-	P95LatencyMs int64
-	ErrorRate    float64
+	Key       string
+	Requests  int64
+	ErrorRate float64
 }
 
 // DashboardProtocolRow is one (provider, protocol) breakdown row.
 type DashboardProtocolRow struct {
-	Provider     string
-	Protocol     string
-	Requests     int64
-	P95LatencyMs int64
-	ErrorRate    float64
+	Provider  string
+	Protocol  string
+	Requests  int64
+	ErrorRate float64
 }
 
 // DashboardModelRow is one model breakdown row carrying per-model token totals.
@@ -92,14 +92,13 @@ type DashboardProviderHealth struct {
 	TotalErrors int64
 }
 
-// DashboardSummary is the full rollup the console dashboard renders. Most
-// panels aggregate request_events (the lean per-request index); the fired-row
-// panels (RulesFired / TagsFired) aggregate the sluice meter rollups in
-// metric_points instead (invariant #4: dashboards read meters, never record
-// scans).
+// DashboardSummary is the full rollup the console dashboard renders. Every panel
+// aggregates a continuous aggregate: the request/outcome panels over
+// cagg_requests_1m, token totals over cagg_tokens_1m, the fired-row panels over
+// cagg_rules_1m / cagg_tags_1m (invariant #4: dashboards read meters, never
+// record scans).
 type DashboardSummary struct {
 	Totals          DashboardTotals
-	Latency         DashboardLatency
 	ByProvider      []DashboardDimensionRow
 	ByProtocol      []DashboardProtocolRow
 	ByConfiguration []DashboardDimensionRow
@@ -110,14 +109,11 @@ type DashboardSummary struct {
 }
 
 // QueryDashboardSummary computes the whole dashboard rollup over [From, To),
-// one query per panel, each narrowed by the shared Filter.
+// one query per panel, each narrowed by the dashboard-scoped Filter.
 func (s *Store) QueryDashboardSummary(ctx context.Context, p DashboardParams) (DashboardSummary, error) {
 	var out DashboardSummary
 	var err error
 	if out.Totals, err = s.queryDashTotals(ctx, p); err != nil {
-		return DashboardSummary{}, err
-	}
-	if out.Latency, err = s.queryDashLatency(ctx, p); err != nil {
 		return DashboardSummary{}, err
 	}
 	if out.ByProvider, err = s.queryDashDimension(ctx, p, "provider"); err != nil {
@@ -144,53 +140,106 @@ func (s *Store) QueryDashboardSummary(ctx context.Context, p DashboardParams) (D
 	return out, nil
 }
 
+// dashCaggColumns is the allowlist of equality predicates the dashboard honors
+// against a CAGG. The shared EventFilter also carries tags + gateway_id + the id
+// search boxes (SessionID/CorrelationID/AgentID/UserID), but the CAGGs carry
+// NONE of those dimensions — they are message-browser-only. So the dashboard
+// applies only the equality dimensions the CAGGs actually have; everything else
+// is silently ignored here. (This is why dashboard rollups must NOT call the
+// entity appendFilter, which references request_events columns / span_event JSONB
+// that don't exist on a CAGG.)
+var dashCaggColumns = []struct {
+	col string
+	val func(EventFilter) string
+}{
+	{"configuration", func(f EventFilter) string { return f.Configuration }},
+	{"model", func(f EventFilter) string { return f.Model }},
+	{"provider", func(f EventFilter) string { return f.Provider }},
+	{"protocol", func(f EventFilter) string { return f.Protocol }},
+}
+
+// appendCaggFilter grows the WHERE fragments + args for the CAGG-scoped equality
+// predicates plus the status-class band, binding every value as a parameter.
+// Column names come from the package-internal allowlist, never request input.
+// Tags / gateway_id / id-lookups are deliberately not applied — the CAGGs lack
+// those columns (see dashCaggColumns).
+func appendCaggFilter(where []string, args []any, f EventFilter) ([]string, []any) {
+	for _, c := range dashCaggColumns {
+		v := c.val(f)
+		if v == "" {
+			continue
+		}
+		args = append(args, v)
+		where = append(where, fmt.Sprintf("%s = $%d", c.col, len(args)))
+	}
+	if lo, hi, ok := statusClassBounds(f.StatusClass); ok {
+		args = append(args, lo)
+		loIdx := len(args)
+		if hi == 0 {
+			where = append(where, fmt.Sprintf("%s >= $%d", exprStatusInt, loIdx))
+		} else {
+			args = append(args, hi)
+			where = append(where, fmt.Sprintf("%s BETWEEN $%d AND $%d", exprStatusInt, loIdx, len(args)))
+		}
+	}
+	return where, args
+}
+
 // dashWindow builds the half-open window WHERE fragments + args seeded with the
-// shared Filter. Bound order ($1=From, $2=To) is fixed so callers extend $3+.
+// dashboard-scoped Filter against a CAGG (bucket column). Bound order ($1=From,
+// $2=To) is fixed so callers extend $3+.
 func dashWindow(p DashboardParams) ([]string, []any) {
-	where := []string{"observed_at >= $1", "observed_at < $2"}
+	where := []string{"bucket >= $1", "bucket < $2"}
 	args := []any{p.From, p.To}
-	return appendFilter(where, args, p.Filter)
+	return appendCaggFilter(where, args, p.Filter)
 }
 
 func (s *Store) queryDashTotals(ctx context.Context, p DashboardParams) (DashboardTotals, error) {
 	where, args := dashWindow(p)
-	q := `
+	reqQ := `
 SELECT
-  COUNT(*),
-  COALESCE(SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END), 0),
-  COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0),
-  COALESCE(SUM(` + exprTokensIn + `), 0),
-  COALESCE(SUM(` + exprTokensOut + `), 0),
-  COALESCE(SUM(` + exprTokensCached + `), 0),
-  COALESCE(SUM(` + exprTokensCacheCreation + `), 0)
-FROM request_events
+  COALESCE(SUM(requests), 0),
+  COALESCE(SUM(requests) FILTER (WHERE ` + exprStatusInt + ` BETWEEN 200 AND 299), 0),
+  COALESCE(SUM(requests) FILTER (WHERE ` + exprStatusInt + ` >= 400), 0)
+FROM cagg_requests_1m
 WHERE ` + strings.Join(where, " AND ")
 
 	var t DashboardTotals
-	if err := s.db.QueryRow(ctx, q, args...).Scan(
-		&t.Requests, &t.RequestsSuccess, &t.RequestsErrored,
+	if err := s.db.QueryRow(ctx, reqQ, args...).Scan(&t.Requests, &t.RequestsSuccess, &t.RequestsErrored); err != nil {
+		return DashboardTotals{}, fmt.Errorf("store: dashboard totals: %w", err)
+	}
+
+	// Token totals come from cagg_tokens_1m, pivoted by metric_name. The token
+	// CAGG has no status_code column, so the request filter's status band must
+	// not apply here — build a token-only window.
+	twhere, targs := dashTokenWindow(p)
+	tokQ := `
+SELECT
+  COALESCE(SUM(tokens) FILTER (WHERE metric_name = '` + metricTokensIn + `'), 0),
+  COALESCE(SUM(tokens) FILTER (WHERE metric_name = '` + metricTokensOut + `'), 0),
+  COALESCE(SUM(tokens) FILTER (WHERE metric_name = '` + metricTokensCached + `'), 0),
+  COALESCE(SUM(tokens) FILTER (WHERE metric_name = '` + metricTokensCacheCreation + `'), 0)
+FROM cagg_tokens_1m
+WHERE ` + strings.Join(twhere, " AND ")
+
+	if err := s.db.QueryRow(ctx, tokQ, targs...).Scan(
 		&t.TokensIn, &t.TokensOut, &t.TokensCached, &t.TokensCacheCreation,
 	); err != nil {
-		return DashboardTotals{}, fmt.Errorf("store: dashboard totals: %w", err)
+		return DashboardTotals{}, fmt.Errorf("store: dashboard token totals: %w", err)
 	}
 	return t, nil
 }
 
-func (s *Store) queryDashLatency(ctx context.Context, p DashboardParams) (DashboardLatency, error) {
-	where, args := dashWindow(p)
-	q := `
-SELECT
-  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY ` + exprLatencyMs + `), 0),
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ` + exprLatencyMs + `), 0),
-  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY ` + exprLatencyMs + `), 0)
-FROM request_events
-WHERE ` + strings.Join(where, " AND ")
-
-	var p50, p95, p99 float64
-	if err := s.db.QueryRow(ctx, q, args...).Scan(&p50, &p95, &p99); err != nil {
-		return DashboardLatency{}, fmt.Errorf("store: dashboard latency: %w", err)
-	}
-	return DashboardLatency{P50: round(p50), P95: round(p95), P99: round(p99)}, nil
+// dashTokenWindow builds the window + equality predicates for cagg_tokens_1m,
+// which lacks a status_code column — the StatusClass band is dropped so a 5xx
+// dashboard filter doesn't reference a missing column. Provider/model/
+// configuration/protocol all exist on the token CAGG and still apply.
+func dashTokenWindow(p DashboardParams) ([]string, []any) {
+	where := []string{"bucket >= $1", "bucket < $2"}
+	args := []any{p.From, p.To}
+	f := p.Filter
+	f.StatusClass = ""
+	return appendCaggFilter(where, args, f)
 }
 
 // dashDimensionColumns is the allowlist for the single-column breakdowns.
@@ -206,13 +255,13 @@ func (s *Store) queryDashDimension(ctx context.Context, p DashboardParams, dim s
 	}
 	where, args := dashWindow(p)
 	q := fmt.Sprintf(`
-SELECT %s AS grp, COUNT(*),
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY %s), 0),
-  COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
-FROM request_events
+SELECT %s AS grp,
+  COALESCE(SUM(requests), 0),
+  COALESCE(SUM(requests) FILTER (WHERE %s >= 400), 0)
+FROM cagg_requests_1m
 WHERE %s AND %s <> ''
 GROUP BY grp
-ORDER BY COUNT(*) DESC, grp`, col, exprLatencyMs, strings.Join(where, " AND "), col)
+ORDER BY 2 DESC, grp`, col, exprStatusInt, strings.Join(where, " AND "), col)
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -224,13 +273,11 @@ ORDER BY COUNT(*) DESC, grp`, col, exprLatencyMs, strings.Join(where, " AND "), 
 	for rows.Next() {
 		var (
 			r      DashboardDimensionRow
-			p95    float64
 			errCnt int64
 		)
-		if err := rows.Scan(&r.Key, &r.Requests, &p95, &errCnt); err != nil {
+		if err := rows.Scan(&r.Key, &r.Requests, &errCnt); err != nil {
 			return nil, fmt.Errorf("store: scan dashboard dimension: %w", err)
 		}
-		r.P95LatencyMs = round(p95)
 		r.ErrorRate = rate(errCnt, r.Requests)
 		out = append(out, r)
 	}
@@ -240,14 +287,14 @@ ORDER BY COUNT(*) DESC, grp`, col, exprLatencyMs, strings.Join(where, " AND "), 
 func (s *Store) queryDashProtocol(ctx context.Context, p DashboardParams) ([]DashboardProtocolRow, error) {
 	where, args := dashWindow(p)
 	q := `
-SELECT provider, protocol, COUNT(*),
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ` + exprLatencyMs + `), 0),
-  COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
-FROM request_events
+SELECT provider, protocol,
+  COALESCE(SUM(requests), 0),
+  COALESCE(SUM(requests) FILTER (WHERE ` + exprStatusInt + ` >= 400), 0)
+FROM cagg_requests_1m
 WHERE ` + strings.Join(where, " AND ") + `
   AND provider <> '' AND protocol <> ''
 GROUP BY provider, protocol
-ORDER BY COUNT(*) DESC, provider, protocol`
+ORDER BY 3 DESC, provider, protocol`
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -259,31 +306,55 @@ ORDER BY COUNT(*) DESC, provider, protocol`
 	for rows.Next() {
 		var (
 			r      DashboardProtocolRow
-			p95    float64
 			errCnt int64
 		)
-		if err := rows.Scan(&r.Provider, &r.Protocol, &r.Requests, &p95, &errCnt); err != nil {
+		if err := rows.Scan(&r.Provider, &r.Protocol, &r.Requests, &errCnt); err != nil {
 			return nil, fmt.Errorf("store: scan dashboard protocol: %w", err)
 		}
-		r.P95LatencyMs = round(p95)
 		r.ErrorRate = rate(errCnt, r.Requests)
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
+// queryDashModel joins per-model request counts (cagg_requests_1m) with per-model
+// token sums (cagg_tokens_1m) in SQL. A FULL OUTER JOIN keeps a model that has
+// only token rows or only request rows; COALESCE collapses the two model keys and
+// zero-fills the missing side. provider is taken from whichever CAGG has it.
 func (s *Store) queryDashModel(ctx context.Context, p DashboardParams) ([]DashboardModelRow, error) {
-	where, args := dashWindow(p)
+	rwhere, rargs := dashWindow(p)
+	// Token side shares the same equality filters minus the status band.
+	twhere, _ := dashTokenWindow(p)
+	// dashTokenWindow re-numbers from $1; but we need its predicates to bind the
+	// SAME args as the request side. Both windows are built from the same Filter
+	// in the same order, so the request-side args cover both — we reuse rargs and
+	// renumber the token predicates onto the shared arg list. Simpler: build one
+	// shared filter and reference it in both CTEs.
 	q := `
-SELECT model, COALESCE(MAX(provider), ''), COUNT(*),
-  COALESCE(SUM(` + exprTokensIn + `), 0), COALESCE(SUM(` + exprTokensOut + `), 0)
-FROM request_events
-WHERE ` + strings.Join(where, " AND ") + `
-  AND model <> ''
-GROUP BY model
-ORDER BY COUNT(*) DESC, model`
+WITH req AS (
+  SELECT model, COALESCE(MAX(provider), '') AS provider, COALESCE(SUM(requests), 0) AS requests
+  FROM cagg_requests_1m
+  WHERE ` + strings.Join(rwhere, " AND ") + ` AND model <> ''
+  GROUP BY model
+),
+tok AS (
+  SELECT model,
+    COALESCE(MAX(provider), '') AS provider,
+    COALESCE(SUM(tokens) FILTER (WHERE metric_name = '` + metricTokensIn + `'), 0) AS tokens_in,
+    COALESCE(SUM(tokens) FILTER (WHERE metric_name = '` + metricTokensOut + `'), 0) AS tokens_out
+  FROM cagg_tokens_1m
+  WHERE ` + strings.Join(twhere, " AND ") + ` AND model <> ''
+  GROUP BY model
+)
+SELECT COALESCE(req.model, tok.model) AS model,
+  COALESCE(NULLIF(req.provider, ''), tok.provider, '') AS provider,
+  COALESCE(req.requests, 0) AS requests,
+  COALESCE(tok.tokens_in, 0) AS tokens_in,
+  COALESCE(tok.tokens_out, 0) AS tokens_out
+FROM req FULL OUTER JOIN tok ON req.model = tok.model
+ORDER BY requests DESC, model`
 
-	rows, err := s.db.Query(ctx, q, args...)
+	rows, err := s.db.Query(ctx, q, rargs...)
 	if err != nil {
 		return nil, fmt.Errorf("store: dashboard model: %w", err)
 	}
@@ -300,61 +371,51 @@ ORDER BY COUNT(*) DESC, model`
 	return out, rows.Err()
 }
 
-// Meter names + label keys backing the fired-row panels. These mirror the
-// gateway's sluice.* counters (internal/observability) — a wire contract, like
-// the payload Kind* constants. The configuration rides every sluice meter as
-// the OTel attribute "sluice.configuration"; the per-row key is the meter's own
-// dimension (rule_name / tag).
-const (
-	meterRuleFired     = "sluice.rule.fired"
-	meterTagsApplied   = "gateway.tags.applied.total"
-	labelConfiguration = "sluice.configuration"
-)
-
-// dashFiredMeter pairs a panel's backing meter name with its per-row key label.
-type dashFiredMeter struct {
-	metric   string
-	keyLabel string
+// dashFiredCagg pairs a fired-row panel with its backing CAGG, key column, and
+// value column. The CAGG + columns are interpolated into SQL, so they MUST come
+// from this fixed set, never from request input.
+type dashFiredCagg struct {
+	view     string
+	keyCol   string
+	valueCol string
 }
 
-// dashFiredMeters is the allowlist for the meter-backed fired-row panels. The
-// keyLabel is interpolated into SQL, so it MUST come from this fixed set, never
-// from request input.
-var dashFiredMeters = map[string]dashFiredMeter{
-	"rules": {metric: meterRuleFired, keyLabel: "rule_name"},
-	"tags":  {metric: meterTagsApplied, keyLabel: "tag"},
+// dashFiredCaggs is the allowlist for the meter-backed fired-row panels. Each
+// reads its dedicated CAGG (cagg_rules_1m / cagg_tags_1m) rather than scanning
+// metric_points raw (invariant #4: dashboards read meters, never record scans).
+var dashFiredCaggs = map[string]dashFiredCagg{
+	"rules": {view: "cagg_rules_1m", keyCol: "rule_name", valueCol: "fired"},
+	"tags":  {view: "cagg_tags_1m", keyCol: "tag", valueCol: "applied"},
 }
 
-// queryDashFired aggregates a fired-row panel from the sluice meter rollups in
-// metric_points — NOT from a span_event blob scan (invariant #4: dashboards
-// read meters, never record scans). The gateway exports these
-// counters with delta temporality, so SUM(value) over the window is the exact
-// count. Only the window + configuration filter apply; the meters carry no
-// provider/model/status dimension, so those filters don't narrow these panels.
+// queryDashFired aggregates a fired-row panel from its continuous aggregate. The
+// CAGGs carry only (bucket, key, configuration, value); the only dashboard filter
+// they can honor is the window + configuration equality (provider/model/status
+// don't exist on these meters). UsedByConfigurations lists the distinct configs
+// that produced each key.
 func (s *Store) queryDashFired(ctx context.Context, p DashboardParams, panel string) ([]DashboardFiredRow, error) {
-	m, ok := dashFiredMeters[panel]
+	m, ok := dashFiredCaggs[panel]
 	if !ok {
 		return nil, fmt.Errorf("store: unknown fired panel %q", panel)
 	}
 	where := []string{
-		"metric_name = $1",
-		"observed_at >= $2",
-		"observed_at < $3",
-		fmt.Sprintf("labels->>'%s' IS NOT NULL", m.keyLabel),
-		fmt.Sprintf("labels->>'%s' <> ''", m.keyLabel),
+		"bucket >= $1",
+		"bucket < $2",
+		m.keyCol + " IS NOT NULL",
+		m.keyCol + " <> ''",
 	}
-	args := []any{m.metric, p.From, p.To}
+	args := []any{p.From, p.To}
 	if p.Filter.Configuration != "" {
 		args = append(args, p.Filter.Configuration)
-		where = append(where, fmt.Sprintf("labels->>'%s' = $%d", labelConfiguration, len(args)))
+		where = append(where, fmt.Sprintf("configuration = $%d", len(args)))
 	}
 	q := fmt.Sprintf(`
-SELECT labels->>'%s' AS key, COALESCE(SUM(value), 0)::bigint AS cnt,
-  COALESCE(array_agg(DISTINCT labels->>'%s') FILTER (WHERE labels->>'%s' IS NOT NULL AND labels->>'%s' <> ''), ARRAY[]::text[]) AS configs
-FROM metric_points
+SELECT %s AS key, COALESCE(SUM(%s), 0)::bigint AS cnt,
+  COALESCE(array_agg(DISTINCT configuration) FILTER (WHERE configuration IS NOT NULL AND configuration <> ''), ARRAY[]::text[]) AS configs
+FROM %s
 WHERE %s
 GROUP BY key
-ORDER BY cnt DESC, key`, m.keyLabel, labelConfiguration, labelConfiguration, labelConfiguration, strings.Join(where, " AND "))
+ORDER BY cnt DESC, key`, m.keyCol, m.valueCol, m.view, strings.Join(where, " AND "))
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -374,13 +435,14 @@ ORDER BY cnt DESC, key`, m.keyLabel, labelConfiguration, labelConfiguration, lab
 }
 
 func (s *Store) queryDashProviderHealth(ctx context.Context, p DashboardParams) ([]DashboardProviderHealth, error) {
-	where := []string{"observed_at >= $1", "observed_at < $2", "provider <> ''"}
+	where := []string{"bucket >= $1", "bucket < $2", "provider <> ''"}
 	args := []any{p.RecentFrom, p.To}
-	where, args = appendFilter(where, args, p.Filter)
+	where, args = appendCaggFilter(where, args, p.Filter)
 	q := `
-SELECT provider, COUNT(*),
-  COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
-FROM request_events
+SELECT provider,
+  COALESCE(SUM(requests), 0),
+  COALESCE(SUM(requests) FILTER (WHERE ` + exprStatusInt + ` >= 400), 0)
+FROM cagg_requests_1m
 WHERE ` + strings.Join(where, " AND ") + `
 GROUP BY provider
 ORDER BY provider`
@@ -413,48 +475,79 @@ type DashboardSeriesParams struct {
 }
 
 // DashboardSeriesBucket is one time bucket carrying every plottable series value.
+// Latency quantiles are gone (MVP drops percentiles); the series carries volume,
+// outcome, and the two token curves only.
 type DashboardSeriesBucket struct {
-	Ts           time.Time
-	Requests     int64
-	Errored      int64
-	TokensIn     int64
-	TokensOut    int64
-	P50LatencyMs int64
-	P95LatencyMs int64
-	P99LatencyMs int64
+	Ts        time.Time
+	Requests  int64
+	Errored   int64
+	TokensIn  int64
+	TokensOut int64
 }
 
 // QueryDashboardSeries computes a zero-filled per-bucket time series over
 // [From, To), one row per BucketSeconds-wide slot, each carrying request volume,
-// errored count, token sums, and the latency quantile set.
+// errored count, and the two token sums. It re-buckets the 1-minute CAGGs up to
+// the requested width with an outer time_bucket and LEFT JOINs onto a generated
+// bucket spine so empty slots zero-fill.
 func (s *Store) QueryDashboardSeries(ctx context.Context, p DashboardSeriesParams) ([]DashboardSeriesBucket, error) {
 	if p.BucketSeconds <= 0 {
 		return nil, fmt.Errorf("store: bucket_seconds must be positive")
 	}
-	where := []string{"e.observed_at >= $1", "e.observed_at < $2"}
-	args := []any{p.From, p.To}
-	where, args = appendFilter(where, args, p.Filter)
-	args = append(args, p.BucketSeconds)
-	w := len(args)
+	// Request side: window + the CAGG-scoped equality/status filter.
+	rwhere := []string{"bucket >= $1", "bucket < $2"}
+	rargs := []any{p.From, p.To}
+	rwhere, rargs = appendCaggFilter(rwhere, rargs, p.Filter)
+	// Token side: same window + equality filters, minus the status band (the
+	// token CAGG has no status_code column).
+	tf := p.Filter
+	tf.StatusClass = ""
+	twhere := []string{"bucket >= $1", "bucket < $2"}
+	twhere, _ = appendCaggFilter(twhere, []any{p.From, p.To}, tf)
+	// BucketSeconds is the last bound; reuse it across the spine + both re-buckets.
+	rargs = append(rargs, p.BucketSeconds)
+	w := len(rargs)
+	// The spine is generated on time_bucket boundaries (floor of From up to To)
+	// so each spine slot equals a re-bucketed CTE ts exactly — a raw
+	// generate_series from an unaligned From would never match the floored CTE
+	// keys and every bucket would read empty.
 	q := fmt.Sprintf(`
-WITH buckets AS (
-  SELECT generate_series($1::timestamptz, $2::timestamptz - ($%d * INTERVAL '1 second'), ($%d * INTERVAL '1 second')) AS ts
+WITH spine AS (
+  SELECT generate_series(
+    time_bucket(make_interval(secs => $%d), $1::timestamptz),
+    time_bucket(make_interval(secs => $%d), $2::timestamptz - make_interval(secs => $%d)),
+    make_interval(secs => $%d)) AS ts
+),
+req AS (
+  SELECT time_bucket(make_interval(secs => $%d), bucket) AS ts,
+    COALESCE(SUM(requests), 0) AS requests,
+    COALESCE(SUM(requests) FILTER (WHERE %s >= 400), 0) AS errored
+  FROM cagg_requests_1m
+  WHERE %s
+  GROUP BY 1
+),
+tok AS (
+  SELECT time_bucket(make_interval(secs => $%d), bucket) AS ts,
+    COALESCE(SUM(tokens) FILTER (WHERE metric_name = '%s'), 0) AS tokens_in,
+    COALESCE(SUM(tokens) FILTER (WHERE metric_name = '%s'), 0) AS tokens_out
+  FROM cagg_tokens_1m
+  WHERE %s
+  GROUP BY 1
 )
-SELECT b.ts,
-  COUNT(e.correlation_id),
-  COALESCE(SUM(CASE WHEN e.status_code >= 400 THEN 1 ELSE 0 END), 0),
-  COALESCE(SUM(COALESCE((e.span_event->>'gen_ai.usage.input_tokens')::bigint, 0)), 0),
-  COALESCE(SUM(COALESCE((e.span_event->>'gen_ai.usage.output_tokens')::bigint, 0)), 0),
-  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY COALESCE((e.span_event->>'sluice.latency_ms')::bigint, 0)), 0),
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY COALESCE((e.span_event->>'sluice.latency_ms')::bigint, 0)), 0),
-  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY COALESCE((e.span_event->>'sluice.latency_ms')::bigint, 0)), 0)
-FROM buckets b
-LEFT JOIN request_events e
-  ON e.observed_at >= b.ts AND e.observed_at < b.ts + ($%d * INTERVAL '1 second') AND %s
-GROUP BY b.ts
-ORDER BY b.ts`, w, w, w, strings.Join(where, " AND "))
+SELECT spine.ts,
+  COALESCE(req.requests, 0),
+  COALESCE(req.errored, 0),
+  COALESCE(tok.tokens_in, 0),
+  COALESCE(tok.tokens_out, 0)
+FROM spine
+LEFT JOIN req ON req.ts = spine.ts
+LEFT JOIN tok ON tok.ts = spine.ts
+ORDER BY spine.ts`,
+		w, w, w, w,
+		w, exprStatusInt, strings.Join(rwhere, " AND "),
+		w, metricTokensIn, metricTokensOut, strings.Join(twhere, " AND "))
 
-	rows, err := s.db.Query(ctx, q, args...)
+	rows, err := s.db.Query(ctx, q, rargs...)
 	if err != nil {
 		return nil, fmt.Errorf("store: dashboard series: %w", err)
 	}
@@ -462,18 +555,11 @@ ORDER BY b.ts`, w, w, w, strings.Join(where, " AND "))
 
 	var out []DashboardSeriesBucket
 	for rows.Next() {
-		var (
-			b             DashboardSeriesBucket
-			p50, p95, p99 float64
-		)
-		if err := rows.Scan(&b.Ts, &b.Requests, &b.Errored, &b.TokensIn, &b.TokensOut, &p50, &p95, &p99); err != nil {
+		var b DashboardSeriesBucket
+		if err := rows.Scan(&b.Ts, &b.Requests, &b.Errored, &b.TokensIn, &b.TokensOut); err != nil {
 			return nil, fmt.Errorf("store: scan dashboard series: %w", err)
 		}
-		b.P50LatencyMs, b.P95LatencyMs, b.P99LatencyMs = round(p50), round(p95), round(p99)
 		out = append(out, b)
 	}
 	return out, rows.Err()
 }
-
-// round rounds a float to the nearest non-negative int64 (half up).
-func round(f float64) int64 { return int64(f + 0.5) }
