@@ -1,11 +1,19 @@
 # Telemetry Record webhook
 
-The Record webhook is **channel 3** of the telemetry design: the full, authoritative
-per-request digital record — request/response bodies, headers, the post-rule tag set,
-the fired-rule chain, and the resilience attempt log — shipped from a gateway to the
-central telemetry service in real time. It is the counterpart to the two OTLP feeds
-(`gen_ai.*` spans and `sluice.*` meters); see [telemetry-service.md](telemetry-service.md)
-for the service that terminates all three.
+The Record webhook is the **audit channel** of the telemetry design: the full,
+authoritative per-request digital record — request/response bodies, headers, the
+post-rule tag set, the fired-rule chain, and the resilience attempt log — shipped
+from a gateway to the central telemetry service in real time. It is the counterpart
+to the two OTLP feeds (`gen_ai.*` spans and `sluice.*` meters); see
+[telemetry-service.md](telemetry-service.md) for the service that terminates all
+three.
+
+Under the **single-writer** model the webhook no longer writes the
+`request_events` entity — the OTel span owns that outright. The receiver stores the
+record's **raw bytes verbatim** in the `record` table, keyed by `correlation_id`,
+and the console joins it to the entity lazily when an operator opens the inspector.
+An absent record simply means reporting forwarding was off (or the push has not
+arrived); the console degrades to the entity-only view.
 
 Unlike the durable `s3` / `azure_blob` connectors, the webhook is **not** disk-backed.
 It is a best-effort, non-blocking, per-record HMAC POST. A wedged or slow receiver can
@@ -101,55 +109,50 @@ handler collapses both to `401` so a caller can never learn *which* check failed
 
 ### Body
 
-The body is a single `cc.Record`. The handler requires only one field to be present:
-`correlation_id`. The record is fanned into Postgres as:
+The body is a single `cc.Record`. The handler decodes it only far enough to read
+one field — `correlation_id` — then stores the **raw POST bytes verbatim** as a
+single `record` row (`correlation_id` PK, `received_at`, `body BYTEA`) via
+`Store.UpsertRecord`. The bytes are exactly what the signature was verified over,
+so the inspector renders precisely what the gateway signed. There is **no** fan-out
+into `request_events` columns and **no** per-item payload rows — the bodies,
+headers, rule chain, and attempts all ride inside that one blob, deserialized
+lazily into `cc.Record` when the record/inspector tab opens.
 
-- one `request_events` row (the gateway columns: configuration, provider, model,
-  protocol/endpoint, method, status, latency, session, fired-rule chain, resilience
-  attempts, post-rule tags), via `Store.UpsertGatewayRecord`;
-- one `request_payloads` row per present captured item — request body, response body,
-  assembled SSE rollup, request headers, response headers — via `Store.UpsertPayload`.
-  Items the record marks omitted (oversize-stripped, or absent) contribute no row.
-
-See [telemetry-database-schema.md](telemetry-database-schema.md) for the row shapes and
-[telemetry-service.md](telemetry-service.md) for how this merges with the OTLP feed on
-`correlation_id`.
+See [telemetry-database-schema.md](telemetry-database-schema.md) for the `record`
+table shape and [telemetry-service.md](telemetry-service.md) for how the console
+joins this blob to the span-written entity by `correlation_id`.
 
 ### Response codes
 
 | Status | Body | When |
 |---|---|---|
-| `200 OK` | `{"stored": N}` | Stored. `N` counts the event row plus each payload row written (1 + number of captured items). |
+| `200 OK` | `{"stored":1}` | Stored. Always `1` — one verbatim `record` row per accepted push (no per-item fan-out). |
 | `400 Bad Request` | `{"error":"malformed record"}` | Body is not valid `cc.Record` JSON. |
 | `400 Bad Request` | `{"error":"missing correlation_id"}` | Record decoded but `correlation_id` is empty. |
 | `401 Unauthorized` | `{"error":"missing gateway id or signature"}` | Either header is absent. |
 | `401 Unauthorized` | `{"error":"signature rejected"}` | Unknown gateway id **or** signature mismatch (deliberately indistinguishable). |
 | `413 Request Entity Too Large` | `{"error":"record too large"}` | Body exceeds the 16 MiB cap. |
-| `500 Internal Server Error` | `{"error":"verify"}` / `{"error":"store event"}` / `{"error":"store payload"}` | HMAC verify raised a non-sentinel error, or a Postgres upsert failed. |
+| `500 Internal Server Error` | `{"error":"verify"}` / `{"error":"store record"}` | HMAC verify raised a non-sentinel error, or the Postgres upsert failed. |
 
 The body is bounded by `http.MaxBytesReader` at `maxRecordBytes = 16 << 20` (16 MiB).
 The gateway caps captured request bodies at 10 MiB inbound; the extra headroom covers the
 JSON envelope (base64 of bytes, headers, rule chain) around them. A runaway record is
 rejected, not buffered without limit.
 
-The success count is computed in `RecordHandler.ServeHTTP`: `stored` starts at `1` for the
-event row and increments once per payload row written. A payload upsert that fails aborts
-the request with `500` after the event row has already been written — the next push of the
-same record converges it (see idempotency).
+The success body is always `{"stored":1}` — the handler writes one verbatim `record`
+row and returns. A failed upsert returns `500 {"error":"store record"}`; the next push
+of the same record converges it (see idempotency).
 
 ### Idempotency
 
-Both upserts are idempotent, so a re-push (pusher retry at a higher layer, or an operator
+The upsert is idempotent, so a re-push (pusher retry at a higher layer, or an operator
 replay) converges rather than duplicating:
 
-- **Event row** — `ON CONFLICT (correlation_id) DO UPDATE`
-  ([internal/telemetry/store/events.go](../internal/telemetry/store/events.go)). The
-  Record feed and the OTLP feed share this row keyed by `correlation_id`; each feed owns
-  its own columns on conflict, so neither clobbers the other's.
-- **Payload rows** — `ON CONFLICT (correlation_id, kind, instance_id, seq) DO UPDATE`
-  ([internal/telemetry/store/payloads.go](../internal/telemetry/store/payloads.go)). The
-  composite key is the stable cross-instance ordering key (invariant #8) — never receive
-  order.
+- **Record row** — `ON CONFLICT (correlation_id) DO UPDATE`
+  ([internal/telemetry/store/record.go](../internal/telemetry/store/record.go)). A
+  re-push overwrites `received_at` + `body` in place. The `record` table is the Record
+  feed's alone; it never touches `request_events`, so there is no cross-feed conflict to
+  reconcile (the OTel span is the entity's single writer).
 
 ### Example
 
@@ -267,7 +270,7 @@ private-network `url` targets are rejected unless `SLUICE_WEBHOOK_ALLOW_PRIVATE`
 
 - [telemetry-service.md](telemetry-service.md) — the service that terminates this webhook plus the two OTLP feeds.
 - [telemetry-service-api.md](telemetry-service-api.md) — the console query API over the stored events.
-- [telemetry-database-schema.md](telemetry-database-schema.md) — the `request_events` / `request_payloads` row shapes.
+- [telemetry-database-schema.md](telemetry-database-schema.md) — the `record` blob table and the span-written `request_events` entity it joins to.
 - [connectors.md](connectors.md) — the durable `s3` / `azure_blob` connectors and the SSRF guard.
 - [connector-bindings.md](connector-bindings.md) — per-binding sampling, filter, and body-cap overrides.
 - [spool.md](spool.md) — the disk-backed buffer the durable connectors drain through (the webhook bypasses it entirely).

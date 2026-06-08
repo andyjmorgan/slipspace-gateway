@@ -1,6 +1,6 @@
 # Telemetry Database Schema
 
-The telemetry service stores everything it ingests in a single Postgres database: a lean, queryable per-request row, the heavy captured payloads, and the raw OTLP metric timeseries. This page is the operator's and developer's reference for that schema — the three tables, their columns and indexes, the composite keys and join semantics, the two-feed merge that converges the OTLP and Record channels onto one row, and the migration history.
+The telemetry service stores everything it ingests in a single Postgres (TimescaleDB) database: a single-writer per-request entity owned by the OTel span feed, a lazily-joined verbatim record blob, and the raw OTLP metric timeseries the dashboard reads through continuous aggregates. This page is the operator's and developer's reference for that schema — the tables, their columns and indexes, the span_event projection, the lazy record join, the CAGG metrics plane, and the migration history.
 
 The source of truth lives in [`internal/telemetry/store/`](../internal/telemetry/store/). If a value here disagrees with that package, the code wins — open a PR. For the service that owns this database (deployment topology, ports, config YAML, ingest contracts, query API, console), see [telemetry-service.md](telemetry-service.md).
 
@@ -11,21 +11,25 @@ The source of truth lives in [`internal/telemetry/store/`](../internal/telemetry
 1. [Mental model](#mental-model)
 2. [Entity-relationship diagram](#entity-relationship-diagram)
 3. [`request_events`](#request_events)
-4. [`request_payloads`](#request_payloads)
-5. [`metric_points`](#metric_points)
-6. [The two-feed COALESCE merge](#the-two-feed-coalesce-merge)
-7. [Payload kinds](#payload-kinds)
-8. [Migration history](#migration-history)
-9. [Schema bookkeeping](#schema-bookkeeping)
-10. [Cross-references](#cross-references)
+4. [The span_event projection](#the-span_event-projection)
+5. [`record`](#record)
+6. [`metric_points` + continuous aggregates](#metric_points--continuous-aggregates)
+7. [Migration history](#migration-history)
+8. [Schema bookkeeping](#schema-bookkeeping)
+9. [Cross-references](#cross-references)
 
 ---
 
 ## Mental model
 
-> **Three feeds, one join key.** `correlation_id` ties a request's lean event row, its heavy captured payloads, and (indirectly, by label) its metric samples together.
+> **Single writer, one join key.** The OTel span feed is the sole writer of the `request_events` entity. `correlation_id` ties that entity to its lazily-joined verbatim `record` blob; metric samples correlate only by shared label values, never by a foreign key.
 
-The telemetry service receives a request's observability from two independent channels — the **gen_ai OTLP trace feed** and the **gateway Record webhook feed** — that arrive in either order and converge onto one `request_events` row keyed by `correlation_id`. The bulky captured bodies and headers ride the Record webhook into `request_payloads`, one row per item. Numeric OTLP samples — **only number data points (gauges + sums/counters)** — land in `metric_points` as a raw timeseries the dashboard aggregates; histogram and summary metrics are skipped on ingest (see [`metric_points`](#metric_points)).
+The telemetry service receives a request's observability over two independent channels:
+
+- the **gen_ai OTLP feed** (`:8687` gRPC) — both the trace service, whose spans are the **single writer** of `request_events`, and the metrics service, whose number data points land in `metric_points`;
+- the **gateway Record webhook** (`:8686` HTTP) — which lands the gateway's verbatim `cc.Record` bytes in the `record` table, joined to the entity lazily by `correlation_id` only when the inspector's record tab opens.
+
+This is a **single-writer** model. The span feed owns `request_events` outright: `EventFromSpan` stores the **complete span** verbatim into an immutable `span_event JSONB` column and projects the filter columns out of it. The Record feed no longer writes the entity at all — there is **no cross-feed COALESCE merge**, and the old `request_payloads` table is gone. The dashboard reads pre-aggregated TimescaleDB **continuous aggregates** over `metric_points`, never a scan of the entity.
 
 There is no ORM and no schema-generation magic: the schema is forward-only SQL strings in [`internal/telemetry/store/migrations.go`](../internal/telemetry/store/migrations.go), applied by a hand-rolled runner ([`store.go::Migrate`](../internal/telemetry/store/store.go)) that records each step in `schema_migrations`.
 
@@ -35,44 +39,24 @@ There is no ORM and no schema-generation magic: the schema is forward-only SQL s
 
 ```mermaid
 erDiagram
-    request_events ||--o{ request_payloads : "correlation_id"
+    request_events ||--o| record : "correlation_id (lazy)"
     request_events {
         TEXT        correlation_id PK "per-request join key"
-        TEXT        gateway_id "producing appliance"
-        TEXT        configuration "resolved policy bundle"
-        TEXT        provider "post-rule upstream (was: backend)"
-        TEXT        model
-        TEXT        protocol "post-rule wire protocol"
-        TEXT        method "inbound client verb"
-        INT         status_code "client-facing status"
-        INT         upstream_status "provider-reported status"
-        BIGINT      latency_ms
-        BIGINT      tokens_in
-        BIGINT      tokens_out
-        BIGINT      tokens_cached
-        BIGINT      tokens_cache_creation
-        TEXT        session_id
-        TEXT        session_id_source
-        TEXT        agent_id
-        TEXT        agent_id_source
-        TEXT        user_id
-        TEXT        user_id_source
-        TEXT        api_key_name
-        TEXT        policy_ref
-        BOOLEAN     streaming
-        JSONB       gen_ai_content "bounded gen_ai content"
-        JSONB       detail "tags + rule chain + attempts"
-        TIMESTAMPTZ observed_at
+        TIMESTAMPTZ observed_at "gateway request-start (span start)"
+        TEXT        session_id "projected from gen_ai.conversation.id"
+        TEXT        agent_id "projected from gen_ai.agent.id"
+        TEXT        user_id "projected from enduser.id"
+        TEXT        provider "projected from gen_ai.provider.name"
+        TEXT        model "projected from gen_ai.request.model"
+        TEXT        configuration "projected from sluice.configuration"
+        TEXT        protocol "projected from sluice.protocol"
+        INT         status_code "projected from http.response.status_code"
+        JSONB       span_event "COMPLETE span (source of truth)"
     }
-    request_payloads {
-        TEXT        correlation_id PK "FK to request_events"
-        TEXT        kind PK "5 discriminator values"
-        TEXT        instance_id PK "producing instance"
-        BIGINT      seq PK "order within instance"
-        BIGINT      ts_ns "producer capture time (unix ns)"
-        TEXT        gateway_id "HMAC-trusted producer"
-        BYTEA       body "raw captured bytes"
-        TIMESTAMPTZ captured_at "server-side store time"
+    record {
+        TEXT        correlation_id PK "FK to request_events (logical)"
+        TIMESTAMPTZ received_at "server-side ingest time"
+        BYTEA       body "verbatim cc.Record bytes"
     }
     metric_points {
         TEXT             metric_name
@@ -82,179 +66,151 @@ erDiagram
     }
 ```
 
-> `request_payloads` is joined to `request_events` by `correlation_id`, but there is **no database-level foreign key** — a payload can be webhook-pushed before (or without) its event row, so the relationship is a logical join, not a referential constraint. `metric_points` has no join column at all; it correlates to events only by shared label values (e.g. `sluice.configuration`), and the dashboard reads it as an independent timeseries (invariant #4: dashboards read meters, never record scans).
+> `record` is joined to `request_events` by `correlation_id`, but there is **no database-level foreign key** — a record can be webhook-pushed before (or without) its span, and an event can exist with no record (reporting forwarding off), so the relationship is a logical, lazy join. `metric_points` has no join column at all; it correlates to events only by shared label values (e.g. `sluice.configuration`), and the dashboard reads it through its continuous aggregates as an independent timeseries (invariant #4: dashboards read meters, never record scans).
 
 ---
 
 ## `request_events`
 
-The lean, queryable per-request row — post-rule labels, outcome, token counts, and (optionally) bounded gen_ai content. It is the recent-history and drill-down surface. Both ingest feeds upsert into it keyed by `correlation_id`; the row is grouped into sessions by `session_id` and joined to the heavy payloads by `correlation_id`. Defined in [`events.go::RequestEvent`](../internal/telemetry/store/events.go) and created by migration 1.
+The single-writer per-request entity. The **OTel span feed is the sole writer**, keyed `correlation_id`. The scalar columns are a **materialized index projected from `span_event`** at ingest — the immutable blob is the source of truth, the columns are backfillable from it by re-projecting. List/filter/facet queries read the columns and never `SELECT span_event`; drill-down selects the blob and decodes it into `SpanFields`. Defined in [`events.go::RequestEvent`](../internal/telemetry/store/events.go) and rebuilt by migration 6.
 
-| Column | Type | Default | Owner feed | Notes |
+| Column | Type | Default | Projected from | Notes |
 |---|---|---|---|---|
-| `correlation_id` | `TEXT` | — | both | **Primary key**; the per-request join key. |
-| `gateway_id` | `TEXT` | `''` | Record | The appliance that produced the event. |
-| `configuration` | `TEXT` | `''` | Record | Resolved policy-bundle name. |
-| `provider` | `TEXT` | `''` | both | Post-rule upstream provider. Renamed from `backend` in migration 2. |
-| `model` | `TEXT` | `''` | both | Requested model. |
-| `protocol` | `TEXT` | `''` | Record | Post-rule wire protocol / endpoint. |
-| `method` | `TEXT` | `''` | Record | Inbound client HTTP verb (a model-list `GET` vs a completion `POST`). |
-| `status_code` | `INT` | `0` | Record | Client-facing HTTP status (may be rule-overridden). |
-| `upstream_status` | `INT` | `0` | Record | Provider-reported status, kept distinct from a synthetic/overridden client status. |
-| `latency_ms` | `BIGINT` | `0` | gen_ai | Request wall time. |
-| `tokens_in` | `BIGINT` | `0` | gen_ai | Prompt token count. |
-| `tokens_out` | `BIGINT` | `0` | gen_ai | Completion token count. |
-| `tokens_cached` | `BIGINT` | `0` | gen_ai | Prompt-cache read tokens the provider billed. |
-| `tokens_cache_creation` | `BIGINT` | `0` | gen_ai | Prompt-cache write tokens the provider billed. |
-| `session_id` | `TEXT` | `''` | both | Resolved session/conversation bundle id. |
-| `session_id_source` | `TEXT` | `''` | Record | Header the session id was bundled from. |
-| `agent_id` | `TEXT` | `''` | both | Resolved agent id (the agent/sub-agent that issued the request). Added by migration 4. |
-| `agent_id_source` | `TEXT` | `''` | Record | Header the agent id was resolved from. Added by migration 4. |
-| `user_id` | `TEXT` | `''` | both | Resolved end-user id (orthogonal to session/agent). Added by migration 5. |
-| `user_id_source` | `TEXT` | `''` | Record | Header the user id was resolved from. Added by migration 5. |
-| `api_key_name` | `TEXT` | `''` | Record | Resolved Sluice API-key name (managed mode); empty in passthrough. |
-| `policy_ref` | `TEXT` | `''` | Record | Resilience policy the rules engine bound; empty for single-shot requests. |
-| `streaming` | `BOOLEAN` | `FALSE` | gen_ai | True iff the upstream response was an SSE stream. |
-| `gen_ai_content` | `JSONB` | `NULL` | gen_ai | Bounded `gen_ai.*` content; queryable, need not be byte-exact. |
-| `detail` | `JSONB` | `NULL` | Record | Structured fleet detail (`{tags, rules_fired, rule_chain, attempts, …}`). |
-| `observed_at` | `TIMESTAMPTZ` | `now()` | both | When the event was observed; a zero value defaults to server `now()` so every replica shares one clock. |
+| `correlation_id` | `TEXT` | — | `sluice.correlation_id` | **Primary key**; the per-request join key. The only span attribute whose absence makes a span unusable. |
+| `observed_at` | `TIMESTAMPTZ` | `now()` | span START time | The gateway request-start, **not** ingest `now()` — load-bearing for ordering, pagination, and retention. A zero start defaults to server `now()` only as a last resort. |
+| `session_id` | `TEXT` | `''` | `gen_ai.conversation.id` | Resolved session/conversation bundle id. |
+| `agent_id` | `TEXT` | `''` | `gen_ai.agent.id` | Resolved agent/sub-agent id. |
+| `user_id` | `TEXT` | `''` | `enduser.id` | Resolved end-user id. |
+| `provider` | `TEXT` | `''` | `gen_ai.provider.name` | Post-rule upstream provider. |
+| `model` | `TEXT` | `''` | `gen_ai.request.model` | Requested model. |
+| `configuration` | `TEXT` | `''` | `sluice.configuration` | Resolved policy-bundle name (a gateway span fact). |
+| `protocol` | `TEXT` | `''` | `sluice.protocol` | Post-rule wire protocol / endpoint (a gateway span fact). |
+| `status_code` | `INT` | `0` | `http.response.status_code` | Client-facing HTTP status. |
+| `span_event` | `JSONB` | — (NOT NULL) | — | The **complete span** as received — every merged attribute plus the bounded gen_ai content — stored verbatim and never stripped. The scalar columns above are projections of it. |
 
-The `detail` JSONB column carries the [`EventDetail`](../internal/telemetry/store/events.go) envelope — the per-request inspector's source: post-rule `tags`, the flat `rules_fired` list, the ordered `rule_chain` ([`RuleChainEntry`](../internal/telemetry/store/events.go): name, actions applied, terminated, error), the resilience `attempts` ([`AttemptDetail`](../internal/telemetry/store/events.go): target, timing, status, outcome), and an `assembly_partial` flag for partially reconstructed streams. Concretely:
-
-```json
-{
-  "tags": ["team-a", "prod"],
-  "rules_fired": ["pin-haiku", "tag-team"],
-  "rule_chain": [
-    { "name": "pin-haiku", "actions_applied": ["changeModel"] }
-  ],
-  "attempts": [
-    { "target": "anthropic-primary", "status_code": 200, "outcome": "success", "duration_ms": 412 }
-  ],
-  "assembly_partial": false
-}
-```
-
-Empty/absent on a row means the Record feed hasn't landed yet (the gen_ai OTLP half can arrive first). Query it with the JSONB operators — e.g. `WHERE detail->'tags' @> '["prod"]'` (GIN-indexed) or `jsonb_array_elements_text(detail->'rules_fired')` to unnest fired rules.
+The upsert is one-sided: `insertEventSQL` ([`events.go`](../internal/telemetry/store/events.go)) does `INSERT … ON CONFLICT (correlation_id) DO UPDATE` where **every column is overwritten from the latest span**. There is one writer, so there is no cross-feed merge to preserve — a re-delivered span simply replaces the row.
 
 ### Indexes
 
-Created by migration 1 unless noted. The dashboard time-range scans and the message browser drive every choice.
+Created by migration 6. The dashboard no longer scans this table (it reads the CAGGs), so the indexes now serve the **message browser and drill-downs** only.
 
 | Index | Definition | Serves |
 |---|---|---|
-| `request_events_observed_at` | `(observed_at DESC)` | Recent-history ordering. |
-| `request_events_observed_corr` | `(observed_at DESC, correlation_id DESC)` | Keyset pagination + the dashboard stats range scan in one index — no separate sort. |
-| `request_events_filter` | `(observed_at DESC, configuration, provider, model, gateway_id, protocol)` | Dashboard filters paired with a time range; `observed_at` leads so the range bound stays index-driven and the equality filters narrow within it. (Migration 2 rewrites the `backend` term to `provider` automatically.) |
+| `request_events_observed_corr` | `(observed_at DESC, correlation_id DESC)` | Keyset pagination of `/messages` and `/events`. |
+| `request_events_filter` | `(observed_at DESC, configuration, provider, model, protocol, status_code)` | The message browser's faceted equality filters paired with a time range; `observed_at` leads so the range bound stays index-driven and the equality filters narrow within it. |
 | `request_events_session` | `(session_id)` | Session grouping / lookup. |
-| `request_events_agent` | `(agent_id)` | Agent lookup / drill-down. Added by migration 4. |
-| `request_events_user` | `(user_id)` | End-user lookup / drill-down. Added by migration 5. |
-| `request_events_tags` | `GIN ((detail->'tags'))` | Tag containment filter (`detail->'tags' @> …`) and the distinct-tag dropdown scan. Added by migration 3. |
+| `request_events_agent` | `(agent_id)` | Agent lookup / drill-down. |
+| `request_events_user` | `(user_id)` | End-user lookup / drill-down. |
+| `request_events_tags` | `GIN ((span_event->'tags'))` | Tag containment filter (`span_event->'tags' @> …`) and the distinct-tag dropdown scan. |
+| `request_events_rules` | `GIN ((span_event->'rules_fired'))` | Fired-rule containment filter and the distinct-rule scan. |
+
+> tags and rules_fired stay **inside the blob** — they are not promoted to columns. The two GIN expression indexes back both the `@>` containment filter and the `jsonb_array_elements_text` facet scan without a full table scan.
 
 ---
 
-## `request_payloads`
+## The span_event projection
 
-The heavy large-payload feed — captured request/response bodies, header maps, and the assembled-SSE rollup — webhook-pushed and HMAC-trusted, stored **one row per item**. Joined to an event by `correlation_id`; the `kind` discriminator separates the items that share it. Defined in [`payloads.go::Payload`](../internal/telemetry/store/payloads.go) and created by migration 1.
+`span_event` holds the complete span; the scalar columns are an index over it. Everything the console needs beyond the filter columns — the source headers for the identity ids, the inbound method, the outcome measurements, the streaming flag, the post-rule tags + fired-rule lifecycle, the resilience attempts, and the bounded gen_ai content — lives **inside the blob** and is decoded lazily by `RequestEvent.DecodeSpanFields` ([`events.go::SpanFields`](../internal/telemetry/store/events.go)) when a drill-down (message entry, session rollup, inspector) needs it. The list/filter/facet paths never touch it.
 
-| Column | Type | Default | Notes |
-|---|---|---|---|
-| `correlation_id` | `TEXT` | — | Joins the payload to its `request_events` row. |
-| `kind` | `TEXT` | — | One of the five [payload kinds](#payload-kinds). |
-| `instance_id` | `TEXT` | `''` | Producing gateway instance. |
-| `seq` | `BIGINT` | `0` | Orders items within an instance. Stored as a signed `BIGINT`; the Go field [`Payload.Seq`](../internal/telemetry/store/payloads.go) is `uint64` and is round-tripped through `int64`. |
-| `ts_ns` | `BIGINT` | `0` | Producer-stamped capture time in unix nanoseconds. |
-| `gateway_id` | `TEXT` | `''` | The registered gateway whose HMAC trusted this item. |
-| `body` | `BYTEA` | — (NOT NULL) | Raw captured bytes. |
-| `captured_at` | `TIMESTAMPTZ` | `now()` | Server-side store time. |
+The blob is built by `buildSpanEvent` ([`ingest/extract.go`](../internal/telemetry/ingest/extract.go)): every merged attribute keyed by its OTLP name (so nothing is discarded — the telemetry analogue of invariant #1), plus a few derived/normalised keys. The JSON keys mirror the OTel/Record attribute names the gateway emits, so the blob round-trips the wire shape.
 
-### Composite primary key and ordering
+`SpanFields` decodes these keys out of the blob:
 
-```sql
-PRIMARY KEY (correlation_id, kind, instance_id, seq)
-```
+| Field | `span_event` key | Source |
+|---|---|---|
+| `LatencyMs` | `sluice.latency_ms` | Derived from the span's start/end bounds at ingest (the gateway also emits it). |
+| `TokensIn` / `TokensOut` | `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` | gen_ai usage attributes. |
+| `TokensCached` / `TokensCacheCreation` | `gen_ai.usage.cache_read.input_tokens` / `gen_ai.usage.cache_creation.input_tokens` | Provider-managed prompt-cache attributes. |
+| `Streaming` | `gen_ai.request.stream` | Whether the upstream response was an SSE stream. |
+| `GatewayID` | `gateway_id` | The producing appliance (lifted from the span/resource attribute). |
+| `Method` | `sluice.method` | Inbound client HTTP verb (a gateway span fact). |
+| `APIKeyName` | `sluice.api_key_name` | Resolved Sluice API-key name (managed mode); empty in passthrough. |
+| `UpstreamStatus` | `sluice.upstream_status` | Provider-reported status, distinct from the client status column. |
+| `PolicyRef` | `sluice.policy_ref` | Resilience policy the rules engine bound. |
+| `SessionIDSource` / `AgentIDSource` / `UserIDSource` | `sluice.session_id_source` etc. | The header each identity id was resolved from. |
+| `Tags` | `tags` | Post-rule tag set, normalised to a JSON `[]string` from `sluice.tags` (GIN-indexed). |
+| `RulesFired` | `rules_fired` | Fired rule names, normalised to a JSON `[]string` from `sluice.rules_fired` (GIN-indexed). |
+| `GenAIContent` | `gen_ai_content` | The bounded `gen_ai.*` content object (`{input_messages, output_messages, tool_definitions, system_instructions}`), `nil` when none was captured. Bounded by `content_max_bytes`. |
 
-The composite key makes `UpsertPayload` idempotent: a re-pushed item (same `correlation_id`/`kind`/`instance_id`/`seq`) converges via `ON CONFLICT … DO UPDATE` rather than duplicating. `ListPayloads` returns a correlation's items ordered by **`(ts_ns, instance_id, seq)`** — the stable composite sort key of **invariant #8**, never receive order. Across instances there is no global ordering guarantee, so the producer-stamped `ts_ns` leads, then the instance, then the per-instance sequence.
+The fired-rule **lifecycle** beyond names (`RuleChain` — actions applied, terminated, error) and the resilience `Attempts` are also carried in the blob when the gateway emits them, decoded into `RuleChainEntry` / `AttemptDetail`. Tool results are captured as `tool_call_response` message parts inside `gen_ai_content` across all four protocols.
 
-A secondary index `request_payloads_correlation (correlation_id)` backs the per-request fetch.
+Query tags inside the blob with the JSONB operators — e.g. `WHERE span_event->'tags' @> '["prod"]'` (GIN-indexed) or `jsonb_array_elements_text(span_event->'rules_fired')` to unnest fired rules. An empty `tags` / `rules_fired` simply means none were applied.
 
 ---
 
-## `metric_points`
+## `record`
 
-The raw OTLP numeric timeseries — the **number data points** (gauges + sums/counters) a gateway pushed over OTLP — that the dashboard aggregates into rate / token panels. Defined in [`metrics.go::MetricPoint`](../internal/telemetry/store/metrics.go) and created by migration 1.
-
-Only number points land here. `PointsFromMetric` ([`ingest/otlp.go`](../internal/telemetry/ingest/otlp.go), lines 104-119) extracts a metric's gauge and sum data points; its `default:` branch returns nil, so **histogram and summary metrics are dropped on ingest**. The consequence: the gateway's latency *histograms* never reach `metric_points`. The dashboard's p50/p95/p99 latency comes from `request_events.latency_ms` via Postgres `percentile_cont`, not from a metric sample.
+The lazily-joined verbatim Record blob — the full per-request digital record (request/response bodies, headers, the post-rule tag set, the fired-rule chain, the resilience attempt log) the gateway HMAC-pushes in real time, stored **exactly as received**, one row per correlation id. Defined in [`record.go`](../internal/telemetry/store/record.go) and created by migration 6.
 
 | Column | Type | Default | Notes |
 |---|---|---|---|
-| `metric_name` | `TEXT` | — | The OTLP metric name (e.g. `sluice.rule.fired`). |
+| `correlation_id` | `TEXT` | — | **Primary key**; the lazy join key to `request_events`. |
+| `received_at` | `TIMESTAMPTZ` | `now()` | Server-side ingest time (the moment the webhook landed), not a producer clock. |
+| `body` | `BYTEA` | — (NOT NULL) | The raw `cc.Record` bytes exactly as received — the signature was verified over these bytes, so the inspector renders exactly what the gateway signed. Deserialized lazily into `cc.Record` only when the record/inspector tab opens. |
+
+`UpsertRecord` is `INSERT … ON CONFLICT (correlation_id) DO UPDATE`, so a re-push (pusher retry, operator replay) overwrites in place rather than duplicating. `GetRecordBody` returns the raw bytes or `ErrRecordNotFound`; **an absent row is normal** — it means reporting forwarding was off for the request, or the push has not yet arrived. The console degrades gracefully to the entity-only view in that case.
+
+The Record handler ([`ingest/record.go`](../internal/telemetry/ingest/record.go)) decodes the body only far enough to read `correlation_id` (the join key), then stores the bytes undisturbed. It writes **no** `request_events` columns and **no** per-item payload rows — that fan-out is gone with the single-writer rearchitecture.
+
+A secondary index `record_received_at (received_at)` backs retention/pruning scans by ingest time.
+
+---
+
+## `metric_points` + continuous aggregates
+
+The raw OTLP numeric timeseries — the **number data points** (gauges + sums/counters) a gateway pushed over OTLP — is a **TimescaleDB hypertable** (migration 7). The dashboard does not query it directly; it reads four **continuous aggregates** that pre-bucket the meter feed at one minute. Defined in [`metrics.go::MetricPoint`](../internal/telemetry/store/metrics.go) (table) and the migration-7 DDL (CAGGs).
+
+Only number points land here. `PointsFromMetric` ([`ingest/otlp.go`](../internal/telemetry/ingest/otlp.go)) extracts a metric's gauge and sum data points; its `default:` branch returns nil, so **histogram and summary metrics are dropped on ingest**. The consequence is structural: the gateway's latency *histograms* never reach `metric_points`, and **the dashboard exposes no latency percentiles** (see below).
+
+### `metric_points` (hypertable)
+
+| Column | Type | Default | Notes |
+|---|---|---|---|
+| `metric_name` | `TEXT` | — | The OTLP metric name (e.g. `sluice.requests.total`). |
 | `labels` | `JSONB` | `'{}'::jsonb` | Merged attribute set; an empty batch entry lands as `{}` rather than `NULL`. |
 | `value` | `DOUBLE PRECISION` | — | The sample value. |
-| `observed_at` | `TIMESTAMPTZ` | — | The sample's timestamp (no `now()` default — the producer's clock owns it). |
+| `observed_at` | `TIMESTAMPTZ` | — | The sample's timestamp (the hypertable's time dimension; no `now()` default — the producer's clock owns it). |
 
-`metric_points` has **no primary key**: it is append-only, written in batches inside one transaction by `InsertMetricPoints`, and queried newest-first. A single index `metric_points_name_time (metric_name, observed_at DESC)` serves the dashboard's per-metric range scans. This is the feed invariant #4 points dashboards at — rules-fired and tags-fired panels read the `sluice.rule.fired` / `gateway.tags.applied.total` meter rollups here, never a scan of `request_events.detail`.
+`metric_points` is append-only (no primary key), written in batches inside one transaction by `InsertMetricPoints`. Migration 7 turns it into a hypertable on `observed_at` and adds `metric_points_name_labels_time (metric_name, observed_at DESC)`.
 
----
+### The four continuous aggregates
 
-## The two-feed COALESCE merge
+Migration 7 (run with autocommit — TimescaleDB forbids creating a continuous aggregate inside a transaction) creates `timescaledb` if absent and four 1-minute CAGGs with real-time aggregation (`materialized_only = false`) and a 1-minute refresh policy. CAGG dimensions are projected from the meter `labels` JSONB with `->>` (immutable, so legal in a continuous-aggregate `GROUP BY`). The aggregation is **count/sum only — no percentiles** (MVP runs plain `timescaledb` without the percentile toolkit).
 
-A `request_events` row is assembled from two independent ingest channels that can arrive in **either order** and must converge without clobbering each other. Both call into the same `INSERT … ON CONFLICT (correlation_id) DO UPDATE` ([`events.go::insertEventSQL`](../internal/telemetry/store/events.go)); they differ only in the `SET` clause, which names the columns that feed **owns**.
+| CAGG | Source metric(s) | Dimensions | Value | Backs |
+|---|---|---|---|---|
+| `cagg_requests_1m` | `sluice.requests.total` | provider, model, configuration, protocol, status_code | `sum(value)` AS `requests` | Request counts, the success/error outcome split (by `status_code`), and every `By*` / `ProviderHealth` panel. |
+| `cagg_tokens_1m` | `sluice.tokens.{input,output,cached,cache_creation}.total` | metric_name, provider, model, configuration, protocol | `sum(value)` AS `tokens` | Token sums (Totals, ByModel), pivoted by `metric_name`. |
+| `cagg_rules_1m` | `sluice.rule.fired` | rule_name, configuration | `sum(value)` AS `fired` | The RulesFired panel. |
+| `cagg_tags_1m` | `gateway.tags.applied.total` | tag, configuration | `sum(value)` AS `applied` | The TagsFired panel. |
 
-```mermaid
-flowchart LR
-    otlp["gen_ai OTLP trace feed<br/>UpsertRequestEvent"] -->|genAISetClause| row[("request_events<br/>(correlation_id)")]
-    record["gateway Record webhook feed<br/>UpsertGatewayRecord"] -->|gatewaySetClause| row
-```
+The dashboard ([`store/dashboard.go`](../internal/telemetry/store/dashboard.go)) re-buckets these 1-minute rows up to the requested window with an outer `time_bucket`. Because the CAGGs carry only the dimensions above, the dashboard honors only the window plus the equality filters those views actually have (configuration / model / provider / protocol, plus the status band on the request CAGG); tags / gateway_id / the id search boxes are message-browser-only and are silently ignored at the dashboard layer. This is the scale fix: dashboard rollups read pre-aggregated meters, never the `request_events` entity, never the record spool ([invariant #4](../CLAUDE.md)).
 
-**Column ownership:**
+> **Dropped for MVP: latency percentiles.** The pre-rearchitecture schema computed p50/p95/p99 from `request_events.latency_ms` via Postgres `percentile_cont`. The CAGG plane is count/sum only, and the latency histograms never reach `metric_points`, so the dashboard summary and timeseries no longer expose latency quantiles. `latency_ms` is still carried per-request inside `span_event` (`SpanFields.LatencyMs`) for the inspector. Percentiles return when the TimescaleDB toolkit (`percentile_agg`) is adopted post-MVP.
 
-| Feed | Entry point | `SET` clause | Owns |
-|---|---|---|---|
-| gen_ai OTLP trace | [`UpsertRequestEvent`](../internal/telemetry/store/events.go) | `genAISetClause` | `provider`, `model`, `latency_ms`, the four `tokens_*`, `session_id`, `agent_id`, `user_id`, `streaming`, `gen_ai_content` |
-| gateway Record webhook | [`UpsertGatewayRecord`](../internal/telemetry/store/events.go) | `gatewaySetClause` | `gateway_id`, `configuration`, `provider`, `model`, `protocol`, `method`, `status_code`, `upstream_status`, `session_id`, `session_id_source`, `agent_id`, `agent_id_source`, `user_id`, `user_id_source`, `api_key_name`, `policy_ref`, `detail` |
-
-A column absent from a feed's `SET` is left **untouched** on conflict, so the gen_ai feed never wipes the gateway columns and vice-versa. Within each clause, string and content columns merge with `COALESCE(NULLIF(EXCLUDED.col, ''), request_events.col)` — an empty or absent value in one delivery never clobbers a value the other feed (or an earlier delivery) already set. The shared dims `provider`, `model`, `session_id`, `agent_id`, and `user_id` appear in **both** clauses precisely so whichever feed arrives first seeds them and the second only fills gaps (the OTLP span carries `agent_id` from `gen_ai.agent.id` and `user_id` from `enduser.id`; the Record additionally owns `agent_id_source` / `user_id_source`). Numeric usage and latency take the latest `EXCLUDED` value (a gen_ai span always carries them meaningfully); `status_code` / `upstream_status` likewise take the Record's value.
-
-The `NULL`-landing mechanism is the two helpers in [`scan.go`](../internal/telemetry/store/scan.go): `nullTime` turns the zero time into SQL `NULL` (so the `COALESCE($22, now())` default applies to `observed_at`) and `nullJSON` turns empty bytes into `NULL` (so `gen_ai_content` / `detail` stay absent rather than empty, letting the conflict's `COALESCE` prefer the existing value).
-
-### Worked example: OTLP first, then Record
-
-1. **OTLP span arrives first.** `UpsertRequestEvent` inserts a fresh row: `provider=anthropic`, `model=claude-sonnet-4-5`, `tokens_in=1200`, `tokens_out=340`, `streaming=true`, `gen_ai_content={…}`. The gateway columns take their table defaults (`configuration=''`, `protocol=''`, `status_code=0`, `detail=NULL`).
-2. **Record arrives second.** `UpsertGatewayRecord` hits the conflict and runs `gatewaySetClause`: it fills `configuration=prod-bundle`, `protocol=anthropic_messages`, `method=POST`, `status_code=200`, `api_key_name=team-a`, `detail={tags,rule_chain,…}`. It also carries `provider=anthropic` / `model=claude-sonnet-4-5`, which `COALESCE(NULLIF(…))` leaves unchanged (already non-empty). It does **not** name `tokens_*`, `latency_ms`, `streaming`, or `gen_ai_content`, so the OTLP values survive intact.
-3. **Final merged row:** every column populated from whichever feed owns it — gen_ai usage/content from step 1, gateway labels/detail from step 2.
-
-The reverse order (Record first, then OTLP) converges to the identical row: the Record seeds the gateway columns, then the OTLP span fills the gen_ai columns and only gap-fills the shared `provider`/`model`/`session_id`.
-
----
-
-## Payload kinds
-
-The `kind` discriminator on `request_payloads` separates the items that share a `correlation_id` so the inspector can render the right tab for each. The five constants are defined in [`payloads.go`](../internal/telemetry/store/payloads.go); all five arrive on the Record webhook feed.
-
-| `kind` value | Constant | Contents |
-|---|---|---|
-| `request_body` | `KindRequestBody` | Captured client→gateway request envelope. |
-| `response_body` | `KindResponseBody` | Captured gateway→client response envelope. |
-| `sse_rollup` | `KindSSERollup` | The assembled (de-chunked) SSE stream. `EventDetail.assembly_partial` flags a stream the accumulator could only partially reconstruct. |
-| `request_headers` | `KindRequestHeaders` | Captured request header map (JSON object), alongside the request body. |
-| `response_headers` | `KindResponseHeaders` | Captured response header map (JSON object), alongside the response body. |
+> **New token counters.** Token sums in `cagg_tokens_1m` are fed by `sluice.tokens.input.total` / `sluice.tokens.output.total` — counter mirrors the gateway added alongside the existing `sluice.tokens.cached.total` / `sluice.tokens.cache_creation.total`. The telemetry ingest skips histograms, so the `gen_ai.client.token.usage` histogram cannot feed a token sum; these counters exist precisely so the dashboard's token CAGG has a number-point source. See [observability.md](observability.md#tokens).
 
 ---
 
 ## Migration history
 
-Migrations are a forward-only, append-only ordered set in [`migrations.go`](../internal/telemetry/store/migrations.go). The runner ([`store.go::Migrate`](../internal/telemetry/store/store.go)) applies every entry whose `version` is newer than the highest recorded in `schema_migrations`, each in its own transaction, and is idempotent on a fully-migrated database. **Never edit or renumber a shipped entry.**
+Migrations are a forward-only, append-only ordered set in [`migrations.go`](../internal/telemetry/store/migrations.go). The runner ([`store.go::Migrate`](../internal/telemetry/store/store.go)) applies every entry whose `version` is newer than the highest recorded in `schema_migrations`, each in its own transaction (except `noTx` steps, below), and is idempotent on a fully-migrated database. **Never edit or renumber a shipped entry.**
 
 | Version | Name | What it does | Rationale |
 |---|---|---|---|
-| 1 | `telemetry_core` | Creates `request_events`, `request_payloads`, `metric_points` and their indexes. | Lays down the three feeds in one step. |
-| 2 | `rename_backend_to_provider` | `ALTER TABLE request_events RENAME COLUMN backend TO provider;` | Vocabulary unification — the configured upstream is "provider" everywhere else (config schema, admin API, gen_ai OTel label), so the telemetry dimension follows. A hard cut with no dual-read window: post-migration the gateway emits `sluice.provider` and ingest reads `provider`. Postgres rewrites the `request_events_filter` index definition to the new column name automatically, so only the rename is needed. |
-| 3 | `tags_gin_index` | `CREATE INDEX … request_events_tags … USING gin ((detail->'tags'));` | The message browser filters by post-rule tags (`detail->'tags' @> …`) and enumerates the distinct tag set for its dropdown; the GIN index makes both the containment filter and the `jsonb_array_elements_text` scan index-backed instead of a full table scan as the event table grows. |
-| 4 | `add_agent_id` | `ALTER TABLE request_events ADD COLUMN agent_id … ; ADD COLUMN agent_id_source … ; CREATE INDEX request_events_agent …` | Adds the additive `agent_id` / `agent_id_source` columns and a single-column lookup index so the message browser can drill down by agent, mirroring `request_events_session`. Populated from `gen_ai.agent.id` (OTLP feed) and `agent_id` (Record feed). |
-| 5 | `add_user_id` | `ALTER TABLE request_events ADD COLUMN user_id … ; ADD COLUMN user_id_source … ; CREATE INDEX request_events_user …` | Adds the additive `user_id` / `user_id_source` columns and a single-column lookup index so the message browser can drill down by end user, mirroring `request_events_agent`. Populated from `enduser.id` (OTLP feed) and `user_id` (Record feed). |
+| 1 | `telemetry_core` | Creates the original three-feed tables: `request_events` (with a `backend` column, `request_payloads`, `metric_points`) and their indexes. | Lays down the original two-feed-merge model. |
+| 2 | `rename_backend_to_provider` | `ALTER TABLE request_events RENAME COLUMN backend TO provider;` | Vocabulary unification — the configured upstream is "provider" everywhere else (config schema, admin API, gen_ai OTel label), so the telemetry dimension follows. A hard cut with no dual-read window. |
+| 3 | `tags_gin_index` | `CREATE INDEX … request_events_tags … USING gin ((detail->'tags'));` | The message browser's tag containment filter and distinct-tag dropdown, index-backed. (Superseded by migration 6, which moves tags into `span_event`.) |
+| 4 | `add_agent_id` | Adds `agent_id` / `agent_id_source` columns + `request_events_agent` index. | Agent drill-down, mirroring `request_events_session`. |
+| 5 | `add_user_id` | Adds `user_id` / `user_id_source` columns + `request_events_user` index. | End-user drill-down, mirroring `request_events_agent`. |
+| 6 | `single_writer_span_event` | **Re-architecture.** `DROP` + `CREATE` rebuild: drops `request_payloads`; rebuilds `request_events` around the immutable `span_event JSONB` (complete span) with the scalar columns as a projection and tags/rules_fired GIN-indexed inside the blob; drops the measurement/`detail`/`gen_ai_content` columns (they now live in `span_event`); creates the lazy `record(correlation_id, received_at, body)` table. | The OTel span becomes the **single writer** of the entity; the Record lands a lazy verbatim blob joined only when the inspector opens. Eliminates the two-feed COALESCE merge and the per-item payload fan-out. A forward-only rebuild — backfill from spans/records is a separate operational step, not part of the migration. |
+| 7 | `metric_points_hypertable_caggs` (`noTx`) | `CREATE EXTENSION timescaledb`; turns `metric_points` into a hypertable; creates the four 1-minute continuous aggregates (`cagg_requests_1m` / `cagg_tokens_1m` / `cagg_rules_1m` / `cagg_tags_1m`) `WITH NO DATA` + a 1-minute refresh policy each. | **Metrics plane.** The dashboard stops scanning the entity for rollups and reads pre-aggregated CAGGs — the scale fix. Count/sum only; no percentiles for MVP (plain `timescaledb`, no toolkit). Runs with autocommit (`noTx`) because TimescaleDB forbids creating a continuous aggregate inside a transaction block; every statement is idempotent and free of embedded semicolons. |
 
-> The `backend → provider` rename (migration 2) is why older field/label references to `backend` should be read as `provider` throughout the telemetry surface. There is no compatibility shim; a gateway emitting the legacy `backend` label after this migration would land its provider dimension in the row's default empty `provider` column.
+> Migrations 1–5 describe the **pre-rearchitecture** schema. On a fresh database the runner still applies them in order before migration 6 rebuilds the entity — the early steps lay down structures that 6 then drops and recreates. Read migrations 1–5 as history; the **live** shape of `request_events` is migration 6's, and the live metrics plane is migration 7's.
+
+### `noTx` migrations
+
+Migration 7 sets `noTx: true`: its statements run with autocommit instead of one wrapping transaction, because `CREATE MATERIALIZED VIEW … WITH (timescaledb.continuous)` cannot run inside a transaction block. `noTx` SQL is split on `;` and each statement executed in turn, so it MUST NOT contain embedded semicolons (no dollar-quoted bodies) and every statement MUST be idempotent (`IF NOT EXISTS` / `if_not_exists`) — a mid-batch failure re-runs the whole step, since the version row is recorded only after all statements succeed.
 
 ---
 
@@ -265,15 +221,17 @@ The migration runner tracks state in a `schema_migrations` table bootstrapped ou
 | Column | Type | Notes |
 |---|---|---|
 | `version` | `INTEGER` | Primary key; the applied migration's version. |
-| `name` | `TEXT` | Human-facing bookkeeping name (e.g. `telemetry_core`). |
+| `name` | `TEXT` | Human-facing bookkeeping name (e.g. `single_writer_span_event`). |
 | `applied_at` | `TIMESTAMPTZ` | Defaults to `now()` at apply time. |
 
-`SchemaVersion` returns `COALESCE(MAX(version), 0)` — `0` on an empty database. Each migration's SQL and its `schema_migrations` row commit together in one transaction ([`store.go::applyMigration`](../internal/telemetry/store/store.go)), so the table never claims a half-applied step.
+`SchemaVersion` returns `COALESCE(MAX(version), 0)` — `0` on an empty database. Each migration's SQL and its `schema_migrations` row commit together in one transaction ([`store.go::applyMigration`](../internal/telemetry/store/store.go)) for transactional steps, so the table never claims a half-applied step; for a `noTx` step the version row is written only after every statement has succeeded.
 
 ---
 
 ## Cross-references
 
 - [telemetry-service.md](telemetry-service.md) — the service that owns this database: deployment topology, ports, config YAML, ingest contracts, query API, console.
-- [observability.md](observability.md) — gateway-side OTel pipeline that produces the OTLP metric and trace feeds this schema ingests.
-- Code: [`internal/telemetry/store/`](../internal/telemetry/store/) — `migrations.go`, `store.go`, `events.go`, `payloads.go`, `metrics.go`, `scan.go`.
+- [telemetry-service-api.md](telemetry-service-api.md) — the console query API that reads these tables.
+- [telemetry-webhook.md](telemetry-webhook.md) — the HMAC Record webhook that feeds the `record` table.
+- [observability.md](observability.md) — gateway-side OTel pipeline that produces the OTLP metric and trace feeds this schema ingests, including the new token counters.
+- Code: [`internal/telemetry/store/`](../internal/telemetry/store/) — `migrations.go`, `store.go`, `events.go`, `record.go`, `metrics.go`, `dashboard.go`, `scan.go`.
