@@ -546,7 +546,7 @@ function MetaGrid({ entry }: { entry: MessageEntry }) {
     ["Session", sessionNode],
     ["Agent", agentNode],
     ["User", userNode],
-    ["At", new Date(entry.at).toLocaleString()],
+    ["At", fmt.fullTime(entry.at)],
   ]
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-3">

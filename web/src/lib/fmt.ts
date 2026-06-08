@@ -1,5 +1,22 @@
 // Formatters ported from the design prototype.
 
+// tzAbbrev returns the short local time-zone name for the given instant
+// (e.g. "BST", "GMT", "UTC", "EST"). Resolved per-instant so a record from
+// a different DST period is labelled with its own offset, not the viewer's
+// current one. Falls back to "" if Intl can't produce a zone name.
+function tzAbbrev(d: Date): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hour12: false,
+      timeZoneName: "short",
+    }).formatToParts(d)
+    return parts.find((p) => p.type === "timeZoneName")?.value ?? ""
+  } catch {
+    return ""
+  }
+}
+
 export const fmt = {
   num: (n?: number | null) => (n == null ? "—" : n.toLocaleString("en-US")),
 
@@ -35,11 +52,23 @@ export const fmt = {
     return Math.round(secs / 86400) + "d ago"
   },
 
+  // Wire timestamps arrive as UTC ISO strings (…Z); render them in the
+  // viewer's local zone — operators read incident timelines against a wall
+  // clock, and a silent UTC offset caused a real "where did the traffic go?"
+  // mix-up. shortTime stays bare (HH:MM:SS) for dense chart axes where a zone
+  // label would be noise; fullTime carries an explicit zone label so the
+  // offset is never ambiguous.
   shortTime: (iso?: string | null) =>
-    !iso ? "—" : new Date(iso).toISOString().slice(11, 19),
+    !iso ? "—" : new Date(iso).toLocaleTimeString("en-GB", { hour12: false }),
 
-  fullTime: (iso?: string | null) =>
-    !iso ? "—" : new Date(iso).toISOString().replace("T", " ").slice(0, 19) + "Z",
+  fullTime: (iso?: string | null) => {
+    if (!iso) return "—"
+    const d = new Date(iso)
+    const date = d.toLocaleDateString("en-CA") // YYYY-MM-DD in the local zone
+    const time = d.toLocaleTimeString("en-GB", { hour12: false })
+    const zone = tzAbbrev(d)
+    return zone ? `${date} ${time} ${zone}` : `${date} ${time}`
+  },
 
   /**
    * Compact human-readable uptime. Returns "12s", "3m 14s", "2h 7m",
