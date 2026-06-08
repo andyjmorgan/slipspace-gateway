@@ -47,9 +47,20 @@ const (
 	// MetricTokenUsage is the spec gen_ai.client.token.usage histogram,
 	// keyed by gen_ai.token.type=input|output. There is no server-side
 	// token metric in the spec, so this client metric is emitted from the
-	// proxy by deliberate choice; it replaces the former input/output
-	// token counters.
+	// proxy by deliberate choice. It is the distribution view (Prometheus/
+	// Grafana); the input/output COUNTERS below carry the same totals for the
+	// central telemetry service, whose ingest does not read histograms.
 	MetricTokenUsage = "gen_ai.client.token.usage" //nolint:gosec // G101 false positive: metric name, not a credential
+
+	// Input/output token COUNTERS, emitted alongside the gen_ai.client.token.usage
+	// histogram above. The histogram serves Prometheus/Grafana (buckets,
+	// distributions); the central telemetry service ingests only counter/gauge
+	// metric points (its OTLP ingest skips histograms by design), so the
+	// dashboard's token-sum continuous aggregates need these counter mirrors.
+	// Same dimensions + temporality as the cache counters below, which the
+	// telemetry dashboard already sums.
+	MetricTokensInputTotal  = "sluice.tokens.input.total"  //nolint:gosec // G101 false positive: metric name, not a credential
+	MetricTokensOutputTotal = "sluice.tokens.output.total" //nolint:gosec // G101 false positive: metric name, not a credential
 
 	// Cache tokens have no gen_ai.token.type value (the spec enum is
 	// input|output only), so they ride Sluice-namespaced counters. Both
@@ -207,6 +218,12 @@ type Meters struct {
 	// histogram sum.
 	TokenUsage metric.Int64Histogram
 
+	// TokensInputTotal / TokensOutputTotal mirror the TokenUsage histogram as
+	// counters so the central telemetry service (which ingests no histograms)
+	// can sum per-window token totals in its dashboard continuous aggregates.
+	TokensInputTotal  metric.Int64Counter
+	TokensOutputTotal metric.Int64Counter
+
 	TokensCachedTotal        metric.Int64Counter
 	TokensCacheCreationTotal metric.Int64Counter
 
@@ -359,6 +376,8 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		dst              *metric.Int64Counter
 	}{
 		{MetricRequestsTotal, "Total requests completed.", "1", &m.RequestsTotal},
+		{MetricTokensInputTotal, "Sum of provider-reported input tokens (counter mirror of the token-usage histogram for the telemetry service's dashboard rollups).", "1", &m.TokensInputTotal},
+		{MetricTokensOutputTotal, "Sum of provider-reported output tokens (counter mirror of the token-usage histogram for the telemetry service's dashboard rollups).", "1", &m.TokensOutputTotal},
 		{MetricTokensCachedTotal, "Sum of provider-reported cached input tokens (cache reads, billed at the discounted rate).", "1", &m.TokensCachedTotal},
 		{MetricTokensCacheCreationTotal, "Sum of provider-reported cache-write tokens (Anthropic's chargeable cache-creation premium).", "1", &m.TokensCacheCreationTotal},
 		{MetricTagsAppliedTotal, "Count of AddTagAction applications labelled by tag name. Cardinality bounded by configured policy.", "1", &m.TagsAppliedTotal},
