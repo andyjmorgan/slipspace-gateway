@@ -563,6 +563,11 @@ export interface SessionSummary {
    */
   messages: number /* int */;
   /**
+   * Subagents is the number of distinct child conversation threads in the
+   * session (subagents spawned). 0 for a plain single-agent session.
+   */
+  subagents: number /* int */;
+  /**
    * TotalTokens is the summed tokens_in+tokens_out across those requests.
    */
   total_tokens: number /* int64 */;

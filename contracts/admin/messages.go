@@ -226,6 +226,10 @@ type SessionSummary struct {
 	// Messages is the number of (matching) requests in the session.
 	Messages int `json:"messages"`
 
+	// Subagents is the number of distinct child conversation threads in the
+	// session (subagents spawned). 0 for a plain single-agent session.
+	Subagents int `json:"subagents"`
+
 	// TotalTokens is the summed tokens_in+tokens_out across those requests.
 	TotalTokens int64 `json:"total_tokens"`
 
