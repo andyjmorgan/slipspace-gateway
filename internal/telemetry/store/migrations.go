@@ -327,4 +327,18 @@ SELECT add_continuous_aggregate_policy('cagg_rules_1m', start_offset => INTERVAL
 
 SELECT add_continuous_aggregate_policy('cagg_tags_1m', start_offset => INTERVAL '3 hours', end_offset => INTERVAL '1 minute', schedule_interval => INTERVAL '1 minute', if_not_exists => TRUE);`,
 	},
+	{
+		version: 8,
+		name:    "drop_dupe_span_keys",
+		// span_event historically stored two byte-identical duplicate pairs: the
+		// raw OTel attrs sluice.tags / sluice.rules_fired (copied verbatim by the
+		// pre-fix buildSpanEvent) alongside the derived, normalised tags /
+		// rules_fired arrays. Every reader (the GIN indexes on
+		// (span_event->'tags') / (span_event->'rules_fired'), the facets unnest,
+		// the EventFilter @> containment, store.SpanFields) consumes only the
+		// bare keys, so the sluice.-prefixed copies were dead weight. Ingest now
+		// skips them; this strips them from existing rows so the blob carries each
+		// value once. Idempotent: subtracting an absent key is a no-op.
+		sql: `UPDATE request_events SET span_event = span_event - 'sluice.tags' - 'sluice.rules_fired';`,
+	},
 }

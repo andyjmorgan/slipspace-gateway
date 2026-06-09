@@ -150,6 +150,25 @@ func TestEventFromSpan_TagsAndRulesToBlob(t *testing.T) {
 	if len(f.RulesFired) != 1 || f.RulesFired[0] != "redirect" {
 		t.Errorf("rules_fired = %+v", f.RulesFired)
 	}
+	// The blob carries each array exactly once, under the canonical bare key.
+	// The verbatim sluice.-prefixed raw attrs must NOT be duplicated in —
+	// nothing reads them, and every reader consumes tags / rules_fired.
+	var blob map[string]json.RawMessage
+	if err := json.Unmarshal(e.SpanEvent, &blob); err != nil {
+		t.Fatalf("unmarshal span_event: %v", err)
+	}
+	if _, ok := blob["tags"]; !ok {
+		t.Error("span_event missing canonical key tags")
+	}
+	if _, ok := blob["rules_fired"]; !ok {
+		t.Error("span_event missing canonical key rules_fired")
+	}
+	if _, ok := blob[attrSluiceTags]; ok {
+		t.Errorf("span_event still carries redundant raw key %q", attrSluiceTags)
+	}
+	if _, ok := blob[attrSluiceRulesFired]; ok {
+		t.Errorf("span_event still carries redundant raw key %q", attrSluiceRulesFired)
+	}
 }
 
 func TestAnyValueNative_Kinds(t *testing.T) {

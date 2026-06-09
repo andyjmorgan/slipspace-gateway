@@ -109,6 +109,14 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 func buildSpanEvent(attrs map[string]*commonpb.AnyValue, span *tracepb.Span, contentMaxBytes int) []byte {
 	out := make(map[string]any, len(attrs)+4)
 	for k, v := range attrs {
+		// sluice.tags / sluice.rules_fired are copied below as the derived,
+		// normalised tags / rules_fired arrays (keyTags / keyRules) that every
+		// reader (GIN indexes, facets, EventFilter, store.SpanFields) consumes.
+		// Skip the verbatim raw attrs here so the blob carries each value once
+		// under its canonical bare key, not a byte-identical duplicate.
+		if k == attrSluiceTags || k == attrSluiceRulesFired {
+			continue
+		}
 		out[k] = anyValueNative(v)
 	}
 	// Derived: request wall time from the span bounds (the gateway also emits it,
