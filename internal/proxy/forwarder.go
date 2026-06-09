@@ -5,8 +5,10 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -305,7 +307,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			streaming := isSSE(resp.Header)
+			streaming := classifyStreaming(resp)
 			cw.streaming = streaming
 
 			if reqLogger.Enabled(ctx, slog.LevelDebug) {
@@ -412,6 +414,89 @@ func isSSE(h http.Header) bool {
 		ct = ct[:i]
 	}
 	return strings.EqualFold(strings.TrimSpace(ct), "text/event-stream")
+}
+
+// sseSniffLimit caps the leading-body peek classifyStreaming performs when the
+// upstream omits Content-Type. SSE framing is recognisable from its first few
+// bytes (issue #308: the Cloudflare-fronted OpenAI Codex backend streams a real
+// event stream with no Content-Type, so the prefix `event: response.created`
+// is the only signal available), so a small cap keeps the regression guard cheap.
+const sseSniffLimit = 512
+
+// prefixedBody re-presents a partially-read response body as a single stream:
+// the bytes already peeked by classifyStreaming, followed by the unread
+// remainder. It exists because the Content-Type fallback (issue #308) must
+// consume the leading bytes to classify them, yet the downstream proxy copy
+// has to see a byte-identical body that still streams incrementally under
+// FlushInterval:-1. Close closes the original body, never the peeked prefix.
+type prefixedBody struct {
+	io.Reader           // MultiReader over the peeked prefix then orig
+	orig      io.Closer // the upstream body; closed by Close, not read early
+}
+
+// Close closes the original upstream body. The peeked prefix is an in-memory
+// bytes.Reader with nothing to release, so only orig is closed here.
+func (b *prefixedBody) Close() error { return b.orig.Close() }
+
+// classifyStreaming decides whether an upstream response is an SSE stream.
+// isSSE on the headers is the primary fast path, so providers that set
+// Content-Type pay zero sniff cost. The fallback exists only for issue #308:
+// the Cloudflare-fronted OpenAI Codex backend returns a genuine event stream
+// with no Content-Type at all, which isSSE alone classifies as non-streaming —
+// dropping gen_ai.request.stream from the span and the TTFC metric. When (and
+// only when) Content-Type is empty and a body is present, it peeks the leading
+// bytes, restores them so the downstream copy stays byte-identical, and reports
+// whether they look like SSE framing.
+func classifyStreaming(resp *http.Response) bool {
+	if isSSE(resp.Header) {
+		return true
+	}
+	// A non-empty Content-Type that wasn't text/event-stream is authoritative:
+	// the header wins and we never touch the body.
+	if resp.Header.Get("Content-Type") != "" {
+		return false
+	}
+	if resp.Body == nil || resp.Body == http.NoBody {
+		return false
+	}
+
+	buf := make([]byte, sseSniffLimit)
+	n, err := io.ReadFull(resp.Body, buf)
+	peeked := buf[:n]
+	// Restore the consumed prefix ahead of the unread remainder so the
+	// downstream copy stays byte-identical regardless of the outcome below.
+	resp.Body = &prefixedBody{
+		Reader: io.MultiReader(bytes.NewReader(peeked), resp.Body),
+		orig:   resp.Body,
+	}
+	// Short bodies are expected, not failures: ErrUnexpectedEOF (read some,
+	// then EOF) and EOF (empty) both leave peeked valid. Any other error is a
+	// real read failure — classify non-SSE; the restored body still surfaces
+	// the same error to the downstream copy.
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return false
+	}
+	return looksLikeSSE(peeked)
+}
+
+// looksLikeSSE reports whether b begins with SSE framing once leading ASCII
+// whitespace is trimmed: an event/data/id/retry field, or a `:` comment line
+// (heartbeat). JSON and plain text bodies begin with `{`, `[`, or a letter, so
+// they never collide with these prefixes.
+func looksLikeSSE(b []byte) bool {
+	t := bytes.TrimLeft(b, " \t\r\n")
+	for _, p := range [][]byte{
+		[]byte("event:"),
+		[]byte("data:"),
+		[]byte("id:"),
+		[]byte("retry:"),
+		[]byte(":"),
+	} {
+		if bytes.HasPrefix(t, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeBadGateway(w http.ResponseWriter) {

@@ -102,6 +102,33 @@ func TestPoliciesHandler_ProjectsTargetsAndCircuitState(t *testing.T) {
 	}
 }
 
+func TestPoliciesHandler_ProjectsLoadBalanceWeights(t *testing.T) {
+	t.Parallel()
+	grp := contractsconfig.Group{
+		Mode: contractsres.ModeLoadBalance,
+		Targets: []contractsconfig.Target{
+			{Provider: "primary", Weight: 7},
+			{Provider: "backup", Weight: 3},
+		},
+	}
+	resolved := &config.ResolvedConfig{Groups: contractsconfig.GroupsConfig{"lb": grp}}
+
+	got := buildPoliciesResponse(resolved, nil)
+	if len(got.Policies) != 1 {
+		t.Fatalf("policies = %d; want 1", len(got.Policies))
+	}
+	p := got.Policies[0]
+	if len(p.Targets) != 2 {
+		t.Fatalf("targets = %d; want 2", len(p.Targets))
+	}
+	if p.Targets[0].Name != "primary" || p.Targets[0].Weight != 7 {
+		t.Errorf("targets[0] = %+v; want primary weight 7", p.Targets[0])
+	}
+	if p.Targets[1].Name != "backup" || p.Targets[1].Weight != 3 {
+		t.Errorf("targets[1] = %+v; want backup weight 3", p.Targets[1])
+	}
+}
+
 func TestPoliciesHandler_NilBreakerSource_AllUnknown(t *testing.T) {
 	t.Parallel()
 	grp := contractsconfig.Group{
