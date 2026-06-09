@@ -205,10 +205,12 @@ func TestExtractContent_OpenAIResponses_MixedToolCatalogue(t *testing.T) {
 	raw := []byte(`{"input":"x","tools":[` +
 		`{"type":"function","name":"shell","description":"run","parameters":{"type":"object"}},` +
 		`{"type":"custom","name":"apply_patch","description":"patch"},` +
-		`{"type":"tool_search"},{"type":"web_search"},{"type":"image_generation"}]}`)
+		`{"type":"tool_search"},{"type":"web_search"},{"type":"image_generation"},` +
+		`{"type":"file_search"},{"type":"code_interpreter"},{"type":"mcp"},` +
+		`{"type":"future_thing"}]}`)
 	c := genaiattr.ExtractContent("responses", raw)
-	if len(c.ToolDefinitions) != 5 {
-		t.Fatalf("tool count = %d, want 5: %+v", len(c.ToolDefinitions), c.ToolDefinitions)
+	if len(c.ToolDefinitions) != 9 {
+		t.Fatalf("tool count = %d, want 9: %+v", len(c.ToolDefinitions), c.ToolDefinitions)
 	}
 	if td := c.ToolDefinitions[0]; td.Type != "function" || td.Name != "shell" || !strings.Contains(string(td.Parameters), "object") {
 		t.Errorf("function tool = %+v", td)
@@ -216,9 +218,11 @@ func TestExtractContent_OpenAIResponses_MixedToolCatalogue(t *testing.T) {
 	if td := c.ToolDefinitions[1]; td.Type != "custom" || td.Name != "apply_patch" || td.Description != "patch" {
 		t.Errorf("custom tool = %+v", td)
 	}
-	for i, wantType := range []string{"tool_search", "web_search", "image_generation"} {
-		if td := c.ToolDefinitions[2+i]; td.Type != wantType || td.Name != "" {
-			t.Errorf("built-in tool[%d] = %+v, want type %q name=\"\"", i, td, wantType)
+	// Built-in and unknown/future types pass through carrying only their type —
+	// no name, description, or parameters — and are never dropped.
+	for i, wantType := range []string{"tool_search", "web_search", "image_generation", "file_search", "code_interpreter", "mcp", "future_thing"} {
+		if td := c.ToolDefinitions[2+i]; td.Type != wantType || td.Name != "" || td.Description != "" || td.Parameters != nil {
+			t.Errorf("type-only tool[%d] = %+v, want type %q with no name/desc/params", i, td, wantType)
 		}
 	}
 }
