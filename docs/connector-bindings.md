@@ -76,7 +76,7 @@ configurations:
           tags_any: [billing, compliance]
 ```
 
-`connector_bindings:` is a slice on the configuration. Empty (or absent) means "no capture" — the body-capture middleware short-circuits when no bindings exist, saving the work of cloning request/response bodies.
+`connector_bindings:` is a slice on the configuration. Empty (or absent) means "no capture" — when no bindings exist the reporter skips building and enqueuing a Record (cmd/gateway/reporter.go enqueueRecord returns early on len(ConnectorBindings)==0), so no record is assembled or shipped. Note the inbound body-capture middleware itself still runs — it is required to decode the model for selection and rules — so it does not short-circuit; only record assembly/enqueue is skipped.
 
 Each binding entry's fields:
 
@@ -85,7 +85,7 @@ Each binding entry's fields:
 | `connector` | string | — (required) | Name of an entry in the top-level `connectors:` slice. Unknown name aborts load. |
 | `sampling` | float in `[0, 1]` | `1.0` (everything) | Fraction of records routed to this binding. The validator accepts `[0, 1]` inclusive, but the runtime treats any `sampling <= 0` as `1.0` (sends everything) — `0` does **not** disable the binding. See [Sampling](#sampling). |
 | `sampling_key` | enum | `correlation_id` | `correlation_id` (deterministic, retries stay grouped) or `random` (per-record). |
-| `max_body_bytes` | int (optional) | unset → per-type default (webhook 1 MiB; s3/azure none) | Per-record body cap. Unset applies the connector-type default; explicit `0` means no cap (the override); a positive value caps the larger of request/response body. See [Per-record body cap](#per-record-body-cap). |
+| `max_body_bytes` | int (optional) | unset → no cap (DefaultMaxBodyBytes returns 0 for all types) | Per-record body cap. Unset applies the connector-type default; explicit `0` means no cap (the override); a positive value caps the larger of request/response body. See [Per-record body cap](#per-record-body-cap). |
 | `oversize_behaviour` | enum | `metadata_only` | What to do when the record's body exceeds the cap: `metadata_only` (strip body, ship metadata) or `drop_record` (skip entirely). |
 | `filter` | object | nil (all-pass) | Predicate filter narrowing which records this binding receives. See [Filter](#filter). |
 
@@ -182,15 +182,15 @@ Per-type defaults applied when `max_body_bytes` is unset:
 
 | Connector type | Default | Reasoning |
 |---|---|---|
-| `webhook` | 1 MiB | Receivers process each delivery synchronously; an unbounded body can stall the receiver, so webhook bindings get a protective default. Set `max_body_bytes: 0` to opt out. |
+| `webhook` | none (no cap) | No default cap; set `max_body_bytes` to a positive value to bound the body. |
 | `s3`, `azure_blob` | none (no cap) | Blob stores ingest large objects out of band, so there is no default cap. |
 
 Bodies are already bounded upstream regardless: the bodycapture middleware reads at most `MaxBodyBytes` (10 MiB) from the inbound request, so a record's bodies never exceed that ceiling even with no binding cap.
 
 ```yaml
 max_body_bytes: 1048576      # 1 MiB — explicit cap
-# max_body_bytes: 0          # opt a webhook binding out of its 1 MiB default
-# (omit entirely)            # webhook → 1 MiB default; s3/azure → no cap
+# max_body_bytes: 0          # explicit no cap (same as unset)
+# (omit entirely)            # no cap for all types (webhook/s3/azure)
 ```
 
 The cap is **per record**, not per segment — multiple oversized records on the same segment are each evaluated independently.
@@ -252,7 +252,7 @@ configurations:
           status_max: 599
 ```
 
-Two bindings on the same configuration. The first ships everything to s3 with the defaults. The second ships only 5xx records (server errors) at 5% random sampling to a webhook; records exceeding the 1 MiB webhook cap are dropped entirely because the receiver expects intact bodies.
+Two bindings on the same configuration. The first ships everything to s3 with the defaults. The second ships only 5xx records (server errors) at 5% random sampling to a webhook; records exceeding the binding's explicit `max_body_bytes` cap are dropped entirely because the receiver expects intact bodies.
 
 ### Different connectors for different traffic shapes
 

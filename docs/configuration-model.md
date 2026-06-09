@@ -286,7 +286,7 @@ bindings:
 - A pattern ending in `*` is a **prefix** match (`gpt-*` matches `gpt-4o`).
 - Otherwise the pattern is compared **exactly**.
 
-`Select` walks the configuration's bindings in order and returns the **first** binding whose `protocol` equals the request protocol and whose `models` match the request model. No fallthrough: when no binding matches, selection returns `ErrNoBinding`, which the data plane maps to a 404 — the model is simply not served on that protocol by this configuration.
+`Select` walks the configuration's bindings in order and returns the **first** binding whose `protocol` equals the request protocol and whose `models` match the request model. No fallthrough: when no binding matches, selection returns `ErrNoBinding`, which the data plane maps to a 404 with error code `no_binding` (`cmd/gateway/pipeline.go:162-163`) — the model is simply not served on that protocol by this configuration.
 
 ### Binding validation (`internal/config/config_validate.go::validateBindings`)
 
@@ -379,7 +379,7 @@ api_keys:
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `id` | *uuid.UUID | no | Stable identifier the admin write API addresses the key by. `nil` is allowed in operator-authored YAML; the admin API mints one on create. Duplicate non-nil IDs abort validation. |
-| `secret` | string | yes | The bearer token clients present. Conventionally prefixed `sk_live_…` / `sk_dev_…`, but the loader does not enforce a prefix. Empty aborts validation; duplicate secrets abort. Authentication compares this in constant time. |
+| `secret` | string | yes | The bearer token clients present. Conventionally prefixed `sk_live_…` / `sk_dev_…`, but the loader does not enforce a prefix. Empty aborts validation; duplicate secrets abort. Authentication resolves this via an O(1) hash-map lookup in `ResolvedConfig.SecretIndex` (`internal/middleware/auth/resolver.go`), not a constant-time comparison. |
 | `name` | string | no | Human-readable label surfaced in logs and reporting events. Unvalidated — carries no auth meaning. |
 | `configuration` | string | yes | Name of the configuration this key resolves to. Unknown name aborts load with `ErrUnknownConfiguration`. |
 | `enabled` | bool | yes | Toggles the key without removing it. A disabled key authenticates structurally but is rejected before forwarding. |

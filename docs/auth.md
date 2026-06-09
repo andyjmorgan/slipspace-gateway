@@ -119,7 +119,7 @@ flowchart LR
 | Bearer value not in SecretIndex | 401 `unauthorized` | `unknown_key` | |
 | Bearer value matches a key with `enabled: false` | 401 `unauthorized` | `disabled_key` | The audit log records `disabled_key` so an operator chasing a rejected client can tell the difference from "unknown secret" — the wire shape stays identical to avoid confirming key existence. |
 | Bearer resolves to an `APIKey` whose `configuration:` field references a name absent from the index | 403 `unknown configuration` | `unknown_configuration` | Only fires under load-time validation skew — the loader rejects this at startup. A live 403 here implies a config swap that the loader didn't validate. |
-| Bearer resolves cleanly but the resolved target's credential is empty (`Configuration.Credentials[provider]` absent or `""`) | request forwarded with **no credential header** (no-credential branch, [`destination.go:137`](../cmd/gateway/destination.go)) | `success` | Auth succeeds; the destination builder strips every credential header and forwards without one. Use for private endpoints that gate themselves (e.g. in-cluster ollama on an unauthenticated NodePort). |
+| Bearer resolves cleanly but the resolved target's credential is empty (`Configuration.Credentials[provider]` absent or `""`) | request forwarded with **no credential header** (no-credential branch, [`destination.go:198`](../cmd/gateway/destination.go)) | `success` | Auth succeeds; the destination builder strips every credential header and forwards without one. Use for private endpoints that gate themselves (e.g. in-cluster ollama on an unauthenticated NodePort). |
 
 The disabled-key vs unknown-key distinction lives only in the structured log — the wire collapses both to 401 to deny enumeration. See `classifyResult` in [`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go).
 
@@ -210,7 +210,7 @@ In managed mode, the destination builder mints exactly one credential header per
 | `gemini` | `x-goog-api-key` | `<credential>` (raw) | [`auth.UpstreamCredentialHeader`](../internal/middleware/auth/resolver.go) |
 | anything else | `Authorization` | `Bearer <credential>` | fallback branch in `UpstreamCredentialHeader` so retargeting a rule to an as-yet-unmodelled provider still produces a reasonable outgoing shape. |
 
-`UpstreamCredentialHeader` is exported so the rules engine's `changeApiKey` action can re-mint a credential header without duplicating the format table. **Note:** in the v2 destination builder `changeApiKey` is wired — the action writes `state.UpstreamCredentialOverride` ([`internal/middleware/rules/actions.go:154`](../internal/middleware/rules/actions.go)), and `resolveCredentialHeaders` ([`cmd/gateway/destination.go:169`](../cmd/gateway/destination.go)) reads it at the single mint site, ahead of the auth mode: a non-empty literal `apiKey` is minted with the post-rule provider's header format (formatting through `credentialHeaderFor` → `UpstreamCredentialHeader`), while the `useSluiceKey` sentinel forwards the inbound `Authorization` verbatim. See [Cross-references](#cross-references).
+`UpstreamCredentialHeader` is exported so the rules engine's `changeApiKey` action can re-mint a credential header without duplicating the format table. **Note:** in the v2 destination builder `changeApiKey` is wired — the action writes `state.UpstreamCredentialOverride` ([`internal/middleware/rules/actions.go:183`](../internal/middleware/rules/actions.go)), and `resolveCredentialHeaders` ([`cmd/gateway/destination.go:169`](../cmd/gateway/destination.go)) reads it at the single mint site, ahead of the auth mode: a non-empty literal `apiKey` is minted with the post-rule provider's header format (formatting through `credentialHeaderFor` → `UpstreamCredentialHeader`), while the `useSluiceKey` sentinel forwards the inbound `Authorization` verbatim. See [Cross-references](#cross-references).
 
 The destination builder defends the credential surface beyond just minting the right header. There is no named "strategy" type in the code; the logic is a precedence `switch` in [`resolveCredentialHeaders`](../cmd/gateway/destination.go) (`cmd/gateway/destination.go:169`), into which `buildDestination` threads the post-rule `state.UpstreamCredentialOverride`. It is evaluated top to bottom:
 
@@ -222,7 +222,7 @@ The destination builder defends the credential surface beyond just minting the r
 | no-credential — line 198 (`target.Credential == ""`) | Managed mode, no override, where the resolved target has no credential (`Configuration.Credentials[provider]` absent or `""`) | Adds every credential header name in the closed set (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) to `DropHeaders`; sets none. The upstream sees no credential — appropriate for endpoints the gateway is not authenticated against. |
 | credential-set — line 203 (`default`) | Managed mode, no override, with a non-empty `target.Credential` | Mints the header via `credentialHeaderFor(target, target.Credential)`; adds every *other* credential header name in the closed set to `DropHeaders` so an inbound openai-style Bearer cannot leak to anthropic. |
 
-The closed set `credentialHeaderNames` (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) is defined in [`cmd/gateway/handler.go:148`](../cmd/gateway/handler.go).
+The closed set `credentialHeaderNames` (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) is defined in [`cmd/gateway/handler.go:180`](../cmd/gateway/handler.go).
 
 ---
 
@@ -266,7 +266,7 @@ Content-Type: application/json
 
 ### Destination build
 
-1. `buildDestination` falls to the credential-set branch (`destination.go:142` default — managed mode, `target.Credential` non-empty).
+1. `buildDestination` falls to the credential-set branch (`destination.go:203` default — managed mode, `target.Credential` non-empty).
 2. `credentialHeaderFor` sees `target.Auth == nil` (no openai protocol auth override) → falls back to `auth.UpstreamCredentialHeader("openai", "sk-real-openai-pk-...")` → returns `("Authorization", "Bearer sk-real-openai-pk-...")`.
 3. The closed credential-header set adds `X-Api-Key` and `X-Goog-Api-Key` to `DropHeaders` (no-ops here since the inbound carried neither).
 
@@ -317,7 +317,7 @@ Content-Type: application/json
 
 ### Destination build
 
-1. `buildDestination` takes the passthrough branch (`destination.go:133`, `mode == auth.ModePassthrough`).
+1. `buildDestination` takes the passthrough branch (`destination.go:194`, `mode == auth.ModePassthrough`).
 2. The forwarder's `alwaysDropHeaders` strips inbound `Authorization`.
 3. The destination builder re-injects the inbound `Authorization` value into `OutgoingHeaders`, so the forwarder sets it back on the outbound request.
 4. `X-Sluice-Configuration` is stripped via `DropHeaders` — the upstream never sees it.
@@ -391,6 +391,6 @@ For passthrough mode there is no key rotation on the gateway side — the upstre
 - **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `Resolver`, `AuthResult`, `Mode`, the discovery walk, and `UpstreamCredentialHeader` per-provider defaults.
 - **[`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go)** — `HTTPHandler`, the typed error → wire status mapping in `writeAuthError`, and the `Result` audit tags.
 - **[`cmd/gateway/destination.go`](../cmd/gateway/destination.go)** — `buildDestination`, `resolveCredentialHeaders` (the credential precedence `switch`, including the `changeApiKey` override), and `credentialHeaderFor` (the single mint site).
-- **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — the closed `credentialHeaderNames` set (`handler.go:148`), the `authFormatPlaceholder` (`{key}`) constant, and the data-plane handler composition.
+- **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — the closed `credentialHeaderNames` set (`handler.go:180`), the `authFormatPlaceholder` (`{key}`) constant, and the data-plane handler composition.
 - **[`internal/selection/selection.go`](../internal/selection/selection.go)** — `Target` (carries the pre-resolved `Auth` convention and `Credential` the destination builder consumes).
 - **[`CLAUDE.md`](../CLAUDE.md)** — load-bearing invariant 6 (credential header lives in one place per `(provider, endpoint)`) and the *Authentication & Auth Modes* design summary.

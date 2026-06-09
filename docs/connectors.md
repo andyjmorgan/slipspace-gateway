@@ -305,7 +305,7 @@ For each evaluated record that passes its binding's sampling / filter / body-cap
 | `X-Sluice-Gateway-Id` | the `gateway_id` field | Identifies the sending gateway to the receiver's registry so it can select the right HMAC secret. Empty when `gateway_id` is unset. |
 | `X-Sluice-Signature` | `<hex_hmac_sha256>` | Hex-encoded HMAC-SHA256 of the **raw request body** under the resolved secret. No timestamp, no `t=`/`v1=` prefix — just the bare hex digest. |
 
-The standard Go `User-Agent` is sent (no custom build-version header). Body bodies above the binding's `max_body_bytes` (default 1 MiB for webhooks — [`contracts/config/connectors.go`](../contracts/config/connectors.go) `WebhookDefaultMaxBodyBytes`) are stripped or the record dropped *before* it reaches the pusher; see [connector-bindings.md](connector-bindings.md).
+The standard Go `User-Agent` is sent (no custom build-version header). Body bodies above the binding's `max_body_bytes` (no per-type default cap — [`contracts/config/connectors.go`](../contracts/config/connectors.go) `DefaultMaxBodyBytes` returns 0 for every connector type including webhook; the 1 MiB webhook default was removed) are stripped or the record dropped *before* it reaches the pusher. The only ceiling is the bodycapture middleware's 10 MiB inbound read limit; see [connector-bindings.md](connector-bindings.md).
 
 ### Signature verification
 

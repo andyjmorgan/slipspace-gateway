@@ -10,7 +10,7 @@ Repo: `git@github.com:andyjmorgan/sluice-gateway.git`
 
 Two coexisting auth modes:
 - **Managed:** client uses a Sluice-issued API key (`Authorization: Bearer sk_live_...`); gateway swaps in the upstream provider credentials before forwarding.
-- **Passthrough:** client uses their own upstream token (e.g., Claude Code OAuth); gateway picks the policy via `X-Sluice-Configuration: <name>` and forwards the `Authorization` header verbatim.
+- **Passthrough:** client uses their own upstream token (e.g., Claude Code OAuth); gateway picks the policy via `X-Sluice-Identity: <sk_live_... api-key secret>` (preferred) or the deprecated legacy `X-Sluice-Configuration: <name>` header, and forwards the `Authorization` header verbatim.
 
 Both modes resolve to a named **Configuration** — a reusable policy bundle (upstream credentials, rules, resilience). Many API keys can share one configuration.
 
@@ -140,7 +140,7 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 
 - YAML directory at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`)
 - Loader scans all `*.yaml`, merges by top-level key, errors on duplicate keys
-- Top-level keys: `providers`, `configurations`, `api_keys`, `rules`, `resilience_policies`, `connectors`, `admin`
+- Top-level keys: `providers`, `groups`, `configurations`, `api_keys`, `rules`, `connectors`, `admin`, `telemetry`
 - **File contents are trusted** (mounted from k8s Secrets or filesystem-permissioned). No `${VAR}` or `env:` syntax inside YAML. Only file paths are env-overridable.
 - API keys are flat references to named Configurations. Configurations carry rules + resilience + default upstream credentials.
 - Two auth modes (see *Authentication & Auth Modes* note) — passthrough wins if both `X-Sluice-Configuration` header and Sluice-issued bearer are present.

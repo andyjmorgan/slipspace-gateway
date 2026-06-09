@@ -120,7 +120,7 @@ predicates are AND-combined.
 Two distinct window conventions:
 
 - **Dashboard routes** use a coarse `?window` token — one of `15m`, `1h`, `6h`,
-  `24h`, `7d`; an unknown or absent token defaults to `24h`
+  `24h`, `7d`; an unknown or absent token defaults to `1h`
   (`observability.go::parseWindow`, lines 23-38). The upper bound is padded by a
   one-minute `clockSkewMargin` so an event stamped by a slightly-ahead Postgres
   `now()` still falls inside the window (lines 40-50).

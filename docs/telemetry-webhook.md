@@ -256,10 +256,11 @@ connectors:
 The `auth`, `rotation`, `bucket`, `region`, `account`, `container`, … fields on `Connector`
 are for the spool-backed `s3` / `azure_blob` types and are ignored for `webhook`.
 
-A webhook binding's `max_body_bytes` defaults to **1 MiB** (`WebhookDefaultMaxBodyBytes`),
-not the unlimited default that `s3` / `azure_blob` get — webhook receivers process a
-delivery synchronously, so an unbounded body can stall them. Set `max_body_bytes: 0` on the
-binding to opt out of that protective cap. See [connector-bindings.md](connector-bindings.md)
+A webhook binding's `max_body_bytes` defaults to **unlimited** (`0`), the same as
+`s3` / `azure_blob` — an unset binding captures the full body, bounded only by the
+inbound bodycapture buffer. (A previous 1 MiB webhook default silently dropped large
+request bodies, so it was removed in #309.) Set `max_body_bytes` explicitly on the
+binding for a tighter per-binding cap. See [connector-bindings.md](connector-bindings.md)
 for the per-binding sampling / filter / body-cap overrides.
 
 The webhook connector also passes through the SSRF guard at config-validation time:

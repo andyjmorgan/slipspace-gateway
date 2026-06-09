@@ -224,7 +224,7 @@ All routes are mounted under `Prefix = "/admin"`. Every route is wrapped in `Ins
 
 | Method · Path | Response shape | Notes |
 |---|---|---|
-| `GET /admin/api/v1/dashboard/summary?window=1h\|24h` | `DashboardSummary` (`contracts/admin/dashboard.go`) | Totals, rates, p50/p95/p99, by-provider, by-protocol, by-configuration, by-model, rules-fired, tags-fired, provider-health. `window` defaults to `MuxOptions.DashboardWindow` (24h). Provider-health is read over a separate 5m window (`MuxOptions.FiveMinWindow`). |
+| `GET /admin/api/v1/dashboard/summary?window=1h\|24h` | `DashboardSummary` (`contracts/admin/dashboard.go`) | Totals, rates, by-provider, by-protocol, by-configuration, by-model, rules-fired, tags-fired, provider-health. (Latency percentiles were removed from the summary contract; a p95 curve still lives on `/dashboard/timeseries?series=p95_by_provider`.) `window` defaults to `MuxOptions.DashboardWindow` (24h). Provider-health is read over a separate 5m window (`MuxOptions.FiveMinWindow`). |
 | `GET /admin/api/v1/dashboard/timeseries?series=...&window=...` | `DashboardTimeseries` (`contracts/admin/dashboard.go`) | One series per charted curve. Single-series queries (RPS, error rate) return one entry; multi-series queries (p95 by provider) return one entry per group key. |
 
 ### Configuration inspector (read)
@@ -357,7 +357,7 @@ The SPA's router (`web/src/App.tsx`) protects every page behind `<ProtectedRoute
 | Page | Path(s) | Backing endpoints | Purpose |
 |---|---|---|---|
 | Login | `/login` | `GET /api/v1/version`, `GET /api/v1/auth/me` | Credential capture. Stores the password in `sessionStorage` on success. |
-| Dashboard | `/dashboard` | `GET /api/v1/dashboard/summary`, `GET /api/v1/dashboard/timeseries` | Totals, p50/p95/p99, per-provider/endpoint/configuration/model tables, rules-fired, tags-fired, provider-health. Single-page summary + sparkline charts. |
+| Dashboard | `/dashboard` | `GET /api/v1/dashboard/summary`, `GET /api/v1/dashboard/timeseries` | Totals, per-provider/endpoint/configuration/model tables, rules-fired, tags-fired, provider-health, and a p95 curve from `timeseries`. Single-page summary + sparkline charts. |
 | Live messages | `/messages` | `GET /api/v1/messages/recent`, `GET /api/v1/messages/stream`, `GET /api/v1/messages/{event_id}/body` | Streaming list of completed requests with body modal. Up/down keyboard navigation through entries. Per-attempt expansion table when the entry is bound to a resilience policy. |
 | Configurations | `/configurations`, `/configurations/:name` | `GET·POST·PUT·DELETE /api/v1/config/configurations[/{name}]` | Configuration inspector. Detail page shows the resolved rule chain, redacted credentials, bindings, and the keyed API-keys table with per-row reveal. |
 | Configuration editor | `/configurations/new`, `/configurations/:name/edit` | `GET·POST·PUT /api/v1/config/configurations[/{name}]` | Create / edit a configuration — credentials, bindings, passthrough bindings, rule names, connector bindings. |

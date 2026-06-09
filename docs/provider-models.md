@@ -129,7 +129,7 @@ Request highlights:
 Response highlights:
 
 - **`Output []OutputItem`** is the ordered list of items the model emitted.
-  `OutputItem` (`responses.go:491-530`) is modelled as a **single struct**, not a
+  `OutputItem` (`responses.go:457-496`) is modelled as a **single struct**, not a
   registry union, because the item shape evolves frequently: `Type` is the
   discriminator and the variant-specific payloads (`Content`, `Output`,
   `Summary`, `Arguments`) are kept as `json.RawMessage` so callers dispatch on
@@ -176,7 +176,7 @@ Two fields accept either a bare string or an array and are kept as
 
 ### Content blocks — the `type`-discriminated union
 
-Registry at `contentblock.go:303-314`:
+Registry at `contentblock.go:341-352`:
 
 | `type` | Type | Notes |
 |---|---|---|
