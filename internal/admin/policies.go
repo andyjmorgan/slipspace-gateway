@@ -89,6 +89,7 @@ func summariseGroupTarget(group string, order int, t contractsconfig.Target, cb 
 		Name:         t.Provider,
 		Provider:     t.Provider,
 		Order:        order,
+		Weight:       t.Weight,
 		CircuitState: "unknown",
 	}
 	if cb != nil {

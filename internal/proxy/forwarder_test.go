@@ -709,6 +709,54 @@ func TestIsSSE(t *testing.T) {
 	}
 }
 
+func TestClassifyStreaming(t *testing.T) {
+	const codexBody = "event: response.created\ndata: {\"type\":\"response.created\"}\n\n"
+	cases := []struct {
+		name        string
+		contentType string // "" means header absent
+		body        string // "" with hasBody=false means nil body
+		hasBody     bool
+		want        bool
+	}{
+		{name: "event-stream header wins", contentType: "text/event-stream", body: "", hasBody: true, want: true},
+		{name: "json header wins over sse body", contentType: "application/json", body: codexBody, hasBody: true, want: false},
+		{name: "empty ct codex sse body", contentType: "", body: codexBody, hasBody: true, want: true},
+		{name: "empty ct json body", contentType: "", body: `{"ok":true}`, hasBody: true, want: false},
+		{name: "empty ct nil body", contentType: "", body: "", hasBody: false, want: false},
+		{name: "empty ct empty body", contentType: "", body: "", hasBody: true, want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resp := &http.Response{Header: http.Header{}}
+			if c.contentType != "" {
+				resp.Header.Set("Content-Type", c.contentType)
+			}
+			if c.hasBody {
+				resp.Body = io.NopCloser(strings.NewReader(c.body))
+			}
+
+			got := classifyStreaming(resp)
+			if got != c.want {
+				t.Errorf("classifyStreaming() = %v; want %v", got, c.want)
+			}
+
+			// The body must remain byte-identical and fully readable after
+			// classification — this is the issue #308 regression guard: the
+			// peeked prefix has to be restored so the downstream copy is
+			// unchanged.
+			if c.hasBody {
+				rest, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("read restored body: %v", err)
+				}
+				if string(rest) != c.body {
+					t.Errorf("restored body = %q; want %q", rest, c.body)
+				}
+			}
+		})
+	}
+}
+
 func TestStatusWriter_DefaultStatus200OnWrite(t *testing.T) {
 	rec := httptest.NewRecorder()
 	sw := &statusWriter{ResponseWriter: rec, status: http.StatusOK}

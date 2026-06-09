@@ -172,7 +172,7 @@ func (s *inMemoryStore) Allow(policy, target string, cfg *contractsres.CircuitBr
 	case StateOpen:
 		return false
 	case StateHalfOpen:
-		if b.halfOpenSuccesses < cfg.HalfOpenSuccessThreshold {
+		if b.halfOpenSuccesses < halfOpenThreshold(cfg) {
 			return true
 		}
 		return false
@@ -192,7 +192,7 @@ func (s *inMemoryStore) RecordSuccess(policy, target string, cfg *contractsres.C
 	b.buckets[b.bucketIdx].successes++
 	if b.state == StateHalfOpen {
 		b.halfOpenSuccesses++
-		if b.halfOpenSuccesses >= cfg.HalfOpenSuccessThreshold {
+		if b.halfOpenSuccesses >= halfOpenThreshold(cfg) {
 			b.transition(StateClosed, now, "halfopen_success_threshold", policy, target, s.listener)
 		}
 	}
@@ -329,6 +329,18 @@ func (b *breaker) advance(now time.Time, cfg *contractsres.CircuitBreakerConfig,
 			b.transition(StateHalfOpen, now, "cooldown_elapsed", policy, target, listener)
 		}
 	}
+}
+
+// halfOpenThreshold returns the consecutive-success count required to
+// close the breaker from HalfOpen. An unset (<=0) value defaults to 1
+// per docs/resilience.md, so a single successful probe closes the
+// breaker; without this default a zero threshold would admit no probes
+// and wedge the breaker Open forever (issue #313).
+func halfOpenThreshold(cfg *contractsres.CircuitBreakerConfig) int {
+	if cfg.HalfOpenSuccessThreshold <= 0 {
+		return 1
+	}
+	return cfg.HalfOpenSuccessThreshold
 }
 
 // shouldTrip evaluates the trip condition against the sliding

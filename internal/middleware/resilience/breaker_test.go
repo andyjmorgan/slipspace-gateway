@@ -531,6 +531,80 @@ func TestBreaker_HalfOpen_AllowReturnsFalseAfterSuccessThreshold(t *testing.T) {
 	}
 }
 
+func TestBreaker_HalfOpenSuccessThreshold_DefaultsToOne(t *testing.T) {
+	// Serial test: mutates the package-global clock via withFakeClock.
+	// No t.Parallel().
+	tests := []struct {
+		name          string
+		threshold     int // HalfOpenSuccessThreshold; 0 == unset
+		successesToCl int // consecutive successes expected to close
+	}{
+		{
+			// issue #313: an unset threshold must default to 1 so a
+			// single probe closes the breaker rather than wedging it
+			// Open forever.
+			name:          "unset_defaults_to_one",
+			threshold:     0,
+			successesToCl: 1,
+		},
+		{
+			// Non-default path is unchanged: an explicit 2 still
+			// requires two consecutive successes to close.
+			name:          "explicit_two_requires_two",
+			threshold:     2,
+			successesToCl: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fc := withFakeClock(t)
+			store := NewInMemoryBreakerStore(nil)
+			cfg := &contractsres.CircuitBreakerConfig{
+				Enabled:                  true,
+				FailureThreshold:         1,
+				MinimumThroughput:        1,
+				CooldownSeconds:          5,
+				HalfOpenSuccessThreshold: tt.threshold,
+			}
+
+			// Trip the breaker Open.
+			store.RecordFailure("p", "t", cfg)
+			if store.State("p", "t") != StateOpen {
+				t.Fatalf("setup: state = %v; want Open", store.State("p", "t"))
+			}
+
+			// Elapse cooldown, then the first Allow probes and
+			// transitions Open → HalfOpen, returning true.
+			fc.Advance(6 * time.Second)
+			if !store.Allow("p", "t", cfg) {
+				t.Fatal("Allow returned false after cooldown; want a HalfOpen probe admitted")
+			}
+			if store.State("p", "t") != StateHalfOpen {
+				t.Fatalf("state = %v; want HalfOpen after cooldown probe", store.State("p", "t"))
+			}
+
+			// Record one fewer success than required — must stay HalfOpen.
+			for i := 0; i < tt.successesToCl-1; i++ {
+				store.RecordSuccess("p", "t", cfg)
+				if store.State("p", "t") != StateHalfOpen {
+					t.Fatalf("state = %v after %d success(es); want HalfOpen (need %d to close)",
+						store.State("p", "t"), i+1, tt.successesToCl)
+				}
+			}
+
+			// The final success crosses the threshold → Closed.
+			store.RecordSuccess("p", "t", cfg)
+			if store.State("p", "t") != StateClosed {
+				t.Errorf("state = %v after %d success(es); want Closed", store.State("p", "t"), tt.successesToCl)
+			}
+			if !store.Allow("p", "t", cfg) {
+				t.Error("Allow returned false after Closed")
+			}
+		})
+	}
+}
+
 func TestNoopBreakerStore(t *testing.T) {
 	t.Parallel()
 	s := noopBreakerStore{}
