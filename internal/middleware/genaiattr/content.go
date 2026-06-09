@@ -165,7 +165,7 @@ func openAIResponsesContent(raw []byte) Content {
 	if json.Unmarshal(raw, &body) != nil {
 		return Content{}
 	}
-	c := Content{ToolDefinitions: openAIToolDefs(body.Tools)}
+	c := Content{ToolDefinitions: openAIResponsesToolDefs(body.Tools)}
 	if body.Instructions != "" {
 		c.SystemInstructions = append(c.SystemInstructions, Part{Type: "text", Content: body.Instructions})
 	}
@@ -393,6 +393,45 @@ func openAIToolDefs(raw json.RawMessage) []ToolDefinition {
 			Name:        t.Function.Name,
 			Description: t.Function.Description,
 			Parameters:  nonEmptyRaw(t.Function.Parameters),
+		})
+	}
+	return out
+}
+
+// openAIResponsesToolDefs normalises a Responses API tools array to the spec's
+// flat shape. Unlike Chat Completions, Responses encodes function tools flat —
+// {type:"function", name, description, parameters} — not nested under a
+// "function" object, and mixes in custom tools ({type:"custom", name,
+// description}) and built-in tools ({type:"web_search"}, {type:"image_generation"},
+// {type:"tool_search"}, …) that carry only a type. Reusing openAIToolDefs here
+// drops every name/description/parameters because they aren't under "function"
+// (Codex tool catalogues collapsed to bare {"type":"function"} entries).
+func openAIResponsesToolDefs(raw json.RawMessage) []ToolDefinition {
+	if len(nonEmptyRaw(raw)) == 0 {
+		return nil
+	}
+	var tools []struct {
+		Type        string          `json:"type"`
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
+	}
+	if json.Unmarshal(raw, &tools) != nil {
+		return nil
+	}
+	var out []ToolDefinition
+	for _, t := range tools {
+		typ := t.Type
+		if typ == "" {
+			typ = "function"
+		}
+		// Built-in tools (web_search, image_generation, …) carry only a type;
+		// name/description/parameters stay empty and the entry records the type.
+		out = append(out, ToolDefinition{
+			Type:        typ,
+			Name:        t.Name,
+			Description: t.Description,
+			Parameters:  nonEmptyRaw(t.Parameters),
 		})
 	}
 	return out
