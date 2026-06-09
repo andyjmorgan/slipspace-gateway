@@ -375,23 +375,23 @@ CREATE INDEX IF NOT EXISTS request_events_parent       ON request_events (parent
 		// Promote the two counts the aggregate needs to BIGINT columns, projected
 		// from the span at ingest exactly like the other filter columns. The blob
 		// stays the source of truth (SpanFields still decodes tokens for the
-		// inspector / message rows); these are a materialized projection of it, so
-		// the backfill below re-derives them from existing rows. Forward-only and
-		// additive; the cached / cache-creation counts stay blob-only (no aggregate
-		// reads them).
+		// inspector / message rows); these are a materialized projection of it.
+		// Forward-only and additive; the cached / cache-creation counts stay
+		// blob-only (no aggregate reads them).
 		//
-		// The backfill guards the cast with a numeric-text check so a malformed or
-		// absent value becomes 0 rather than aborting the migration (a failed
-		// migration is worse than a query error). Idempotent: re-running recomputes
-		// the same values. Rows predating the token keys keep the column default 0.
+		// ADD COLUMN with a constant DEFAULT is a metadata-only change (PG11+), so
+		// this is instant on a large table. The backfill of EXISTING rows is
+		// deliberately NOT here: re-deriving the columns from the blob is the exact
+		// per-row detoast this change exists to avoid, and doing it inline would
+		// scan + decompress every span. Migrate() runs before the HTTP server binds,
+		// so a multi-minute table scan here outlasts the liveness probe and the pod
+		// is SIGTERM'd mid-UPDATE (context canceled) into a crash loop. Per the v6
+		// precedent ("backfill is a separate operational step, not part of the
+		// schema migration"), new rows project correct tokens from ingest
+		// immediately; existing rows are backfilled out-of-band (batched, after the
+		// pod is serving) and read 0 until then.
 		sql: `
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_in  BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_out BIGINT NOT NULL DEFAULT 0;
-UPDATE request_events SET
-  tokens_in  = CASE WHEN span_event->>'gen_ai.usage.input_tokens'  ~ '^-?[0-9]+$'
-                    THEN (span_event->>'gen_ai.usage.input_tokens')::bigint  ELSE 0 END,
-  tokens_out = CASE WHEN span_event->>'gen_ai.usage.output_tokens' ~ '^-?[0-9]+$'
-                    THEN (span_event->>'gen_ai.usage.output_tokens')::bigint ELSE 0 END
-WHERE span_event ? 'gen_ai.usage.input_tokens' OR span_event ? 'gen_ai.usage.output_tokens';`,
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_out BIGINT NOT NULL DEFAULT 0;`,
 	},
 }
