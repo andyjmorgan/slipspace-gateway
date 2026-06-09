@@ -179,15 +179,47 @@ func TestExtractContent_Gemini_FunctionCallTurn(t *testing.T) {
 func TestExtractContent_OpenAIResponses(t *testing.T) {
 	t.Parallel()
 	// Responses API: instructions = system, input = prompt (string form).
-	c := genaiattr.ExtractContent("responses", []byte(`{"instructions":"be brief","input":"hello there","tools":[{"type":"function","function":{"name":"f"}}]}`))
+	// Tools are FLAT — {type,name,description,parameters} — not nested under a
+	// "function" object the way Chat Completions encodes them.
+	c := genaiattr.ExtractContent("responses", []byte(`{"instructions":"be brief","input":"hello there","tools":[{"type":"function","name":"f","description":"d","parameters":{"type":"object"}}]}`))
 	if textOf(c.SystemInstructions) != "be brief" {
 		t.Errorf("system = %q", textOf(c.SystemInstructions))
 	}
 	if userText(c) != "hello there" {
 		t.Errorf("latest user (string input) = %q", userText(c))
 	}
-	if len(c.ToolDefinitions) != 1 || c.ToolDefinitions[0].Name != "f" {
-		t.Errorf("tools = %+v", c.ToolDefinitions)
+	if len(c.ToolDefinitions) != 1 || c.ToolDefinitions[0].Name != "f" || c.ToolDefinitions[0].Description != "d" {
+		t.Fatalf("tools = %+v", c.ToolDefinitions)
+	}
+	if !strings.Contains(string(c.ToolDefinitions[0].Parameters), "object") {
+		t.Errorf("flat responses parameters not captured: %s", c.ToolDefinitions[0].Parameters)
+	}
+}
+
+func TestExtractContent_OpenAIResponses_MixedToolCatalogue(t *testing.T) {
+	t.Parallel()
+	// A Codex-shaped catalogue: a flat function tool, a custom tool, and
+	// built-in tools that carry only a type. Each must keep its name (where it
+	// has one) and its type — the pre-fix parser dropped every name because it
+	// looked for a nested "function" object.
+	raw := []byte(`{"input":"x","tools":[` +
+		`{"type":"function","name":"shell","description":"run","parameters":{"type":"object"}},` +
+		`{"type":"custom","name":"apply_patch","description":"patch"},` +
+		`{"type":"tool_search"},{"type":"web_search"},{"type":"image_generation"}]}`)
+	c := genaiattr.ExtractContent("responses", raw)
+	if len(c.ToolDefinitions) != 5 {
+		t.Fatalf("tool count = %d, want 5: %+v", len(c.ToolDefinitions), c.ToolDefinitions)
+	}
+	if td := c.ToolDefinitions[0]; td.Type != "function" || td.Name != "shell" || !strings.Contains(string(td.Parameters), "object") {
+		t.Errorf("function tool = %+v", td)
+	}
+	if td := c.ToolDefinitions[1]; td.Type != "custom" || td.Name != "apply_patch" || td.Description != "patch" {
+		t.Errorf("custom tool = %+v", td)
+	}
+	for i, wantType := range []string{"tool_search", "web_search", "image_generation"} {
+		if td := c.ToolDefinitions[2+i]; td.Type != wantType || td.Name != "" {
+			t.Errorf("built-in tool[%d] = %+v, want type %q name=\"\"", i, td, wantType)
+		}
 	}
 }
 
