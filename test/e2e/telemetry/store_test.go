@@ -66,6 +66,8 @@ func TestRequestEvent_RoundTrip(t *testing.T) {
 		SessionID:     "sess-1",
 		AgentID:       "agt-1",
 		UserID:        "usr-1",
+		TokensIn:      10,
+		TokensOut:     20,
 		SpanEvent:     span,
 	}
 	if err := st.UpsertRequestEvent(ctx, e); err != nil {
@@ -80,6 +82,10 @@ func TestRequestEvent_RoundTrip(t *testing.T) {
 	}
 	if got.AgentID != "agt-1" || got.UserID != "usr-1" {
 		t.Errorf("identity round-trip = agent %q user %q", got.AgentID, got.UserID)
+	}
+	// Promoted token columns (#318) round-trip through the projection.
+	if got.TokensIn != 10 || got.TokensOut != 20 {
+		t.Errorf("token columns round-trip = (in %d, out %d), want (10, 20)", got.TokensIn, got.TokensOut)
 	}
 	// Measurement values live in the blob; decode them out.
 	f := got.DecodeSpanFields()
@@ -193,12 +199,15 @@ func TestListSessions(t *testing.T) {
 
 	base := time.Date(2023, 3, 15, 12, 0, 0, 0, time.UTC)
 	seed := func(id, sess, cfg, model, tag string, in, out int64, at time.Time) {
+		// total_tokens now sums the promoted tokens_in/tokens_out columns (#318),
+		// so the seed sets them; the blob still carries the same usage for the
+		// inspector/SpanFields path.
 		span := fmt.Sprintf(
 			`{"gen_ai.usage.input_tokens":%d,"gen_ai.usage.output_tokens":%d,"tags":["%s"]}`,
 			in, out, tag)
 		if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
 			CorrelationID: id, SessionID: sess, Configuration: cfg, Model: model,
-			StatusCode: 200, ObservedAt: at, SpanEvent: []byte(span),
+			StatusCode: 200, ObservedAt: at, TokensIn: in, TokensOut: out, SpanEvent: []byte(span),
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
