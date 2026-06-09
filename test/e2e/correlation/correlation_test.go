@@ -85,7 +85,7 @@ func TestCorrelation_SessionID_NotEchoed_WhenAbsent(t *testing.T) {
 	}
 }
 
-func TestCorrelation_AgentID_Echoed(t *testing.T) {
+func TestCorrelation_ClaudeAgentID_EchoedAsConversation(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
 
@@ -95,12 +95,38 @@ func TestCorrelation_AgentID_Echoed(t *testing.T) {
 		Body:   `{"id":"x"}`,
 	})
 
-	// Sent under the shipped client default header; the gateway resolves it
-	// and echoes it under the authoritative Sluice agent header.
-	const aid = "agent-abc-123"
+	// X-Claude-Code-Agent-Id is a subagent thread, not a named agent: it
+	// resolves onto the conversation axis and echoes under X-Sluice-Thread-Id,
+	// and must NOT populate the named-agent header.
+	const tid = "claude-thread-123"
 	resp := h.PostJSON("/v1/chat/completions",
 		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}},
-		http.Header{"X-Claude-Code-Agent-Id": []string{aid}})
+		http.Header{"X-Claude-Code-Agent-Id": []string{tid}})
+
+	if got := resp.Header.Get("X-Sluice-Thread-Id"); got != tid {
+		t.Fatalf("X-Sluice-Thread-Id=%q want %q", got, tid)
+	}
+	if got := resp.Header.Get("X-Sluice-Agent-Id"); got != "" {
+		t.Errorf("X-Sluice-Agent-Id=%q, want empty — a subagent thread is not a named agent", got)
+	}
+}
+
+func TestCorrelation_NamedAgentID_Echoed(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"x"}`,
+	})
+
+	// gen_ai.agent.id is reserved for a genuinely named agent: only the
+	// authoritative X-Sluice-Agent-Id feeds it.
+	const aid = "reviewer"
+	resp := h.PostJSON("/v1/chat/completions",
+		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}},
+		http.Header{"X-Sluice-Agent-Id": []string{aid}})
 
 	if got := resp.Header.Get("X-Sluice-Agent-Id"); got != aid {
 		t.Fatalf("X-Sluice-Agent-Id=%q want %q", got, aid)
@@ -122,6 +148,34 @@ func TestCorrelation_AgentID_NotEchoed_WhenAbsent(t *testing.T) {
 
 	if got := resp.Header.Get("X-Sluice-Agent-Id"); got != "" {
 		t.Errorf("X-Sluice-Agent-Id=%q, want empty when not supplied", got)
+	}
+}
+
+func TestCorrelation_CodexSubagent_Echoed(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"x"}`,
+	})
+
+	// Codex subagent: distinct Thread-Id with an explicit parent. The gateway
+	// echoes the session bundle root and the resolved conversation/thread.
+	resp := h.PostJSON("/v1/chat/completions",
+		map[string]any{"model": "gpt", "messages": []map[string]string{{"role": "user", "content": "."}}},
+		http.Header{
+			"Session-Id":               []string{"codex-sess-1"},
+			"Thread-Id":                []string{"codex-thread-2"},
+			"X-Codex-Parent-Thread-Id": []string{"codex-sess-1"},
+		})
+
+	if got := resp.Header.Get("X-Sluice-Session-Id"); got != "codex-sess-1" {
+		t.Errorf("X-Sluice-Session-Id=%q want codex-sess-1", got)
+	}
+	if got := resp.Header.Get("X-Sluice-Thread-Id"); got != "codex-thread-2" {
+		t.Errorf("X-Sluice-Thread-Id=%q want codex-thread-2", got)
 	}
 }
 

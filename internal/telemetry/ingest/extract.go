@@ -41,6 +41,16 @@ const (
 	attrEnduserID           = "enduser.id"
 	attrRequestStream       = "gen_ai.request.stream"
 
+	// attrSluiceSessionID is the session bundle root (the gateway's own
+	// attribute, since the semconv has no session-vs-thread split). It projects
+	// to session_id; gen_ai.conversation.id is the fallback for spans predating
+	// it (where conversation == session for the main agent).
+	attrSluiceSessionID = "sluice.session_id"
+
+	// attrSluiceParentConversationID is the parent of a subagent thread — the
+	// hierarchy edge with no semconv home. Projects to parent_conversation_id.
+	attrSluiceParentConversationID = "sluice.parent_conversation_id"
+
 	// Gateway facts the gateway now emits on the span (relaxed channel boundary).
 	// These are the EXACT string keys the destination/reporter writes — the
 	// telemetry service only consumes them, never mints them. configuration and
@@ -86,17 +96,19 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 	}
 
 	return store.RequestEvent{
-		CorrelationID: corr,
-		ObservedAt:    spanStart(span),
-		SessionID:     strAttr(attrs, attrConversationID),
-		AgentID:       strAttr(attrs, attrAgentID),
-		UserID:        strAttr(attrs, attrEnduserID),
-		Provider:      strAttr(attrs, attrGenAIProvider),
-		Model:         strAttr(attrs, attrModel),
-		Configuration: strAttr(attrs, attrSluiceConfiguration),
-		Protocol:      strAttr(attrs, attrSluiceProtocol),
-		StatusCode:    int(intAttr(attrs, attrStatusCode)),
-		SpanEvent:     buildSpanEvent(attrs, span, contentMaxBytes),
+		CorrelationID:        corr,
+		ObservedAt:           spanStart(span),
+		SessionID:            firstNonEmpty(strAttr(attrs, attrSluiceSessionID), strAttr(attrs, attrConversationID)),
+		ConversationID:       strAttr(attrs, attrConversationID),
+		ParentConversationID: strAttr(attrs, attrSluiceParentConversationID),
+		AgentID:              strAttr(attrs, attrAgentID),
+		UserID:               strAttr(attrs, attrEnduserID),
+		Provider:             strAttr(attrs, attrGenAIProvider),
+		Model:                strAttr(attrs, attrModel),
+		Configuration:        strAttr(attrs, attrSluiceConfiguration),
+		Protocol:             strAttr(attrs, attrSluiceProtocol),
+		StatusCode:           int(intAttr(attrs, attrStatusCode)),
+		SpanEvent:            buildSpanEvent(attrs, span, contentMaxBytes),
 	}, true
 }
 
@@ -156,6 +168,18 @@ func mergeAttrs(resource, span []*commonpb.KeyValue) map[string]*commonpb.AnyVal
 		}
 	}
 	return out
+}
+
+// firstNonEmpty returns the first non-empty string in vals, or "". Used to
+// fall back from sluice.session_id to gen_ai.conversation.id for spans that
+// predate the session-root attribute (where conversation == session).
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func strAttr(attrs map[string]*commonpb.AnyValue, key string) string {

@@ -250,7 +250,12 @@ func TestEmitTrace_AttemptsBecomeChildSpans(t *testing.T) {
 
 func TestEmitTrace_ConversationID(t *testing.T) {
 	r, sr := traceHarness(t)
+	// A subagent: the conversation is the thread, the session is the bundle
+	// root, and the parent links the two. gen_ai.conversation.id carries the
+	// thread; sluice.session_id the root; sluice.parent_conversation_id the edge.
 	r.sessionID = "bundle-1"
+	r.conversationID = "thread-2"
+	r.parentConversationID = "bundle-1"
 	r.emitTrace(context.Background(), events.Request{
 		Provider:   "openai",
 		Protocol:   "chat_completions",
@@ -262,16 +267,27 @@ func TestEmitTrace_ConversationID(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("len(spans) = %d, want 1", len(spans))
 	}
-	if v, ok := attrValue(spans[0].Attributes(), observability.AttrGenAIConversationID); !ok || v.AsString() != "bundle-1" {
-		t.Errorf("gen_ai.conversation.id = %q (ok=%v), want bundle-1", v.AsString(), ok)
+	attrs := spans[0].Attributes()
+	if v, ok := attrValue(attrs, observability.AttrGenAIConversationID); !ok || v.AsString() != "thread-2" {
+		t.Errorf("gen_ai.conversation.id = %q (ok=%v), want thread-2", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceSessionID); !ok || v.AsString() != "bundle-1" {
+		t.Errorf("sluice.session_id = %q (ok=%v), want bundle-1", v.AsString(), ok)
+	}
+	if v, ok := attrValue(attrs, observability.AttrSluiceParentConversationID); !ok || v.AsString() != "bundle-1" {
+		t.Errorf("sluice.parent_conversation_id = %q (ok=%v), want bundle-1", v.AsString(), ok)
 	}
 }
 
 func TestEmitTrace_NoConversationIDWhenNoSession(t *testing.T) {
 	r, sr := traceHarness(t)
 	r.emitTrace(context.Background(), events.Request{Protocol: "chat_completions", StatusCode: 200, DurationMs: 1}, nil)
-	if _, ok := attrValue(sr.Ended()[0].Attributes(), observability.AttrGenAIConversationID); ok {
-		t.Errorf("gen_ai.conversation.id should be absent when no session resolved")
+	attrs := sr.Ended()[0].Attributes()
+	if _, ok := attrValue(attrs, observability.AttrGenAIConversationID); ok {
+		t.Errorf("gen_ai.conversation.id should be absent when no conversation resolved")
+	}
+	if _, ok := attrValue(attrs, observability.AttrSluiceSessionID); ok {
+		t.Errorf("sluice.session_id should be absent when no session resolved")
 	}
 }
 

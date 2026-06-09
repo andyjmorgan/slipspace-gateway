@@ -33,27 +33,21 @@ func TestSessionResolver_Resolve(t *testing.T) {
 	}{
 		{
 			name:       "sluice header wins over client fallbacks",
-			headers:    hdr(observability.SluiceSessionHeader, "sess-1", "Thread_id", "thread-9"),
+			headers:    hdr(observability.SluiceSessionHeader, "sess-1", "Session-Id", "codex-9"),
 			wantID:     "sess-1",
 			wantSource: observability.SluiceSessionHeader,
 		},
 		{
-			name:       "thread_id beats session_id by order",
-			headers:    hdr("Thread_id", "thread-9", "Session_id", "session-9"),
-			wantID:     "thread-9",
-			wantSource: "Thread_id",
+			name:       "codex Session-Id beats claude header by order",
+			headers:    hdr("Session-Id", "codex-9", "X-Claude-Code-Session-Id", "cc-9"),
+			wantID:     "codex-9",
+			wantSource: "Session-Id",
 		},
 		{
-			name:       "session_id fallback when no thread_id",
-			headers:    hdr("Session_id", "session-9"),
-			wantID:     "session-9",
-			wantSource: "Session_id",
-		},
-		{
-			name:       "claude code default header",
-			headers:    hdr("x-claude-code-session-id", "cc-7"),
+			name:       "claude code session header fallback",
+			headers:    hdr("X-Claude-Code-Session-Id", "cc-7"),
 			wantID:     "cc-7",
-			wantSource: "x-claude-code-session-id",
+			wantSource: "X-Claude-Code-Session-Id",
 		},
 		{
 			name:       "operator custom header appended after defaults",
@@ -63,15 +57,15 @@ func TestSessionResolver_Resolve(t *testing.T) {
 			wantSource: "X-Acme-Conversation-Id",
 		},
 		{
-			name:       "redacted sluice header falls through to thread_id",
-			headers:    hdr(observability.SluiceSessionHeader, "sess-1", "Thread_id", "thread-9"),
+			name:       "redacted sluice header falls through to Session-Id",
+			headers:    hdr(observability.SluiceSessionHeader, "sess-1", "Session-Id", "codex-9"),
 			sensitive:  sensitiveSluice,
-			wantID:     "thread-9",
-			wantSource: "Thread_id",
+			wantID:     "codex-9",
+			wantSource: "Session-Id",
 		},
 		{
 			name:    "whitespace-only value is treated as absent",
-			headers: hdr("Thread_id", "   "),
+			headers: hdr("Session-Id", "   "),
 			wantID:  "",
 		},
 		{
@@ -105,7 +99,7 @@ func TestSessionResolver_BlankExtraDropped(t *testing.T) {
 	t.Parallel()
 	r := observability.NewSessionResolver([]string{"  ", ""})
 	// Only the built-in defaults remain usable; a blank extra never matches.
-	if id, _ := r.Resolve(hdr("Thread_id", "t"), nil); id != "t" {
+	if id, _ := r.Resolve(hdr("Session-Id", "t"), nil); id != "t" {
 		t.Errorf("id = %q, want t", id)
 	}
 }

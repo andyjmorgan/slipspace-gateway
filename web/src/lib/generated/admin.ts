@@ -322,17 +322,28 @@ export interface MessageEntry {
    */
   correlation_id?: string;
   /**
-   * SessionID is the resolved session/bundle id grouping this request
-   * with its conversation; SessionIDSource is the header it came from
-   * (the bundle's provenance label). Both omitted when no session
-   * header was present.
+   * SessionID is the resolved session bundle root grouping this request
+   * with its whole conversation (including subagent threads);
+   * SessionIDSource is the header it came from (the bundle's provenance
+   * label). Both omitted when no session header was present.
    */
   session_id?: string;
   session_id_source?: string;
   /**
-   * AgentID is the resolved agent id identifying the agent (or sub-agent)
-   * that issued this request; AgentIDSource is the header it came from.
-   * Both omitted when no agent header was present.
+   * ConversationID is the resolved conversation/thread id (the subagent
+   * thread when active, else the session); ConversationIDSource is the header
+   * it came from. ParentConversationID links a subagent thread back toward
+   * its session (omitted for a main agent). These model the unified subagent
+   * paradigm; the console nests threads under their session via them.
+   */
+  conversation_id?: string;
+  conversation_id_source?: string;
+  parent_conversation_id?: string;
+  /**
+   * AgentID is the resolved id of a genuinely named agent (the gen_ai.agent.id
+   * home); AgentIDSource is the header it came from. A subagent thread is NOT
+   * an agent — those ride ConversationID. Both omitted when no named-agent
+   * header was present.
    */
   agent_id?: string;
   agent_id_source?: string;

@@ -45,6 +45,7 @@ export async function fetchRecentMessages(limit?: number): Promise<MessagesRecen
 export type MessageFilters = {
   correlationId?: string
   sessionId?: string
+  conversationId?: string
   agentId?: string
   userId?: string
   provider?: string
@@ -84,6 +85,7 @@ export async function fetchMessagesPage(
   }
   put("correlation_id", filters.correlationId)
   put("session_id", filters.sessionId)
+  put("conversation_id", filters.conversationId)
   put("agent_id", filters.agentId)
   put("user_id", filters.userId)
   put("provider", filters.provider)

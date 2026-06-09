@@ -44,9 +44,25 @@ const (
 	AttrGenAITokenType = "gen_ai.token.type" //nolint:gosec // G101 false positive: OTel attribute key, not a credential
 
 	// AttrGenAIConversationID is the spec home for a session/conversation
-	// identifier. Populated by the session-bundling work; declared here so
-	// the span builder has a single key reference once that lands.
+	// identifier. The semconv defines it as "the unique identifier for a
+	// conversation (session, thread)", so it carries the most-specific thread a
+	// request belongs to: the session for a main agent, or a distinct subagent
+	// thread when one is active.
 	AttrGenAIConversationID = "gen_ai.conversation.id"
+
+	// AttrSluiceSessionID carries the session bundle root — the stable id that
+	// groups every request of a conversation, including all of its subagent
+	// threads. The semconv has no session-vs-thread distinction (conversation.id
+	// covers both) and no parent/child concept, so the root rides this sluice.*
+	// attribute; the telemetry service projects it to request_events.session_id
+	// for top-down bundling. For a main agent it equals gen_ai.conversation.id.
+	AttrSluiceSessionID = "sluice.session_id"
+
+	// AttrSluiceParentConversationID carries the parent of a subagent thread —
+	// the hierarchy edge the semconv has no home for. Set only when the resolved
+	// conversation is a subagent thread (distinct from the session); empty for a
+	// main agent. Codex supplies it explicitly via X-Codex-Parent-Thread-Id.
+	AttrSluiceParentConversationID = "sluice.parent_conversation_id"
 
 	// AttrGenAIAgentID is the spec home for the GenAI agent identifier (see
 	// the GenAI agent-spans convention). Sluice resolves it from

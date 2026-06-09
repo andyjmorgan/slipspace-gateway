@@ -153,7 +153,7 @@ func newTranslateEnv(t *testing.T) *testEnv {
 	evaluator := rules.NewEvaluator(store, 8, meters)
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
-	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), observability.NewUserResolver(nil), nil, dataPlane)
+	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), observability.NewConversationResolver(nil), observability.NewParentResolver(nil), observability.NewAgentResolver(nil), observability.NewUserResolver(nil), nil, dataPlane)
 
 	gateway := httptest.NewServer(root)
 	env := &testEnv{

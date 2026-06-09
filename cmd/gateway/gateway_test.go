@@ -94,7 +94,7 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
 	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
-	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), observability.NewUserResolver(nil), nil, dataPlane)
+	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), observability.NewConversationResolver(nil), observability.NewParentResolver(nil), observability.NewAgentResolver(nil), observability.NewUserResolver(nil), nil, dataPlane)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {

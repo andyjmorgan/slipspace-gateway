@@ -141,13 +141,24 @@ func run(ctx context.Context) error {
 		logger.Info("redactor configured", "extra_substrings", extras)
 	}
 
-	// sessionResolver promotes a client-supplied session/bundle id to a
-	// first-class field. X-Sluice-Session-Id is authoritative; the
-	// shipped client defaults plus SLUICE_SESSION_ID_HEADERS follow.
+	// sessionResolver promotes a client-supplied session bundle root to a
+	// first-class field. X-Sluice-Session-Id is authoritative; the shipped
+	// client defaults (Session-Id / X-Claude-Code-Session-Id) plus
+	// SLUICE_SESSION_ID_HEADERS follow.
 	sessionResolver := observability.NewSessionResolver(env.SessionIDHeaders)
-	// agentResolver promotes a client-supplied agent id the same way.
-	// X-Sluice-Agent-Id is authoritative; the shipped default
-	// (X-Claude-Code-Agent-Id) plus SLUICE_AGENT_ID_HEADERS follow.
+	// conversationResolver resolves the conversation/thread id (the subagent
+	// thread when active, else the session). X-Sluice-Thread-Id is
+	// authoritative; the shipped defaults (Thread-Id / X-Claude-Code-Agent-Id)
+	// plus SLUICE_THREAD_ID_HEADERS follow.
+	conversationResolver := observability.NewConversationResolver(env.ThreadIDHeaders)
+	// parentResolver resolves the parent conversation of a subagent thread.
+	// X-Sluice-Parent-Conversation-Id is authoritative; the shipped default
+	// (X-Codex-Parent-Thread-Id) plus SLUICE_PARENT_ID_HEADERS follow.
+	parentResolver := observability.NewParentResolver(env.ParentIDHeaders)
+	// agentResolver promotes a client-supplied NAMED agent id the same way.
+	// X-Sluice-Agent-Id is authoritative; there is no shipped default (the
+	// gen_ai.agent.id key is reserved for named agents), so only
+	// SLUICE_AGENT_ID_HEADERS extends the chain.
 	agentResolver := observability.NewAgentResolver(env.AgentIDHeaders)
 	// userResolver promotes a client-supplied end-user id the same way.
 	// X-Sluice-User-Id is authoritative; there is no shipped default, so
@@ -187,7 +198,7 @@ func run(ctx context.Context) error {
 	// log carries the correlation_id) and the data-plane chain, so
 	// any panic in routing/auth/bodycapture/rules/forwarder is
 	// converted to a logged 500 instead of crashing the goroutine.
-	root := correlationMiddleware(logger, sessionResolver, agentResolver, userResolver, redactor, recoverMiddleware(obs.Meters, errs, captured))
+	root := correlationMiddleware(logger, sessionResolver, conversationResolver, parentResolver, agentResolver, userResolver, redactor, recoverMiddleware(obs.Meters, errs, captured))
 
 	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
 

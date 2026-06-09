@@ -63,9 +63,10 @@ def test_session_id_echoed_when_sent(gateway_url: str, mockllm_url: str) -> None
     assert resp.headers.get("X-Sluice-Session-Id") == "sess-abc-123"
 
 
-def test_agent_id_echoed_when_sent_via_default_header(gateway_url: str, mockllm_url: str) -> None:
-    # Sent under the shipped client default header; the gateway resolves it and
-    # echoes it under the authoritative Sluice agent header.
+def test_claude_agent_id_echoed_as_conversation(gateway_url: str, mockllm_url: str) -> None:
+    # X-Claude-Code-Agent-Id is a subagent thread, not a named agent: it
+    # resolves onto the conversation axis (echoed under X-Sluice-Thread-Id) and
+    # must NOT populate the named-agent header.
     _stage_chat_ok(mockllm_url)
     resp = requests.post(
         f"{gateway_url}/v1/chat/completions",
@@ -78,7 +79,47 @@ def test_agent_id_echoed_when_sent_via_default_header(gateway_url: str, mockllm_
         timeout=15,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.headers.get("X-Sluice-Agent-Id") == "agt-abc-123"
+    assert resp.headers.get("X-Sluice-Thread-Id") == "agt-abc-123"
+    assert resp.headers.get("X-Sluice-Agent-Id") is None
+
+
+def test_named_agent_id_echoed_when_sent(gateway_url: str, mockllm_url: str) -> None:
+    # gen_ai.agent.id is reserved for a named agent: only the authoritative
+    # X-Sluice-Agent-Id feeds it.
+    _stage_chat_ok(mockllm_url)
+    resp = requests.post(
+        f"{gateway_url}/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+            "X-Sluice-Agent-Id": "reviewer",
+        },
+        data=json.dumps({"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "x"}]}),
+        timeout=15,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("X-Sluice-Agent-Id") == "reviewer"
+
+
+def test_codex_subagent_echoed(gateway_url: str, mockllm_url: str) -> None:
+    # Codex subagent: Session-Id is the bundle root, Thread-Id the subagent
+    # thread; both are echoed under their Sluice headers.
+    _stage_chat_ok(mockllm_url)
+    resp = requests.post(
+        f"{gateway_url}/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+            "Session-Id": "codex-sess-1",
+            "Thread-Id": "codex-thread-2",
+            "X-Codex-Parent-Thread-Id": "codex-sess-1",
+        },
+        data=json.dumps({"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "x"}]}),
+        timeout=15,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("X-Sluice-Session-Id") == "codex-sess-1"
+    assert resp.headers.get("X-Sluice-Thread-Id") == "codex-thread-2"
 
 
 def test_agent_id_not_echoed_when_absent(gateway_url: str, mockllm_url: str) -> None:

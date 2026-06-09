@@ -20,10 +20,18 @@ const headerCorrelationID = "X-Sluice-Correlation-Id"
 // on the response, and stores them on the request context for downstream
 // surfaces.
 //
-// Session id, agent id, and user id are promoted to context (and onto records,
-// spans, and the live feed) but never become an OTel metric label — all have
-// unbounded cardinality and are a records/live-feed concern, not telemetry.
-func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.SessionResolver, agents *observability.AgentResolver, users *observability.UserResolver, redactor *headers.Redactor, next http.Handler) http.Handler {
+// Session id, conversation/thread id, parent id, agent id, and user id are
+// promoted to context (and onto records, spans, and the live feed) but never
+// become an OTel metric label — all have unbounded cardinality and are a
+// records/live-feed concern, not telemetry.
+//
+// The conversation/parent combination realises the unified subagent paradigm
+// (see the Session Bundling design note): the resolved conversation is the
+// thread when present, else the session; the parent is the explicit parent
+// header when present, else the session when the thread differs from it. A main
+// agent (thread == session, or no thread) has conversation == session and no
+// parent.
+func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.SessionResolver, conversations *observability.ConversationResolver, parents *observability.ParentResolver, agents *observability.AgentResolver, users *observability.UserResolver, redactor *headers.Redactor, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Extract any inbound W3C trace context (traceparent/baggage) so the
 		// gateway's gen_ai span nests under the caller's distributed trace
@@ -38,9 +46,35 @@ func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.Sess
 		logger := baseLogger.With(observability.LogFieldCorrelationID, id)
 
 		sessionID, sessionSource := sessions.Resolve(r.Header, redactor.IsSensitive)
+		threadID, threadSource := conversations.Resolve(r.Header, redactor.IsSensitive)
+		explicitParent, _ := parents.Resolve(r.Header, redactor.IsSensitive)
+
+		// Combine the two axes into the resolved conversation + parent. The
+		// conversation is the thread when present, else the session. A thread
+		// distinct from the session is a subagent: its parent is the explicit
+		// parent header, or the session as a fallback. thread == session (main
+		// agent) collapses to conversation == session with no parent.
+		conversationID, conversationSource := sessionID, sessionSource
+		if threadID != "" {
+			conversationID, conversationSource = threadID, threadSource
+		}
+		parentID := ""
+		if conversationID != "" && conversationID != sessionID {
+			parentID = explicitParent
+			if parentID == "" {
+				parentID = sessionID
+			}
+		}
+
 		if sessionID != "" {
 			ctx = observability.WithSessionID(ctx, sessionID, sessionSource)
 			logger = logger.With(observability.LogFieldSessionID, sessionID)
+		}
+		if conversationID != "" {
+			ctx = observability.WithConversationID(ctx, conversationID, conversationSource)
+		}
+		if parentID != "" {
+			ctx = observability.WithParentConversationID(ctx, parentID)
 		}
 
 		agentID, agentSource := agents.Resolve(r.Header, redactor.IsSensitive)
@@ -57,14 +91,19 @@ func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.Sess
 		ctx = observability.WithLogger(ctx, logger)
 
 		w.Header().Set(headerCorrelationID, id)
-		// Echo the resolved bundle id under the Sluice header so a client
+		// Echo the resolved bundle root under the Sluice header so a client
 		// or proxy sees the id Sluice settled on, even when it arrived via
-		// a client-specific header (Codex's Thread_id, etc.).
+		// a client-specific header (Codex's Session-Id, etc.).
 		if sessionID != "" {
 			w.Header().Set(observability.SluiceSessionHeader, sessionID)
 		}
-		// Likewise echo the resolved agent id under the Sluice header, even
-		// when it arrived via a client-specific header (X-Claude-Code-Agent-Id).
+		// Echo the resolved conversation/thread under the Sluice header, even
+		// when it arrived via a client-specific header (Thread-Id,
+		// X-Claude-Code-Agent-Id).
+		if conversationID != "" {
+			w.Header().Set(observability.SluiceThreadHeader, conversationID)
+		}
+		// Likewise echo the resolved agent id under the Sluice header.
 		if agentID != "" {
 			w.Header().Set(observability.SluiceAgentHeader, agentID)
 		}

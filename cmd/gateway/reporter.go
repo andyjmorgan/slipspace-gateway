@@ -187,21 +187,24 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 		}
 		serverAddress, serverPort := upstreamServerAddrPort(dest)
 		return &reporterRun{
-			factory:         f,
-			provider:        labels.Provider,
-			protocol:        labels.Protocol,
-			model:           labels.Model,
-			method:          labels.Method,
-			configuration:   labels.Configuration,
-			apiKeyName:      apiKeyName,
-			serverAddress:   serverAddress,
-			serverPort:      serverPort,
-			sessionID:       observability.SessionIDFromContext(ctx),
-			sessionIDSource: observability.SessionIDSourceFromContext(ctx),
-			agentID:         observability.AgentIDFromContext(ctx),
-			agentIDSource:   observability.AgentIDSourceFromContext(ctx),
-			userID:          observability.UserIDFromContext(ctx),
-			userIDSource:    observability.UserIDSourceFromContext(ctx),
+			factory:              f,
+			provider:             labels.Provider,
+			protocol:             labels.Protocol,
+			model:                labels.Model,
+			method:               labels.Method,
+			configuration:        labels.Configuration,
+			apiKeyName:           apiKeyName,
+			serverAddress:        serverAddress,
+			serverPort:           serverPort,
+			sessionID:            observability.SessionIDFromContext(ctx),
+			sessionIDSource:      observability.SessionIDSourceFromContext(ctx),
+			conversationID:       observability.ConversationIDFromContext(ctx),
+			conversationIDSource: observability.ConversationIDSourceFromContext(ctx),
+			parentConversationID: observability.ParentConversationIDFromContext(ctx),
+			agentID:              observability.AgentIDFromContext(ctx),
+			agentIDSource:        observability.AgentIDSourceFromContext(ctx),
+			userID:               observability.UserIDFromContext(ctx),
+			userIDSource:         observability.UserIDSourceFromContext(ctx),
 		}
 	}
 }
@@ -236,12 +239,23 @@ type reporterRun struct {
 	serverAddress string
 	serverPort    int
 
-	// sessionID + sessionIDSource are the resolved bundle id and its
+	// sessionID + sessionIDSource are the resolved bundle root and its
 	// provenance header, captured from context at construction time.
-	// Stamped on the Record, the span (gen_ai.conversation.id), and the
-	// live-feed entry — never on a metric label (unbounded cardinality).
+	// Stamped on the Record and the span (sluice.session_id) — never on a
+	// metric label (unbounded cardinality).
 	sessionID       string
 	sessionIDSource string
+
+	// conversationID + conversationIDSource are the resolved conversation/
+	// thread id (subagent thread when active, else the session) and its
+	// provenance. Stamped on the Record and the span (gen_ai.conversation.id).
+	conversationID       string
+	conversationIDSource string
+
+	// parentConversationID is the parent of a subagent thread, set only when
+	// the conversation differs from the session. Stamped on the Record and the
+	// span (sluice.parent_conversation_id).
+	parentConversationID string
 
 	// agentID + agentIDSource are the resolved agent id and its provenance
 	// header, captured from context at construction time. Stamped on the
@@ -637,24 +651,27 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 	}
 
 	rec := cc.Record{
-		V:               1,
-		ID:              uuid.NewString(),
-		TsNs:            tsNs,
-		Seq:             r.factory.nextSeq(),
-		InstanceID:      r.factory.instanceID,
-		CorrelationID:   ev.CorrelationID,
-		SessionID:       r.sessionID,
-		SessionIDSource: r.sessionIDSource,
-		AgentID:         r.agentID,
-		AgentIDSource:   r.agentIDSource,
-		UserID:          r.userID,
-		UserIDSource:    r.userIDSource,
-		Configuration:   r.configuration,
-		APIKeyName:      r.apiKeyName,
-		Provider:        ev.Provider,
-		Protocol:        ev.Protocol,
-		Model:           ev.Model,
-		Tags:            ev.Tags,
+		V:                    1,
+		ID:                   uuid.NewString(),
+		TsNs:                 tsNs,
+		Seq:                  r.factory.nextSeq(),
+		InstanceID:           r.factory.instanceID,
+		CorrelationID:        ev.CorrelationID,
+		SessionID:            r.sessionID,
+		SessionIDSource:      r.sessionIDSource,
+		ConversationID:       r.conversationID,
+		ConversationIDSource: r.conversationIDSource,
+		ParentConversationID: r.parentConversationID,
+		AgentID:              r.agentID,
+		AgentIDSource:        r.agentIDSource,
+		UserID:               r.userID,
+		UserIDSource:         r.userIDSource,
+		Configuration:        r.configuration,
+		APIKeyName:           r.apiKeyName,
+		Provider:             ev.Provider,
+		Protocol:             ev.Protocol,
+		Model:                ev.Model,
+		Tags:                 ev.Tags,
 		Request: cc.RequestPart{
 			Method: ev.Method,
 		},
@@ -835,32 +852,35 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		}
 	}
 	r.factory.liveFeed.Append(livefeed.Entry{
-		EventID:             id,
-		At:                  time.Now().UTC(),
-		CorrelationID:       ev.CorrelationID,
-		SessionID:           r.sessionID,
-		SessionIDSource:     r.sessionIDSource,
-		AgentID:             r.agentID,
-		AgentIDSource:       r.agentIDSource,
-		UserID:              r.userID,
-		UserIDSource:        r.userIDSource,
-		Provider:            ev.Provider,
-		Protocol:            ev.Protocol,
-		Model:               ev.Model,
-		Method:              ev.Method,
-		Configuration:       r.configuration,
-		StatusCode:          ev.StatusCode,
-		DurationMs:          ev.DurationMs,
-		Streaming:           ev.Streaming,
-		UpstreamError:       ev.UpstreamError,
-		TokensIn:            ev.TokensIn,
-		TokensOut:           ev.TokensOut,
-		TokensCached:        ev.TokensCached,
-		TokensCacheCreation: ev.TokensCacheCreation,
-		Tags:                tags,
-		RulesMatched:        hits,
-		PolicyRef:           ev.PolicyRef,
-		Attempts:            attempts,
+		EventID:              id,
+		At:                   time.Now().UTC(),
+		CorrelationID:        ev.CorrelationID,
+		SessionID:            r.sessionID,
+		SessionIDSource:      r.sessionIDSource,
+		ConversationID:       r.conversationID,
+		ConversationIDSource: r.conversationIDSource,
+		ParentConversationID: r.parentConversationID,
+		AgentID:              r.agentID,
+		AgentIDSource:        r.agentIDSource,
+		UserID:               r.userID,
+		UserIDSource:         r.userIDSource,
+		Provider:             ev.Provider,
+		Protocol:             ev.Protocol,
+		Model:                ev.Model,
+		Method:               ev.Method,
+		Configuration:        r.configuration,
+		StatusCode:           ev.StatusCode,
+		DurationMs:           ev.DurationMs,
+		Streaming:            ev.Streaming,
+		UpstreamError:        ev.UpstreamError,
+		TokensIn:             ev.TokensIn,
+		TokensOut:            ev.TokensOut,
+		TokensCached:         ev.TokensCached,
+		TokensCacheCreation:  ev.TokensCacheCreation,
+		Tags:                 tags,
+		RulesMatched:         hits,
+		PolicyRef:            ev.PolicyRef,
+		Attempts:             attempts,
 	})
 	return id
 }
@@ -1126,8 +1146,14 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 	if ev.CorrelationID != "" {
 		attrs = append(attrs, attribute.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
 	}
+	if r.conversationID != "" {
+		attrs = append(attrs, attribute.String(observability.AttrGenAIConversationID, r.conversationID))
+	}
 	if r.sessionID != "" {
-		attrs = append(attrs, attribute.String(observability.AttrGenAIConversationID, r.sessionID))
+		attrs = append(attrs, attribute.String(observability.AttrSluiceSessionID, r.sessionID))
+	}
+	if r.parentConversationID != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSluiceParentConversationID, r.parentConversationID))
 	}
 	if r.agentID != "" {
 		attrs = append(attrs, attribute.String(observability.AttrGenAIAgentID, r.agentID))
@@ -1341,8 +1367,14 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	if ev.CorrelationID != "" {
 		attrs = append(attrs, otellog.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
 	}
+	if r.conversationID != "" {
+		attrs = append(attrs, otellog.String(observability.AttrGenAIConversationID, r.conversationID))
+	}
 	if r.sessionID != "" {
-		attrs = append(attrs, otellog.String(observability.AttrGenAIConversationID, r.sessionID))
+		attrs = append(attrs, otellog.String(observability.AttrSluiceSessionID, r.sessionID))
+	}
+	if r.parentConversationID != "" {
+		attrs = append(attrs, otellog.String(observability.AttrSluiceParentConversationID, r.parentConversationID))
 	}
 	if r.agentID != "" {
 		attrs = append(attrs, otellog.String(observability.AttrGenAIAgentID, r.agentID))
