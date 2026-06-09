@@ -386,3 +386,57 @@ func TestMetricsReceiver_Export(t *testing.T) {
 		t.Fatalf("points = %d, want 1", len(sink.points))
 	}
 }
+
+// TestEventFromSpan_ConversationParent covers the unified subagent projection:
+// gen_ai.conversation.id is the thread, sluice.session_id the bundle root, and
+// sluice.parent_conversation_id the hierarchy edge.
+func TestEventFromSpan_ConversationParent(t *testing.T) {
+	span := &tracepb.Span{
+		StartTimeUnixNano: 1_000_000_000,
+		EndTimeUnixNano:   1_200_000_000,
+		Attributes: []*commonpb.KeyValue{
+			strKV(attrCorrelationID, "corr-sub"),
+			strKV(attrConversationID, "thread-2"),
+			strKV(attrSluiceSessionID, "sess-1"),
+			strKV(attrSluiceParentConversationID, "sess-1"),
+			intKV(attrStatusCode, 200),
+		},
+	}
+	e, ok := EventFromSpan(nil, span, testContentCap)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if e.SessionID != "sess-1" {
+		t.Errorf("session_id = %q, want sess-1 (the bundle root)", e.SessionID)
+	}
+	if e.ConversationID != "thread-2" {
+		t.Errorf("conversation_id = %q, want thread-2 (the thread)", e.ConversationID)
+	}
+	if e.ParentConversationID != "sess-1" {
+		t.Errorf("parent_conversation_id = %q, want sess-1", e.ParentConversationID)
+	}
+}
+
+// TestEventFromSpan_SessionFallsBackToConversation covers a span predating the
+// sluice.session_id attribute: the bundle root falls back to the conversation.
+func TestEventFromSpan_SessionFallsBackToConversation(t *testing.T) {
+	span := &tracepb.Span{
+		StartTimeUnixNano: 1_000_000_000,
+		EndTimeUnixNano:   1_100_000_000,
+		Attributes: []*commonpb.KeyValue{
+			strKV(attrCorrelationID, "corr-old"),
+			strKV(attrConversationID, "sess-only"),
+			intKV(attrStatusCode, 200),
+		},
+	}
+	e, ok := EventFromSpan(nil, span, testContentCap)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if e.SessionID != "sess-only" || e.ConversationID != "sess-only" {
+		t.Errorf("session/conversation = (%q, %q), want both sess-only", e.SessionID, e.ConversationID)
+	}
+	if e.ParentConversationID != "" {
+		t.Errorf("parent = %q, want empty", e.ParentConversationID)
+	}
+}

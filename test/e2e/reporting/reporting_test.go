@@ -66,11 +66,11 @@ func TestReporting_RequestEvent_Inline(t *testing.T) {
 	}
 }
 
-// TestReporting_RequestEvent_AgentID proves a client-supplied agent id is
-// resolved by the gateway and lands on the emitted connector Record (the
-// audit/report channel), with its provenance header. Mirrors the session-id
-// capture path.
-func TestReporting_RequestEvent_AgentID(t *testing.T) {
+// TestReporting_RequestEvent_ClaudeConversation proves Claude Code's
+// X-Claude-Code-Agent-Id is resolved as the conversation/thread (NOT a named
+// agent) and lands on the emitted connector Record with its provenance header,
+// the session as its inferred parent, and the named-agent field left empty.
+func TestReporting_RequestEvent_ClaudeConversation(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
 
@@ -80,10 +80,14 @@ func TestReporting_RequestEvent_AgentID(t *testing.T) {
 		Body:   `{"id":"chatcmpl-1","object":"chat.completion"}`,
 	})
 
-	const agentID = "agent-report-7c3"
+	const sessID = "claude-sess-7c3"
+	const threadID = "claude-thread-7c3"
 	resp := h.PostJSON("/v1/chat/completions",
 		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}},
-		http.Header{"X-Claude-Code-Agent-Id": []string{agentID}})
+		http.Header{
+			"X-Claude-Code-Session-Id": []string{sessID},
+			"X-Claude-Code-Agent-Id":   []string{threadID},
+		})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
 	}
@@ -92,11 +96,63 @@ func TestReporting_RequestEvent_AgentID(t *testing.T) {
 	if env.Record == nil {
 		t.Fatalf("expected a connector Record on the request envelope")
 	}
-	if env.Record.AgentID != agentID {
-		t.Errorf("Record.AgentID=%q want %q", env.Record.AgentID, agentID)
+	if env.Record.SessionID != sessID {
+		t.Errorf("Record.SessionID=%q want %q", env.Record.SessionID, sessID)
 	}
-	if env.Record.AgentIDSource != "X-Claude-Code-Agent-Id" {
-		t.Errorf("Record.AgentIDSource=%q want X-Claude-Code-Agent-Id", env.Record.AgentIDSource)
+	if env.Record.ConversationID != threadID {
+		t.Errorf("Record.ConversationID=%q want %q", env.Record.ConversationID, threadID)
+	}
+	if env.Record.ConversationIDSource != "X-Claude-Code-Agent-Id" {
+		t.Errorf("Record.ConversationIDSource=%q want X-Claude-Code-Agent-Id", env.Record.ConversationIDSource)
+	}
+	if env.Record.ParentConversationID != sessID {
+		t.Errorf("Record.ParentConversationID=%q want %q (inferred session)", env.Record.ParentConversationID, sessID)
+	}
+	if env.Record.AgentID != "" {
+		t.Errorf("Record.AgentID=%q want empty — a subagent thread must not squat on the named-agent field", env.Record.AgentID)
+	}
+}
+
+// TestReporting_RequestEvent_CodexSubagent proves the Codex subagent header
+// triad (Session-Id / Thread-Id / X-Codex-Parent-Thread-Id) lands on the
+// connector Record as the bundle root, the thread conversation, and the
+// explicit parent edge.
+func TestReporting_RequestEvent_CodexSubagent(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"chatcmpl-1","object":"chat.completion"}`,
+	})
+
+	resp := h.PostJSON("/v1/chat/completions",
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}},
+		http.Header{
+			"Session-Id":               []string{"codex-sess-1"},
+			"Thread-Id":                []string{"codex-thread-2"},
+			"X-Codex-Parent-Thread-Id": []string{"codex-sess-1"},
+		})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("gateway status=%d", resp.StatusCode)
+	}
+
+	env := h.ExpectEvent("gateway.request", 5*time.Second)
+	if env.Record == nil {
+		t.Fatalf("expected a connector Record on the request envelope")
+	}
+	if env.Record.SessionID != "codex-sess-1" {
+		t.Errorf("Record.SessionID=%q want codex-sess-1", env.Record.SessionID)
+	}
+	if env.Record.ConversationID != "codex-thread-2" {
+		t.Errorf("Record.ConversationID=%q want codex-thread-2", env.Record.ConversationID)
+	}
+	if env.Record.ConversationIDSource != "Thread-Id" {
+		t.Errorf("Record.ConversationIDSource=%q want Thread-Id", env.Record.ConversationIDSource)
+	}
+	if env.Record.ParentConversationID != "codex-sess-1" {
+		t.Errorf("Record.ParentConversationID=%q want codex-sess-1", env.Record.ParentConversationID)
 	}
 }
 

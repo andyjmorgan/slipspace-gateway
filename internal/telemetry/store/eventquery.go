@@ -28,6 +28,11 @@ type EventFilter struct {
 	// browser's two id search boxes; empty means no predicate.
 	SessionID     string
 	CorrelationID string
+	// ConversationID and ParentConversationID are exact-match lookups for
+	// drilling into a specific subagent thread or the children of a parent;
+	// empty means no predicate.
+	ConversationID       string
+	ParentConversationID string
 	// AgentID is an exact-match lookup for the message browser's agent search
 	// box; empty means no predicate.
 	AgentID string
@@ -51,6 +56,8 @@ func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 		{"protocol", f.Protocol},
 		{"session_id", f.SessionID},
 		{"correlation_id", f.CorrelationID},
+		{"conversation_id", f.ConversationID},
+		{"parent_conversation_id", f.ParentConversationID},
 		{"agent_id", f.AgentID},
 		{"user_id", f.UserID},
 	}

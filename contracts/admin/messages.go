@@ -21,17 +21,29 @@ type MessageEntry struct {
 	// to the X-Sluice-Correlation-Id response header.
 	CorrelationID string `json:"correlation_id,omitempty"`
 
-	// SessionID is the resolved session/bundle id grouping this request
-	// with its conversation; SessionIDSource is the header it came from
-	// (the bundle's provenance label). Both omitted when no session
-	// header was present.
+	// SessionID is the resolved session bundle root grouping this request
+	// with its whole conversation (including subagent threads);
+	// SessionIDSource is the header it came from (the bundle's provenance
+	// label). Both omitted when no session header was present.
 	SessionID string `json:"session_id,omitempty"`
 
 	SessionIDSource string `json:"session_id_source,omitempty"`
 
-	// AgentID is the resolved agent id identifying the agent (or sub-agent)
-	// that issued this request; AgentIDSource is the header it came from.
-	// Both omitted when no agent header was present.
+	// ConversationID is the resolved conversation/thread id (the subagent
+	// thread when active, else the session); ConversationIDSource is the header
+	// it came from. ParentConversationID links a subagent thread back toward
+	// its session (omitted for a main agent). These model the unified subagent
+	// paradigm; the console nests threads under their session via them.
+	ConversationID string `json:"conversation_id,omitempty"`
+
+	ConversationIDSource string `json:"conversation_id_source,omitempty"`
+
+	ParentConversationID string `json:"parent_conversation_id,omitempty"`
+
+	// AgentID is the resolved id of a genuinely named agent (the gen_ai.agent.id
+	// home); AgentIDSource is the header it came from. A subagent thread is NOT
+	// an agent — those ride ConversationID. Both omitted when no named-agent
+	// header was present.
 	AgentID string `json:"agent_id,omitempty"`
 
 	AgentIDSource string `json:"agent_id_source,omitempty"`

@@ -55,17 +55,19 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 func filterFromQuery(r *http.Request) store.EventFilter {
 	q := r.URL.Query()
 	return store.EventFilter{
-		Configuration: q.Get("configuration"),
-		Gateway:       q.Get("gateway"),
-		Model:         q.Get("model"),
-		Provider:      q.Get("provider"),
-		Protocol:      q.Get("protocol"),
-		StatusClass:   q.Get("status_class"),
-		SessionID:     q.Get("session_id"),
-		CorrelationID: q.Get("correlation_id"),
-		AgentID:       q.Get("agent_id"),
-		UserID:        q.Get("user_id"),
-		Tags:          nonEmpty(q["tags"]),
+		Configuration:        q.Get("configuration"),
+		Gateway:              q.Get("gateway"),
+		Model:                q.Get("model"),
+		Provider:             q.Get("provider"),
+		Protocol:             q.Get("protocol"),
+		StatusClass:          q.Get("status_class"),
+		SessionID:            q.Get("session_id"),
+		CorrelationID:        q.Get("correlation_id"),
+		ConversationID:       q.Get("conversation_id"),
+		ParentConversationID: q.Get("parent_conversation_id"),
+		AgentID:              q.Get("agent_id"),
+		UserID:               q.Get("user_id"),
+		Tags:                 nonEmpty(q["tags"]),
 	}
 }
 

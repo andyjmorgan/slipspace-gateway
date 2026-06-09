@@ -24,41 +24,37 @@ func TestAgentResolver_Resolve(t *testing.T) {
 		wantSource string
 	}{
 		{
-			name:       "sluice header wins over client fallbacks",
-			headers:    map[string]string{observability.SluiceAgentHeader: "agt-1", "X-Claude-Code-Agent-Id": "cc-9"},
+			name:       "sluice header wins over operator extras",
+			extra:      []string{"X-Acme-Agent-Id"},
+			headers:    map[string]string{observability.SluiceAgentHeader: "agt-1", "X-Acme-Agent-Id": "acme-3"},
 			wantID:     "agt-1",
 			wantSource: observability.SluiceAgentHeader,
 		},
 		{
-			name:       "claude code default header",
-			headers:    map[string]string{"X-Claude-Code-Agent-Id": "cc-9"},
-			wantID:     "cc-9",
-			wantSource: "X-Claude-Code-Agent-Id",
+			name:    "claude code agent header does NOT resolve as a named agent",
+			headers: map[string]string{"X-Claude-Code-Agent-Id": "cc-9"},
+			// gen_ai.agent.id is reserved for named agents; the Claude Code
+			// subagent instance rides the conversation/thread axis instead.
+			wantID: "",
 		},
 		{
-			name:       "operator custom header appended after defaults",
+			name:       "operator custom header appended after the (empty) defaults",
 			extra:      []string{"X-Acme-Agent-Id"},
 			headers:    map[string]string{"X-Acme-Agent-Id": "acme-3"},
 			wantID:     "acme-3",
 			wantSource: "X-Acme-Agent-Id",
 		},
 		{
-			name:       "default beats operator extra by order",
+			name:       "redacted sluice header falls through to operator extra",
 			extra:      []string{"X-Acme-Agent-Id"},
-			headers:    map[string]string{"X-Claude-Code-Agent-Id": "cc-9", "X-Acme-Agent-Id": "acme-3"},
-			wantID:     "cc-9",
-			wantSource: "X-Claude-Code-Agent-Id",
-		},
-		{
-			name:       "redacted sluice header falls through to claude code default",
-			headers:    map[string]string{observability.SluiceAgentHeader: "agt-1", "X-Claude-Code-Agent-Id": "cc-9"},
+			headers:    map[string]string{observability.SluiceAgentHeader: "agt-1", "X-Acme-Agent-Id": "acme-3"},
 			sensitive:  sensitiveSluice,
-			wantID:     "cc-9",
-			wantSource: "X-Claude-Code-Agent-Id",
+			wantID:     "acme-3",
+			wantSource: "X-Acme-Agent-Id",
 		},
 		{
 			name:    "whitespace-only value is treated as absent",
-			headers: map[string]string{"X-Claude-Code-Agent-Id": "   "},
+			headers: map[string]string{observability.SluiceAgentHeader: "   "},
 			wantID:  "",
 		},
 		{
@@ -99,9 +95,10 @@ func TestAgentResolver_Resolve(t *testing.T) {
 func TestAgentResolver_BlankExtraDropped(t *testing.T) {
 	t.Parallel()
 	r := observability.NewAgentResolver([]string{"  ", ""})
-	// Only the built-in defaults remain usable; a blank extra never matches.
-	if id, _ := r.Resolve(hdr("X-Claude-Code-Agent-Id", "cc"), nil); id != "cc" {
-		t.Errorf("id = %q, want cc", id)
+	// The agent chain has no shipped default; a blank extra never matches, so
+	// only the authoritative Sluice header resolves.
+	if id, _ := r.Resolve(hdr(observability.SluiceAgentHeader, "agt"), nil); id != "agt" {
+		t.Errorf("id = %q, want agt", id)
 	}
 }
 

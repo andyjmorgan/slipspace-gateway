@@ -45,26 +45,49 @@ type Record struct {
 	// lifetime.
 	CorrelationID string `json:"correlation_id"`
 
-	// SessionID is the resolved session/bundle id grouping every request
-	// of one agent conversation, one level above CorrelationID. Empty when
-	// no session header was present. Consumers bundle on the
-	// (Configuration, SessionID) tuple, never the bare SessionID, since
-	// client-controlled ids can collide across configurations.
+	// SessionID is the resolved session bundle root — the stable id grouping
+	// every request of one conversation, including all of its subagent threads,
+	// one level above CorrelationID. Resolved from Session-Id (Codex) /
+	// X-Claude-Code-Session-Id (Claude Code). Empty when no session header was
+	// present. Consumers bundle on the (Configuration, SessionID) tuple, never
+	// the bare SessionID, since client-controlled ids can collide across
+	// configurations.
 	SessionID string `json:"session_id,omitempty"`
 
 	// SessionIDSource is the header name SessionID was resolved from
-	// (e.g. "X-Sluice-Session-Id", "Thread_id") — the provenance the
+	// (e.g. "X-Sluice-Session-Id", "Session-Id") — the provenance the
 	// console uses to label a bundle. Empty when SessionID is empty.
 	SessionIDSource string `json:"session_id_source,omitempty"`
 
-	// AgentID is the resolved agent id identifying the agent (or sub-agent)
-	// that issued the request — one axis below SessionID. Empty when no agent
-	// header was present.
+	// ConversationID is the resolved conversation/thread id — the
+	// most-specific thread the request belongs to: equal to SessionID for a
+	// main agent, or a distinct subagent thread when one is active. Resolved
+	// from Thread-Id (Codex) / X-Claude-Code-Agent-Id (Claude Code). This is
+	// the value emitted as gen_ai.conversation.id. Empty when no thread header
+	// was present.
+	ConversationID string `json:"conversation_id,omitempty"`
+
+	// ConversationIDSource is the header name ConversationID was resolved from
+	// (e.g. "Thread-Id", "X-Claude-Code-Agent-Id"). Empty when ConversationID
+	// is empty.
+	ConversationIDSource string `json:"conversation_id_source,omitempty"`
+
+	// ParentConversationID is the parent of a subagent thread — the hierarchy
+	// edge linking ConversationID back toward its session. Set only when the
+	// conversation is a subagent thread (distinct from SessionID); empty for a
+	// main agent. Codex supplies it explicitly via X-Codex-Parent-Thread-Id;
+	// otherwise it is the SessionID.
+	ParentConversationID string `json:"parent_conversation_id,omitempty"`
+
+	// AgentID is the resolved id of a genuinely NAMED agent (the gen_ai.agent.id
+	// semconv home, paired with agent.name/description), resolved only from the
+	// authoritative X-Sluice-Agent-Id. NOT a subagent thread — those ride
+	// ConversationID. Empty when no named-agent header was present.
 	AgentID string `json:"agent_id,omitempty"`
 
 	// AgentIDSource is the header name AgentID was resolved from (e.g.
-	// "X-Sluice-Agent-Id", "X-Claude-Code-Agent-Id") — the provenance the
-	// console uses to label the agent. Empty when AgentID is empty.
+	// "X-Sluice-Agent-Id") — the provenance the console uses to label the
+	// agent. Empty when AgentID is empty.
 	AgentIDSource string `json:"agent_id_source,omitempty"`
 
 	// UserID is the resolved end-user id on whose behalf the request was made —

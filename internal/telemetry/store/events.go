@@ -25,11 +25,19 @@ type RequestEvent struct {
 	// ObservedAt is the gateway request-start time (the span START time), NOT
 	// ingest now() — load-bearing for ordering, pagination, and retention.
 	ObservedAt time.Time
-	// SessionID is the resolved session/conversation bundle id; projected from
-	// the span's gen_ai.conversation.id.
+	// SessionID is the resolved session bundle root — the stable top-down
+	// grouping key; projected from the span's sluice.session_id (falling back
+	// to gen_ai.conversation.id for spans predating that attribute).
 	SessionID string
-	// AgentID is the resolved agent id (the agent or sub-agent that issued the
-	// request); projected from gen_ai.agent.id.
+	// ConversationID is the resolved conversation/thread id (subagent thread
+	// when active, else the session); projected from gen_ai.conversation.id.
+	ConversationID string
+	// ParentConversationID links a subagent thread back toward its session;
+	// projected from sluice.parent_conversation_id. Empty for a main agent.
+	ParentConversationID string
+	// AgentID is the resolved id of a genuinely named agent; projected from
+	// gen_ai.agent.id. A subagent thread is NOT an agent — it rides
+	// ConversationID.
 	AgentID string
 	// UserID is the resolved end-user id on whose behalf the request was made;
 	// projected from enduser.id.
@@ -66,25 +74,26 @@ type RequestEvent struct {
 // the span, so the blob round-trips the wire shape (invariant: nothing on the
 // span is discarded). Numeric usage is read leniently (int or numeric string).
 type SpanFields struct {
-	SessionIDSource     string           `json:"sluice.session_id_source,omitempty"`
-	AgentIDSource       string           `json:"sluice.agent_id_source,omitempty"`
-	UserIDSource        string           `json:"sluice.user_id_source,omitempty"`
-	GatewayID           string           `json:"gateway_id,omitempty"`
-	Method              string           `json:"sluice.method,omitempty"`
-	APIKeyName          string           `json:"sluice.api_key_name,omitempty"`
-	PolicyRef           string           `json:"sluice.policy_ref,omitempty"`
-	UpstreamStatus      int              `json:"sluice.upstream_status,omitempty"`
-	LatencyMs           int64            `json:"sluice.latency_ms,omitempty"`
-	TokensIn            int64            `json:"gen_ai.usage.input_tokens,omitempty"`
-	TokensOut           int64            `json:"gen_ai.usage.output_tokens,omitempty"`
-	TokensCached        int64            `json:"gen_ai.usage.cache_read.input_tokens,omitempty"`
-	TokensCacheCreation int64            `json:"gen_ai.usage.cache_creation.input_tokens,omitempty"`
-	Streaming           bool             `json:"gen_ai.request.stream,omitempty"`
-	Tags                []string         `json:"tags,omitempty"`
-	RulesFired          []string         `json:"rules_fired,omitempty"`
-	RuleChain           []RuleChainEntry `json:"rule_chain,omitempty"`
-	Attempts            []AttemptDetail  `json:"attempts,omitempty"`
-	AssemblyPartial     bool             `json:"assembly_partial,omitempty"`
+	SessionIDSource      string           `json:"sluice.session_id_source,omitempty"`
+	ConversationIDSource string           `json:"sluice.conversation_id_source,omitempty"`
+	AgentIDSource        string           `json:"sluice.agent_id_source,omitempty"`
+	UserIDSource         string           `json:"sluice.user_id_source,omitempty"`
+	GatewayID            string           `json:"gateway_id,omitempty"`
+	Method               string           `json:"sluice.method,omitempty"`
+	APIKeyName           string           `json:"sluice.api_key_name,omitempty"`
+	PolicyRef            string           `json:"sluice.policy_ref,omitempty"`
+	UpstreamStatus       int              `json:"sluice.upstream_status,omitempty"`
+	LatencyMs            int64            `json:"sluice.latency_ms,omitempty"`
+	TokensIn             int64            `json:"gen_ai.usage.input_tokens,omitempty"`
+	TokensOut            int64            `json:"gen_ai.usage.output_tokens,omitempty"`
+	TokensCached         int64            `json:"gen_ai.usage.cache_read.input_tokens,omitempty"`
+	TokensCacheCreation  int64            `json:"gen_ai.usage.cache_creation.input_tokens,omitempty"`
+	Streaming            bool             `json:"gen_ai.request.stream,omitempty"`
+	Tags                 []string         `json:"tags,omitempty"`
+	RulesFired           []string         `json:"rules_fired,omitempty"`
+	RuleChain            []RuleChainEntry `json:"rule_chain,omitempty"`
+	Attempts             []AttemptDetail  `json:"attempts,omitempty"`
+	AssemblyPartial      bool             `json:"assembly_partial,omitempty"`
 	// GenAIContent is the bounded gen_ai.* content object ({input_messages,
 	// output_messages, tool_definitions, system_instructions}), nil when none
 	// was captured.
@@ -136,7 +145,7 @@ type AttemptDetail struct {
 // touch columns only. A list PAGE returns rendered rows whose contract
 // (MessageEntry) carries blob-only fields, so it must read the blob; the cost
 // is bounded by the page LIMIT, not the whole table.
-const requestEventColumns = `correlation_id, observed_at, session_id, agent_id, user_id, provider, model, configuration, protocol, status_code, span_event`
+const requestEventColumns = `correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, span_event`
 
 // insertEventSQL upserts the single-writer entity from the OTel span feed,
 // keyed correlation_id. The whole span lands in span_event; the scalar columns
@@ -145,19 +154,21 @@ const requestEventColumns = `correlation_id, observed_at, session_id, agent_id, 
 // overwritten from the latest span — there is one writer, so there is no
 // cross-feed merge to preserve.
 const insertEventSQL = `
-INSERT INTO request_events (correlation_id, observed_at, session_id, agent_id, user_id, provider, model, configuration, protocol, status_code, span_event)
-VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11)
+INSERT INTO request_events (correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, span_event)
+VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (correlation_id) DO UPDATE SET
-  observed_at   = COALESCE(EXCLUDED.observed_at, request_events.observed_at),
-  session_id    = EXCLUDED.session_id,
-  agent_id      = EXCLUDED.agent_id,
-  user_id       = EXCLUDED.user_id,
-  provider      = EXCLUDED.provider,
-  model         = EXCLUDED.model,
-  configuration = EXCLUDED.configuration,
-  protocol      = EXCLUDED.protocol,
-  status_code   = EXCLUDED.status_code,
-  span_event    = EXCLUDED.span_event`
+  observed_at            = COALESCE(EXCLUDED.observed_at, request_events.observed_at),
+  session_id             = EXCLUDED.session_id,
+  conversation_id        = EXCLUDED.conversation_id,
+  parent_conversation_id = EXCLUDED.parent_conversation_id,
+  agent_id               = EXCLUDED.agent_id,
+  user_id                = EXCLUDED.user_id,
+  provider               = EXCLUDED.provider,
+  model                  = EXCLUDED.model,
+  configuration          = EXCLUDED.configuration,
+  protocol               = EXCLUDED.protocol,
+  status_code            = EXCLUDED.status_code,
+  span_event             = EXCLUDED.span_event`
 
 // UpsertRequestEvent inserts or replaces a request event from the OTel span
 // feed — the single writer of the entity. A zero ObservedAt defaults to now()
@@ -168,7 +179,8 @@ func (s *Store) UpsertRequestEvent(ctx context.Context, e RequestEvent) error {
 		span = []byte("{}")
 	}
 	_, err := s.db.Exec(ctx, insertEventSQL,
-		e.CorrelationID, nullTime(e.ObservedAt), e.SessionID, e.AgentID, e.UserID,
+		e.CorrelationID, nullTime(e.ObservedAt), e.SessionID, e.ConversationID, e.ParentConversationID,
+		e.AgentID, e.UserID,
 		e.Provider, e.Model, e.Configuration, e.Protocol, e.StatusCode, span)
 	if err != nil {
 		return fmt.Errorf("store: upsert request event: %w", err)
@@ -215,7 +227,8 @@ func (s *Store) ListRecentRequestEvents(ctx context.Context, limit int) ([]Reque
 // scanRequestEvent scans the full projection including span_event.
 func scanRequestEvent(s rowScanner) (RequestEvent, error) {
 	var e RequestEvent
-	if err := s.Scan(&e.CorrelationID, &e.ObservedAt, &e.SessionID, &e.AgentID, &e.UserID,
+	if err := s.Scan(&e.CorrelationID, &e.ObservedAt, &e.SessionID, &e.ConversationID, &e.ParentConversationID,
+		&e.AgentID, &e.UserID,
 		&e.Provider, &e.Model, &e.Configuration, &e.Protocol, &e.StatusCode, &e.SpanEvent); err != nil {
 		return RequestEvent{}, fmt.Errorf("store: scan request event: %w", err)
 	}

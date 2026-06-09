@@ -18,12 +18,18 @@ import (
 const SluiceAgentHeader = "X-Sluice-Agent-Id"
 
 // DefaultAgentIDHeaders is the shipped fallback chain, walked in order after
-// the authoritative Sluice header. Claude Code identifies the acting agent
-// with X-Claude-Code-Agent-Id; operators bundle additional client headers via
-// SLUICE_AGENT_ID_HEADERS.
-var DefaultAgentIDHeaders = []string{
-	"X-Claude-Code-Agent-Id",
-}
+// the authoritative Sluice header. It is intentionally EMPTY: gen_ai.agent.id
+// is reserved for a genuinely named agent (the semconv pairs it with
+// agent.name / agent.description), so only the authoritative X-Sluice-Agent-Id
+// — or an operator-supplied SLUICE_AGENT_ID_HEADERS entry that truly names an
+// agent — feeds it.
+//
+// X-Claude-Code-Agent-Id was previously here, but its values are opaque
+// per-invocation instance ids (one per session), not named agents — the same
+// instance-id-on-agent.id abuse we reject for Codex's Thread-Id. It now feeds
+// the conversation/thread axis (DefaultThreadIDHeaders) instead, so the
+// subagent is modelled coherently across clients and gen_ai.agent.id is freed.
+var DefaultAgentIDHeaders = []string{}
 
 // AgentResolver resolves an agent id from inbound request headers. The Sluice
 // header is always attempted first; operator-configured fallbacks follow the

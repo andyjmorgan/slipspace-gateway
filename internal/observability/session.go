@@ -18,66 +18,41 @@ import (
 // so it is always tried before the fallback chain.
 const SluiceSessionHeader = "X-Sluice-Session-Id"
 
-// DefaultSessionIDHeaders is the shipped fallback chain, walked in order
-// after the authoritative Sluice header. Codex exposes Thread_id (the
-// durable conversation id) with Session_id carrying the same UUID as a
-// fallback; Claude Code uses x-claude-code-session-id.
+// DefaultSessionIDHeaders is the shipped fallback chain for the session
+// bundle (the stable root that groups every request of a conversation,
+// including its subagents), walked in order after the authoritative Sluice
+// header.
 //
-// Underscore header names (Codex's Thread_id / Session_id) survive Go's
-// net/http and Traefik but are stripped by nginx-class proxies by
-// default; that is an infra requirement, not a gateway concern.
+// Codex emits Session-Id (verified live; hyphenated, NOT the underscore
+// Session_id we previously and wrongly chased) — the root session shared
+// across all subagent threads. Claude Code uses X-Claude-Code-Session-Id.
+// The per-turn thread/subagent id is a SEPARATE axis (the conversation),
+// resolved by ConversationResolver — not part of this chain.
 var DefaultSessionIDHeaders = []string{
-	"Thread_id",
-	"Session_id",
-	"x-claude-code-session-id",
+	"Session-Id",
+	"X-Claude-Code-Session-Id",
 }
 
-// SessionResolver resolves a session id from inbound request headers. The
-// Sluice header is always attempted first; operator-configured fallbacks
-// follow the shipped defaults, in the order supplied.
-type SessionResolver struct {
-	// fallbacks is the ordered fallback chain (shipped defaults plus
-	// operator extras). The Sluice header is implicit and always first.
-	fallbacks []string
-}
+// SessionResolver resolves the session bundle id from inbound request
+// headers. The Sluice header is always attempted first; operator-configured
+// fallbacks follow the shipped defaults, in the order supplied.
+type SessionResolver struct{ *idResolver }
 
 // NewSessionResolver builds a resolver whose fallback chain is the shipped
 // DefaultSessionIDHeaders followed by extra — operator-supplied custom
 // headers, kept in the order given. The Sluice header is authoritative
 // and need not appear in extra. Blank entries are dropped.
 func NewSessionResolver(extra []string) *SessionResolver {
-	fb := make([]string, 0, len(DefaultSessionIDHeaders)+len(extra))
-	fb = append(fb, DefaultSessionIDHeaders...)
-	for _, e := range extra {
-		if e = strings.TrimSpace(e); e != "" {
-			fb = append(fb, e)
-		}
-	}
-	return &SessionResolver{fallbacks: fb}
+	return &SessionResolver{newIDResolver(SluiceSessionHeader, DefaultSessionIDHeaders, extra)}
 }
 
 // Resolve returns the session id and its provenance (the header name it
 // came from, which the console uses to label the bundle). The Sluice
 // header wins; otherwise the fallback chain is walked top-down and the
-// first present, non-empty header wins.
-//
-// A candidate for which sensitive reports true is treated as absent and
-// resolution falls through to the next — so a promoted session id can
-// never resurface a value the operator added to the redaction set.
-// Returns ("", "") when nothing matches.
+// first present, non-empty, non-sensitive header wins. Returns ("", "")
+// when nothing matches.
 func (s *SessionResolver) Resolve(h http.Header, sensitive func(string) bool) (id, source string) {
-	if h == nil {
-		return "", ""
-	}
-	if id, source = pickHeader(h, SluiceSessionHeader, sensitive); id != "" {
-		return id, source
-	}
-	for _, name := range s.fallbacks {
-		if id, source = pickHeader(h, name, sensitive); id != "" {
-			return id, source
-		}
-	}
-	return "", ""
+	return s.resolve(h, sensitive)
 }
 
 // pickHeader returns the trimmed value of name and name itself when the

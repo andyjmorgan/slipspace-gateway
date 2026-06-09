@@ -76,10 +76,12 @@ export function MessagesPage() {
   // Filter inputs. Dropdowns/segments apply immediately; the id boxes debounce.
   const [corrInput, setCorrInput] = useState("")
   const [sessInput, setSessInput] = useState("")
+  const [convInput, setConvInput] = useState("")
   const [agentInput, setAgentInput] = useState("")
   const [userInput, setUserInput] = useState("")
   const correlationId = useDebounced(corrInput, 300)
   const sessionId = useDebounced(sessInput, 300)
+  const conversationId = useDebounced(convInput, 300)
   const agentId = useDebounced(agentInput, 300)
   const userId = useDebounced(userInput, 300)
   const [provider, setProvider] = useState("")
@@ -98,8 +100,8 @@ export function MessagesPage() {
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
   // and must not run during render.
   const filters = useMemo<MessageFilters>(
-    () => ({ correlationId, sessionId, agentId, userId, provider, model, configuration, protocol, statusClass, tags }),
-    [correlationId, sessionId, agentId, userId, provider, model, configuration, protocol, statusClass, tags],
+    () => ({ correlationId, sessionId, conversationId, agentId, userId, provider, model, configuration, protocol, statusClass, tags }),
+    [correlationId, sessionId, conversationId, agentId, userId, provider, model, configuration, protocol, statusClass, tags],
   )
 
   const activeCount = useMemo(() => {
@@ -108,6 +110,7 @@ export function MessagesPage() {
       [
         f.correlationId,
         f.sessionId,
+        f.conversationId,
         f.agentId,
         f.userId,
         f.provider,
@@ -224,9 +227,10 @@ export function MessagesPage() {
 
       <PanelCard>
         <div className="flex flex-col gap-2.5 p-3 border-b border-[color:var(--border)]">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2">
             <Input placeholder="Correlation ID" value={corrInput} onChange={(e) => setCorrInput(e.target.value)} className="h-9 text-[12px] mono" />
             <Input placeholder="Session ID" value={sessInput} onChange={(e) => setSessInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Input placeholder="Thread / Conversation ID" value={convInput} onChange={(e) => setConvInput(e.target.value)} className="h-9 text-[12px] mono" />
             <Input placeholder="Agent ID" value={agentInput} onChange={(e) => setAgentInput(e.target.value)} className="h-9 text-[12px] mono" />
             <Input placeholder="User ID" value={userInput} onChange={(e) => setUserInput(e.target.value)} className="h-9 text-[12px] mono" />
             <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} />
@@ -510,9 +514,28 @@ function MetaGrid({ entry }: { entry: MessageEntry }) {
   ) : (
     "—"
   )
+  // Conversation/thread id: the subagent thread when active, else the session.
+  // Shown copyable, titled with its provenance header; a subagent thread also
+  // shows its parent so the operator can walk up toward the session bundle.
+  const threadNode = entry.conversation_id ? (
+    <span className="flex items-center gap-1 min-w-0">
+      <span className="truncate min-w-0" title={entry.conversation_id_source ? `from ${entry.conversation_id_source}` : entry.conversation_id}>
+        {entry.conversation_id}
+      </span>
+      {entry.parent_conversation_id ? (
+        <span className="text-[10.5px] text-[color:var(--text-4)] shrink-0" title={`parent ${entry.parent_conversation_id}`}>
+          ↳ parent
+        </span>
+      ) : null}
+      <CopyButton value={entry.conversation_id} label="conversation id" />
+    </span>
+  ) : (
+    "—"
+  )
   // Agent id is a leaf dimension (no per-agent page yet): show it copyable,
   // titled with its provenance header so the operator knows which header it
-  // came from.
+  // came from. Reserved for genuinely named agents — a subagent thread rides
+  // the Thread cell, not here.
   const agentNode = entry.agent_id ? (
     <span className="flex items-center gap-1 min-w-0">
       <span className="truncate min-w-0" title={entry.agent_id_source ? `from ${entry.agent_id_source}` : entry.agent_id}>
@@ -544,6 +567,7 @@ function MetaGrid({ entry }: { entry: MessageEntry }) {
     ["Duration", fmt.ms(entry.duration_ms)],
     ["Streaming", entry.streaming ? "yes" : "no"],
     ["Session", sessionNode],
+    ["Thread", threadNode],
     ["Agent", agentNode],
     ["User", userNode],
     ["At", fmt.fullTime(entry.at)],

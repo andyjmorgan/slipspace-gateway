@@ -341,4 +341,24 @@ SELECT add_continuous_aggregate_policy('cagg_tags_1m', start_offset => INTERVAL 
 		// value once. Idempotent: subtracting an absent key is a no-op.
 		sql: `UPDATE request_events SET span_event = span_event - 'sluice.tags' - 'sluice.rules_fired';`,
 	},
+	{
+		version: 9,
+		name:    "add_conversation_parent",
+		// Unified conversation/thread/parent paradigm (Session Bundling design
+		// note). session_id keeps its meaning (the bundle root, now projected
+		// from sluice.session_id); two additive columns split out the per-turn
+		// thread and its parent so a subagent is modelled coherently across
+		// clients (Codex Thread-Id / X-Codex-Parent-Thread-Id; Claude Code's
+		// X-Claude-Code-Agent-Id, moved off the squatted agent_id axis).
+		//
+		// conversation_id is the gen_ai.conversation.id projection (the thread,
+		// == session for a main agent); parent_conversation_id links a subagent
+		// thread toward its session. Both indexed for the message browser's
+		// drill-down. Forward-only: existing rows keep '' until re-projected.
+		sql: `
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS conversation_id        TEXT NOT NULL DEFAULT '';
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS parent_conversation_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS request_events_conversation ON request_events (conversation_id);
+CREATE INDEX IF NOT EXISTS request_events_parent       ON request_events (parent_conversation_id);`,
+	},
 }

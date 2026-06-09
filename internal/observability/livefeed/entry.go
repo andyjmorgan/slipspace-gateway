@@ -21,17 +21,27 @@ type Entry struct {
 	// surfaced on the response as X-Sluice-Correlation-Id.
 	CorrelationID string
 
-	// SessionID is the resolved session/bundle id grouping this request
-	// with the rest of its conversation; SessionIDSource is the header it
-	// came from. Both empty when no session header was present. Lets the
-	// console group the live pane into per-conversation bundles.
+	// SessionID is the resolved session bundle root grouping this request
+	// with the rest of its conversation (including subagent threads);
+	// SessionIDSource is the header it came from. Both empty when no session
+	// header was present. Lets the console group the live pane into
+	// per-conversation bundles.
 	SessionID       string
 	SessionIDSource string
 
-	// AgentID is the resolved agent id identifying the agent (or sub-agent)
-	// that issued this request; AgentIDSource is the header it came from.
-	// Both empty when no agent header was present. Lets the console filter
-	// the live pane by acting agent.
+	// ConversationID is the resolved conversation/thread id (the subagent
+	// thread when active, else the session); ConversationIDSource is the header
+	// it came from. ParentConversationID links a subagent thread back toward
+	// its session (set only when ConversationID differs from SessionID). Lets
+	// the console nest subagent threads under their session.
+	ConversationID       string
+	ConversationIDSource string
+	ParentConversationID string
+
+	// AgentID is the resolved id of a genuinely named agent (reserved for the
+	// gen_ai.agent.id semconv home); AgentIDSource is the header it came from.
+	// Both empty when no named-agent header was present. A subagent thread is
+	// NOT an agent — those ride ConversationID.
 	AgentID       string
 	AgentIDSource string
 

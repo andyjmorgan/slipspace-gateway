@@ -101,6 +101,8 @@ const (
 	EnvAdminLiveFeedBodyMaxBytes            = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
 	EnvRedactExtraHeaders                   = "SLUICE_REDACT_EXTRA_HEADERS"
 	EnvSessionIDHeaders                     = "SLUICE_SESSION_ID_HEADERS"
+	EnvThreadIDHeaders                      = "SLUICE_THREAD_ID_HEADERS"
+	EnvParentIDHeaders                      = "SLUICE_PARENT_ID_HEADERS"
 	EnvAgentIDHeaders                       = "SLUICE_AGENT_ID_HEADERS"
 	EnvUserIDHeaders                        = "SLUICE_USER_ID_HEADERS"
 	EnvExternalURL                          = "SLUICE_EXTERNAL_URL"
@@ -129,6 +131,8 @@ var envVarNames = []string{
 	EnvAdminLiveFeedBodyMaxBytes,
 	EnvRedactExtraHeaders,
 	EnvSessionIDHeaders,
+	EnvThreadIDHeaders,
+	EnvParentIDHeaders,
 	EnvAgentIDHeaders,
 	EnvUserIDHeaders,
 	EnvExternalURL,
@@ -249,14 +253,26 @@ type ServerEnv struct {
 	// during resolution so a promoted session id can't bypass redaction.
 	SessionIDHeaders []string
 
+	// ThreadIDHeaders is the operator-supplied addendum to the built-in
+	// conversation/thread fallback chain (observability.DefaultThreadIDHeaders,
+	// Thread-Id / X-Claude-Code-Agent-Id). Appended in order after the shipped
+	// defaults; the authoritative X-Sluice-Thread-Id is always tried first. A
+	// header also present in RedactExtraHeaders is skipped during resolution.
+	ThreadIDHeaders []string
+
+	// ParentIDHeaders is the operator-supplied addendum to the built-in
+	// parent-conversation fallback chain (observability.DefaultParentIDHeaders,
+	// X-Codex-Parent-Thread-Id). Appended in order after the shipped defaults;
+	// the authoritative X-Sluice-Parent-Conversation-Id is always tried first.
+	ParentIDHeaders []string
+
 	// AgentIDHeaders is the operator-supplied addendum to the built-in
-	// agent-id fallback chain (observability.DefaultAgentIDHeaders). Each
-	// entry is a header name appended, in order, after the shipped defaults
-	// (X-Claude-Code-Agent-Id); the authoritative X-Sluice-Agent-Id is
-	// always tried first regardless. Lets an operator bundle a custom
-	// client's agent header without a code change. A header also present in
-	// RedactExtraHeaders is skipped during resolution so a promoted agent id
-	// can't bypass redaction.
+	// agent-id fallback chain (observability.DefaultAgentIDHeaders, now empty —
+	// gen_ai.agent.id is reserved for genuinely named agents). Each entry is a
+	// header name appended, in order; the authoritative X-Sluice-Agent-Id is
+	// always tried first regardless. A header also present in RedactExtraHeaders
+	// is skipped during resolution so a promoted agent id can't bypass
+	// redaction.
 	AgentIDHeaders []string
 
 	// UserIDHeaders is the operator-supplied addendum to the built-in
@@ -354,6 +370,8 @@ func LoadEnv() (*ServerEnv, error) {
 		AdminLiveFeedBodyMaxBytes:            bodyMaxBytes,
 		RedactExtraHeaders:                   envCSVList(EnvRedactExtraHeaders),
 		SessionIDHeaders:                     envCSVList(EnvSessionIDHeaders),
+		ThreadIDHeaders:                      envCSVList(EnvThreadIDHeaders),
+		ParentIDHeaders:                      envCSVList(EnvParentIDHeaders),
 		AgentIDHeaders:                       envCSVList(EnvAgentIDHeaders),
 		UserIDHeaders:                        envCSVList(EnvUserIDHeaders),
 		ExternalURL:                          envString(EnvExternalURL, ""),
