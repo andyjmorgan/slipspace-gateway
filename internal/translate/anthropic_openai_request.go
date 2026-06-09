@@ -45,6 +45,9 @@ func translateMessagesRequestToChat(body []byte) ([]byte, []Drop, error) {
 	if src.Thinking != nil {
 		drops = append(drops, Drop{Field: "thinking", Reason: reasonNoTargetEquivalent})
 	}
+	if src.ContextManagement != nil {
+		drops = append(drops, Drop{Field: "context_management", Reason: reasonNoTargetEquivalent})
+	}
 
 	if len(src.StopSequences) > 0 {
 		raw, err := json.Marshal(src.StopSequences)

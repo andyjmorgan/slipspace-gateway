@@ -497,6 +497,9 @@ func TestChat_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(File{}),
 		reflect.TypeOf(FileContentPart{}),
 		reflect.TypeOf(UnknownContentPart{}),
+		reflect.TypeOf(URLCitation{}),
+		reflect.TypeOf(UrlCitationAnnotation{}),
+		reflect.TypeOf(UnknownAnnotation{}),
 	}
 	for _, rt := range types {
 		t.Run(rt.Name(), func(t *testing.T) {
@@ -519,6 +522,9 @@ func TestChat_RegistriesHaveFallbacks(t *testing.T) {
 	}
 	if contentPartRegistry.Fallback == nil {
 		t.Fatalf("contentPartRegistry must have a fallback")
+	}
+	if annotationRegistry.Fallback == nil {
+		t.Fatalf("annotationRegistry must have a fallback")
 	}
 	wantRoles := map[string]bool{
 		"system":    false,

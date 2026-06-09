@@ -64,6 +64,17 @@ type MessagesRequest struct {
 	// OutputConfig configures output controls such as reasoning effort.
 	OutputConfig *OutputConfig `json:"output_config,omitempty"`
 
+	// ContextManagement is the request-side context-management config (BETA;
+	// requires the "anthropic-beta: context-management-2025-06-27" header).
+	// It carries an array of context-edit strategies (clear_tool_uses,
+	// clear_thinking, compact). Distinct from the response-side
+	// MessagesResponse.ContextManagement, which reports the edits the server
+	// actually applied. Nil leaves context management unconfigured.
+	// Ref: anthropic-sdk-python message_create_params.py — context_management:
+	// Optional[BetaContextManagementConfigParam]:
+	// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/message_create_params.py
+	ContextManagement *ContextManagementConfig `json:"context_management,omitempty"`
+
 	models.DynamicProperties
 }
 

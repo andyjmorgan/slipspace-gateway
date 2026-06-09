@@ -146,6 +146,43 @@ type messagesResponseRaw struct {
 // resulting object.
 func (r MessagesResponse) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(r) }
 
+// ErrorResponse is the non-streaming top-level error body Anthropic returns on
+// an HTTP 4xx/5xx response from POST /v1/messages — shape
+// {"type":"error","error":{"type","message"},"request_id"}. A successful call
+// never carries this; it returns a MessagesResponse (with stop_reason etc.)
+// instead. Unknown fields round-trip via the embedded DynamicProperties.
+//
+// The nested error object is StreamError, reused verbatim: the Anthropic error
+// object shape ({type,message}) is identical for streaming error events and
+// non-streaming error bodies, so a second type would be duplication. RequestID
+// is body-level here (success bodies carry it as the request-id HTTP header
+// instead — so it is modelled only where documented to appear in the body).
+// Ref: https://docs.anthropic.com/en/api/errors
+type ErrorResponse struct {
+	// Type is the top-level discriminator, always "error".
+	Type string `json:"type"`
+
+	// Error carries the machine-readable error code and human-readable
+	// message; same {type,message} shape as the streaming ErrorEvent's error.
+	Error StreamError `json:"error"`
+
+	// RequestID is Anthropic's unique request identifier (prefixed "req_"),
+	// present at the top level of error response bodies and mirrored by the
+	// request-id HTTP response header. Empty when absent.
+	// Ref: https://docs.anthropic.com/en/api/errors
+	RequestID string `json:"request_id,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into e, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (e *ErrorResponse) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, e) }
+
+// MarshalJSON encodes e and merges DynamicProperties.Extra back into the
+// resulting object.
+func (e ErrorResponse) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(e) }
+
 // Usage describes token accounting for one Anthropic /v1/messages request.
 // Unknown fields round-trip via the embedded DynamicProperties.
 type Usage struct {

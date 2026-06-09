@@ -91,6 +91,8 @@ func FuzzChatCompletionResponse(f *testing.F) {
 		`{"id":"x","object":"chat.completion","created":1,"model":"gpt-oss","choices":[{"index":0,"message":{"role":"assistant","content":"4","reasoning":"2+2 is 4"},"finish_reason":"stop"}]}`,
 		// older vLLM spelling "reasoning_content" rides along via DynamicProperties.
 		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi","reasoning_content":"legacy"},"finish_reason":"stop"}]}`,
+		// web-search annotations: typed url_citation plus an unknown annotation type.
+		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"see source","annotations":[{"type":"url_citation","url_citation":{"start_index":0,"end_index":3,"title":"t","url":"https://x.test"}},{"type":"file_citation","file_citation":{"file_id":"f_1"}}]},"finish_reason":"stop"}]}`,
 		`{}`,
 	}
 	for _, s := range seeds {
