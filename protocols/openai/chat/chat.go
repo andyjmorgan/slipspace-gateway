@@ -555,6 +555,17 @@ type ResponseMessage struct {
 	// enabled.
 	Audio *AudioMessage `json:"audio,omitempty"`
 
+	// Annotations lists the source citations a web-search-enabled model
+	// attaches to its reply (choices[].message.annotations). It is polymorphic
+	// on each element's "type" discriminator — today only "url_citation", with
+	// any other type round-tripping via UnknownAnnotation. Nil/empty when the
+	// model did no web search. AnnotationList rather than []Annotation so the
+	// interface-typed slice still decodes under models.UnmarshalDynamic (see
+	// annotations.go).
+	// Source: OpenAI Chat Completions API reference, choices[].message.annotations
+	// (https://developers.openai.com/api/reference/chat-completions).
+	Annotations AnnotationList `json:"annotations,omitempty"`
+
 	models.DynamicProperties
 }
 

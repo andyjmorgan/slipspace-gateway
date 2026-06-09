@@ -167,6 +167,9 @@ func TestChat_SealedInterfaceMarkers(t *testing.T) {
 	RefusalContentPart{}.isContentPart()
 	FileContentPart{}.isContentPart()
 	UnknownContentPart{}.isContentPart()
+
+	UrlCitationAnnotation{}.isAnnotation()
+	UnknownAnnotation{}.isAnnotation()
 }
 
 func TestChat_RequestMessages_UnmarshalJSONError(t *testing.T) {

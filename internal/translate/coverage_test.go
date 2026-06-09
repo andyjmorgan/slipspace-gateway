@@ -43,6 +43,8 @@ var requestFieldDisposition = map[string]string{
 	"Thinking":      dispDropped, // no OpenAI equivalent
 	"ServiceTier":   dispMapped,  // -> chat.ServiceTier
 	"OutputConfig":  dispMapped,  // effort -> chat.ReasoningEffort
+
+	"ContextManagement": dispDropped, // Anthropic context-management beta; no OpenAI equivalent (signalled)
 }
 
 // responseFieldDisposition classifies every exported field of

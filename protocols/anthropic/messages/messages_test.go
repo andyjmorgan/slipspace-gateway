@@ -519,6 +519,12 @@ func TestMessages_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(OutputTokensDetails{}),
 		reflect.TypeOf(Container{}),
 		reflect.TypeOf(ContextManagement{}),
+		reflect.TypeOf(ErrorResponse{}),
+		reflect.TypeOf(ContextManagementConfig{}),
+		reflect.TypeOf(ClearToolUsesEdit{}),
+		reflect.TypeOf(ClearThinkingEdit{}),
+		reflect.TypeOf(CompactEdit{}),
+		reflect.TypeOf(UnknownContextEdit{}),
 	}
 	for _, rt := range types {
 		t.Run(rt.Name(), func(t *testing.T) {
