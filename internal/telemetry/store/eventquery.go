@@ -242,6 +242,12 @@ type SessionSummary struct {
 	SessionID string
 	// Messages is the number of (matching) requests in the session.
 	Messages int
+	// Subagents is the number of distinct CHILD conversation threads in the
+	// session — distinct conversation_id values that differ from the session
+	// root. 0 for a plain single-agent session; N when N subagents spawned.
+	// Rows predating the conversation columns (empty conversation_id) never
+	// count, so old sessions read 0.
+	Subagents int
 	// TotalTokens is the summed tokens_in+tokens_out across those requests.
 	TotalTokens int64
 	// Models is the distinct requested model names, empty strings excluded.
@@ -342,6 +348,9 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
 	q := `WITH agg AS (
   SELECT session_id,
          COUNT(*) AS messages,
+         COUNT(DISTINCT conversation_id) FILTER (
+           WHERE conversation_id <> '' AND conversation_id <> session_id
+         ) AS subagents,
          COALESCE(SUM(
            COALESCE((span_event->>'gen_ai.usage.input_tokens')::bigint, 0) +
            COALESCE((span_event->>'gen_ai.usage.output_tokens')::bigint, 0)
@@ -353,7 +362,7 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
   WHERE ` + strings.Join(inner, " AND ") + `
   GROUP BY session_id
 )
-SELECT session_id, messages, total_tokens, started, last_at, models FROM agg`
+SELECT session_id, messages, subagents, total_tokens, started, last_at, models FROM agg`
 	if len(outer) > 0 {
 		q += ` WHERE ` + strings.Join(outer, " AND ")
 	}
@@ -369,7 +378,7 @@ SELECT session_id, messages, total_tokens, started, last_at, models FROM agg`
 	var out []SessionSummary
 	for rows.Next() {
 		var sum SessionSummary
-		if serr := rows.Scan(&sum.SessionID, &sum.Messages, &sum.TotalTokens, &sum.Started, &sum.LastAt, &sum.Models); serr != nil {
+		if serr := rows.Scan(&sum.SessionID, &sum.Messages, &sum.Subagents, &sum.TotalTokens, &sum.Started, &sum.LastAt, &sum.Models); serr != nil {
 			return nil, "", fmt.Errorf("store: scan session summary: %w", serr)
 		}
 		out = append(out, sum)

@@ -210,6 +210,21 @@ func TestListSessions(t *testing.T) {
 	seed("lsq-b1", "lsq-B", "lsq-dev", "lsq-m2", "lsq-y", 50, 5, base.Add(-30*time.Minute))
 	seed("lsq-o1", "lsq-old", "lsq-prod", "lsq-m3", "lsq-z", 1, 1, base.Add(-10*24*time.Hour))
 
+	// Session sub: a main agent (conversation == session) plus two distinct
+	// subagent threads — exercises the Subagents distinct-child count.
+	seedConv := func(id, sess, conv string, at time.Time) {
+		if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
+			CorrelationID: id, SessionID: sess, ConversationID: conv, Configuration: "lsq-subcfg",
+			Model: "lsq-m1", StatusCode: 200, ObservedAt: at, SpanEvent: []byte(`{}`),
+		}); err != nil {
+			t.Fatalf("seedConv %s: %v", id, err)
+		}
+	}
+	seedConv("lsq-s0", "lsq-sub", "lsq-sub", base.Add(-50*time.Minute))      // main (conv == session)
+	seedConv("lsq-s1", "lsq-sub", "lsq-thread-1", base.Add(-49*time.Minute)) // subagent 1
+	seedConv("lsq-s2", "lsq-sub", "lsq-thread-2", base.Add(-48*time.Minute)) // subagent 2
+	seedConv("lsq-s3", "lsq-sub", "lsq-thread-1", base.Add(-47*time.Minute)) // subagent 1 again (still distinct=2)
+
 	from, to := base.Add(-3*time.Hour), base
 
 	// pick returns the summary for a session id from a result page, or fails.
@@ -238,6 +253,20 @@ func TestListSessions(t *testing.T) {
 		}
 		if a.Messages != 2 || a.TotalTokens != 330 {
 			t.Errorf("A rollup = %+v, want messages 2 tokens 330", a)
+		}
+		// Session A has no subagent threads (empty conversation_id rows excluded).
+		if a.Subagents != 0 {
+			t.Errorf("A subagents = %d, want 0", a.Subagents)
+		}
+		// Session sub spawned two distinct subagent threads (the third row reuses
+		// thread-1, so the distinct child count stays 2; the main thread, whose
+		// conversation == session, is not counted).
+		sub := pick(t, got, "lsq-sub")
+		if sub.Subagents != 2 {
+			t.Errorf("sub subagents = %d, want 2", sub.Subagents)
+		}
+		if sub.Messages != 4 {
+			t.Errorf("sub messages = %d, want 4", sub.Messages)
 		}
 		if len(a.Models) != 1 || a.Models[0] != "lsq-m1" {
 			t.Errorf("A models = %v, want [lsq-m1]", a.Models)

@@ -398,6 +398,7 @@ func mapSessionSummary(s store.SessionSummary) adminc.SessionSummary {
 	return adminc.SessionSummary{
 		SessionID:    s.SessionID,
 		Messages:     s.Messages,
+		Subagents:    s.Subagents,
 		TotalTokens:  s.TotalTokens,
 		Models:       models,
 		StartedAt:    s.Started.UTC(),

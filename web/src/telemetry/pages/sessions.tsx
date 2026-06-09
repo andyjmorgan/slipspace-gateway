@@ -241,6 +241,7 @@ function SessionsList() {
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th className="text-left font-medium px-4 py-2">Session</th>
               <th className="text-right font-medium px-4 py-2">Messages</th>
+              <th className="text-right font-medium px-4 py-2">Subagents</th>
               <th className="text-right font-medium px-4 py-2">Tokens</th>
               <th className="text-left font-medium px-4 py-2">Models</th>
               <th className="text-left font-medium px-4 py-2">Started</th>
@@ -251,7 +252,7 @@ function SessionsList() {
             {status === "loading" && (
               <SkeletonRows
                 rows={Math.min(limit, 12)}
-                cols={[{ w: "12rem" }, { w: "2.5rem", align: "right" }, { w: "3rem", align: "right" }, { w: "8rem" }, { w: "9rem" }, { w: "4rem" }]}
+                cols={[{ w: "12rem" }, { w: "2.5rem", align: "right" }, { w: "2.5rem", align: "right" }, { w: "3rem", align: "right" }, { w: "8rem" }, { w: "9rem" }, { w: "4rem" }]}
               />
             )}
             {status !== "loading" && sessions.map((s) => (
@@ -262,6 +263,11 @@ function SessionsList() {
               >
                 <td className="mono text-[12px] px-4 py-2 max-w-[22rem] truncate" title={s.session_id}>{s.session_id}</td>
                 <td className="mono tnum text-[12px] text-right px-4 py-2">{fmt.compact(s.messages)}</td>
+                <td className="mono tnum text-[12px] text-right px-4 py-2">
+                  {s.subagents > 0
+                    ? <span className="inline-flex items-center rounded-full bg-[color:var(--accent-soft,var(--hover))] px-1.5 text-[color:var(--accent)]" title={`${s.subagents} subagent${s.subagents === 1 ? "" : "s"} spawned`}>{s.subagents}</span>
+                    : <span className="text-[color:var(--text-4)]"><Dash /></span>}
+                </td>
                 <td className="mono tnum text-[12px] text-right px-4 py-2 text-[color:var(--text-3)]">
                   {s.total_tokens > 0 ? fmt.compact(s.total_tokens) : <Dash />}
                 </td>
@@ -271,7 +277,7 @@ function SessionsList() {
               </tr>
             ))}
             {status === "ok" && sessions.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No sessions match these filters." : "No sessions in this window."}</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No sessions match these filters." : "No sessions in this window."}</td></tr>
             )}
           </tbody>
         </TableScroll>
