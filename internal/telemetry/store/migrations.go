@@ -361,4 +361,37 @@ ALTER TABLE request_events ADD COLUMN IF NOT EXISTS parent_conversation_id TEXT 
 CREATE INDEX IF NOT EXISTS request_events_conversation ON request_events (conversation_id);
 CREATE INDEX IF NOT EXISTS request_events_parent       ON request_events (parent_conversation_id);`,
 	},
+	{
+		version: 10,
+		name:    "promote_token_columns",
+		// Detoast fix for the session list (#318). The Sessions aggregate summed
+		// the per-request usage straight out of the span_event JSONB
+		// (SUM((span_event->>'gen_ai.usage.input_tokens')::bigint + …)). Because
+		// Postgres TOASTs the whole blob out of line, that SUM detoasts +
+		// decompresses every ~95 kB span per row — measured at ~3.8 s over ~550
+		// rows, vs ~1.4 ms for the same query with the token term removed. The cost
+		// is entirely the blob touch, not the row count.
+		//
+		// Promote the two counts the aggregate needs to BIGINT columns, projected
+		// from the span at ingest exactly like the other filter columns. The blob
+		// stays the source of truth (SpanFields still decodes tokens for the
+		// inspector / message rows); these are a materialized projection of it, so
+		// the backfill below re-derives them from existing rows. Forward-only and
+		// additive; the cached / cache-creation counts stay blob-only (no aggregate
+		// reads them).
+		//
+		// The backfill guards the cast with a numeric-text check so a malformed or
+		// absent value becomes 0 rather than aborting the migration (a failed
+		// migration is worse than a query error). Idempotent: re-running recomputes
+		// the same values. Rows predating the token keys keep the column default 0.
+		sql: `
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_in  BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_out BIGINT NOT NULL DEFAULT 0;
+UPDATE request_events SET
+  tokens_in  = CASE WHEN span_event->>'gen_ai.usage.input_tokens'  ~ '^-?[0-9]+$'
+                    THEN (span_event->>'gen_ai.usage.input_tokens')::bigint  ELSE 0 END,
+  tokens_out = CASE WHEN span_event->>'gen_ai.usage.output_tokens' ~ '^-?[0-9]+$'
+                    THEN (span_event->>'gen_ai.usage.output_tokens')::bigint ELSE 0 END
+WHERE span_event ? 'gen_ai.usage.input_tokens' OR span_event ? 'gen_ai.usage.output_tokens';`,
+	},
 }

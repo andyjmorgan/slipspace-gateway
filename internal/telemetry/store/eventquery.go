@@ -343,18 +343,17 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
 		outer = append(outer, fmt.Sprintf("(last_at, session_id) < ($%d, $%d)", lIdx, len(args)))
 	}
 
-	// total_tokens sums the input+output usage out of the span_event blob
-	// (no promoted token columns); a missing/non-numeric value reads as 0.
+	// total_tokens sums the promoted tokens_in/tokens_out columns (#318) — NOT
+	// span_event. The pre-#318 form summed the usage out of the JSONB blob, which
+	// detoasted every ~95 kB span per row (~3.8 s); reading the columns keeps the
+	// whole aggregate off the blob so it never detoasts.
 	q := `WITH agg AS (
   SELECT session_id,
          COUNT(*) AS messages,
          COUNT(DISTINCT conversation_id) FILTER (
            WHERE conversation_id <> '' AND conversation_id <> session_id
          ) AS subagents,
-         COALESCE(SUM(
-           COALESCE((span_event->>'gen_ai.usage.input_tokens')::bigint, 0) +
-           COALESCE((span_event->>'gen_ai.usage.output_tokens')::bigint, 0)
-         ), 0) AS total_tokens,
+         COALESCE(SUM(tokens_in + tokens_out), 0) AS total_tokens,
          MIN(observed_at) AS started,
          MAX(observed_at) AS last_at,
          COALESCE(array_agg(DISTINCT model) FILTER (WHERE model <> ''), '{}') AS models

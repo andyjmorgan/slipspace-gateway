@@ -56,6 +56,14 @@ type RequestEvent struct {
 	// StatusCode is the client-facing HTTP status; projected from
 	// http.response.status_code.
 	StatusCode int
+	// TokensIn / TokensOut are the usage counts projected from
+	// gen_ai.usage.input_tokens / .output_tokens — the same values SpanFields
+	// decodes from the blob, promoted to columns so the session-list aggregate
+	// sums them without detoasting span_event (#318). Zero when the response
+	// carried no usage block. The cached / cache-creation counts stay blob-only
+	// (no aggregate reads them yet).
+	TokensIn  int64
+	TokensOut int64
 	// SpanEvent is the COMPLETE span as received — every attribute plus the
 	// gen_ai content — stored verbatim and never stripped. The columns above are
 	// projections of it. nil only on a freshly built event before ingest sets it.
@@ -145,7 +153,7 @@ type AttemptDetail struct {
 // touch columns only. A list PAGE returns rendered rows whose contract
 // (MessageEntry) carries blob-only fields, so it must read the blob; the cost
 // is bounded by the page LIMIT, not the whole table.
-const requestEventColumns = `correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, span_event`
+const requestEventColumns = `correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, tokens_in, tokens_out, span_event`
 
 // insertEventSQL upserts the single-writer entity from the OTel span feed,
 // keyed correlation_id. The whole span lands in span_event; the scalar columns
@@ -154,8 +162,8 @@ const requestEventColumns = `correlation_id, observed_at, session_id, conversati
 // overwritten from the latest span — there is one writer, so there is no
 // cross-feed merge to preserve.
 const insertEventSQL = `
-INSERT INTO request_events (correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, span_event)
-VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+INSERT INTO request_events (correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, tokens_in, tokens_out, span_event)
+VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 ON CONFLICT (correlation_id) DO UPDATE SET
   observed_at            = COALESCE(EXCLUDED.observed_at, request_events.observed_at),
   session_id             = EXCLUDED.session_id,
@@ -168,6 +176,8 @@ ON CONFLICT (correlation_id) DO UPDATE SET
   configuration          = EXCLUDED.configuration,
   protocol               = EXCLUDED.protocol,
   status_code            = EXCLUDED.status_code,
+  tokens_in              = EXCLUDED.tokens_in,
+  tokens_out             = EXCLUDED.tokens_out,
   span_event             = EXCLUDED.span_event`
 
 // UpsertRequestEvent inserts or replaces a request event from the OTel span
@@ -181,7 +191,7 @@ func (s *Store) UpsertRequestEvent(ctx context.Context, e RequestEvent) error {
 	_, err := s.db.Exec(ctx, insertEventSQL,
 		e.CorrelationID, nullTime(e.ObservedAt), e.SessionID, e.ConversationID, e.ParentConversationID,
 		e.AgentID, e.UserID,
-		e.Provider, e.Model, e.Configuration, e.Protocol, e.StatusCode, span)
+		e.Provider, e.Model, e.Configuration, e.Protocol, e.StatusCode, e.TokensIn, e.TokensOut, span)
 	if err != nil {
 		return fmt.Errorf("store: upsert request event: %w", err)
 	}
@@ -229,7 +239,7 @@ func scanRequestEvent(s rowScanner) (RequestEvent, error) {
 	var e RequestEvent
 	if err := s.Scan(&e.CorrelationID, &e.ObservedAt, &e.SessionID, &e.ConversationID, &e.ParentConversationID,
 		&e.AgentID, &e.UserID,
-		&e.Provider, &e.Model, &e.Configuration, &e.Protocol, &e.StatusCode, &e.SpanEvent); err != nil {
+		&e.Provider, &e.Model, &e.Configuration, &e.Protocol, &e.StatusCode, &e.TokensIn, &e.TokensOut, &e.SpanEvent); err != nil {
 		return RequestEvent{}, fmt.Errorf("store: scan request event: %w", err)
 	}
 	return e, nil

@@ -74,9 +74,10 @@ const testContentCap = 16 * 1024
 func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 	// Single-writer model: the span carries GenAI semconv AND the gateway facts
 	// (sluice.*). EventFromSpan projects provider/model/configuration/protocol/
-	// status/identity to columns and stores the COMPLETE span (every attribute +
-	// content + derived latency/tags) into SpanEvent. The measurement values
-	// (tokens, latency, streaming, method) are read back out of the blob via
+	// status/identity AND the input/output token counts (#318) to columns, and
+	// stores the COMPLETE span (every attribute + content + derived latency/tags)
+	// into SpanEvent. The remaining measurements (latency, streaming, method, the
+	// cached / cache-creation token counts) are read back out of the blob via
 	// SpanFields, not off dedicated columns.
 	span := &tracepb.Span{
 		StartTimeUnixNano: 1_000_000_000,
@@ -113,6 +114,10 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 	}
 	if e.SessionID != "sess-9" || e.AgentID != "agt-9" || e.UserID != "usr-9" {
 		t.Errorf("identity columns = %+v", e)
+	}
+	// Promoted token columns (#318) — projected off the span, not just in the blob.
+	if e.TokensIn != 10 || e.TokensOut != 20 {
+		t.Errorf("token columns = (in %d, out %d), want (10, 20)", e.TokensIn, e.TokensOut)
 	}
 	// observed_at is the SPAN START time, not ingest now().
 	if e.ObservedAt.UnixNano() != 1_000_000_000 {
