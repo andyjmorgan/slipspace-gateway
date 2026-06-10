@@ -89,6 +89,10 @@ type fakeQuerier struct {
 	execCalls   int
 	execFailAt  int // fail the Nth Exec call (1-based); 0 = use execErr for all
 	beginCalls  int
+	// querySQL records the SQL text of every Query call so tests can assert on
+	// the statements a method actually issues (e.g. the blob-discipline
+	// tripwires).
+	querySQL []string
 }
 
 func (q *fakeQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -101,8 +105,9 @@ func (q *fakeQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, 
 	}
 	return pgconn.CommandTag{}, q.execErr
 }
-func (q *fakeQuerier) Query(context.Context, string, ...any) (rows, error) {
+func (q *fakeQuerier) Query(_ context.Context, sql string, _ ...any) (rows, error) {
 	q.queryCalls++
+	q.querySQL = append(q.querySQL, sql)
 	if q.queryFailAt != 0 && q.queryCalls == q.queryFailAt {
 		return nil, errors.New("query failed")
 	}

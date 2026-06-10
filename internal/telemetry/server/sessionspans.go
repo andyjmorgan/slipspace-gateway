@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"strconv"
@@ -18,12 +19,21 @@ import (
 // — the gen_ai span the OTLP ingest stored verbatim — never from Records
 // (invariant #4; renderer contract: "spans only, no Record pulls").
 //
-// Truncation policy: full fidelity. Text and tool arguments are served whole;
-// the contract's *_chars fields are populated with the true size (so they
-// always equal the served length and the renderer's "showing first N of M"
-// cap notice never fires). The gateway's own emission caps
-// (SLUICE_OTEL_CAPTURE_CONTENT) and the ingest content bound already keep the
-// blob finite, so no additional server-side cap is applied here.
+// Memory discipline: the endpoint is keyset-paged on the wire
+// ({spans, next_cursor}; default 200 spans, max 500) and the store streams
+// rows through a callback, so the handler holds at most one full span_event
+// blob plus one page of capped DTOs — never the whole session. The pre-paging
+// single-shot array peaked at 600 MB - 1 GB on big sessions and OOM-killed
+// the 512 Mi prod pod (2026-06-10).
+//
+// Truncation policy: each served content field (text, tool args, input_text,
+// output_text) is capped at Server.spanFieldCap bytes (span_field_max_bytes,
+// default 64 KiB; 0 disables), cut on a rune boundary. The contract's *_chars
+// fields carry the TRUE uncapped sizes, so the renderer's "showing first N of
+// M" notice fires exactly when the server truncated. This revises the v1
+// "full fidelity" decision: serving unbounded fields is unsafe while ingest
+// content caps are disabled (content_max_bytes: 0), and 64 KiB per field
+// keeps any realistic page to tens of MB.
 
 // span_event blob keys the projection reads beyond what store.SpanFields
 // models. The names are the OTel attribute keys the gateway emits (see
@@ -41,42 +51,51 @@ const (
 	blobKeyGenAIContent     = "gen_ai_content"
 )
 
-// handleSessionSpans serves the SessionSpansDTO v1 array for a session: one
-// element per request event, oldest-first (ordered by `at` — EventsBySession's
-// (observed_at, correlation_id) order). 404 mirrors the sibling
-// /sessions/{id} when no event carries the session id.
+// handleSessionSpans serves one SessionSpansDTO v1 page for a session: one
+// element per request event, oldest-first ((observed_at, correlation_id)
+// order), wrapped in {spans, next_cursor}. ?cursor= pages forward (the same
+// keyset cursor convention as the event list); ?limit= sizes the page
+// (default 200, max 500, store-enforced). Each row is projected to its capped
+// DTO inside the store's streaming callback so the full blob of only one span
+// is live at a time. 404 mirrors the sibling /sessions/{id} when the FIRST
+// page of a session is empty; a later page going empty (rows pruned between
+// pages) is a normal end-of-list, not a 404.
 func (s *Server) handleSessionSpans(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	events, err := s.queries.EventsBySession(r.Context(), id)
+	cursor := r.URL.Query().Get("cursor")
+	spans := []adminc.SessionSpan{}
+	next, err := s.queries.EventsBySessionPage(r.Context(), store.SessionPageParams{
+		SessionID: id,
+		Cursor:    cursor,
+		Limit:     limitParam(r, 0),
+	}, func(e store.RequestEvent) error {
+		spans = append(spans, sessionSpanFromEvent(e, s.spanFieldCap))
+		return nil
+	})
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidCursor) {
+			writeError(w, http.StatusBadRequest, "invalid cursor")
+			return
+		}
 		s.queryError(w, "session spans", err)
 		return
 	}
-	if len(events) == 0 {
+	if len(spans) == 0 && cursor == "" {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, mapSessionSpans(events))
-}
-
-// mapSessionSpans projects a session's events (assumed oldest-first) onto the
-// DTO array. Always returns a non-nil slice so the wire shape is `[]`, never
-// `null`.
-func mapSessionSpans(events []store.RequestEvent) []adminc.SessionSpan {
-	out := make([]adminc.SessionSpan, 0, len(events))
-	for _, e := range events {
-		out = append(out, sessionSpanFromEvent(e))
-	}
-	return out
+	writeJSON(w, http.StatusOK, adminc.SessionSpansPage{Spans: spans, NextCursor: next})
 }
 
 // sessionSpanFromEvent projects one request event onto its DTO element. The
 // identity/scalar fields come from the promoted columns; latency, upstream
 // status, time-to-first-chunk, finish reasons, usage, and the content
-// envelopes are decoded from the span_event blob. A missing or malformed blob
-// degrades to nulls/empty envelopes — never an error — matching how the rest
-// of the console renders a column-only row.
-func sessionSpanFromEvent(e store.RequestEvent) adminc.SessionSpan {
+// envelopes are decoded from the span_event blob. fieldCap bounds each served
+// content field in bytes (<= 0 disables); *_chars always carry the true
+// sizes. A missing or malformed blob degrades to nulls/empty envelopes —
+// never an error — matching how the rest of the console renders a column-only
+// row.
+func sessionSpanFromEvent(e store.RequestEvent, fieldCap int) adminc.SessionSpan {
 	var blob map[string]json.RawMessage
 	if len(e.SpanEvent) > 0 {
 		// A malformed blob leaves the map nil; every lookup below tolerates that.
@@ -124,11 +143,25 @@ func sessionSpanFromEvent(e store.RequestEvent) adminc.SessionSpan {
 	if raw, ok := blob[blobKeyGenAIContent]; ok {
 		var c spanContent
 		if json.Unmarshal(raw, &c) == nil {
-			span.OutputParts, span.OutputText, span.OutputTextChars = outputEnvelope(c.OutputMessages)
-			span.InputParts, span.InputText, span.InputTextChars = inputEnvelope(c.InputMessages)
+			span.OutputParts, span.OutputText, span.OutputTextChars = outputEnvelope(c.OutputMessages, fieldCap)
+			span.InputParts, span.InputText, span.InputTextChars = inputEnvelope(c.InputMessages, fieldCap)
 		}
 	}
 	return span
+}
+
+// capText bounds s to at most maxBytes bytes (<= 0 disables), cutting on a
+// rune boundary so a capped field is always valid UTF-8. Callers pair it with
+// the true charCount so the renderer can tell a cap fired.
+func capText(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // usageFromBlob reads the token rollup. Presence-keyed: a count is null when
@@ -193,8 +226,9 @@ type spanPart struct {
 // output text. Server-executed tools appear as a tool_call followed by a
 // tool_call_response on the same span — both ride through with their join id.
 // Part types outside the contract enum (pass-through media blocks) map to
-// "unknown" so the renderer can count them without guessing.
-func outputEnvelope(msgs []spanMessage) ([]adminc.SessionSpanOutputPart, *string, *int) {
+// "unknown" so the renderer can count them without guessing. fieldCap bounds
+// each served field; *_chars carry the true sizes.
+func outputEnvelope(msgs []spanMessage, fieldCap int) ([]adminc.SessionSpanOutputPart, *string, *int) {
 	parts := []adminc.SessionSpanOutputPart{}
 	var text strings.Builder
 	hasText := false
@@ -214,13 +248,13 @@ func outputEnvelope(msgs []spanMessage) ([]adminc.SessionSpanOutputPart, *string
 				if len(p.Arguments) > 0 {
 					args := string(p.Arguments)
 					n := charCount(args)
-					part.Args = args
+					part.Args = capText(args, fieldCap)
 					part.ArgsChars = &n
 				}
 				parts = append(parts, part)
 			case "tool_call_response":
 				n := charCount(p.Result)
-				parts = append(parts, adminc.SessionSpanOutputPart{Type: "tool_call_response", ID: p.ID, Chars: &n, Text: p.Result})
+				parts = append(parts, adminc.SessionSpanOutputPart{Type: "tool_call_response", ID: p.ID, Chars: &n, Text: capText(p.Result, fieldCap)})
 			default:
 				parts = append(parts, adminc.SessionSpanOutputPart{Type: "unknown"})
 			}
@@ -231,14 +265,16 @@ func outputEnvelope(msgs []spanMessage) ([]adminc.SessionSpanOutputPart, *string
 	}
 	s := text.String()
 	n := charCount(s)
+	s = capText(s, fieldCap)
 	return parts, &s, &n
 }
 
 // inputEnvelope flattens the trailing input delta (the gateway captures only
 // the NEW turn of each request) into the DTO's input parts plus the
 // concatenated human text. Only the contract's part types survive — text and
-// tool_call_response — since media blocks carry no text to render.
-func inputEnvelope(msgs []spanMessage) ([]adminc.SessionSpanInputPart, *string, *int) {
+// tool_call_response — since media blocks carry no text to render. fieldCap
+// bounds each served field; *_chars carry the true sizes.
+func inputEnvelope(msgs []spanMessage, fieldCap int) ([]adminc.SessionSpanInputPart, *string, *int) {
 	parts := []adminc.SessionSpanInputPart{}
 	var text strings.Builder
 	hasText := false
@@ -247,12 +283,12 @@ func inputEnvelope(msgs []spanMessage) ([]adminc.SessionSpanInputPart, *string, 
 			switch p.Type {
 			case "text":
 				n := charCount(p.Content)
-				parts = append(parts, adminc.SessionSpanInputPart{Type: "text", Chars: &n, Text: p.Content})
+				parts = append(parts, adminc.SessionSpanInputPart{Type: "text", Chars: &n, Text: capText(p.Content, fieldCap)})
 				text.WriteString(p.Content)
 				hasText = true
 			case "tool_call_response":
 				n := charCount(p.Result)
-				parts = append(parts, adminc.SessionSpanInputPart{Type: "tool_call_response", ID: p.ID, Chars: &n, Text: p.Result})
+				parts = append(parts, adminc.SessionSpanInputPart{Type: "tool_call_response", ID: p.ID, Chars: &n, Text: capText(p.Result, fieldCap)})
 			}
 		}
 	}
@@ -261,6 +297,7 @@ func inputEnvelope(msgs []spanMessage) ([]adminc.SessionSpanInputPart, *string, 
 	}
 	s := text.String()
 	n := charCount(s)
+	s = capText(s, fieldCap)
 	return parts, &s, &n
 }
 

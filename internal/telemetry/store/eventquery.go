@@ -395,15 +395,68 @@ SELECT session_id, messages, subagents, total_tokens, started, last_at, models F
 	return out, next, nil
 }
 
-// EventsBySession returns every event in a session, oldest first, so the
-// session view can render the conversation in order. The composite
+// sessionRollupColumns is the narrow projection the session rollup reads: the
+// scalar columns plus span_event with the gen_ai_content sub-object REMOVED.
+// The rollup (SessionView / MessageEntry) needs the span's small attributes
+// (tags, rule chain, attempts, sources, usage) but never the captured content
+// — which is the only unbounded key on the blob (~hundreds of KB per row when
+// ingest caps are off). Stripping it in SQL keeps a whole-session scan to the
+// few-KB residue per row instead of materializing every full blob in memory
+// (the 2026-06-10 prod OOM: 688 rows x ~410 KB ≈ 280 MB per request).
+const sessionRollupColumns = `correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, tokens_in, tokens_out, span_event - 'gen_ai_content' AS span_event`
+
+// Session-scoped read bounds. sessionScanBatch is the internal keyset batch
+// the rollup pages the table with; sessionPageDefault / sessionPageMax bound
+// the wire page of EventsBySessionPage (the /sessions/{id}/spans feed, whose
+// rows carry the full blob and so get a smaller cap than the event list).
+const (
+	sessionScanBatch   = 200
+	sessionPageDefault = 200
+	sessionPageMax     = 500
+)
+
+// EventsBySessionRollup returns every event in a session, oldest first, in the
+// narrow rollup projection (span_event stripped of gen_ai_content) so the
+// session view can render the conversation in order without ever
+// materializing the full blobs. The scan is internally keyset-batched
+// (sessionScanBatch rows per query) and the composite
 // (observed_at, correlation_id) keeps it deterministic.
-func (s *Store) EventsBySession(ctx context.Context, sessionID string) ([]RequestEvent, error) {
+func (s *Store) EventsBySessionRollup(ctx context.Context, sessionID string) ([]RequestEvent, error) {
 	if sessionID == "" {
 		return nil, nil
 	}
-	rows, err := s.db.Query(ctx,
-		`SELECT `+requestEventColumns+` FROM request_events WHERE session_id=$1 ORDER BY observed_at, correlation_id`, sessionID)
+	var out []RequestEvent
+	var after *eventCursor
+	for {
+		page, err := s.sessionEventsAsc(ctx, sessionRollupColumns, sessionID, after, sessionScanBatch)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < sessionScanBatch {
+			return out, nil
+		}
+		last := page[len(page)-1]
+		after = &eventCursor{ObservedAt: last.ObservedAt, Correlation: last.CorrelationID}
+	}
+}
+
+// sessionEventsAsc runs one ascending keyset batch over a session's events:
+// rows after the cursor position (exclusive), ordered by
+// (observed_at, correlation_id), capped at limit.
+func (s *Store) sessionEventsAsc(ctx context.Context, columns, sessionID string, after *eventCursor, limit int) ([]RequestEvent, error) {
+	args := []any{sessionID}
+	q := `SELECT ` + columns + ` FROM request_events WHERE session_id=$1`
+	if after != nil {
+		args = append(args, after.ObservedAt)
+		oIdx := len(args)
+		args = append(args, after.Correlation)
+		q += fmt.Sprintf(` AND (observed_at, correlation_id) > ($%d, $%d)`, oIdx, len(args))
+	}
+	args = append(args, limit)
+	q += fmt.Sprintf(` ORDER BY observed_at, correlation_id LIMIT $%d`, len(args))
+
+	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: events by session: %w", err)
 	}
@@ -418,4 +471,84 @@ func (s *Store) EventsBySession(ctx context.Context, sessionID string) ([]Reques
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// SessionPageParams is the input to EventsBySessionPage: the session, an
+// opaque keyset Cursor from a prior call (empty = first page), and a Limit
+// (<= 0 defaults to sessionPageDefault, capped at sessionPageMax).
+type SessionPageParams struct {
+	SessionID string
+	Cursor    string
+	Limit     int
+}
+
+// EventsBySessionPage streams one keyset page of a session's events — full
+// projection including the span_event blob — oldest first, invoking fn once
+// per row. The callback shape is deliberate: each event (and its potentially
+// huge blob) is only live for the duration of its fn call, so a caller that
+// projects rows down to a bounded DTO holds O(1 full blobs) at a time, never
+// O(page). It fetches Limit+1 rows to learn whether a further page exists;
+// when it does, next encodes the last delivered row's position (same cursor
+// encoding as the event list). An empty next means the last page; a malformed
+// Cursor is ErrInvalidCursor; an fn error aborts the scan and is returned.
+func (s *Store) EventsBySessionPage(ctx context.Context, p SessionPageParams, fn func(RequestEvent) error) (string, error) {
+	if p.SessionID == "" {
+		return "", nil
+	}
+	limit := p.Limit
+	if limit <= 0 {
+		limit = sessionPageDefault
+	}
+	if limit > sessionPageMax {
+		limit = sessionPageMax
+	}
+
+	args := []any{p.SessionID}
+	q := `SELECT ` + requestEventColumns + ` FROM request_events WHERE session_id=$1`
+	if p.Cursor != "" {
+		cur, err := decodeCursor(p.Cursor)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, cur.ObservedAt)
+		oIdx := len(args)
+		args = append(args, cur.Correlation)
+		q += fmt.Sprintf(` AND (observed_at, correlation_id) > ($%d, $%d)`, oIdx, len(args))
+	}
+	args = append(args, limit+1)
+	q += fmt.Sprintf(` ORDER BY observed_at, correlation_id LIMIT $%d`, len(args))
+
+	rows, err := s.db.Query(ctx, q, args...)
+	if err != nil {
+		return "", fmt.Errorf("store: session events page: %w", err)
+	}
+	defer rows.Close()
+
+	n := 0
+	var last eventCursor
+	more := false
+	for rows.Next() {
+		if n == limit {
+			// The +1 sentinel row: a further page exists. Never scanned or
+			// delivered — it belongs to the next page.
+			more = true
+			break
+		}
+		e, serr := scanRequestEvent(rows)
+		if serr != nil {
+			return "", serr
+		}
+		if err := fn(e); err != nil {
+			return "", err
+		}
+		last = eventCursor{ObservedAt: e.ObservedAt, Correlation: e.CorrelationID}
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if more {
+		return encodeCursor(last), nil
+	}
+	return "", nil
 }

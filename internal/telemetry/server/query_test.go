@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,9 @@ type fakeQueries struct {
 	// lastSessionParams records the SessionListParams of the most recent
 	// ListSessions call so the session-list filter-plumbing test can assert on it.
 	lastSessionParams store.SessionListParams
+	// lastPageParams records the SessionPageParams of the most recent
+	// EventsBySessionPage call so the spans paging tests can assert plumbing.
+	lastPageParams store.SessionPageParams
 }
 
 func (f *fakeQueries) QueryDashboardSummary(context.Context, store.DashboardParams) (store.DashboardSummary, error) {
@@ -66,8 +70,43 @@ func (f *fakeQueries) GetRequestEvent(context.Context, string) (store.RequestEve
 func (f *fakeQueries) GetRecordBody(context.Context, string) ([]byte, error) {
 	return f.recordBody, f.recordErr
 }
-func (f *fakeQueries) EventsBySession(context.Context, string) ([]store.RequestEvent, error) {
+func (f *fakeQueries) EventsBySessionRollup(context.Context, string) ([]store.RequestEvent, error) {
 	return f.session, f.sessionErr
+}
+
+// EventsBySessionPage emulates the store's keyset paging over f.session: an
+// integer-index cursor (opaque to the handler), limit defaulted/capped like
+// the store, one fn call per row in order.
+func (f *fakeQueries) EventsBySessionPage(_ context.Context, p store.SessionPageParams, fn func(store.RequestEvent) error) (string, error) {
+	f.lastPageParams = p
+	if f.sessionErr != nil {
+		return "", f.sessionErr
+	}
+	start := 0
+	if p.Cursor != "" {
+		n, err := strconv.Atoi(p.Cursor)
+		if err != nil {
+			return "", store.ErrInvalidCursor
+		}
+		start = n
+	}
+	limit := p.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	end := start + limit
+	if end > len(f.session) {
+		end = len(f.session)
+	}
+	for _, e := range f.session[start:end] {
+		if err := fn(e); err != nil {
+			return "", err
+		}
+	}
+	if end < len(f.session) {
+		return strconv.Itoa(end), nil
+	}
+	return "", nil
 }
 func (f *fakeQueries) ListSessions(_ context.Context, p store.SessionListParams) ([]store.SessionSummary, string, error) {
 	f.lastSessionParams = p
@@ -81,7 +120,7 @@ func newQueryServer(t *testing.T, q Queries) http.Handler {
 		t.Fatalf("bcrypt: %v", err)
 	}
 	console := config.Console{Username: "admin", PasswordHash: string(hash)}
-	return New(console, stubPinger{}, q, nil, discardLogger()).Handler()
+	return New(console, stubPinger{}, q, nil, config.DefaultSpanFieldMaxBytes, discardLogger()).Handler()
 }
 
 // get runs a GET through the handler and returns the recorder (no http.Response,
@@ -107,7 +146,7 @@ func TestQuery_RequiresAuth(t *testing.T) {
 func TestQuery_NoQueriesDisablesRoutes(t *testing.T) {
 	// queries nil -> route not registered -> falls through to the console shell.
 	hash, _ := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.MinCost)
-	h := New(config.Console{Username: "admin", PasswordHash: string(hash)}, stubPinger{}, nil, nil, discardLogger()).Handler()
+	h := New(config.Console{Username: "admin", PasswordHash: string(hash)}, stubPinger{}, nil, nil, config.DefaultSpanFieldMaxBytes, discardLogger()).Handler()
 	resp := get(t, h, "/api/v1/dashboard/summary", true)
 	// The catch-all GET / console handler answers 200 with the shell text.
 	if resp.Code != http.StatusOK {
@@ -314,7 +353,7 @@ func TestFacets_NilSlicesAndError(t *testing.T) {
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestSession(t *testing.T) {
-	// EventsBySession returns oldest-first; the handler must preserve that order
+	// EventsBySessionRollup returns oldest-first; the handler must preserve that order
 	// and project each event onto the tagged MessageEntry shape (parsed from the
 	// span_event blob, not a column) with totals over the session.
 	q := &fakeQueries{session: []store.RequestEvent{

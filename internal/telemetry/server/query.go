@@ -20,7 +20,13 @@ type Queries interface {
 	GetRequestEvent(ctx context.Context, correlationID string) (store.RequestEvent, error)
 	GetRecordBody(ctx context.Context, correlationID string) ([]byte, error)
 	ListSessions(ctx context.Context, p store.SessionListParams) ([]store.SessionSummary, string, error)
-	EventsBySession(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
+	// EventsBySessionRollup is the whole-session scan in the NARROW projection
+	// (span_event stripped of gen_ai_content) — bounded per row, safe to hold
+	// for a session. EventsBySessionPage is the only full-blob session read and
+	// is keyset-paged + callback-streamed so a caller never holds more than one
+	// full blob at a time.
+	EventsBySessionRollup(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
+	EventsBySessionPage(ctx context.Context, p store.SessionPageParams, fn func(store.RequestEvent) error) (string, error)
 	Facets(ctx context.Context) (store.Facets, error)
 }
 
@@ -196,9 +202,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, mapSessionList(sessions, next))
 }
 
+// handleSession serves the session rollup. It reads the narrow rollup
+// projection — the gen_ai content never leaves Postgres for this view — so a
+// large session costs O(rows x stripped-blob), not O(rows x full-blob).
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	events, err := s.queries.EventsBySession(r.Context(), id)
+	events, err := s.queries.EventsBySessionRollup(r.Context(), id)
 	if err != nil {
 		s.queryError(w, "session", err)
 		return

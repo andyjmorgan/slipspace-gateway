@@ -79,6 +79,14 @@ export type SessionSpan = {
   output_text_chars?: number | null
 }
 
+// SessionSpansPage is the paged wire envelope of GET /sessions/{id}/spans:
+// one keyset page plus the cursor for the next (empty on the last page). The
+// server pages so a large session never materializes in one response.
+export type SessionSpansPage = {
+  spans: SessionSpan[]
+  next_cursor: string
+}
+
 // SessionSpansResult tags the span list with where it came from: "api" is the
 // live projection; "fixture" is the bundled synthetic fallback served when the
 // backend has no /spans endpoint yet, so the page can label the data honestly.
@@ -88,16 +96,33 @@ export type SessionSpansResult = {
 }
 
 /**
- * Fetches the session's gen_ai span list for the lifecycle page. When the
- * endpoint 404s (a backend that predates the spans projection), falls back to
- * the bundled synthetic fixture — lazily imported so it stays out of the main
- * chunk — and says so via `source`. Anything else (incl. UnauthorizedError)
- * bubbles up.
+ * Fetches the session's complete gen_ai span list for the lifecycle page by
+ * walking the paged endpoint (follows next_cursor until exhausted — the page
+ * renders from the full list, so fetching in pages only bounds SERVER memory).
+ * A bare-array response (a backend predating paging) is accepted as the full
+ * list. When the endpoint 404s (a backend that predates the spans projection
+ * entirely), falls back to the bundled synthetic fixture — lazily imported so
+ * it stays out of the main chunk — and says so via `source`. Anything else
+ * (incl. UnauthorizedError) bubbles up.
  */
 export async function fetchSessionSpans(id: string): Promise<SessionSpansResult> {
   try {
-    const spans = await apiFetch<SessionSpan[]>(`/api/v1/sessions/${encodeURIComponent(id)}/spans`)
-    return { spans: spans ?? [], source: "api" }
+    const spans: SessionSpan[] = []
+    let cursor = ""
+    for (;;) {
+      const base = `/api/v1/sessions/${encodeURIComponent(id)}/spans`
+      const path = cursor ? `${base}?cursor=${encodeURIComponent(cursor)}` : base
+      const page = await apiFetch<SessionSpansPage | SessionSpan[]>(path)
+      if (Array.isArray(page)) {
+        // Pre-paging backend: the whole session in one array.
+        return { spans: page, source: "api" }
+      }
+      spans.push(...(page?.spans ?? []))
+      if (!page?.next_cursor) {
+        return { spans, source: "api" }
+      }
+      cursor = page.next_cursor
+    }
   } catch (err) {
     if ((err as { status?: number }).status === 404) {
       const { SESSION_SPANS_FIXTURE } = await import("@/telemetry/mock/session-spans-fixture")

@@ -86,7 +86,9 @@ type service struct {
 }
 
 // startService spawns a fresh telemetry binary wired to the shared Postgres.
-func startService(t *testing.T) *service {
+// extraConfig lines (top-level YAML keys, e.g. "content_max_bytes: 0") are
+// appended to the generated config.
+func startService(t *testing.T, extraConfig ...string) *service {
 	t.Helper()
 	if startErr != nil {
 		t.Skipf("postgres container unavailable: %v", startErr)
@@ -110,6 +112,9 @@ gateways:
   - id: %s
     hmac_secret: %s
 `, httpPort, otlpPort, sharedDSN, testUser, string(hash), testGatewayID, testSecret)
+	for _, line := range extraConfig {
+		cfg += line + "\n"
+	}
 
 	cfgPath := filepath.Join(t.TempDir(), "telemetry.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
@@ -793,8 +798,10 @@ func doubleKV(k string, v float64) *commonpb.KeyValue {
 // SessionSpansDTO v1 projection (span-dto.schema.json) from ingested gen_ai
 // spans alone: per-span scalars + usage (incl. the server_tool_use counter
 // map) from span attributes, and the input/output part envelopes from the
-// gen_ai content attributes — full fidelity (chars == served length), ordered
-// by at, with the tool_call -> tool_call_response join id intact across spans.
+// gen_ai content attributes — served whole below the default field cap
+// (chars == served length), ordered by at, with the tool_call ->
+// tool_call_response join id intact across spans, in the paged
+// {spans, next_cursor} envelope.
 func TestE2E_SessionSpansDTO(t *testing.T) {
 	svc := startService(t)
 
@@ -829,12 +836,16 @@ func TestE2E_SessionSpansDTO(t *testing.T) {
 		strKV("gen_ai.output.messages", `[{"role":"assistant","parts":[{"type":"text","content":"all green"}]}]`),
 	)
 
-	var spans []adminc.SessionSpan
-	if code := svc.getJSON(t, "/api/v1/sessions/lifecycle-1/spans", &spans); code != http.StatusOK {
+	var page adminc.SessionSpansPage
+	if code := svc.getJSON(t, "/api/v1/sessions/lifecycle-1/spans", &page); code != http.StatusOK {
 		t.Fatalf("spans status = %d", code)
 	}
+	spans := page.Spans
 	if len(spans) != 2 {
 		t.Fatalf("spans = %d, want 2", len(spans))
+	}
+	if page.NextCursor != "" {
+		t.Fatalf("next_cursor = %q, want empty (single page)", page.NextCursor)
 	}
 	// Ordered by at (oldest first); both spans were stamped time.Now() in send
 	// order, so span 1 leads.
@@ -920,5 +931,159 @@ func TestE2E_SessionSpansDTO(t *testing.T) {
 	// input_text stays null on a tool-continuation turn (no human text part).
 	if b.InputText != nil {
 		t.Errorf("input_text = %v, want null", *b.InputText)
+	}
+}
+
+// sendSpanBatch exports a batch of pre-built spans over one OTLP connection
+// (the bulk path the large-session test uses; per-span dials would dominate
+// the runtime at 300 spans).
+func sendSpanBatch(t *testing.T, client collectortrace.TraceServiceClient, spans []*tracepb.Span) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err := client.Export(ctx, &collectortrace.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			ScopeSpans: []*tracepb.ScopeSpans{{Spans: spans}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("otlp export batch: %v", err)
+	}
+}
+
+// TestE2E_SessionSpansLargeSessionPaged is the OOM regression e2e (2026-06-10
+// prod: a 688-message session of ~410 KB blobs OOM-killed the 512 Mi pod via
+// the unbounded session reads). It mirrors the incident shape — ingest content
+// cap DISABLED (content_max_bytes: 0) and a session of 300 spans carrying
+// ~100 KB content each — and proves through the real binary that:
+//
+//   - GET /sessions/{id} answers 200 with the full rollup (the narrow
+//     projection never materializes the content);
+//   - GET /sessions/{id}/spans pages (default 200/page), the cursor walk is
+//     stable/ordered/complete, and it equals a single max-size page;
+//   - the per-field cap holds: served input_text is span_field_max_bytes
+//     while input_text_chars reports the true uncapped size.
+//
+// Heap assertions are deliberately omitted: the spawned binary exposes no
+// runtime-metrics surface, so this stays functional-only; the memory bounds
+// are pinned structurally by the store/server unit tests (blob-discipline
+// tripwire + paging/cap tests).
+func TestE2E_SessionSpansLargeSessionPaged(t *testing.T) {
+	svc := startService(t, "content_max_bytes: 0", "span_field_max_bytes: 65536")
+
+	const (
+		nSpans      = 300
+		contentSize = 100_000
+		fieldCap    = 65536
+		batchSize   = 25 // ~2.5 MB per export, under the 4 MB gRPC default
+	)
+	filler := strings.Repeat("x", contentSize)
+	inputMessages := `[{"role":"user","parts":[{"type":"text","content":"` + filler + `"}]}]`
+
+	conn, err := grpc.NewClient(svc.otlpAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("otlp dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	client := collectortrace.NewTraceServiceClient(conn)
+
+	base := time.Now().Add(-10 * time.Minute)
+	var batch []*tracepb.Span
+	for i := 0; i < nSpans; i++ {
+		start := base.Add(time.Duration(i) * time.Second)
+		batch = append(batch, &tracepb.Span{
+			Name:              "gen_ai.request",
+			StartTimeUnixNano: uint64(start.UnixNano()),                             //nolint:gosec // test timestamp
+			EndTimeUnixNano:   uint64(start.Add(200 * time.Millisecond).UnixNano()), //nolint:gosec // test timestamp
+			Attributes: []*commonpb.KeyValue{
+				strKV("sluice.correlation_id", fmt.Sprintf("big-%03d", i)),
+				strKV("sluice.session_id", "big-session"),
+				strKV("gen_ai.conversation.id", "big-session"),
+				strKV("gen_ai.provider.name", "anthropic"),
+				strKV("gen_ai.request.model", "claude-x"),
+				intKV("http.response.status_code", 200),
+				intKV("gen_ai.usage.input_tokens", 10),
+				intKV("gen_ai.usage.output_tokens", 5),
+				strKV("gen_ai.input.messages", inputMessages),
+			},
+		})
+		if len(batch) == batchSize {
+			sendSpanBatch(t, client, batch)
+			batch = nil
+		}
+	}
+	if len(batch) > 0 {
+		sendSpanBatch(t, client, batch)
+	}
+
+	// Rollup: 200 with every request and correct totals, content never needed.
+	var sess adminc.SessionView
+	if code := svc.getJSON(t, "/api/v1/sessions/big-session", &sess); code != http.StatusOK {
+		t.Fatalf("session rollup status = %d", code)
+	}
+	if sess.Totals.Requests != nSpans || len(sess.Requests) != nSpans {
+		t.Fatalf("rollup = %d totals / %d requests, want %d", sess.Totals.Requests, len(sess.Requests), nSpans)
+	}
+
+	// Cursor walk with the default page size: complete, ordered, no overlap.
+	var walked []adminc.SessionSpan
+	cursor := ""
+	pages := 0
+	for {
+		path := "/api/v1/sessions/big-session/spans"
+		if cursor != "" {
+			path += "?cursor=" + cursor
+		}
+		var page adminc.SessionSpansPage
+		if code := svc.getJSON(t, path, &page); code != http.StatusOK {
+			t.Fatalf("spans page %d status = %d", pages, code)
+		}
+		walked = append(walked, page.Spans...)
+		pages++
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+		if pages > 10 {
+			t.Fatal("cursor walk did not terminate")
+		}
+	}
+	if pages != 2 {
+		t.Errorf("pages = %d, want 2 (default 200 + 100)", pages)
+	}
+	if len(walked) != nSpans {
+		t.Fatalf("walked %d spans, want %d", len(walked), nSpans)
+	}
+	for i, s := range walked {
+		if want := fmt.Sprintf("big-%03d", i); s.CID != want {
+			t.Fatalf("walked[%d] = %s, want %s (stable oldest-first order)", i, s.CID, want)
+		}
+		if i > 0 && walked[i].At.Before(walked[i-1].At) {
+			t.Fatalf("walked[%d] at %v precedes walked[%d] at %v", i, walked[i].At, i-1, walked[i-1].At)
+		}
+	}
+
+	// Per-field cap: served bytes bounded, *_chars carries the true size.
+	first := walked[0]
+	if first.InputText == nil || len(*first.InputText) != fieldCap {
+		t.Fatalf("input_text served %d bytes, want capped %d", len(*first.InputText), fieldCap)
+	}
+	if first.InputTextChars == nil || *first.InputTextChars != contentSize {
+		t.Fatalf("input_text_chars = %v, want true size %d", first.InputTextChars, contentSize)
+	}
+
+	// One max-size page equals the cursor walk (content identical to the old
+	// single-shot shape, just reassembled).
+	var maxPage adminc.SessionSpansPage
+	if code := svc.getJSON(t, "/api/v1/sessions/big-session/spans?limit=500", &maxPage); code != http.StatusOK {
+		t.Fatalf("max page status = %d", code)
+	}
+	if len(maxPage.Spans) != nSpans || maxPage.NextCursor != "" {
+		t.Fatalf("max page = %d spans, next=%q; want %d, empty", len(maxPage.Spans), maxPage.NextCursor, nSpans)
+	}
+	for i := range maxPage.Spans {
+		if maxPage.Spans[i].CID != walked[i].CID {
+			t.Fatalf("max page[%d] = %s, walk = %s — page boundaries changed content", i, maxPage.Spans[i].CID, walked[i].CID)
+		}
 	}
 }

@@ -379,14 +379,15 @@ whole-table grouped scan, so the console defaults it to a recent window.
 
 #### `GET /api/v1/sessions/{id}`
 
-Handler `handleSession` (lines 161-173). `{id}` is the session id. Returns a
-`stitch.SessionView`: every event sharing the session, **oldest-first**, plus
+Handler `handleSession` (`query.go`). `{id}` is the session id. Returns the
+tagged `contracts/admin.SessionView`: every event sharing the session mapped
+through `mapEntry` (the `MessageEntry` shape), **oldest-first**, plus
 aggregate `totals`:
 
 ```json
 {
   "session_id": "sess-123",
-  "requests": [ { "...": "store.RequestEvent" } ],
+  "requests": [ { "...": "contracts/admin.MessageEntry" } ],
   "totals": { "requests": 4, "errors": 1, "tokens_in": 5120, "tokens_out": 880 }
 }
 ```
@@ -395,20 +396,47 @@ A request with `status_code >= 400` counts as an error
 (`stitch.BuildSessionView`). `404 {"error":"session not found"}` when no event
 carries that session id.
 
+**Memory discipline.** The rollup reads `store.EventsBySessionRollup` — a
+keyset-batched scan over the **narrow projection** that strips
+`gen_ai_content` from `span_event` in SQL (`sessionRollupColumns`), so the
+captured content (the only unbounded key on the blob) never leaves Postgres
+for this view. A whole session costs O(rows × stripped-blob), bounded per row
+regardless of session size. (The pre-fix form selected every full blob into
+memory — ~280 MB on a 688-message session — and OOM-killed the service.)
+
 #### `GET /api/v1/sessions/{id}/spans`
 
 Handler `handleSessionSpans` (`sessionspans.go`). The **session lifecycle**
-feed: a flat array of the session's gen_ai spans in **SessionSpansDTO v1** —
-the shape the lifecycle page renders lanes, gaps, the tool ledger, and exec
-stats from (`contracts/admin.SessionSpan`). One element per request event,
-ordered by `at` (oldest first, `(observed_at, correlation_id)`).
+feed: the session's gen_ai spans in **SessionSpansDTO v1** — the shape the
+lifecycle page renders lanes, gaps, the tool ledger, and exec stats from
+(`contracts/admin.SessionSpan`). One element per request event, ordered by
+`at` (oldest first, `(observed_at, correlation_id)`).
+
+**Keyset-paged** (`contracts/admin.SessionSpansPage`): the response is
+`{"spans": […], "next_cursor": "…"}`. Query params:
+
+| Param | Meaning |
+|---|---|
+| `cursor` | Opaque keyset cursor from a prior `next_cursor` (same encoding as the event list). Empty/absent = first page. |
+| `limit` | Page size (default 200, capped 500). |
+
+`next_cursor` is empty on the last page; `400 {"error":"invalid cursor"}` for
+a malformed cursor. The SPA fetcher (`web/src/lib/session-spans.ts`) follows
+`next_cursor` until exhausted, so the page still renders the complete session
+— paging bounds *server* memory, not the rendered list. The store streams
+rows through a callback (`store.EventsBySessionPage`), so the service holds
+at most one full `span_event` blob plus one page of capped DTOs at a time —
+never the whole session (the pre-paging single-shot array peaked at 600 MB+
+on big sessions and OOM-killed the service).
 
 Everything is projected from the `request_events` columns plus the
 `span_event` blob — the span feed alone, never the lazy `record` blob, so the
 projection works whether or not reporting forwarding was on:
 
 ```json
-[
+{
+ "next_cursor": "",
+ "spans": [
   {
     "cid": "0b8e…",
     "at": "2026-06-10T12:00:00Z",
@@ -437,7 +465,8 @@ projection works whether or not reporting forwarding was on:
     "input_text": null, "input_text_chars": null,
     "output_text": "on it", "output_text_chars": 5
   }
-]
+ ]
+}
 ```
 
 Field sources: `latency_ms` is the blob's derived `sluice.latency_ms`;
@@ -450,22 +479,26 @@ collects every `gen_ai.usage.server_tool_use.*` counter. The part envelopes
 come from the blob's `gen_ai_content` (`{input_messages, output_messages}`,
 present only when content capture was on): output parts map the normalizer's
 uniform shape onto `text`/`reasoning` (size only), `tool_call`
-(`id`/`name`/raw `args` JSON), and `tool_call_response` (`id` + full result
+(`id`/`name`/raw `args` JSON), and `tool_call_response` (`id` + result
 `text` — server-executed tools land call + response on the same span); other
 block types (media) become `unknown`. Input parts keep only `text` and
 `tool_call_response` — a `tool_call_response.id` here joins a *prior* span's
 `tool_call.id` (the renderer's exact-ledger rule).
 
-**Truncation policy: none.** Text and tool arguments are served whole, and
-every `*_chars` field equals the served length (counted in Unicode code
-points), so the renderer's "showing first N of M (server cap)" notice never
-fires. The chars fields stay in the contract because the DTO schema makes
-truncation a server prerogative — a future cap changes only this projection.
-The blob itself is already bounded upstream by the gateway's content-capture
-caps and the ingest `content_max_bytes`.
+**Truncation policy: per-field server cap.** Each served content field —
+text, tool `args`, `input_text`, `output_text` — is capped at
+`span_field_max_bytes` (default 65536; `0` disables), cut on a rune boundary
+so capped fields stay valid UTF-8. Every `*_chars` field carries the TRUE
+uncapped size (counted in Unicode code points), so the renderer's "showing
+first N of M (server cap)" notice fires exactly when the server truncated.
+This revises the v1 "no truncation" decision: full fidelity is unsafe while
+ingest content caps are disabled (`content_max_bytes: 0`), and 64 KiB per
+field keeps any realistic page to tens of MB. Truncation remains a server
+prerogative per the DTO schema — a cap change never changes the renderer.
 
-`404 {"error":"session not found"}` when no event carries that session id
-(same as the sibling `/sessions/{id}`).
+`404 {"error":"session not found"}` when the **first** page of a session is
+empty (same as the sibling `/sessions/{id}`); an empty continuation page (a
+`cursor` was given) is a normal `200` end-of-list.
 
 > **Invariant #4 compliance.** `sessions/{id}` and `events/{id}` assemble their
 > views from the `request_events` entity (and, for `events/{id}`, the lazily-joined

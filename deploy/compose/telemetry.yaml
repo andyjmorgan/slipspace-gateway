@@ -8,10 +8,17 @@ http_bind: "0.0.0.0:8686"
 otlp_bind: "0.0.0.0:8687"
 
 # Per-request cap (bytes) on the gen_ai content the console keeps. Content is a
-# best-effort console aid — the audit copy travels the Record feed — so it is
-# bounded by default (16384). Raise it to keep larger prompts/responses, or set
-# 0 to disable the cap entirely. Omit to take the default.
-# content_max_bytes: 0
+# best-effort console aid — the audit copy travels the Record feed. Raise it to
+# keep larger prompts/responses, or omit to take the default (16384). Avoid 0
+# (no cap): unbounded content makes the console's memory profile a function of
+# the largest stored session.
+content_max_bytes: 65536
+
+# Per-field cap (bytes) the session-spans projection applies to served content
+# (text / tool args / input_text / output_text). The *_chars fields keep the
+# true sizes so the console's "showing first N of M" notice stays accurate.
+# Omit to take the default (65536); 0 disables the cap.
+span_field_max_bytes: 65536
 
 postgres:
   # Matches the telemetry-db service in docker-compose.telemetry.yaml.

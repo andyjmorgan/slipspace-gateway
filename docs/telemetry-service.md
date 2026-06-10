@@ -130,6 +130,13 @@ otlp_bind: "0.0.0.0:8687"
 # set 0 (or negative) to disable the cap and store the full content.
 content_max_bytes: 16384
 
+# Per-field cap (bytes) the console's session-spans projection
+# (GET /api/v1/sessions/{id}/spans) applies to served content fields — text,
+# tool args, input_text, output_text. The *_chars fields keep the true
+# uncapped sizes, so the console's "showing first N of M" notice fires exactly
+# when this cap truncated. Omit to take the default (65536); 0 disables.
+span_field_max_bytes: 65536
+
 postgres:
   # libpq/pgx connection string. Required.
   dsn: "postgres://telemetry:telemetry@telemetry-db:5432/telemetry?sslmode=disable"
@@ -151,7 +158,8 @@ gateways:
 |---|---|---|---|---|
 | `http_bind` | string | `0.0.0.0:8686` | Console + HMAC webhook listener | `config.go:24,38,114` |
 | `otlp_bind` | string | `0.0.0.0:8687` | OTLP gRPC listener (traces + metrics) | `config.go:25,40,117` |
-| `content_max_bytes` | int (pointer) | `16384` | Per-request gen_ai content cap from OTLP spans. Unset → default; `0`/negative → unlimited | `config.go:33,45,125` |
+| `content_max_bytes` | int (pointer) | `16384` | Per-request gen_ai content cap from OTLP spans. Unset → default; `0`/negative → unlimited | `config.go` (`DefaultContentMaxBytes`, `ContentCap`) |
+| `span_field_max_bytes` | int (pointer) | `65536` | Per-field content cap the session-spans projection applies to served text/args. Unset → default; `0`/negative → unlimited | `config.go` (`DefaultSpanFieldMaxBytes`, `SpanFieldCap`) |
 | `postgres.dsn` | string | — (**required**) | pgx/libpq connection string | `config.go:59` |
 | `console.username` | string | — (**required**) | HTTP Basic login | `config.go:65` |
 | `console.password_hash` | string | — (**required**) | **bcrypt** hash of the console password | `config.go:69` |
