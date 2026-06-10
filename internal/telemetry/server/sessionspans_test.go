@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,7 +262,8 @@ func TestSessionSpanFromEvent(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sessionSpanFromEvent(tc.event)
+			// fieldCap 0 = cap disabled, so the table pins the uncapped shapes.
+			got := sessionSpanFromEvent(tc.event, 0)
 			gotJSON, _ := json.Marshal(got)
 			wantJSON, _ := json.Marshal(tc.want)
 			if string(gotJSON) != string(wantJSON) {
@@ -270,46 +273,93 @@ func TestSessionSpanFromEvent(t *testing.T) {
 	}
 }
 
-// TestSessionSpans_FullFidelity pins the no-truncation decision: a large tool
-// argument payload and result text are served whole and every *_chars equals
-// the served length.
-func TestSessionSpans_FullFidelity(t *testing.T) {
-	big := make([]byte, 0, 200_000)
-	for len(big) < 200_000 {
-		big = append(big, 'x')
-	}
-	args := `{"data":"` + string(big) + `"}`
-	event := store.RequestEvent{
+// bigSpanEvent builds an event whose blob carries a large tool argument
+// payload, a large tool result, and a large text part (all built from `fill`).
+func bigSpanEvent(t *testing.T, fill string) store.RequestEvent {
+	t.Helper()
+	args := `{"data":"` + fill + `"}`
+	return store.RequestEvent{
 		CorrelationID: "cid-big", SessionID: "s", ConversationID: "s",
 		SpanEvent: spanBlob(t, map[string]any{
 			"gen_ai_content": map[string]any{
 				"output_messages": []any{map[string]any{
 					"role": "assistant",
 					"parts": []any{
+						map[string]any{"type": "text", "content": fill},
 						map[string]any{"type": "tool_call", "id": "t1", "name": "Write", "arguments": json.RawMessage(args)},
 					},
 				}},
 				"input_messages": []any{map[string]any{
 					"role": "user",
 					"parts": []any{
-						map[string]any{"type": "tool_call_response", "id": "t0", "result": string(big)},
+						map[string]any{"type": "text", "content": fill},
+						map[string]any{"type": "tool_call_response", "id": "t0", "result": fill},
 					},
 				}},
 			},
 		}),
 	}
-	got := sessionSpanFromEvent(event)
-	if len(got.OutputParts) != 1 || got.OutputParts[0].Args != args {
-		t.Fatalf("tool args were not served whole (len %d, want %d)", len(got.OutputParts[0].Args), len(args))
+}
+
+// TestSessionSpans_FieldCap pins the truncation policy that replaced v1's
+// "full fidelity" (the OOM fix): every served content field is capped at
+// fieldCap bytes while every *_chars field carries the TRUE uncapped size, so
+// the renderer's "showing first N of M" notice fires exactly on truncation.
+func TestSessionSpans_FieldCap(t *testing.T) {
+	const capBytes = 1024
+	big := strings.Repeat("x", 200_000)
+	args := `{"data":"` + big + `"}`
+
+	got := sessionSpanFromEvent(bigSpanEvent(t, big), capBytes)
+
+	// tool_call args: capped, args_chars = true size.
+	call := got.OutputParts[1]
+	if len(call.Args) != capBytes {
+		t.Errorf("args len = %d, want capped %d", len(call.Args), capBytes)
 	}
-	if *got.OutputParts[0].ArgsChars != len(args) {
-		t.Errorf("args_chars = %d, want %d", *got.OutputParts[0].ArgsChars, len(args))
+	if *call.ArgsChars != len(args) {
+		t.Errorf("args_chars = %d, want true %d", *call.ArgsChars, len(args))
 	}
-	if len(got.InputParts) != 1 || got.InputParts[0].Text != string(big) {
-		t.Fatalf("tool result was not served whole")
+	// input text part + tool result: capped, chars = true size.
+	for _, p := range got.InputParts {
+		if len(p.Text) != capBytes {
+			t.Errorf("input %s text len = %d, want capped %d", p.Type, len(p.Text), capBytes)
+		}
+		if *p.Chars != len(big) {
+			t.Errorf("input %s chars = %d, want true %d", p.Type, *p.Chars, len(big))
+		}
 	}
-	if *got.InputParts[0].Chars != len(big) {
-		t.Errorf("chars = %d, want %d", *got.InputParts[0].Chars, len(big))
+	// concatenated input_text/output_text: capped, *_chars = true size.
+	if len(*got.InputText) != capBytes || *got.InputTextChars != len(big) {
+		t.Errorf("input_text len/chars = %d/%d, want %d/%d", len(*got.InputText), *got.InputTextChars, capBytes, len(big))
+	}
+	if len(*got.OutputText) != capBytes || *got.OutputTextChars != len(big) {
+		t.Errorf("output_text len/chars = %d/%d, want %d/%d", len(*got.OutputText), *got.OutputTextChars, capBytes, len(big))
+	}
+	// output text part chars (size-only field) also carries the true size.
+	if *got.OutputParts[0].Chars != len(big) {
+		t.Errorf("text part chars = %d, want true %d", *got.OutputParts[0].Chars, len(big))
+	}
+
+	// fieldCap 0 disables the cap: everything served whole.
+	whole := sessionSpanFromEvent(bigSpanEvent(t, big), 0)
+	if whole.OutputParts[1].Args != args || *whole.InputText != big {
+		t.Error("fieldCap 0 must serve fields whole")
+	}
+}
+
+// TestCapText pins the rune-boundary cut: a cap landing mid-rune backs up so
+// the capped string stays valid UTF-8.
+func TestCapText(t *testing.T) {
+	s := "aé" // 'a' (1 byte) + 'é' (2 bytes)
+	if got := capText(s, 2); got != "a" {
+		t.Errorf("capText(%q, 2) = %q, want %q (no mid-rune cut)", s, got, "a")
+	}
+	if got := capText(s, 3); got != s {
+		t.Errorf("capText(%q, 3) = %q, want whole", s, got)
+	}
+	if got := capText(s, 0); got != s {
+		t.Errorf("capText cap 0 = %q, want whole (disabled)", got)
 	}
 }
 
@@ -325,15 +375,73 @@ func TestSessionSpansHandler(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.Code)
 	}
-	var spans []adminc.SessionSpan
-	if err := json.Unmarshal(resp.Body.Bytes(), &spans); err != nil {
+	var page adminc.SessionSpansPage
+	if err := json.Unmarshal(resp.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(spans) != 2 || spans[0].CID != "c1" || spans[1].CID != "c2" {
-		t.Fatalf("spans = %+v", spans)
+	if len(page.Spans) != 2 || page.Spans[0].CID != "c1" || page.Spans[1].CID != "c2" {
+		t.Fatalf("spans = %+v", page.Spans)
 	}
-	if !spans[1].At.After(spans[0].At) {
-		t.Errorf("spans not ordered by at: %v then %v", spans[0].At, spans[1].At)
+	if page.NextCursor != "" {
+		t.Errorf("next_cursor = %q, want empty on the last page", page.NextCursor)
+	}
+	if !page.Spans[1].At.After(page.Spans[0].At) {
+		t.Errorf("spans not ordered by at: %v then %v", page.Spans[0].At, page.Spans[1].At)
+	}
+}
+
+// TestSessionSpansHandler_Paging walks the cursor across pages and checks the
+// union equals the single-shot list, in the same stable order — the
+// pre-paging wire content, reassembled page by page.
+func TestSessionSpansHandler_Paging(t *testing.T) {
+	at := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	var events []store.RequestEvent
+	for i := 0; i < 5; i++ {
+		events = append(events, store.RequestEvent{
+			CorrelationID: "c" + strconv.Itoa(i),
+			ObservedAt:    at.Add(time.Duration(i) * time.Second),
+			SessionID:     "sess-1", ConversationID: "sess-1",
+		})
+	}
+	q := &fakeQueries{session: events}
+	h := newQueryServer(t, q)
+
+	var walked []adminc.SessionSpan
+	cursor := ""
+	pages := 0
+	for {
+		path := "/api/v1/sessions/sess-1/spans?limit=2"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		resp := get(t, h, path, true)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("page %d status = %d", pages, resp.Code)
+		}
+		var page adminc.SessionSpansPage
+		if err := json.Unmarshal(resp.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decode page %d: %v", pages, err)
+		}
+		if q.lastPageParams.Limit != 2 || q.lastPageParams.Cursor != cursor {
+			t.Fatalf("page params not plumbed: %+v", q.lastPageParams)
+		}
+		walked = append(walked, page.Spans...)
+		pages++
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if pages != 3 {
+		t.Errorf("pages = %d, want 3 (2+2+1)", pages)
+	}
+	if len(walked) != len(events) {
+		t.Fatalf("walked %d spans, want %d", len(walked), len(events))
+	}
+	for i, s := range walked {
+		if s.CID != events[i].CorrelationID {
+			t.Errorf("walked[%d] = %s, want %s (stable order)", i, s.CID, events[i].CorrelationID)
+		}
 	}
 }
 
@@ -348,6 +456,28 @@ func TestSessionSpansHandler_Errors(t *testing.T) {
 		h := newQueryServer(t, &fakeQueries{})
 		if resp := get(t, h, "/api/v1/sessions/nope/spans", true); resp.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", resp.Code)
+		}
+	})
+	t.Run("empty later page is 200, not 404", func(t *testing.T) {
+		// A cursor implies the first page existed; an empty continuation is a
+		// normal end-of-list.
+		h := newQueryServer(t, &fakeQueries{})
+		resp := get(t, h, "/api/v1/sessions/x/spans?cursor=0", true)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.Code)
+		}
+		var page adminc.SessionSpansPage
+		if err := json.Unmarshal(resp.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(page.Spans) != 0 || page.NextCursor != "" {
+			t.Errorf("page = %+v, want empty terminal page", page)
+		}
+	})
+	t.Run("invalid cursor is 400", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{session: []store.RequestEvent{{CorrelationID: "c"}}})
+		if resp := get(t, h, "/api/v1/sessions/x/spans?cursor=!!!", true); resp.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", resp.Code)
 		}
 	})
 	t.Run("query failure is 500", func(t *testing.T) {

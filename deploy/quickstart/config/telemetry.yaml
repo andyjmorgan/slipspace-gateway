@@ -8,6 +8,18 @@ http_bind: "0.0.0.0:8686"
 # OTLP gRPC listener — the gateway pushes gen_ai spans + sluice meters here.
 otlp_bind: "0.0.0.0:8687"
 
+# Per-request cap (bytes) on the gen_ai content the OTLP ingest keeps for the
+# console. Content is a best-effort console aid — the audit copy travels the
+# Record feed. 0 disables the cap; unbounded content makes the console's
+# memory profile a function of the largest session, so keep a bound in place.
+content_max_bytes: 65536
+
+# Per-field cap (bytes) the session-spans projection applies to served content
+# (text / tool args / input_text / output_text). The *_chars fields keep the
+# true sizes so the console's "showing first N of M" notice stays accurate.
+# Omit to take the default (65536); 0 disables the cap.
+span_field_max_bytes: 65536
+
 postgres:
   # Matches the telemetry-db service in compose.telemetry.yaml.
   dsn: "postgres://telemetry:telemetry@telemetry-db:5432/telemetry?sslmode=disable"

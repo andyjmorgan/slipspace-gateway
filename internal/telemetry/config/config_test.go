@@ -74,6 +74,41 @@ func TestContentCap(t *testing.T) {
 	}
 }
 
+func TestSpanFieldCap(t *testing.T) {
+	zero := 0
+	custom := 1024
+	cases := []struct {
+		name string
+		ptr  *int
+		want int
+	}{
+		{"unset takes default", nil, DefaultSpanFieldMaxBytes},
+		{"explicit zero is unlimited", &zero, 0},
+		{"explicit value passes through", &custom, 1024},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (Config{SpanFieldMaxBytes: tc.ptr}).SpanFieldCap(); got != tc.want {
+				t.Errorf("SpanFieldCap() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoad_SpanFieldMaxBytesParses(t *testing.T) {
+	body := validBody + "span_field_max_bytes: 1024\n"
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SpanFieldMaxBytes == nil || *cfg.SpanFieldMaxBytes != 1024 {
+		t.Fatalf("SpanFieldMaxBytes = %v, want &1024", cfg.SpanFieldMaxBytes)
+	}
+	if cfg.SpanFieldCap() != 1024 {
+		t.Errorf("SpanFieldCap() = %d, want 1024", cfg.SpanFieldCap())
+	}
+}
+
 func TestLoad_ContentMaxBytesParses(t *testing.T) {
 	body := validBody + "content_max_bytes: 0\n"
 	cfg, err := Load(writeConfig(t, body))

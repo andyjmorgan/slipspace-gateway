@@ -2,18 +2,32 @@ package admin
 
 import "time"
 
-// SessionSpan is one element of the SessionSpansDTO v1 array returned by
+// SessionSpansPage is the wire envelope of GET /api/v1/sessions/{id}/spans:
+// one keyset page of the session's spans, oldest first. NextCursor is the
+// opaque position to pass as ?cursor= for the following page; empty on the
+// last page. The endpoint is paged so a large session never materializes in
+// one response (the pre-paging single-shot array peaked at hundreds of MB on
+// big sessions and OOM-killed the service).
+type SessionSpansPage struct {
+	// Spans is the page's span list, ordered by at (oldest first). Always an
+	// array, never null.
+	Spans []SessionSpan `json:"spans"`
+	// NextCursor pages forward; empty means this was the last page.
+	NextCursor string `json:"next_cursor"`
+}
+
+// SessionSpan is one element of the SessionSpansDTO v1 page returned by
 // GET /api/v1/sessions/{id}/spans — one gen_ai span (one upstream request) of
 // a session, projected from the request_events span_event blob alone (never
 // from Records; invariant #4). The shape is frozen by the span-dto JSON schema
 // (sluice:session-spans-dto/v1) the session lifecycle page renders from.
 //
-// Truncation policy: this server serves FULL text and tool arguments — no
-// cap is applied — and every *Chars field carries the same value as the
-// served text's length, so the renderer's "showing first N of M" guard never
-// fires. The *Chars fields remain in the contract because the schema makes
-// truncation a server prerogative; a future cap only changes the server, not
-// the renderer.
+// Truncation policy: served content fields (text, tool args, input_text,
+// output_text) are capped per field by the server (span_field_max_bytes,
+// default 64 KiB; 0 disables). Every *Chars field carries the TRUE uncapped
+// size, so the renderer's "showing first N of M" guard fires exactly when the
+// server truncated. Truncation is a server prerogative per the DTO schema —
+// changing the cap never changes the renderer.
 type SessionSpan struct {
 	// CID is the correlation id (= span id in the console).
 	CID string `json:"cid"`
@@ -113,16 +127,16 @@ type SessionSpanOutputPart struct {
 	Name string `json:"name,omitempty"`
 
 	// Args is the raw tool-call arguments JSON — an opaque vendor payload the
-	// renderer never field-picks. Served whole (no cap).
+	// renderer never field-picks. Server-capped; ArgsChars greater than the
+	// served length means the server truncated.
 	Args string `json:"args,omitempty"`
 
-	// ArgsChars is the uncapped arguments size; equal to len(Args) since this
-	// server applies no cap.
+	// ArgsChars is the uncapped arguments size.
 	ArgsChars *int `json:"args_chars,omitempty"`
 
 	// Text is the result text of a tool_call_response output part (a
 	// server-executed tool's result, carried on the same span as its call).
-	// Served whole (no cap); Chars carries its size.
+	// Server-capped; Chars carries the uncapped size.
 	Text string `json:"text,omitempty"`
 }
 
@@ -135,12 +149,11 @@ type SessionSpanInputPart struct {
 	// ID joins a tool_call_response back to a prior span's tool_call.
 	ID string `json:"id,omitempty"`
 
-	// Chars is the true total size of Text before any cap (equal to
-	// len(Text) since this server applies no cap).
+	// Chars is the true total size of Text before any cap.
 	Chars *int `json:"chars,omitempty"`
 
 	// Text is the part's own text — the user message text or the tool result
-	// body. Served whole (no cap).
+	// body. Server-capped; Chars carries the uncapped size.
 	Text string `json:"text,omitempty"`
 
 	// IsError marks an errored tool result. Omitted today: the gateway's

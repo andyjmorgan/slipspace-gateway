@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -152,22 +153,169 @@ func TestDecodeSessionCursor_BadJSON(t *testing.T) {
 	}
 }
 
-// --- EventsBySession ---
+// --- EventsBySessionRollup ---
 
-func TestEventsBySession(t *testing.T) {
-	if got, _ := newStore(&fakeQuerier{}).EventsBySession(ctx(), ""); got != nil {
+func TestEventsBySessionRollup(t *testing.T) {
+	if got, _ := newStore(&fakeQuerier{}).EventsBySessionRollup(ctx(), ""); got != nil {
 		t.Error("empty session -> nil")
 	}
 	q := &fakeQuerier{query: rowsN(2)}
-	got, err := newStore(q).EventsBySession(ctx(), "s")
+	got, err := newStore(q).EventsBySessionRollup(ctx(), "s")
 	if err != nil || len(got) != 2 {
 		t.Fatalf("got %d err %v", len(got), err)
 	}
-	if _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).EventsBySession(ctx(), "s"); err == nil {
+	if _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).EventsBySessionRollup(ctx(), "s"); err == nil {
 		t.Fatal("want query error")
 	}
-	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).EventsBySession(ctx(), "s"); err == nil {
+	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).EventsBySessionRollup(ctx(), "s"); err == nil {
 		t.Fatal("want scan error")
+	}
+}
+
+// TestEventsBySessionRollup_InternalBatching proves the rollup pages the table
+// in keyset batches: a first batch of exactly sessionScanBatch rows triggers a
+// second query seeking past the last row, and the second (shorter) batch ends
+// the scan.
+func TestEventsBySessionRollup_InternalBatching(t *testing.T) {
+	// Two full batches then an empty terminator: the rollup must issue three
+	// queries (the keyset seek after each full batch) and return every row.
+	cq := &countingQuerier{full: 2, batch: sessionScanBatch}
+	got, err := newStore(cq).EventsBySessionRollup(ctx(), "s")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 2*sessionScanBatch {
+		t.Fatalf("rows = %d, want %d (two full batches)", len(got), 2*sessionScanBatch)
+	}
+	if cq.calls != 3 {
+		t.Errorf("queries = %d, want 3 (batch, batch, empty terminator)", cq.calls)
+	}
+	// Batches after the first must seek past the previous position.
+	for i, sql := range cq.querySQL[1:] {
+		if !strings.Contains(sql, "(observed_at, correlation_id) >") {
+			t.Errorf("batch %d does not keyset-seek: %s", i+2, sql)
+		}
+	}
+}
+
+// countingQuerier returns `full` consecutive full batches of `batch` rows from
+// Query, then empty row sets, recording each statement.
+type countingQuerier struct {
+	fakeQuerier
+	full  int
+	batch int
+	calls int
+}
+
+func (c *countingQuerier) Query(_ context.Context, sql string, _ ...any) (rows, error) {
+	c.calls++
+	c.querySQL = append(c.querySQL, sql)
+	if c.calls <= c.full {
+		return &fakeRows{scanErrs: make([]error, c.batch)}, nil
+	}
+	return &fakeRows{}, nil
+}
+
+// TestSessionReads_BlobDiscipline is the OOM regression tripwire (2026-06-10
+// prod: 688-message session x ~410 KB blobs OOM-killed the 512 Mi pod): the
+// whole-session rollup scan must NEVER select the full span_event blob — only
+// the gen_ai_content-stripped projection — and the only full-blob session read
+// (EventsBySessionPage) must always carry a LIMIT.
+func TestSessionReads_BlobDiscipline(t *testing.T) {
+	if !strings.Contains(sessionRollupColumns, "span_event - 'gen_ai_content'") {
+		t.Fatalf("sessionRollupColumns must strip gen_ai_content: %s", sessionRollupColumns)
+	}
+
+	// The SQL the rollup actually issues uses the stripped projection.
+	q := &fakeQuerier{query: rowsN(1)}
+	if _, err := newStore(q).EventsBySessionRollup(ctx(), "s"); err != nil {
+		t.Fatalf("rollup: %v", err)
+	}
+	if len(q.querySQL) == 0 {
+		t.Fatal("rollup issued no query")
+	}
+	for _, sql := range q.querySQL {
+		if !strings.Contains(sql, "span_event - 'gen_ai_content'") {
+			t.Errorf("rollup query selects the full blob: %s", sql)
+		}
+		if !strings.Contains(sql, "LIMIT") {
+			t.Errorf("rollup batch is unbounded: %s", sql)
+		}
+	}
+
+	// The spans page reads the full projection but is always LIMIT-bounded.
+	qp := &fakeQuerier{query: rowsN(1)}
+	if _, err := newStore(qp).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s"}, func(RequestEvent) error { return nil }); err != nil {
+		t.Fatalf("page: %v", err)
+	}
+	for _, sql := range qp.querySQL {
+		if !strings.Contains(sql, "LIMIT") {
+			t.Errorf("session page is unbounded: %s", sql)
+		}
+	}
+}
+
+// --- EventsBySessionPage ---
+
+func TestEventsBySessionPage(t *testing.T) {
+	// Empty session id -> no query, no cursor.
+	if next, err := newStore(&fakeQuerier{}).EventsBySessionPage(ctx(), SessionPageParams{}, nil); err != nil || next != "" {
+		t.Fatalf("empty id: next=%q err=%v", next, err)
+	}
+
+	// 3 rows with limit 2 -> fn sees 2, next cursor set.
+	q := &fakeQuerier{query: rowsN(3)}
+	n := 0
+	next, err := newStore(q).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s", Limit: 2}, func(RequestEvent) error {
+		n++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if n != 2 || next == "" {
+		t.Fatalf("fn calls = %d next = %q, want 2 rows + a next cursor", n, next)
+	}
+
+	// 2 rows with limit 5 -> all delivered, no next cursor.
+	q2 := &fakeQuerier{query: rowsN(2)}
+	n = 0
+	next, err = newStore(q2).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s", Limit: 5}, func(RequestEvent) error {
+		n++
+		return nil
+	})
+	if err != nil || n != 2 || next != "" {
+		t.Fatalf("last page: n=%d next=%q err=%v", n, next, err)
+	}
+}
+
+func TestEventsBySessionPage_CursorAndCap(t *testing.T) {
+	// A cursor minted by the package decodes and seeks; Limit above the max is
+	// capped (exercises both branches in one call).
+	cur := encodeCursor(eventCursor{ObservedAt: time.Unix(5, 0), Correlation: "c"})
+	q := &fakeQuerier{query: rowsN(1)}
+	if _, err := newStore(q).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s", Cursor: cur, Limit: 10000}, func(RequestEvent) error { return nil }); err != nil {
+		t.Fatalf("valid cursor: %v", err)
+	}
+}
+
+func TestEventsBySessionPage_Errors(t *testing.T) {
+	nop := func(RequestEvent) error { return nil }
+	if _, err := newStore(&fakeQuerier{}).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s", Cursor: "!!!"}, nop); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("want ErrInvalidCursor, got %v", err)
+	}
+	if _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s"}, nop); err == nil {
+		t.Fatal("want query error")
+	}
+	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s"}, nop); err == nil {
+		t.Fatal("want scan error")
+	}
+	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{nil}, finalErr: errors.New("rows")}}).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s"}, nop); err == nil {
+		t.Fatal("want rows.Err")
+	}
+	boom := errors.New("fn")
+	if _, err := newStore(&fakeQuerier{query: rowsN(1)}).EventsBySessionPage(ctx(), SessionPageParams{SessionID: "s"}, func(RequestEvent) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("fn error must propagate, got %v", err)
 	}
 }
 

@@ -32,6 +32,14 @@ const (
 // 0 (unlimited).
 const DefaultContentMaxBytes = 16 * 1024
 
+// DefaultSpanFieldMaxBytes is the per-field cap the console's session-spans
+// projection applies to served content (text / tool args / concatenated
+// input_text / output_text) when the operator does not set
+// span_field_max_bytes. 64 KiB per field keeps any realistic spans page to
+// tens of MB even when the ingest content cap is disabled; the renderer's
+// *_chars fields still carry the true uncapped sizes.
+const DefaultSpanFieldMaxBytes = 64 * 1024
+
 // Config is the root of the telemetry service's YAML file.
 type Config struct {
 	// HTTPBind is the listen address for the console + HMAC webhook ingest.
@@ -43,6 +51,12 @@ type Config struct {
 	// 0 (or negative) disables the cap so the full content is stored. A pointer
 	// distinguishes "unset" (take the default) from an explicit 0 (unlimited).
 	ContentMaxBytes *int `yaml:"content_max_bytes,omitempty"`
+	// SpanFieldMaxBytes caps each served content field (text, tool args,
+	// input_text, output_text) of the console's session-spans projection, in
+	// bytes. nil applies DefaultSpanFieldMaxBytes; 0 (or negative) disables the
+	// cap so fields are served whole. A pointer distinguishes "unset" (take the
+	// default) from an explicit 0 (unlimited).
+	SpanFieldMaxBytes *int `yaml:"span_field_max_bytes,omitempty"`
 	// Postgres is the central store connection.
 	Postgres Postgres `yaml:"postgres"`
 	// Console carries the HTTP Basic credentials for the operator console.
@@ -127,6 +141,17 @@ func (c Config) ContentCap() int {
 		return DefaultContentMaxBytes
 	}
 	return *c.ContentMaxBytes
+}
+
+// SpanFieldCap resolves the session-spans per-field content cap in bytes: the
+// operator's explicit value when set (including 0, which disables the cap),
+// else DefaultSpanFieldMaxBytes. The console projection treats a result <= 0
+// as unlimited.
+func (c Config) SpanFieldCap() int {
+	if c.SpanFieldMaxBytes == nil {
+		return DefaultSpanFieldMaxBytes
+	}
+	return *c.SpanFieldMaxBytes
 }
 
 // Validate enforces the invariants the service depends on at startup: a store

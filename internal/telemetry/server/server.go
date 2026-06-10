@@ -39,7 +39,11 @@ type Server struct {
 	store   Pinger
 	queries Queries
 	webhook http.Handler
-	log     *slog.Logger
+	// spanFieldCap bounds each served content field of the session-spans
+	// projection, in bytes (<= 0 disables). Resolved from the telemetry
+	// config's span_field_max_bytes (config.SpanFieldCap).
+	spanFieldCap int
+	log          *slog.Logger
 	// facets caches the distinct dropdown values so a dropdown open doesn't scan
 	// the event table on every request; refreshed once past its TTL. See
 	// cachedFacets.
@@ -53,9 +57,11 @@ type Server struct {
 
 // New builds the console server. store backs the readiness probe; queries backs
 // the DB-backed console API (may be nil to disable those routes); webhook is the
-// HMAC-trusted large-payload ingest handler (may be nil to disable the route).
-func New(console config.Console, st Pinger, queries Queries, webhook http.Handler, log *slog.Logger) *Server {
-	return &Server{console: console, store: st, queries: queries, webhook: webhook, log: log}
+// HMAC-trusted large-payload ingest handler (may be nil to disable the route);
+// spanFieldCap is the per-field content bound of the session-spans projection
+// (config.SpanFieldCap; <= 0 disables).
+func New(console config.Console, st Pinger, queries Queries, webhook http.Handler, spanFieldCap int, log *slog.Logger) *Server {
+	return &Server{console: console, store: st, queries: queries, webhook: webhook, spanFieldCap: spanFieldCap, log: log}
 }
 
 // Handler returns the routed HTTP handler. Probes and the HMAC-authed webhook
