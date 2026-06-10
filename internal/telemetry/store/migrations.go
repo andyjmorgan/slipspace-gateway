@@ -394,4 +394,22 @@ CREATE INDEX IF NOT EXISTS request_events_parent       ON request_events (parent
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_in  BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tokens_out BIGINT NOT NULL DEFAULT 0;`,
 	},
+	{
+		version: 11,
+		name:    "backfill_bookkeeping",
+		// Bookkeeping for the out-of-band backfills that migrations defer
+		// (v6 precedent, v10 token columns). v10 deliberately left existing
+		// rows reading 0 and promised a "batched, after the pod is serving"
+		// backfill — but shipped no mechanism, leaving the step to ad-hoc SQL
+		// against prod and its hand-typed column names (the 2026-06-10 prod
+		// errors: the dropped `streaming` column, `blob` for `record.body`).
+		// store.BackfillTokenColumns is that mechanism in code; this table
+		// records completion so it runs once, not on every boot (re-deriving
+		// every row is the exact detoast scan v10 exists to avoid).
+		sql: `
+CREATE TABLE IF NOT EXISTS backfill_runs (
+    name         TEXT PRIMARY KEY,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`,
+	},
 }

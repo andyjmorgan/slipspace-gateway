@@ -43,7 +43,9 @@ erDiagram
     request_events {
         TEXT        correlation_id PK "per-request join key"
         TIMESTAMPTZ observed_at "gateway request-start (span start)"
-        TEXT        session_id "projected from gen_ai.conversation.id"
+        TEXT        session_id "projected from sluice.session_id"
+        TEXT        conversation_id "projected from gen_ai.conversation.id"
+        TEXT        parent_conversation_id "projected from sluice.parent_conversation_id"
         TEXT        agent_id "projected from gen_ai.agent.id"
         TEXT        user_id "projected from enduser.id"
         TEXT        provider "projected from gen_ai.provider.name"
@@ -51,6 +53,8 @@ erDiagram
         TEXT        configuration "projected from sluice.configuration"
         TEXT        protocol "projected from sluice.protocol"
         INT         status_code "projected from http.response.status_code"
+        BIGINT      tokens_in "projected from gen_ai.usage.input_tokens"
+        BIGINT      tokens_out "projected from gen_ai.usage.output_tokens"
         JSONB       span_event "COMPLETE span (source of truth)"
     }
     record {
@@ -78,15 +82,21 @@ The single-writer per-request entity. The **OTel span feed is the sole writer**,
 |---|---|---|---|---|
 | `correlation_id` | `TEXT` | — | `sluice.correlation_id` | **Primary key**; the per-request join key. The only span attribute whose absence makes a span unusable. |
 | `observed_at` | `TIMESTAMPTZ` | `now()` | span START time | The gateway request-start, **not** ingest `now()` — load-bearing for ordering, pagination, and retention. A zero start defaults to server `now()` only as a last resort. |
-| `session_id` | `TEXT` | `''` | `gen_ai.conversation.id` | Resolved session/conversation bundle id. |
-| `agent_id` | `TEXT` | `''` | `gen_ai.agent.id` | Resolved agent/sub-agent id. |
+| `session_id` | `TEXT` | `''` | `sluice.session_id` | Resolved session bundle root (falls back to `gen_ai.conversation.id` for spans predating the attribute). |
+| `conversation_id` | `TEXT` | `''` | `gen_ai.conversation.id` | The per-turn conversation/thread (subagent thread when active, else the session). Added by migration 9. |
+| `parent_conversation_id` | `TEXT` | `''` | `sluice.parent_conversation_id` | Links a subagent thread toward its session; empty for a main agent. Added by migration 9. |
+| `agent_id` | `TEXT` | `''` | `gen_ai.agent.id` | Resolved id of a genuinely named agent (a subagent thread rides `conversation_id`, not this). |
 | `user_id` | `TEXT` | `''` | `enduser.id` | Resolved end-user id. |
 | `provider` | `TEXT` | `''` | `gen_ai.provider.name` | Post-rule upstream provider. |
 | `model` | `TEXT` | `''` | `gen_ai.request.model` | Requested model. |
 | `configuration` | `TEXT` | `''` | `sluice.configuration` | Resolved policy-bundle name (a gateway span fact). |
 | `protocol` | `TEXT` | `''` | `sluice.protocol` | Post-rule wire protocol / endpoint (a gateway span fact). |
 | `status_code` | `INT` | `0` | `http.response.status_code` | Client-facing HTTP status. |
+| `tokens_in` | `BIGINT` | `0` | `gen_ai.usage.input_tokens` | Promoted by migration 10 (#318/#325) so the session-list aggregate sums tokens without detoasting `span_event`. Pre-v10 rows read 0 until the run-once boot backfill (`store.BackfillTokenColumns`) re-projects them. |
+| `tokens_out` | `BIGINT` | `0` | `gen_ai.usage.output_tokens` | As `tokens_in`. |
 | `span_event` | `JSONB` | — (NOT NULL) | — | The **complete span** as received — every merged attribute plus the bounded gen_ai content — stored verbatim and never stripped. The scalar columns above are projections of it. |
+
+> **Columns that do NOT exist (common query mistakes).** Everything else lives **inside `span_event`** — there is no `streaming` column (dropped by migration 6; query `(span_event->>'gen_ai.request.stream')::boolean`), no `latency_ms`, `detail`, or `gen_ai_content` columns (all migration-6 casualties, all blob keys now), and the cached / cache-creation token counts are blob-only. On the `record` table the payload column is **`body`**, not `blob` — "the record blob" is prose, not a column name. Both mistakes hit prod on 2026-06-10 (`ERROR: column "streaming" does not exist`, `ERROR: column "blob" does not exist`).
 
 The upsert is one-sided: `insertEventSQL` ([`events.go`](../internal/telemetry/store/events.go)) does `INSERT … ON CONFLICT (correlation_id) DO UPDATE` where **every column is overwritten from the latest span**. There is one writer, so there is no cross-feed merge to preserve — a re-delivered span simply replaces the row.
 
@@ -101,6 +111,8 @@ Created by migration 6. The dashboard no longer scans this table (it reads the C
 | `request_events_session` | `(session_id)` | Session grouping / lookup. |
 | `request_events_agent` | `(agent_id)` | Agent lookup / drill-down. |
 | `request_events_user` | `(user_id)` | End-user lookup / drill-down. |
+| `request_events_conversation` | `(conversation_id)` | Subagent-thread drill-down (migration 9). |
+| `request_events_parent` | `(parent_conversation_id)` | Children-of-a-parent drill-down (migration 9). |
 | `request_events_tags` | `GIN ((span_event->'tags'))` | Tag containment filter (`span_event->'tags' @> …`) and the distinct-tag dropdown scan. |
 | `request_events_rules` | `GIN ((span_event->'rules_fired'))` | Fired-rule containment filter and the distinct-rule scan. |
 
@@ -119,7 +131,7 @@ The blob is built by `buildSpanEvent` ([`ingest/extract.go`](../internal/telemet
 | Field | `span_event` key | Source |
 |---|---|---|
 | `LatencyMs` | `sluice.latency_ms` | Derived from the span's start/end bounds at ingest (the gateway also emits it). |
-| `TokensIn` / `TokensOut` | `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` | gen_ai usage attributes. |
+| `TokensIn` / `TokensOut` | `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` | gen_ai usage attributes. Also promoted to the `tokens_in` / `tokens_out` columns (migration 10) for the session-list aggregate; the blob stays the source of truth. |
 | `TokensCached` / `TokensCacheCreation` | `gen_ai.usage.cache_read.input_tokens` / `gen_ai.usage.cache_creation.input_tokens` | Provider-managed prompt-cache attributes. |
 | `Streaming` | `gen_ai.request.stream` | Whether the upstream response was an SSE stream. |
 | `GatewayID` | `gateway_id` | The producing appliance (lifted from the span/resource attribute). |
@@ -205,8 +217,12 @@ Migrations are a forward-only, append-only ordered set in [`migrations.go`](../i
 | 5 | `add_user_id` | Adds `user_id` / `user_id_source` columns + `request_events_user` index. | End-user drill-down, mirroring `request_events_agent`. |
 | 6 | `single_writer_span_event` | **Re-architecture.** `DROP` + `CREATE` rebuild: drops `request_payloads`; rebuilds `request_events` around the immutable `span_event JSONB` (complete span) with the scalar columns as a projection and tags/rules_fired GIN-indexed inside the blob; drops the measurement/`detail`/`gen_ai_content` columns (they now live in `span_event`); creates the lazy `record(correlation_id, received_at, body)` table. | The OTel span becomes the **single writer** of the entity; the Record lands a lazy verbatim blob joined only when the inspector opens. Eliminates the two-feed COALESCE merge and the per-item payload fan-out. A forward-only rebuild — backfill from spans/records is a separate operational step, not part of the migration. |
 | 7 | `metric_points_hypertable_caggs` (`noTx`) | `CREATE EXTENSION timescaledb`; turns `metric_points` into a hypertable; creates the four 1-minute continuous aggregates (`cagg_requests_1m` / `cagg_tokens_1m` / `cagg_rules_1m` / `cagg_tags_1m`) `WITH NO DATA` + a 1-minute refresh policy each. | **Metrics plane.** The dashboard stops scanning the entity for rollups and reads pre-aggregated CAGGs — the scale fix. Count/sum only; no percentiles for MVP (plain `timescaledb`, no toolkit). Runs with autocommit (`noTx`) because TimescaleDB forbids creating a continuous aggregate inside a transaction block; every statement is idempotent and free of embedded semicolons. |
+| 8 | `drop_dupe_span_keys` | `UPDATE request_events SET span_event = span_event - 'sluice.tags' - 'sluice.rules_fired';` | Strips the byte-identical raw-attr duplicates of the normalised `tags` / `rules_fired` keys from existing blobs (#316); ingest stopped writing them. |
+| 9 | `add_conversation_parent` | Adds `conversation_id` / `parent_conversation_id` columns + their indexes. | Unified conversation/thread/parent paradigm (#320): models a subagent thread coherently across clients; `session_id` keeps the bundle-root meaning. |
+| 10 | `promote_token_columns` | Adds `tokens_in` / `tokens_out` `BIGINT` columns (`ADD COLUMN ... DEFAULT 0`, metadata-only, instant). | Detoast fix for the session list (#318/#325): the aggregate sums columns instead of reaching into the TOASTed blob. **Columns only** — the original inline backfill UPDATE detoasted every row inside `Migrate()`, outlasted the liveness probe, and crash-looped the rollout (#327). Existing rows read 0 until the run-once boot backfill (below) re-projects them. |
+| 11 | `backfill_bookkeeping` | Creates `backfill_runs (name PK, completed_at)`. | Run-once bookkeeping for the out-of-band backfills migrations defer. `store.BackfillTokenColumns` (spawned in the background at boot, after `Migrate()`, bound to the process ctx) walks `request_events` in `correlation_id` keyset batches re-projecting `tokens_in` / `tokens_out` from `span_event`, then records completion here so later boots skip the scan. |
 
-> Migrations 1–5 describe the **pre-rearchitecture** schema. On a fresh database the runner still applies them in order before migration 6 rebuilds the entity — the early steps lay down structures that 6 then drops and recreates. Read migrations 1–5 as history; the **live** shape of `request_events` is migration 6's, and the live metrics plane is migration 7's.
+> Migrations 1–5 describe the **pre-rearchitecture** schema. On a fresh database the runner still applies them in order before migration 6 rebuilds the entity — the early steps lay down structures that 6 then drops and recreates. Read migrations 1–5 as history; the **live** shape of `request_events` is migration 6's plus the additive columns from 9 and 10, and the live metrics plane is migration 7's. In particular, migration 1's `streaming` / `detail` / `gen_ai_content` / measurement columns are **gone** — do not query them.
 
 ### `noTx` migrations
 
@@ -225,6 +241,8 @@ The migration runner tracks state in a `schema_migrations` table bootstrapped ou
 | `applied_at` | `TIMESTAMPTZ` | Defaults to `now()` at apply time. |
 
 `SchemaVersion` returns `COALESCE(MAX(version), 0)` — `0` on an empty database. Each migration's SQL and its `schema_migrations` row commit together in one transaction ([`store.go::applyMigration`](../internal/telemetry/store/store.go)) for transactional steps, so the table never claims a half-applied step; for a `noTx` step the version row is written only after every statement has succeeded.
+
+A sibling `backfill_runs (name PK, completed_at)` table (migration 11) tracks the **out-of-band data backfills** the schema migrations deliberately defer — currently `v10_token_columns` ([`backfill.go::BackfillTokenColumns`](../internal/telemetry/store/backfill.go)). Unlike `schema_migrations`, an absent row here is normal mid-flight: the backfill runs batched in the background after boot and records its name only on completion, so an interrupted run resumes (idempotently) on the next boot.
 
 ---
 
