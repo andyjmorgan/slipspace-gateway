@@ -72,9 +72,9 @@ an array of content parts. The raw bytes are retained verbatim, with
 
 - **Audio** is end-to-end: the request opts in via `Modalities` (`["text","audio"]`)
   and `Audio *AudioOptions` (voice + format) (`chat.go:92-103`); the assistant's
-  audio reply comes back as `ResponseMessage.Audio` (`chat.go:541`), an
+  audio reply comes back as `ResponseMessage.Audio` (`chat.go:556`), an
   `AudioMessage` carrying an `ID` (replayable in a later turn), base64 `Data`,
-  `Transcript`, and `ExpiresAt` (`chat.go:556-572`).
+  `Transcript`, and `ExpiresAt` (`chat.go:582-595`).
 - **Refusals** appear both as a top-level `ResponseMessage.Refusal *string`
   (`chat.go:537`) and, in array content, as a `RefusalContentPart`.
 - **Reasoning models** are served by `ReasoningEffort` on the request
@@ -96,10 +96,10 @@ same raw-bytes treatment applies to `Stop` (string or array of strings,
 > **`ToolCallFunction.Arguments` is a JSON string, not an object.** OpenAI ships
 > function-call arguments as a stringified JSON document, so `Arguments` is a Go
 > `string`; callers must `json.Unmarshal` it to recover the structured payload
-> (`chat.go:674-688`). In streaming, `ToolCallFunctionDelta.Arguments` is emitted
-> *without* `omitempty` because OpenAI sends an empty-string delta as the
-> "tool call begins" marker — dropping it would lose the start signal
-> (`chat.go:702-718`).
+> (`chat.go:706-716`, `Arguments` at `chat.go:713`). In streaming,
+> `ToolCallFunctionDelta.Arguments` is emitted *without* `omitempty` because
+> OpenAI sends an empty-string delta as the "tool call begins" marker — dropping
+> it would lose the start signal (`chat.go:737-746`, `Arguments` at `chat.go:743`).
 
 ## OpenAI — Responses API (`protocols/openai/responses`)
 
@@ -137,8 +137,8 @@ Response highlights:
   the convenience concatenated-text projection.
 - **`Usage`** uses `input_tokens`/`output_tokens` naming (not chat's
   `prompt`/`completion`), so it is a **distinct local type** from the chat
-  package's `Usage` (`responses.go:409-433`); `OutputTokensDetails.ReasoningTokens`
-  reports reasoning spend (`responses.go:465-471`).
+  package's `Usage` (`responses.go:380-399`); `OutputTokensDetails.ReasoningTokens`
+  reports reasoning spend (`responses.go:431-434`).
 - Many echoed scalars (`MaxToolCalls`, `PromptCacheKey`, `SafetyIdentifier`,
   `User`, `Moderation`, `Instructions`, `Tools`, `ToolChoice`) are kept raw
   precisely because OpenAI emits them as `null` when unset and the gateway must
@@ -156,7 +156,7 @@ The streaming variant emits a polymorphic SSE event hierarchy
 
 ## Anthropic — messages (`protocols/anthropic/messages`)
 
-`MessagesRequest` (`messages.go:16-68`) and `MessagesResponse`
+`MessagesRequest` (`messages.go:16-79`) and `MessagesResponse`
 (`response.go:14-56`). `MaxTokens` is required on every request
 (`messages.go:21-23`).
 
@@ -167,11 +167,11 @@ Two fields accept either a bare string or an array and are kept as
 
 - **`MessagesRequest.System`** — a string or an array of `SystemBlock`. Read with
   `SystemAsString` / `SystemAsBlocks`, write with `SetSystemString` /
-  `SetSystemBlocks` (`messages.go:78-122`). A `SystemBlock` (`messages.go:294-306`)
+  `SetSystemBlocks` (`messages.go:89-133`). A `SystemBlock` (`messages.go:319-331`)
   carries `Text` plus an optional `CacheControl`.
 - **`Message.Content`** — a string or an array of `ContentBlock`. Read with
   `ContentAsString` / `ContentAsBlocks`, write with `SetContentString` /
-  `SetContentBlocks` (`messages.go:149-195`). `ContentAsBlocks` dispatches through
+  `SetContentBlocks` (`messages.go:162-206`). `ContentAsBlocks` dispatches through
   the content-block registry, so unknown block types survive.
 
 ### Content blocks — the `type`-discriminated union
@@ -181,18 +181,18 @@ Registry at `contentblock.go:341-352`:
 | `type` | Type | Notes |
 |---|---|---|
 | `text` | `TextBlock` (`contentblock.go:43`) | |
-| `image` | `ImageBlock` (`contentblock.go:98`) | `ImageSource` is base64 *or* URL (`contentblock.go:70`) |
-| `tool_use` | `ToolUseBlock` (`contentblock.go:124`) | `Input` raw; optional `Caller` attributes the call (`ToolCaller`, `contentblock.go:149`) |
-| `tool_result` | `ToolResultBlock` (`contentblock.go:180`) | `Content` is itself string-or-array, kept raw |
-| `thinking` | `ThinkingBlock` (`contentblock.go:220`) | See signature echo below |
-| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:253`) | Opaque encrypted `Data` |
-| *(any other)* | `UnknownBlock` (`contentblock.go:283`) | Fallback |
+| `image` | `ImageBlock` (`contentblock.go:136`) | `ImageSource` is base64 *or* URL (`contentblock.go:108`) |
+| `tool_use` | `ToolUseBlock` (`contentblock.go:162`) | `Input` raw; optional `Caller` attributes the call (`ToolCaller`, `contentblock.go:180`) |
+| `tool_result` | `ToolResultBlock` (`contentblock.go:218`) | `Content` is itself string-or-array, kept raw |
+| `thinking` | `ThinkingBlock` (`contentblock.go:258`) | See signature echo below |
+| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:291`) | Opaque encrypted `Data` |
+| *(any other)* | `UnknownBlock` (`contentblock.go:321`) | Fallback |
 
 ### Thinking blocks and the signature-echo requirement
 
 Extended thinking is **load-bearing for round-tripping**, not just informational:
 
-- `ThinkingBlock.Signature` (`contentblock.go:227-230`) is a cryptographic
+- `ThinkingBlock.Signature` (`contentblock.go:268`) is a cryptographic
   attestation over the thinking trace. The client **MUST echo it back verbatim**
   on the assistant turn or tool use cannot resume — so it must round-trip
   exactly. In streaming it arrives as a terminal `signature_delta` after the
@@ -203,7 +203,7 @@ Extended thinking is **load-bearing for round-tripping**, not just informational
   sibling thinking blocks.
 
 The request enables thinking via `MessagesRequest.Thinking *ThinkingConfig`
-(`type` + `budget_tokens`, `messages.go:270-281`).
+(`messages.go:59`; `ThinkingConfig` type + `budget_tokens` at `messages.go:297-306`).
 
 ### Response-side fields: context management, containers, cache tiers
 
@@ -213,32 +213,34 @@ carry several beta / accounting structures:
 - **`ContextManagement`** (`response.go:61-69`) reports the context-editing
   operations the server applied under the context-management beta. `AppliedEdits`
   is kept raw so an empty array round-trips intact rather than collapsing.
-- **`Container`** (`response.go:263-272`) describes the code-execution sandbox
+- **`Container`** (`response.go:300-309`) describes the code-execution sandbox
   (`ID` + `ExpiresAt`) when the request used the code-execution tool; the `ID`
   can be reused across requests to preserve workspace state.
 - **`Usage.ServerToolUse`** (`ServerToolUseUsage`, `response.go:200-206`) counts
   server-side tool calls (e.g. web search).
 - **Cache accounting** is tiered: `Usage.CacheCreationInputTokens` /
-  `CacheReadInputTokens` (`response.go:158-165`) plus `CacheCreation`
-  (`response.go:220-230`) which splits writes into the 5-minute and 1-hour
+  `CacheReadInputTokens` (`response.go:198-202`) plus `CacheCreation`
+  (`response.go:257-267`) which splits writes into the 5-minute and 1-hour
   ephemeral tiers (`Ephemeral5mInputTokens` / `Ephemeral1hInputTokens`). The
   request marks cacheable spans with `CacheControl` (`type: "ephemeral"`,
-  `messages.go:339-344`) on system blocks, tools, and content blocks.
-- **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:242-248`) reports
+  `messages.go:396-401`) on system blocks, tools, and content blocks.
+- **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:279-285`) reports
   output tokens spent inside thinking blocks.
 
 The request also exposes `OutputConfig.Effort` (reasoning-effort hint,
-`messages.go:316-326`) and `ServiceTier` (`messages.go:61-62`).
+`messages.go:345-358`, `Effort` at `messages.go:348`) and `ServiceTier`
+(`messages.go:62`).
 
 ### Messages streaming events
 
 The streaming union (`stream.go`, dispatched on event `type`) is:
 `MessageStartEvent`, `ContentBlockStartEvent`, `ContentBlockDeltaEvent`,
 `ContentBlockStopEvent`, `MessageDeltaEvent`, `MessageStopEvent`, `PingEvent`,
-`ErrorEvent`, and `UnknownStreamEvent` (`stream.go:36-365`). The
-`ContentBlockDelta` payload is itself a union: `TextDelta`, `InputJSONDelta`,
-`ThinkingDelta`, `SignatureDelta`, `UnknownContentBlockDelta`
-(`stream.go:434-543`).
+`ErrorEvent`, and `UnknownStreamEvent` (`stream.go:36-394`, `UnknownStreamEvent`
+at `stream.go:372`). The `ContentBlockDelta` payload is itself a union:
+`TextDelta`, `InputJSONDelta`, `ThinkingDelta`, `SignatureDelta`,
+`UnknownContentBlockDelta` (`stream.go:431-598`, `UnknownContentBlockDelta` at
+`stream.go:578`).
 
 ## Gemini — generateContent (`protocols/gemini/content`)
 
@@ -320,9 +322,11 @@ rich response metadata:
   bucketed + numeric probability/severity, `Blocked`) appears both on each
   `Candidate` and on `PromptFeedback` (`response.go:325-335`, which also carries
   a `BlockReason` if the prompt itself was rejected).
-- **`UsageMetadata`** (`response.go:347-391`) accounts tokens with per-modality
-  breakdowns (`ModalityTokenCount`, `response.go:404-413`): prompt, candidates,
-  cached-content, tool-use, and `ThoughtsTokenCount` for the thinking trace.
+- **`UsageMetadata`** (`response.go:347-391`) — carried on
+  `GenerateContentResponse` (`response.go:25`), not on `Candidate` — accounts
+  tokens with per-modality breakdowns (`ModalityTokenCount`, `response.go:404-413`):
+  prompt, candidates, cached-content, tool-use, and `ThoughtsTokenCount` for the
+  thinking trace.
 
 ## Models-list surfaces
 

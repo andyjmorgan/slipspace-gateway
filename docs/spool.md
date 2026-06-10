@@ -224,7 +224,7 @@ The spool itself does not currently enforce a disk-usage cap; operator-provision
 
 ## Recovery on startup
 
-`spool.RecoverAll(ctx, ...)` runs on process start before the drain or uploader goroutines launch. It walks each track's directories and:
+`spool.Recover(m *Manager)` runs per track on process start (called by `Spool.Start` before the drain or uploader goroutines launch). It walks each track's directories and:
 
 1. **`active/`** — for each file, attempts to read the zstd frames end-to-end. Files that decode cleanly are sealed (rotated to `sealed/`) so the next upload cycle picks them up. Files that hit a torn frame (crash mid-write) move to `quarantine/`.
 2. **`uploading/`** — any file here is an orphan from a worker killed mid-upload. Move back to `sealed/` so the uploader re-attempts.

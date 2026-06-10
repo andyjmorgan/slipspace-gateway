@@ -173,7 +173,7 @@ The `Fallback` is what makes unknown discriminators survive. By convention each
 union has an `UnknownX` member whose only typed field is the discriminator
 itself; everything else lands in `DynamicProperties.Extra`. The Anthropic
 content-block registry is the canonical example
-(`protocols/anthropic/messages/contentblock.go:303-314`):
+(`protocols/anthropic/messages/contentblock.go:341-352`):
 
 ```go
 var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
@@ -239,7 +239,7 @@ inside a raw sub-document are not discovered (`models/unmapped.go:28-34`,
 Anthropic, baked into the type design:
 
 - Anthropic **request** `Message.Content` is kept as `json.RawMessage`
-  (`protocols/anthropic/messages/messages.go:136`), so a request-side walk
+  (`protocols/anthropic/messages/messages.go:147`), so a request-side walk
   surfaces top-level and message-level unknowns but **not** content-block
   internals.
 - Anthropic **response** `Content` is typed `[]ContentBlock`
