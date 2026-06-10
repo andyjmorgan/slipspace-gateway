@@ -215,8 +215,13 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 		if oerr != nil {
 			return nil, oerr
 		}
+		// No separate exp.Shutdown registration: the reader is owned by the
+		// MeterProvider, and mp.Shutdown (below) shuts down every attached
+		// reader. Registering both made the second call return
+		// ErrReaderShutdown, which surfaced as a false "telemetry flush on
+		// shutdown failed" WARN on every graceful exit once shutdown errors
+		// stopped being swallowed (first seen on the 2026-06-10 prod roll).
 		readers = append(readers, exp)
-		shutdownFns = append(shutdownFns, exp.Shutdown)
 	}
 
 	// Always attach a ManualReader. The snapshotter (and the admin
