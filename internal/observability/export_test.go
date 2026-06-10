@@ -20,3 +20,12 @@ func NewOTLPSpanExporterForTest(ctx context.Context, endpoint, protocol string) 
 func NewOTLPLogExporterForTest(ctx context.Context, endpoint, protocol string) (sdklog.Exporter, error) {
 	return newOTLPLogExporter(ctx, endpoint, protocol)
 }
+
+// FlushThenShutdown exposes flushThenShutdown so the flush-before-shutdown
+// ordering contract (the graceful-termination fix for the June 2026 span-loss
+// incident) is covered by an explicit test rather than inferred from Setup.
+var FlushThenShutdown = flushThenShutdown
+
+// ExportErrorHandler exposes exportErrorHandler so the OTLP-export-failure
+// counter wiring can be exercised without a failing exporter.
+var ExportErrorHandler = exportErrorHandler

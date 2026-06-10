@@ -4,7 +4,7 @@ A **connector** is a destination the spool ships sealed segments to. Each connec
 
 Three connector types ship today: `s3`, `azure_blob`, and `webhook`. This page is the YAML reference for every per-type field, the auth modes each accepts, and the operational caveats that don't fit on the field table.
 
-**Two fundamentally different runtimes hide behind one YAML block.** `s3` and `azure_blob` are *disk-backed spool connectors*: each evaluated record lands on the connector spool, is batched into sealed `.ndjson.zst` segments, and an upload worker ships each segment with a retry budget, circuit breaker, and deadletter path. `webhook` is **not** spool-backed — it is a *real-time per-record pusher* ([`internal/telemetry/pusher`](../internal/telemetry/pusher/)) that POSTs each `cc.Record` as JSON the moment the request completes, from a bounded worker pool, dropping on a full queue. There is no disk queue, no segment, no retry budget, and no deadletter for webhook. Keep this split in mind throughout: the spool semantics on [spool.md](spool.md) apply to `s3`/`azure_blob` only.
+**Two fundamentally different runtimes hide behind one YAML block.** `s3` and `azure_blob` are *disk-backed spool connectors*: each evaluated record lands on the connector spool, is batched into sealed `.ndjson.zst` segments, and an upload worker ships each segment with a retry budget, circuit breaker, and deadletter path. `webhook` is **not** spool-backed — it is a *real-time per-record pusher* ([`internal/telemetry/pusher`](../internal/telemetry/pusher/)) that POSTs each `cc.Record` as JSON the moment the request completes, from a bounded worker pool, dropping on a full queue. Transient failures retry in-memory with capped exponential backoff, but there is no disk queue, no segment, and no deadletter for webhook. Keep this split in mind throughout: the spool semantics on [spool.md](spool.md) apply to `s3`/`azure_blob` only.
 
 For *how* records reach a connector — the binding evaluation — see [connector-bindings.md](connector-bindings.md). For *what happens once spool-backed records are written to disk* — the spool runtime — see [spool.md](spool.md). For the webhook push contract end-to-end (the telemetry-service ingest side included), see [telemetry-webhook.md](telemetry-webhook.md).
 
@@ -272,7 +272,7 @@ The validator rejects s3-only refs (`access_key_id_ref`, `role_arn`, etc.) on az
 
 Pushes each evaluated `cc.Record` to an HTTPS endpoint as an individual POST, in real time, the moment the request completes. This is the gateway's *channel-3* record sink — the authoritative per-request log (headers, bodies, rule chain, resilience attempts) — and its canonical receiver is the central telemetry service's `/api/v1/ingest/record`, though any endpoint that verifies the signature can consume it.
 
-**Webhook is not spool-backed.** Unlike `s3`/`azure_blob`, there is no disk queue, no `.ndjson.zst` segment, no retry budget, no circuit breaker, and no deadletter. Delivery is best-effort: records flow from a bounded in-memory worker pool ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go)), and a full queue drops the record on the floor (bumping a `dropped` counter) rather than ever blocking the request path (invariant #2). The full end-to-end push contract — including the telemetry-service ingest side, the gateway registry, and secret management — is documented in [telemetry-webhook.md](telemetry-webhook.md); this section covers the gateway-side YAML and wire shape only.
+**Webhook is not spool-backed.** Unlike `s3`/`azure_blob`, there is no disk queue, no `.ndjson.zst` segment, no circuit breaker, and no deadletter. Records flow from a bounded in-memory worker pool ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go)); transient failures (network errors, `408`/`429`/`5xx`) retry in-worker with capped exponential backoff (5 attempts, 250ms doubling to a 5s cap — safe because ingest upserts on `correlation_id`), and a full queue drops the record on the floor (bumping a `dropped` counter) rather than ever blocking the request path (invariant #2). The full end-to-end push contract — including the telemetry-service ingest side, the gateway registry, and secret management — is documented in [telemetry-webhook.md](telemetry-webhook.md); this section covers the gateway-side YAML and wire shape only.
 
 ### Fields
 
@@ -324,17 +324,17 @@ The telemetry service does exactly this ([`internal/telemetry/registry/registry.
 
 ### Outcome handling
 
-There is no segment lifecycle, so there is no `uploading/` → `deadletter/` state machine. The pusher's `send` simply classifies each POST ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go)):
+There is no segment lifecycle, so there is no `uploading/` → `deadletter/` state machine. The pusher classifies each POST and retries transient failures with capped exponential backoff (default 5 attempts, 250ms base doubling to a 5s cap) before declaring a record lost ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go)):
 
 | Outcome | Treatment |
 |---|---|
 | `2xx` | Success. Bumps the `sent` counter. |
-| any non-`2xx` (4xx, 5xx, 1xx, 3xx) | Failure. Bumps the `failed` counter, logs at debug with the correlation id. The record is **not** retried and **not** deadlettered — it is gone. |
-| transport error (DNS, TLS, EOF, timeout) | Failure. Same as above: `failed`++, logged, dropped. |
-| JSON marshal error | Failure. `failed`++, dropped before any HTTP call. |
-| queue full at `Enqueue` time | Dropped before the worker pool ever sees it. Bumps the `dropped` counter (distinct from `failed`). |
+| transport error (DNS, TLS, EOF, timeout), `408`, `429`, `5xx` | Transient failure. Bumps the `failed` counter (per attempt), logs at debug, retries with backoff. Exhausting all attempts loses the record: `lost`++, warn-logged, reported as reason `exhausted`. |
+| any other non-`2xx` (remaining 4xx, 1xx, 3xx) | Permanent rejection (e.g. bad HMAC). `failed`++, never retried — the record is lost immediately (`lost`++, reason `rejected`). |
+| JSON marshal error | `failed`++, lost before any HTTP call (reason `encode`). Never retried. |
+| queue full at `Enqueue` time | Dropped before the worker pool ever sees it. Bumps the `dropped` counter (reason `queue_full`, distinct from `failed`). |
 
-`dropped`, `sent`, and `failed` are exposed as `Pusher.Dropped()` / `Sent()` / `Failed()` for the gateway's own telemetry meters. Because every non-success path just drops, webhook delivery is strictly at-most-once and lossy under pressure — by design, so the request path never stalls on a slow or wedged receiver.
+`dropped`, `sent`, `failed`, and `lost` are exposed as `Pusher.Dropped()` / `Sent()` / `Failed()` / `Lost()`, and the gateway wires the pusher's loss hooks to the `gateway.telemetry.push.dropped.total` (by `connector` + `reason`) and `gateway.telemetry.push.failures.total` (by `connector` + `kind`) meters so loss is monitorable. Retrying is safe — the telemetry service's record ingest is an idempotent upsert keyed by `correlation_id` — and retries run inside the worker that owns the record, so the bounded queue stays the only buffer: delivery is at-most-once-per-success, lossy under sustained pressure, and never stalls the request path on a slow or wedged receiver.
 
 The worker pool and queue use built-in defaults ([`internal/telemetry/pusher/pusher.go`](../internal/telemetry/pusher/pusher.go)): **2** workers drain a bounded channel of **1024** records, with a **5 s** per-push timeout fallback (in practice overridden by the connector's required `timeout_ms`). The `dropped` counter bumps whenever `Enqueue` finds those 1024 slots full, so the buffer depth **is** the drop-on-full threshold — a receiver that can't keep up with the inbound record rate starts shedding once 1024 records are in flight.
 

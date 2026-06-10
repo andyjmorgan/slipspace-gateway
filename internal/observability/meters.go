@@ -172,6 +172,31 @@ const (
 	// Labelled by status (HTTP status code) so a spike in failures
 	// is visible without scanning logs.
 	MetricAdminConfigExportsTotal = "gateway.admin.config_exports.total"
+
+	// Telemetry-delivery loss instruments. These exist because the loss is
+	// otherwise invisible: a dropped Record or a failed OTLP export produces
+	// no client-facing error and (for records) at most a debug log line —
+	// the June 2026 binary-swap incident lost ~15s of records and ~90 spans
+	// with zero monitoring signal. Cardinality is bounded: connector names
+	// come from operator YAML, reason/kind are fixed vocabularies.
+	//
+	// MetricTelemetryPushDroppedTotal counts Records permanently lost by the
+	// real-time telemetry pusher, labelled connector + reason (queue_full,
+	// encode, rejected, exhausted). Any non-zero rate is audit-record loss.
+	MetricTelemetryPushDroppedTotal = "gateway.telemetry.push.dropped.total"
+
+	// MetricTelemetryPushFailuresTotal counts failed record-push attempts,
+	// labelled connector + kind (network, status). Failures retry, so this
+	// climbing alone is degradation, not yet loss — pair with the dropped
+	// counter above for the loss signal.
+	MetricTelemetryPushFailuresTotal = "gateway.telemetry.push.failures.total"
+
+	// MetricOTelExportFailuresTotal counts errors surfaced by the OTel SDK's
+	// global error handler — overwhelmingly OTLP export failures from the
+	// periodic metric reader and the span/log batch processors. Exports are
+	// fire-and-forget inside the SDK, so without this counter a dead OTLP
+	// endpoint is only visible by the absence of data downstream.
+	MetricOTelExportFailuresTotal = "gateway.otel.export_failures.total"
 )
 
 // Histogram bucket boundaries. Defined as package-level vars (not consts)
@@ -346,6 +371,21 @@ type Meters struct {
 	// (HTTP status code) — a spike on non-200 surfaces export failures
 	// (e.g. malformed YAML on disk) without scanning logs.
 	AdminConfigExportsTotal metric.Int64Counter
+
+	// TelemetryPushDroppedTotal counts Records permanently lost by the
+	// real-time telemetry pusher (queue full, encode failure, permanent
+	// rejection, retries exhausted). Labels: connector, reason. Any
+	// non-zero rate is audit-record loss and operator-attention-worthy.
+	TelemetryPushDroppedTotal metric.Int64Counter
+
+	// TelemetryPushFailuresTotal counts failed record-push attempts
+	// (retried, so not yet loss). Labels: connector, kind (network|status).
+	TelemetryPushFailuresTotal metric.Int64Counter
+
+	// OTelExportFailuresTotal counts errors reported to the OTel SDK's
+	// global error handler — in practice OTLP export failures that would
+	// otherwise be invisible to monitoring.
+	OTelExportFailuresTotal metric.Int64Counter
 }
 
 // NewMeters constructs the Meters bundle from the supplied meter. The
@@ -399,6 +439,9 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricResilienceOutcomeTotal, "Per-request orchestrator outcome (success, all_failed, all_open). Bumped once per inbound request that ran through a resilience policy.", "1", &m.ResilienceOutcomeTotal},
 		{MetricCircuitBreakerTransitionTotal, "Circuit-breaker state transitions per (policy, target, to_state). One increment per state change.", "1", &m.CircuitBreakerTransitionTotal},
 		{MetricAdminConfigExportsTotal, "Redacted-config bundle downloads served by the admin export endpoint.", "1", &m.AdminConfigExportsTotal},
+		{MetricTelemetryPushDroppedTotal, "Records permanently lost by the real-time telemetry pusher, by connector and reason (queue_full, encode, rejected, exhausted).", "1", &m.TelemetryPushDroppedTotal},
+		{MetricTelemetryPushFailuresTotal, "Failed record-push attempts (retried, not yet loss), by connector and kind (network, status).", "1", &m.TelemetryPushFailuresTotal},
+		{MetricOTelExportFailuresTotal, "Errors reported to the OTel SDK global error handler, in practice OTLP export failures.", "1", &m.OTelExportFailuresTotal},
 	} {
 		if err := int64Counter(c.name, c.desc, c.unit, c.dst); err != nil {
 			return nil, err

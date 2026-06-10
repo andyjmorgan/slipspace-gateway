@@ -61,6 +61,9 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 	meters.ResilienceAttemptsPerRequest.Record(ctx, 2)
 	meters.ResilienceOutcomeTotal.Add(ctx, 1)
 	meters.CircuitBreakerTransitionTotal.Add(ctx, 1)
+	meters.TelemetryPushDroppedTotal.Add(ctx, 1)
+	meters.TelemetryPushFailuresTotal.Add(ctx, 1)
+	meters.OTelExportFailuresTotal.Add(ctx, 1)
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(ctx, &rm); err != nil {
@@ -96,6 +99,9 @@ func TestNewMeters_RegistersAllInstruments(t *testing.T) {
 		observability.MetricResilienceAttemptsPerRequest,
 		observability.MetricResilienceOutcomeTotal,
 		observability.MetricCircuitBreakerTransitionTotal,
+		observability.MetricTelemetryPushDroppedTotal,
+		observability.MetricTelemetryPushFailuresTotal,
+		observability.MetricOTelExportFailuresTotal,
 	}
 	for _, name := range want {
 		if !got[name] {
