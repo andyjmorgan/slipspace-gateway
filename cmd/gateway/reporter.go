@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -333,6 +334,13 @@ type reporterRun struct {
 	// the operation-details event; a tool-only response keeps its tool_call
 	// parts rather than vanishing.
 	respOutputParts []genaiattr.Part
+
+	// serverToolUse is the provider's server-side tool usage counter map
+	// (Anthropic usage.server_tool_use, keyed by wire counter name),
+	// extracted in populateTokens and projected as the
+	// gen_ai.usage.server_tool_use.<counter> attributes on both the span and
+	// the operation-details event. Nil when the response reported none.
+	serverToolUse map[string]int
 
 	// reqContent is the bounded request content (system instructions,
 	// latest user turn, tool definitions) parsed once from the request body
@@ -990,6 +998,11 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 		return
 	}
 	snap := tokens.ExtractFrames(ev.Provider, ev.Protocol, r.responseFrames)
+	// Server-side tool counters ride beside the snapshot (span/event
+	// attributes only — no meter, no event field), captured before the
+	// Recognised gate so a usage block that somehow carried only
+	// server_tool_use still projects.
+	r.serverToolUse = tokens.ServerToolUseFrames(ev.Provider, ev.Protocol, r.responseFrames)
 	if !snap.Recognised {
 		return
 	}
@@ -1029,6 +1042,25 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	if snap.CacheCreation > 0 && r.factory.meters.TokensCacheCreationTotal != nil {
 		r.factory.meters.TokensCacheCreationTotal.Add(ctx, int64(snap.CacheCreation), metric.WithAttributes(base...))
 	}
+}
+
+// serverToolUseKeys returns the names of the reported (non-zero) server-tool
+// counters, sorted so attribute emission is deterministic. Zero-valued keys
+// are skipped — Anthropic zero-fills the counters of tools the request
+// declared but the model never invoked, and every other usage attribute on
+// the span follows the same "> 0 or absent" convention.
+func serverToolUseKeys(counters map[string]int) []string {
+	if len(counters) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(counters))
+	for k, v := range counters {
+		if v > 0 {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // providerEndpointModelAttrs builds the gen_ai dimension attributes used
@@ -1172,6 +1204,9 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 	}
 	if ev.TokensCached > 0 {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageCacheReadInputTokens, ev.TokensCached))
+	}
+	for _, k := range serverToolUseKeys(r.serverToolUse) {
+		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageServerToolUsePrefix+k, r.serverToolUse[k]))
 	}
 	attrs = r.appendRequestParamAttrs(ctx, attrs)
 	attrs = r.appendResponseAttrs(attrs)
@@ -1396,6 +1431,9 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	}
 	if ev.TokensCached > 0 {
 		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageCacheReadInputTokens, ev.TokensCached))
+	}
+	for _, k := range serverToolUseKeys(r.serverToolUse) {
+		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageServerToolUsePrefix+k, r.serverToolUse[k]))
 	}
 	if r.respReasoning != nil && *r.respReasoning > 0 {
 		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageReasoningOutputTokens, *r.respReasoning))

@@ -57,3 +57,21 @@ func ExtractFrames(provider, endpoint string, frames [][]byte) Snapshot {
 	}
 	return fn(frames)
 }
+
+// ServerToolUseFrames returns the provider's server-side tool usage counters
+// for frames already collated by sseframe.Collate, keyed by the wire counter
+// name (web_search_requests, web_fetch_requests, ...). It is a sibling to
+// ExtractFrames rather than a Snapshot field so Snapshot stays a comparable
+// value type. Anthropic Messages is the only protocol that reports per-tool
+// counters today (usage.server_tool_use); the OpenAI Responses / Chat usage
+// objects carry no analogue (confirmed against the SDK ResponseUsage model —
+// built-in tool invocations are billed per *_call output item, outside
+// usage), and Gemini's usageMetadata has none. Every other endpoint returns
+// nil, as does an Anthropic response that invoked no server tools.
+func ServerToolUseFrames(provider, endpoint string, frames [][]byte) map[string]int {
+	_ = provider
+	if endpoint != "messages" || len(frames) == 0 {
+		return nil
+	}
+	return extractAnthropicServerToolUse(frames)
+}

@@ -185,3 +185,34 @@ func TestEmitEvents_OperationDetailsWhenContentOn(t *testing.T) {
 		t.Errorf("output.messages content = %q, want it to contain the reply", got)
 	}
 }
+
+// TestEmitEvents_ServerToolUseAttrs mirrors the span projection on the
+// operation-details event: one gen_ai.usage.server_tool_use.<counter>
+// attribute per reported non-zero counter.
+func TestEmitEvents_ServerToolUseAttrs(t *testing.T) {
+	rl := &recordingEventLogger{}
+	r := &reporterRun{
+		factory:         &reporterFactory{eventLogger: rl, captureContent: true},
+		provider:        "anthropic",
+		protocol:        "messages",
+		configuration:   "p",
+		started:         time.Now(),
+		serverToolUse:   map[string]int{"web_search_requests": 2, "web_fetch_requests": 0},
+		respOutputParts: []genaiattr.Part{{Type: "text", Content: "ok"}},
+	}
+	r.emitEvents(context.Background(), events.Request{
+		Provider:   "anthropic",
+		Protocol:   "messages",
+		StatusCode: 200,
+	})
+	if len(rl.records) != 1 {
+		t.Fatalf("records = %d, want 1", len(rl.records))
+	}
+	rec := rl.records[0]
+	if v, ok := eventAttr(rec, observability.AttrGenAIUsageServerToolUsePrefix+"web_search_requests"); !ok || v.AsInt64() != 2 {
+		t.Errorf("event server_tool_use.web_search_requests = %d (ok=%v), want 2", v.AsInt64(), ok)
+	}
+	if _, ok := eventAttr(rec, observability.AttrGenAIUsageServerToolUsePrefix+"web_fetch_requests"); ok {
+		t.Errorf("zero-valued counter projected on the event")
+	}
+}

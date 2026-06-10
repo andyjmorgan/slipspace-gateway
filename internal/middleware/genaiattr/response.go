@@ -77,6 +77,17 @@ type toolAcc struct {
 	id   string
 	name string
 	args strings.Builder
+
+	// argsOverride, when set, replaces the fragment-accumulated args.
+	// Server-tool output items carry their argument fields whole on every
+	// appearance (output_item.added, .done, the final response.output), so
+	// assignment — not append — keeps the repeated emissions idempotent.
+	argsOverride json.RawMessage
+
+	// result, when non-empty, emits a paired tool_call_response part right
+	// after the tool_call — Responses server-tool items carry call and
+	// (optional, include-gated) result on the same item.
+	result string
 }
 
 // toolAccList is an insertion-ordered set of tool-call accumulators keyed by
@@ -104,15 +115,22 @@ func (l *toolAccList) parts() []Part {
 	var parts []Part
 	for _, idx := range l.order {
 		a := l.byIdx[idx]
-		if a.name == "" && a.args.Len() == 0 && a.id == "" {
+		if a.name == "" && a.args.Len() == 0 && a.id == "" && len(a.argsOverride) == 0 {
 			continue
+		}
+		args := a.argsOverride
+		if args == nil {
+			args = argsRaw(a.args.String())
 		}
 		parts = append(parts, Part{
 			Type:      "tool_call",
 			ID:        a.id,
 			Name:      a.name,
-			Arguments: argsRaw(a.args.String()),
+			Arguments: args,
 		})
+		if a.result != "" {
+			parts = append(parts, Part{Type: "tool_call_response", ID: a.id, Result: a.result})
+		}
 	}
 	return parts
 }
@@ -133,6 +151,56 @@ func argsRaw(s string) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(b)
+}
+
+// bulkyResultKeys are the content-payload carriers stripped from server-tool
+// result JSON before it rides telemetry: encrypted_content (opaque multi-KB
+// citation blobs on web_search results) and data (document / base64 bodies on
+// web_fetch results). Telemetry stays bounded — the full payload rides the
+// connector Record, never the span (provider bodies are never logged in full).
+var bulkyResultKeys = map[string]bool{"encrypted_content": true, "data": true}
+
+// compactToolResult renders a server-tool result payload as a bounded result
+// string: a plain JSON string passes through as text; structured content is
+// compact-marshalled after recursively stripping the bulky payload carriers in
+// bulkyResultKeys. Empty / null content yields "".
+func compactToolResult(raw json.RawMessage) string {
+	if len(nonEmptyRaw(raw)) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	stripBulkyKeys(v)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// stripBulkyKeys removes every bulkyResultKeys entry from v in place,
+// recursing through nested objects and arrays.
+func stripBulkyKeys(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if bulkyResultKeys[k] {
+				delete(t, k)
+				continue
+			}
+			stripBulkyKeys(val)
+		}
+	case []any:
+		for _, e := range t {
+			stripBulkyKeys(e)
+		}
+	}
 }
 
 // outputParts assembles the ordered output parts: the reassembled text first
@@ -234,7 +302,13 @@ func (a *toolAcc) merge(tc openAIToolCall) {
 }
 
 // responsesOutput is one Responses-API output item: an assistant message
-// (content parts with type "output_text") or a function_call item.
+// (content parts with type "output_text"), a function_call item, or a
+// server-tool item (web_search_call, file_search_call, code_interpreter_call,
+// computer_call, mcp_call, ...). The fields past Content are the server-tool
+// argument and result carriers — which are populated depends on the item type
+// (action on web_search/computer/local_shell, queries+results on file_search,
+// code+container_id+outputs on code_interpreter, arguments+output+server_label
+// on mcp_call).
 type responsesOutput struct {
 	Type      string `json:"type"`
 	ID        string `json:"id"`
@@ -244,6 +318,128 @@ type responsesOutput struct {
 	Content   []struct {
 		Text string `json:"text"`
 	} `json:"content"`
+	Status      string          `json:"status"`
+	Action      json.RawMessage `json:"action"`
+	Queries     json.RawMessage `json:"queries"`
+	Code        string          `json:"code"`
+	ContainerID string          `json:"container_id"`
+	Input       json.RawMessage `json:"input"`
+	ServerLabel string          `json:"server_label"`
+	Results     json.RawMessage `json:"results"`
+	Outputs     json.RawMessage `json:"outputs"`
+	Output      json.RawMessage `json:"output"`
+	Error       string          `json:"error"`
+}
+
+// responsesServerToolName maps a Responses output-item type to the gen_ai
+// tool_call part name for items that represent provider-side tool activity:
+// any "*_call" item (web_search_call → web_search, code_interpreter_call →
+// code_interpreter, future built-ins included) plus the suffix-less MCP
+// catalogue/approval items, which keep their full type as the name.
+// function_call is the client-executed path and message/reasoning are not
+// tool activity — all return ok=false, as do the *_output input-item types
+// (function_call_output, computer_call_output) so a confused echo never
+// mints a phantom call.
+func responsesServerToolName(itemType string) (string, bool) {
+	switch itemType {
+	case "", "function_call", "message", "reasoning", "function_call_output", "computer_call_output":
+		return "", false
+	case "mcp_list_tools", "mcp_approval_request", "mcp_approval_response":
+		return itemType, true
+	}
+	if name, ok := strings.CutSuffix(itemType, "_call"); ok {
+		return name, true
+	}
+	return "", false
+}
+
+// responsesServerToolArgs is the best-effort argument projection of a
+// server-tool item: whichever argument-bearing fields the item carries, keyed
+// by their wire names, compact-marshalled. Result payloads (results, outputs,
+// output) are deliberately excluded — they ride the paired
+// tool_call_response part instead.
+type responsesServerToolArgs struct {
+	Name        string          `json:"name,omitempty"`
+	Arguments   json.RawMessage `json:"arguments,omitempty"`
+	Action      json.RawMessage `json:"action,omitempty"`
+	Queries     json.RawMessage `json:"queries,omitempty"`
+	Code        string          `json:"code,omitempty"`
+	ContainerID string          `json:"container_id,omitempty"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	ServerLabel string          `json:"server_label,omitempty"`
+}
+
+// mergeServerItem folds one appearance of a server-tool output item into the
+// accumulator. Items repeat (output_item.added, .done, the final
+// response.output), each time carrying the whole item, so every field is
+// assigned — never appended — and only when the new appearance has it.
+func (a *toolAcc) mergeServerItem(o responsesOutput, name string) {
+	a.name = name
+	if id := firstNonEmpty(o.CallID, o.ID); id != "" {
+		a.id = id
+	}
+	args := responsesServerToolArgs{
+		Action:      nonEmptyRaw(o.Action),
+		Queries:     nonEmptyRaw(o.Queries),
+		Code:        o.Code,
+		ContainerID: o.ContainerID,
+		Input:       nonEmptyRaw(o.Input),
+		ServerLabel: o.ServerLabel,
+	}
+	// mcp_call carries the MCP tool's own name and a JSON-encoded arguments
+	// string; both ride inside the argument object (the part name stays the
+	// item-type-derived family name).
+	if o.Name != "" {
+		args.Name = o.Name
+	}
+	if o.Arguments != "" {
+		args.Arguments = argsRaw(o.Arguments)
+	}
+	hasArgs := len(args.Action)+len(args.Queries)+len(args.Input)+len(args.Arguments) > 0 ||
+		args.Name != "" || args.Code != "" || args.ContainerID != "" || args.ServerLabel != ""
+	if hasArgs {
+		if b, err := json.Marshal(args); err == nil {
+			a.argsOverride = json.RawMessage(b)
+		}
+	}
+	if res := o.serverToolResult(); res != "" {
+		a.result = res
+	}
+}
+
+// serverToolResult renders the item's inline result, when it carries one:
+// results (file_search / web_search behind include), outputs
+// (code_interpreter behind include), output (mcp_call), an mcp_call error
+// string, or — absent all of those — a {"status":...} marker on a
+// failed/incomplete call so the failure stays visible in telemetry.
+func (o responsesOutput) serverToolResult() string {
+	switch {
+	case len(nonEmptyRaw(o.Results)) > 0:
+		return compactToolResult(o.Results)
+	case len(nonEmptyRaw(o.Outputs)) > 0:
+		return compactToolResult(o.Outputs)
+	case len(nonEmptyRaw(o.Output)) > 0:
+		return compactToolResult(o.Output)
+	case o.Error != "":
+		return marshalString(struct {
+			Error string `json:"error"`
+		}{o.Error})
+	case o.Status == "failed" || o.Status == "incomplete":
+		return marshalString(struct {
+			Status string `json:"status"`
+		}{o.Status})
+	}
+	return ""
+}
+
+// marshalString compact-marshals v, returning "" on the (practically
+// impossible for plain structs) marshal error.
+func marshalString(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
@@ -276,6 +472,13 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 					acc.id = id
 				}
 				acc.args.WriteString(o.Arguments)
+				continue
+			}
+			// Server-tool items (web_search_call, file_search_call, ...)
+			// become tool_call parts; without this branch they would fall
+			// through to text extraction and contribute nothing.
+			if name, ok := responsesServerToolName(o.Type); ok {
+				accFor(firstNonEmpty(o.ID, o.CallID)).mergeServerItem(o, name)
 				continue
 			}
 			for _, c := range o.Content {
@@ -320,6 +523,14 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 				if id := firstNonEmpty(ch.Item.CallID, ch.Item.ID); id != "" {
 					acc.id = id
 				}
+			} else if ch.Item != nil {
+				// Streamed server-tool items arrive whole on the added/done
+				// events (arguments don't fragment like function_call's);
+				// merging both keeps the richer .done fields and stays
+				// idempotent when response.completed repeats the item.
+				if name, ok := responsesServerToolName(ch.Item.Type); ok {
+					accFor(firstNonEmpty(ch.Item.ID, ch.ItemID)).mergeServerItem(*ch.Item, name)
+				}
 			}
 		}
 		writeOutputs(ch.Output)
@@ -346,21 +557,30 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 			Index      int     `json:"index"`
 			StopReason *string `json:"stop_reason"`
 			// Content is the non-streaming top-level content block array.
+			// ToolUseID + InnerContent carry the *_tool_result correlation id
+			// and payload (server-side tool results: web_search_tool_result,
+			// mcp_tool_result, ...).
 			Content []struct {
-				Type     string          `json:"type"`
-				Text     string          `json:"text"`
-				ID       string          `json:"id"`
-				Name     string          `json:"name"`
-				Input    json.RawMessage `json:"input"`
-				Thinking string          `json:"thinking"`
+				Type         string          `json:"type"`
+				Text         string          `json:"text"`
+				ID           string          `json:"id"`
+				Name         string          `json:"name"`
+				Input        json.RawMessage `json:"input"`
+				Thinking     string          `json:"thinking"`
+				ToolUseID    string          `json:"tool_use_id"`
+				InnerContent json.RawMessage `json:"content"`
 			} `json:"content"`
-			// ContentBlock carries the tool_use / thinking header on
-			// content_block_start.
+			// ContentBlock carries the tool_use / server_tool_use / thinking
+			// header on content_block_start. Server-side *_tool_result blocks
+			// arrive whole inside content_block_start (no deltas follow), so
+			// it also carries their tool_use_id and content payload.
 			ContentBlock *struct {
-				Type     string `json:"type"`
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				Thinking string `json:"thinking"`
+				Type         string          `json:"type"`
+				ID           string          `json:"id"`
+				Name         string          `json:"name"`
+				Thinking     string          `json:"thinking"`
+				ToolUseID    string          `json:"tool_use_id"`
+				InnerContent json.RawMessage `json:"content"`
 			} `json:"content_block"`
 			Message *struct {
 				ID    string `json:"id"`
@@ -390,35 +610,50 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 		if ch.StopReason != nil && *ch.StopReason != "" {
 			a.FinishReasons = appendUnique(a.FinishReasons, *ch.StopReason)
 		}
-		// Non-streaming: thinking + text + tool_use blocks arrive whole,
-		// indexed by array position.
+		// Non-streaming: thinking + text + tool blocks arrive whole, indexed
+		// by array position. Server-executed calls (server_tool_use,
+		// mcp_tool_use) share the tool_use shape; any *_tool_result block
+		// carries the paired result.
 		for i, blk := range ch.Content {
 			b := blocks.get(i)
 			b.setKind(blk.Type)
 			switch blk.Type {
 			case "text":
 				b.text.WriteString(blk.Text)
-			case "tool_use":
+			case "tool_use", "server_tool_use", "mcp_tool_use":
 				b.toolID = blk.ID
 				b.toolName = blk.Name
 				b.toolArgs.WriteString(string(nonEmptyRaw(blk.Input)))
 			case "thinking":
 				b.thinking.WriteString(blk.Thinking)
+			default:
+				if strings.HasSuffix(blk.Type, "_tool_result") {
+					b.toolID = blk.ToolUseID
+					b.result = compactToolResult(blk.InnerContent)
+				}
 			}
 		}
 		// Streaming: each block opens with a content_block_start carrying its
 		// kind, then accumulates on the matching delta, keyed by block index.
 		// Thinking and text can interleave (think, text, think again), so each
-		// index keeps its own ordered slot.
+		// index keeps its own ordered slot. server_tool_use / mcp_tool_use
+		// stream exactly like tool_use (header here, input_json_delta after);
+		// *_tool_result blocks arrive whole in this event with no deltas, so
+		// the result is captured here.
 		if ch.Type == "content_block_start" && ch.ContentBlock != nil {
 			b := blocks.get(ch.Index)
 			b.setKind(ch.ContentBlock.Type)
 			switch ch.ContentBlock.Type {
-			case "tool_use":
+			case "tool_use", "server_tool_use", "mcp_tool_use":
 				b.toolID = ch.ContentBlock.ID
 				b.toolName = ch.ContentBlock.Name
 			case "thinking":
 				b.thinking.WriteString(ch.ContentBlock.Thinking)
+			default:
+				if strings.HasSuffix(ch.ContentBlock.Type, "_tool_result") {
+					b.toolID = ch.ContentBlock.ToolUseID
+					b.result = compactToolResult(ch.ContentBlock.InnerContent)
+				}
 			}
 		}
 		if ch.Delta != nil {
@@ -449,7 +684,10 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 
 // anthropicBlock is the in-flight reconstruction of one Anthropic response
 // content block. kind is fixed on first sight; only the buffers matching kind
-// are populated.
+// are populated. The tool fields serve both client tool calls (tool_use) and
+// server-executed calls (server_tool_use, mcp_tool_use); result carries the
+// compacted payload of a *_tool_result block (toolID then holds the block's
+// tool_use_id).
 type anthropicBlock struct {
 	kind     string
 	text     strings.Builder
@@ -457,6 +695,7 @@ type anthropicBlock struct {
 	toolID   string
 	toolName string
 	toolArgs strings.Builder
+	result   string
 }
 
 func (b *anthropicBlock) setKind(k string) {
@@ -499,8 +738,14 @@ func (l *anthropicBlockList) text() string {
 
 // parts emits one ordered Part per content block: reasoning for thinking /
 // redacted_thinking (redacted carries no text), text for text, tool_call for
-// tool_use. Empty text blocks are dropped; a thinking block is always emitted
-// so its presence (and any content) reaches telemetry.
+// tool_use and the server-executed call blocks (server_tool_use,
+// mcp_tool_use), tool_call_response for any *_tool_result block
+// (web_search_tool_result, code_execution_tool_result, mcp_tool_result and
+// whatever the provider adds next — matched by suffix, not by name). Empty
+// text blocks are dropped; a thinking block is always emitted so its presence
+// (and any content) reaches telemetry. A block of any other kind degrades to
+// a bare typed part rather than vanishing, so a future server-side block type
+// is at least visible in telemetry.
 func (l *anthropicBlockList) parts() []Part {
 	sort.Ints(l.order)
 	var parts []Part
@@ -515,9 +760,16 @@ func (l *anthropicBlockList) parts() []Part {
 			parts = append(parts, Part{Type: "reasoning", Content: b.thinking.String()})
 		case "redacted_thinking":
 			parts = append(parts, Part{Type: "reasoning"})
-		case "tool_use":
+		case "tool_use", "server_tool_use", "mcp_tool_use":
 			if b.toolID != "" || b.toolName != "" || b.toolArgs.Len() > 0 {
 				parts = append(parts, Part{Type: "tool_call", ID: b.toolID, Name: b.toolName, Arguments: argsRaw(b.toolArgs.String())})
+			}
+		default:
+			switch {
+			case strings.HasSuffix(b.kind, "_tool_result"):
+				parts = append(parts, Part{Type: "tool_call_response", ID: b.toolID, Result: b.result})
+			case b.kind != "":
+				parts = append(parts, Part{Type: b.kind})
 			}
 		}
 	}

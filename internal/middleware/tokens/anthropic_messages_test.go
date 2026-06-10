@@ -3,6 +3,7 @@ package tokens_test
 import (
 	"testing"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/sseframe"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/tokens"
 )
 
@@ -113,5 +114,79 @@ data: {"type":"message_start","message":{"id":"m1","type":"message","role":"assi
 	want := tokens.Snapshot{Input: 100, Output: 1, Cached: 0, CacheCreation: 0, Recognised: true}
 	if got != want {
 		t.Errorf("snapshot = %+v, want %+v", got, want)
+	}
+}
+
+// serverToolUse collates raw and runs the server-tool counter extraction —
+// the test-side mirror of how the reporter pairs ServerToolUseFrames with
+// ExtractFrames on the same collated frames.
+func serverToolUse(endpoint string, raw []byte) map[string]int {
+	return tokens.ServerToolUseFrames("anthropic", endpoint, sseframe.Collate(raw))
+}
+
+// TestServerToolUse_Stream models the captured prod shape: the final
+// message_delta carries usage.server_tool_use with one counter per server
+// tool family, zero-filled for the unused ones. The map must come back
+// generically — every wire key, no hardcoded names.
+func TestServerToolUse_Stream(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`event: message_start
+data: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[],"usage":{"input_tokens":2918,"output_tokens":48}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":10668,"output_tokens":968,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}}
+
+`)
+	got := serverToolUse("messages", raw)
+	if len(got) != 2 || got["web_search_requests"] != 1 || got["web_fetch_requests"] != 0 {
+		t.Errorf("server_tool_use = %v, want map[web_fetch_requests:0 web_search_requests:1]", got)
+	}
+	// The token snapshot itself is untouched by the counters.
+	want := tokens.Snapshot{Input: 10668, Output: 968, Recognised: true}
+	if snap := tokens.Extract("anthropic", "messages", raw); snap != want {
+		t.Errorf("snapshot = %+v, want %+v", snap, want)
+	}
+}
+
+// TestServerToolUse_NonStream covers the whole-body shape with multiple
+// counters, including a future key the gateway has never heard of.
+func TestServerToolUse_NonStream(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"id":"m2","type":"message","usage":{"input_tokens":5,"output_tokens":7,"server_tool_use":{"web_search_requests":2,"code_execution_requests":3,"future_tool_requests":1}}}`)
+	got := serverToolUse("messages", body)
+	if len(got) != 3 || got["web_search_requests"] != 2 || got["code_execution_requests"] != 3 || got["future_tool_requests"] != 1 {
+		t.Errorf("server_tool_use = %v", got)
+	}
+}
+
+// TestServerToolUse_Absent: no server_tool_use block means nil — the
+// reporter projects no gen_ai.usage.server_tool_use.* attributes.
+func TestServerToolUse_Absent(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"id":"m3","type":"message","usage":{"input_tokens":5,"output_tokens":7}}`)
+	if got := serverToolUse("messages", body); got != nil {
+		t.Errorf("server_tool_use = %v, want nil when absent", got)
+	}
+	// Non-Anthropic endpoints have no analogous counters (OpenAI Responses
+	// usage carries none — invocations are billed per *_call output item).
+	openai := []byte(`{"id":"r1","usage":{"input_tokens":5,"output_tokens":7,"total_tokens":12}}`)
+	if got := serverToolUse("responses", openai); got != nil {
+		t.Errorf("responses server_tool_use = %v, want nil", got)
+	}
+}
+
+// TestServerToolUse_NonIntegerMemberSkipped: a future non-integer member of
+// the block must neither appear in the map nor break the integer counters
+// beside it (the raw-value decode guards the whole usage unmarshal too).
+func TestServerToolUse_NonIntegerMemberSkipped(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"type":"message","usage":{"input_tokens":5,"output_tokens":7,"server_tool_use":{"web_search_requests":4,"detail":{"nested":true}}}}`)
+	got := serverToolUse("messages", body)
+	if len(got) != 1 || got["web_search_requests"] != 4 {
+		t.Errorf("server_tool_use = %v, want only web_search_requests:4", got)
+	}
+	want := tokens.Snapshot{Input: 5, Output: 7, Recognised: true}
+	if snap := tokens.Extract("anthropic", "messages", body); snap != want {
+		t.Errorf("snapshot = %+v, want %+v (usage decode must survive)", snap, want)
 	}
 }

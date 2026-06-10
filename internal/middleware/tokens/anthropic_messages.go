@@ -20,6 +20,33 @@ type anthropicUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+
+	// ServerToolUse is the per-tool request-counter block Anthropic adds
+	// when the model invoked server-executed tools (web_search_requests,
+	// web_fetch_requests, and whatever counter the next server tool family
+	// ships). Decoded generically — keys are NOT hardcoded — and as raw
+	// values so a future non-integer member can never fail the whole usage
+	// unmarshal and cost us the token counts.
+	ServerToolUse map[string]json.RawMessage `json:"server_tool_use"`
+}
+
+// counters filters u.ServerToolUse down to its integer members. nil when
+// the block was absent or carried no integer counters.
+func (u *anthropicUsage) counters() map[string]int {
+	if len(u.ServerToolUse) == 0 {
+		return nil
+	}
+	m := make(map[string]int, len(u.ServerToolUse))
+	for k, v := range u.ServerToolUse {
+		var n int
+		if json.Unmarshal(v, &n) == nil {
+			m[k] = n
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
 // anthropicStreamFrame covers both event types we care about:
@@ -56,24 +83,51 @@ func extractAnthropicMessages(frames [][]byte) Snapshot {
 		if err := json.Unmarshal(f, &frame); err != nil {
 			continue
 		}
-		var u *anthropicUsage
-		switch {
-		case frame.Type == "message_start" && frame.Message != nil:
-			u = frame.Message.Usage
-		case frame.Type == "message_delta":
-			u = frame.Usage
-		default:
-			// Non-streaming response body (type "message") carries usage at
-			// the top level; no streaming frame other than message_delta
-			// does, so this only fires for the whole-body single frame.
-			u = frame.Usage
-		}
+		// usageForType: message_start nests usage under message.usage;
+		// message_delta and the non-streaming body (type "message") carry it
+		// at the top level — no other streaming frame does.
+		u := frame.usageForType()
 		if u == nil {
 			continue
 		}
 		agg.Handle(StrategyLastWins, anthropicUsageToObservation(u))
 	}
 	return agg.Snapshot()
+}
+
+// extractAnthropicServerToolUse walks the same frames as
+// extractAnthropicMessages and returns the usage.server_tool_use counters as
+// a generic map (web_search_requests, web_fetch_requests, future keys). It
+// rides outside Snapshot so Snapshot stays a comparable value type; the same
+// last-wins logic applies — the cumulative message_delta emission is
+// authoritative. nil when the response reported no server-tool counters.
+func extractAnthropicServerToolUse(frames [][]byte) map[string]int {
+	var out map[string]int
+	for _, f := range frames {
+		var frame anthropicStreamFrame
+		if err := json.Unmarshal(f, &frame); err != nil {
+			continue
+		}
+		u := frame.usageForType()
+		if u == nil {
+			continue
+		}
+		if m := u.counters(); m != nil {
+			out = m
+		}
+	}
+	return out
+}
+
+// usageForType resolves which usage block the frame carries, mirroring the
+// event-type dispatch in extractAnthropicMessages: message_start nests it
+// under message.usage, message_delta and the non-streaming body carry it at
+// the top level.
+func (f *anthropicStreamFrame) usageForType() *anthropicUsage {
+	if f.Type == "message_start" && f.Message != nil {
+		return f.Message.Usage
+	}
+	return f.Usage
 }
 
 func anthropicUsageToObservation(u *anthropicUsage) Usage {

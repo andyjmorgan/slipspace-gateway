@@ -15,6 +15,7 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
+	"github.com/andyjmorgan/sluice-gateway/internal/middleware/sseframe"
 	"github.com/andyjmorgan/sluice-gateway/internal/observability"
 )
 
@@ -531,5 +532,69 @@ func TestEmitTrace_NoTracerOrNoStartNoOp(t *testing.T) {
 	r2.emitTrace(context.Background(), events.Request{StatusCode: 200}, nil)
 	if got := len(sr.Ended()); got != 0 {
 		t.Errorf("spans = %d, want 0 when start time is zero", got)
+	}
+}
+
+// TestEmitTrace_ServerToolUseAttrs: the server-tool counters extracted from
+// usage.server_tool_use project as one gen_ai.usage.server_tool_use.<counter>
+// attribute per reported (non-zero) counter, sorted; zero-filled counters of
+// undeclared-but-unused tools stay off the span like every other zero usage
+// attribute.
+func TestEmitTrace_ServerToolUseAttrs(t *testing.T) {
+	r, sr := traceHarness(t)
+	r.provider = "anthropic"
+	r.protocol = "messages"
+	r.serverToolUse = map[string]int{"web_search_requests": 3, "web_fetch_requests": 0}
+	r.emitTrace(context.Background(), events.Request{
+		Provider:   "anthropic",
+		Protocol:   "messages",
+		Model:      "claude-opus-4-8",
+		StatusCode: 200,
+	}, nil)
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("len(spans) = %d, want 1", len(spans))
+	}
+	attrs := spans[0].Attributes()
+	if v, ok := attrValue(attrs, observability.AttrGenAIUsageServerToolUsePrefix+"web_search_requests"); !ok || v.AsInt64() != 3 {
+		t.Errorf("gen_ai.usage.server_tool_use.web_search_requests = %d (ok=%v), want 3", v.AsInt64(), ok)
+	}
+	if _, ok := attrValue(attrs, observability.AttrGenAIUsageServerToolUsePrefix+"web_fetch_requests"); ok {
+		t.Errorf("zero-valued web_fetch_requests must not be projected")
+	}
+}
+
+// TestEmitTrace_NoServerToolUseAttrs: a request with no server-tool counters
+// emits none of the gen_ai.usage.server_tool_use.* family.
+func TestEmitTrace_NoServerToolUseAttrs(t *testing.T) {
+	r, sr := traceHarness(t)
+	r.emitTrace(context.Background(), events.Request{
+		Provider:   "openai",
+		Protocol:   "chat_completions",
+		Model:      "gpt-4o-mini",
+		StatusCode: 200,
+	}, nil)
+	for _, kv := range sr.Ended()[0].Attributes() {
+		if strings.HasPrefix(string(kv.Key), observability.AttrGenAIUsageServerToolUsePrefix) {
+			t.Errorf("unexpected server_tool_use attribute %s", kv.Key)
+		}
+	}
+}
+
+// TestPopulateTokens_CapturesServerToolUse proves the OnComplete wiring: the
+// counters ride from the collated response frames onto the run alongside the
+// token snapshot, ready for the span/event projection.
+func TestPopulateTokens_CapturesServerToolUse(t *testing.T) {
+	r := &reporterRun{factory: &reporterFactory{}}
+	r.responseFrames = sseframe.Collate([]byte(`{"id":"m1","type":"message","usage":{"input_tokens":10,"output_tokens":4,"server_tool_use":{"web_search_requests":1}}}`))
+	var ev events.Request
+	ev.Provider, ev.Protocol = "anthropic", "messages"
+	r.populateTokens(context.Background(), &ev)
+	if ev.TokensIn != 10 || ev.TokensOut != 4 {
+		t.Errorf("tokens = %d/%d, want 10/4", ev.TokensIn, ev.TokensOut)
+	}
+	if len(r.serverToolUse) != 1 || r.serverToolUse["web_search_requests"] != 1 {
+		t.Errorf("serverToolUse = %v, want map[web_search_requests:1]", r.serverToolUse)
 	}
 }
