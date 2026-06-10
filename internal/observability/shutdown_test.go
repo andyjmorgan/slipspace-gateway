@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -173,5 +176,43 @@ func TestExportErrorHandler_CountsAndLogs(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "otlp export boom") {
 		t.Fatalf("log output missing handler error: %q", buf.String())
+	}
+}
+
+// TestProvider_ShutdownCleanAgainstLiveOTLP is the regression test for the
+// false "telemetry flush on shutdown failed … reader is shutdown" WARN seen
+// on the 2026-06-10 prod roll: the OTLP periodic reader's Shutdown was
+// registered both directly and via MeterProvider.Shutdown, so the second
+// invocation returned ErrReaderShutdown and poisoned the joined error even
+// though every export succeeded. Against a healthy OTLP receiver a graceful
+// Shutdown must return nil.
+func TestProvider_ShutdownCleanAgainstLiveOTLP(t *testing.T) {
+	t.Parallel()
+
+	// Minimal OTLP http/protobuf receiver: 200 every export. The exporters
+	// only need the status code.
+	recv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(recv.Close)
+	endpoint := strings.TrimPrefix(recv.URL, "http://")
+
+	prov, err := observability.Setup(context.Background(), observability.Config{
+		OTLPEndpoint: endpoint,
+		OTLPProtocol: "http/protobuf",
+		LogFormat:    "json",
+		LogLevel:     "info",
+	}, build())
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	// Give the pipeline something to flush.
+	prov.Meters.RequestsTotal.Add(context.Background(), 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := prov.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown against a live receiver must be clean, got: %v", err)
 	}
 }
