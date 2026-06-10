@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { DashboardPage } from "./pages/dashboard"
 import { MessagesPage } from "./pages/messages"
 import { SessionsPage } from "./pages/sessions"
+import { SessionLifecyclePage } from "./pages/session-lifecycle"
 
 // App is the telemetry console root: a Basic-auth login gate wrapping the
 // shared app shell (sidebar + topbar) the gateway admin console uses, themed
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="messages" element={<MessagesPage />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="sessions/:id" element={<SessionsPage />} />
+          <Route path="sessions/:id/lifecycle" element={<SessionLifecyclePage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

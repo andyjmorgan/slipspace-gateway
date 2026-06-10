@@ -793,3 +793,192 @@ export interface PolicyTarget {
    */
   circuit_state: string;
 }
+
+//////////
+// source: sessionspans.go
+
+/**
+ * SessionSpan is one element of the SessionSpansDTO v1 array returned by
+ * GET /api/v1/sessions/{id}/spans — one gen_ai span (one upstream request) of
+ * a session, projected from the request_events span_event blob alone (never
+ * from Records; invariant #4). The shape is frozen by the span-dto JSON schema
+ * (sluice:session-spans-dto/v1) the session lifecycle page renders from.
+ * Truncation policy: this server serves FULL text and tool arguments — no
+ * cap is applied — and every *Chars field carries the same value as the
+ * served text's length, so the renderer's "showing first N of M" guard never
+ * fires. The *Chars fields remain in the contract because the schema makes
+ * truncation a server prerogative; a future cap only changes the server, not
+ * the renderer.
+ */
+export interface SessionSpan {
+  /**
+   * CID is the correlation id (= span id in the console).
+   */
+  cid: string;
+  /**
+   * At is the request receipt time (the span start), RFC3339.
+   */
+  at: string;
+  /**
+   * LatencyMs is the request wall time; null when the span blob is absent.
+   */
+  latency_ms?: number /* int64 */;
+  /**
+   * TTFCMs is gen_ai.response.time_to_first_chunk converted to ms; null for
+   * non-streaming requests (the attribute is emitted on streams only).
+   */
+  ttfc_ms?: number /* int64 */;
+  /**
+   * Status is the upstream HTTP status (sluice.upstream_status, falling back
+   * to the client-facing status column); null when neither is known.
+   */
+  status?: number /* int */;
+  /**
+   * Model is the requested model; null when unknown.
+   */
+  model?: string;
+  /**
+   * FinishReason is the first gen_ai.response.finish_reasons entry; null
+   * when the response carried none.
+   */
+  finish_reason?: string;
+  /**
+   * SessionID is the session bundle root every span of the session shares.
+   */
+  session_id: string;
+  /**
+   * ConversationID is the thread the request belongs to: the session for the
+   * main loop, the subagent thread id for sub-agents.
+   */
+  conversation_id: string;
+  /**
+   * ParentConversationID links a subagent thread toward its parent; null for
+   * the main loop.
+   */
+  parent_conversation_id?: string;
+  /**
+   * Usage is the per-span token rollup incl. the server-tool counter map.
+   */
+  usage: SessionSpanUsage;
+  /**
+   * OutputParts is the normalized assistant output envelope, in emission
+   * order. Always an array (empty when content capture was off).
+   */
+  output_parts: SessionSpanOutputPart[];
+  /**
+   * InputParts is the trailing input delta — the NEW parts of this request
+   * only. Always an array (empty when content capture was off).
+   */
+  input_parts: SessionSpanInputPart[];
+  /**
+   * InputText is the human text of the trailing message when InputParts has
+   * text parts (concatenated in order); null otherwise.
+   */
+  input_text?: string;
+  /**
+   * InputTextChars is the uncapped total size of InputText.
+   */
+  input_text_chars?: number /* int */;
+  /**
+   * OutputText is the concatenated output text parts; null when the
+   * response carried no text part.
+   */
+  output_text?: string;
+  /**
+   * OutputTextChars is the uncapped total size of OutputText.
+   */
+  output_text_chars?: number /* int */;
+}
+/**
+ * SessionSpanUsage is the per-span token rollup. Each count is null when the
+ * span carried no such usage attribute (e.g. an errored request with no usage
+ * block), distinguishing "not reported" from a genuine zero.
+ */
+export interface SessionSpanUsage {
+  /**
+   * Input / Output are gen_ai.usage.input_tokens / .output_tokens.
+   */
+  input?: number /* int64 */;
+  output?: number /* int64 */;
+  /**
+   * CacheRead / CacheCreation are the provider prompt-cache counts
+   * (gen_ai.usage.cache_read.input_tokens / .cache_creation.input_tokens).
+   */
+  cache_read?: number /* int64 */;
+  cache_creation?: number /* int64 */;
+  /**
+   * ServerToolUse is the generic provider-executed tool counter map
+   * (gen_ai.usage.server_tool_use.*), keyed by the provider's own counter
+   * name; null when the span carried none.
+   */
+  server_tool_use: { [key: string]: number /* int64 */};
+}
+/**
+ * SessionSpanOutputPart is one normalized assistant output part. Type is one
+ * of text | reasoning | tool_call | tool_call_response | unknown; only the
+ * fields relevant to the type are set.
+ */
+export interface SessionSpanOutputPart {
+  /**
+   * Type is the part discriminator.
+   */
+  type: string;
+  /**
+   * Chars is the true size of the part's text (text / reasoning content, or
+   * a tool_call_response's result). Absent for tool_call parts.
+   */
+  chars?: number /* int */;
+  /**
+   * ID is the tool_call / tool_call_response join key.
+   */
+  id?: string;
+  /**
+   * Name is the tool name (tool_call only).
+   */
+  name?: string;
+  /**
+   * Args is the raw tool-call arguments JSON — an opaque vendor payload the
+   * renderer never field-picks. Served whole (no cap).
+   */
+  args?: string;
+  /**
+   * ArgsChars is the uncapped arguments size; equal to len(Args) since this
+   * server applies no cap.
+   */
+  args_chars?: number /* int */;
+  /**
+   * Text is the result text of a tool_call_response output part (a
+   * server-executed tool's result, carried on the same span as its call).
+   * Served whole (no cap); Chars carries its size.
+   */
+  text?: string;
+}
+/**
+ * SessionSpanInputPart is one part of the trailing input delta. Type is
+ * text | tool_call_response.
+ */
+export interface SessionSpanInputPart {
+  /**
+   * Type is the part discriminator.
+   */
+  type: string;
+  /**
+   * ID joins a tool_call_response back to a prior span's tool_call.
+   */
+  id?: string;
+  /**
+   * Chars is the true total size of Text before any cap (equal to
+   * len(Text) since this server applies no cap).
+   */
+  chars?: number /* int */;
+  /**
+   * Text is the part's own text — the user message text or the tool result
+   * body. Served whole (no cap).
+   */
+  text?: string;
+  /**
+   * IsError marks an errored tool result. Omitted today: the gateway's
+   * content normalizer does not yet capture the provider is_error flag.
+   */
+  is_error?: boolean;
+}
