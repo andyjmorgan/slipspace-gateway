@@ -373,6 +373,322 @@ func TestExtractResponse_ToolCalls(t *testing.T) {
 	})
 }
 
+func TestExtractResponse_Anthropic_ServerTools(t *testing.T) {
+	t.Parallel()
+
+	// Non-streaming: server_tool_use + web_search_tool_result + text, modeled
+	// on real captured traffic (srvtoolu_ id prefix, web_search name, query
+	// input, result entries with title/url/encrypted_content/page_age). The
+	// parts must preserve wire order and the result must drop the bulky
+	// encrypted_content blobs.
+	t.Run("non-stream web_search round", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"id":"msg_1","model":"claude-opus-4-8","content":[` +
+			`{"type":"server_tool_use","id":"srvtoolu_01AAA","name":"web_search","input":{"query":"julien thibeaut"}},` +
+			`{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01AAA","content":[` +
+			`{"type":"web_search_result","title":"Site One","url":"https://example.com/one","encrypted_content":"OPAQUEBLOB1","page_age":null},` +
+			`{"type":"web_search_result","title":"Site Two","url":"https://example.com/two","encrypted_content":"OPAQUEBLOB2","page_age":"April 30, 2025"}` +
+			`],"caller":{"type":"direct"}},` +
+			`{"type":"text","text":"Found it."}],"stop_reason":"end_turn"}`)
+		got := genaiattr.ExtractResponse("messages", raw)
+		if len(got.OutputParts) != 3 {
+			t.Fatalf("parts = %+v, want [tool_call, tool_call_response, text]", got.OutputParts)
+		}
+		call := got.OutputParts[0]
+		if call.Type != "tool_call" || call.ID != "srvtoolu_01AAA" || call.Name != "web_search" {
+			t.Errorf("part0 = %+v, want tool_call srvtoolu_01AAA/web_search", call)
+		}
+		if string(call.Arguments) != `{"query":"julien thibeaut"}` {
+			t.Errorf("arguments = %s", call.Arguments)
+		}
+		res := got.OutputParts[1]
+		if res.Type != "tool_call_response" || res.ID != "srvtoolu_01AAA" {
+			t.Errorf("part1 = %+v, want tool_call_response srvtoolu_01AAA", res)
+		}
+		if strings.Contains(res.Result, "OPAQUEBLOB") {
+			t.Errorf("encrypted_content survived into result: %q", res.Result)
+		}
+		for _, want := range []string{"Site One", "https://example.com/one", "Site Two", "April 30, 2025"} {
+			if !strings.Contains(res.Result, want) {
+				t.Errorf("result = %q, want it to contain %q", res.Result, want)
+			}
+		}
+		if got.OutputParts[2].Type != "text" || got.OutputParts[2].Content != "Found it." {
+			t.Errorf("part2 = %+v, want text part", got.OutputParts[2])
+		}
+	})
+
+	// Streaming: server_tool_use streams like tool_use (content_block_start
+	// header with empty input, then input_json_delta fragments); the
+	// *_tool_result block arrives whole inside content_block_start with no
+	// deltas. Mirrors the captured SSE shape, including pause_turn-style
+	// stop_reason passthrough.
+	t.Run("stream web_search round", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte("" +
+			"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_s\",\"model\":\"claude-opus-4-8\"}}\n\n" +
+			"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_01BBB\",\"name\":\"web_search\",\"input\":{}}}\n\n" +
+			"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n" +
+			"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"quer\"}}\n\n" +
+			"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"y\\\": \\\"ruvnet github\\\"}\"}}\n\n" +
+			"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+			"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"web_search_tool_result\",\"tool_use_id\":\"srvtoolu_01BBB\",\"content\":[{\"type\":\"web_search_result\",\"title\":\"rUv\",\"url\":\"https://example.com/ruv\",\"encrypted_content\":\"OPAQUEBLOB\",\"page_age\":null}],\"caller\":{\"type\":\"direct\"}}}\n\n" +
+			"data: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
+			"data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"text_delta\",\"text\":\"summary\"}}\n\n" +
+			"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"pause_turn\"},\"usage\":{\"output_tokens\":42}}\n\n")
+		got := genaiattr.ExtractResponse("messages", raw)
+		if len(got.OutputParts) != 3 {
+			t.Fatalf("parts = %+v, want [tool_call, tool_call_response, text]", got.OutputParts)
+		}
+		call := got.OutputParts[0]
+		if call.Type != "tool_call" || call.ID != "srvtoolu_01BBB" || call.Name != "web_search" {
+			t.Errorf("part0 = %+v", call)
+		}
+		if string(call.Arguments) != `{"query": "ruvnet github"}` {
+			t.Errorf("reassembled arguments = %s", call.Arguments)
+		}
+		res := got.OutputParts[1]
+		if res.Type != "tool_call_response" || res.ID != "srvtoolu_01BBB" {
+			t.Errorf("part1 = %+v", res)
+		}
+		if strings.Contains(res.Result, "OPAQUEBLOB") || !strings.Contains(res.Result, "https://example.com/ruv") {
+			t.Errorf("result = %q, want url kept and encrypted_content stripped", res.Result)
+		}
+		if got.OutputParts[2].Type != "text" || got.OutputParts[2].Content != "summary" {
+			t.Errorf("part2 = %+v", got.OutputParts[2])
+		}
+		if len(got.FinishReasons) != 1 || got.FinishReasons[0] != "pause_turn" {
+			t.Errorf("finish_reasons = %v, want [pause_turn]", got.FinishReasons)
+		}
+	})
+
+	// Any future *_tool_result block maps generically by suffix — no
+	// per-tool allowlist. String content passes through as plain text.
+	t.Run("unknown foo_tool_result maps generically", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"content":[` +
+			`{"type":"server_tool_use","id":"srvtoolu_X","name":"foo","input":{"arg":1}},` +
+			`{"type":"foo_tool_result","tool_use_id":"srvtoolu_X","content":"plain result text"}]}`)
+		got := genaiattr.ExtractResponse("messages", raw)
+		if len(got.OutputParts) != 2 {
+			t.Fatalf("parts = %+v, want [tool_call, tool_call_response]", got.OutputParts)
+		}
+		if got.OutputParts[0].Type != "tool_call" || got.OutputParts[0].Name != "foo" {
+			t.Errorf("part0 = %+v", got.OutputParts[0])
+		}
+		res := got.OutputParts[1]
+		if res.Type != "tool_call_response" || res.ID != "srvtoolu_X" || res.Result != "plain result text" {
+			t.Errorf("part1 = %+v", res)
+		}
+	})
+
+	// Error results: content is an object, not an array — compacted as JSON.
+	t.Run("tool_result error object", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"content":[{"type":"web_search_tool_result","tool_use_id":"srvtoolu_E","content":{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}}]}`)
+		got := genaiattr.ExtractResponse("messages", raw)
+		if len(got.OutputParts) != 1 || got.OutputParts[0].Type != "tool_call_response" {
+			t.Fatalf("parts = %+v", got.OutputParts)
+		}
+		if !strings.Contains(got.OutputParts[0].Result, "max_uses_exceeded") {
+			t.Errorf("result = %q, want error_code preserved", got.OutputParts[0].Result)
+		}
+	})
+
+	// mcp_tool_use is the server-executed MCP call — same shape as tool_use.
+	t.Run("mcp_tool_use and mcp_tool_result", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"content":[` +
+			`{"type":"mcp_tool_use","id":"mcptoolu_1","name":"list_issues","input":{"repo":"a/b"}},` +
+			`{"type":"mcp_tool_result","tool_use_id":"mcptoolu_1","content":[{"type":"text","text":"3 open issues"}]}]}`)
+		got := genaiattr.ExtractResponse("messages", raw)
+		if len(got.OutputParts) != 2 {
+			t.Fatalf("parts = %+v", got.OutputParts)
+		}
+		if got.OutputParts[0].Type != "tool_call" || got.OutputParts[0].ID != "mcptoolu_1" || got.OutputParts[0].Name != "list_issues" {
+			t.Errorf("part0 = %+v", got.OutputParts[0])
+		}
+		if got.OutputParts[1].Type != "tool_call_response" || !strings.Contains(got.OutputParts[1].Result, "3 open issues") {
+			t.Errorf("part1 = %+v", got.OutputParts[1])
+		}
+	})
+
+	// An unrecognised future block type degrades to a bare typed part —
+	// never a silent drop.
+	t.Run("unknown block degrades to typed part", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"content":[{"type":"future_server_block","payload":"x"},{"type":"text","text":"hi"}]}`)
+		got := genaiattr.ExtractResponse("messages", raw)
+		if len(got.OutputParts) != 2 {
+			t.Fatalf("parts = %+v, want [future_server_block, text]", got.OutputParts)
+		}
+		if got.OutputParts[0].Type != "future_server_block" {
+			t.Errorf("part0 = %+v, want bare typed part", got.OutputParts[0])
+		}
+	})
+}
+
+func TestExtractResponse_OpenAIResponses_ServerTools(t *testing.T) {
+	t.Parallel()
+
+	// Non-streaming: a built-in tool mix interleaved with a function call and
+	// the assistant message. Every *_call item maps to a tool_call part named
+	// by the type minus "_call"; file_search carries inline (include-gated)
+	// results, which pair as a tool_call_response with the same id.
+	t.Run("non-stream mixed builtin items", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"id":"resp_1","model":"gpt-5.2","output":[` +
+			`{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"positive news"}},` +
+			`{"type":"file_search_call","id":"fs_1","status":"completed","queries":["deep research"],"results":[{"file_id":"file-1","filename":"blog.pdf","score":0.95}]},` +
+			`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":"{\"loc\":\"Paris\"}"},` +
+			`{"type":"message","content":[{"type":"output_text","text":"done"}]}]}`)
+		got := genaiattr.ExtractResponse("responses", raw)
+		if len(got.OutputParts) != 5 {
+			t.Fatalf("parts = %+v, want [text, ws call, fs call, fs response, fn call]", got.OutputParts)
+		}
+		if got.OutputParts[0].Type != "text" || got.OutputParts[0].Content != "done" {
+			t.Errorf("part0 = %+v, want the message text", got.OutputParts[0])
+		}
+		ws := got.OutputParts[1]
+		if ws.Type != "tool_call" || ws.ID != "ws_1" || ws.Name != "web_search" {
+			t.Errorf("web_search part = %+v", ws)
+		}
+		if string(ws.Arguments) != `{"action":{"type":"search","query":"positive news"}}` {
+			t.Errorf("web_search arguments = %s", ws.Arguments)
+		}
+		fs := got.OutputParts[2]
+		if fs.Type != "tool_call" || fs.ID != "fs_1" || fs.Name != "file_search" {
+			t.Errorf("file_search part = %+v", fs)
+		}
+		if string(fs.Arguments) != `{"queries":["deep research"]}` {
+			t.Errorf("file_search arguments = %s", fs.Arguments)
+		}
+		fsRes := got.OutputParts[3]
+		if fsRes.Type != "tool_call_response" || fsRes.ID != "fs_1" {
+			t.Errorf("file_search response part = %+v", fsRes)
+		}
+		if !strings.Contains(fsRes.Result, "blog.pdf") || !strings.Contains(fsRes.Result, "file-1") {
+			t.Errorf("file_search result = %q", fsRes.Result)
+		}
+		fn := got.OutputParts[4]
+		if fn.Type != "tool_call" || fn.ID != "call_1" || fn.Name != "get_weather" || string(fn.Arguments) != `{"loc":"Paris"}` {
+			t.Errorf("function_call part = %+v", fn)
+		}
+	})
+
+	// Streaming: the item arrives on output_item.added (in_progress, bare),
+	// is completed on output_item.done, and response.completed repeats the
+	// whole output — the merges must stay idempotent (one part, final args).
+	t.Run("stream web_search_call idempotent across events", func(t *testing.T) {
+		t.Parallel()
+		sse := "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_9\",\"status\":\"in_progress\"}}\n\n" +
+			"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_9\",\"status\":\"completed\",\"action\":{\"type\":\"open_page\",\"url\":\"https://example.com/a\"}}}\n\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_9\",\"output\":[{\"type\":\"web_search_call\",\"id\":\"ws_9\",\"status\":\"completed\",\"action\":{\"type\":\"open_page\",\"url\":\"https://example.com/a\"}}]}}\n\n"
+		got := genaiattr.ExtractResponse("responses", []byte(sse))
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].ID != "ws_9" || tc[0].Name != "web_search" {
+			t.Fatalf("tool calls = %+v, want exactly one web_search", tc)
+		}
+		if string(tc[0].Arguments) != `{"action":{"type":"open_page","url":"https://example.com/a"}}` {
+			t.Errorf("arguments = %s", tc[0].Arguments)
+		}
+	})
+
+	// mcp_call: the part keeps the family name (type minus _call); the MCP
+	// tool's own name, decoded arguments, and server label ride inside the
+	// argument object; the output string pairs as a tool_call_response.
+	t.Run("mcp_call with output", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"output":[{"type":"mcp_call","id":"mcp_1","name":"roll_dice","server_label":"dice","arguments":"{\"sides\":6}","output":"4"}]}`)
+		got := genaiattr.ExtractResponse("responses", raw)
+		if len(got.OutputParts) != 2 {
+			t.Fatalf("parts = %+v, want [tool_call, tool_call_response]", got.OutputParts)
+		}
+		call := got.OutputParts[0]
+		if call.Type != "tool_call" || call.ID != "mcp_1" || call.Name != "mcp" {
+			t.Errorf("part0 = %+v", call)
+		}
+		if string(call.Arguments) != `{"name":"roll_dice","arguments":{"sides":6},"server_label":"dice"}` {
+			t.Errorf("arguments = %s", call.Arguments)
+		}
+		if got.OutputParts[1].Type != "tool_call_response" || got.OutputParts[1].ID != "mcp_1" || got.OutputParts[1].Result != "4" {
+			t.Errorf("part1 = %+v", got.OutputParts[1])
+		}
+	})
+
+	// computer_call prefers call_id (the transcript-correlating id, matching
+	// the function_call convention); code_interpreter_call carries code +
+	// container_id as its arguments; an unknown future *_call still maps.
+	t.Run("computer, code_interpreter, future calls", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"output":[` +
+			`{"type":"computer_call","id":"cu_1","call_id":"call_z","status":"completed","action":{"type":"click","button":"left","x":156,"y":50}},` +
+			`{"type":"code_interpreter_call","id":"ci_1","status":"completed","container_id":"cntr_1","code":"print(1)"},` +
+			`{"type":"hologram_call","id":"holo_1","status":"completed"}]}`)
+		got := genaiattr.ExtractResponse("responses", raw)
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 3 {
+			t.Fatalf("tool calls = %+v, want 3", tc)
+		}
+		if tc[0].ID != "call_z" || tc[0].Name != "computer" || !strings.Contains(string(tc[0].Arguments), `"click"`) {
+			t.Errorf("computer part = %+v", tc[0])
+		}
+		if tc[1].ID != "ci_1" || tc[1].Name != "code_interpreter" || string(tc[1].Arguments) != `{"code":"print(1)","container_id":"cntr_1"}` {
+			t.Errorf("code_interpreter part = %+v", tc[1])
+		}
+		if tc[2].ID != "holo_1" || tc[2].Name != "hologram" || tc[2].Arguments != nil {
+			t.Errorf("future *_call part = %+v", tc[2])
+		}
+	})
+
+	// A failed call with no inline result surfaces the failure as a
+	// status-marker tool_call_response so it doesn't vanish.
+	t.Run("failed call emits status response", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"output":[{"type":"web_search_call","id":"ws_f","status":"failed","action":{"type":"search","query":"q"}}]}`)
+		got := genaiattr.ExtractResponse("responses", raw)
+		if len(got.OutputParts) != 2 {
+			t.Fatalf("parts = %+v, want [tool_call, tool_call_response]", got.OutputParts)
+		}
+		if got.OutputParts[1].Type != "tool_call_response" || got.OutputParts[1].Result != `{"status":"failed"}` {
+			t.Errorf("part1 = %+v", got.OutputParts[1])
+		}
+	})
+
+	// mcp_list_tools / mcp_approval_request have no _call suffix but are
+	// still server-tool activity; the type itself is the part name.
+	t.Run("mcp_list_tools keeps full type as name", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"output":[{"type":"mcp_list_tools","id":"mcpl_1","server_label":"dice"}]}`)
+		got := genaiattr.ExtractResponse("responses", raw)
+		tc := toolCalls(got.OutputParts)
+		if len(tc) != 1 || tc[0].Name != "mcp_list_tools" || string(tc[0].Arguments) != `{"server_label":"dice"}` {
+			t.Fatalf("tool calls = %+v", tc)
+		}
+	})
+}
+
+// Chat Completions has no server-tool output items (search-preview models
+// return plain text with annotations) — the extractor must keep emitting
+// exactly [text, tool_call...] with no response parts.
+func TestExtractResponse_OpenAIChat_NoServerToolParts(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"id":"c1","model":"gpt-4o-search-preview","choices":[{"message":{"content":"cited answer","annotations":[{"type":"url_citation","url_citation":{"url":"https://example.com","title":"t"}}],"tool_calls":[{"id":"call_1","function":{"name":"f","arguments":"{}"}}]},"finish_reason":"stop"}]}`)
+	got := genaiattr.ExtractResponse("chat_completions", raw)
+	if len(got.OutputParts) != 2 {
+		t.Fatalf("parts = %+v, want [text, tool_call] only", got.OutputParts)
+	}
+	if got.OutputParts[0].Type != "text" || got.OutputParts[1].Type != "tool_call" {
+		t.Errorf("parts = %+v", got.OutputParts)
+	}
+	for _, p := range got.OutputParts {
+		if p.Type == "tool_call_response" {
+			t.Errorf("unexpected tool_call_response part on chat: %+v", p)
+		}
+	}
+}
+
 func TestExtractResponse_EdgeCases(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

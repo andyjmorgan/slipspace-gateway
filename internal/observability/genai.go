@@ -104,6 +104,18 @@ const (
 	// (OpenAI reasoning_tokens, Gemini thoughtsTokenCount).
 	AttrGenAIUsageReasoningOutputTokens = "gen_ai.usage.reasoning.output_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
 
+	// AttrGenAIUsageServerToolUsePrefix prefixes the per-tool server-side
+	// usage counters Anthropic reports under usage.server_tool_use
+	// (web_search_requests, web_fetch_requests, ...), emitted as
+	// gen_ai.usage.server_tool_use.<counter> with the provider's own counter
+	// name as the suffix. Conscious exception to the "never mint inside
+	// gen_ai.*" rule above: the spec has no home for server-tool counters
+	// yet, the key family mirrors the provider-page usage.* pattern the
+	// cache attributes follow, and it renames in lockstep if/when the spec
+	// lands one. Emitted only for counters the provider actually reported
+	// (non-zero), like every other usage attribute.
+	AttrGenAIUsageServerToolUsePrefix = "gen_ai.usage.server_tool_use." //nolint:gosec // G101 false positive: attribute key, not a credential
+
 	// AttrGenAIRequestStream marks whether the request used streaming.
 	// Conditionally required by the spec when the request is streaming.
 	AttrGenAIRequestStream = "gen_ai.request.stream"
