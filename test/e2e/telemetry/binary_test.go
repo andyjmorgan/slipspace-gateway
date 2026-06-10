@@ -782,3 +782,143 @@ func TestE2E_ConsoleServedPublic(t *testing.T) {
 		t.Fatalf("console / status = %d, want 200 (public SPA)", resp.StatusCode)
 	}
 }
+
+// doubleKV builds a double-valued attribute (the shape
+// gen_ai.response.time_to_first_chunk rides on the span).
+func doubleKV(k string, v float64) *commonpb.KeyValue {
+	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_DoubleValue{DoubleValue: v}}}
+}
+
+// TestE2E_SessionSpansDTO proves GET /api/v1/sessions/{id}/spans serves the
+// SessionSpansDTO v1 projection (span-dto.schema.json) from ingested gen_ai
+// spans alone: per-span scalars + usage (incl. the server_tool_use counter
+// map) from span attributes, and the input/output part envelopes from the
+// gen_ai content attributes — full fidelity (chars == served length), ordered
+// by at, with the tool_call -> tool_call_response join id intact across spans.
+func TestE2E_SessionSpansDTO(t *testing.T) {
+	svc := startService(t)
+
+	// Span 1: assistant answers with text + a client tool call, and reports a
+	// server-side web_search alongside.
+	svc.sendSpan(t,
+		strKV("sluice.correlation_id", "lcs-a"),
+		strKV("sluice.session_id", "lifecycle-1"),
+		strKV("gen_ai.conversation.id", "lifecycle-1"),
+		strKV("gen_ai.provider.name", "anthropic"),
+		strKV("gen_ai.request.model", "claude-x"),
+		intKV("http.response.status_code", 200),
+		intKV("sluice.upstream_status", 200),
+		intKV("gen_ai.usage.input_tokens", 100),
+		intKV("gen_ai.usage.output_tokens", 25),
+		intKV("gen_ai.usage.server_tool_use.web_search_requests", 2),
+		strSliceKV("gen_ai.response.finish_reasons", "tool_use"),
+		doubleKV("gen_ai.response.time_to_first_chunk", 0.25),
+		strKV("gen_ai.input.messages", `[{"role":"user","parts":[{"type":"text","content":"run the tests"}]}]`),
+		strKV("gen_ai.output.messages", `[{"role":"assistant","parts":[{"type":"text","content":"on it"},{"type":"reasoning","content":"plan"},{"type":"tool_call","id":"toolu_e2e","name":"Bash","arguments":{"command":"make e2e"}}]}]`),
+	)
+	// Span 2: the tool continuation — the result joins span 1's call by id.
+	svc.sendSpan(t,
+		strKV("sluice.correlation_id", "lcs-b"),
+		strKV("sluice.session_id", "lifecycle-1"),
+		strKV("gen_ai.conversation.id", "lifecycle-1"),
+		strKV("gen_ai.provider.name", "anthropic"),
+		strKV("gen_ai.request.model", "claude-x"),
+		intKV("http.response.status_code", 200),
+		strSliceKV("gen_ai.response.finish_reasons", "end_turn"),
+		strKV("gen_ai.input.messages", `[{"role":"user","parts":[{"type":"tool_call_response","id":"toolu_e2e","result":"ok: 12 passed"}]}]`),
+		strKV("gen_ai.output.messages", `[{"role":"assistant","parts":[{"type":"text","content":"all green"}]}]`),
+	)
+
+	var spans []adminc.SessionSpan
+	if code := svc.getJSON(t, "/api/v1/sessions/lifecycle-1/spans", &spans); code != http.StatusOK {
+		t.Fatalf("spans status = %d", code)
+	}
+	if len(spans) != 2 {
+		t.Fatalf("spans = %d, want 2", len(spans))
+	}
+	// Ordered by at (oldest first); both spans were stamped time.Now() in send
+	// order, so span 1 leads.
+	a, b := spans[0], spans[1]
+	if a.CID != "lcs-a" || b.CID != "lcs-b" {
+		t.Fatalf("order = %q, %q; want lcs-a, lcs-b", a.CID, b.CID)
+	}
+	if !b.At.After(a.At) && !b.At.Equal(a.At) {
+		t.Errorf("not ordered by at: %v then %v", a.At, b.At)
+	}
+
+	// Span 1 scalars + usage.
+	if a.SessionID != "lifecycle-1" || a.ConversationID != "lifecycle-1" {
+		t.Errorf("ids = %q / %q", a.SessionID, a.ConversationID)
+	}
+	if a.Status == nil || *a.Status != 200 {
+		t.Errorf("status = %v", a.Status)
+	}
+	if a.Model == nil || *a.Model != "claude-x" {
+		t.Errorf("model = %v", a.Model)
+	}
+	if a.FinishReason == nil || *a.FinishReason != "tool_use" {
+		t.Errorf("finish_reason = %v", a.FinishReason)
+	}
+	if a.TTFCMs == nil || *a.TTFCMs != 250 {
+		t.Errorf("ttfc_ms = %v, want 250", a.TTFCMs)
+	}
+	if a.LatencyMs == nil || *a.LatencyMs != 200 {
+		t.Errorf("latency_ms = %v, want 200 (the sendSpan span width)", a.LatencyMs)
+	}
+	if a.Usage.Input == nil || *a.Usage.Input != 100 || a.Usage.Output == nil || *a.Usage.Output != 25 {
+		t.Errorf("usage = %+v", a.Usage)
+	}
+	if a.Usage.CacheRead != nil {
+		t.Errorf("cache_read = %v, want null (attribute absent)", a.Usage.CacheRead)
+	}
+	if a.Usage.ServerToolUse["web_search_requests"] != 2 {
+		t.Errorf("server_tool_use = %v", a.Usage.ServerToolUse)
+	}
+
+	// Span 1 envelopes: text + reasoning + tool_call, full fidelity.
+	if len(a.OutputParts) != 3 {
+		t.Fatalf("output_parts = %+v", a.OutputParts)
+	}
+	if a.OutputParts[0].Type != "text" || a.OutputParts[1].Type != "reasoning" {
+		t.Errorf("part types = %q, %q", a.OutputParts[0].Type, a.OutputParts[1].Type)
+	}
+	call := a.OutputParts[2]
+	if call.Type != "tool_call" || call.ID != "toolu_e2e" || call.Name != "Bash" {
+		t.Fatalf("tool_call part = %+v", call)
+	}
+	if call.Args == "" || !strings.Contains(call.Args, `"make e2e"`) {
+		t.Errorf("args not served whole: %q", call.Args)
+	}
+	if call.ArgsChars == nil || *call.ArgsChars != len(call.Args) {
+		t.Errorf("args_chars = %v, want %d (full fidelity)", call.ArgsChars, len(call.Args))
+	}
+	if a.OutputText == nil || *a.OutputText != "on it" {
+		t.Errorf("output_text = %v", a.OutputText)
+	}
+	if a.OutputTextChars == nil || *a.OutputTextChars != 5 {
+		t.Errorf("output_text_chars = %v", a.OutputTextChars)
+	}
+	if a.InputText == nil || *a.InputText != "run the tests" {
+		t.Errorf("input_text = %v", a.InputText)
+	}
+
+	// Span 2: the join material — input tool_call_response carrying span 1's
+	// call id, with the full result text.
+	if len(b.InputParts) != 1 {
+		t.Fatalf("input_parts = %+v", b.InputParts)
+	}
+	resp := b.InputParts[0]
+	if resp.Type != "tool_call_response" || resp.ID != "toolu_e2e" {
+		t.Errorf("tool_call_response part = %+v", resp)
+	}
+	if resp.Text != "ok: 12 passed" || resp.Chars == nil || *resp.Chars != 13 {
+		t.Errorf("result not served whole: %+v", resp)
+	}
+	if b.FinishReason == nil || *b.FinishReason != "end_turn" {
+		t.Errorf("finish_reason = %v", b.FinishReason)
+	}
+	// input_text stays null on a tool-continuation turn (no human text part).
+	if b.InputText != nil {
+		t.Errorf("input_text = %v, want null", *b.InputText)
+	}
+}

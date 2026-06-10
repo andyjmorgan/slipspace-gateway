@@ -36,7 +36,7 @@ flowchart TD
     msgs["GET /api/v1/messages*"]
     facets["GET /api/v1/facets"]
     events["GET /api/v1/events*"]
-    sessions["GET /api/v1/sessions, /sessions/{id}"]
+    sessions["GET /api/v1/sessions, /sessions/{id}, /sessions/{id}/spans"]
   end
   client --> open
   client --> hmac
@@ -394,6 +394,78 @@ aggregate `totals`:
 A request with `status_code >= 400` counts as an error
 (`stitch.BuildSessionView`). `404 {"error":"session not found"}` when no event
 carries that session id.
+
+#### `GET /api/v1/sessions/{id}/spans`
+
+Handler `handleSessionSpans` (`sessionspans.go`). The **session lifecycle**
+feed: a flat array of the session's gen_ai spans in **SessionSpansDTO v1** —
+the shape the lifecycle page renders lanes, gaps, the tool ledger, and exec
+stats from (`contracts/admin.SessionSpan`). One element per request event,
+ordered by `at` (oldest first, `(observed_at, correlation_id)`).
+
+Everything is projected from the `request_events` columns plus the
+`span_event` blob — the span feed alone, never the lazy `record` blob, so the
+projection works whether or not reporting forwarding was on:
+
+```json
+[
+  {
+    "cid": "0b8e…",
+    "at": "2026-06-10T12:00:00Z",
+    "latency_ms": 1234,
+    "ttfc_ms": 250,
+    "status": 200,
+    "model": "claude-opus-4-8",
+    "finish_reason": "tool_use",
+    "session_id": "sess-123",
+    "conversation_id": "sess-123",
+    "parent_conversation_id": null,
+    "usage": {
+      "input": 100, "output": 25, "cache_read": 64, "cache_creation": null,
+      "server_tool_use": { "web_search_requests": 2 }
+    },
+    "output_parts": [
+      { "type": "text", "chars": 5 },
+      { "type": "reasoning", "chars": 40 },
+      { "type": "tool_call", "id": "toolu_01", "name": "Bash",
+        "args": "{\"command\":\"make e2e\"}", "args_chars": 22 }
+    ],
+    "input_parts": [
+      { "type": "tool_call_response", "id": "toolu_00", "chars": 13,
+        "text": "ok: 12 passed" }
+    ],
+    "input_text": null, "input_text_chars": null,
+    "output_text": "on it", "output_text_chars": 5
+  }
+]
+```
+
+Field sources: `latency_ms` is the blob's derived `sluice.latency_ms`;
+`ttfc_ms` converts `gen_ai.response.time_to_first_chunk` (seconds, streaming
+only) to ms; `status` prefers `sluice.upstream_status` over the client-facing
+column; `finish_reason` is the first `gen_ai.response.finish_reasons` entry;
+the usage counts are presence-keyed (null when the span carried no such
+attribute, distinguishing "not reported" from zero) and `server_tool_use`
+collects every `gen_ai.usage.server_tool_use.*` counter. The part envelopes
+come from the blob's `gen_ai_content` (`{input_messages, output_messages}`,
+present only when content capture was on): output parts map the normalizer's
+uniform shape onto `text`/`reasoning` (size only), `tool_call`
+(`id`/`name`/raw `args` JSON), and `tool_call_response` (`id` + full result
+`text` — server-executed tools land call + response on the same span); other
+block types (media) become `unknown`. Input parts keep only `text` and
+`tool_call_response` — a `tool_call_response.id` here joins a *prior* span's
+`tool_call.id` (the renderer's exact-ledger rule).
+
+**Truncation policy: none.** Text and tool arguments are served whole, and
+every `*_chars` field equals the served length (counted in Unicode code
+points), so the renderer's "showing first N of M (server cap)" notice never
+fires. The chars fields stay in the contract because the DTO schema makes
+truncation a server prerogative — a future cap changes only this projection.
+The blob itself is already bounded upstream by the gateway's content-capture
+caps and the ingest `content_max_bytes`.
+
+`404 {"error":"session not found"}` when no event carries that session id
+(same as the sibling `/sessions/{id}`).
 
 > **Invariant #4 compliance.** `sessions/{id}` and `events/{id}` assemble their
 > views from the `request_events` entity (and, for `events/{id}`, the lazily-joined

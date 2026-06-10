@@ -31,6 +31,10 @@ export type OutputPart = {
   name?: string
   args?: string
   args_chars?: number
+  // text is the result body of a tool_call_response output part (a
+  // server-executed tool's result, on the same span as its call). The server
+  // serves it whole — chars carries the same total.
+  text?: string
 }
 
 // InputPart is one part of the trailing input delta (the NEW parts of this

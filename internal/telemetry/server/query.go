@@ -47,6 +47,9 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/events/{id}/body", gated(s.handleEventBody))
 	mux.Handle("GET /api/v1/sessions", gated(s.handleSessions))
 	mux.Handle("GET /api/v1/sessions/{id}", gated(s.handleSession))
+	// Session lifecycle feed — the SessionSpansDTO v1 projection the lifecycle
+	// page renders from (sessionspans.go).
+	mux.Handle("GET /api/v1/sessions/{id}/spans", gated(s.handleSessionSpans))
 }
 
 // filterFromQuery reads the shared equality/status filters from the query
