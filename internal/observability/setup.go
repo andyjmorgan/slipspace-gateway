@@ -129,10 +129,11 @@ type Provider struct {
 	// Caller must invoke Snapshotter.Start(ctx) once at startup.
 	Snapshotter *Snapshotter
 
-	// Shutdown flushes and shuts down the OTLP exporter and the
-	// MeterProvider. Safe to call multiple times: the inner once.Do
-	// makes subsequent invocations no-ops that return the same joined
-	// error as the first call.
+	// Shutdown gracefully terminates the telemetry pipeline: it ForceFlushes
+	// every SDK provider (meter, tracer, logger) so buffered spans, logs, and
+	// metric points hit the wire, then shuts each down — bounded by ctx.
+	// Safe to call multiple times: the inner once.Do makes subsequent
+	// invocations no-ops that return the same joined error as the first call.
 	Shutdown func(ctx context.Context) error
 }
 
@@ -178,7 +179,13 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 
 	readers := make([]sdkmetric.Reader, 0, 3)
 
-	shutdownFns := make([]func(context.Context) error, 0, 2)
+	// flushFns run before shutdownFns inside the composed Shutdown: every
+	// pipeline is ForceFlushed first so buffered spans/logs/metric points hit
+	// the wire even if a later provider's Shutdown errors or times out. The
+	// June 2026 binary-swap incident lost ~90 buffered spans on exit; flush
+	// ordering is now an explicit, tested contract (see flushThenShutdown).
+	flushFns := make([]func(context.Context) error, 0, 3)
+	shutdownFns := make([]func(context.Context) error, 0, 4)
 
 	var promHandler http.Handler
 
@@ -225,6 +232,9 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 	}
 	mp := sdkmetric.NewMeterProvider(opts...)
 	otel.SetMeterProvider(mp)
+	// ForceFlush drives every reader (periodic OTLP included) through a final
+	// collect+export before any Shutdown runs.
+	flushFns = append(flushFns, mp.ForceFlush)
 
 	// Install the W3C trace-context + baggage propagator so the data plane
 	// can extract an inbound traceparent and nest its spans under a caller's
@@ -270,6 +280,7 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
 		)
 		otel.SetTracerProvider(sdkTP)
+		flushFns = append(flushFns, sdkTP.ForceFlush)
 		shutdownFns = append(shutdownFns, sdkTP.Shutdown)
 		tp = sdkTP
 	}
@@ -282,7 +293,7 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 	if otlpEnabled {
 		logExp, lerr := newOTLPLogExporter(ctx, cfg.OTLPEndpoint, cfg.OTLPProtocol)
 		if lerr != nil {
-			_ = idempotentShutdown(shutdownFns)(ctx)
+			_ = flushThenShutdown(nil, shutdownFns)(ctx)
 			return nil, lerr
 		}
 		sdkLP := sdklog.NewLoggerProvider(
@@ -290,9 +301,18 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 			sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)),
 		)
 		logglobal.SetLoggerProvider(sdkLP)
+		flushFns = append(flushFns, sdkLP.ForceFlush)
 		shutdownFns = append(shutdownFns, sdkLP.Shutdown)
 		lp = sdkLP
 	}
+
+	// Surface SDK-internal errors — overwhelmingly OTLP export failures from
+	// the periodic reader and batch processors — as a counter + warn log.
+	// Without this, a dead OTLP endpoint silently drops every span and metric
+	// point (the default handler writes to stderr once). The counter rides
+	// the Prometheus reader too, so the failure is visible even when the
+	// OTLP path itself is what's broken.
+	otel.SetErrorHandler(exportErrorHandler(meters.OTelExportFailuresTotal, logger)) //nolint:contextcheck // the handler outlives Setup's ctx; it runs from SDK exporter goroutines with no caller context
 
 	return &Provider{
 		Meters:         meters,
@@ -302,8 +322,18 @@ func Setup(ctx context.Context, cfg Config, build BuildInfo) (*Provider, error) 
 		Logger:         logger,
 		PromHandler:    promHandler,
 		Snapshotter:    snap,
-		Shutdown:       idempotentShutdown(shutdownFns),
+		Shutdown:       flushThenShutdown(flushFns, shutdownFns),
 	}, nil
+}
+
+// exportErrorHandler builds the global OTel error handler: bump the export
+// failures counter and warn. Kept tiny and allocation-light — the SDK may
+// invoke it from exporter goroutines on every failed batch.
+func exportErrorHandler(counter metric.Int64Counter, logger *slog.Logger) otel.ErrorHandler {
+	return otel.ErrorHandlerFunc(func(err error) {
+		counter.Add(context.Background(), 1)
+		logger.Warn("otel sdk error (likely OTLP export failure)", "err", err.Error())
+	})
 }
 
 func buildResource(ctx context.Context, build BuildInfo) (*resource.Resource, error) {
@@ -371,11 +401,14 @@ func deltaTemporality(kind sdkmetric.InstrumentKind) metricdata.Temporality {
 	}
 }
 
-// idempotentShutdown collapses a slice of shutdown callbacks into one
-// callable that may be invoked many times. Subsequent invocations
-// short-circuit to nil so graceful shutdown handlers can re-run without
-// double-flushing the SDK.
-func idempotentShutdown(fns []func(context.Context) error) func(context.Context) error {
+// flushThenShutdown composes the provider's graceful-termination contract
+// into one idempotent callable: every flush callback runs first (ForceFlush
+// pushes buffered spans, logs, and metric points to the wire), then every
+// shutdown callback, all bounded by the caller's ctx. A flush failure does
+// not skip the remaining flushes or the shutdowns — each error is collected
+// and joined. Subsequent invocations short-circuit to the first call's result
+// so shutdown handlers can re-run without double-flushing the SDK.
+func flushThenShutdown(flushFns, shutdownFns []func(context.Context) error) func(context.Context) error {
 	var (
 		once sync.Once
 		err  error
@@ -383,9 +416,14 @@ func idempotentShutdown(fns []func(context.Context) error) func(context.Context)
 	return func(ctx context.Context) error {
 		once.Do(func() {
 			var errs []error
-			for _, fn := range fns {
+			for _, fn := range flushFns {
 				if e := fn(ctx); e != nil {
-					errs = append(errs, e)
+					errs = append(errs, fmt.Errorf("observability: flush: %w", e))
+				}
+			}
+			for _, fn := range shutdownFns {
+				if e := fn(ctx); e != nil {
+					errs = append(errs, fmt.Errorf("observability: shutdown: %w", e))
 				}
 			}
 			err = errors.Join(errs...)

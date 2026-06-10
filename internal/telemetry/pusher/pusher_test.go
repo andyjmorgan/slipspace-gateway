@@ -220,5 +220,316 @@ func TestPusher_Defaults(t *testing.T) {
 	if cap(p.ch) != defaultBuffer {
 		t.Errorf("buffer = %d, want %d", cap(p.ch), defaultBuffer)
 	}
+	if p.maxAttempts != defaultMaxAttempts {
+		t.Errorf("maxAttempts = %d, want %d", p.maxAttempts, defaultMaxAttempts)
+	}
+	if p.backoffBase != defaultBackoffBase || p.backoffMax != defaultBackoffMax {
+		t.Errorf("backoff = %v/%v, want %v/%v", p.backoffBase, p.backoffMax, defaultBackoffBase, defaultBackoffMax)
+	}
 	drain(t, p)
+}
+
+// scriptedResp is one canned outcome for scriptedDoer.
+type scriptedResp struct {
+	status int
+	err    error
+}
+
+// scriptedDoer plays back a fixed sequence of responses, repeating the last
+// entry once the script runs out, so retry behaviour is deterministic.
+type scriptedDoer struct {
+	mu    sync.Mutex
+	seq   []scriptedResp
+	calls int
+}
+
+func (s *scriptedDoer) Do(*http.Request) (*http.Response, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.calls
+	s.calls++
+	if i >= len(s.seq) {
+		i = len(s.seq) - 1
+	}
+	r := s.seq[i]
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &http.Response{StatusCode: r.status, Body: io.NopCloser(http.NoBody)}, nil
+}
+
+func (s *scriptedDoer) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// hookLog collects OnDropped / OnFailure invocations. Worker goroutines call
+// the hooks concurrently, hence the mutex.
+type hookLog struct {
+	mu    sync.Mutex
+	drops []string
+	fails []string
+}
+
+func (h *hookLog) onDropped(reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.drops = append(h.drops, reason)
+}
+
+func (h *hookLog) onFailure(kind string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.fails = append(h.fails, kind)
+}
+
+func (h *hookLog) snapshot() (drops, fails []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.drops...), append([]string(nil), h.fails...)
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestPusher_RetryBackoffGiveUp drives one record through the retry loop per
+// case: transient failures (network, 408/429/5xx) retry up to MaxAttempts;
+// permanent rejections (other 4xx) and exhausted schedules drop the record
+// with the matching reason. The incident this pins: a transient 502 from the
+// telemetry service permanently lost records because no retry existed.
+func TestPusher_RetryBackoffGiveUp(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		seq         []scriptedResp
+		maxAttempts int
+		wantCalls   int
+		wantSent    int64
+		wantFailed  int64
+		wantLost    int64
+		wantDrops   []string
+		wantFails   []string
+	}{
+		{
+			name:      "transient 502 then success",
+			seq:       []scriptedResp{{status: 502}, {status: 200}},
+			wantCalls: 2, wantSent: 1, wantFailed: 1,
+			wantFails: []string{FailureStatus},
+		},
+		{
+			name:      "network error then success",
+			seq:       []scriptedResp{{err: io.ErrUnexpectedEOF}, {status: 200}},
+			wantCalls: 2, wantSent: 1, wantFailed: 1,
+			wantFails: []string{FailureNetwork},
+		},
+		{
+			name:      "throttle then outage then success",
+			seq:       []scriptedResp{{status: 429}, {status: 503}, {status: 200}},
+			wantCalls: 3, wantSent: 1, wantFailed: 2,
+			wantFails: []string{FailureStatus, FailureStatus},
+		},
+		{
+			name:      "request timeout 408 retried",
+			seq:       []scriptedResp{{status: 408}, {status: 202}},
+			wantCalls: 2, wantSent: 1, wantFailed: 1,
+			wantFails: []string{FailureStatus},
+		},
+		{
+			name:      "non-retryable 400 gives up immediately",
+			seq:       []scriptedResp{{status: 400}},
+			wantCalls: 1, wantFailed: 1, wantLost: 1,
+			wantDrops: []string{DropRejected},
+			wantFails: []string{FailureStatus},
+		},
+		{
+			name:      "bad HMAC 401 never retried",
+			seq:       []scriptedResp{{status: 401}},
+			wantCalls: 1, wantFailed: 1, wantLost: 1,
+			wantDrops: []string{DropRejected},
+			wantFails: []string{FailureStatus},
+		},
+		{
+			name:        "persistent 502 exhausts attempts",
+			seq:         []scriptedResp{{status: 502}},
+			maxAttempts: 3,
+			wantCalls:   3, wantFailed: 3, wantLost: 1,
+			wantDrops: []string{DropExhausted},
+			wantFails: []string{FailureStatus, FailureStatus, FailureStatus},
+		},
+		{
+			name:        "persistent network error exhausts attempts",
+			seq:         []scriptedResp{{err: io.ErrUnexpectedEOF}},
+			maxAttempts: 2,
+			wantCalls:   2, wantFailed: 2, wantLost: 1,
+			wantDrops: []string{DropExhausted},
+			wantFails: []string{FailureNetwork, FailureNetwork},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			doer := &scriptedDoer{seq: tc.seq}
+			hooks := &hookLog{}
+			p := New(Options{
+				Endpoint:    "http://x",
+				Secret:      "s",
+				Workers:     1,
+				Buffer:      4,
+				Client:      doer,
+				Logger:      discard(),
+				MaxAttempts: tc.maxAttempts,
+				BackoffBase: time.Millisecond,
+				BackoffMax:  4 * time.Millisecond,
+				OnDropped:   hooks.onDropped,
+				OnFailure:   hooks.onFailure,
+			})
+			if !p.Enqueue(sampleRecord()) {
+				t.Fatal("Enqueue should accept")
+			}
+			drain(t, p)
+
+			if got := doer.callCount(); got != tc.wantCalls {
+				t.Errorf("attempts = %d, want %d", got, tc.wantCalls)
+			}
+			if p.Sent() != tc.wantSent || p.Failed() != tc.wantFailed || p.Lost() != tc.wantLost {
+				t.Errorf("sent/failed/lost = %d/%d/%d, want %d/%d/%d",
+					p.Sent(), p.Failed(), p.Lost(), tc.wantSent, tc.wantFailed, tc.wantLost)
+			}
+			drops, fails := hooks.snapshot()
+			if !equalStrings(drops, tc.wantDrops) {
+				t.Errorf("drop reasons = %v, want %v", drops, tc.wantDrops)
+			}
+			if !equalStrings(fails, tc.wantFails) {
+				t.Errorf("failure kinds = %v, want %v", fails, tc.wantFails)
+			}
+		})
+	}
+}
+
+// TestBackoffFor pins the capped exponential schedule.
+func TestBackoffFor(t *testing.T) {
+	t.Parallel()
+
+	p := New(Options{
+		Endpoint: "http://x", Secret: "s", Logger: discard(),
+		BackoffBase: 100 * time.Millisecond, BackoffMax: time.Second,
+	})
+	defer drain(t, p)
+
+	cases := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{1, 100 * time.Millisecond},
+		{2, 200 * time.Millisecond},
+		{3, 400 * time.Millisecond},
+		{4, 800 * time.Millisecond},
+		{5, time.Second},  // doubled past the cap
+		{10, time.Second}, // stays pinned at the cap
+	}
+	for _, tc := range cases {
+		if got := p.backoffFor(tc.attempt); got != tc.want {
+			t.Errorf("backoffFor(%d) = %v, want %v", tc.attempt, got, tc.want)
+		}
+	}
+
+	// A base above the cap is clamped from the first retry.
+	p2 := New(Options{
+		Endpoint: "http://x", Secret: "s", Logger: discard(),
+		BackoffBase: 2 * time.Second, BackoffMax: time.Second,
+	})
+	defer drain(t, p2)
+	if got := p2.backoffFor(1); got != time.Second {
+		t.Errorf("clamped backoffFor(1) = %v, want 1s", got)
+	}
+}
+
+// TestPusher_QueueFullDropHook proves the Enqueue-side cap reports queue_full
+// through the dropped hook — the metric feed for invariant-#2-style loss.
+func TestPusher_QueueFullDropHook(t *testing.T) {
+	doer := &blockingDoer{release: make(chan struct{})}
+	hooks := &hookLog{}
+	p := New(Options{
+		Endpoint: "http://x", Secret: "s", Workers: 1, Buffer: 1,
+		Client: doer, Logger: discard(), OnDropped: hooks.onDropped,
+	})
+
+	// Park the single worker inside Do so the channel slot is the only
+	// free capacity, then overflow it.
+	deadline := time.After(2 * time.Second)
+	for doer.calls.Load() == 0 {
+		p.Enqueue(sampleRecord())
+		select {
+		case <-deadline:
+			t.Fatal("worker never entered Do")
+		default:
+		}
+		time.Sleep(time.Millisecond)
+	}
+	p.Enqueue(sampleRecord()) // fills the buffer (best effort)
+	for range 20 {
+		p.Enqueue(sampleRecord())
+	}
+
+	drops, _ := hooks.snapshot()
+	if int64(len(drops)) != p.Dropped() {
+		t.Fatalf("hook fired %d times, Dropped() = %d", len(drops), p.Dropped())
+	}
+	if p.Dropped() == 0 {
+		t.Fatal("expected queue-full drops")
+	}
+	for _, r := range drops {
+		if r != DropQueueFull {
+			t.Fatalf("drop reason = %q, want %q", r, DropQueueFull)
+		}
+	}
+	close(doer.release)
+	drain(t, p)
+}
+
+// TestPusher_CloseSkipsBackoff proves a shutdown drain does not sleep out the
+// backoff schedule: remaining retries run back-to-back so Close stays bounded
+// by HTTP timeouts, not by minutes of accumulated waits.
+func TestPusher_CloseSkipsBackoff(t *testing.T) {
+	t.Parallel()
+
+	doer := &scriptedDoer{seq: []scriptedResp{{status: 502}}}
+	p := New(Options{
+		Endpoint: "http://x", Secret: "s", Workers: 1, Buffer: 4,
+		Client: doer, Logger: discard(),
+		MaxAttempts: 3,
+		BackoffBase: 30 * time.Second, // would dwarf the Close deadline if honoured
+		BackoffMax:  time.Minute,
+	})
+	if !p.Enqueue(sampleRecord()) {
+		t.Fatal("Enqueue should accept")
+	}
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	p.Close(ctx)
+
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("Close took %v; draining must skip backoff waits", elapsed)
+	}
+	if got := doer.callCount(); got != 3 {
+		t.Errorf("attempts = %d, want all 3 during drain", got)
+	}
+	if p.Lost() != 1 {
+		t.Errorf("lost = %d, want 1 (exhausted during drain)", p.Lost())
+	}
 }

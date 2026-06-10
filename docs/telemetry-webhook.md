@@ -193,9 +193,13 @@ boot loudly rather than silently dropping every record.
 | `Workers` | not config-exposed | `2` |
 | `Buffer` | not config-exposed | `1024` |
 | `Timeout` | connector `timeout_ms` | `5s` |
+| `MaxAttempts` | not config-exposed | `5` |
+| `BackoffBase` | not config-exposed | `250ms` |
+| `BackoffMax` | not config-exposed | `5s` |
+| `OnDropped` / `OnFailure` | wired by `setupPushers` | gateway loss meters |
 
-`Workers` and `Buffer` are not surfaced in the connector YAML today; the gateway always
-takes their defaults. The per-send timeout comes from `timeout_ms`.
+`Workers`, `Buffer`, and the retry knobs are not surfaced in the connector YAML today; the
+gateway always takes their defaults. The per-send timeout comes from `timeout_ms`.
 
 ### Non-blocking semantics
 
@@ -213,22 +217,42 @@ default:
 
 If the queue is full it **drops the record on the floor** and bumps a counter — the
 request path never waits (invariant #2). Workers fire *after* the client response, marshal
-each record, sign it, and POST it with a per-send context timeout. A non-2xx response or a
-transport error is logged at debug and counted as failed; there is **no retry, no
-deadletter, no circuit breaker, no backoff** — telemetry delivery is best-effort by design.
+each record, sign it, and POST it with a per-send context timeout.
+
+Transient failures — a transport error or a retryable non-2xx (`408`, `429`, `5xx`) — are
+**retried with capped exponential backoff** inside the worker that owns the record
+(default 5 attempts, 250ms base doubling to a 5s cap). Retrying is safe because the
+telemetry service's ingest is an idempotent upsert keyed by `correlation_id`. Other 4xx
+responses (bad HMAC, bad request) are deterministic rejections and are never retried.
+A record that exhausts its attempts, hits a permanent rejection, or cannot be encoded is
+declared **lost**: warn-logged with the reason and reported through the `OnDropped` hook.
+Retries run in-worker, so the bounded channel remains the only queue: a wedged receiver
+parks the workers, the channel fills, and *new* records drop at `Enqueue` — memory stays
+capped and the request path still never blocks. There is still **no disk queue, no
+deadletter, no circuit breaker** for webhook.
+
 `Close(ctx)` stops accepting new records, drains the in-flight queue, and waits for the
-workers bounded by `ctx`; after close, `Enqueue` continues to return `false` (drops).
+workers bounded by `ctx`; in-flight retries keep their remaining attempts but skip the
+backoff waits so the drain stays fast. After close, `Enqueue` continues to return `false`
+(drops).
 
 ### Counters
 
-The pusher exposes three monotonic counters for operators to scrape via the gateway's own
-meters:
+The pusher exposes four monotonic counters:
 
 | Method | Meaning |
 |---|---|
 | `Dropped()` | Records dropped because the in-memory queue was full. A rising value means the receiver is too slow or down. |
 | `Sent()` | Records the receiver accepted with a 2xx. |
-| `Failed()` | Records that errored on send — JSON marshal failure, transport error, or a non-2xx response. Telemetry loss, **not** a request-path failure. |
+| `Failed()` | Send **attempts** that errored — JSON marshal failure, transport error, or a non-2xx response. One record can fail several attempts before succeeding or being lost. Degradation signal, not yet loss. |
+| `Lost()` | Records permanently lost after `Enqueue` accepted them: encode failure, permanent rejection, or retries exhausted. (Queue-full drops are counted by `Dropped()`.) |
+
+The gateway additionally wires the pusher's loss hooks
+([cmd/gateway/main.go](../cmd/gateway/main.go) `setupPushers`) to two OTel counters so the
+loss is a dashboard signal, not a debug log line:
+`gateway.telemetry.push.dropped.total` (labels: `connector`, `reason` =
+`queue_full|encode|rejected|exhausted` — any non-zero rate is audit-record loss) and
+`gateway.telemetry.push.failures.total` (labels: `connector`, `kind` = `network|status`).
 
 ## Webhook connector config
 

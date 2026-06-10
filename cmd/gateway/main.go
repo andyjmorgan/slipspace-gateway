@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
@@ -97,6 +100,14 @@ func run(ctx context.Context) error {
 
 	logger := obs.Logger
 
+	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
+
+	// Log the shutdown intent the moment the signal lands — before drain,
+	// flush, and pusher cleanup — so an exit without this line means the
+	// process was killed with no signal (the June 2026 binary-swap incident
+	// left no shutdown trace at all, which cost the forensics hours).
+	watchShutdownSignal(ctx, logger, drain)
+
 	spoolInst, spoolCleanup, err := setupSpool(ctx, env, resolved, logger)
 	if err != nil {
 		return fmt.Errorf("gateway: spool setup: %w", err)
@@ -124,7 +135,7 @@ func run(ctx context.Context) error {
 
 	contentCaps := resolved.Telemetry.ContentCapture.Resolve()
 	//nolint:contextcheck // pusher workers bind to the channel lifecycle, not a request ctx — context.Background is intentional (same rationale as the spool's detached workers)
-	pushers, pushCleanup, err := setupPushers(resolved.Connectors, logger)
+	pushers, pushCleanup, err := setupPushers(resolved.Connectors, logger, obs.Meters)
 	if err != nil {
 		return fmt.Errorf("gateway: webhook pusher setup: %w", err)
 	}
@@ -200,8 +211,6 @@ func run(ctx context.Context) error {
 	// converted to a logged 500 instead of crashing the goroutine.
 	root := correlationMiddleware(logger, sessionResolver, conversationResolver, parentResolver, agentResolver, userResolver, redactor, recoverMiddleware(obs.Meters, errs, captured))
 
-	drain := time.Duration(env.ShutdownDrainSeconds) * time.Second
-
 	srv := server.New(server.Options{
 		Bind:         env.HTTPBind,
 		Handler:      root,
@@ -247,7 +256,12 @@ const pushStopTimeout = 5 * time.Second
 // secret is resolved from its secret_ref at startup so a missing secret fails
 // boot loudly rather than silently dropping every pushed record. Returns an
 // empty map + noop cleanup when no webhook connectors are configured.
-func setupPushers(connectors []contractsconfig.Connector, logger *slog.Logger) (map[string]*pusher.Pusher, func(), error) {
+//
+// Each pusher's loss hooks are wired to the telemetry-delivery meters so a
+// dropped record or a failing push is a dashboard signal, not just a debug
+// log line — record loss was invisible to monitoring in the June 2026
+// incident.
+func setupPushers(connectors []contractsconfig.Connector, logger *slog.Logger, meters *observability.Meters) (map[string]*pusher.Pusher, func(), error) {
 	noop := func() {}
 	pushers := map[string]*pusher.Pusher{}
 	for _, c := range connectors {
@@ -258,12 +272,21 @@ func setupPushers(connectors []contractsconfig.Connector, logger *slog.Logger) (
 		if err != nil {
 			return nil, noop, fmt.Errorf("webhook connector %q: resolve secret_ref: %w", c.Name, err)
 		}
+		connectorAttr := attribute.String("connector", c.Name)
 		pushers[c.Name] = pusher.New(pusher.Options{
 			Endpoint:  c.URL,
 			GatewayID: c.GatewayID,
 			Secret:    secret,
 			Timeout:   time.Duration(c.TimeoutMS) * time.Millisecond,
 			Logger:    logger,
+			OnDropped: func(reason string) {
+				meters.TelemetryPushDroppedTotal.Add(context.Background(), 1,
+					metric.WithAttributes(connectorAttr, attribute.String("reason", reason)))
+			},
+			OnFailure: func(kind string) {
+				meters.TelemetryPushFailuresTotal.Add(context.Background(), 1,
+					metric.WithAttributes(connectorAttr, attribute.String("kind", kind)))
+			},
 		})
 		logger.Info("webhook connector enabled", "connector", c.Name, "url", c.URL, "gateway_id", c.GatewayID)
 	}
@@ -611,11 +634,40 @@ func buildTagAttachments(resolved *config.ResolvedConfig) map[string][]string {
 	return out
 }
 
-// shutdownObservability flushes the telemetry pipeline with a fresh, detached
-// context so the OTLP exporter is not killed by the same signal that triggered
-// shutdown.
+// otelFlushTimeout bounds the final ForceFlush+Shutdown of the OTel
+// providers. It runs last in the shutdown sequence (after the request drain
+// and the pusher/spool drains) so the budget only covers the OTLP exports
+// themselves.
+const otelFlushTimeout = 10 * time.Second
+
+// shutdownObservability ForceFlushes then shuts down the telemetry pipeline
+// (spans, logs, metric points) with a fresh, detached context so the OTLP
+// exporter is not killed by the same signal that triggered shutdown. The
+// outcome is always logged: a silent flush failure here is exactly how the
+// June 2026 binary swap lost ~90 spans without a trace.
 func shutdownObservability(p *observability.Provider) {
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), otelFlushTimeout)
 	defer cancel()
-	_ = p.Shutdown(shutdownCtx)
+	if err := p.Shutdown(shutdownCtx); err != nil {
+		p.Logger.Warn("telemetry flush on shutdown failed (spans/metrics may be lost)", "err", err.Error())
+		return
+	}
+	p.Logger.Info("telemetry pipeline flushed and shut down")
+}
+
+// watchShutdownSignal logs a "shutting down" line the instant ctx is
+// cancelled (SIGTERM/SIGINT via signal.NotifyContext). The logger must be the
+// build-enriched root logger so the line carries service + version (added
+// once by EnrichLogger — not repeated here to avoid duplicate JSON keys);
+// the line is the forensic marker that distinguishes a graceful exit from a
+// kill. Returns a channel closed after the line is emitted so tests can
+// synchronise.
+func watchShutdownSignal(ctx context.Context, logger *slog.Logger, drain time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+	safego.Go(ctx, "gateway.shutdown_signal_watcher", logger, nil, func() {
+		<-ctx.Done()
+		logger.Info("shutting down", "drain_timeout", drain.String())
+		close(done)
+	})
+	return done
 }
