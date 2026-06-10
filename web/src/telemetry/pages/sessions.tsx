@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router"
-import { ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Search, Workflow, X } from "lucide-react"
 import {
   Area,
   AreaChart,
@@ -65,7 +65,8 @@ export function SessionsPage() {
 }
 
 // SessionBreadcrumb sits atop the detail view: "Sessions / <id>", the first
-// segment routing back to the list.
+// segment routing back to the list, plus the pivot into the lifecycle
+// dashboard (the spans-derived lanes/ledger view) for this session.
 function SessionBreadcrumb({ sessionId }: { sessionId: string }) {
   const nav = useNavigate()
   return (
@@ -81,6 +82,15 @@ function SessionBreadcrumb({ sessionId }: { sessionId: string }) {
       <span className="mono text-[12px] text-[color:var(--text-2)] truncate" title={sessionId}>
         {sessionId}
       </span>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="ml-auto shrink-0"
+        onClick={() => nav(`/sessions/${encodeURIComponent(sessionId)}/lifecycle`)}
+        title="Open the span-derived lifecycle dashboard"
+      >
+        <Workflow /> <span className="hidden sm:inline">Lifecycle</span>
+      </Button>
     </div>
   )
 }
