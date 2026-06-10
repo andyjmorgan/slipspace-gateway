@@ -92,6 +92,24 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		log.Info("store ready", "schema_version", v)
 	}
 
+	// The migration-v10 token-column backfill runs out-of-band by design (#327:
+	// inline it and the boot scan outlasts the liveness probe). Batched, bound
+	// to the process ctx, run-once via backfill_runs, and non-fatal — a failure
+	// only leaves pre-v10 rows reading 0 tokens until the next boot retries.
+	safego.Go(ctx, "telemetry.backfill.tokens", log, nil, func() {
+		n, err := st.BackfillTokenColumns(ctx, 0)
+		switch {
+		case err != nil && ctx.Err() != nil:
+			// Shutdown mid-backfill: partial progress, no completion row; the
+			// next boot resumes idempotently.
+			log.Info("token column backfill interrupted by shutdown", "rows_updated", n)
+		case err != nil:
+			log.Error("token column backfill failed", "rows_updated", n, "err", err)
+		case n > 0:
+			log.Info("token column backfill complete", "rows_updated", n)
+		}
+	})
+
 	// Ingest surfaces: HMAC Record webhook (HTTP) for the full per-request
 	// digital record, OTLP gRPC for the gen_ai telemetry feed + sluice meters.
 	reg := registry.New(cfg.Gateways)
