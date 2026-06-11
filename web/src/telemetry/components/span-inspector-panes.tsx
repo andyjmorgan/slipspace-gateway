@@ -28,7 +28,6 @@ import {
   parseGenAIContent,
   type GenAIMessagePart,
   type GenAIToolDefinition,
-  type MessageBodyDetail,
 } from "@/lib/messages"
 import { id8, useMessageBody } from "@/lib/span-view"
 import type { InputPart, OutputPart, SessionSpan } from "@/lib/session-spans"
@@ -69,25 +68,33 @@ export function CardCopy({ text, label = "card text" }: { text: string; label?: 
   )
 }
 
-// MCard is the modal's content card: header strip + body. copyText, when
-// set, renders the standard top-right copy button for the card's content.
+// MCard is the modal's content card: header strip + body. Every card
+// collapses — the header is a <details> summary with a rotating chevron —
+// and content cards default open. copyText renders the standard top-right
+// copy button for the card's FULL content; it works while collapsed.
 export function MCard({
   head,
   copyText,
+  defaultOpen = true,
   children,
 }: {
   head: React.ReactNode
   copyText?: string
+  defaultOpen?: boolean
   children: React.ReactNode
 }) {
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg)] my-2 overflow-hidden">
-      <div className="flex items-center gap-2 px-3.5 py-2 bg-[color:var(--bg-2)] border-b border-[color:var(--border)] text-[12.5px] text-[color:var(--text-3)] flex-wrap min-h-[35px]">
+    <details
+      className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg)] my-2 overflow-hidden group"
+      open={defaultOpen}
+    >
+      <summary className="flex items-center gap-2 px-3.5 py-2 bg-[color:var(--bg-2)] text-[12.5px] text-[color:var(--text-3)] flex-wrap min-h-[35px] cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <span className="text-[9px] text-[color:var(--text-4)] transition-transform group-open:rotate-90">▶</span>
         {head}
         {copyText ? <CardCopy text={copyText} /> : null}
-      </div>
-      <div className="px-3.5 py-3">{children}</div>
-    </div>
+      </summary>
+      <div className="px-3.5 py-3 border-t border-[color:var(--border)]">{children}</div>
+    </details>
   )
 }
 
@@ -557,89 +564,118 @@ function PaneNote({ children, warn }: { children: React.ReactNode; warn?: boolea
   )
 }
 
-// bytesMeta renders the right-aligned size/truncation meta for a wire-body
-// card head.
-function bytesMeta(bytes?: number, truncated?: boolean, partial?: boolean) {
+
+
+// SubTab is the second-level strip inside a parent tab (Telemetry / Report):
+// the same underline idiom as IOTab but smaller and neutral-colored so the
+// two levels read distinctly.
+function SubTab({ on, onClick, label, meta }: { on: boolean; onClick: () => void; label: string; meta?: string }) {
   return (
-    <span className="ml-auto mono tnum text-[11.5px] text-[color:var(--text-3)] pl-2.5 whitespace-nowrap">
-      {bytes ? (
-        <>
-          <b className="text-[color:var(--text-2)]">{fmt.compact(bytes)}</b> bytes
-        </>
-      ) : null}
-      {truncated ? <b style={{ color: "var(--warn)" }}> · truncated</b> : null}
-      {partial ? <b style={{ color: "var(--warn)" }}> · partial</b> : null}
-    </span>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "px-3 py-1.5 -mb-px text-[11.5px] font-medium border-b-2 transition-colors",
+        on
+          ? "text-[color:var(--text)] border-[color:var(--text-3)]"
+          : "text-[color:var(--text-4)] border-transparent hover:text-[color:var(--text-2)]",
+      )}
+    >
+      {label}
+      {meta ? <span className="font-normal text-[10.5px] text-[color:var(--text-4)] ml-1 mono tnum">{meta}</span> : null}
+    </button>
   )
 }
 
-// TelemetryPane is the bridge's first tab: everything the gen_ai span knows
-// beyond the Output/Input turn — the system prompt, the tool definitions the
-// request advertised, and the complete raw OTel span. Fetched on demand.
-export function TelemetryPane({ cid, wanted }: { cid: string; wanted: boolean }) {
-  const st = useMessageBody(cid, wanted)
-  if (st.state === "loading") {
-    return <PaneNote>loading telemetry…</PaneNote>
-  }
-  if (st.state === "error") {
-    return <PaneNote warn>failed to load telemetry — try re-opening the tab</PaneNote>
-  }
-  if (st.state === "missing") {
-    return <PaneNote>no telemetry stored for this request (rolled off, or content capture disabled)</PaneNote>
-  }
-  return <TelemetryBody body={st.body} />
+// WellHead is the slim meta row above a sub-tab's content well: left-aligned
+// meta, right-aligned copy control for the well's full text.
+function WellHead({ copyText, children }: { copyText?: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] text-[color:var(--text-4)] mono tnum mt-2.5 mb-1.5">
+      {children}
+      <span className="flex-1" />
+      {copyText ? <CardCopy text={copyText} /> : null}
+    </div>
+  )
 }
 
-function TelemetryBody({ body }: { body: MessageBodyDetail }) {
-  const genAI = useMemo(() => parseGenAIContent(body.gen_ai_content), [body])
-  const rawSpan = useMemo(() => prettyJSON(body.span_event), [body])
+// TelemetryPane is the bridge's first parent tab: everything the gen_ai span
+// knows beyond the Output/Input turn, split across sub-tabs — System prompts,
+// Tools (the definitions the request advertised), and Raw (the complete OTel
+// span verbatim). The fetch (?include=telemetry — span side only, never the
+// record) fires when the parent tab is first opened.
+export function TelemetryPane({ cid, wanted }: { cid: string; wanted: boolean }) {
+  const st = useMessageBody(cid, wanted, "telemetry")
+  const [sub, setSub] = useState<"system" | "tools" | "raw">("system")
+  const body = st.state === "ready" ? st.body : null
+  const genAI = useMemo(() => (body ? parseGenAIContent(body.gen_ai_content) : null), [body])
+  const rawSpan = useMemo(() => (body ? prettyJSON(body.span_event) : ""), [body])
   const sys = genAI?.system_instructions ?? []
   const defs = genAI?.tool_definitions ?? []
-  if (!sys.length && !defs.length && !rawSpan) {
-    return <PaneNote>no telemetry stored for this request (record-only event)</PaneNote>
-  }
   return (
-    <div className="pt-3">
-      {genAI?.truncated && (
+    <div className="pt-2.5">
+      <div className="flex border-b border-[color:var(--border)] flex-wrap">
+        <SubTab on={sub === "system"} onClick={() => setSub("system")} label="System prompts" meta={body ? String(sys.length) : undefined} />
+        <SubTab on={sub === "tools"} onClick={() => setSub("tools")} label="Tools" meta={body ? String(defs.length) : undefined} />
+        <SubTab on={sub === "raw"} onClick={() => setSub("raw")} label="Raw" meta="otel span" />
+      </div>
+      {st.state === "loading" && <PaneNote>loading telemetry…</PaneNote>}
+      {st.state === "error" && <PaneNote warn>failed to load telemetry — try re-opening the tab</PaneNote>}
+      {st.state === "missing" && (
+        <PaneNote>no telemetry stored for this request (rolled off, or content capture disabled)</PaneNote>
+      )}
+      {body && genAI?.truncated && (
         <PaneNote warn>
           captured gen_ai content exceeded the service's content cap and was dropped
           {genAI.original_bytes ? ` (${fmt.compact(genAI.original_bytes)} bytes)` : ""}
         </PaneNote>
       )}
-      {sys.map((p, i) => (
-        <SystemPromptCard key={i} part={p} index={i} count={sys.length} />
-      ))}
-      {defs.map((d, i) => (
-        <ToolDefCard key={d.name ?? i} def={d} />
-      ))}
-      {rawSpan && (
-        <DetailsCard
-          copyText={rawSpan}
-          markerColor="var(--violet)"
-          head={
-            <>
-              <span style={{ color: "var(--violet)" }}>●</span>
-              <span>Raw span</span>
-              <span className="text-[11px] text-[color:var(--text-4)]">the complete OTel gen_ai span, every attribute verbatim</span>
-              <span className="ml-auto mono tnum text-[11.5px] text-[color:var(--text-3)] pl-2.5 whitespace-nowrap">
-                <b className="text-[color:var(--text-2)]">{fmt.compact(rawSpan.length)}</b> chars
-              </span>
-            </>
-          }
-        >
-          <PreBlock text={rawSpan} />
-        </DetailsCard>
+      {body && sub === "system" && (
+        sys.length ? (
+          <div className="pt-1">
+            {sys.map((p, i) => (
+              <SystemPromptCard key={i} part={p} index={i} count={sys.length} />
+            ))}
+          </div>
+        ) : (
+          <PaneNote>no system instructions captured on this span</PaneNote>
+        )
+      )}
+      {body && sub === "tools" && (
+        defs.length ? (
+          <div className="pt-1">
+            {defs.map((d, i) => (
+              <ToolDefCard key={d.name ?? i} def={d} />
+            ))}
+          </div>
+        ) : (
+          <PaneNote>no tool definitions captured on this span</PaneNote>
+        )
+      )}
+      {body && sub === "raw" && (
+        rawSpan ? (
+          <>
+            <WellHead copyText={rawSpan}>
+              the complete OTel gen_ai span, every attribute verbatim ·{" "}
+              <b className="text-[color:var(--text-2)]">{fmt.compact(rawSpan.length)}</b> chars
+            </WellHead>
+            <PreBlock text={rawSpan} />
+          </>
+        ) : (
+          <PaneNote>no raw span stored for this request (record-only event)</PaneNote>
+        )
       )}
     </div>
   )
 }
 
-// SystemPromptCard renders one system-instruction part, collapsed by default
-// — system prompts are large static preambles.
+// SystemPromptCard renders one system-instruction part, open by default —
+// the operator chose this sub-tab, so show the content (still foldable).
 function SystemPromptCard({ part, index, count }: { part: GenAIMessagePart; index: number; count: number }) {
   const text = part.content ?? ""
   return (
     <DetailsCard
+      defaultOpen
       copyText={text || undefined}
       head={
         <>
@@ -660,7 +696,7 @@ function SystemPromptCard({ part, index, count }: { part: GenAIMessagePart; inde
 }
 
 // ToolDefCard renders one advertised tool definition, collapsed by default —
-// tool schemas are the bulkiest gen_ai content, so the pane opens as a
+// tool schemas are the bulkiest gen_ai content, so the tab opens as a
 // scannable list of names.
 function ToolDefCard({ def }: { def: GenAIToolDefinition }) {
   const params = useMemo(() => {
@@ -700,122 +736,105 @@ function ToolDefCard({ def }: { def: GenAIToolDefinition }) {
   )
 }
 
-// ReportPane is the bridge's second tab: the spool-captured wire bytes the
-// Record carried — request body, response (assembled rollup for streams, raw
-// SSE on its own card), and the redacted header snapshots. Fetched on demand
-// through the same shared body fetch as TelemetryPane.
+// ReportPane is the bridge's second parent tab: the spool-captured wire bytes
+// the Record carried, split across sub-tabs — Request, Response (the
+// accumulator's assembled rollup for streams), Stream (the raw SSE bytes),
+// and Headers (redacted snapshots). The fetch (?include=report — record side
+// only, never the span) fires ONLY when this tab is first opened.
 export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
-  const st = useMessageBody(cid, wanted)
-  if (st.state === "loading") {
-    return <PaneNote>loading report…</PaneNote>
-  }
-  if (st.state === "error") {
-    return <PaneNote warn>failed to load the report — try re-opening the tab</PaneNote>
-  }
-  if (st.state === "missing") {
-    return <PaneNote>no report for this request (no connector binding, or the record rolled off)</PaneNote>
-  }
-  return <ReportBody body={st.body} />
-}
-
-function ReportBody({ body }: { body: MessageBodyDetail }) {
-  const req = useMemo(() => prettyJSON(body.request), [body])
-  const assembled = useMemo(() => prettyJSON(body.response_assembled), [body])
-  const resp = useMemo(
-    () => (body.response_assembled ? (body.response ?? "") : prettyJSON(body.response)),
-    [body],
-  )
-  const reqHdr = body.request_headers ?? {}
-  const respHdr = body.response_headers ?? {}
-  const hasHeaders = Object.keys(reqHdr).length > 0 || Object.keys(respHdr).length > 0
-  if (!req && !assembled && !resp && !hasHeaders) {
-    return <PaneNote>no report for this request (the record carried no captured bodies)</PaneNote>
-  }
+  const st = useMessageBody(cid, wanted, "report")
+  const [sub, setSub] = useState<"request" | "response" | "stream" | "headers">("request")
+  const body = st.state === "ready" ? st.body : null
+  const req = useMemo(() => (body ? prettyJSON(body.request) : ""), [body])
+  const assembled = useMemo(() => (body ? prettyJSON(body.response_assembled) : ""), [body])
+  // streaming = the accumulator produced a rollup; the raw SSE bytes then
+  // live on the Stream sub-tab. Non-streaming responses pretty-print on the
+  // Response sub-tab and Stream says so.
+  const streaming = !!body?.response_assembled
+  const resp = useMemo(() => {
+    if (!body) return ""
+    return streaming ? "" : prettyJSON(body.response)
+  }, [body, streaming])
+  const sse = (streaming ? body?.response : "") ?? ""
+  const reqHdr = body?.request_headers ?? {}
+  const respHdr = body?.response_headers ?? {}
+  const nHdr = Object.keys(reqHdr).length + Object.keys(respHdr).length
   return (
-    <div className="pt-3">
-      {req ? (
-        <DetailsCard
-          defaultOpen
-          copyText={req}
-          markerColor="var(--accent)"
-          head={
-            <>
-              <span style={{ color: "var(--accent)" }}>●</span>
-              <span>Request body</span>
-              {bytesMeta(body.request_total_bytes, body.request_truncated)}
-            </>
-          }
-        >
-          <PreBlock text={req} />
-        </DetailsCard>
-      ) : (
-        <PaneNote>no request body captured</PaneNote>
+    <div className="pt-2.5">
+      <div className="flex border-b border-[color:var(--border)] flex-wrap">
+        <SubTab on={sub === "request"} onClick={() => setSub("request")} label="Request" meta={body?.request_total_bytes ? `${fmt.compact(body.request_total_bytes)} B` : undefined} />
+        <SubTab on={sub === "response"} onClick={() => setSub("response")} label="Response" meta={body?.response_total_bytes ? `${fmt.compact(body.response_total_bytes)} B` : undefined} />
+        <SubTab on={sub === "stream"} onClick={() => setSub("stream")} label="Stream" meta={streaming ? "sse" : undefined} />
+        <SubTab on={sub === "headers"} onClick={() => setSub("headers")} label="Headers" meta={body ? String(nHdr) : undefined} />
+      </div>
+      {st.state === "loading" && <PaneNote>loading report…</PaneNote>}
+      {st.state === "error" && <PaneNote warn>failed to load the report — try re-opening the tab</PaneNote>}
+      {st.state === "missing" && (
+        <PaneNote>no report for this request (no connector binding, or the record rolled off)</PaneNote>
       )}
-      {assembled ? (
-        <DetailsCard
-          defaultOpen
-          copyText={assembled}
-          markerColor="var(--ok)"
-          head={
-            <>
-              <span style={{ color: "var(--ok)" }}>●</span>
-              <span>Response (assembled)</span>
-              <span className="text-[11px] text-[color:var(--text-4)]">accumulator rollup of the stream</span>
-              {bytesMeta(body.response_total_bytes, body.response_truncated, body.assembly_partial)}
-            </>
-          }
-        >
-          <PreBlock text={assembled} />
-        </DetailsCard>
-      ) : resp ? (
-        <DetailsCard
-          defaultOpen
-          copyText={resp}
-          markerColor="var(--ok)"
-          head={
-            <>
-              <span style={{ color: "var(--ok)" }}>●</span>
-              <span>Response body</span>
-              {bytesMeta(body.response_total_bytes, body.response_truncated)}
-            </>
-          }
-        >
-          <PreBlock text={resp} />
-        </DetailsCard>
-      ) : (
-        <PaneNote>no response body captured</PaneNote>
+      {body && sub === "request" && (
+        req ? (
+          <>
+            <WellHead copyText={req}>
+              inbound request body as the client sent it ·{" "}
+              <b className="text-[color:var(--text-2)]">{fmt.compact(body.request_total_bytes)}</b> bytes
+              {body.request_truncated ? <b style={{ color: "var(--warn)" }}> · truncated</b> : null}
+            </WellHead>
+            <PreBlock text={req} />
+          </>
+        ) : (
+          <PaneNote>no request body captured</PaneNote>
+        )
       )}
-      {assembled && resp && (
-        <DetailsCard
-          copyText={resp}
-          head={
-            <>
-              <span style={{ color: "var(--warn)" }}>●</span>
-              <span>Raw SSE stream</span>
-              <span className="text-[11px] text-[color:var(--text-4)]">the event bytes as they left the gateway</span>
-              {bytesMeta(body.response_total_bytes, body.response_truncated)}
-            </>
-          }
-        >
-          <PreBlock text={resp} />
-        </DetailsCard>
+      {body && sub === "response" && (
+        streaming ? (
+          <>
+            <WellHead copyText={assembled}>
+              assembled by the accumulator from the streamed chunks ·{" "}
+              <b className="text-[color:var(--text-2)]">{fmt.compact(body.response_total_bytes)}</b> bytes on the wire
+              {body.assembly_partial ? <b style={{ color: "var(--warn)" }}> · partial</b> : null}
+              {body.response_truncated ? <b style={{ color: "var(--warn)" }}> · truncated</b> : null}
+            </WellHead>
+            <PreBlock text={assembled} />
+          </>
+        ) : resp ? (
+          <>
+            <WellHead copyText={resp}>
+              outbound response body as it left the gateway ·{" "}
+              <b className="text-[color:var(--text-2)]">{fmt.compact(body.response_total_bytes)}</b> bytes
+              {body.response_truncated ? <b style={{ color: "var(--warn)" }}> · truncated</b> : null}
+            </WellHead>
+            <PreBlock text={resp} />
+          </>
+        ) : (
+          <PaneNote>no response body captured</PaneNote>
+        )
       )}
-      {hasHeaders && (
-        <DetailsCard
-          markerColor="var(--violet)"
-          copyText={headersCopyText(reqHdr, respHdr)}
-          head={
-            <>
-              <span style={{ color: "var(--violet)" }}>●</span>
-              <span>Headers</span>
-              <span className="text-[11px] text-[color:var(--text-4)]">credential values redacted at capture</span>
-            </>
-          }
-        >
-          <HeaderList label="Request headers" headers={reqHdr} />
-          <div className="h-2.5" />
-          <HeaderList label="Response headers" headers={respHdr} />
-        </DetailsCard>
+      {body && sub === "stream" && (
+        streaming && sse ? (
+          <>
+            <WellHead copyText={sse}>
+              raw SSE event bytes as they left the gateway ·{" "}
+              <b className="text-[color:var(--text-2)]">{fmt.compact(body.response_total_bytes)}</b> bytes
+              {body.response_truncated ? <b style={{ color: "var(--warn)" }}> · truncated</b> : null}
+            </WellHead>
+            <PreBlock text={sse} />
+          </>
+        ) : (
+          <PaneNote>no SSE stream — this response was not streamed (the body is on the Response tab)</PaneNote>
+        )
+      )}
+      {body && sub === "headers" && (
+        nHdr ? (
+          <>
+            <WellHead copyText={headersCopyText(reqHdr, respHdr)}>credential values redacted at capture</WellHead>
+            <HeaderList label="Request headers" headers={reqHdr} />
+            <div className="h-2.5" />
+            <HeaderList label="Response headers" headers={respHdr} />
+          </>
+        ) : (
+          <PaneNote>no headers captured</PaneNote>
+        )
       )}
     </div>
   )

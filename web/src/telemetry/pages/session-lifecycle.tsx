@@ -19,7 +19,7 @@ import {
   type OutputPart,
   type SessionSpan,
 } from "@/lib/session-spans"
-import { MESSAGE_DEFAULT_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
+import { SESSION_MESSAGES_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
 import { Dash, MessagesPagerBar, MessagesTableView } from "../components/messages-table"
 import { id8, inputMeta, outputMeta } from "@/lib/span-view"
 import {
@@ -516,12 +516,14 @@ function LifecycleView({
         onToggleNames={() => setUseNames((v) => !v)}
         onOpen={setSelectedCid}
       />
-      <SessionMessagesPanel vm={vm} slice={slice} source={source} onOpen={openSpan} />
-      <div className="grid md:grid-cols-2 gap-3.5 items-start">
-        <ToolTable vm={vm} kind="client" />
-        <ToolTable vm={vm} kind="server" />
-      </div>
-      <LedgerTable vm={vm} dispName={dispName} onOpen={setSelectedCid} />
+      <SessionDataTabs
+        vm={vm}
+        slice={slice}
+        source={source}
+        dispName={dispName}
+        onOpenMessage={openSpan}
+        onOpenSpan={setSelectedCid}
+      />
       {selectedCid && (
         <SpanInspector
           vm={vm}
@@ -1540,7 +1542,7 @@ function SessionMessagesPanel({
   const d0 = debounced?.d0 ?? 0
   const d1 = debounced?.d1 ?? vm.dur
   const full = d0 <= 0.5 && d1 >= vm.dur - 0.5
-  const [limit, setLimit] = useState<number>(MESSAGE_DEFAULT_PAGE_SIZE)
+  const [limit, setLimit] = useState<number>(SESSION_MESSAGES_PAGE_SIZE)
   const isFixture = source === "fixture"
 
   // Query filters: session-scoped always; from/to only when sliced — the full
@@ -1630,6 +1632,58 @@ function SessionMessagesPanel({
         onNext={onNext}
       />
     </PanelCard>
+  )
+}
+
+// SessionDataTabs puts the session's data tables behind one tab strip:
+// Messages — the slice-bound table, the priority view and the default — and
+// Tools — the per-tool aggregates plus the joined call ledger. Only the
+// active tab mounts, so the tools aggregation costs nothing while browsing
+// messages.
+function SessionDataTabs({
+  vm,
+  slice,
+  source,
+  dispName,
+  onOpenMessage,
+  onOpenSpan,
+}: {
+  vm: ViewModel
+  slice: SliceRange | null
+  source: "api" | "fixture"
+  dispName: (conv: string) => string
+  onOpenMessage: (cid: string) => void
+  onOpenSpan: (cid: string) => void
+}) {
+  const [tab, setTab] = useState<"messages" | "tools">("messages")
+  return (
+    <div className="flex flex-col gap-3.5">
+      <div className="flex border-b border-[color:var(--border)]">
+        <IOTab
+          on={tab === "messages"}
+          onClick={() => setTab("messages")}
+          label="Messages"
+          meta={`${vm.spans.length} request${vm.spans.length === 1 ? "" : "s"}`}
+        />
+        <IOTab
+          on={tab === "tools"}
+          onClick={() => setTab("tools")}
+          label="Tools"
+          meta={`${vm.ledger.length} call${vm.ledger.length === 1 ? "" : "s"}`}
+        />
+      </div>
+      {tab === "messages" ? (
+        <SessionMessagesPanel vm={vm} slice={slice} source={source} onOpen={onOpenMessage} />
+      ) : (
+        <>
+          <div className="grid md:grid-cols-2 gap-3.5 items-start">
+            <ToolTable vm={vm} kind="client" />
+            <ToolTable vm={vm} kind="server" />
+          </div>
+          <LedgerTable vm={vm} dispName={dispName} onOpen={onOpenSpan} />
+        </>
+      )}
+    </div>
   )
 }
 
@@ -2009,8 +2063,8 @@ function SpanInspector({
           <div className="flex border-b border-[color:var(--border)] mt-5">
             <IOTab on={ioTab === "output"} onClick={() => onTab("output")} label="Output" meta={outputMeta(s)} />
             <IOTab on={ioTab === "input"} onClick={() => onTab("input")} label="Input" meta={inputMeta(s)} />
-            <IOTab on={ioTab === "telemetry"} onClick={() => onTab("telemetry")} label="Telemetry" meta="system · tools · raw span" />
-            <IOTab on={ioTab === "report"} onClick={() => onTab("report")} label="Report" meta="request · response · headers" />
+            <IOTab on={ioTab === "telemetry"} onClick={() => onTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
+            <IOTab on={ioTab === "report"} onClick={() => onTab("report")} label="Report" meta="request · response · stream · headers" />
           </div>
 
           {ioTab === "output" && <OutputPane span={s} joinCall={joinCall} />}

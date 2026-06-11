@@ -104,32 +104,48 @@ func (s *Server) handleObsMessagesRecent(w http.ResponseWriter, r *http.Request)
 // correlation id. The raw bodies/headers + assembled rollup come from the
 // lazily-joined record (present iff reporting forwarding was on); the gen_ai
 // content comes from the entity's span_event blob (present iff content capture
-// was on). 404 only when neither the entity nor a record exists.
+// was on). ?include=telemetry serves only the span side (gen_ai content + raw
+// span), ?include=report only the record side (wire bodies + headers) — the
+// console's bridge tabs fetch per side so pressing Telemetry never pulls the
+// record and pressing Report never reads the span blob. Any other value (or
+// none) serves both, the pre-split shape. 404 when nothing the request asked
+// for exists.
 func (s *Server) handleObsMessageBody(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	include := r.URL.Query().Get("include")
+	wantSpan := include != "report"
+	wantRecord := include != "telemetry"
 
 	var genAI, spanEvent []byte
-	event, evErr := s.queries.GetRequestEvent(r.Context(), id)
-	if evErr != nil && !errors.Is(evErr, store.ErrRequestEventNotFound) {
-		s.queryError(w, "message body", evErr)
-		return
-	}
-	if evErr == nil {
-		if c := event.DecodeSpanFields().GenAIContent; len(c) > 0 {
-			genAI = c
+	spanFound := false
+	if wantSpan {
+		event, evErr := s.queries.GetRequestEvent(r.Context(), id)
+		if evErr != nil && !errors.Is(evErr, store.ErrRequestEventNotFound) {
+			s.queryError(w, "message body", evErr)
+			return
 		}
-		// The complete span verbatim, so the raw telemetry pane shows every
-		// field on the span (not just the gen_ai content sub-object).
-		spanEvent = event.SpanEvent
+		if evErr == nil {
+			spanFound = true
+			if c := event.DecodeSpanFields().GenAIContent; len(c) > 0 {
+				genAI = c
+			}
+			// The complete span verbatim, so the raw telemetry pane shows every
+			// field on the span (not just the gen_ai content sub-object).
+			spanEvent = event.SpanEvent
+		}
 	}
 
-	rec, err := s.recordFor(r.Context(), id)
-	if err != nil {
-		s.queryError(w, "message body", err)
-		return
+	var rec *cc.Record
+	if wantRecord {
+		var err error
+		rec, err = s.recordFor(r.Context(), id)
+		if err != nil {
+			s.queryError(w, "message body", err)
+			return
+		}
 	}
-	// Neither feed produced anything for this id — nothing to inspect.
-	if rec == nil && errors.Is(evErr, store.ErrRequestEventNotFound) {
+	// Nothing the caller asked for exists for this id.
+	if rec == nil && !spanFound {
 		writeError(w, http.StatusNotFound, "no body")
 		return
 	}

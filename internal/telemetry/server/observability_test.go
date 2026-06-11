@@ -191,6 +191,55 @@ func TestObsMessageBody(t *testing.T) {
 	}
 }
 
+// TestObsMessageBody_IncludeSplit covers the per-side projections behind the
+// console's bridge tabs: ?include=telemetry must never touch the record,
+// ?include=report must never read the span blob, and each side 404s on its
+// own absence (not the other's presence).
+func TestObsMessageBody_IncludeSplit(t *testing.T) {
+	rec := cc.Record{
+		CorrelationID: "c",
+		Request:       cc.RequestPart{Body: json.RawMessage(`{"req":1}`)},
+		Response:      cc.ResponsePart{Body: json.RawMessage(`{"resp":1}`)},
+	}
+	recJSON, _ := json.Marshal(rec)
+	event := store.RequestEvent{CorrelationID: "c", SpanEvent: []byte(`{"gen_ai_content":{"input_messages":[]}}`)}
+
+	t.Run("telemetry side skips the record", func(t *testing.T) {
+		// recordErr would 500 any record read — proves the handler never asks.
+		h := newQueryServer(t, &fakeQueries{event: event, recordErr: errors.New("must not be read")})
+		got := decodeAdmin[adminc.MessageBodyDetail](t, get(t, h, "/api/v1/messages/c/body?include=telemetry", true))
+		if got.GenAIContent == "" || len(got.SpanEvent) == 0 {
+			t.Errorf("telemetry side missing span fields: %+v", got)
+		}
+		if got.Request != "" || got.Response != "" {
+			t.Errorf("telemetry side leaked record fields: %+v", got)
+		}
+	})
+	t.Run("report side skips the span", func(t *testing.T) {
+		// eventErr (hard) would 500 any event read — proves the handler never asks.
+		h := newQueryServer(t, &fakeQueries{recordBody: recJSON, eventErr: errors.New("must not be read")})
+		got := decodeAdmin[adminc.MessageBodyDetail](t, get(t, h, "/api/v1/messages/c/body?include=report", true))
+		if got.Request != `{"req":1}` || got.Response != `{"resp":1}` {
+			t.Errorf("report side missing record fields: %+v", got)
+		}
+		if got.GenAIContent != "" || len(got.SpanEvent) != 0 {
+			t.Errorf("report side leaked span fields: %+v", got)
+		}
+	})
+	t.Run("telemetry side 404s without an entity even when a record exists", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{recordBody: recJSON, eventErr: store.ErrRequestEventNotFound})
+		if resp := get(t, h, "/api/v1/messages/c/body?include=telemetry", true); resp.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", resp.Code)
+		}
+	})
+	t.Run("report side 404s without a record even when an entity exists", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{event: event, recordErr: store.ErrRecordNotFound})
+		if resp := get(t, h, "/api/v1/messages/c/body?include=report", true); resp.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", resp.Code)
+		}
+	})
+}
+
 // --- mapper units ---
 
 // TestMapBodyDecodesEscapedSSE pins the inverse of the gateway's
