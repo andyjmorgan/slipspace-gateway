@@ -671,3 +671,52 @@ func TestSessionSpanHandler(t *testing.T) {
 		}
 	})
 }
+
+// TestEventSpanHandler covers the un-scoped single-span endpoint the message
+// browser uses: same full DTO element as the session-scoped sibling, keyed by
+// correlation id alone (no cross-session 404 rule — there is no session in
+// the route to scope to).
+func TestEventSpanHandler(t *testing.T) {
+	event := bigSpanEvent(t, "the full body")
+	event.SessionID = "sess-1"
+	event.ConversationID = "sess-1"
+
+	t.Run("serves the full element", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{event: event})
+		resp := get(t, h, "/api/v1/events/cid-big/span", true)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.Code)
+		}
+		var span adminc.SessionSpan
+		if err := json.Unmarshal(resp.Body.Bytes(), &span); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if span.CID != "cid-big" {
+			t.Errorf("cid = %q", span.CID)
+		}
+		if span.InputText == nil || *span.InputText != "the full body" {
+			t.Errorf("input_text = %v, want the body served whole", span.InputText)
+		}
+		if span.OutputParts[1].Args == "" {
+			t.Error("tool args omitted; the single-span element must include bodies")
+		}
+	})
+	t.Run("unknown cid is 404", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{eventErr: store.ErrRequestEventNotFound})
+		if resp := get(t, h, "/api/v1/events/nope/span", true); resp.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", resp.Code)
+		}
+	})
+	t.Run("auth required", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{event: event})
+		if resp := get(t, h, "/api/v1/events/cid-big/span", false); resp.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", resp.Code)
+		}
+	})
+	t.Run("query failure is 500", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{eventErr: errors.New("db")})
+		if resp := get(t, h, "/api/v1/events/cid-big/span", true); resp.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", resp.Code)
+		}
+	})
+}

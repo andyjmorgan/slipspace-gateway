@@ -19,9 +19,21 @@ import {
   type OutputPart,
   type SessionSpan,
 } from "@/lib/session-spans"
-import { cn } from "@/lib/utils"
 import { MESSAGE_DEFAULT_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
 import { Dash, MessagesPagerBar, MessagesTableView } from "../components/messages-table"
+import { id8, inputMeta, outputMeta } from "@/lib/span-view"
+import {
+  CardCopy,
+  IOTab,
+  InputPane,
+  OutputPane,
+  ReportPane,
+  TelemetryPane,
+  Tile,
+  TKV,
+  type CallJoin,
+  type RespJoin,
+} from "../components/span-inspector-panes"
 
 // SessionLifecyclePage renders THE session view — the lifecycle dashboard
 // derived from a SessionSpansDTO (GET /api/v1/sessions/{id}/spans): stat
@@ -278,11 +290,6 @@ function clockMsAt(t0ms: number, t: number): string {
   return `${clockAt(ms, 0)}.${String(ms % 1000).padStart(3, "0")}`
 }
 
-// id8 abbreviates a tool_call id to its last 8 chars, matching the ledger.
-function id8(id?: string): string {
-  return "…" + String(id ?? "").slice(-8)
-}
-
 // useRafThrottle coalesces high-frequency updates (brush drag, wheel zoom,
 // crosshair mousemove) to at most one state commit per animation frame —
 // mousemove can fire several times per frame, and each uncoalesced commit
@@ -469,9 +476,9 @@ function LifecycleView({
       setSelectedCid(cid)
     }
   }, [vm])
-  // ioTab is lifted here so the inspector's Input|Output choice persists
-  // across prev/next while the page lives.
-  const [ioTab, setIoTab] = useState<"output" | "input">("output")
+  // ioTab is lifted here so the inspector's tab choice (Output | Input |
+  // Telemetry | Report) persists across prev/next while the page lives.
+  const [ioTab, setIoTab] = useState<InspectorTab>("output")
   // slice is the timeline brush window [d0, d1] in session seconds, lifted
   // here so the token burn chart and the messages table bind to it. null =
   // the full session — and tracks vm.dur as progressive pages land, so a
@@ -1809,6 +1816,11 @@ const LedgerTable = memo(function LedgerTable({
 // Span inspector modal
 // ─────────────────────────────────────────────────────────────────────────
 
+// InspectorTab is the modal's tab strip: the span's own Output/Input panes
+// plus the on-demand bridge tabs (Telemetry, Report), which fetch their
+// heavier payloads only when first opened.
+type InspectorTab = "output" | "input" | "telemetry" | "report"
+
 function SpanInspector({
   vm,
   source,
@@ -1822,8 +1834,8 @@ function SpanInspector({
   vm: ViewModel
   source: "api" | "fixture"
   cid: string
-  ioTab: "output" | "input"
-  onTab: (t: "output" | "input") => void
+  ioTab: InspectorTab
+  onTab: (t: InspectorTab) => void
   dispName: (conv: string) => string
   onSelect: (cid: string) => void
   onClose: () => void
@@ -1910,28 +1922,28 @@ function SpanInspector({
     return () => document.removeEventListener("keydown", onKey)
   }, [goPrev, goNext, onClose])
 
+  // Ledger joins for the shared panes, pre-formatted here because the clocks
+  // are session-relative (only this page owns t0ms). null = looked, no join
+  // (the panes say so honestly).
+  const joinCall = useCallback(
+    (p: OutputPart): CallJoin => {
+      const r = p.id ? vm.ledgerById.get(p.id) : undefined
+      return r && r.resultT != null
+        ? { resultClock: clockAt(vm.t0ms, r.resultT), execS: r.execS, resultChars: r.resultChars, isError: r.isError }
+        : null
+    },
+    [vm],
+  )
+  const joinResp = useCallback(
+    (p: InputPart): RespJoin => {
+      const r = p.id ? vm.ledgerById.get(p.id) : undefined
+      return r ? { name: r.name, calledClock: clockAt(vm.t0ms, r.callT), execS: r.execS } : null
+    },
+    [vm],
+  )
+
   if (!s) return null
   const col = vm.colors.get(s.conversation_id)
-
-  const toolCalls = (s.output_parts ?? []).filter((p) => p.type === "tool_call")
-  // Same-span responses key server-tool detection (rule 8) and the
-  // "chars back" meta on the call card.
-  const srvResp = new Map<string, OutputPart>()
-  for (const p of s.output_parts ?? []) {
-    if (p.type === "tool_call_response" && p.id) srvResp.set(p.id, p)
-  }
-  const inParts = s.input_parts ?? []
-  const resps = inParts.filter((p) => p.type === "tool_call_response")
-  const texts = inParts.filter((p) => p.type === "text")
-  const nReasoning = (s.output_parts ?? []).filter((p) => p.type === "reasoning").length
-
-  const outChars = s.output_text_chars ?? (s.output_text ?? "").length
-  const outMeta = `${fmt.compact(outChars)} chars${nReasoning ? ` · ${nReasoning} reasoning` : ""}${
-    toolCalls.length ? ` · ${toolCalls.length} tool call${toolCalls.length === 1 ? "" : "s"}` : ""
-  }`
-  const inMeta = inParts.length
-    ? `${resps.length} tool response${resps.length === 1 ? "" : "s"}${texts.length ? ` · ${texts.length} text` : ""}`
-    : "empty"
 
   return createPortal(
     <div
@@ -1971,9 +1983,11 @@ function SpanInspector({
               <X size={16} />
             </button>
           </div>
-          <div className="mt-1.5 mono text-[11px] text-[color:var(--text-4)]">
-            conv <b className="text-[color:var(--text-3)]">{s.conversation_id}</b> · span{" "}
-            <b className="text-[color:var(--text-3)]">{s.cid}</b>
+          <div className="mt-1.5 mono text-[11px] text-[color:var(--text-4)] flex items-center flex-wrap gap-x-1">
+            conv <b className="text-[color:var(--text-3)]">{s.conversation_id}</b>
+            <CardCopy text={s.conversation_id} label="conversation id" />
+            <span className="mx-1">·</span> span <b className="text-[color:var(--text-3)]">{s.cid}</b>
+            <CardCopy text={s.cid} label="span id" />
           </div>
         </div>
 
@@ -1990,76 +2004,19 @@ function SpanInspector({
             </div>
           )}
 
-          {/* Input | Output tabs — Output default, choice persists across prev/next */}
+          {/* Tab strip — Output default, choice persists across prev/next.
+              Telemetry and Report mount (and fetch) only when clicked. */}
           <div className="flex border-b border-[color:var(--border)] mt-5">
-            <IOTab on={ioTab === "output"} onClick={() => onTab("output")} label="Output" meta={outMeta} />
-            <IOTab on={ioTab === "input"} onClick={() => onTab("input")} label="Input" meta={inMeta} />
+            <IOTab on={ioTab === "output"} onClick={() => onTab("output")} label="Output" meta={outputMeta(s)} />
+            <IOTab on={ioTab === "input"} onClick={() => onTab("input")} label="Input" meta={inputMeta(s)} />
+            <IOTab on={ioTab === "telemetry"} onClick={() => onTab("telemetry")} label="Telemetry" meta="system · tools · raw span" />
+            <IOTab on={ioTab === "report"} onClick={() => onTab("report")} label="Report" meta="request · response · headers" />
           </div>
 
-          {ioTab === "output" ? (
-            <div className="pt-3">
-              {s.output_text ? (
-                <MCard
-                  head={
-                    <>
-                      <span style={{ color: "var(--accent)" }}>●</span>
-                      <span>Text</span>
-                      <span className="ml-auto mono tnum text-[11.5px] text-[color:var(--text-3)] pl-2.5 whitespace-nowrap">
-                        <b className="text-[color:var(--text-2)]">{fmt.compact(outChars)}</b> chars
-                        {outChars > s.output_text.length ? ` · showing first ${fmt.compact(s.output_text.length)} (server cap)` : ""}
-                      </span>
-                    </>
-                  }
-                >
-                  <PreBlock text={s.output_text} />
-                </MCard>
-              ) : (
-                <div className="text-[12.5px] text-[color:var(--text-4)]">(no text parts)</div>
-              )}
-              {toolCalls.map((p, i) => (
-                <ToolCallCard key={p.id ?? i} vm={vm} part={p} sameSpanResp={p.id ? srvResp.get(p.id) : undefined} />
-              ))}
-            </div>
-          ) : (
-            <div className="pt-3">
-              {inParts.length === 0 ? (
-                s.input_text ? (
-                  <PreBlock text={s.input_text} />
-                ) : (
-                  <div className="text-[12.5px] text-[color:var(--text-4)]">
-                    (empty — no new input parts in this request)
-                  </div>
-                )
-              ) : (
-                <>
-                  {resps.map((p, i) => (
-                    <RespCard key={p.id ?? i} vm={vm} part={p} defaultOpen={resps.length === 1} />
-                  ))}
-                  {texts.map((p, i) => (
-                    <MCard
-                      key={`txt-${i}`}
-                      head={
-                        <>
-                          <span style={{ color: "var(--accent)" }}>●</span>
-                          <span>Text</span>
-                          <span className="ml-auto mono tnum text-[11.5px] text-[color:var(--text-3)] pl-2.5 whitespace-nowrap">
-                            <b className="text-[color:var(--text-2)]">{fmt.compact(p.chars ?? null)}</b> chars
-                          </span>
-                        </>
-                      }
-                    >
-                      <PreBlock text={s.input_text ?? "(empty)"} />
-                    </MCard>
-                  ))}
-                </>
-              )}
-              {(s.input_text_chars ?? 0) > (s.input_text ?? "").length && (
-                <div className="text-[11px] text-[color:var(--text-4)] mt-1.5">
-                  showing first {fmt.compact((s.input_text ?? "").length)} of {fmt.compact(s.input_text_chars ?? 0)} chars (server cap)
-                </div>
-              )}
-            </div>
-          )}
+          {ioTab === "output" && <OutputPane span={s} joinCall={joinCall} />}
+          {ioTab === "input" && <InputPane span={s} joinResp={joinResp} />}
+          {ioTab === "telemetry" && <TelemetryPane cid={s.cid} wanted />}
+          {ioTab === "report" && <ReportPane cid={s.cid} wanted />}
         </div>
 
         {/* footer pinned to the modal bottom */}
@@ -2108,268 +2065,4 @@ function TimingTokensTiles({ vm, s }: { vm: ViewModel; s: SpanVM }) {
       </Tile>
     </div>
   )
-}
-
-function Tile({ label, accent, children }: { label: string; accent: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-4 pt-3 pb-3.5">
-      <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-[color:var(--text-3)]">
-        <span className="inline-block size-1.5 rounded-full" style={{ background: accent }} />
-        {label}
-      </div>
-      <div className="grid grid-cols-3 gap-x-4 gap-y-2.5 mt-2.5">{children}</div>
-    </div>
-  )
-}
-
-function TKV({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-[color:var(--text-4)] whitespace-nowrap">{k}</div>
-      <div className="mono tnum text-[14px] font-semibold mt-0.5 whitespace-nowrap">{v}</div>
-    </div>
-  )
-}
-
-function IOTab({ on, onClick, label, meta }: { on: boolean; onClick: () => void; label: string; meta: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "px-4 py-2 -mb-px text-[12.5px] font-semibold border-b-2 transition-colors",
-        on
-          ? "text-[color:var(--text)] border-[color:var(--accent)]"
-          : "text-[color:var(--text-3)] border-transparent hover:text-[color:var(--text-2)]",
-      )}
-    >
-      {label} <span className="font-normal text-[11px] text-[color:var(--text-4)] ml-1">{meta}</span>
-    </button>
-  )
-}
-
-// MCard is the modal's content card: header strip + body, matching the
-// reference's mcard look in console tokens.
-function MCard({ head, children }: { head: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg)] my-2 overflow-hidden">
-      <div className="flex items-center gap-2 px-3.5 py-2 bg-[color:var(--bg-2)] border-b border-[color:var(--border)] text-[12.5px] text-[color:var(--text-3)] flex-wrap min-h-[35px]">
-        {head}
-      </div>
-      <div className="px-3.5 py-3">{children}</div>
-    </div>
-  )
-}
-
-// ToolChip / ServerChip mirror the reference's tool-name and server-executed
-// pills in token colors.
-function ToolChip({ name }: { name?: string }) {
-  return (
-    <span
-      className="inline-flex items-center rounded-full px-2.5 py-px text-[11.5px] font-semibold"
-      style={{ background: "var(--accent-bg)", color: "var(--accent)", border: "1px solid color-mix(in oklab, var(--accent) 35%, transparent)" }}
-    >
-      {name ?? "(unnamed)"}
-    </span>
-  )
-}
-
-// ToolCallCard renders one tool_call the span emitted: server-executed when a
-// same-span response exists (rule 8), otherwise annotated from the ledger
-// join, with the raw-args display below (rule 7 default path).
-function ToolCallCard({
-  vm,
-  part,
-  sameSpanResp,
-}: {
-  vm: ViewModel
-  part: OutputPart
-  sameSpanResp?: OutputPart
-}) {
-  const ledgerRow = part.id ? vm.ledgerById.get(part.id) : undefined
-  let meta: React.ReactNode
-  if (sameSpanResp) {
-    meta = (
-      <>
-        <span
-          className="inline-flex items-center rounded-full px-2.5 py-px text-[10.5px] font-semibold"
-          style={{ background: "var(--violet-bg)", color: "var(--violet)", border: "1px solid color-mix(in oklab, var(--violet) 30%, transparent)" }}
-        >
-          server-executed · response in this span
-        </span>
-        <span className="ml-auto mono tnum text-[11.5px] whitespace-nowrap pl-2.5">
-          <b className="text-[color:var(--text-2)]">{fmt.compact(sameSpanResp.chars ?? null)}</b> chars back
-        </span>
-      </>
-    )
-  } else if (ledgerRow && ledgerRow.resultT != null) {
-    meta = (
-      <span className="ml-auto mono tnum text-[11.5px] whitespace-nowrap pl-2.5">
-        result at {clockAt(vm.t0ms, ledgerRow.resultT)} · exec{" "}
-        <b className="text-[color:var(--text-2)]">{ledgerRow.execS != null ? `${ledgerRow.execS.toFixed(1)}s` : "–"}</b> ·{" "}
-        <b className="text-[color:var(--text-2)]">{fmt.compact(ledgerRow.resultChars ?? null)}</b> chars
-        {ledgerRow.isError && (
-          <b className="ml-1" style={{ color: "var(--err)" }}>
-            · ERROR
-          </b>
-        )}
-      </span>
-    )
-  } else {
-    meta = <span className="ml-auto text-[11.5px] text-[color:var(--text-4)] pl-2.5">no joined result in this session</span>
-  }
-  const argsLen = (part.args ?? "").length
-  const truncated = (part.args_chars ?? 0) > argsLen
-  return (
-    <MCard
-      head={
-        <>
-          <ToolChip name={part.name} />
-          <span className="mono text-[11px] text-[color:var(--text-4)]">{id8(part.id)}</span>
-          {meta}
-        </>
-      }
-    >
-      {truncated && (
-        <div className="text-[11px] mb-1.5" style={{ color: "var(--warn)" }}>
-          arguments truncated — showing first {fmt.compact(argsLen)} of {fmt.compact(part.args_chars ?? 0)} chars (server cap)
-        </div>
-      )}
-      <ArgsView raw={part.args} />
-    </MCard>
-  )
-}
-
-// RespCard renders one tool_call_response from the span's input delta as a
-// collapsible card, annotated by joining its id back to the ledger row of the
-// call that produced it. When no call matches anywhere in the captured spans,
-// it says so honestly instead of guessing.
-function RespCard({ vm, part, defaultOpen }: { vm: ViewModel; part: InputPart; defaultOpen: boolean }) {
-  const row = part.id ? vm.ledgerById.get(part.id) : undefined
-  const textLen = (part.text ?? "").length
-  const truncated = (part.chars ?? 0) > textLen && !!part.text
-  return (
-    <details
-      className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg)] my-2 overflow-hidden group"
-      open={defaultOpen}
-    >
-      <summary className="flex items-center gap-2 px-3.5 py-2 bg-[color:var(--bg-2)] text-[12.5px] text-[color:var(--text-3)] flex-wrap min-h-[35px] cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-        <span className="transition-transform group-open:-rotate-90" style={{ color: "var(--warn)" }}>
-          ↩
-        </span>
-        {row ? (
-          <>
-            <span>response to</span>
-            <ToolChip name={row.name} />
-            <span className="mono text-[11px] text-[color:var(--text-4)]">{id8(part.id)}</span>
-            <span className="text-[color:var(--text-4)]">
-              called at {clockAt(vm.t0ms, row.callT)}
-              {row.execS != null && (
-                <b className="text-[color:var(--text-2)]"> (exec {row.execS.toFixed(1)}s)</b>
-              )}
-            </span>
-          </>
-        ) : (
-          <>
-            <span>tool response</span>
-            <span className="mono text-[11px] text-[color:var(--text-4)]">{id8(part.id)}</span>
-            <span className="text-[color:var(--text-4)]">no matching tool_call in captured spans — possible capture gap</span>
-          </>
-        )}
-        <span className="ml-auto mono tnum text-[11.5px] whitespace-nowrap pl-2.5">
-          <b className="text-[color:var(--text-2)]">{fmt.compact(part.chars ?? null)}</b> chars
-          {part.is_error && (
-            <b className="ml-1" style={{ color: "var(--err)" }}>
-              · ERROR
-            </b>
-          )}
-        </span>
-      </summary>
-      <div className="px-3.5 py-3 border-t border-[color:var(--border)]">
-        {truncated && (
-          <div className="text-[11px] mb-1.5" style={{ color: "var(--warn)" }}>
-            showing first {fmt.compact(textLen)} of {fmt.compact(part.chars ?? 0)} chars (server cap)
-          </div>
-        )}
-        <PreBlock text={part.text || "(no text captured)"} />
-      </div>
-    </details>
-  )
-}
-
-// PreBlock is the modal's raw-text well.
-function PreBlock({ text }: { text: string }) {
-  return (
-    <pre className="whitespace-pre-wrap break-words rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg)] px-3 py-2.5 mono text-[12px] leading-[1.55] text-[color:var(--text-2)] max-h-[46vh] overflow-y-auto m-0">
-      {text}
-    </pre>
-  )
-}
-
-// ArgsView is the rule-7 default path for tool arguments: opaque vendor JSON,
-// possibly server-capped. Parse if possible and render a generic key/value
-// grid (no field-picking, every shape handled); fall back to the raw string
-// visibly when the payload isn't valid JSON.
-function ArgsView({ raw }: { raw?: string }) {
-  if (!raw) return <div className="text-[12px] text-[color:var(--text-4)]">(no arguments captured)</div>
-  let parsed: unknown
-  let ok = true
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    ok = false
-  }
-  if (!ok) {
-    return (
-      <>
-        <div className="text-[11px] mb-1.5" style={{ color: "var(--warn)" }}>
-          ⚠ raw — not valid JSON
-        </div>
-        <PreBlock text={raw} />
-      </>
-    )
-  }
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    const entries = Object.entries(parsed as Record<string, unknown>)
-    if (!entries.length) {
-      return <div className="text-[12px] text-[color:var(--text-4)]">{"{}"} — empty arguments</div>
-    }
-    return (
-      <div className="grid grid-cols-[minmax(96px,max-content)_1fr] gap-x-4 gap-y-2 items-start">
-        {entries.map(([k, v]) => (
-          <ArgRow key={k} k={k} v={v} />
-        ))}
-      </div>
-    )
-  }
-  return <ArgValue v={parsed} />
-}
-
-function ArgRow({ k, v }: { k: string; v: unknown }) {
-  return (
-    <>
-      <div className="mono text-[11.5px] font-semibold text-[color:var(--text-3)] pt-0.5 break-all">{k}</div>
-      <div className="min-w-0">
-        <ArgValue v={v} />
-      </div>
-    </>
-  )
-}
-
-// ArgValue renders any JSON value generically: short strings inline, long or
-// multiline strings in a well, primitives in mono, nested structures
-// pretty-printed — never interpreting the payload.
-function ArgValue({ v }: { v: unknown }) {
-  if (typeof v === "string") {
-    if (v.includes("\n") || v.length > 160) return <PreBlock text={v} />
-    return <span className="text-[12.5px] whitespace-pre-wrap break-words">{v}</span>
-  }
-  if (v === null || typeof v !== "object") {
-    return (
-      <span className="mono text-[12px]" style={{ color: "var(--accent)" }}>
-        {JSON.stringify(v)}
-      </span>
-    )
-  }
-  return <PreBlock text={JSON.stringify(v, null, 2)} />
 }

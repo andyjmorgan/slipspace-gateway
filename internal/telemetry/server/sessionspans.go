@@ -185,6 +185,25 @@ func (s *Server) handleSessionSpan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sessionSpanFromEvent(e, s.spanFieldCap, true))
 }
 
+// handleEventSpan serves one correlation id's full DTO element without a
+// session scope — the message browser's inspector feed. The browser lists
+// events by arbitrary filters (a row may carry no session id at all), so it
+// cannot route through /sessions/{id}/spans/{cid}; this is the same
+// projection keyed by the id alone. 404 when no span was captured for the id
+// (a record-only event) so the client can degrade to the Report tab.
+func (s *Server) handleEventSpan(w http.ResponseWriter, r *http.Request) {
+	e, err := s.queries.GetRequestEvent(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrRequestEventNotFound) {
+			writeError(w, http.StatusNotFound, "span not found")
+			return
+		}
+		s.queryError(w, "event span", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sessionSpanFromEvent(e, s.spanFieldCap, true))
+}
+
 // sessionSpanFromEvent projects one request event onto its DTO element. The
 // identity/scalar fields come from the promoted columns; latency, upstream
 // status, time-to-first-chunk, finish reasons, usage, and the content
