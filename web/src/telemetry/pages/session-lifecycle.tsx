@@ -2009,8 +2009,8 @@ function SpanInspector({
           <div className="flex border-b border-[color:var(--border)] mt-5">
             <IOTab on={ioTab === "output"} onClick={() => onTab("output")} label="Output" meta={outputMeta(s)} />
             <IOTab on={ioTab === "input"} onClick={() => onTab("input")} label="Input" meta={inputMeta(s)} />
-            <IOTab on={ioTab === "telemetry"} onClick={() => onTab("telemetry")} label="Telemetry" meta="system · tools · raw span" />
-            <IOTab on={ioTab === "report"} onClick={() => onTab("report")} label="Report" meta="request · response · headers" />
+            <IOTab on={ioTab === "telemetry"} onClick={() => onTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
+            <IOTab on={ioTab === "report"} onClick={() => onTab("report")} label="Report" meta="request · response · stream · headers" />
           </div>
 
           {ioTab === "output" && <OutputPane span={s} joinCall={joinCall} />}

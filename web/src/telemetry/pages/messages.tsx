@@ -387,8 +387,8 @@ function Inspector({
             <div className="flex border-b border-[color:var(--border)] mt-2 flex-wrap">
               {span && <IOTab on={effTab === "output"} onClick={() => setTab("output")} label="Output" meta={outputMeta(span)} />}
               {span && <IOTab on={effTab === "input"} onClick={() => setTab("input")} label="Input" meta={inputMeta(span)} />}
-              <IOTab on={effTab === "telemetry"} onClick={() => setTab("telemetry")} label="Telemetry" meta="system · tools · raw span" />
-              <IOTab on={effTab === "report"} onClick={() => setTab("report")} label="Report" meta="request · response · headers" />
+              <IOTab on={effTab === "telemetry"} onClick={() => setTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
+              <IOTab on={effTab === "report"} onClick={() => setTab("report")} label="Report" meta="request · response · stream · headers" />
             </div>
             {effTab === "output" && span && <OutputPane span={span} />}
             {effTab === "input" && span && <InputPane span={span} />}
