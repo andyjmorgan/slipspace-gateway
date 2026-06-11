@@ -8,9 +8,12 @@ import { UnauthorizedError } from "@/lib/api"
 import { fetchMessagesPage, type MessageEntry, type MessageFilters } from "@/lib/messages"
 
 // MESSAGE_PAGE_SIZES the operator can page in. The default keeps the table
-// snappy while covering most browsing in one screen.
-export const MESSAGE_PAGE_SIZES = [50, 100, 200] as const
+// snappy while covering most browsing in one screen; the session view
+// defaults smaller (SESSION_MESSAGES_PAGE_SIZE) since it shares the page
+// with the timeline.
+export const MESSAGE_PAGE_SIZES = [20, 50, 100, 200] as const
 export const MESSAGE_DEFAULT_PAGE_SIZE = 50
+export const SESSION_MESSAGES_PAGE_SIZE = 20
 
 // useDebounced delays propagating a fast-changing value (id search boxes, the
 // timeline brush) so each keystroke / drag frame doesn't fire a query.

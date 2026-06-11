@@ -68,25 +68,33 @@ export function CardCopy({ text, label = "card text" }: { text: string; label?: 
   )
 }
 
-// MCard is the modal's content card: header strip + body. copyText, when
-// set, renders the standard top-right copy button for the card's content.
+// MCard is the modal's content card: header strip + body. Every card
+// collapses — the header is a <details> summary with a rotating chevron —
+// and content cards default open. copyText renders the standard top-right
+// copy button for the card's FULL content; it works while collapsed.
 export function MCard({
   head,
   copyText,
+  defaultOpen = true,
   children,
 }: {
   head: React.ReactNode
   copyText?: string
+  defaultOpen?: boolean
   children: React.ReactNode
 }) {
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg)] my-2 overflow-hidden">
-      <div className="flex items-center gap-2 px-3.5 py-2 bg-[color:var(--bg-2)] border-b border-[color:var(--border)] text-[12.5px] text-[color:var(--text-3)] flex-wrap min-h-[35px]">
+    <details
+      className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg)] my-2 overflow-hidden group"
+      open={defaultOpen}
+    >
+      <summary className="flex items-center gap-2 px-3.5 py-2 bg-[color:var(--bg-2)] text-[12.5px] text-[color:var(--text-3)] flex-wrap min-h-[35px] cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <span className="text-[9px] text-[color:var(--text-4)] transition-transform group-open:rotate-90">▶</span>
         {head}
         {copyText ? <CardCopy text={copyText} /> : null}
-      </div>
-      <div className="px-3.5 py-3">{children}</div>
-    </div>
+      </summary>
+      <div className="px-3.5 py-3 border-t border-[color:var(--border)]">{children}</div>
+    </details>
   )
 }
 
