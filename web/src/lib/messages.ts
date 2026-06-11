@@ -179,15 +179,23 @@ export function parseGenAIContent(raw?: string): GenAIContent | null {
   }
 }
 
+// BodySide selects one side of the body detail: "telemetry" (gen_ai content
+// + raw span) or "report" (record wire bodies + headers). The console's
+// bridge tabs fetch per side so pressing one never pulls the other.
+export type BodySide = "telemetry" | "report"
+
 /**
  * Fetches the captured request + response bodies for a single event
- * id. Returns null when the body store is disabled (503) or the
- * event_id has rolled out of the LRU (404). Anything else bubbles up
- * as a normal APIError / UnauthorizedError.
+ * id. `include` narrows the response to one side (telemetry/report); a
+ * backend predating the param ignores it and serves both — a superset, so
+ * callers are unaffected. Returns null when the body store is disabled (503)
+ * or the side doesn't exist for the id (404). Anything else bubbles up as a
+ * normal APIError / UnauthorizedError.
  */
-export async function fetchMessageBody(eventId: string): Promise<MessageBodyDetail | null> {
+export async function fetchMessageBody(eventId: string, include?: BodySide): Promise<MessageBodyDetail | null> {
   try {
-    return await apiFetch<MessageBodyDetail>(`/api/v1/messages/${encodeURIComponent(eventId)}/body`)
+    const qs = include ? `?include=${include}` : ""
+    return await apiFetch<MessageBodyDetail>(`/api/v1/messages/${encodeURIComponent(eventId)}/body${qs}`)
   } catch (err) {
     const status = (err as { status?: number }).status
     if (status === 404 || status === 503) return null
