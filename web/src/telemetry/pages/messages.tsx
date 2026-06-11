@@ -1,24 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, RefreshCw, X } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Copy, RefreshCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StatusPill } from "@/components/atoms/status-pill"
-import { ProviderChip } from "@/components/atoms/provider-chip"
 import { JsonViewer } from "@/components/atoms/json-viewer"
 import { InspectorModal } from "@/components/atoms/inspector-modal"
-import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
-import { SkeletonRows } from "@/components/atoms/skeleton"
+import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { Segmented } from "@/components/atoms/segmented"
 import { Select } from "@/components/atoms/select"
 import { MultiSelect } from "@/components/atoms/multi-select"
 import { fmt } from "@/lib/fmt"
-import { UnauthorizedError } from "@/lib/api"
 import {
   fetchFacets,
   fetchMessageBody,
-  fetchMessagesPage,
   parseGenAIContent,
   type Facets,
   type GenAIContent,
@@ -29,11 +25,8 @@ import {
   type MessageEntry,
   type MessageFilters,
 } from "@/lib/messages"
-
-// PAGE_SIZES the operator can page in. Default keeps the table snappy while
-// covering most browsing in one screen.
-const PAGE_SIZES = [50, 100, 200] as const
-const DEFAULT_PAGE_SIZE = 50
+import { MESSAGE_DEFAULT_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
+import { MessagesPagerBar, MessagesTableView } from "../components/messages-table"
 
 // TIME_RANGES are the relative-window presets. "all" omits the bound so the
 // keyset scan can walk the full history.
@@ -53,17 +46,6 @@ const STATUS_CLASSES = [
 ] as const
 
 const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], protocols: [], tags: [] }
-
-// useDebounced delays propagating a fast-changing value (the id search boxes)
-// so each keystroke doesn't fire a query.
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), ms)
-    return () => clearTimeout(id)
-  }, [value, ms])
-  return debounced
-}
 
 // MessagesPage is the request browser: a filter bar (two exact id boxes, four
 // facet dropdowns, a tags AND multi-select, status-class + time-range presets)
@@ -94,7 +76,7 @@ export function MessagesPage() {
   // all-time view scans far too much to be a useful landing state. Operators
   // widen via the time-range presets / row-size control as needed.
   const [timeRange, setTimeRange] = useState<TimeRange>("1h")
-  const [limit, setLimit] = useState<number>(DEFAULT_PAGE_SIZE)
+  const [limit, setLimit] = useState<number>(MESSAGE_DEFAULT_PAGE_SIZE)
 
   // filters holds the pure (input-derived) predicates. The relative time bound
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
@@ -124,54 +106,30 @@ export function MessagesPage() {
     )
   }, [filters, timeRange])
 
-  // Data + paging state. cursorsRef holds the keyset cursor that fetches each
-  // page (index 0 = "" = page one); it's navigational, not render state.
+  // Data + paging state. The shared pager hook owns the keyset cursor stack;
+  // the time bound resolves from the relative preset at fetch time (Date.now()
+  // is impure and must not run during render), so it rides resolveWindow with
+  // timeRange as the invalidation key.
   const [facets, setFacets] = useState<Facets>(EMPTY_FACETS)
-  const [entries, setEntries] = useState<MessageEntry[]>([])
-  const [nextCursor, setNextCursor] = useState("")
-  const [pageIndex, setPageIndex] = useState(0)
-  const cursorsRef = useRef<string[]>([""])
-  const [status, setStatus] = useState<"loading" | "ok" | "error">("loading")
-  const [err, setErr] = useState("")
-  const [selected, setSelected] = useState<number | null>(null)
   const [reloadNonce, setReloadNonce] = useState(0)
+  const { entries, status, err, pageIndex, hasNext, onNext, onPrev } = useMessagesPager({
+    filters,
+    limit,
+    reloadNonce,
+    resolveWindow: () => {
+      const range = TIME_RANGES.find((r) => r.value === timeRange)
+      return { from: range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined }
+    },
+    windowKey: timeRange,
+    onUnauthorized: () => nav("/login", { replace: true }),
+  })
 
-  // Any filter, time-range, or page-size change invalidates the cursor stack —
-  // restart at page one. Runs before the fetch effect so it reads the reset
-  // cursor.
-  useEffect(() => {
-    cursorsRef.current = [""]
-    setPageIndex(0)
-  }, [filters, timeRange, limit])
-
-  // Fetch the current page whenever the filters, time range, page, size, or a
-  // manual reload changes. pageIndex moves via Next/Prev within the same set.
-  useEffect(() => {
-    let cancelled = false
-    setStatus("loading")
-    const range = TIME_RANGES.find((r) => r.value === timeRange)
-    const from = range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined
-    fetchMessagesPage({ ...filters, from }, { cursor: cursorsRef.current[pageIndex] ?? "", limit })
-      .then((p) => {
-        if (cancelled) return
-        setEntries(p.entries)
-        setNextCursor(p.nextCursor)
-        setStatus("ok")
-        setSelected(null)
-      })
-      .catch((e) => {
-        if (cancelled) return
-        if (e instanceof UnauthorizedError) {
-          nav("/login", { replace: true })
-          return
-        }
-        setErr(e instanceof Error ? e.message : String(e))
-        setStatus("error")
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [filters, timeRange, pageIndex, limit, reloadNonce, nav])
+  // The inspector selection is tagged with the page it points into, so a new
+  // page derives it closed during render (no reset effect).
+  const [selection, setSelection] = useState<{ list: MessageEntry[]; index: number } | null>(null)
+  const selected = selection && selection.list === entries ? selection.index : null
+  const setSelected = (index: number | null) =>
+    setSelection(index === null ? null : { list: entries, index })
 
   // Facets load on mount and refresh; they back the dropdowns (cached server
   // side, so re-fetching on Refresh is cheap).
@@ -189,16 +147,6 @@ export function MessagesPage() {
     }
   }, [reloadNonce])
 
-  const onNext = () => {
-    if (!nextCursor) return
-    const ci = pageIndex + 1
-    if (ci >= cursorsRef.current.length) cursorsRef.current = [...cursorsRef.current, nextCursor]
-    else cursorsRef.current[ci] = nextCursor
-    setPageIndex(ci)
-  }
-  const onPrev = () => {
-    if (pageIndex > 0) setPageIndex(pageIndex - 1)
-  }
   const clearFilters = () => {
     setCorrInput("")
     setSessInput("")
@@ -263,67 +211,23 @@ export function MessagesPage() {
             Failed to load messages: <span className="mono">{err}</span>
           </div>
         )}
-        <TableScroll>
-          <thead>
-            <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Time</th>
-              <th className="text-left font-medium px-4 py-2">Status</th>
-              <th className="text-left font-medium px-4 py-2">Provider</th>
-              <th className="text-left font-medium px-4 py-2">Protocol</th>
-              <th className="text-left font-medium px-4 py-2">Model</th>
-              <th className="text-left font-medium px-4 py-2">Configuration</th>
-              <th className="text-left font-medium px-4 py-2">Tags</th>
-              <th className="text-right font-medium px-4 py-2">Duration</th>
-              <th className="text-right font-medium px-4 py-2">Tokens</th>
-            </tr>
-          </thead>
-          <tbody aria-busy={status === "loading"}>
-            {status === "loading" && (
-              <SkeletonRows
-                rows={Math.min(limit, 12)}
-                cols={[{ w: "5rem" }, { w: "2.5rem" }, { w: "4rem" }, { w: "3.5rem" }, { w: "6rem" }, { w: "5rem" }, { w: "5rem" }, { w: "3rem", align: "right" }, { w: "3.5rem", align: "right" }]}
-              />
-            )}
-            {status !== "loading" && entries.map((e, i) => (
-              <tr
-                key={e.event_id}
-                onClick={() => setSelected(i)}
-                className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)]"
-              >
-                <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap">{shortTime(e.at)}</td>
-                <td className="px-4 py-2"><StatusPill code={e.status_code} /></td>
-                <td className="px-4 py-2">{e.provider ? <ProviderChip name={e.provider} /> : <Dash />}</td>
-                <td className="mono text-[12px] px-4 py-2">{e.protocol || <Dash />}</td>
-                <td className="mono text-[12px] px-4 py-2">{e.model || <Dash />}</td>
-                <td className="mono text-[12px] px-4 py-2">{e.configuration || <Dash />}</td>
-                <td className="px-4 py-2"><TagCell tags={e.tags} /></td>
-                <td className="mono tnum text-[12px] text-right px-4 py-2">{fmt.ms(e.duration_ms)}</td>
-                <td className="mono tnum text-[11.5px] text-right px-4 py-2 text-[color:var(--text-3)]">
-                  {(e.tokens_in ?? 0) + (e.tokens_out ?? 0) > 0 ? `${fmt.compact(e.tokens_in ?? 0)}/${fmt.compact(e.tokens_out ?? 0)}` : <Dash />}
-                </td>
-              </tr>
-            ))}
-            {status === "ok" && entries.length === 0 && (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No requests match these filters." : "No requests recorded yet."}</td></tr>
-            )}
-          </tbody>
-        </TableScroll>
+        <MessagesTableView
+          entries={entries}
+          status={status}
+          limit={limit}
+          emptyText={activeCount > 0 ? "No requests match these filters." : "No requests recorded yet."}
+          onRowClick={(_e, i) => setSelected(i)}
+        />
 
-        <div className="flex items-center gap-3 px-4 py-2.5 border-t border-[color:var(--border)]">
-          <div className="flex items-center gap-1.5 text-[11px] text-[color:var(--text-4)]">
-            <span>Rows</span>
-            <Segmented
-              value={String(limit)}
-              onChange={(v) => setLimit(Number(v))}
-              options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
-            />
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-[11px] text-[color:var(--text-4)] mono">page {pageIndex + 1}</span>
-            <Button variant="ghost" size="icon-xs" onClick={onPrev} disabled={pageIndex === 0} aria-label="Previous page"><ChevronLeft /></Button>
-            <Button variant="ghost" size="icon-xs" onClick={onNext} disabled={!nextCursor} aria-label="Next page"><ChevronRight /></Button>
-          </div>
-        </div>
+        <MessagesPagerBar
+          limit={limit}
+          onLimit={setLimit}
+          pageIndex={pageIndex}
+          hasPrev={pageIndex > 0}
+          hasNext={hasNext}
+          onPrev={onPrev}
+          onNext={onNext}
+        />
       </PanelCard>
 
       {selected !== null && entries[selected] && (
@@ -337,10 +241,6 @@ export function MessagesPage() {
       )}
     </div>
   )
-}
-
-export function Dash() {
-  return <span className="text-[color:var(--text-4)]">—</span>
 }
 
 // CopyButton copies `value` to the clipboard and flips to a check for a beat.
@@ -372,40 +272,10 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   )
 }
 
-// TAG_CELL_MAX caps how many tag chips a row renders inline; the rest collapse
-// into a "+N" chip so a request with many tags can't blow out the row height.
-const TAG_CELL_MAX = 3
-
-// TagCell renders a request's tags as compact chips in the table, capped at
-// TAG_CELL_MAX with a "+N" overflow. The full list is on the row's hover title
-// and always in the inspector, so the cap loses nothing — it just keeps rows
-// uniform. Empty tags render as the same em-dash the other columns use.
-function TagCell({ tags }: { tags?: string[] }) {
-  if (!tags || tags.length === 0) return <Dash />
-  const shown = tags.slice(0, TAG_CELL_MAX)
-  const overflow = tags.length - shown.length
-  return (
-    <div className="flex flex-wrap items-center gap-1" title={tags.join(", ")}>
-      {shown.map((t) => (
-        <span
-          key={t}
-          className="inline-flex max-w-[10rem] items-center truncate rounded-[4px] border border-[color:var(--border)] bg-[color:var(--bg-2)] px-1.5 py-0.5 text-[10.5px] mono uppercase tracking-[0.04em] text-[color:var(--text-2)]"
-        >
-          {t}
-        </span>
-      ))}
-      {overflow > 0 && (
-        <span className="mono text-[10.5px] text-[color:var(--text-4)]">+{overflow}</span>
-      )}
-    </div>
-  )
-}
-
 // Inspector is the per-request detail modal (meta grid, captured
 // request/response bodies, GenAI content) rendered inside the shared
-// InspectorModal shell. Exported so the sessions page can reuse it unchanged
-// against a session's MessageEntry rows.
-export function Inspector({
+// InspectorModal shell.
+function Inspector({
   entry,
   position,
   onClose,
@@ -1065,9 +935,4 @@ function Headers({ label, headers }: { label: string; headers?: Record<string, s
       </div>
     </div>
   )
-}
-
-function shortTime(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleTimeString(undefined, { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0")
 }

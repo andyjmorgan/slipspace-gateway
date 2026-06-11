@@ -1,36 +1,17 @@
-// Session view client. Mirrors contracts/admin.SessionView on the Go side and
-// drives the telemetry console's per-session page: one conversation's requests
-// (oldest-first, as the graphs plot them) plus aggregate totals for the header
-// tiles. Each request is the same MessageEntry shape the messages browser
-// renders, so the session page reuses the messages row + GenAI inspector.
+// Session list client. Drives the telemetry console's session discovery list;
+// a row pivots into the lifecycle dashboard (lib/session-spans.ts), which owns
+// the per-session feeds.
 
 import { apiFetch } from "@/lib/api"
 // Wire DTOs are generated from the Go contracts (contracts/admin). Do NOT
 // hand-edit — run `make generate`. Source of truth: web/src/lib/generated/.
-// SessionTotals = header-tile rollup; SessionView = GET /sessions/{id};
 // SessionSummary = one session-list row; SessionList = the wire list page.
 import type {
-  SessionTotals,
-  SessionView,
   SessionSummary,
   SessionList as SessionListWire,
 } from "./generated/admin"
 
-export type { SessionTotals, SessionView, SessionSummary }
-
-/**
- * Fetches one session's requests + totals. Returns null when the session id is
- * unknown (404) so the page can render an empty state rather than erroring;
- * anything else (incl. UnauthorizedError) bubbles up.
- */
-export async function fetchSession(id: string): Promise<SessionView | null> {
-  try {
-    return await apiFetch<SessionView>(`/api/v1/sessions/${encodeURIComponent(id)}`)
-  } catch (err) {
-    if ((err as { status?: number }).status === 404) return null
-    throw err
-  }
-}
+export type { SessionSummary }
 
 // SessionListPage is one keyset page of the session list, client-shaped:
 // nextCursor (camelCase) is remapped from the wire's next_cursor by fetchSessions
