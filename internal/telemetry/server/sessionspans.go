@@ -5,11 +5,14 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
@@ -21,10 +24,21 @@ import (
 //
 // Memory discipline: the endpoint is keyset-paged on the wire
 // ({spans, next_cursor}; default 200 spans, max 500) and the store streams
-// rows through a callback, so the handler holds at most one full span_event
-// blob plus one page of capped DTOs — never the whole session. The pre-paging
-// single-shot array peaked at 600 MB - 1 GB on big sessions and OOM-killed
-// the 512 Mi prod pod (2026-06-10).
+// rows through a callback into a bounded worker pool, so the handler holds at
+// most ~2x spanProjectWorkers full span_event blobs plus one page of capped
+// DTOs — never the whole session. The pre-paging single-shot array peaked at
+// 600 MB - 1 GB on big sessions and OOM-killed the 512 Mi prod pod
+// (2026-06-10); the bounded pool keeps the worst case to a few MB while
+// cutting the page's serial decode latency by ~the worker count.
+//
+// Projection modes: ?include=structure serves the ENVELOPE ONLY — every id,
+// name, *_chars size, timing, and usage field, but none of the content
+// bodies (text, tool args, input_text, output_text). The lifecycle dashboard
+// renders lanes/ledger/stats from sizes alone, so its pages shrink from MBs
+// to KBs; the span inspector lazy-fetches the one span it needs in full via
+// GET /sessions/{id}/spans/{cid}. Any other ?include value (or none) serves
+// the full bodies — the pre-split wire shape, kept as the default for older
+// clients.
 //
 // Truncation policy: each served content field (text, tool args, input_text,
 // output_text) is capped at Server.spanFieldCap bytes (span_field_max_bytes,
@@ -63,15 +77,55 @@ const (
 func (s *Server) handleSessionSpans(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	cursor := r.URL.Query().Get("cursor")
-	spans := []adminc.SessionSpan{}
-	next, err := s.queries.EventsBySessionPage(r.Context(), store.SessionPageParams{
+	// Envelope-only mode: bodies stay false only for the exact "structure"
+	// value; anything else keeps the full pre-split shape (lenient, like the
+	// rest of the query params).
+	bodies := r.URL.Query().Get("include") != "structure"
+	limit := limitParam(r, 0)
+
+	// Order-preserving bounded fan-out: the streaming callback assigns each row
+	// a slot in a pre-sized buffer and hands the raw event to a small worker
+	// pool, which projects rows concurrently. The serial form paid the whole
+	// page's blob decode on one goroutine (~28 ms/span on prod-sized blobs =
+	// 3.5 s per 125-span page); the pool divides that by ~the worker count.
+	// In-flight full blobs stay bounded at workers (processing) + cap(jobs)
+	// (queued) + 1 (in the callback) — a few MB worst case, preserving the
+	// OOM-fix discipline. buf is sized to the store's effective page limit and
+	// never reallocated, so the callback's slot writes and the workers' element
+	// writes touch disjoint memory (no slice-header sharing).
+	ctx := r.Context()
+	workers := spanProjectWorkers()
+	jobs := make(chan spanProjectJob, workers)
+	buf := make([]adminc.SessionSpan, store.ClampSessionPageLimit(limit))
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		safego.Go(ctx, "telemetry.sessionspans.project", s.log, nil, func() {
+			defer wg.Done()
+			for j := range jobs {
+				// Per-row recover keeps the worker draining even if one row's
+				// projection panics (the slot stays a zero-value DTO), so the
+				// producer can never block on a dead pool.
+				safego.Run(ctx, "telemetry.sessionspans.project_row", s.log, nil, func() {
+					buf[j.idx] = sessionSpanFromEvent(j.e, s.spanFieldCap, bodies)
+				})
+			}
+		})
+	}
+	n := 0
+	next, err := s.queries.EventsBySessionPage(ctx, store.SessionPageParams{
 		SessionID: id,
 		Cursor:    cursor,
-		Limit:     limitParam(r, 0),
+		Limit:     limit,
 	}, func(e store.RequestEvent) error {
-		spans = append(spans, sessionSpanFromEvent(e, s.spanFieldCap))
+		jobs <- spanProjectJob{idx: n, e: e}
+		n++
 		return nil
 	})
+	// Always drain the pool — also on the error path, where workers may still
+	// hold queued jobs.
+	close(jobs)
+	wg.Wait()
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			writeError(w, http.StatusBadRequest, "invalid cursor")
@@ -80,11 +134,55 @@ func (s *Server) handleSessionSpans(w http.ResponseWriter, r *http.Request) {
 		s.queryError(w, "session spans", err)
 		return
 	}
-	if len(spans) == 0 && cursor == "" {
+	if n == 0 && cursor == "" {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, adminc.SessionSpansPage{Spans: spans, NextCursor: next})
+	writeJSON(w, http.StatusOK, adminc.SessionSpansPage{Spans: buf[:n], NextCursor: next})
+}
+
+// spanProjectJob is one row handed to the projection pool: the raw event and
+// its order-preserving slot in the page buffer.
+type spanProjectJob struct {
+	idx int
+	e   store.RequestEvent
+}
+
+// spanProjectWorkers sizes the projection pool: one worker per CPU, capped so
+// the in-flight blob bound (and the goroutine count per request) stays small
+// even on large hosts.
+func spanProjectWorkers() int {
+	n := runtime.GOMAXPROCS(0)
+	if n > 8 {
+		n = 8
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// handleSessionSpan serves ONE span's full DTO element (content bodies
+// included, still per-field capped) — the lazy fetch behind the lifecycle
+// page's span inspector, which renders the dashboard from envelope-only
+// structure pages and pulls a single full span on modal open. 404 when the
+// correlation id is unknown OR belongs to a different session, so the
+// session-scoped route never leaks a span across sessions.
+func (s *Server) handleSessionSpan(w http.ResponseWriter, r *http.Request) {
+	e, err := s.queries.GetRequestEvent(r.Context(), r.PathValue("cid"))
+	if err != nil {
+		if errors.Is(err, store.ErrRequestEventNotFound) {
+			writeError(w, http.StatusNotFound, "span not found")
+			return
+		}
+		s.queryError(w, "session span", err)
+		return
+	}
+	if e.SessionID != r.PathValue("id") {
+		writeError(w, http.StatusNotFound, "span not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, sessionSpanFromEvent(e, s.spanFieldCap, true))
 }
 
 // sessionSpanFromEvent projects one request event onto its DTO element. The
@@ -92,10 +190,12 @@ func (s *Server) handleSessionSpans(w http.ResponseWriter, r *http.Request) {
 // status, time-to-first-chunk, finish reasons, usage, and the content
 // envelopes are decoded from the span_event blob. fieldCap bounds each served
 // content field in bytes (<= 0 disables); *_chars always carry the true
-// sizes. A missing or malformed blob degrades to nulls/empty envelopes —
-// never an error — matching how the rest of the console renders a column-only
-// row.
-func sessionSpanFromEvent(e store.RequestEvent, fieldCap int) adminc.SessionSpan {
+// sizes. bodies=false is the structure projection: the part envelopes, ids,
+// names, and every *_chars size survive, but the content bodies (part text,
+// tool args, input_text, output_text) are omitted entirely. A missing or
+// malformed blob degrades to nulls/empty envelopes — never an error —
+// matching how the rest of the console renders a column-only row.
+func sessionSpanFromEvent(e store.RequestEvent, fieldCap int, bodies bool) adminc.SessionSpan {
 	var blob map[string]json.RawMessage
 	if len(e.SpanEvent) > 0 {
 		// A malformed blob leaves the map nil; every lookup below tolerates that.
@@ -143,8 +243,8 @@ func sessionSpanFromEvent(e store.RequestEvent, fieldCap int) adminc.SessionSpan
 	if raw, ok := blob[blobKeyGenAIContent]; ok {
 		var c spanContent
 		if json.Unmarshal(raw, &c) == nil {
-			span.OutputParts, span.OutputText, span.OutputTextChars = outputEnvelope(c.OutputMessages, fieldCap)
-			span.InputParts, span.InputText, span.InputTextChars = inputEnvelope(c.InputMessages, fieldCap)
+			span.OutputParts, span.OutputText, span.OutputTextChars = outputEnvelope(c.OutputMessages, fieldCap, bodies)
+			span.InputParts, span.InputText, span.InputTextChars = inputEnvelope(c.InputMessages, fieldCap, bodies)
 		}
 	}
 	return span
@@ -227,10 +327,14 @@ type spanPart struct {
 // tool_call_response on the same span — both ride through with their join id.
 // Part types outside the contract enum (pass-through media blocks) map to
 // "unknown" so the renderer can count them without guessing. fieldCap bounds
-// each served field; *_chars carry the true sizes.
-func outputEnvelope(msgs []spanMessage, fieldCap int) ([]adminc.SessionSpanOutputPart, *string, *int) {
+// each served field; *_chars carry the true sizes. bodies=false omits every
+// content body (args, result text, output_text) while keeping the sizes —
+// including output_text_chars, which is summed without ever building the
+// concatenation.
+func outputEnvelope(msgs []spanMessage, fieldCap int, bodies bool) ([]adminc.SessionSpanOutputPart, *string, *int) {
 	parts := []adminc.SessionSpanOutputPart{}
 	var text strings.Builder
+	totalChars := 0
 	hasText := false
 	for _, m := range msgs {
 		for _, p := range m.Parts {
@@ -238,7 +342,10 @@ func outputEnvelope(msgs []spanMessage, fieldCap int) ([]adminc.SessionSpanOutpu
 			case "text":
 				n := charCount(p.Content)
 				parts = append(parts, adminc.SessionSpanOutputPart{Type: "text", Chars: &n})
-				text.WriteString(p.Content)
+				if bodies {
+					text.WriteString(p.Content)
+				}
+				totalChars += n
 				hasText = true
 			case "reasoning":
 				n := charCount(p.Content)
@@ -248,13 +355,19 @@ func outputEnvelope(msgs []spanMessage, fieldCap int) ([]adminc.SessionSpanOutpu
 				if len(p.Arguments) > 0 {
 					args := string(p.Arguments)
 					n := charCount(args)
-					part.Args = capText(args, fieldCap)
+					if bodies {
+						part.Args = capText(args, fieldCap)
+					}
 					part.ArgsChars = &n
 				}
 				parts = append(parts, part)
 			case "tool_call_response":
 				n := charCount(p.Result)
-				parts = append(parts, adminc.SessionSpanOutputPart{Type: "tool_call_response", ID: p.ID, Chars: &n, Text: capText(p.Result, fieldCap)})
+				part := adminc.SessionSpanOutputPart{Type: "tool_call_response", ID: p.ID, Chars: &n}
+				if bodies {
+					part.Text = capText(p.Result, fieldCap)
+				}
+				parts = append(parts, part)
 			default:
 				parts = append(parts, adminc.SessionSpanOutputPart{Type: "unknown"})
 			}
@@ -263,42 +376,55 @@ func outputEnvelope(msgs []spanMessage, fieldCap int) ([]adminc.SessionSpanOutpu
 	if !hasText {
 		return parts, nil, nil
 	}
-	s := text.String()
-	n := charCount(s)
-	s = capText(s, fieldCap)
-	return parts, &s, &n
+	if !bodies {
+		return parts, nil, &totalChars
+	}
+	s := capText(text.String(), fieldCap)
+	return parts, &s, &totalChars
 }
 
 // inputEnvelope flattens the trailing input delta (the gateway captures only
 // the NEW turn of each request) into the DTO's input parts plus the
 // concatenated human text. Only the contract's part types survive — text and
 // tool_call_response — since media blocks carry no text to render. fieldCap
-// bounds each served field; *_chars carry the true sizes.
-func inputEnvelope(msgs []spanMessage, fieldCap int) ([]adminc.SessionSpanInputPart, *string, *int) {
+// bounds each served field; *_chars carry the true sizes. bodies=false omits
+// the part text and input_text bodies while keeping every size.
+func inputEnvelope(msgs []spanMessage, fieldCap int, bodies bool) ([]adminc.SessionSpanInputPart, *string, *int) {
 	parts := []adminc.SessionSpanInputPart{}
 	var text strings.Builder
+	totalChars := 0
 	hasText := false
 	for _, m := range msgs {
 		for _, p := range m.Parts {
 			switch p.Type {
 			case "text":
 				n := charCount(p.Content)
-				parts = append(parts, adminc.SessionSpanInputPart{Type: "text", Chars: &n, Text: capText(p.Content, fieldCap)})
-				text.WriteString(p.Content)
+				part := adminc.SessionSpanInputPart{Type: "text", Chars: &n}
+				if bodies {
+					part.Text = capText(p.Content, fieldCap)
+					text.WriteString(p.Content)
+				}
+				parts = append(parts, part)
+				totalChars += n
 				hasText = true
 			case "tool_call_response":
 				n := charCount(p.Result)
-				parts = append(parts, adminc.SessionSpanInputPart{Type: "tool_call_response", ID: p.ID, Chars: &n, Text: capText(p.Result, fieldCap)})
+				part := adminc.SessionSpanInputPart{Type: "tool_call_response", ID: p.ID, Chars: &n}
+				if bodies {
+					part.Text = capText(p.Result, fieldCap)
+				}
+				parts = append(parts, part)
 			}
 		}
 	}
 	if !hasText {
 		return parts, nil, nil
 	}
-	s := text.String()
-	n := charCount(s)
-	s = capText(s, fieldCap)
-	return parts, &s, &n
+	if !bodies {
+		return parts, nil, &totalChars
+	}
+	s := capText(text.String(), fieldCap)
+	return parts, &s, &totalChars
 }
 
 // charCount is the *_chars unit: Unicode code points. Always <= a JS string's

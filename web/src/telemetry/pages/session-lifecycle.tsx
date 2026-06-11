@@ -10,7 +10,9 @@ import { SkeletonTiles, SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
 import {
+  fetchFullSpan,
   fetchSessionSpans,
+  peekFullSpan,
   type InputPart,
   type OutputPart,
   type SessionSpan,
@@ -272,6 +274,38 @@ function id8(id?: string): string {
   return "…" + String(id ?? "").slice(-8)
 }
 
+// useRafThrottle coalesces high-frequency updates (brush drag, wheel zoom,
+// crosshair mousemove) to at most one state commit per animation frame —
+// mousemove can fire several times per frame, and each uncoalesced commit
+// re-rendered the whole lanes SVG. Returns [push, cancel]; cancel drops any
+// pending value (used when an immediate update like reset must not be
+// overwritten by a stale queued frame).
+function useRafThrottle<T>(apply: (v: T) => void): [(v: T) => void, () => void] {
+  const raf = useRef(0)
+  // Boxed so a pushed `null`/`undefined` value still counts as pending.
+  const pending = useRef<{ v: T } | null>(null)
+  const applyRef = useRef(apply)
+  applyRef.current = apply
+  const cancel = useCallback(() => {
+    pending.current = null
+    if (raf.current) {
+      cancelAnimationFrame(raf.current)
+      raf.current = 0
+    }
+  }, [])
+  useEffect(() => cancel, [cancel])
+  const push = useCallback((v: T) => {
+    pending.current = { v }
+    if (raf.current) return
+    raf.current = requestAnimationFrame(() => {
+      raf.current = 0
+      if (pending.current) applyRef.current(pending.current.v)
+      pending.current = null
+    })
+  }, [])
+  return [push, cancel]
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Page shell: route param → fetch → view
 // ─────────────────────────────────────────────────────────────────────────
@@ -320,17 +354,29 @@ function LifecycleBody({ sessionId }: { sessionId: string }) {
   const [spans, setSpans] = useState<SessionSpan[]>([])
   const [source, setSource] = useState<"api" | "fixture">("api")
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading")
+  // partial is true while later pages of a multi-page session are still in
+  // flight — the dashboard paints from page 1 and appends as pages land
+  // instead of blanking on a serial cursor walk.
+  const [partial, setPartial] = useState(false)
   const [err, setErr] = useState("")
 
   // No "loading" reset inside the effect: LifecycleBody is keyed by session
   // id, so a new session remounts it with the initial loading state.
   useEffect(() => {
     let cancelled = false
-    fetchSessionSpans(sessionId)
+    fetchSessionSpans(sessionId, (cum, done) => {
+      // Progressive paint: each page hands back the cumulative list (a fresh
+      // array), so the view model rebuilds and the dashboard grows in place.
+      if (cancelled) return
+      setSpans(cum)
+      setPartial(!done)
+      setStatus("ok")
+    })
       .then((r) => {
         if (cancelled) return
         setSpans(r.spans)
         setSource(r.source)
+        setPartial(false)
         setStatus("ok")
       })
       .catch((e) => {
@@ -379,23 +425,48 @@ function LifecycleBody({ sessionId }: { sessionId: string }) {
       </div>
     )
   }
-  return <LifecycleView vm={vm} source={source} />
+  return <LifecycleView vm={vm} source={source} partial={partial} />
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // The dashboard proper
 // ─────────────────────────────────────────────────────────────────────────
 
-function LifecycleView({ vm, source }: { vm: ViewModel; source: "api" | "fixture" }) {
+function LifecycleView({
+  vm,
+  source,
+  partial,
+}: {
+  vm: ViewModel
+  source: "api" | "fixture"
+  partial: boolean
+}) {
   // useNames toggles rule-6 aliases vs raw agent ids everywhere a
   // conversation is named (lanes, ledger, modal).
   const [useNames, setUseNames] = useState(true)
   // Deep link: opening the page with #span=<cid> opens that span's inspector
-  // on load (ported from the reference implementation's #modal= hash).
+  // on load (ported from the reference implementation's #modal= hash). With
+  // progressive paint the view mounts on page 1, so a hash pointing at a
+  // later page's span resolves via the effect below as pages land —
+  // hashConsumed makes it one-shot so closing the modal stays closed.
   const [selectedCid, setSelectedCid] = useState<string | null>(() => {
     const m = window.location.hash.match(/^#span=(.+)$/)
     return m && vm.byCid.has(decodeURIComponent(m[1])) ? decodeURIComponent(m[1]) : null
   })
+  const hashConsumed = useRef(selectedCid != null)
+  useEffect(() => {
+    if (hashConsumed.current) return
+    const m = window.location.hash.match(/^#span=(.+)$/)
+    if (!m) {
+      hashConsumed.current = true
+      return
+    }
+    const cid = decodeURIComponent(m[1])
+    if (vm.byCid.has(cid)) {
+      hashConsumed.current = true
+      setSelectedCid(cid)
+    }
+  }, [vm])
   // ioTab is lifted here so the inspector's Input|Output choice persists
   // across prev/next while the page lives.
   const [ioTab, setIoTab] = useState<"output" | "input">("output")
@@ -408,7 +479,7 @@ function LifecycleView({ vm, source }: { vm: ViewModel; source: "api" | "fixture
 
   return (
     <>
-      <LifecycleHeader vm={vm} source={source} />
+      <LifecycleHeader vm={vm} source={source} partial={partial} />
       <StatCards vm={vm} />
       <ActivityStrip vm={vm} />
       <TimelinePanel
@@ -426,6 +497,7 @@ function LifecycleView({ vm, source }: { vm: ViewModel; source: "api" | "fixture
       {selectedCid && (
         <SpanInspector
           vm={vm}
+          source={source}
           cid={selectedCid}
           ioTab={ioTab}
           onTab={setIoTab}
@@ -438,7 +510,15 @@ function LifecycleView({ vm, source }: { vm: ViewModel; source: "api" | "fixture
   )
 }
 
-function LifecycleHeader({ vm, source }: { vm: ViewModel; source: "api" | "fixture" }) {
+function LifecycleHeader({
+  vm,
+  source,
+  partial,
+}: {
+  vm: ViewModel
+  source: "api" | "fixture"
+  partial: boolean
+}) {
   const models = useMemo(() => {
     const ct = new Map<string, number>()
     for (const s of vm.spans) ct.set(s.model ?? "unknown", (ct.get(s.model ?? "unknown") ?? 0) + 1)
@@ -458,6 +538,11 @@ function LifecycleHeader({ vm, source }: { vm: ViewModel; source: "api" | "fixtu
         {source === "fixture" && (
           <HeaderChip>
             <span style={{ color: "var(--warn)" }}>fixture data</span> — no /spans endpoint on this backend
+          </HeaderChip>
+        )}
+        {partial && (
+          <HeaderChip>
+            <span style={{ color: "var(--accent)" }}>loading…</span> {vm.spans.length} spans so far
           </HeaderChip>
         )}
         <HeaderChip>
@@ -734,17 +819,24 @@ function TimelinePanel({
   const xz = useCallback((t: number) => GEO.l + ((t - d0) / span) * plotW, [d0, span, plotW])
   const clampX = useCallback((px: number) => Math.max(GEO.l, Math.min(w - GEO.r, px)), [w])
 
+  // Brush updates are rAF-throttled: drag/wheel mousemoves coalesce to one
+  // range commit (and so one lanes re-render) per frame.
+  const [pushRange, cancelPendingRange] = useRafThrottle<{ d0: number; d1: number }>(setRange)
   const setBrush = useCallback(
     (t1: number, t2: number) => {
       let n0 = Math.max(0, Math.min(t1, t2))
       let n1 = Math.min(vm.dur, Math.max(t1, t2))
       if (n1 - n0 < 2) n1 = Math.min(vm.dur, n0 + 2)
       if (n1 - n0 < 2) n0 = Math.max(0, n1 - 2)
-      setRange({ d0: n0, d1: n1 })
+      pushRange({ d0: n0, d1: n1 })
     },
-    [vm.dur],
+    [vm.dur, pushRange],
   )
-  const reset = useCallback(() => setRange({ d0: 0, d1: vm.dur }), [vm.dur])
+  const reset = useCallback(() => {
+    // Immediate, and drop any queued drag frame so it can't undo the reset.
+    cancelPendingRange()
+    setRange({ d0: 0, d1: vm.dur })
+  }, [vm.dur, cancelPendingRange])
 
   // Minimap drag: mousedown picks the mode (edge resize / pan / new slice);
   // window-level move/up finish the gesture so it survives leaving the svg.
@@ -805,9 +897,12 @@ function TimelinePanel({
   }, [w, plotW, setBrush])
 
   // Crosshair + hover tooltip state. The bars themselves are memoized below,
-  // so mousemove only re-renders the overlay.
+  // so mousemove only re-renders the overlay — and the overlay updates are
+  // rAF-throttled too, so a fast mouse costs at most one render per frame.
   const [crossPx, setCrossPx] = useState<number | null>(null)
   const [tip, setTip] = useState<{ x: number; y: number; cid: string } | null>(null)
+  const [pushCross, cancelPendingCross] = useRafThrottle<number | null>(setCrossPx)
+  const [pushTip, cancelPendingTip] = useRafThrottle<{ x: number; y: number; cid: string } | null>(setTip)
 
   const chartH = GEO.t + vm.convIds.length * (LANE_H + LANE_GAP) + GEO.b
 
@@ -824,7 +919,16 @@ function TimelinePanel({
   // Lanes + bars (rules 2-3): per conversation, a bar per span split at TTFC
   // (solid head, gradient streaming tail) and a hatched gap between
   // consecutive spans — harness/tool time, never drawn for server tools.
+  //
+  // Level-of-detail: when zoomed out far enough that individual bars project
+  // to sub-pixel widths, runs of adjacent sub-pixel bars merge into ONE rect
+  // per run (and the sub-pixel gaps between them are skipped). Pure visual —
+  // the merged blob is what thousands of overlapping 2px rects rendered as
+  // anyway, minus the DOM weight; zooming in past the threshold restores the
+  // individual bars with their full click/hover behavior. A merged rect
+  // carries an SVG <title> with the run size so it still explains itself.
   const lanes = useMemo(() => {
+    const MIN_BAR_PX = 1.5
     const nodes: React.ReactNode[] = []
     vm.convIds.forEach((conv, i) => {
       const yTop = GEO.t + i * (LANE_H + LANE_GAP)
@@ -854,8 +958,83 @@ function TimelinePanel({
           {conv === vm.sid ? "◆ session" : dispName(conv)}
         </text>,
       )
+      // Pending merged run of sub-pixel bars: [x1, x2) plus the run size.
+      let run: { x1: number; x2: number; n: number; key: string } | null = null
+      const flushRun = () => {
+        if (!run) return
+        nodes.push(
+          <rect
+            key={`md-${run.key}`}
+            x={run.x1}
+            y={yTop + 2}
+            width={Math.max(1, run.x2 - run.x1)}
+            height={LANE_H - 4}
+            rx={2.5}
+            style={{ fill: col }}
+            opacity={0.85}
+          >
+            <title>{`${run.n} requests — zoom in for detail`}</title>
+          </rect>,
+        )
+        run = null
+      }
       flow.forEach((s, j) => {
         const nx = flow[j + 1]
+        if (s.tEnd < d0 || s.t > d1) {
+          // Bar outside the slice — but a gap trailing a bar that ended left
+          // of the slice can still reach into view.
+          if (nx && nx.t > s.tEnd && nx.t > d0 && s.tEnd < d1) {
+            const g1 = clampX(xz(s.tEnd))
+            const g2 = clampX(xz(nx.t))
+            if (g2 - g1 >= MIN_BAR_PX) {
+              nodes.push(
+                <rect
+                  key={`gap-${s.cid}`}
+                  x={g1}
+                  y={yTop + 7}
+                  width={Math.max(1, g2 - g1)}
+                  height={LANE_H - 14}
+                  fill="url(#lifecycle-hatch)"
+                  opacity={0.55}
+                />,
+              )
+            }
+          }
+          return
+        }
+        const x1 = clampX(xz(s.t))
+        const xEnd = clampX(xz(s.tEnd))
+        const gapPx = nx && nx.t > s.tEnd ? clampX(xz(nx.t)) - xEnd : 0
+
+        if (xEnd - x1 < MIN_BAR_PX) {
+          // Sub-pixel bar: extend or start a merged run.
+          if (run && x1 - run.x2 <= MIN_BAR_PX) {
+            run.x2 = Math.max(run.x2, xEnd, x1 + 0.5)
+            run.n++
+          } else {
+            flushRun()
+            run = { x1, x2: Math.max(xEnd, x1 + 0.5), n: 1, key: s.cid }
+          }
+          // The gap after a merged member only renders when it is visibly
+          // wide; sub-pixel gaps stay inside the blob.
+          if (nx && nx.t > s.tEnd && nx.t > d0 && gapPx >= MIN_BAR_PX) {
+            flushRun()
+            nodes.push(
+              <rect
+                key={`gap-${s.cid}`}
+                x={xEnd}
+                y={yTop + 7}
+                width={Math.max(1, clampX(xz(nx.t)) - xEnd)}
+                height={LANE_H - 14}
+                fill="url(#lifecycle-hatch)"
+                opacity={0.55}
+              />,
+            )
+          }
+          return
+        }
+
+        flushRun()
         if (nx && nx.t > s.tEnd && nx.t > d0 && s.tEnd < d1) {
           const g1 = clampX(xz(s.tEnd))
           const g2 = clampX(xz(nx.t))
@@ -873,9 +1052,7 @@ function TimelinePanel({
             )
           }
         }
-        if (s.tEnd < d0 || s.t > d1) return
-        const x1 = clampX(xz(s.t))
-        const x2 = Math.max(x1 + 2, clampX(xz(s.tEnd)))
+        const x2 = Math.max(x1 + 2, xEnd)
         const tt = s.ttfc_ms != null ? s.ttfc_ms / 1000 : null
         const xs = tt != null ? Math.max(x1, Math.min(x2, clampX(xz(s.t + tt)))) : x2
         nodes.push(
@@ -890,8 +1067,11 @@ function TimelinePanel({
             strokeWidth={0.5}
             className="cursor-pointer hover:brightness-125"
             onClick={() => onOpen(s.cid)}
-            onMouseMove={(ev) => setTip({ x: ev.clientX, y: ev.clientY, cid: s.cid })}
-            onMouseLeave={() => setTip(null)}
+            onMouseMove={(ev) => pushTip({ x: ev.clientX, y: ev.clientY, cid: s.cid })}
+            onMouseLeave={() => {
+              cancelPendingTip()
+              setTip(null)
+            }}
           />,
         )
         if (xs < x2) {
@@ -906,15 +1086,19 @@ function TimelinePanel({
               fill={`url(#lifecycle-tail-${i})`}
               className="cursor-pointer hover:brightness-125"
               onClick={() => onOpen(s.cid)}
-              onMouseMove={(ev) => setTip({ x: ev.clientX, y: ev.clientY, cid: s.cid })}
-              onMouseLeave={() => setTip(null)}
+              onMouseMove={(ev) => pushTip({ x: ev.clientX, y: ev.clientY, cid: s.cid })}
+              onMouseLeave={() => {
+                cancelPendingTip()
+                setTip(null)
+              }}
             />,
           )
         }
       })
+      flushRun()
     })
     return nodes
-  }, [vm, dispName, d0, d1, plotW, xz, clampX, onOpen])
+  }, [vm, dispName, d0, d1, plotW, xz, clampX, onOpen, pushTip, cancelPendingTip])
 
   // Minimap content: minute ticks + every span as a slim bar (main lane on
   // top, sub-agents below), under the brush overlay.
@@ -1037,10 +1221,14 @@ function TimelinePanel({
             className="block select-none"
             onMouseMove={(ev) => {
               const px = ev.clientX - ev.currentTarget.getBoundingClientRect().left
-              setCrossPx(px >= GEO.l && px <= w - GEO.r ? px : null)
+              pushCross(px >= GEO.l && px <= w - GEO.r ? px : null)
             }}
             onMouseLeave={() => {
+              // Direct + cancel: a queued move frame must not resurrect the
+              // crosshair after the pointer left the chart.
+              cancelPendingCross()
               setCrossPx(null)
+              cancelPendingTip()
               setTip(null)
             }}
             aria-label="Per-conversation request timeline"
@@ -1218,8 +1406,16 @@ function ToolTable({ vm, kind }: { vm: ViewModel; kind: "client" | "server" }) {
   )
 }
 
+// LEDGER_PREVIEW caps the rows the ledger renders by default. A 688-message
+// session can carry thousands of tool calls; mounting them all as table rows
+// dominated the initial paint. The cap is presentation-only — stats and the
+// ledger joins always run over the full list — and "show all" lifts it.
+const LEDGER_PREVIEW = 250
+
 // LedgerTable is the flat joined ledger: one row per tool_call, raw arguments
 // (rule 7 default path — opaque vendor JSON, truncated, never field-picked).
+// List spans are envelope-only, so the args column may have only the size to
+// show; the calling span's inspector (click the row) fetches the full args.
 function LedgerTable({
   vm,
   dispName,
@@ -1229,6 +1425,8 @@ function LedgerTable({
   dispName: (conv: string) => string
   onOpen: (cid: string) => void
 }) {
+  const [showAll, setShowAll] = useState(false)
+  const rows = showAll ? vm.ledger : vm.ledger.slice(0, LEDGER_PREVIEW)
   return (
     <PanelCard>
       <PanelHead title="Tool call ledger" sub="joined by tool_call id · parameters shown raw" />
@@ -1246,7 +1444,7 @@ function LedgerTable({
             </tr>
           </thead>
           <tbody>
-            {vm.ledger.map((r, i) => (
+            {rows.map((r, i) => (
               <tr
                 key={`${r.id}-${i}`}
                 onClick={() => onOpen(r.callCid)}
@@ -1277,10 +1475,27 @@ function LedgerTable({
                   )}
                 </td>
                 <td className="mono text-[10.5px] px-4 py-2 text-[color:var(--text-4)] max-w-[340px] overflow-hidden text-ellipsis whitespace-nowrap">
-                  {r.args.slice(0, 110)}
+                  {r.args ? (
+                    r.args.slice(0, 110)
+                  ) : r.argsChars ? (
+                    <span className="italic">{`{…} ${fmt.compact(r.argsChars)} chars — open span`}</span>
+                  ) : null}
                 </td>
               </tr>
             ))}
+            {!showAll && vm.ledger.length > LEDGER_PREVIEW && (
+              <tr className="border-t border-[color:var(--border)]">
+                <td colSpan={7} className="px-4 py-2.5 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowAll(true)}
+                    className="rounded-full border border-[color:var(--border)] bg-[color:var(--bg-1)] px-3 py-0.5 text-[11.5px] text-[color:var(--text-3)] hover:text-[color:var(--text)] hover:bg-[color:var(--hover)]"
+                  >
+                    show all {vm.ledger.length} tool calls (first {LEDGER_PREVIEW} shown)
+                  </button>
+                </td>
+              </tr>
+            )}
             {vm.ledger.length === 0 && (
               <tr className="border-t border-[color:var(--border)]">
                 <td colSpan={7} className="px-4 py-6 text-center text-[12px] text-[color:var(--text-4)]">
@@ -1301,6 +1516,7 @@ function LedgerTable({
 
 function SpanInspector({
   vm,
+  source,
   cid,
   ioTab,
   onTab,
@@ -1309,6 +1525,7 @@ function SpanInspector({
   onClose,
 }: {
   vm: ViewModel
+  source: "api" | "fixture"
   cid: string
   ioTab: "output" | "input"
   onTab: (t: "output" | "input") => void
@@ -1316,7 +1533,51 @@ function SpanInspector({
   onSelect: (cid: string) => void
   onClose: () => void
 }) {
-  const s = vm.byCid.get(cid)
+  // The list spans are envelope-only (include=structure), so the inspector
+  // lazy-fetches THIS span's full element (content bodies) on open, through
+  // the module-level LRU cache. The structural span renders immediately —
+  // timing/tokens/part counts need no bodies — and the text wells fill in
+  // when the fetch lands. Fixture spans already carry bodies (no fetch); a
+  // backend predating the per-span endpoint 404s and we honestly degrade to
+  // structure-only.
+  const [full, setFull] = useState<SessionSpan | null>(null)
+  const [bodyState, setBodyState] = useState<"ready" | "loading" | "unavailable">("ready")
+  useEffect(() => {
+    if (source !== "api") {
+      setFull(null)
+      setBodyState("ready")
+      return
+    }
+    const cached = peekFullSpan(vm.sid, cid)
+    if (cached) {
+      setFull(cached)
+      setBodyState("ready")
+      return
+    }
+    let cancelled = false
+    setFull(null)
+    setBodyState("loading")
+    fetchFullSpan(vm.sid, cid)
+      .then((sp) => {
+        if (cancelled) return
+        setFull(sp)
+        setBodyState("ready")
+      })
+      .catch(() => {
+        if (!cancelled) setBodyState("unavailable")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [vm.sid, cid, source])
+
+  // The rendered span: the full element when fetched, overlaid on the view
+  // model's session-relative timing (t/tEnd never come over the wire).
+  const s = useMemo<SpanVM | undefined>(() => {
+    const base = vm.byCid.get(cid)
+    if (!base) return undefined
+    return full ? { ...full, t: base.t, tEnd: base.tEnd } : base
+  }, [vm, cid, full])
   const flow = useMemo(
     () => (s ? (vm.byConv.get(s.conversation_id) ?? []) : []),
     [vm, s],
@@ -1424,6 +1685,15 @@ function SpanInspector({
         {/* body */}
         <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
           <TimingTokensTiles vm={vm} s={s} />
+
+          {bodyState === "loading" && (
+            <div className="mt-3 text-[11.5px] text-[color:var(--text-4)]">loading full content…</div>
+          )}
+          {bodyState === "unavailable" && (
+            <div className="mt-3 text-[11.5px]" style={{ color: "var(--warn)" }}>
+              full content unavailable on this backend — showing structure only
+            </div>
+          )}
 
           {/* Input | Output tabs — Output default, choice persists across prev/next */}
           <div className="flex border-b border-[color:var(--border)] mt-5">

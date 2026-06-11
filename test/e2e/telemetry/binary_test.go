@@ -3,12 +3,14 @@
 package telemetry_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -278,6 +280,27 @@ func counterDP(value int64, attrs ...*commonpb.KeyValue) *metricspb.NumberDataPo
 }
 
 // --- authed API ---
+
+// getRaw GETs path with Basic auth and an explicit Accept-Encoding (which
+// disables the Go transport's transparent gzip), returning the status,
+// headers, and the raw on-the-wire body bytes — the measurement helper the
+// payload-size assertions use.
+func (s *service) getRaw(t *testing.T, path, acceptEncoding string) (int, http.Header, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, s.httpBase+path, nil)
+	req.SetBasicAuth(testUser, testPass)
+	req.Header.Set("Accept-Encoding", acceptEncoding)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get %s: %v", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return resp.StatusCode, resp.Header, body
+}
 
 func (s *service) getJSON(t *testing.T, path string, out any) int {
 	t.Helper()
@@ -932,6 +955,58 @@ func TestE2E_SessionSpansDTO(t *testing.T) {
 	if b.InputText != nil {
 		t.Errorf("input_text = %v, want null", *b.InputText)
 	}
+
+	// ?include=structure: the envelope-only projection the dashboard pages
+	// fetch — same ids/names/sizes/usage/timing, no content bodies.
+	var sp adminc.SessionSpansPage
+	if code := svc.getJSON(t, "/api/v1/sessions/lifecycle-1/spans?include=structure", &sp); code != http.StatusOK {
+		t.Fatalf("structure status = %d", code)
+	}
+	if len(sp.Spans) != 2 {
+		t.Fatalf("structure spans = %d, want 2", len(sp.Spans))
+	}
+	sa, sb := sp.Spans[0], sp.Spans[1]
+	if len(sa.OutputParts) != 3 || sa.OutputParts[2].ID != "toolu_e2e" || sa.OutputParts[2].Name != "Bash" {
+		t.Fatalf("structure envelope lost the part identity: %+v", sa.OutputParts)
+	}
+	if sa.OutputParts[2].Args != "" {
+		t.Errorf("structure page served tool args: %q", sa.OutputParts[2].Args)
+	}
+	if sa.OutputParts[2].ArgsChars == nil || *sa.OutputParts[2].ArgsChars != *call.ArgsChars {
+		t.Errorf("structure args_chars = %v, want %v", sa.OutputParts[2].ArgsChars, *call.ArgsChars)
+	}
+	if sa.OutputText != nil || sa.InputText != nil {
+		t.Errorf("structure page served text bodies: out=%v in=%v", sa.OutputText, sa.InputText)
+	}
+	if sa.OutputTextChars == nil || *sa.OutputTextChars != 5 || sa.InputTextChars == nil || *sa.InputTextChars != 13 {
+		t.Errorf("structure *_chars = %v / %v, want 5 / 13", sa.OutputTextChars, sa.InputTextChars)
+	}
+	if sa.Usage.Input == nil || *sa.Usage.Input != 100 || sa.TTFCMs == nil || *sa.TTFCMs != 250 {
+		t.Errorf("structure page dropped usage/timing: usage=%+v ttfc=%v", sa.Usage, sa.TTFCMs)
+	}
+	if sb.InputParts[0].Text != "" || sb.InputParts[0].ID != "toolu_e2e" || sb.InputParts[0].Chars == nil || *sb.InputParts[0].Chars != 13 {
+		t.Errorf("structure input part = %+v, want join id + size, no body", sb.InputParts[0])
+	}
+
+	// GET /sessions/{id}/spans/{cid}: the inspector's lazy fetch — one full
+	// element, bodies included.
+	var one adminc.SessionSpan
+	if code := svc.getJSON(t, "/api/v1/sessions/lifecycle-1/spans/lcs-a", &one); code != http.StatusOK {
+		t.Fatalf("single span status = %d", code)
+	}
+	if one.CID != "lcs-a" || one.OutputText == nil || *one.OutputText != "on it" {
+		t.Fatalf("single span = %q / %v, want full bodies", one.CID, one.OutputText)
+	}
+	if !strings.Contains(one.OutputParts[2].Args, `"make e2e"`) {
+		t.Errorf("single span args = %q, want the full payload", one.OutputParts[2].Args)
+	}
+	// 404 on an unknown cid AND on a cid that belongs to a different session.
+	if code := svc.getJSON(t, "/api/v1/sessions/lifecycle-1/spans/no-such-cid", nil); code != http.StatusNotFound {
+		t.Errorf("unknown cid status = %d, want 404", code)
+	}
+	if code := svc.getJSON(t, "/api/v1/sessions/some-other-session/spans/lcs-a", nil); code != http.StatusNotFound {
+		t.Errorf("cross-session cid status = %d, want 404", code)
+	}
 }
 
 // sendSpanBatch exports a batch of pre-built spans over one OTLP connection
@@ -1086,4 +1161,66 @@ func TestE2E_SessionSpansLargeSessionPaged(t *testing.T) {
 			t.Fatalf("max page[%d] = %s, walk = %s — page boundaries changed content", i, maxPage.Spans[i].CID, walked[i].CID)
 		}
 	}
+
+	// Structure vs full page: payload bytes + wall time, measured on the wire
+	// (identity encoding so the transport doesn't gunzip behind our back).
+	// The hard assertions are the contract — bodies absent, sizes present,
+	// >10x smaller; the timings are t.Logf'd for the perf record.
+	const pagePath = "/api/v1/sessions/big-session/spans?limit=200"
+	tFull := time.Now()
+	code, _, fullBody := svc.getRaw(t, pagePath, "identity")
+	fullDur := time.Since(tFull)
+	if code != http.StatusOK {
+		t.Fatalf("full page status = %d", code)
+	}
+	tStruct := time.Now()
+	code, _, structBody := svc.getRaw(t, pagePath+"&include=structure", "identity")
+	structDur := time.Since(tStruct)
+	if code != http.StatusOK {
+		t.Fatalf("structure page status = %d", code)
+	}
+	if bytes.Contains(structBody, []byte(strings.Repeat("x", 256))) {
+		t.Error("structure page leaked content bodies")
+	}
+	if len(structBody)*10 > len(fullBody) {
+		t.Errorf("structure page = %d bytes vs full %d — expected >10x smaller", len(structBody), len(fullBody))
+	}
+	var structPage adminc.SessionSpansPage
+	if err := json.Unmarshal(structBody, &structPage); err != nil {
+		t.Fatalf("decode structure page: %v", err)
+	}
+	if structPage.Spans[0].InputText != nil {
+		t.Error("structure span carries input_text")
+	}
+	if structPage.Spans[0].InputTextChars == nil || *structPage.Spans[0].InputTextChars != contentSize {
+		t.Errorf("structure input_text_chars = %v, want %d", structPage.Spans[0].InputTextChars, contentSize)
+	}
+
+	// gzip negotiation on the console API: a client that asks gets a gzip
+	// stream that is much smaller than the identity bytes.
+	code, hdr, gzBody := svc.getRaw(t, pagePath+"&include=structure", "gzip")
+	if code != http.StatusOK {
+		t.Fatalf("gzip page status = %d", code)
+	}
+	if got := hdr.Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	if len(gzBody) >= len(structBody) {
+		t.Errorf("gzip page = %d bytes >= identity %d — not compressing", len(gzBody), len(structBody))
+	}
+
+	// The inspector's lazy fetch serves the single full span, field-capped.
+	var one adminc.SessionSpan
+	if code := svc.getJSON(t, "/api/v1/sessions/big-session/spans/big-000", &one); code != http.StatusOK {
+		t.Fatalf("single span status = %d", code)
+	}
+	if one.InputText == nil || len(*one.InputText) != fieldCap {
+		t.Fatalf("single span input_text = %d bytes, want capped %d", len(*one.InputText), fieldCap)
+	}
+	if one.InputTextChars == nil || *one.InputTextChars != contentSize {
+		t.Fatalf("single span input_text_chars = %v, want %d", one.InputTextChars, contentSize)
+	}
+
+	t.Logf("page of 200 (~100 KB content/span): full = %d bytes in %v; structure = %d bytes in %v; structure+gzip = %d bytes",
+		len(fullBody), fullDur, len(structBody), structDur, len(gzBody))
 }

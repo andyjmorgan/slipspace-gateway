@@ -415,6 +415,20 @@ const (
 	sessionPageMax     = 500
 )
 
+// ClampSessionPageLimit resolves a requested EventsBySessionPage limit to the
+// effective one the store enforces (<= 0 defaults, capped at the max).
+// Exported so the spans handler can pre-size its page buffer to exactly the
+// number of rows the store may deliver.
+func ClampSessionPageLimit(n int) int {
+	if n <= 0 {
+		return sessionPageDefault
+	}
+	if n > sessionPageMax {
+		return sessionPageMax
+	}
+	return n
+}
+
 // EventsBySessionRollup returns every event in a session, oldest first, in the
 // narrow rollup projection (span_event stripped of gen_ai_content) so the
 // session view can render the conversation in order without ever
@@ -485,9 +499,10 @@ type SessionPageParams struct {
 // EventsBySessionPage streams one keyset page of a session's events — full
 // projection including the span_event blob — oldest first, invoking fn once
 // per row. The callback shape is deliberate: each event (and its potentially
-// huge blob) is only live for the duration of its fn call, so a caller that
-// projects rows down to a bounded DTO holds O(1 full blobs) at a time, never
-// O(page). It fetches Limit+1 rows to learn whether a further page exists;
+// huge blob) is handed over one at a time, so a caller that projects rows
+// down to a bounded DTO holds O(1) full blobs — or O(workers) when fn fans
+// out to a bounded pool, as the spans handler does — never O(page). It
+// fetches Limit+1 rows to learn whether a further page exists;
 // when it does, next encodes the last delivered row's position (same cursor
 // encoding as the event list). An empty next means the last page; a malformed
 // Cursor is ErrInvalidCursor; an fn error aborts the scan and is returned.
@@ -495,13 +510,7 @@ func (s *Store) EventsBySessionPage(ctx context.Context, p SessionPageParams, fn
 	if p.SessionID == "" {
 		return "", nil
 	}
-	limit := p.Limit
-	if limit <= 0 {
-		limit = sessionPageDefault
-	}
-	if limit > sessionPageMax {
-		limit = sessionPageMax
-	}
+	limit := ClampSessionPageLimit(p.Limit)
 
 	args := []any{p.SessionID}
 	q := `SELECT ` + requestEventColumns + ` FROM request_events WHERE session_id=$1`
