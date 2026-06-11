@@ -2067,12 +2067,12 @@ function SpanInspector({
           <Button variant="secondary" size="sm" onClick={goPrev} disabled={!hasPrev} aria-label="Previous request (←)" title="Previous request (←)">
             <ChevronLeft /> prev
           </Button>
-          <span className="text-[12px] text-[color:var(--text-4)] mono">
-            request {idx + 1} / {flow.length} in this conversation
-          </span>
           <Button variant="secondary" size="sm" onClick={goNext} disabled={!hasNext} aria-label="Next request (→)" title="Next request (→)">
             next <ChevronRight />
           </Button>
+          <span className="text-[12px] text-[color:var(--text-4)] mono">
+            {idx + 1}/{flow.length}
+          </span>
           <div className="flex-1" />
           <Button variant="ghost" size="sm" onClick={onClose}>
             <X /> close
