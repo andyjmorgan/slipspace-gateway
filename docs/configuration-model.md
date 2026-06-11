@@ -2,7 +2,7 @@
 
 Everything the gateway needs to serve traffic lives in YAML files under `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The loader reads **every** `*.yaml` file in that directory, merges the top-level blocks by key into a single `ResolvedConfig`, validates cross-block references, then builds the runtime indexes the data plane reads on every request.
 
-This is the **v2** configuration model. Routing is config data: the inbound request path fixes a *protocol*, the request body carries a *model*, and a configuration's **bindings** map `(protocol, model)` to a provider or a resilience group. There is no path-based route table, no provider `endpoints`/`accepted_paths`/`prefix*` schema, and no top-level `resilience_policies` block — those were v1 concepts retired into bindings, groups, and provider `protocols`. See `internal/config/config_model.go` (the loader) and `contracts/config/model.go` (the schema) for the source of truth.
+This is the **v2** configuration model. Routing defaults to config data: the inbound request path fixes a *protocol*, the request body carries a *model*, and a configuration's **bindings** map `(protocol, model)` to a provider or a resilience group. The routing rule actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`, see [actions.md](actions.md)) remain available as per-request overrides layered on top of that binding data. There is no path-based route table, no provider `endpoints`/`accepted_paths`/`prefix*` schema, and no top-level `resilience_policies` block — those were v1 concepts retired into bindings, groups, and provider `protocols`. See `internal/config/config_model.go` (the loader) and `contracts/config/model.go` (the schema) for the source of truth.
 
 This page is the operator's reference for that on-disk schema — what files exist, which top-level keys may appear, every field on every type, how the pieces bind together, and what's deliberately out of scope.
 
@@ -94,7 +94,7 @@ The loader recognises **eight** top-level keys (`internal/config/loader.go`, `ke
 | `groups` | Resilience-group catalogue. Each group is an ordered/weighted set of provider targets with a mode, failure policy, and circuit breaker. Bindings reference a group by name. Replaces v1 `resilience_policies`. |
 | `configurations` | Named policy bundles. Each holds `credentials`, `bindings`, optional `passthrough_bindings`, `rule_names`, `tags`, and `connector_bindings`. |
 | `api_keys` | Flat list of gateway-issued bearers; each points at a configuration by name. |
-| `rules` | Top-level **transform**-rule library (body/header/query rewrites, tags, short-circuits). Routing actions were retired into bindings; rules no longer route. Configurations reference rules through `rule_names`. |
+| `rules` | Top-level rule library (body/header/query rewrites, tags, short-circuits, routing overrides). Bindings carry the default routing; `changeProvider` / `changeUrl` / `useResiliencePolicy` remain available as rule-level overrides. Configurations reference rules through `rule_names`. |
 | `connectors` | Top-level connector destinations (s3, azure_blob, webhook). Configurations attach them through `connector_bindings`. |
 | `admin` | Management-console gate. Optional; absent means the console never starts. |
 | `telemetry` | Operator-tunable telemetry knobs (today: GenAI content-capture byte caps). Optional; absent resolves to built-in defaults. |
@@ -390,14 +390,14 @@ Lookups use `SecretIndex` (built post-validate); the slice exists for enumeratio
 
 ## `rules` block
 
-`rules:` is the top-level **transform**-rule library, a flat list of `RuleContract` entries (`contracts/rules`). In v2 the routing actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`) have been retired into bindings, providers, and groups; what remains in a rule is body / header / query rewrites, tags, short-circuits, and the upstream-credential override (`changeApiKey`, which is wired — it overrides the credential sent upstream at the single mint site). Definitions are unique by `name`; configurations reference them through `Configuration.RuleNames`. See [rules.md](rules.md) for the condition/action grammar.
+`rules:` is the top-level rule library, a flat list of `RuleContract` entries (`contracts/rules`). In v2 bindings carry the default routing, but the routing actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`) remain available as rule-level per-request overrides layered on top (see [actions.md](actions.md)); a rule can also apply body / header / query rewrites, tags, short-circuits, and the upstream-credential override (`changeApiKey`, which is wired — it overrides the credential sent upstream at the single mint site). Definitions are unique by `name`; configurations reference them through `Configuration.RuleNames`. See [rules.md](rules.md) for the condition/action grammar.
 
 Each rule must:
 
 - Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:121`).
 - Pass `RuleContract.Validate()` — the per-rule semantic checks.
 
-> **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names — that action is gone. Routing is data, not a rule action.
+> **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names against the `groups` block — the action itself remains live as a routing override (see [actions.md](actions.md)).
 
 ---
 
@@ -733,7 +733,7 @@ The admin block's `ErrPasswordRequired` / `ErrInvalidBindAddr` propagate from `a
 
 These are documented intentionally — don't fix them without checking the milestone first.
 
-1. **Live edits limited to the rules library.** Mutations via `POST/PUT/DELETE /admin/api/v1/config/rules` clone the live snapshot, validate, persist atomically, and publish through `config.Store.Replace` so the next request evaluates the new rule set — no restart, no torn reads (see [Atomic snapshot store](#atomic-snapshot-store)). Every other top-level block (providers, groups, configurations, api_keys, connectors) is loaded once at startup; direct YAML edits there require a process restart. v1.3+ adds an `fsnotify`-based reload path.
+1. **Live edits flow through the admin write API only.** The write API carries full CRUD for rules, providers, groups, configurations, api_keys, and connectors; every mutation clones the live snapshot, validates (`RevalidateAndIndex`), persists atomically, and publishes through `config.Store.Replace` so the next request sees the new config — no restart, no torn reads (see [Atomic snapshot store](#atomic-snapshot-store)). Direct YAML edits on disk (and the `admin` / `telemetry` blocks, which have no write endpoints) still require a process restart. v1.3+ adds an `fsnotify`-based reload path.
 
    ### Atomic snapshot store
 
@@ -762,5 +762,3 @@ These are documented intentionally — don't fix them without checking the miles
 - [connector-bindings.md](connector-bindings.md) — per-configuration sampling / filter / size-cap knobs.
 - [spool.md](spool.md) — disk layout, lifecycle, and loss policy for buffered connector deliveries.
 - [environment-variables.md](environment-variables.md) — every `SLUICE_*` env var (server bind, spool root, OTel, admin runtime knobs).
-</content>
-</invoke>

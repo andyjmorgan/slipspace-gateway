@@ -333,9 +333,10 @@ When the cursor advances by more than `len(buckets)` seconds at once (a quiet ga
 Both `failure_threshold` and `failure_rate_threshold` can be configured. The breaker trips when:
 
 - `minimum_throughput` samples have accumulated in the window, AND
-- `failure_threshold > 0 && failures >= failure_threshold`, OR
-- `failure_rate_threshold > 0 && (failures/total) > failure_rate_threshold`,
-- (or both, when both are set)
+- every configured threshold is breached:
+  - only `failure_threshold > 0` set — trip when `failures >= failure_threshold`
+  - only `failure_rate_threshold > 0` set — trip when `(failures/total) > failure_rate_threshold`
+  - both set — **both** must breach
 
 If neither threshold is set, the breaker never trips — useful for "metric-only" scenarios where you want the gauge but no behavioural effect.
 

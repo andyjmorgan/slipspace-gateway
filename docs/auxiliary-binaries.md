@@ -105,11 +105,11 @@ cli key new [--label <name>] [--configuration <name>] [--prefix <prefix>]
 
 The key value is the literal `<prefix>` followed by 64 hex characters (`crypto/rand` → `encoding/hex`). Two calls never collide.
 
-Output goes to stdout: the raw key on line 1, blank line, then a YAML snippet starting with the `# yaml-snippet:` marker. Pipe to your editor or paste into `api_keys.yaml`.
+Output goes to stdout: the raw key on line 1, blank line, then a YAML snippet starting with the `# yaml-snippet:` marker. Pipe to your editor or paste into the `api_keys:` block of `policy.yaml` (or any YAML file carrying that top-level key).
 
 #### `config validate`
 
-Loads the full `gateway.yaml` / `providers.yaml` / `configurations.yaml` / `api_keys.yaml` bundle through the same loader the gateway uses at startup, runs the same validators (route collision, prefix-required, unknown-configuration references, etc.), and reports the result.
+Loads the configuration directory (every `*.yaml` merged by top-level key — typically `providers.yaml`, `policy.yaml`, `admin.yaml`) through the same loader the gateway uses at startup, runs the same validators (route collision, prefix-required, unknown-configuration references, etc.), and reports the result.
 
 ```sh
 cli config validate [--dir <path>]
@@ -153,7 +153,7 @@ api_keys:
     enabled: true
 ```
 
-Paste the YAML block into `api_keys.yaml`, redeploy, and the key is live. The raw key string never leaves your workstation unless you put it in a secret store — `cli` does not persist anything to disk.
+Paste the YAML block into the `api_keys:` block of `policy.yaml` (or any YAML file carrying that top-level key), redeploy, and the key is live. The raw key string never leaves your workstation unless you put it in a secret store — `cli` does not persist anything to disk.
 
 ### Worked example — validate before deploy
 

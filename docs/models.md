@@ -118,8 +118,9 @@ typed fields and `Extra` back into one object:
 3. Honours `omitempty`: an empty typed field is deleted from the output (and
    does not resurrect a same-named `Extra` entry).
 4. Emits keys in **sorted order** so output is deterministic — this is what
-   makes the golden-fixture byte-equivalence tests in `test/fixtures/`
-   possible.
+   makes the inline golden round-trip byte-equivalence tests in each
+   `protocols/*/*_test.go` possible (`test/fixtures/` holds E2E fixtures, not
+   the per-type golden round-trips).
 
 Because output is sorted, a round-trip is byte-equivalent *modulo key order*:
 the gateway does not promise to preserve the provider's original key ordering,

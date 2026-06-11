@@ -66,7 +66,7 @@ These are the rules that, if broken, silently break customers or destabilize the
 
 5. **YAML schema accepts rules + resilience in v1.0 even though evaluation is off.** Locks the shape so v1.1 flips evaluation on without YAML migration.
 
-6. **Credential header format lives in one place per `(provider, protocol)`.** Managed-mode credential resolution flows: endpoint override (`auth_header` / `auth_format` in `providers.yaml`) → provider override → per-provider default in `auth.UpstreamCredentialHeader`. The destination builder (`cmd/gateway/destination.go::resolveCredentialHeaders`, with `credentialHeaderFor` as the mint helper) is the only mint site. Bypassing it — minting in auth, in a rule, in middleware — fragments the table and causes silent credential mismatches. OpenAI-compat surfaces on Anthropic and Gemini depend on this: same provider, different credential conventions per protocol.
+6. **Credential header format lives in one place per `(provider, protocol)`.** Managed-mode credential resolution flows: per-protocol (or passthrough-family) `auth` `{header, format}` on the provider's `protocols` map → per-provider default in `auth.UpstreamCredentialHeader`. The destination builder (`cmd/gateway/destination.go::resolveCredentialHeaders`, with `credentialHeaderFor` as the mint helper) is the only mint site. Bypassing it — minting in auth, in a rule, in middleware — fragments the table and causes silent credential mismatches. OpenAI-compat surfaces on Anthropic and Gemini depend on this: same provider, different credential conventions per protocol.
 
 7. **`changeProvider` re-resolves the endpoint on the new provider.** The destination builder reads `state.Provider` post-rule and looks up the endpoint map on that provider — not the original. This is what makes the model-keyed redirect pattern work (claude-* on `/openai/v1/chat/completions` lands on anthropic's `chat_completions` endpoint with anthropic's credential + auth header). Don't add code that bypasses the post-rule endpoint lookup.
 
@@ -99,7 +99,7 @@ Keep the dep graph small. Approved deps:
 - `github.com/klauspost/compress/zstd` — segment compression in the connector spool (`internal/spool/segment.go`)
 - `github.com/aws/aws-sdk-go-v2/...` — S3 connector + STS AssumeRole; pulled by `internal/connector/s3/`
 - `github.com/Azure/azure-sdk-for-go/sdk/azblob` + `github.com/Azure/azure-sdk-for-go/sdk/azidentity` — Azure Blob connector; pulled by `internal/connector/azureblob/`
-- `github.com/testcontainers/testcontainers-go` — tests only (MinIO + Azurite spin-ups for connector integration tests)
+- `github.com/testcontainers/testcontainers-go` — tests only (SeaweedFS + Azurite + Postgres spin-ups for connector integration tests)
 - `go.uber.org/goleak` — tests only
 
 Conditionally approved (decide on first use):
@@ -144,7 +144,7 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 - **File contents are trusted** (mounted from k8s Secrets or filesystem-permissioned). No `${VAR}` or `env:` syntax inside YAML. Only file paths are env-overridable.
 - API keys are flat references to named Configurations. Configurations carry rules + resilience + default upstream credentials.
 - Two auth modes (see *Authentication & Auth Modes* note) — passthrough wins if both `X-Sluice-Configuration` header and Sluice-issued bearer are present.
-- **Rule edits via the admin write API apply live** — `POST/PUT/DELETE /admin/api/v1/config/rules[/{name}]` clones the snapshot, validates, persists `policy.yaml`, then publishes through `config.Store.Replace`. The data plane reads each request's snapshot atomically, so mid-flight requests see either the pre-swap or post-swap rule set, never a torn mix. Direct YAML file edits on disk still require a process restart; v1.2+ adds `fsnotify`-based automatic reload for that path. Other top-level blocks (configurations, api_keys, providers, connectors, resilience_policies) are still YAML-only.
+- **Config edits via the admin write API apply live** — rules, providers, groups, configurations, api-keys, and connectors all have CRUD endpoints under `/admin/api/v1/config/...` that clone the snapshot, validate, persist back to each block's source file (`config.WriteConfig` routes to the block's `SourceFiles` origin, not a fixed `policy.yaml`), then publish through `config.Store.Replace` — no restart. The data plane reads each request's snapshot atomically, so mid-flight requests see either the pre-swap or post-swap config, never a torn mix. Direct YAML file edits on disk and the `admin` / `telemetry` blocks still require a process restart; v1.2+ adds `fsnotify`-based automatic reload for that path.
 
 ## Testing requirements
 
@@ -161,7 +161,7 @@ Unit (internal correctness) and E2E (wire contract through the real binary) are 
 | Layer | Where | How |
 |---|---|---|
 | Unit | `*_test.go` next to code | stdlib `testing`, table-driven `t.Run` |
-| Integration | `*_test.go` `//go:build integration` | testcontainers-go (MinIO, Azurite) |
+| Integration | `test/e2e/` (`e2e` tag — no separate `integration` tag exists) | testcontainers-go (SeaweedFS for S3, Azurite for Azure Blob, Postgres for telemetry) |
 | E2E | `test/e2e/` (`e2e` tag) | spawn `gateway` + mockllm, per-test tmp spool, `httptest.Server` webhook receivers. `make e2e` |
 | Wire compat | `test/python/` | pytest + official SDKs vs spawned stack. `make py-compat`. Release-blocking. |
 | Smoke | `test/smoke/` | pytest + SDKs vs **live deploy** (`SLUICE_BASE_URL`, `SLUICE_API_KEY`). `make smoke`; `SLUICE_SMOKE_QWEN=true` for cluster qwen redirect tests. |
@@ -183,7 +183,7 @@ The `protocols/` packages model the on-the-wire shapes of OpenAI, Anthropic, and
 
 ## E2E requirements
 
-E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`: `PostJSON`/`PostStream`/`ReadSealedRecords`/`ExpectRecord`/`WebhookReceiver`) and the full `(provider, endpoint) × variant × auth` matrix live in `test/e2e/README.md`. Every case asserts:
+E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`: `PostJSON`/`PostStream`/`Get`/`ExpectEvent`/`ExpectNoEvent`, plus an in-process httptest webhook capture server) and the full `(provider, endpoint) × variant × auth` matrix live in `test/e2e/README.md`. Every case asserts:
 
 - HTTP status correct; body shape round-trips via the typed `providers` package.
 - Captured connector record matches the **post-rule** labels + body envelope; **no** record when the configuration has no `connector_bindings` or sampling/filter excludes the request.

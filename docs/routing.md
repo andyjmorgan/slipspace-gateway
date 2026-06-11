@@ -130,7 +130,7 @@ Each target is composed by `resolveTarget` (the unexported worker behind both `S
 
 `resolveTarget` errors (unknown provider, provider does not serve the protocol, configuration holds no credential entry for the provider) are validation-class faults — config validation rejects them before runtime, and they surface as HTTP 500 if they ever reach the request path.
 
-**`ResolveTarget` is re-called per attempt during group orchestration.** The orchestrator picks a provider; the final handler re-resolves that provider's transport for the request's protocol via `selection.ResolveTarget(pi.protocol, provider, "", cfg, providers)` — see [`buildFinalHandler`](../cmd/gateway/handler.go). This is the v2 equivalent of "re-resolve the endpoint on the new provider": the transport (path, auth, headers, credential) is always re-derived from the chosen provider, never carried over from the binding's first target.
+**`ResolveTarget` is re-called per attempt during group orchestration.** The orchestrator picks a provider; the final handler re-resolves that provider's transport for the request's protocol via `selection.ResolveTarget(state.Protocol, provider, "", cfg, providers)` — see [`buildFinalHandler`](../cmd/gateway/handler.go). `state.Protocol` equals the inbound protocol unless a `translate` rule retargeted the dialect, in which case resolution lands on the target protocol's endpoint. This is the v2 equivalent of "re-resolve the endpoint on the new provider": the transport (path, auth, headers, credential) is always re-derived from the chosen provider, never carried over from the binding's first target.
 
 ---
 

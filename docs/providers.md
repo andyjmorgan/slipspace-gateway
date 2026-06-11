@@ -378,7 +378,7 @@ There is no `accepts_streaming` flag in v2 — whether a response streams is dec
 
 ### `http.Flusher` passthrough
 
-The forwarder uses `httputil.ReverseProxy` with `FlushInterval = -1` ([`internal/proxy/forwarder.go`](../internal/proxy/forwarder.go) line 349), which tells the standard library to flush immediately on every write — the behaviour SSE requires. Every response-writer wrapper in the gateway stack — the status recorder ([`internal/proxy/statuswriter.go`](../internal/proxy/statuswriter.go)), the streaming observer, the resilience orchestrator's [`BufferingResponseWriter`](../internal/proxy/buffering_writer.go) — implements `http.Flusher` and forwards `Flush()` through to the wrapped writer. The contract that **every** wrapper preserves `Flusher` is what keeps SSE chunks landing at the client unbatched.
+The forwarder uses `httputil.ReverseProxy` with `FlushInterval = -1` ([`internal/proxy/forwarder.go`](../internal/proxy/forwarder.go)), which tells the standard library to flush immediately on every write — the behaviour SSE requires. Every response-writer wrapper in the gateway stack — the status recorder ([`internal/proxy/statuswriter.go`](../internal/proxy/statuswriter.go)), the streaming observer, the resilience orchestrator's [`BufferingResponseWriter`](../internal/proxy/buffering_writer.go) — implements `http.Flusher` and forwards `Flush()` through to the wrapped writer. The contract that **every** wrapper preserves `Flusher` is what keeps SSE chunks landing at the client unbatched.
 
 ### `BufferingResponseWriter` swap under a resilience group
 

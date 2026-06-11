@@ -70,7 +70,7 @@ Both `UnmarshalAction` (JSON) and `DecodeActionYAMLNode` (YAML) dispatch through
 
 ### Apply dispatch
 
-The runtime side lives in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go). `ApplyAction` is the public entry point; both the rules middleware and the v1.2 resilience orchestrator call it. It dispatches on the concrete pointer type via a type switch and returns an `Outcome`:
+The runtime side lives in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go). `ApplyAction(act rules.Action, state *MutableState, body any) (rules.Outcome, error)` is the public entry point; both the rules middleware and the v1.2 resilience orchestrator call it. It takes no context, dispatches on the concrete pointer type via a type switch, and returns an `Outcome` plus an error — apply errors are metered and attached to the rule's `RuleMatched` event, and the action loop continues:
 
 ```go
 type Outcome struct {
@@ -133,6 +133,7 @@ Actions write through a [`rules.MutableState`](../internal/middleware/rules/stat
 | `Provider` | `string` | `changeProvider` | **Yes (wired).** Read at [`handler.go`](../cmd/gateway/handler.go) line 102 and passed to `selection.ResolveTarget` (line 146), which re-resolves the upstream endpoint on the post-rule provider. Only superseded when a resilience-policy **target** supplies its own provider action, which the orchestrator applies per attempt — see [`changeProvider`](#changeprovider). |
 | `Protocol` | `string` | `translate` | **Yes (wired).** Overwritten with the target protocol; the final handler resolves the upstream endpoint on it — see [`translate`](#translate). |
 | `SourceProtocol` | `string` | `translate` | **Yes (wired).** Records the inbound protocol so the response leg translates back — see [`translate`](#translate). |
+| `MatchedPath` | `string` | no action (read-only) | Yes — the un-prefixed `accepted_paths` value the router matched, used by the destination builder as the upstream path template when the endpoint declares no explicit `Path`. Untouched by every action; a `changeUrl` retarget bypasses it entirely. |
 | `UpstreamURL` | `*url.URL` | `changeUrl` | **No (inert).** `buildDestination` sets `dest.UpstreamURL` from the resolved target; `applyStateOverlays` never reads this field — see [`changeUrl`](#changeurl). |
 | `UpstreamCredentialOverride` | `*string` | `changeApiKey` | **Yes (wired).** Read by `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), the single credential mint site, which honours it over the auth mode: a literal key is minted with the post-rule provider's header format, the `useSluiceKey` sentinel (empty string) forwards the inbound `Authorization` verbatim — see [`changeApiKey`](#changeapikey). |
 | `OutgoingHeaders` | `http.Header` | `setHeader` | Yes — layered onto the destination by `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 278-283). |

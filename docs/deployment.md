@@ -125,10 +125,10 @@ The version string baked into `/gateway` via `-ldflags "-X .../version.Version=$
 
 | Trigger | What gets published |
 |---|---|
-| Push to `main` | `ghcr.io/andyjmorgan/sluice-gateway:main`, `:sha-<short>`. Same tags for `sluice-mockllm`. No GitHub Release. |
-| Tag push `v*.*.*` | All of the above **plus** `:<version>`, `:<major>.<minor>`, and `:latest`. The release job then creates (or edits, on tag re-push) a GitHub Release with rendered notes pointing at the freshly-pushed image tags. |
+| Push to `main` | `ghcr.io/andyjmorgan/sluice-gateway:main`, `:sha-<short>`, and `:latest` (floats on every default-branch build since #248, mirroring `:main`). Same tags for `sluice-mockllm` and `sluice-telemetry`. No GitHub Release. |
+| Tag push `v*.*.*` | All of the above **plus** `:<version>` and `:<major>.<minor>` (`:latest` moves on both events). The release job then creates (or edits, on tag re-push) a GitHub Release with rendered notes pointing at the freshly-pushed image tags. |
 
-Both stages of the matrix (`sluice-gateway` and `sluice-mockllm`) build for `linux/amd64,linux/arm64` simultaneously via QEMU + buildx; the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
+All three images in the matrix (`sluice-gateway`, `sluice-mockllm`, `sluice-telemetry` — the latter from `deploy/docker/Dockerfile.telemetry`, added in #234) build for `linux/amd64` only (arm64 was dropped in #224); the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
 
 ### Image visibility
 

@@ -166,7 +166,7 @@ Retry backoff defaults (the `RetryOpts` tunables in [`internal/spool/options.go`
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `BaseBackoff` | 1 s | First-attempt sleep ceiling. Full jitter applied — actual sleep is `rand.Float64() * backoff`. |
+| `BaseBackoff` | 1 s | First-attempt sleep ceiling. Full jitter applied — actual sleep is a uniform random duration in [0, backoff) (`fullJitter`, `rand.Int64N`). |
 | `MaxBackoff` | 60 s | Per-attempt sleep ceiling after exponential growth. |
 | `Multiplier` | 2.0 | Doubles the ceiling between attempts. |
 | `MaxAttempts` | 8 | Total `Upload` calls including the first. After 8 retryable failures, the segment lands in deadletter. |

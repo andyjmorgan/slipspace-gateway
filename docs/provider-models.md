@@ -131,9 +131,11 @@ Response highlights:
 - **`Output []OutputItem`** is the ordered list of items the model emitted.
   `OutputItem` (`responses.go:457-496`) is modelled as a **single struct**, not a
   registry union, because the item shape evolves frequently: `Type` is the
-  discriminator and the variant-specific payloads (`Content`, `Output`,
-  `Summary`, `Arguments`) are kept as `json.RawMessage` so callers dispatch on
-  `Type` and decode the shape they need. `OutputText` (`responses.go:161-163`) is
+  discriminator and the variant-specific payloads `Content`, `Output`, and
+  `Summary` are kept as `json.RawMessage` so callers dispatch on `Type` and
+  decode the shape they need; `Arguments` is a Go `string` because OpenAI ships
+  function arguments as a JSON-encoded string, matching the chat package's
+  `ToolCallFunction.Arguments` convention. `OutputText` (`responses.go:161-163`) is
   the convenience concatenated-text projection.
 - **`Usage`** uses `input_tokens`/`output_tokens` naming (not chat's
   `prompt`/`completion`), so it is a **distinct local type** from the chat
@@ -197,7 +199,7 @@ Extended thinking is **load-bearing for round-tripping**, not just informational
   on the assistant turn or tool use cannot resume — so it must round-trip
   exactly. In streaming it arrives as a terminal `signature_delta` after the
   `thinking_delta` fragments (`stream.go`, `SignatureDelta`).
-- `RedactedThinkingBlock.Data` (`contentblock.go:257-258`) is thinking the
+- `RedactedThinkingBlock.Data` (`contentblock.go:291-296`) is thinking the
   provider encrypted after tripping a safety classifier. It carries no
   human-readable content but must likewise be echoed back verbatim alongside any
   sibling thinking blocks.

@@ -322,7 +322,7 @@ Per-package, fast, focused. `*_test.go` next to the code under test. Stdlib `tes
 - Does this evaluator short-circuit on a terminating action?
 - Does this state machine transition `Closed → Open` when the threshold is breached?
 
-`make coverage` runs every `*_test.go` under the repo (excluding `web/node_modules`), produces `coverage.out`, then invokes `scripts/coverage-gate.sh` which fails if total coverage falls below 95%. The gate counts every package — including the public schema packages at the repo root — and refuses to merge a PR that regresses below the floor.
+`make coverage` runs every `*_test.go` under the repo (excluding `web/node_modules`), produces `coverage.out`, then invokes `scripts/coverage-gate.sh` which fails if any gated package falls below 95%. The gate covers `internal/`, `models/`, `contracts/`, and the public schema packages (per-package, not repo-total); `cmd/*`, `test/*`, and generated code are excluded. It refuses to merge a PR that regresses below the floor.
 
 Race detector is always on (`-race`). Goroutine leak detection via `goleak` runs in tests that own background workers.
 
