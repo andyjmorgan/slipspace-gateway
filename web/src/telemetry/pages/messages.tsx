@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
-import { Check, ChevronDown, ChevronRight, Copy, RefreshCw, X } from "lucide-react"
+import { Check, Copy, RefreshCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StatusPill } from "@/components/atoms/status-pill"
-import { JsonViewer } from "@/components/atoms/json-viewer"
 import { InspectorModal } from "@/components/atoms/inspector-modal"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
 import { Segmented } from "@/components/atoms/segmented"
@@ -14,19 +12,23 @@ import { MultiSelect } from "@/components/atoms/multi-select"
 import { fmt } from "@/lib/fmt"
 import {
   fetchFacets,
-  fetchMessageBody,
-  parseGenAIContent,
   type Facets,
-  type GenAIContent,
-  type GenAIMessage,
-  type GenAIMessagePart,
-  type GenAIToolDefinition,
-  type MessageBodyDetail,
   type MessageEntry,
   type MessageFilters,
 } from "@/lib/messages"
+import { fetchEventSpan, type SessionSpan } from "@/lib/session-spans"
 import { MESSAGE_DEFAULT_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
 import { MessagesPagerBar, MessagesTableView } from "../components/messages-table"
+import { inputMeta, outputMeta } from "@/lib/span-view"
+import {
+  IOTab,
+  InputPane,
+  OutputPane,
+  ReportPane,
+  TelemetryPane,
+  Tile,
+  TKV,
+} from "../components/span-inspector-panes"
 
 // TIME_RANGES are the relative-window presets. "all" omits the bound so the
 // keyset scan can walk the full history.
@@ -272,9 +274,15 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   )
 }
 
-// Inspector is the per-request detail modal (meta grid, captured
-// request/response bodies, GenAI content) rendered inside the shared
-// InspectorModal shell.
+// InspectorTab mirrors the session lifecycle modal's strip: the span's own
+// Output/Input panes plus the on-demand bridge tabs (Telemetry, Report).
+type InspectorTab = "output" | "input" | "telemetry" | "report"
+
+// Inspector is the per-request detail modal, rendered inside the shared
+// InspectorModal shell. The message content is the SAME SessionSpan DTO
+// element the session lifecycle modal renders (fetched per-event through
+// /events/{id}/span), so one request looks identical on both surfaces; the
+// heavier Telemetry/Report payloads load only when their tab is clicked.
 function Inspector({
   entry,
   position,
@@ -288,16 +296,24 @@ function Inspector({
   onPrev?: () => void
   onNext?: () => void
 }) {
-  const [body, setBody] = useState<MessageBodyDetail | null | undefined>(undefined)
-
+  const cid = entry.correlation_id || entry.event_id
+  // Keyed by cid so stepping prev/next derives "loading" during render (no
+  // reset-state effect). undefined = loading; null = no gen_ai span captured
+  // (record-only event).
+  const [spanSt, setSpanSt] = useState<{ cid: string; v: SessionSpan | null } | null>(null)
+  const span = spanSt && spanSt.cid === cid ? spanSt.v : undefined
   useEffect(() => {
     let cancelled = false
-    setBody(undefined)
-    fetchMessageBody(entry.event_id)
-      .then((b) => { if (!cancelled) setBody(b) })
-      .catch(() => { if (!cancelled) setBody(null) })
+    fetchEventSpan(cid)
+      .then((s) => { if (!cancelled) setSpanSt({ cid, v: s }) })
+      .catch(() => { if (!cancelled) setSpanSt({ cid, v: null }) })
     return () => { cancelled = true }
-  }, [entry.event_id])
+  }, [cid])
+
+  // Tab choice persists across prev/next (the component survives the step).
+  const [tab, setTab] = useState<InspectorTab>("output")
+  // A record-only event has no Output/Input panes — fall to the bridge tabs.
+  const effTab: InspectorTab = span === null && (tab === "output" || tab === "input") ? "telemetry" : tab
 
   return (
     <InspectorModal
@@ -307,7 +323,7 @@ function Inspector({
       header={
         <div className="flex items-center gap-2">
           <StatusPill code={entry.status_code} />
-          <span className="mono text-[12px] text-[color:var(--text-3)] truncate">{entry.correlation_id || entry.event_id}</span>
+          <span className="mono text-[12px] text-[color:var(--text-3)] truncate">{cid}</span>
           <span className="ml-auto mono text-[11px] text-[color:var(--text-4)]">{position}</span>
         </div>
       }
@@ -358,10 +374,69 @@ function Inspector({
           </Section>
         )}
 
-        <BodyTabs body={body} streaming={entry.streaming} />
+        {span === undefined ? (
+          <div className="text-[12px] text-[color:var(--text-4)]">loading span…</div>
+        ) : (
+          <div>
+            {span && <SpanTiles span={span} />}
+            {span === null && (
+              <div className="text-[12px] text-[color:var(--text-4)] mb-1">
+                no gen_ai span captured for this request — the report may still carry the wire bodies
+              </div>
+            )}
+            <div className="flex border-b border-[color:var(--border)] mt-2 flex-wrap">
+              {span && <IOTab on={effTab === "output"} onClick={() => setTab("output")} label="Output" meta={outputMeta(span)} />}
+              {span && <IOTab on={effTab === "input"} onClick={() => setTab("input")} label="Input" meta={inputMeta(span)} />}
+              <IOTab on={effTab === "telemetry"} onClick={() => setTab("telemetry")} label="Telemetry" meta="system · tools · raw span" />
+              <IOTab on={effTab === "report"} onClick={() => setTab("report")} label="Report" meta="request · response · headers" />
+            </div>
+            {effTab === "output" && span && <OutputPane span={span} />}
+            {effTab === "input" && span && <InputPane span={span} />}
+            {effTab === "telemetry" && <TelemetryPane cid={cid} wanted />}
+            {effTab === "report" && <ReportPane cid={cid} wanted />}
+          </div>
+        )}
       </div>
     </InspectorModal>
   )
+}
+
+// SpanTiles is the message browser's variant of the lifecycle modal's
+// Timing/Tokens tiles — same layout, but clocks are wall time (there is no
+// session t0 to be relative to).
+function SpanTiles({ span }: { span: SessionSpan }) {
+  const u = span.usage
+  const fresh = (u.input ?? 0) - (u.cache_read ?? 0) - (u.cache_creation ?? 0)
+  const cacheShare = u.input ? `${Math.round(((u.cache_read ?? 0) / u.input) * 100)}%` : "—"
+  return (
+    <div className="grid sm:grid-cols-2 gap-3 mb-3">
+      <Tile label="Timing" accent="var(--warn)">
+        <TKV k="start" v={wallClock(span.at)} />
+        <TKV k="first chunk" v={span.ttfc_ms != null ? wallClock(span.at, span.ttfc_ms) : "—"} />
+        <TKV k="end" v={span.latency_ms != null ? wallClock(span.at, span.latency_ms) : "—"} />
+        <TKV k="latency" v={fmt.ms(span.latency_ms)} />
+        <TKV k="ttfc" v={fmt.ms(span.ttfc_ms)} />
+        <TKV k="stream tail" v={span.ttfc_ms != null && span.latency_ms != null ? fmt.ms(span.latency_ms - span.ttfc_ms) : "—"} />
+      </Tile>
+      <Tile label="Tokens" accent="var(--ok)">
+        <TKV k="in" v={fmt.compact(u.input)} />
+        <TKV k="out" v={fmt.compact(u.output)} />
+        <TKV k="fresh in" v={fmt.compact(fresh)} />
+        <TKV k="cache read" v={fmt.compact(u.cache_read)} />
+        <TKV k="cache write" v={fmt.compact(u.cache_creation)} />
+        <TKV k="cache share" v={cacheShare} />
+      </Tile>
+    </div>
+  )
+}
+
+// wallClock formats an RFC3339 instant (plus an optional offset) as local
+// HH:MM:SS.mmm — the tile clock format, absolute rather than session-relative.
+function wallClock(iso: string, plusMs = 0): string {
+  const d = new Date(new Date(iso).getTime() + plusMs)
+  if (Number.isNaN(d.getTime())) return "—"
+  const p = (n: number, w = 2) => String(n).padStart(w, "0")
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
 }
 
 function MetaGrid({ entry }: { entry: MessageEntry }) {
@@ -459,480 +534,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div className="flex flex-col gap-1.5">
       <div className="text-[11px] uppercase tracking-[0.06em] text-[color:var(--text-3)]">{title}</div>
       {children}
-    </div>
-  )
-}
-
-function BodyTabs({ body, streaming }: { body: MessageBodyDetail | null | undefined; streaming?: boolean }) {
-  // Parse the captured gen_ai content (a JSON string on the wire) once per
-  // body so the rich GenAI view and the tab gating share one result.
-  const genAI = useMemo(() => parseGenAIContent(body?.gen_ai_content), [body])
-
-  if (body === undefined) return <div className="text-[12px] text-[color:var(--text-4)]">Loading bodies…</div>
-  if (body === null) return <div className="text-[12px] text-[color:var(--text-4)]">No captured bodies (rolled off or capture disabled).</div>
-
-  const hasGenAI = genAI !== null && genAIContentHasParts(genAI)
-  // The complete OTel span — every attribute the gateway emitted (model,
-  // provider, usage, request params, sluice.* facts, the gen_ai content, …),
-  // pretty-printed for the raw telemetry pane.
-  const spanRaw = prettyJSON(body.span_event)
-  const hasSpan = spanRaw !== ""
-  const hasTelemetry = hasGenAI || hasSpan
-  // Two top-level groups: Telemetry (the gen_ai span — a structured Simplified
-  // view plus the whole-span Raw view) and Report (the spool-captured wire
-  // bytes + headers). Each group nests a line-variant sub-tab strip:
-  //   Telemetry → Simplified (structured gen_ai) | Raw (the entire span)
-  //   Report    → Request | Response | SSE stream (streaming only) | Headers
-  // For streaming responses the Response sub-tab shows the accumulator's
-  // assembled JSON (the rollup) and the raw SSE event bytes live on the
-  // separate SSE stream sub-tab. For non-streaming there is no raw/assembled
-  // split — Response is the full body. This mirrors the gateway admin
-  // inspector so the two surfaces never disagree.
-  return (
-    <Tabs defaultValue={hasTelemetry ? "telemetry" : "report"} className="flex flex-col gap-2">
-      <TabsList>
-        {hasTelemetry && <TabsTrigger value="telemetry">Telemetry</TabsTrigger>}
-        <TabsTrigger value="report">Report</TabsTrigger>
-      </TabsList>
-      {hasTelemetry && (
-        <TabsContent value="telemetry">
-          <Tabs defaultValue={hasGenAI ? "simplified" : "raw"} className="flex flex-col gap-2">
-            <TabsList variant="line">
-              {hasGenAI && <TabsTrigger value="simplified">Simplified</TabsTrigger>}
-              <TabsTrigger value="raw">Raw</TabsTrigger>
-            </TabsList>
-            {hasGenAI && (
-              <TabsContent value="simplified">
-                <GenAIContentView content={genAI} />
-              </TabsContent>
-            )}
-            <TabsContent value="raw">
-              <BodyView label="OTel span" text={hasSpan ? spanRaw : body.gen_ai_content} />
-            </TabsContent>
-          </Tabs>
-        </TabsContent>
-      )}
-      <TabsContent value="report">
-        <Tabs defaultValue="request" className="flex flex-col gap-2">
-          <TabsList variant="line">
-            <TabsTrigger value="request">Request</TabsTrigger>
-            <TabsTrigger value="response">Response</TabsTrigger>
-            {streaming && <TabsTrigger value="sse">SSE stream</TabsTrigger>}
-            <TabsTrigger value="headers">Headers</TabsTrigger>
-          </TabsList>
-          <TabsContent value="request">
-            <BodyView label="Request body" text={body.request} bytes={body.request_total_bytes} truncated={body.request_truncated} />
-          </TabsContent>
-          <TabsContent value="response">
-            {streaming ? (
-              body.response_assembled ? (
-                <BodyView
-                  label="Response (assembled)"
-                  text={body.response_assembled}
-                  bytes={body.response_total_bytes}
-                  truncated={body.response_truncated}
-                  partial={body.assembly_partial}
-                />
-              ) : (
-                <NoAssemblyNote />
-              )
-            ) : (
-              <BodyView label="Response body" text={body.response} bytes={body.response_total_bytes} truncated={body.response_truncated} />
-            )}
-          </TabsContent>
-          {streaming && (
-            <TabsContent value="sse">
-              <BodyView label="Raw SSE bytes" text={body.response} bytes={body.response_total_bytes} truncated={body.response_truncated} />
-            </TabsContent>
-          )}
-          <TabsContent value="headers">
-            <Headers label="Request headers" headers={body.request_headers} />
-            <div className="h-2" />
-            <Headers label="Response headers" headers={body.response_headers} />
-          </TabsContent>
-        </Tabs>
-      </TabsContent>
-    </Tabs>
-  )
-}
-
-// NoAssemblyNote fills the Response tab when a streamed response carried no
-// assembled rollup — the protocol is outside the accumulator registry (e.g.
-// /responses), the stream errored before any chunk parsed, or the gateway
-// predates the rollup-on-Record change. The raw bytes are still on the SSE
-// stream tab; say so rather than render a blank "No response" that reads as
-// data loss.
-function NoAssemblyNote() {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="text-[10.5px] text-[color:var(--text-4)]">Response (assembled)</div>
-      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-3 text-[12px] text-[color:var(--text-3)]">
-        No assembled response — the gateway accumulator did not reconstruct this stream. The raw
-        SSE bytes are on the <span className="font-mono">SSE stream</span> tab.
-      </div>
-    </div>
-  )
-}
-
-function BodyView({ label, text, bytes, truncated, partial }: { label: string; text?: string; bytes?: number; truncated?: boolean; partial?: boolean }) {
-  if (!text) return <div className="text-[12px] text-[color:var(--text-4)]">No {label.toLowerCase()}.</div>
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="text-[10.5px] text-[color:var(--text-4)]">
-        {label}{bytes ? ` · ${fmt.compact(bytes)} bytes` : ""}{truncated ? " · truncated" : ""}{partial ? " · partial" : ""}
-      </div>
-      <JsonViewer text={text} maxHeightClassName="max-h-[60vh]" />
-    </div>
-  )
-}
-
-// prettyJSON pretty-prints a JSON string for display; returns "" for an empty
-// input and the original string when it does not parse as JSON.
-function prettyJSON(s: string | undefined): string {
-  if (!s) return ""
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2)
-  } catch {
-    return s
-  }
-}
-
-// genAIContentHasParts reports whether the captured content carries any
-// renderable section, so an empty {} or a content-less envelope does not light
-// up an empty GenAI tab.
-function genAIContentHasParts(c: GenAIContent): boolean {
-  return (
-    !!c.truncated ||
-    (c.input_messages?.length ?? 0) > 0 ||
-    (c.output_messages?.length ?? 0) > 0 ||
-    (c.tool_definitions?.length ?? 0) > 0 ||
-    (c.system_instructions?.length ?? 0) > 0
-  )
-}
-
-// GenAIContentView renders the telemetry-native GenAI content the gateway put
-// on the request span: the system instructions, the input turn, the model's
-// response (incl. tool calls), and the tool definitions advertised to the
-// model. This is the content channel — the request/response body tabs carry the
-// spool-captured bytes — and either may be present without the other.
-function GenAIContentView({ content }: { content: GenAIContent }) {
-  if (content.truncated) {
-    return (
-      <div className="rounded-[var(--radius)] border border-[color:var(--warn)] bg-[color:var(--bg-2)] p-3 text-[12px] text-[color:var(--text-3)]">
-        Captured content exceeded the telemetry service's content cap and was dropped
-        {content.original_bytes ? ` (${fmt.compact(content.original_bytes)} bytes)` : ""}. The Request / Response tabs
-        still carry the spool-captured bytes when a connector binding is configured.
-      </div>
-    )
-  }
-  return (
-    <div className="flex flex-col gap-4">
-      {(content.input_messages?.length ?? 0) > 0 && (
-        <GenAIMessagesSection label="Input messages" messages={content.input_messages ?? []} />
-      )}
-      {(content.output_messages?.length ?? 0) > 0 && (
-        <GenAIMessagesSection label="Response" messages={content.output_messages ?? []} />
-      )}
-      {/* System instructions sit below the request/response — they're usually a
-          large, static preamble, so they're ordered after the live turns and
-          collapsed by default — and above the tool definitions. */}
-      {(content.system_instructions?.length ?? 0) > 0 && (
-        <GenAIPartsSection label="System instructions" parts={content.system_instructions ?? []} defaultOpen={false} />
-      )}
-      {(content.tool_definitions?.length ?? 0) > 0 && (
-        <GenAIToolDefsSection defs={content.tool_definitions ?? []} />
-      )}
-    </div>
-  )
-}
-
-// GenAIMessagesSection renders a list of role-tagged turns, each turn a
-// collapsible panel so individual messages can be folded away.
-function GenAIMessagesSection({ label, messages }: { label: string; messages: GenAIMessage[] }) {
-  return (
-    <CollapsibleSection label={label} count={messages.length}>
-      <div className="flex flex-col gap-2">
-        {messages.map((m, i) => (
-          <CollapsiblePanel
-            key={i}
-            header={<span className="mono text-[10px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{m.role}</span>}
-            preview={messagePreview(m)}
-          >
-            <GenAIParts parts={m.parts ?? []} />
-          </CollapsiblePanel>
-        ))}
-      </div>
-    </CollapsibleSection>
-  )
-}
-
-// GenAIPartsSection renders a bare parts array (system instructions have no
-// role wrapper). Each part is its own collapsible panel so multi-part system
-// prompts are visibly split rather than running together as one block.
-function GenAIPartsSection({
-  label,
-  parts,
-  defaultOpen = true,
-}: {
-  label: string
-  parts: GenAIMessagePart[]
-  defaultOpen?: boolean
-}) {
-  return (
-    <CollapsibleSection label={label} count={parts.length} defaultOpen={defaultOpen}>
-      {parts.length === 0 ? (
-        <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {parts.map((p, i) => (
-            <CollapsiblePanel
-              key={i}
-              header={
-                <>
-                  <span className="mono text-[10px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{p.type || "text"}</span>
-                  <span className="mono text-[10px] text-[color:var(--text-4)]">#{i + 1}</span>
-                </>
-              }
-              preview={partPreview(p)}
-            >
-              <GenAIPart part={p} />
-            </CollapsiblePanel>
-          ))}
-        </div>
-      )}
-    </CollapsibleSection>
-  )
-}
-
-// GenAIParts renders each part by kind: assembled text, a model-issued tool
-// call (name + arguments), a tool-call result, or a reasoning trace.
-function GenAIParts({ parts }: { parts: GenAIMessagePart[] }) {
-  if (parts.length === 0) {
-    return <div className="text-[11.5px] text-[color:var(--text-4)] italic">empty</div>
-  }
-  return (
-    <div className="flex flex-col gap-2">
-      {parts.map((p, i) => (
-        <GenAIPart key={i} part={p} />
-      ))}
-    </div>
-  )
-}
-
-function GenAIPart({ part }: { part: GenAIMessagePart }) {
-  if (part.type === "tool_call") {
-    return (
-      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-2">
-        <div className="mb-1 flex items-center gap-2">
-          <span className="mono text-[10px] uppercase tracking-[0.06em]" style={{ color: "var(--violet)" }}>
-            tool call
-          </span>
-          {part.name && <span className="mono text-[12px] text-[color:var(--text-2)]">{part.name}</span>}
-          {part.id && <span className="mono text-[10.5px] text-[color:var(--text-4)]">{part.id}</span>}
-        </div>
-        {part.arguments !== undefined && <GenAIJson value={part.arguments} />}
-      </div>
-    )
-  }
-  if (part.type === "tool_call_response") {
-    return (
-      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-2">
-        <div className="mb-1 flex items-center gap-2">
-          <span className="mono text-[10px] uppercase tracking-[0.06em]" style={{ color: "var(--ok)" }}>
-            tool result
-          </span>
-          {part.id && <span className="mono text-[10.5px] text-[color:var(--text-4)]">{part.id}</span>}
-        </div>
-        <GenAIJson value={part.result} />
-      </div>
-    )
-  }
-  if (part.type === "reasoning") {
-    return (
-      <div className="flex flex-col">
-        <span className="mono text-[10px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">reasoning</span>
-        <div className="whitespace-pre-wrap break-words text-[12.5px] text-[color:var(--text-3)]">
-          {part.content || <span className="italic text-[color:var(--text-4)]">redacted</span>}
-        </div>
-      </div>
-    )
-  }
-  if (part.type === "text" || part.content) {
-    return (
-      <div className="whitespace-pre-wrap break-words text-[12.5px] text-[color:var(--text-2)]">
-        {part.content || <span className="italic text-[color:var(--text-4)]">empty</span>}
-      </div>
-    )
-  }
-  // Pass-through media block (image, audio, …): the gateway records only the
-  // type, never the inline bytes, so surface the type alone.
-  return (
-    <div className="mono text-[11.5px] text-[color:var(--text-4)] italic">{part.type}</div>
-  )
-}
-
-// GenAIToolDefsSection lists the tools the request advertised to the model.
-// Each definition is a collapsible panel, collapsed by default — tool schemas
-// are the bulkiest GenAI content, so the section opens as a scannable list of
-// tool names and you expand only the one you want.
-function GenAIToolDefsSection({ defs }: { defs: GenAIToolDefinition[] }) {
-  return (
-    <CollapsibleSection label="Tool definitions" count={defs.length}>
-      <div className="flex flex-col gap-2">
-        {defs.map((d, i) => (
-          <CollapsiblePanel
-            key={i}
-            defaultOpen={false}
-            header={
-              <>
-                {d.name && <span className="mono text-[12px] text-[color:var(--text-2)]">{d.name}</span>}
-                {d.type && <span className="mono text-[10.5px] text-[color:var(--text-4)]">{d.type}</span>}
-              </>
-            }
-            preview={previewText(d.description)}
-          >
-            {d.description && (
-              <div className="mb-1 whitespace-pre-wrap break-words text-[12px] text-[color:var(--text-3)]">
-                {d.description}
-              </div>
-            )}
-            {d.parameters !== undefined && <GenAIJson value={d.parameters} />}
-          </CollapsiblePanel>
-        ))}
-      </div>
-    </CollapsibleSection>
-  )
-}
-
-// GenAIJson pretty-prints a nested JSON value (tool arguments, results, tool
-// parameter schemas) through the shared JsonViewer.
-function GenAIJson({ value }: { value: unknown }) {
-  const text = useMemo(() => {
-    if (typeof value === "string") return value
-    try {
-      return JSON.stringify(value, null, 2)
-    } catch {
-      return String(value)
-    }
-  }, [value])
-  return <JsonViewer text={text} maxHeightClassName="max-h-56" />
-}
-
-// CollapsibleSection wraps a GenAI content section in a click-to-toggle panel so
-// the inspector's long turns and tool schemas can be folded away while
-// navigating. Sections start expanded; the header chevron mirrors open state.
-function CollapsibleSection({
-  label,
-  count,
-  defaultOpen = true,
-  children,
-}: {
-  label: string
-  count: number
-  defaultOpen?: boolean
-  children: React.ReactNode
-}) {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="mb-1 flex w-full items-center gap-1.5 text-left hover:opacity-80"
-      >
-        {open ? (
-          <ChevronDown className="size-3 text-[color:var(--text-4)]" />
-        ) : (
-          <ChevronRight className="size-3 text-[color:var(--text-4)]" />
-        )}
-        <span className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{label}</span>
-        <span className="mono text-[10.5px] text-[color:var(--text-4)]">{count}</span>
-      </button>
-      {open && children}
-    </div>
-  )
-}
-
-// CollapsiblePanel is a single bordered, click-to-toggle card for one item
-// inside a section — a message turn, a system-instruction part, or a tool
-// definition — so each can be folded away on its own. The header row stays
-// visible; `preview` is a one-line summary shown only while collapsed so a
-// folded card is still identifiable.
-function CollapsiblePanel({
-  header,
-  preview,
-  defaultOpen = true,
-  children,
-}: {
-  header: React.ReactNode
-  preview?: string
-  defaultOpen?: boolean
-  children: React.ReactNode
-}) {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)]">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 p-2 text-left hover:bg-[color:var(--hover)]"
-      >
-        {open ? (
-          <ChevronDown className="size-3 shrink-0 text-[color:var(--text-4)]" />
-        ) : (
-          <ChevronRight className="size-3 shrink-0 text-[color:var(--text-4)]" />
-        )}
-        <span className="flex min-w-0 items-center gap-2">{header}</span>
-        {!open && preview && (
-          <span className="min-w-0 flex-1 truncate text-[11.5px] text-[color:var(--text-4)]">{preview}</span>
-        )}
-      </button>
-      {open && <div className="border-t border-[color:var(--border)] p-2">{children}</div>}
-    </div>
-  )
-}
-
-// previewText collapses whitespace and clips a string to a single short line,
-// used for the collapsed-panel summaries.
-function previewText(s: string | undefined, max = 90): string {
-  if (!s) return ""
-  const line = s.replace(/\s+/g, " ").trim()
-  return line.length > max ? line.slice(0, max) + "…" : line
-}
-
-// partPreview summarises a single message part for a collapsed panel header.
-function partPreview(part: GenAIMessagePart): string {
-  if (part.type === "tool_call") return part.name ? `tool call · ${part.name}` : "tool call"
-  if (part.type === "tool_call_response") return "tool result"
-  if (part.content) return previewText(part.content)
-  return part.type ?? ""
-}
-
-// messagePreview summarises a message turn by its first content-bearing part.
-function messagePreview(m: GenAIMessage): string {
-  for (const p of m.parts ?? []) {
-    const t = partPreview(p)
-    if (t) return t
-  }
-  return ""
-}
-
-function Headers({ label, headers }: { label: string; headers?: Record<string, string[]> }) {
-  const keys = headers ? Object.keys(headers).sort() : []
-  if (!keys.length) return <div className="text-[12px] text-[color:var(--text-4)]">No {label.toLowerCase()}.</div>
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="text-[10.5px] text-[color:var(--text-4)]">{label}</div>
-      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11.5px] mono flex flex-col gap-0.5">
-        {keys.map((k) => (
-          <div key={k} className="flex gap-2 break-all">
-            <span className="text-[color:var(--text-3)] shrink-0">{k}:</span>
-            <span className="text-[color:var(--text-2)]">{headers![k].join(", ")}</span>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }

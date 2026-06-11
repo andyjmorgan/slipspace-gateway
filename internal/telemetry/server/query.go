@@ -54,6 +54,10 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/events", gated(s.handleEvents))
 	mux.Handle("GET /api/v1/events/{id}", gated(s.handleEventInspector))
 	mux.Handle("GET /api/v1/events/{id}/body", gated(s.handleEventBody))
+	// Un-scoped single-span DTO — the message browser's inspector renders the
+	// same SessionSpan element as the lifecycle modal but reaches it by
+	// correlation id alone (its rows aren't guaranteed a session id).
+	mux.Handle("GET /api/v1/events/{id}/span", gated(s.handleEventSpan))
 	mux.Handle("GET /api/v1/sessions", gated(s.handleSessions))
 	mux.Handle("GET /api/v1/sessions/{id}", gated(s.handleSession))
 	// Session lifecycle feed — the SessionSpansDTO v1 projection the lifecycle
