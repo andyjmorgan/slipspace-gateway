@@ -35,7 +35,10 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	if s.queries == nil {
 		return
 	}
-	gated := func(h http.HandlerFunc) http.Handler { return s.basicAuth(h) }
+	// gzip sits inside the auth gate so only authenticated JSON pays the
+	// compression negotiation; the console's biggest payloads (span pages,
+	// event lists) compress >10x.
+	gated := func(h http.HandlerFunc) http.Handler { return s.basicAuth(withGzip(h)) }
 	// Parity surface — emits contracts/admin shapes so the shared SPA
 	// observability components decode without translation.
 	mux.Handle("GET /api/v1/dashboard/summary", gated(s.handleObsSummary))
@@ -54,8 +57,11 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/sessions", gated(s.handleSessions))
 	mux.Handle("GET /api/v1/sessions/{id}", gated(s.handleSession))
 	// Session lifecycle feed — the SessionSpansDTO v1 projection the lifecycle
-	// page renders from (sessionspans.go).
+	// page renders from (sessionspans.go): the paged list (?include=structure
+	// for the envelope-only dashboard pages) plus the single full span the
+	// inspector modal lazy-fetches.
 	mux.Handle("GET /api/v1/sessions/{id}/spans", gated(s.handleSessionSpans))
+	mux.Handle("GET /api/v1/sessions/{id}/spans/{cid}", gated(s.handleSessionSpan))
 }
 
 // filterFromQuery reads the shared equality/status filters from the query

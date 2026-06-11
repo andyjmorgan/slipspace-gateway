@@ -36,7 +36,7 @@ flowchart TD
     msgs["GET /api/v1/messages*"]
     facets["GET /api/v1/facets"]
     events["GET /api/v1/events*"]
-    sessions["GET /api/v1/sessions, /sessions/{id}, /sessions/{id}/spans"]
+    sessions["GET /api/v1/sessions, /sessions/{id}, /sessions/{id}/spans, /sessions/{id}/spans/{cid}"]
   end
   client --> open
   client --> hmac
@@ -80,6 +80,17 @@ Authorization: Basic base64(username:password)
   form itself and sends `Authorization` on every fetch, so suppressing the
   challenge header stops browsers from popping their native auth dialog over the
   SPA on each poll. `curl --basic -u user:pass` still works.
+
+## Response compression
+
+Every Basic-auth-gated query route negotiates **gzip** response compression
+(`withGzip`, `internal/telemetry/server/gzip.go`): a request whose
+`Accept-Encoding` includes `gzip` (with a non-zero q-value) gets a gzipped
+body with `Content-Encoding: gzip` + `Vary: Accept-Encoding`; anything else
+gets identity bytes, so `curl | jq` keeps working unchanged (`curl
+--compressed` opts in). The console's large JSON payloads (span pages, event
+lists) compress >10x; compression sits inside the auth gate, so unauthorized
+responses and the open probe/ingest/SPA routes are never compressed.
 
 ## Common query parameters
 
@@ -419,15 +430,36 @@ lifecycle page renders lanes, gaps, the tool ledger, and exec stats from
 |---|---|
 | `cursor` | Opaque keyset cursor from a prior `next_cursor` (same encoding as the event list). Empty/absent = first page. |
 | `limit` | Page size (default 200, capped 500). |
+| `include` | `structure` serves the **envelope-only** projection: the content bodies (part `text`, tool `args`, `input_text`, `output_text`) are omitted while every id, name, `*_chars` size, timing, and usage field survives. Any other value (or none) serves the full bodies — the back-compat default. |
 
 `next_cursor` is empty on the last page; `400 {"error":"invalid cursor"}` for
 a malformed cursor. The SPA fetcher (`web/src/lib/session-spans.ts`) follows
 `next_cursor` until exhausted, so the page still renders the complete session
 — paging bounds *server* memory, not the rendered list. The store streams
-rows through a callback (`store.EventsBySessionPage`), so the service holds
-at most one full `span_event` blob plus one page of capped DTOs at a time —
-never the whole session (the pre-paging single-shot array peaked at 600 MB+
-on big sessions and OOM-killed the service).
+rows through a callback (`store.EventsBySessionPage`) into a small
+order-preserving worker pool (`spanProjectWorkers`, capped at 8), so the
+service holds a bounded handful of full `span_event` blobs plus one page of
+capped DTOs at a time — never the whole session (the pre-paging single-shot
+array peaked at 600 MB+ on big sessions and OOM-killed the service) — while
+the page's per-row blob decode runs in parallel instead of serially.
+
+**Why `include=structure` exists.** The lifecycle dashboard renders lanes,
+gaps, the tool ledger, and exec stats from the part ENVELOPE + sizes alone —
+content bodies are only ever shown in the span inspector modal. Serving the
+bodies on every page made a 125-span page 3.3 MB / 3.5 s (2026-06-10 prod
+baseline); structure pages are KBs. The SPA requests `include=structure` for
+the dashboard and lazy-fetches the single span the modal needs (below).
+
+#### `GET /api/v1/sessions/{id}/spans/{cid}`
+
+Handler `handleSessionSpan` (`sessionspans.go`). One span's **full** DTO
+element — a single `contracts/admin.SessionSpan` (not wrapped in a page
+envelope), content bodies included, still per-field capped — the lazy fetch
+behind the lifecycle page's span inspector, which renders the dashboard from
+envelope-only structure pages and pulls one full span on modal open.
+`404 {"error":"span not found"}` when the correlation id is unknown **or**
+belongs to a different session, so the session-scoped route never leaks
+spans across sessions.
 
 Everything is projected from the `request_events` columns plus the
 `span_event` blob — the span feed alone, never the lazy `record` blob, so the
@@ -512,7 +544,7 @@ empty (same as the sibling `/sessions/{id}`); an empty continuation page (a
 | `400` | `{"error":"invalid from"}` / `invalid to` | unparseable RFC3339 window bound |
 | `400` | `{"error":"invalid cursor"}` | malformed/tampered keyset cursor |
 | `401` | `unauthorized\n` (text/plain) | missing/wrong Basic credentials — note: no `WWW-Authenticate` |
-| `404` | `{"error":"event not found"}` / `no body` / `no record` / `session not found` | unknown correlation/session id, or no stored record for the id |
+| `404` | `{"error":"event not found"}` / `no body` / `no record` / `session not found` / `span not found` | unknown correlation/session id, cross-session span cid, or no stored record for the id |
 | `500` | `{"error":"<op>"}` | query failed; detail logged server-side only (`queryError`) |
 
 ## See also

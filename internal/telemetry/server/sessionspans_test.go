@@ -263,7 +263,7 @@ func TestSessionSpanFromEvent(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// fieldCap 0 = cap disabled, so the table pins the uncapped shapes.
-			got := sessionSpanFromEvent(tc.event, 0)
+			got := sessionSpanFromEvent(tc.event, 0, true)
 			gotJSON, _ := json.Marshal(got)
 			wantJSON, _ := json.Marshal(tc.want)
 			if string(gotJSON) != string(wantJSON) {
@@ -310,7 +310,7 @@ func TestSessionSpans_FieldCap(t *testing.T) {
 	big := strings.Repeat("x", 200_000)
 	args := `{"data":"` + big + `"}`
 
-	got := sessionSpanFromEvent(bigSpanEvent(t, big), capBytes)
+	got := sessionSpanFromEvent(bigSpanEvent(t, big), capBytes, true)
 
 	// tool_call args: capped, args_chars = true size.
 	call := got.OutputParts[1]
@@ -342,7 +342,7 @@ func TestSessionSpans_FieldCap(t *testing.T) {
 	}
 
 	// fieldCap 0 disables the cap: everything served whole.
-	whole := sessionSpanFromEvent(bigSpanEvent(t, big), 0)
+	whole := sessionSpanFromEvent(bigSpanEvent(t, big), 0, true)
 	if whole.OutputParts[1].Args != args || *whole.InputText != big {
 		t.Error("fieldCap 0 must serve fields whole")
 	}
@@ -483,6 +483,190 @@ func TestSessionSpansHandler_Errors(t *testing.T) {
 	t.Run("query failure is 500", func(t *testing.T) {
 		h := newQueryServer(t, &fakeQueries{sessionErr: errors.New("db")})
 		if resp := get(t, h, "/api/v1/sessions/x/spans", true); resp.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", resp.Code)
+		}
+	})
+}
+
+// TestSessionSpanFromEvent_Structure pins the envelope-only projection
+// (?include=structure): the content bodies — part text, tool args,
+// input_text, output_text — are omitted, while every id, name, *_chars size,
+// and scalar/usage field is byte-identical to the full projection.
+func TestSessionSpanFromEvent_Structure(t *testing.T) {
+	big := strings.Repeat("y", 4096)
+	event := bigSpanEvent(t, big)
+
+	full := sessionSpanFromEvent(event, 0, true)
+	structure := sessionSpanFromEvent(event, 0, false)
+
+	// No bodies anywhere.
+	for i, p := range structure.OutputParts {
+		if p.Args != "" || p.Text != "" {
+			t.Errorf("output part %d carries a body: args=%d text=%d bytes", i, len(p.Args), len(p.Text))
+		}
+	}
+	for i, p := range structure.InputParts {
+		if p.Text != "" {
+			t.Errorf("input part %d carries a body: %d bytes", i, len(p.Text))
+		}
+	}
+	if structure.InputText != nil || structure.OutputText != nil {
+		t.Error("structure projection must omit input_text/output_text bodies")
+	}
+
+	// Sizes survive and match the full projection's true sizes.
+	if structure.OutputParts[1].ArgsChars == nil || *structure.OutputParts[1].ArgsChars != *full.OutputParts[1].ArgsChars {
+		t.Errorf("args_chars = %v, want %v", structure.OutputParts[1].ArgsChars, full.OutputParts[1].ArgsChars)
+	}
+	if structure.InputTextChars == nil || *structure.InputTextChars != *full.InputTextChars {
+		t.Errorf("input_text_chars = %v, want %v", structure.InputTextChars, full.InputTextChars)
+	}
+	if structure.OutputTextChars == nil || *structure.OutputTextChars != *full.OutputTextChars {
+		t.Errorf("output_text_chars = %v, want %v", structure.OutputTextChars, full.OutputTextChars)
+	}
+
+	// Everything except the four body fields is identical: stripping the full
+	// projection's bodies must yield the structure projection exactly.
+	stripped := full
+	stripped.InputText = nil
+	stripped.OutputText = nil
+	stripped.OutputParts = append([]adminc.SessionSpanOutputPart{}, full.OutputParts...)
+	for i := range stripped.OutputParts {
+		stripped.OutputParts[i].Args = ""
+		stripped.OutputParts[i].Text = ""
+	}
+	stripped.InputParts = append([]adminc.SessionSpanInputPart{}, full.InputParts...)
+	for i := range stripped.InputParts {
+		stripped.InputParts[i].Text = ""
+	}
+	gotJSON, _ := json.Marshal(structure)
+	wantJSON, _ := json.Marshal(stripped)
+	if string(gotJSON) != string(wantJSON) {
+		t.Errorf("structure != full-minus-bodies:\n got %s\nwant %s", gotJSON, wantJSON)
+	}
+}
+
+// TestSessionSpansHandler_StructureParam proves the wire behavior of
+// ?include=structure: the page's JSON carries no body keys while the default
+// (and any other include value) serves them — the back-compat contract older
+// SPAs rely on.
+func TestSessionSpansHandler_StructureParam(t *testing.T) {
+	q := &fakeQueries{session: []store.RequestEvent{bigSpanEvent(t, "hello world")}}
+	h := newQueryServer(t, q)
+
+	structure := get(t, h, "/api/v1/sessions/s/spans?include=structure", true)
+	if structure.Code != http.StatusOK {
+		t.Fatalf("structure status = %d", structure.Code)
+	}
+	sb := structure.Body.String()
+	if strings.Contains(sb, "hello world") {
+		t.Errorf("structure page leaked a content body: %s", sb)
+	}
+	if !strings.Contains(sb, `"args_chars"`) || !strings.Contains(sb, `"input_text_chars"`) {
+		t.Errorf("structure page dropped the size fields: %s", sb)
+	}
+
+	for _, path := range []string{
+		"/api/v1/sessions/s/spans",
+		"/api/v1/sessions/s/spans?include=everything",
+	} {
+		full := get(t, h, path, true)
+		if full.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", path, full.Code)
+		}
+		if !strings.Contains(full.Body.String(), "hello world") {
+			t.Errorf("%s must serve bodies (back-compat default)", path)
+		}
+	}
+}
+
+// TestSessionSpansHandler_PoolOrder stresses the order-preserving worker
+// pool: a full default page projected concurrently must come back in exact
+// (observed_at, correlation_id) row order with every row present once.
+func TestSessionSpansHandler_PoolOrder(t *testing.T) {
+	at := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	var events []store.RequestEvent
+	for i := 0; i < 200; i++ {
+		events = append(events, store.RequestEvent{
+			CorrelationID: "c" + strconv.Itoa(i),
+			ObservedAt:    at.Add(time.Duration(i) * time.Second),
+			SessionID:     "sess-1", ConversationID: "sess-1",
+			SpanEvent: spanBlob(t, map[string]any{"sluice.latency_ms": i}),
+		})
+	}
+	h := newQueryServer(t, &fakeQueries{session: events})
+
+	resp := get(t, h, "/api/v1/sessions/sess-1/spans", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	var page adminc.SessionSpansPage
+	if err := json.Unmarshal(resp.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Spans) != len(events) {
+		t.Fatalf("spans = %d, want %d", len(page.Spans), len(events))
+	}
+	for i, s := range page.Spans {
+		if s.CID != events[i].CorrelationID {
+			t.Fatalf("spans[%d] = %s, want %s (pool must preserve row order)", i, s.CID, events[i].CorrelationID)
+		}
+		if s.LatencyMs == nil || *s.LatencyMs != int64(i) {
+			t.Fatalf("spans[%d] latency = %v, want %d (row/slot mixup)", i, s.LatencyMs, i)
+		}
+	}
+}
+
+// TestSessionSpanHandler covers the single-span lazy-fetch endpoint: a full
+// DTO element (bodies included) for the session's own span; 404 for an
+// unknown cid or a cid belonging to a different session; auth + error
+// plumbing like its siblings.
+func TestSessionSpanHandler(t *testing.T) {
+	event := bigSpanEvent(t, "the full body")
+	event.SessionID = "sess-1"
+	event.ConversationID = "sess-1"
+
+	t.Run("serves the full element", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{event: event})
+		resp := get(t, h, "/api/v1/sessions/sess-1/spans/cid-big", true)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.Code)
+		}
+		var span adminc.SessionSpan
+		if err := json.Unmarshal(resp.Body.Bytes(), &span); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if span.CID != "cid-big" {
+			t.Errorf("cid = %q", span.CID)
+		}
+		if span.InputText == nil || *span.InputText != "the full body" {
+			t.Errorf("input_text = %v, want the body served whole", span.InputText)
+		}
+		if span.OutputParts[1].Args == "" {
+			t.Error("tool args omitted; the single-span element must include bodies")
+		}
+	})
+	t.Run("unknown cid is 404", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{eventErr: store.ErrRequestEventNotFound})
+		if resp := get(t, h, "/api/v1/sessions/sess-1/spans/nope", true); resp.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", resp.Code)
+		}
+	})
+	t.Run("cross-session cid is 404", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{event: event})
+		if resp := get(t, h, "/api/v1/sessions/other-session/spans/cid-big", true); resp.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 (must not leak spans across sessions)", resp.Code)
+		}
+	})
+	t.Run("auth required", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{event: event})
+		if resp := get(t, h, "/api/v1/sessions/sess-1/spans/cid-big", false); resp.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", resp.Code)
+		}
+	})
+	t.Run("query failure is 500", func(t *testing.T) {
+		h := newQueryServer(t, &fakeQueries{eventErr: errors.New("db")})
+		if resp := get(t, h, "/api/v1/sessions/sess-1/spans/cid-big", true); resp.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500", resp.Code)
 		}
 	})

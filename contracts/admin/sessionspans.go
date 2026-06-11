@@ -28,6 +28,14 @@ type SessionSpansPage struct {
 // size, so the renderer's "showing first N of M" guard fires exactly when the
 // server truncated. Truncation is a server prerogative per the DTO schema —
 // changing the cap never changes the renderer.
+//
+// Projection modes: with ?include=structure the page serves the ENVELOPE
+// ONLY — the content bodies (part text, tool args, input_text, output_text)
+// are omitted while every id, name, *Chars size, timing, and usage field
+// survives. The lifecycle dashboard renders from structure pages and
+// lazy-fetches the one full element it needs via
+// GET /api/v1/sessions/{id}/spans/{cid} (which returns a single SessionSpan,
+// bodies included).
 type SessionSpan struct {
 	// CID is the correlation id (= span id in the console).
 	CID string `json:"cid"`

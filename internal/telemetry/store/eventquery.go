@@ -415,6 +415,20 @@ const (
 	sessionPageMax     = 500
 )
 
+// ClampSessionPageLimit resolves a requested EventsBySessionPage limit to the
+// effective one the store enforces (<= 0 defaults, capped at the max).
+// Exported so the spans handler can pre-size its page buffer to exactly the
+// number of rows the store may deliver.
+func ClampSessionPageLimit(n int) int {
+	if n <= 0 {
+		return sessionPageDefault
+	}
+	if n > sessionPageMax {
+		return sessionPageMax
+	}
+	return n
+}
+
 // EventsBySessionRollup returns every event in a session, oldest first, in the
 // narrow rollup projection (span_event stripped of gen_ai_content) so the
 // session view can render the conversation in order without ever
@@ -495,13 +509,7 @@ func (s *Store) EventsBySessionPage(ctx context.Context, p SessionPageParams, fn
 	if p.SessionID == "" {
 		return "", nil
 	}
-	limit := p.Limit
-	if limit <= 0 {
-		limit = sessionPageDefault
-	}
-	if limit > sessionPageMax {
-		limit = sessionPageMax
-	}
+	limit := ClampSessionPageLimit(p.Limit)
 
 	args := []any{p.SessionID}
 	q := `SELECT ` + requestEventColumns + ` FROM request_events WHERE session_id=$1`
