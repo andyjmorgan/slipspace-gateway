@@ -119,6 +119,30 @@ Anything else needs justification in the PR description.
 - **Magic struct tags beyond `json` / `yaml`** — no `validate:`, no `mapstructure:`. Validation is explicit code.
 - **`gomock` / `mockery`** — hand-rolled interface stubs are 10 lines and clearer than generated mocks.
 
+### Web console (SPA) standards
+
+Same lean-and-mean posture as the Go side, applied to `web/`. The console is two build targets (gateway admin, telemetry) over one `src/` tree.
+
+Approved deps (`web/package.json` is the allowlist — anything new needs justification in the PR description):
+
+- `react` / `react-dom` / `react-router` — the framework; `MemoryRouter` only in test harnesses
+- `recharts` — charts
+- `lucide-react` — icons
+- `tailwindcss` (+ `@tailwindcss/vite`, `tw-animate-css`) — styling; design tokens (`--bg-*`, `--text-*`, `--accent`, `--ok/--warn/--err/--violet`) only, never hex literals in components
+- `radix-ui` primitives + `clsx`/`tailwind-merge`/`class-variance-authority` — the shadcn-style `components/ui` base
+- `next-themes`, `sonner` — theme + toasts
+- vite / typescript / eslint toolchain (dev)
+
+What we deliberately avoid:
+
+- **State-management libraries** (redux, zustand, jotai) — component state + module-level caches (see `fullSpanCache`, `bodyCache`) cover current needs.
+- **Data-fetching layers** (react-query, swr, axios) — `apiFetch` in `@/lib/api` is the one HTTP path; lazy/LRU semantics live next to their feature (`@/lib/span-view`).
+- **CSS-in-JS / component-kit creep** — new visuals compose `components/atoms` and the shared card/tab idioms (`telemetry/components/span-inspector-panes.tsx`). One design per concept: if a card/tab/table exists, reuse it — never fork a near-duplicate.
+- **Hand-edited wire types** — `web/src/lib/generated/` comes from `make generate` (tygo, CI-enforced freshness). Contract changes start in `contracts/`, never in TS.
+- **Render impurity** — no `Date.now()` / `Math.random()` / ref reads during render; time bounds resolve at fetch time, reset-on-change derives from keyed state instead of setState-in-effect (the eslint react-hooks rules are the enforcement; the repo carries a small documented baseline of legacy hits — add zero new ones).
+
+Verification bar for `web/` PRs: `npx tsc --noEmit`, eslint clean on touched files, `npm run build:telemetry` (and `npm run build` when the admin SPA is touched). Visual changes get fixture-harness screenshots (headless Brave against a vite dev server with `@/lib/api` aliased to a mock) — UI is not done until it's been looked at.
+
 ## Project structure
 
 Flat layout: public packages at the repo root, private under `internal/` (compiler-enforced privacy). Full tree + rationale is in the *Module Layout* design note. The load-bearing split:
