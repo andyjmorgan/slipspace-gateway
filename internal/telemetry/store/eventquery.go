@@ -499,9 +499,10 @@ type SessionPageParams struct {
 // EventsBySessionPage streams one keyset page of a session's events — full
 // projection including the span_event blob — oldest first, invoking fn once
 // per row. The callback shape is deliberate: each event (and its potentially
-// huge blob) is only live for the duration of its fn call, so a caller that
-// projects rows down to a bounded DTO holds O(1 full blobs) at a time, never
-// O(page). It fetches Limit+1 rows to learn whether a further page exists;
+// huge blob) is handed over one at a time, so a caller that projects rows
+// down to a bounded DTO holds O(1) full blobs — or O(workers) when fn fans
+// out to a bounded pool, as the spans handler does — never O(page). It
+// fetches Limit+1 rows to learn whether a further page exists;
 // when it does, next encodes the last delivered row's position (same cursor
 // encoding as the event list). An empty next means the last page; a malformed
 // Cursor is ErrInvalidCursor; an fn error aborts the scan and is returned.
