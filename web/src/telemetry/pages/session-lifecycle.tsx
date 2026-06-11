@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate, useParams } from "react-router"
 import { ChevronLeft, ChevronRight, RotateCcw, X } from "lucide-react"
+import { Bar, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { Button } from "@/components/ui/button"
 import { KPI } from "@/components/atoms/kpi"
 import { StatusPill } from "@/components/atoms/status-pill"
@@ -9,6 +10,7 @@ import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { SkeletonTiles, SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
+import type { MessageEntry, MessageFilters } from "@/lib/messages"
 import {
   fetchFullSpan,
   fetchSessionSpans,
@@ -18,11 +20,13 @@ import {
   type SessionSpan,
 } from "@/lib/session-spans"
 import { cn } from "@/lib/utils"
-import { Dash } from "./messages"
+import { MESSAGE_DEFAULT_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
+import { Dash, MessagesPagerBar, MessagesTableView } from "../components/messages-table"
 
-// SessionLifecyclePage renders the agent-session lifecycle dashboard from a
-// SessionSpansDTO (GET /api/v1/sessions/{id}/spans): stat cards, the session
-// activity strip, a per-conversation lanes timeline with a minimap slicer,
+// SessionLifecyclePage renders THE session view — the lifecycle dashboard
+// derived from a SessionSpansDTO (GET /api/v1/sessions/{id}/spans): stat
+// cards, the session activity strip, the token burn chart, a per-conversation
+// lanes timeline with a minimap slicer, the slice-bound messages table,
 // client/server tool tables, the tool-call ledger, and a span inspector modal.
 //
 // Renderer-contract purity (renderer-contract.md): every value on this page is
@@ -124,6 +128,11 @@ type ViewModel = {
   ledger: LedgerRow[]
   ledgerById: Map<string, LedgerRow>
 }
+
+// SliceRange is the timeline slicer's window in session-relative seconds.
+// Owned by LifecycleView (null = full session) and shared by the minimap
+// brush, the token burn chart, and the messages table.
+type SliceRange = { d0: number; d1: number }
 
 // MAIN_COLOR is the main conversation's lane color (the gold the whole design
 // keys on); sub-agent lanes walk the hue wheel by the golden angle, dodging
@@ -321,8 +330,8 @@ export function SessionLifecyclePage() {
   )
 }
 
-// LifecycleBreadcrumb: Sessions / <id> / Lifecycle — the first two segments
-// route back to the list and the session detail respectively.
+// LifecycleBreadcrumb: Sessions / <id> — the first segment routes back to the
+// list; the id IS this page (the lifecycle dashboard is the session view).
 function LifecycleBreadcrumb({ sessionId }: { sessionId: string }) {
   const nav = useNavigate()
   return (
@@ -335,16 +344,9 @@ function LifecycleBreadcrumb({ sessionId }: { sessionId: string }) {
         Sessions
       </button>
       <ChevronRight size={14} className="text-[color:var(--text-4)] shrink-0" />
-      <button
-        type="button"
-        onClick={() => nav(`/sessions/${encodeURIComponent(sessionId)}`)}
-        className="mono text-[12px] text-[color:var(--accent)] hover:underline truncate"
-        title={sessionId}
-      >
+      <span className="mono text-[12px] text-[color:var(--text-2)] truncate" title={sessionId}>
         {sessionId}
-      </button>
-      <ChevronRight size={14} className="text-[color:var(--text-4)] shrink-0" />
-      <span className="text-[color:var(--text-2)] shrink-0">Lifecycle</span>
+      </span>
     </div>
   )
 }
@@ -470,6 +472,11 @@ function LifecycleView({
   // ioTab is lifted here so the inspector's Input|Output choice persists
   // across prev/next while the page lives.
   const [ioTab, setIoTab] = useState<"output" | "input">("output")
+  // slice is the timeline brush window [d0, d1] in session seconds, lifted
+  // here so the token burn chart and the messages table bind to it. null =
+  // the full session — and tracks vm.dur as progressive pages land, so a
+  // growing session never strands the view on page one's extent.
+  const [slice, setSlice] = useState<SliceRange | null>(null)
 
   const dispName = useCallback(
     (conv: string) =>
@@ -477,18 +484,32 @@ function LifecycleView({
     [vm, useNames],
   )
 
+  // openSpan guards a messages-table row click: the table's rows come from
+  // the events store, so a correlation id without a captured gen_ai span
+  // (capture gap) must not open an empty inspector.
+  const openSpan = useCallback(
+    (cid: string) => {
+      if (vm.byCid.has(cid)) setSelectedCid(cid)
+    },
+    [vm],
+  )
+
   return (
     <>
       <LifecycleHeader vm={vm} source={source} partial={partial} />
       <StatCards vm={vm} />
       <ActivityStrip vm={vm} />
+      <TokenBurnPanel vm={vm} slice={slice} />
       <TimelinePanel
         vm={vm}
+        slice={slice}
+        onSlice={setSlice}
         dispName={dispName}
         useNames={useNames}
         onToggleNames={() => setUseNames((v) => !v)}
         onOpen={setSelectedCid}
       />
+      <SessionMessagesPanel vm={vm} slice={slice} source={source} onOpen={openSpan} />
       <div className="grid md:grid-cols-2 gap-3.5 items-start">
         <ToolTable vm={vm} kind="client" />
         <ToolTable vm={vm} kind="server" />
@@ -577,8 +598,11 @@ function HeaderChip({ children }: { children: React.ReactNode }) {
 }
 
 // StatCards: the 8 lifecycle summary cards (2×4), all aggregated from the
-// span list at render time.
-function StatCards({ vm }: { vm: ViewModel }) {
+// span list at render time. Memoized (as are ActivityStrip, ToolTable, and
+// LedgerTable): the slice state lives on LifecycleView, so every brush frame
+// re-renders it — the panels that don't read the slice must not re-render
+// with it.
+const StatCards = memo(function StatCards({ vm }: { vm: ViewModel }) {
   const c = useMemo(() => {
     const lats = vm.spans.map((s) => s.latency_ms).filter((v): v is number => v != null)
     const outs = vm.spans.map((s) => s.usage.output).filter((v): v is number => v != null)
@@ -659,13 +683,13 @@ function StatCards({ vm }: { vm: ViewModel }) {
       />
     </div>
   )
-}
+})
 
 // ActivityStrip: stacked active-conversation count (main + sub-agents) per
 // time bucket across the whole session, as a normalized-viewBox SVG.
 const STRIP_BUCKETS = 160
 
-function ActivityStrip({ vm }: { vm: ViewModel }) {
+const ActivityStrip = memo(function ActivityStrip({ vm }: { vm: ViewModel }) {
   const { rows, maxC, bucketLabel } = useMemo(() => {
     const bw = vm.dur / STRIP_BUCKETS
     const out: [number, number][] = []
@@ -742,6 +766,150 @@ function ActivityStrip({ vm }: { vm: ViewModel }) {
       </div>
     </PanelCard>
   )
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Token burn chart
+// ─────────────────────────────────────────────────────────────────────────
+
+// BurnPoint is one span projected onto the burn chart: per-span tokens in/out
+// plus the running session-wide cumulative burn as of that span.
+type BurnPoint = {
+  t: number
+  cid: string
+  model: string
+  tin: number
+  tout: number
+  cum: number
+}
+
+// TokenBurnPanel charts token consumption across the session: per-span tokens
+// in/out as stacked bars (--p-input / --p-output, the designated token-curve
+// colors) plus a cumulative burn line on the right axis. It shares the
+// timeline's time domain and respects the slice — when the brush moves, the
+// chart re-domains to [d0, d1], computed client-side from the already-loaded
+// structure spans. The slice is deferred so a fast brush drag doesn't force a
+// recharts re-render every frame.
+function TokenBurnPanel({ vm, slice }: { vm: ViewModel; slice: SliceRange | null }) {
+  const deferred = useDeferredValue(slice)
+  const d0 = deferred?.d0 ?? 0
+  const d1 = deferred?.d1 ?? vm.dur
+  const full = d0 <= 0.5 && d1 >= vm.dur - 0.5
+
+  const points = useMemo<BurnPoint[]>(() => {
+    // Cumulative sums over the WHOLE session (true burn-to-date, so the line
+    // doesn't restart at zero inside a slice); points then filter to the
+    // slice for display.
+    const out: BurnPoint[] = []
+    let cum = 0
+    for (const s of vm.spans) {
+      const tin = s.usage.input ?? 0
+      const tout = s.usage.output ?? 0
+      cum += tin + tout
+      if (s.t < d0 || s.t > d1) continue
+      out.push({ t: s.t, cid: s.cid, model: s.model ?? "unknown", tin, tout, cum })
+    }
+    return out
+  }, [vm, d0, d1])
+
+  const axis = "var(--text-4)"
+  return (
+    <PanelCard>
+      <PanelHead
+        title="Token burn"
+        sub={
+          full ? (
+            "tokens per request · cumulative across the session — follows the timeline slice"
+          ) : (
+            <span className="mono tnum font-semibold" style={{ color: "var(--accent)" }}>
+              slice {clockAt(vm.t0ms, d0)} → {clockAt(vm.t0ms, d1)} · {fmt.uptime((d1 - d0) * 1000)}
+            </span>
+          )
+        }
+        action={
+          <div className="flex items-center gap-3 flex-wrap text-[11px] text-[color:var(--text-2)]">
+            <BurnSwatch color="var(--p-input)" label="tokens in" />
+            <BurnSwatch color="var(--p-output)" label="tokens out" />
+            <BurnSwatch color="var(--warn)" label="cumulative" line />
+          </div>
+        }
+      />
+      <div className="px-4 pt-3 pb-2">
+        {points.length === 0 ? (
+          <div className="text-[12px] grid place-items-center min-h-[180px] text-[color:var(--text-4)]">
+            No requests in this window.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={180}>
+            <ComposedChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+              <XAxis
+                dataKey="t"
+                type="number"
+                domain={[d0, d1]}
+                tickFormatter={(v) => clockAt(vm.t0ms, v as number)}
+                tick={{ fontSize: 10, fill: axis }}
+                stroke={axis}
+                minTickGap={42}
+              />
+              <YAxis
+                yAxisId="span"
+                tickFormatter={(v) => fmt.compact(v as number)}
+                tick={{ fontSize: 10, fill: axis }}
+                stroke={axis}
+                width={44}
+              />
+              <YAxis
+                yAxisId="cum"
+                orientation="right"
+                tickFormatter={(v) => fmt.compact(v as number)}
+                tick={{ fontSize: 10, fill: axis }}
+                stroke={axis}
+                width={48}
+              />
+              <Tooltip cursor={{ fill: "var(--hover)" }} content={<BurnTooltip t0ms={vm.t0ms} />} />
+              <Bar yAxisId="span" dataKey="tin" stackId="t" fill="var(--p-input)" isAnimationActive={false} maxBarSize={14} />
+              <Bar yAxisId="span" dataKey="tout" stackId="t" fill="var(--p-output)" radius={[2, 2, 0, 0]} isAnimationActive={false} maxBarSize={14} />
+              <Line yAxisId="cum" dataKey="cum" type="monotone" stroke="var(--warn)" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </PanelCard>
+  )
+}
+
+// BurnSwatch is the token chart's legend chip: a square for a bar series, a
+// line for the cumulative curve.
+function BurnSwatch({ color, label, line }: { color: string; label: string; line?: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className={line ? "inline-block w-3 h-[2px] rounded-full" : "inline-block w-2.5 h-2.5 rounded-[2px]"}
+        style={{ backgroundColor: color }}
+      />
+      <span>{label}</span>
+    </span>
+  )
+}
+
+// BurnTooltip renders the hovered span's burn detail. Typed locally rather
+// than via recharts' TooltipProps (its v3 content-prop shape doesn't surface
+// payload directly); recharts injects active/payload at runtime when it
+// clones the element passed to Tooltip's content.
+type BurnTooltipProps = { active?: boolean; payload?: { payload?: BurnPoint }[]; t0ms?: number }
+function BurnTooltip({ active, payload, t0ms }: BurnTooltipProps) {
+  if (!active || !payload?.length || t0ms == null) return null
+  const p = payload[0]?.payload
+  if (!p) return null
+  return (
+    <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-1)] px-3 py-2 text-[11.5px] shadow-[var(--shadow-md)] flex flex-col gap-0.5">
+      <div className="mono text-[color:var(--text-4)]">{clockAt(t0ms, p.t)}</div>
+      <div className="mono">{p.model}</div>
+      <div className="text-[color:var(--text-3)]">
+        in {fmt.compact(p.tin)} · out {fmt.compact(p.tout)} · cumulative {fmt.compact(p.cum)}
+      </div>
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -768,12 +936,16 @@ type DragState =
 
 function TimelinePanel({
   vm,
+  slice,
+  onSlice,
   dispName,
   useNames,
   onToggleNames,
   onOpen,
 }: {
   vm: ViewModel
+  slice: SliceRange | null
+  onSlice: (s: SliceRange | null) => void
   dispName: (conv: string) => string
   useNames: boolean
   onToggleNames: () => void
@@ -793,19 +965,20 @@ function TimelinePanel({
   }, [])
   const plotW = w - GEO.l - GEO.r
 
-  // The slice window [d0, d1] in session seconds. rangeRef mirrors it for the
-  // window-level drag handlers, which must read the latest value without
-  // re-subscribing.
-  const [range, setRange] = useState({ d0: 0, d1: vm.dur })
-  const rangeRef = useRef(range)
+  // The slice window [d0, d1] in session seconds, owned by LifecycleView
+  // (null = full session, which tracks vm.dur as progressive pages land).
+  // rangeRef mirrors the resolved window for the window-level drag handlers,
+  // which must read the latest value without re-subscribing.
+  const d0 = slice?.d0 ?? 0
+  const d1 = slice?.d1 ?? vm.dur
+  const rangeRef = useRef({ d0, d1 })
   useEffect(() => {
-    rangeRef.current = range
-  }, [range])
+    rangeRef.current = { d0, d1 }
+  }, [d0, d1])
   const dragRef = useRef<DragState | null>(null)
   const miniRef = useRef<SVGSVGElement>(null)
   const chartRef = useRef<SVGSVGElement>(null)
 
-  const { d0, d1 } = range
   const full = d0 <= 0.5 && d1 >= vm.dur - 0.5
   const span = Math.max(1, d1 - d0)
 
@@ -821,7 +994,7 @@ function TimelinePanel({
 
   // Brush updates are rAF-throttled: drag/wheel mousemoves coalesce to one
   // range commit (and so one lanes re-render) per frame.
-  const [pushRange, cancelPendingRange] = useRafThrottle<{ d0: number; d1: number }>(setRange)
+  const [pushRange, cancelPendingRange] = useRafThrottle<SliceRange>(onSlice)
   const setBrush = useCallback(
     (t1: number, t2: number) => {
       let n0 = Math.max(0, Math.min(t1, t2))
@@ -835,8 +1008,8 @@ function TimelinePanel({
   const reset = useCallback(() => {
     // Immediate, and drop any queued drag frame so it can't undo the reset.
     cancelPendingRange()
-    setRange({ d0: 0, d1: vm.dur })
-  }, [vm.dur, cancelPendingRange])
+    onSlice(null)
+  }, [onSlice, cancelPendingRange])
 
   // Minimap drag: mousedown picks the mode (edge resize / pan / new slice);
   // window-level move/up finish the gesture so it survives leaving the svg.
@@ -1332,6 +1505,128 @@ function LegendChip({ children }: { children: React.ReactNode }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Slice-bound messages table
+// ─────────────────────────────────────────────────────────────────────────
+
+// SessionMessagesPanel embeds the shared paginated MessageEntry table at the
+// bottom of the timeline section, pre-filtered to this session. The time
+// window binds to the slicer: full session by default; once the operator
+// slices, the table re-queries with from/to = the slice window (absolute
+// timestamps derived from t0 + offset), debounced 300ms so the brush settles
+// before a query fires. Keyset pagination runs within the current window; a
+// row click opens the span inspector for that correlation id. On the fixture
+// fallback (no backend) rows are synthesized from the loaded spans so the
+// table still demonstrates the slice binding honestly.
+function SessionMessagesPanel({
+  vm,
+  slice,
+  source,
+  onOpen,
+}: {
+  vm: ViewModel
+  slice: SliceRange | null
+  source: "api" | "fixture"
+  onOpen: (cid: string) => void
+}) {
+  const nav = useNavigate()
+  const debounced = useDebounced(slice, 300)
+  const d0 = debounced?.d0 ?? 0
+  const d1 = debounced?.d1 ?? vm.dur
+  const full = d0 <= 0.5 && d1 >= vm.dur - 0.5
+  const [limit, setLimit] = useState<number>(MESSAGE_DEFAULT_PAGE_SIZE)
+  const isFixture = source === "fixture"
+
+  // Query filters: session-scoped always; from/to only when sliced — the full
+  // session needs no time bounds, session_id already scopes the scan.
+  const filters = useMemo<MessageFilters>(() => {
+    const f: MessageFilters = { sessionId: vm.sid }
+    if (debounced) {
+      f.from = new Date(vm.t0ms + debounced.d0 * 1000).toISOString()
+      f.to = new Date(vm.t0ms + debounced.d1 * 1000).toISOString()
+    }
+    return f
+  }, [vm.sid, vm.t0ms, debounced])
+
+  const pager = useMessagesPager({
+    filters,
+    limit,
+    enabled: !isFixture,
+    onUnauthorized: () => nav("/login", { replace: true }),
+  })
+
+  // Fixture path: rows derived client-side from the loaded spans (newest
+  // first, windowed + paged locally) — there is no backend to query.
+  const fixtureRows = useMemo<MessageEntry[]>(() => {
+    if (!isFixture) return []
+    return vm.spans
+      .filter((s) => s.t >= d0 && s.t <= d1)
+      .slice()
+      .reverse()
+      .map((s) => ({
+        event_id: s.cid,
+        correlation_id: s.cid,
+        at: s.at,
+        status_code: s.status ?? 0,
+        model: s.model ?? undefined,
+        duration_ms: s.latency_ms ?? 0,
+        tokens_in: s.usage.input ?? 0,
+        tokens_out: s.usage.output ?? 0,
+      }))
+  }, [isFixture, vm, d0, d1])
+  // Fixture paging is tagged with the row set + page size it belongs to, so a
+  // window or size change derives page one during render (no reset effect).
+  const [fixNav, setFixNav] = useState<{ rows: MessageEntry[]; limit: number; page: number } | null>(null)
+  const fixPage = fixNav && fixNav.rows === fixtureRows && fixNav.limit === limit ? fixNav.page : 0
+  const setFixPage = (page: number) => setFixNav({ rows: fixtureRows, limit, page })
+
+  const entries = isFixture ? fixtureRows.slice(fixPage * limit, (fixPage + 1) * limit) : pager.entries
+  const status = isFixture ? ("ok" as const) : pager.status
+  const pageIndex = isFixture ? fixPage : pager.pageIndex
+  const hasNext = isFixture ? (fixPage + 1) * limit < fixtureRows.length : pager.hasNext
+  const onNext = isFixture ? () => setFixPage(fixPage + 1) : pager.onNext
+  const onPrev = isFixture ? () => setFixPage(Math.max(0, fixPage - 1)) : pager.onPrev
+
+  return (
+    <PanelCard>
+      <PanelHead
+        title="Messages"
+        sub={
+          <>
+            <span className="mono tnum font-semibold" style={full ? undefined : { color: "var(--accent)" }}>
+              {full
+                ? `${clockAt(vm.t0ms, 0)} → ${clockAt(vm.t0ms, vm.dur)} · full session`
+                : `slice ${clockAt(vm.t0ms, d0)} → ${clockAt(vm.t0ms, d1)} · ${fmt.uptime((d1 - d0) * 1000)}`}
+            </span>
+            {" "}· slice the timeline to narrow · click a row to open the span
+          </>
+        }
+      />
+      {status === "error" && (
+        <div className="m-3 rounded-[var(--radius-lg)] border p-4 text-[13px]" style={{ color: "var(--err)", background: "var(--err-bg)" }}>
+          Failed to load messages: <span className="mono">{pager.err}</span>
+        </div>
+      )}
+      <MessagesTableView
+        entries={entries}
+        status={status}
+        limit={limit}
+        emptyText={full ? "No requests recorded for this session." : "No requests in the sliced window."}
+        onRowClick={(e) => onOpen(e.correlation_id || e.event_id)}
+      />
+      <MessagesPagerBar
+        limit={limit}
+        onLimit={setLimit}
+        pageIndex={pageIndex}
+        hasPrev={pageIndex > 0}
+        hasNext={hasNext}
+        onPrev={onPrev}
+        onNext={onNext}
+      />
+    </PanelCard>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Tool tables (rule 5) + ledger
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -1339,7 +1634,7 @@ function LegendChip({ children }: { children: React.ReactNode }) {
 // the median of joined exec times (no gap heuristics); server-executed tools
 // report the median hosting-span latency instead, since the tool ran inside
 // the request.
-function ToolTable({ vm, kind }: { vm: ViewModel; kind: "client" | "server" }) {
+const ToolTable = memo(function ToolTable({ vm, kind }: { vm: ViewModel; kind: "client" | "server" }) {
   const rows = useMemo(() => {
     const agg = new Map<string, { calls: number; convs: Set<string>; execs: number[]; hosts: number[] }>()
     for (const r of vm.ledger) {
@@ -1404,7 +1699,7 @@ function ToolTable({ vm, kind }: { vm: ViewModel; kind: "client" | "server" }) {
       </TableScroll>
     </PanelCard>
   )
-}
+})
 
 // LEDGER_PREVIEW caps the rows the ledger renders by default. A 688-message
 // session can carry thousands of tool calls; mounting them all as table rows
@@ -1416,7 +1711,7 @@ const LEDGER_PREVIEW = 250
 // (rule 7 default path — opaque vendor JSON, truncated, never field-picked).
 // List spans are envelope-only, so the args column may have only the size to
 // show; the calling span's inspector (click the row) fetches the full args.
-function LedgerTable({
+const LedgerTable = memo(function LedgerTable({
   vm,
   dispName,
   onOpen,
@@ -1508,7 +1803,7 @@ function LedgerTable({
       </div>
     </PanelCard>
   )
-}
+})
 
 // ─────────────────────────────────────────────────────────────────────────
 // Span inspector modal

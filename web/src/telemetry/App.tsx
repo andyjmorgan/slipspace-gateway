@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { NavLink, Navigate, Outlet, Route, Routes, useNavigate } from "react-router"
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router"
 import { Activity, Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Sun } from "lucide-react"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
@@ -25,13 +25,23 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="messages" element={<MessagesPage />} />
           <Route path="sessions" element={<SessionsPage />} />
-          <Route path="sessions/:id" element={<SessionsPage />} />
-          <Route path="sessions/:id/lifecycle" element={<SessionLifecyclePage />} />
+          <Route path="sessions/:id" element={<SessionLifecyclePage />} />
+          <Route path="sessions/:id/lifecycle" element={<LifecycleAlias />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
+}
+
+// LifecycleAlias keeps pre-existing /sessions/:id/lifecycle links alive now
+// that the lifecycle dashboard IS the session view at /sessions/:id. The
+// redirect preserves the #span= deep-link hash.
+function LifecycleAlias() {
+  const { id } = useParams<{ id?: string }>()
+  const { hash } = useLocation()
+  if (!id) return <Navigate to="/sessions" replace />
+  return <Navigate to={`/sessions/${encodeURIComponent(id)}${hash}`} replace />
 }
 
 // Guard redirects to /login when no Basic credentials are cached. The pages
