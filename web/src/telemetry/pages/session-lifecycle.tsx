@@ -1282,11 +1282,16 @@ function TimelinePanel({
     return nodes
   }, [vm, dispName, d0, d1, plotW, xz, clampX, onOpen, pushTip, cancelPendingTip])
 
-  // Minimap content: minute ticks + every span as a slim bar (main lane on
-  // top, sub-agents below), under the brush overlay.
+  // Minimap content: time ticks + every span as a slim bar (main lane on
+  // top, sub-agents below), under the brush overlay. The tick step adapts to
+  // pixel density — an HH:MM label is ~36px, so steps walk a 1/2/5/10/15/30/60
+  // minute ladder until labels get >= ~64px each and stop bleeding together.
   const miniBars = useMemo(() => {
     const nodes: React.ReactNode[] = []
-    for (let ms = Math.ceil(vm.t0ms / 60000) * 60000; ms <= vm.t0ms + vm.dur * 1000; ms += 60000) {
+    const pxPerSec = plotW / Math.max(1, vm.dur)
+    const stepS = [60, 120, 300, 600, 900, 1800, 3600].find((s) => s * pxPerSec >= 64) ?? 7200
+    const stepMs = stepS * 1000
+    for (let ms = Math.ceil(vm.t0ms / stepMs) * stepMs; ms <= vm.t0ms + vm.dur * 1000; ms += stepMs) {
       const t = (ms - vm.t0ms) / 1000
       nodes.push(
         <g key={`mt-${ms}`}>
@@ -1324,7 +1329,7 @@ function TimelinePanel({
       )
     }
     return nodes
-  }, [vm, mx])
+  }, [vm, mx, plotW])
 
   const tipSpan = tip ? vm.byCid.get(tip.cid) : undefined
   const crossT = crossPx != null ? d0 + ((crossPx - GEO.l) / plotW) * span : null
