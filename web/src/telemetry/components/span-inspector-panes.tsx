@@ -528,7 +528,7 @@ export function InputPane({
           {texts.map((p, i) => (
             <MCard
               key={`txt-${i}`}
-              copyText={span.input_text || undefined}
+              copyText={p.text || undefined}
               head={
                 <>
                   <span style={{ color: "var(--accent)" }}>●</span>
@@ -539,7 +539,7 @@ export function InputPane({
                 </>
               }
             >
-              <PreBlock text={span.input_text ?? "(empty)"} />
+              <PreBlock text={p.text ?? "(empty)"} />
             </MCard>
           ))}
         </>
