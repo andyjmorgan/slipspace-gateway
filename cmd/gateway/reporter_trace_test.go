@@ -460,6 +460,48 @@ func TestEmitTrace_ContentOnSpan(t *testing.T) {
 	}
 }
 
+// The executor flag on a tool_call part must survive onto the span's
+// gen_ai.output.messages JSON — it is the only signal the telemetry console
+// has for bucketing a provider-hosted tool (e.g. OpenAI web_search, whose
+// result folds into the model output with no discrete response part) as
+// server-executed rather than client-executed.
+func TestEmitTrace_ToolCallExecutorOnSpan(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	r := &reporterRun{
+		factory:       &reporterFactory{tracer: tp.Tracer("test"), captureContent: true},
+		provider:      "openai",
+		protocol:      "responses",
+		model:         "gpt-5.5",
+		configuration: "p",
+		started:       start,
+		respOutputParts: []genaiattr.Part{
+			{Type: "tool_call", ID: "ws_1", Name: "web_search", Arguments: []byte(`{"query":"x"}`), Executor: "server"},
+			{Type: "tool_call", ID: "call_1", Name: "do_thing", Arguments: []byte(`{"a":1}`), Executor: "client"},
+		},
+	}
+	ctx := bodycapture.WithCaptured(context.Background(), bodycapture.Captured{
+		Raw: []byte(`{"input":"hi"}`),
+	})
+	r.emitTrace(ctx, events.Request{Provider: "openai", Protocol: "responses", Model: "gpt-5.5", StatusCode: 200, DurationMs: 10}, nil)
+
+	attrs := sr.Ended()[0].Attributes()
+	v, ok := attrValue(attrs, observability.AttrGenAIOutputMessages)
+	if !ok {
+		t.Fatalf("output.messages absent on span")
+	}
+	out := v.AsString()
+	if !strings.Contains(out, `"executor":"server"`) {
+		t.Errorf("server tool_call executor missing from span output.messages: %s", out)
+	}
+	if !strings.Contains(out, `"executor":"client"`) {
+		t.Errorf("client tool_call executor missing from span output.messages: %s", out)
+	}
+}
+
 func TestEmitTrace_SpanContextReachesEvents(t *testing.T) {
 	sr := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))

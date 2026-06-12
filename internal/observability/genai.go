@@ -214,6 +214,16 @@ const (
 	PartTypeReasoning = "reasoning"
 )
 
+// Executor values for a tool_call / tool_call_response part — who runs the
+// tool. "server" is a provider-hosted tool the upstream executes inline (its
+// result rides the same span); "client" is an ordinary function call the
+// caller runs and returns on a later turn. Empty marks a non-tool part or a
+// legacy span predating the distinction.
+const (
+	ExecutorServer = "server"
+	ExecutorClient = "client"
+)
+
 // Sluice-namespaced extras — dimensions the GenAI spec has no concept for.
 const (
 	// AttrSluiceProtocol is the precise resolved protocol (chat, messages,

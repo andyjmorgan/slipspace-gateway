@@ -1541,6 +1541,7 @@ type emitPart struct {
 	name      string
 	arguments json.RawMessage
 	result    string
+	executor  string
 }
 
 // sanitiseParts redacts and caps each part's free text once. Tool-call
@@ -1553,7 +1554,7 @@ type emitPart struct {
 func sanitiseParts(parts []genaiattr.Part, textCap, toolArgsCap int) []emitPart {
 	out := make([]emitPart, 0, len(parts))
 	for _, p := range parts {
-		e := emitPart{typ: p.Type, id: p.ID, name: p.Name}
+		e := emitPart{typ: p.Type, id: p.ID, name: p.Name, executor: p.Executor}
 		switch p.Type {
 		case observability.PartTypeToolCall:
 			if len(p.Arguments) > 0 && (toolArgsCap <= 0 || len(p.Arguments) <= toolArgsCap) {
@@ -1591,11 +1592,17 @@ func (e emitPart) logPartValue() otellog.Value {
 				kvs = append(kvs, otellog.KeyValue{Key: "arguments", Value: v})
 			}
 		}
+		if e.executor != "" {
+			kvs = append(kvs, otellog.String("executor", e.executor))
+		}
 	case observability.PartTypeToolCallResponse:
 		if e.id != "" {
 			kvs = append(kvs, otellog.String("id", e.id))
 		}
 		kvs = append(kvs, otellog.String("result", e.result))
+		if e.executor != "" {
+			kvs = append(kvs, otellog.String("executor", e.executor))
+		}
 	default:
 		if e.content != "" {
 			kvs = append(kvs, otellog.String("content", e.content))
@@ -1776,11 +1783,17 @@ func (e emitPart) jsonMap() map[string]any {
 		if len(e.arguments) > 0 {
 			m["arguments"] = e.arguments
 		}
+		if e.executor != "" {
+			m["executor"] = e.executor
+		}
 	case observability.PartTypeToolCallResponse:
 		if e.id != "" {
 			m["id"] = e.id
 		}
 		m["result"] = e.result
+		if e.executor != "" {
+			m["executor"] = e.executor
+		}
 	default:
 		if e.content != "" {
 			m["content"] = e.content

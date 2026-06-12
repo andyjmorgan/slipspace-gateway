@@ -288,9 +288,10 @@ export type RespJoin = {
   execS?: number | null
 } | null
 
-// ToolCallCard renders one tool_call the span emitted: server-executed when a
-// same-span response exists (rule 8), otherwise annotated via the caller's
-// ledger join, with the raw-args display below (rule 7 default path).
+// ToolCallCard renders one tool_call the span emitted: server-executed when
+// the part is flagged executor:"server" or a same-span response exists (rule
+// 8), otherwise annotated via the caller's ledger join, with the raw-args
+// display below (rule 7 default path).
 export function ToolCallCard({
   part,
   sameSpanResp,
@@ -314,6 +315,18 @@ export function ToolCallCard({
           <b className="text-[color:var(--text-2)]">{fmt.compact(sameSpanResp.chars ?? null)}</b> chars back
         </span>
       </>
+    )
+  } else if (part.executor === "server") {
+    // Provider-hosted tool (e.g. OpenAI web_search) the upstream runs inline;
+    // its result folds into the model output, so there is no discrete
+    // same-span response part to size.
+    meta = (
+      <span
+        className="inline-flex items-center rounded-full px-2.5 py-px text-[10.5px] font-semibold"
+        style={{ background: "var(--violet-bg)", color: "var(--violet)", border: "1px solid color-mix(in oklab, var(--violet) 30%, transparent)" }}
+      >
+        server-executed · runs inline upstream
+      </span>
     )
   } else if (join) {
     meta = (

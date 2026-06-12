@@ -88,6 +88,12 @@ type toolAcc struct {
 	// after the tool_call — Responses server-tool items carry call and
 	// (optional, include-gated) result on the same item.
 	result string
+
+	// server marks a provider-hosted tool item (web_search_call,
+	// file_search_call, code_interpreter_call, mcp_call, …) the upstream
+	// executes inline, as opposed to a client-executed function_call. Set by
+	// mergeServerItem; drives the emitted part's Executor.
+	server bool
 }
 
 // toolAccList is an insertion-ordered set of tool-call accumulators keyed by
@@ -122,14 +128,21 @@ func (l *toolAccList) parts() []Part {
 		if args == nil {
 			args = argsRaw(a.args.String())
 		}
+		// function_call (a.server false) is client-executed; server-tool items
+		// run inline upstream.
+		exec := "client"
+		if a.server {
+			exec = "server"
+		}
 		parts = append(parts, Part{
 			Type:      "tool_call",
 			ID:        a.id,
 			Name:      a.name,
 			Arguments: args,
+			Executor:  exec,
 		})
 		if a.result != "" {
-			parts = append(parts, Part{Type: "tool_call_response", ID: a.id, Result: a.result})
+			parts = append(parts, Part{Type: "tool_call_response", ID: a.id, Result: a.result, Executor: exec})
 		}
 	}
 	return parts
@@ -375,6 +388,7 @@ type responsesServerToolArgs struct {
 // assigned — never appended — and only when the new appearance has it.
 func (a *toolAcc) mergeServerItem(o responsesOutput, name string) {
 	a.name = name
+	a.server = true
 	if id := firstNonEmpty(o.CallID, o.ID); id != "" {
 		a.id = id
 	}
@@ -762,12 +776,22 @@ func (l *anthropicBlockList) parts() []Part {
 			parts = append(parts, Part{Type: "reasoning"})
 		case "tool_use", "server_tool_use", "mcp_tool_use":
 			if b.toolID != "" || b.toolName != "" || b.toolArgs.Len() > 0 {
-				parts = append(parts, Part{Type: "tool_call", ID: b.toolID, Name: b.toolName, Arguments: argsRaw(b.toolArgs.String())})
+				// tool_use is the client-executed path; server_tool_use /
+				// mcp_tool_use are provider-hosted and run inline.
+				exec := "client"
+				if b.kind != "tool_use" {
+					exec = "server"
+				}
+				parts = append(parts, Part{Type: "tool_call", ID: b.toolID, Name: b.toolName, Arguments: argsRaw(b.toolArgs.String()), Executor: exec})
 			}
 		default:
 			switch {
 			case strings.HasSuffix(b.kind, "_tool_result"):
-				parts = append(parts, Part{Type: "tool_call_response", ID: b.toolID, Result: b.result})
+				// A *_tool_result block is always a server-executed tool's
+				// inline result (web_search_tool_result, mcp_tool_result, …);
+				// the client path returns results as a fresh user-turn
+				// tool_result, never here.
+				parts = append(parts, Part{Type: "tool_call_response", ID: b.toolID, Result: b.result, Executor: "server"})
 			case b.kind != "":
 				parts = append(parts, Part{Type: b.kind})
 			}
@@ -811,10 +835,13 @@ func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 			}
 			for _, p := range cand.Content.Parts {
 				if p.FunctionCall != nil {
+					// Gemini function calls are always client-executed (no
+					// provider-hosted tools in this path).
 					toolParts = append(toolParts, Part{
 						Type:      "tool_call",
 						Name:      p.FunctionCall.Name,
 						Arguments: nonEmptyRaw(p.FunctionCall.Args),
+						Executor:  "client",
 					})
 					continue
 				}

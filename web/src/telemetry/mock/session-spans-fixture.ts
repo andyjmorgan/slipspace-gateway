@@ -9,6 +9,9 @@
 //   - 4 conversations (main + three sub-agents), overlapping for concurrency
 //   - client tool calls joined to a later span's tool_call_response (rule 4)
 //   - one server-executed tool: call + response in the same span (rule 8)
+//   - one server-executed tool flagged executor:"server" with NO same-span
+//     response (OpenAI web_search folds its result into the model output) —
+//     the flag alone must land it in the server tool table
 //   - one unjoined tool_call_response (capture-gap honesty path)
 //   - one error tool result, one truncated-args call, one raw non-JSON args
 
@@ -118,12 +121,25 @@ export const SESSION_SPANS_FIXTURE: SessionSpan[] = [
       {
         type: "tool_call",
         id: "fx-tc-003",
-        name: "web_search",
+        name: "knowledge_search",
         args: '{"query":"benchmark dashboards quarterly metrics"}',
         args_chars: 50,
+        executor: "server",
       },
       // Same-span response → server-executed tool (renderer-contract rule 8).
-      { type: "tool_call_response", id: "fx-tc-003", chars: 2100 },
+      { type: "tool_call_response", id: "fx-tc-003", chars: 2100, executor: "server" },
+      // Provider-hosted web_search (OpenAI Responses): flagged executor:server
+      // but NO same-span response — its result folds into the model output, so
+      // the flag is the only server signal. Must still land in the server tool
+      // table, not client.
+      {
+        type: "tool_call",
+        id: "fx-tc-004",
+        name: "web_search",
+        args: '{"query":"published Q1 SaaS benchmark medians"}',
+        args_chars: 47,
+        executor: "server",
+      },
       { type: "text", chars: 260 },
     ],
     input_parts: [],
