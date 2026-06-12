@@ -77,6 +77,14 @@ type Citation struct {
 	// Title is the cited source title when the source carries one.
 	Title string `json:"title,omitempty"`
 
+	// EncryptedIndex is the opaque encrypted reference Anthropic attaches to
+	// web_search_result_location citations so the citation context survives
+	// across multi-turn conversations. Present only on web-search citations;
+	// distinct from the start/end index fields on char/page/block locations
+	// (which still ride in via DynamicProperties).
+	// Ref: https://docs.anthropic.com/en/docs/build-with-claude/citations
+	EncryptedIndex string `json:"encrypted_index,omitempty"`
+
 	models.DynamicProperties
 }
 
@@ -246,6 +254,130 @@ func (b *ToolResultBlock) UnmarshalJSON(data []byte) error { return models.Unmar
 // resulting object.
 func (b ToolResultBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
 
+// ServerToolUseBlock is the "server_tool_use" content block variant emitted
+// when the model invokes a server-side (Anthropic-hosted) tool such as web
+// search or web fetch. It mirrors ToolUseBlock's shape — the result lands in a
+// sibling WebSearchToolResultBlock / WebFetchToolResultBlock correlated by the
+// shared ID — and, like tool_use, streams its Input across input_json_delta
+// fragments. Unknown fields round-trip via the embedded DynamicProperties.
+// Ref: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool
+type ServerToolUseBlock struct {
+	// Type is the wire "type" discriminator, always "server_tool_use".
+	Type string `json:"type"`
+
+	// ID is the Anthropic-assigned server-tool-call identifier (prefixed
+	// "srvtoolu_"); echoed as ToolUseID on the corresponding result block.
+	ID string `json:"id"`
+
+	// Name is the server tool the model invoked (e.g. "web_search",
+	// "web_fetch").
+	Name string `json:"name"`
+
+	// Input is the structured argument payload (JSON object, e.g.
+	// {"query":"..."}). Kept raw; streamed responses accumulate it from
+	// input_json_delta fragments.
+	Input json.RawMessage `json:"input,omitempty"`
+
+	// Caller attributes the invocation to its invoker (e.g. {"type":"direct"}),
+	// matching the field on ToolUseBlock.
+	Caller *ToolCaller `json:"caller,omitempty"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "server_tool_use" discriminator.
+func (ServerToolUseBlock) BlockType() string { return "server_tool_use" }
+
+func (ServerToolUseBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *ServerToolUseBlock) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, b)
+}
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b ServerToolUseBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
+// WebSearchToolResultBlock is the "web_search_tool_result" content block
+// carrying the outcome of a server-side web_search invocation. Content holds
+// either an array of web_search_result items ({type,title,url,
+// encrypted_content,page_age}) or a {type:"web_search_tool_result_error"}
+// object, so it is kept raw to round-trip both shapes intact. Unknown fields
+// round-trip via the embedded DynamicProperties.
+// Ref: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool
+type WebSearchToolResultBlock struct {
+	// Type is the wire "type" discriminator, always "web_search_tool_result".
+	Type string `json:"type"`
+
+	// ToolUseID echoes the ID of the ServerToolUseBlock this result answers.
+	ToolUseID string `json:"tool_use_id"`
+
+	// Content carries the search results array or an error object; kept raw
+	// because Anthropic emits both shapes here.
+	Content json.RawMessage `json:"content,omitempty"`
+
+	// Caller attributes the result to its invoker (e.g. {"type":"direct"}).
+	Caller *ToolCaller `json:"caller,omitempty"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "web_search_tool_result" discriminator.
+func (WebSearchToolResultBlock) BlockType() string { return "web_search_tool_result" }
+
+func (WebSearchToolResultBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *WebSearchToolResultBlock) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, b)
+}
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b WebSearchToolResultBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
+// WebFetchToolResultBlock is the "web_fetch_tool_result" content block carrying
+// the outcome of a server-side web_fetch invocation. Content holds either a
+// web_fetch_result object ({type,url,retrieved_at,content:{...document...}}) or
+// a {type:"web_fetch_tool_result_error"} object, so it is kept raw to
+// round-trip both shapes intact. Unknown fields round-trip via the embedded
+// DynamicProperties.
+// Ref: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool
+type WebFetchToolResultBlock struct {
+	// Type is the wire "type" discriminator, always "web_fetch_tool_result".
+	Type string `json:"type"`
+
+	// ToolUseID echoes the ID of the ServerToolUseBlock this result answers.
+	ToolUseID string `json:"tool_use_id"`
+
+	// Content carries the fetch result object or an error object; kept raw
+	// because Anthropic emits both shapes here.
+	Content json.RawMessage `json:"content,omitempty"`
+
+	// Caller attributes the result to its invoker (e.g. {"type":"direct"}).
+	Caller *ToolCaller `json:"caller,omitempty"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "web_fetch_tool_result" discriminator.
+func (WebFetchToolResultBlock) BlockType() string { return "web_fetch_tool_result" }
+
+func (WebFetchToolResultBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *WebFetchToolResultBlock) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, b)
+}
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b WebFetchToolResultBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
 // ThinkingBlock is the "thinking" content block variant carrying the model's
 // extended-thinking trace. The non-streaming response embeds it directly; the
 // streaming response delivers it as a thinking content_block_start followed by
@@ -341,10 +473,17 @@ func (b UnknownBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynam
 var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
 	DiscriminatorField: "type",
 	Factories: map[string]func() ContentBlock{
-		"text":              func() ContentBlock { return &TextBlock{} },
-		"image":             func() ContentBlock { return &ImageBlock{} },
-		"tool_use":          func() ContentBlock { return &ToolUseBlock{} },
-		"tool_result":       func() ContentBlock { return &ToolResultBlock{} },
+		"text":            func() ContentBlock { return &TextBlock{} },
+		"image":           func() ContentBlock { return &ImageBlock{} },
+		"tool_use":        func() ContentBlock { return &ToolUseBlock{} },
+		"tool_result":     func() ContentBlock { return &ToolResultBlock{} },
+		"server_tool_use": func() ContentBlock { return &ServerToolUseBlock{} },
+		"web_search_tool_result": func() ContentBlock {
+			return &WebSearchToolResultBlock{}
+		},
+		"web_fetch_tool_result": func() ContentBlock {
+			return &WebFetchToolResultBlock{}
+		},
 		"thinking":          func() ContentBlock { return &ThinkingBlock{} },
 		"redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
 	},

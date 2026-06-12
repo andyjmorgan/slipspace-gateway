@@ -16,7 +16,8 @@ import (
 //
 //   - message_start            (initial Message envelope — id, role,
 //     model, empty Content, partial Usage)
-//   - content_block_start      (block of kind text|tool_use|thinking)
+//   - content_block_start      (block of kind text|tool_use|
+//     server_tool_use|web_search_tool_result|thinking)
 //   - content_block_delta      (text_delta | input_json_delta |
 //     thinking_delta | signature_delta | citations_delta)
 //   - content_block_stop
@@ -126,6 +127,16 @@ func (s *anthropicState) absorbBlockStart(index int, block messages.ContentBlock
 		}
 	case *messages.ToolUseBlock:
 		st.kind = "tool_use"
+		if b != nil {
+			st.toolID = b.ID
+			st.toolName = b.Name
+		}
+	case *messages.ServerToolUseBlock:
+		// Server tools (web_search/web_fetch) stream their Input across
+		// input_json_delta fragments exactly like tool_use, so accumulate
+		// the same way — otherwise the rollup would emit the start block's
+		// empty input and silently drop the query.
+		st.kind = "server_tool_use"
 		if b != nil {
 			st.toolID = b.ID
 			st.toolName = b.Name
@@ -262,6 +273,23 @@ func (s *anthropicState) assemble() messages.MessagesResponse {
 			// leaves an unterminated fragment; splicing it verbatim would
 			// emit a structurally-invalid response body. Fall back to the
 			// start block's Input, or "{}".
+			if frag := st.toolArgs.String(); frag != "" && json.Valid([]byte(frag)) {
+				block.Input = json.RawMessage(frag)
+			} else if len(block.Input) == 0 {
+				block.Input = json.RawMessage("{}")
+			}
+			content = append(content, block)
+		case "server_tool_use":
+			// Same reconstruction as tool_use: reuse the start block (keeps ID,
+			// Name, Caller, and any DynamicProperties) and splice the streamed
+			// Input only when the accumulated fragment is valid JSON.
+			block, ok := st.raw.(*messages.ServerToolUseBlock)
+			if !ok || block == nil {
+				block = &messages.ServerToolUseBlock{}
+			}
+			block.Type = "server_tool_use"
+			block.ID = st.toolID
+			block.Name = st.toolName
 			if frag := st.toolArgs.String(); frag != "" && json.Valid([]byte(frag)) {
 				block.Input = json.RawMessage(frag)
 			} else if len(block.Input) == 0 {

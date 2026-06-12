@@ -2,6 +2,7 @@ package accumulator
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
@@ -368,6 +369,87 @@ func TestAccumulate_AnthropicMessages_AssemblesToolUse(t *testing.T) {
 	}
 	if string(tu.Input) != `{"city":"Paris"}` {
 		t.Errorf("Input=%q", tu.Input)
+	}
+}
+
+// TestAccumulate_AnthropicMessages_ServerToolUseRollup exercises the
+// web_search streaming shape captured from a real claude-opus-4-8 response:
+// a server_tool_use block whose query streams across input_json_delta
+// fragments, followed by a web_search_tool_result block delivered complete in
+// its content_block_start, then the terminal usage carrying the server-tool
+// counters. The server_tool_use input MUST survive the rollup — before the
+// accumulator special-cased it, the streamed query was silently dropped and
+// the rollup emitted an empty {} input.
+func TestAccumulate_AnthropicMessages_ServerToolUseRollup(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		`event: message_start` + "\n" +
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\n" +
+		`event: content_block_start` + "\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}` + "\n\n" +
+		`event: content_block_delta` + "\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":"}}` + "\n\n" +
+		`event: content_block_delta` + "\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" \"tool_calls schema\"}"}}` + "\n\n" +
+		`event: content_block_stop` + "\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		`event: content_block_start` + "\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","caller":{"type":"direct"},"content":[{"type":"web_search_result","title":"Docs","url":"https://example.com","encrypted_content":"abc"}]}}` + "\n\n" +
+		`event: content_block_stop` + "\n" +
+		`data: {"type":"content_block_stop","index":1}` + "\n\n" +
+		`event: content_block_start` + "\n" +
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		`event: content_block_delta` + "\n" +
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Here is the answer."}}` + "\n\n" +
+		`event: message_delta` + "\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}}` + "\n\n" +
+		`event: message_stop` + "\n" +
+		`data: {"type":"message_stop"}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	if !got.Recognised || got.Partial {
+		t.Fatalf("got %+v", got)
+	}
+	resp := parseAnthropic(t, got.Assembled)
+	if len(resp.Content) != 3 {
+		t.Fatalf("Content=%d want 3", len(resp.Content))
+	}
+
+	stu, ok := resp.Content[0].(*messages.ServerToolUseBlock)
+	if !ok {
+		t.Fatalf("block[0] = %T want *ServerToolUseBlock", resp.Content[0])
+	}
+	if stu.ID != "srvtoolu_1" || stu.Name != "web_search" {
+		t.Errorf("server_tool_use ID/Name = %q/%q", stu.ID, stu.Name)
+	}
+	// The load-bearing assertion: the streamed query is preserved, not dropped.
+	// (json.RawMessage is compacted on marshal, so the inter-token space the
+	// fragments carried is dropped — the value is what matters.)
+	if string(stu.Input) != `{"query":"tool_calls schema"}` {
+		t.Errorf("server_tool_use Input=%q want the reassembled query", stu.Input)
+	}
+
+	res, ok := resp.Content[1].(*messages.WebSearchToolResultBlock)
+	if !ok {
+		t.Fatalf("block[1] = %T want *WebSearchToolResultBlock", resp.Content[1])
+	}
+	if res.ToolUseID != "srvtoolu_1" {
+		t.Errorf("web_search_tool_result tool_use_id=%q", res.ToolUseID)
+	}
+	if res.Caller == nil || res.Caller.Type != "direct" {
+		t.Errorf("web_search_tool_result caller=%+v", res.Caller)
+	}
+	if !json.Valid(res.Content) || !strings.Contains(string(res.Content), "web_search_result") {
+		t.Errorf("web_search_tool_result content not preserved: %s", res.Content)
+	}
+
+	if tb, ok := resp.Content[2].(*messages.TextBlock); !ok || tb.Text != "Here is the answer." {
+		t.Errorf("block[2] = %+v", resp.Content[2])
+	}
+
+	if resp.Usage.ServerToolUse == nil ||
+		resp.Usage.ServerToolUse.WebSearchRequests == nil || *resp.Usage.ServerToolUse.WebSearchRequests != 1 ||
+		resp.Usage.ServerToolUse.WebFetchRequests == nil || *resp.Usage.ServerToolUse.WebFetchRequests != 0 {
+		t.Errorf("usage.server_tool_use=%+v", resp.Usage.ServerToolUse)
 	}
 }
 
