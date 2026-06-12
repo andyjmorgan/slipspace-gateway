@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
@@ -100,6 +101,46 @@ func TestBindingsHandler_SortOrderingAcrossBranches(t *testing.T) {
 	}
 	if got.PassthroughBindings[0].Configuration != "alpha" || got.PassthroughBindings[1].Configuration != "beta" {
 		t.Errorf("passthrough not sorted by configuration: %+v", got.PassthroughBindings)
+	}
+}
+
+// TestBindingsHandler_CatchAllModelsNotNull guards the contract the web
+// console relies on: a binding with no models (catch-all) must serialise
+// `models` as `[]`, never `null`. The generated TS type declares
+// `models: string[]` and the bindings view reads `b.models.length`
+// directly, so a `null` here crashes the page on render.
+func TestBindingsHandler_CatchAllModelsNotNull(t *testing.T) {
+	rc := &config.ResolvedConfig{
+		Providers: contractsconfig.ProvidersConfig{
+			"openai": contractsconfig.Provider{
+				BaseURL: "https://api.openai.com",
+				Protocols: map[string]contractsconfig.ProviderProtocol{
+					"chat": {Path: "/v1/chat/completions"},
+				},
+			},
+		},
+		Configurations: map[string]contractsconfig.Configuration{
+			"alpha": {
+				Credentials: map[string]string{"openai": "sk-a"},
+				Bindings: []contractsconfig.Binding{
+					// Catch-all: no models declared.
+					{Protocol: "chat", Provider: "openai"},
+				},
+			},
+		},
+	}
+	populateIndexes(rc)
+
+	h := admin.BindingsHandler(config.NewStore(rc))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config/bindings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	// Assert against the raw wire bytes: unmarshalling into []string would
+	// mask the null-vs-[] distinction this test exists to catch.
+	if body := rec.Body.String(); !strings.Contains(body, `"models":[]`) || strings.Contains(body, `"models":null`) {
+		t.Fatalf("catch-all binding must emit models:[], got body: %s", body)
 	}
 }
 
