@@ -233,7 +233,7 @@ configurations:
       - connector: prod-audit-s3
 ```
 
-Defaults across the board: `sampling=1.0`, `sampling_key=correlation_id`, `max_body_bytes` unset → **no cap** (s3 / azure_blob have no default body cap; only `webhook` defaults to 1 MiB), `oversize_behaviour=metadata_only`, no filter. Bodies are still bounded by the bodycapture middleware's 10 MiB inbound read limit regardless.
+Defaults across the board: `sampling=1.0`, `sampling_key=correlation_id`, `max_body_bytes` unset → **no cap** (s3 / azure_blob AND webhook all have no default body cap; `DefaultMaxBodyBytes` returns 0 for all types), `oversize_behaviour=metadata_only`, no filter. Bodies are still bounded by the bodycapture middleware's 10 MiB inbound read limit regardless.
 
 ### 5% webhook sampling on errors only
 

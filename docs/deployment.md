@@ -199,7 +199,7 @@ spec:
       persistentVolumeClaim: { claimName: sluice-spool }
 ```
 
-Every field above is load-bearing. `runAsNonRoot` + `readOnlyRootFilesystem` are compatible with the scratch image (UID `65532:65532`, no writes outside `/tmp` and the spool mount); the listeners must bind `0.0.0.0` inside the container so the kube proxy reaches them. The `spool` PVC mount is read-write and must be writable by UID `65532` (set `fsGroup: 65532` on the pod's `securityContext`, or rely on the storage class's default ownership rules). Drop the volume + mount + `SLUICE_SPOOL_ROOT` when `policy.yaml` has no `connectors:` block — the spool is constructed lazily and idle deployments do not need storage.
+Every field above is load-bearing. `runAsNonRoot` + `readOnlyRootFilesystem` are compatible with the scratch image (UID `65532:65532`, no writes outside `/tmp` and the spool mount); the listeners must bind `0.0.0.0` inside the container so the kube proxy reaches them. Of the env vars shown, only `SLUICE_ADMIN_PASSWORD` is strictly required, and only when `admin.enabled: true` — `SLUICE_HTTP_BIND` and `SLUICE_PROMETHEUS_BIND` are optional (the data-plane listener defaults to `:8585` and the Prometheus listener defaults to disabled/empty). The spec sets the binds explicitly for legibility, not because the binary requires them. The `spool` PVC mount is read-write and must be writable by UID `65532` (set `fsGroup: 65532` on the pod's `securityContext`, or rely on the storage class's default ownership rules). Drop the volume + mount + `SLUICE_SPOOL_ROOT` when `policy.yaml` has no `connectors:` block — the spool is constructed lazily and idle deployments do not need storage.
 
 ---
 
@@ -283,7 +283,7 @@ spec:
 
 ### Restart-to-apply (non-admin paths only)
 
-Rule edits via the admin write API apply live — `config.Store.Replace` swaps the snapshot atomically and the next request evaluates against the new rule set. **Direct YAML edits on disk** (e.g. updating the source ConfigMap, editing the PVC contents from a sidecar, manual `kubectl cp`) still require a process restart — the in-binary `fsnotify` watcher is a v1.2+ task. To apply a direct edit, roll the Deployment (`kubectl rollout restart deployment/sluice-gateway`). Other top-level blocks (configurations, api_keys, providers, connectors, resilience_policies) have no write API yet; restart is the only path.
+Config edits via the admin write API apply live — `config.Store.Replace` swaps the snapshot atomically and the next request evaluates against the new config. Live write APIs cover rules, providers, groups, configurations, api_keys, and connectors (each clones the snapshot, validates, persists back to the block's source file, then publishes through `config.Store.Replace` — no restart). **Direct YAML edits on disk** (e.g. updating the source ConfigMap, editing the PVC contents from a sidecar, manual `kubectl cp`) still require a process restart — the in-binary `fsnotify` watcher is a v1.2+ task. To apply a direct edit, roll the Deployment (`kubectl rollout restart deployment/sluice-gateway`). The `admin` and `telemetry` blocks have no write API; changes to those also require a restart.
 
 ---
 
