@@ -1,8 +1,9 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
+import type { ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate, useParams } from "react-router"
 import { ChevronLeft, ChevronRight, RotateCcw, X } from "lucide-react"
-import { Bar, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { Button } from "@/components/ui/button"
 import { KPI } from "@/components/atoms/kpi"
 import { StatusPill } from "@/components/atoms/status-pill"
@@ -792,13 +793,17 @@ type BurnPoint = {
   cum: number
 }
 
-// TokenBurnPanel charts token consumption across the session: per-span tokens
-// in/out as stacked bars (--p-input / --p-output, the designated token-curve
-// colors) plus a cumulative burn line on the right axis. It shares the
-// timeline's time domain and respects the slice — when the brush moves, the
-// chart re-domains to [d0, d1], computed client-side from the already-loaded
-// structure spans. The slice is deferred so a fast brush drag doesn't force a
-// recharts re-render every frame.
+// TokenBurnPanel charts token consumption across the session, split into two
+// side-by-side line charts that share one time domain: per-request tokens
+// in/out (--p-input / --p-output, the designated token-curve colors) and the
+// running cumulative burn (--warn). They were one dual-axis ComposedChart, but
+// on long sessions the per-span bars collapsed to sub-pixel widths against the
+// cumulative line's scale and effectively vanished; two single-axis line charts
+// render cleanly at any span count and keep each question legible on its own
+// scale. Both respect the slice — when the brush moves, the charts re-domain to
+// [d0, d1], computed client-side from the already-loaded structure spans. The
+// slice is deferred so a fast brush drag doesn't force a recharts re-render
+// every frame.
 function TokenBurnPanel({ vm, slice }: { vm: ViewModel; slice: SliceRange | null }) {
   const deferred = useDeferredValue(slice)
   const d0 = deferred?.d0 ?? 0
@@ -821,28 +826,76 @@ function TokenBurnPanel({ vm, slice }: { vm: ViewModel; slice: SliceRange | null
     return out
   }, [vm, d0, d1])
 
-  const axis = "var(--text-4)"
+  const sub = full ? null : (
+    <span className="mono tnum font-semibold" style={{ color: "var(--accent)" }}>
+      slice {clockAt(vm.t0ms, d0)} → {clockAt(vm.t0ms, d1)} · {fmt.uptime((d1 - d0) * 1000)}
+    </span>
+  )
+
   return (
-    <PanelCard>
-      <PanelHead
-        title="Token burn"
-        sub={
-          full ? (
-            "tokens per request · cumulative across the session — follows the timeline slice"
-          ) : (
-            <span className="mono tnum font-semibold" style={{ color: "var(--accent)" }}>
-              slice {clockAt(vm.t0ms, d0)} → {clockAt(vm.t0ms, d1)} · {fmt.uptime((d1 - d0) * 1000)}
-            </span>
-          )
-        }
+    <div className="grid lg:grid-cols-2 gap-3 items-start">
+      <BurnChartCard
+        vm={vm}
+        points={points}
+        d0={d0}
+        d1={d1}
+        title="Tokens per request"
+        sub={sub ?? "tokens in / out per request — follows the timeline slice"}
         action={
           <div className="flex items-center gap-3 flex-wrap text-[11px] text-[color:var(--text-2)]">
-            <BurnSwatch color="var(--p-input)" label="tokens in" />
-            <BurnSwatch color="var(--p-output)" label="tokens out" />
+            <BurnSwatch color="var(--p-input)" label="tokens in" line />
+            <BurnSwatch color="var(--p-output)" label="tokens out" line />
+          </div>
+        }
+        lines={[
+          { key: "tin", color: "var(--p-input)" },
+          { key: "tout", color: "var(--p-output)" },
+        ]}
+      />
+      <BurnChartCard
+        vm={vm}
+        points={points}
+        d0={d0}
+        d1={d1}
+        title="Cumulative burn"
+        sub={sub ?? "running total tokens across the session — follows the timeline slice"}
+        action={
+          <div className="flex items-center gap-3 flex-wrap text-[11px] text-[color:var(--text-2)]">
             <BurnSwatch color="var(--warn)" label="cumulative" line />
           </div>
         }
+        lines={[{ key: "cum", color: "var(--warn)" }]}
       />
+    </div>
+  )
+}
+
+// BurnChartCard is one half of the token-burn split: a single-axis line chart
+// over the shared [d0, d1] time domain. `lines` selects which BurnPoint series
+// to draw (tin/tout for the per-request card, cum for the cumulative card).
+function BurnChartCard({
+  vm,
+  points,
+  d0,
+  d1,
+  title,
+  sub,
+  action,
+  lines,
+}: {
+  vm: ViewModel
+  points: BurnPoint[]
+  d0: number
+  d1: number
+  title: string
+  sub: ReactNode
+  action: ReactNode
+  lines: { key: keyof BurnPoint; color: string }[]
+}) {
+  const axis = "var(--text-4)"
+  return (
+    <PanelCard>
+      <PanelHead title={title} sub={sub} action={action} />
       <div className="px-4 pt-3 pb-2">
         {points.length === 0 ? (
           <div className="text-[12px] grid place-items-center min-h-[180px] text-[color:var(--text-4)]">
@@ -850,7 +903,7 @@ function TokenBurnPanel({ vm, slice }: { vm: ViewModel; slice: SliceRange | null
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={180}>
-            <ComposedChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+            <LineChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
               <XAxis
                 dataKey="t"
                 type="number"
@@ -861,25 +914,24 @@ function TokenBurnPanel({ vm, slice }: { vm: ViewModel; slice: SliceRange | null
                 minTickGap={42}
               />
               <YAxis
-                yAxisId="span"
                 tickFormatter={(v) => fmt.compact(v as number)}
                 tick={{ fontSize: 10, fill: axis }}
                 stroke={axis}
                 width={44}
               />
-              <YAxis
-                yAxisId="cum"
-                orientation="right"
-                tickFormatter={(v) => fmt.compact(v as number)}
-                tick={{ fontSize: 10, fill: axis }}
-                stroke={axis}
-                width={48}
-              />
-              <Tooltip cursor={{ fill: "var(--hover)" }} content={<BurnTooltip t0ms={vm.t0ms} />} />
-              <Bar yAxisId="span" dataKey="tin" stackId="t" fill="var(--p-input)" isAnimationActive={false} maxBarSize={14} />
-              <Bar yAxisId="span" dataKey="tout" stackId="t" fill="var(--p-output)" radius={[2, 2, 0, 0]} isAnimationActive={false} maxBarSize={14} />
-              <Line yAxisId="cum" dataKey="cum" type="monotone" stroke="var(--warn)" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-            </ComposedChart>
+              <Tooltip cursor={{ stroke: "var(--border)" }} content={<BurnTooltip t0ms={vm.t0ms} />} />
+              {lines.map((l) => (
+                <Line
+                  key={l.key}
+                  dataKey={l.key}
+                  type="monotone"
+                  stroke={l.color}
+                  strokeWidth={1.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
           </ResponsiveContainer>
         )}
       </div>
