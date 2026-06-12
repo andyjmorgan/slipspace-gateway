@@ -201,13 +201,16 @@ func TestListSessions(t *testing.T) {
 	seed := func(id, sess, cfg, model, tag string, in, out int64, at time.Time) {
 		// total_tokens now sums the promoted tokens_in/tokens_out columns (#318),
 		// so the seed sets them; the blob still carries the same usage for the
-		// inspector/SpanFields path.
+		// inspector/SpanFields path. Tags is likewise promoted to a column (v12):
+		// ingest sets RequestEvent.Tags from the span, so the seed sets it too
+		// (the facet/filter/rollup all read the column, not the blob).
 		span := fmt.Sprintf(
 			`{"gen_ai.usage.input_tokens":%d,"gen_ai.usage.output_tokens":%d,"tags":["%s"]}`,
 			in, out, tag)
 		if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
 			CorrelationID: id, SessionID: sess, Configuration: cfg, Model: model,
-			StatusCode: 200, ObservedAt: at, TokensIn: in, TokensOut: out, SpanEvent: []byte(span),
+			StatusCode: 200, ObservedAt: at, TokensIn: in, TokensOut: out,
+			Tags: []string{tag}, SpanEvent: []byte(span),
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
@@ -280,6 +283,14 @@ func TestListSessions(t *testing.T) {
 		if len(a.Models) != 1 || a.Models[0] != "lsq-m1" {
 			t.Errorf("A models = %v, want [lsq-m1]", a.Models)
 		}
+		// Tags roll up per session from the promoted column (both of A's requests
+		// carry lsq-x, deduped to one). The subagent session carried no tags.
+		if len(a.Tags) != 1 || a.Tags[0] != "lsq-x" {
+			t.Errorf("A tags = %v, want [lsq-x]", a.Tags)
+		}
+		if len(sub.Tags) != 0 {
+			t.Errorf("sub tags = %v, want []", sub.Tags)
+		}
 		if !a.Started.Equal(base.Add(-2*time.Hour)) || !a.LastAt.Equal(base.Add(-1*time.Hour)) {
 			t.Errorf("A bounds = %v..%v", a.Started, a.LastAt)
 		}
@@ -348,6 +359,34 @@ func TestListSessions(t *testing.T) {
 			t.Fatalf("page 2 = %+v (page 1 was %+v)", p2, p1)
 		}
 	})
+}
+
+// TestFacets_TagsFromColumn proves the tag facet enumerates the promoted tags
+// column (v12) — the fix for the ~30 s span_event detoast that emptied the
+// dropdowns. A seeded tag appears in the distinct facet set.
+func TestFacets_TagsFromColumn(t *testing.T) {
+	st := migratedStore(t)
+	ctx := context.Background()
+	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
+		CorrelationID: "facet-tag-1", SessionID: "facet-sess", StatusCode: 200,
+		ObservedAt: time.Now(), Tags: []string{"facet-uniq-tag"},
+		SpanEvent: []byte(`{"tags":["facet-uniq-tag"]}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := st.Facets(ctx)
+	if err != nil {
+		t.Fatalf("Facets: %v", err)
+	}
+	found := false
+	for _, tag := range f.Tags {
+		if tag == "facet-uniq-tag" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("facet tags %v missing seeded tag", f.Tags)
+	}
 }
 
 func TestMetricPoints_InsertAndList(t *testing.T) {

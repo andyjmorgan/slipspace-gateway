@@ -412,4 +412,34 @@ CREATE TABLE IF NOT EXISTS backfill_runs (
     completed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`,
 	},
+	{
+		version: 12,
+		name:    "promote_tags_column",
+		// Detoast fix for the facets dropdowns + the session-list tag rollup,
+		// same lesson as v10 (#318). Distinct-tag enumeration ran
+		// `jsonb_array_elements_text(span_event->'tags')` over the whole table —
+		// a full scan that detoasts every ~95 kB span (measured ~30 s on prod),
+		// because the GIN index on (span_event->'tags') backs containment (@>)
+		// but cannot enumerate distinct elements. /api/v1/facets computed tags
+		// last and returned all-or-nothing, so the scan blowing past the request
+		// deadline emptied EVERY dropdown. Aggregating tags per session from the
+		// blob would re-trigger the same scan.
+		//
+		// Promote tags to a GIN-indexed text[] column, projected from the span at
+		// ingest exactly like model/configuration/tokens_in. The blob stays the
+		// source of truth (SpanFields still decodes tags for the inspector /
+		// message rows); the column is a materialized projection. Forward-only
+		// and additive.
+		//
+		// ADD COLUMN with a constant DEFAULT is metadata-only (PG11+) → instant.
+		// The backfill of existing rows is deliberately NOT here (it detoasts
+		// every span — the exact cost this exists to avoid — and would outlast the
+		// liveness probe inside Migrate()); store.BackfillTags runs it out-of-band
+		// after the pod is serving (v10/v11 precedent). Existing rows read '{}'
+		// until then. The old (span_event->'tags') GIN index is left in place —
+		// harmless once readers move to the column; drop is a follow-up.
+		sql: `
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS request_events_tags_arr ON request_events USING gin (tags);`,
+	},
 }

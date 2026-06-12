@@ -576,6 +576,11 @@ export interface SessionSummary {
    */
   models: string[];
   /**
+   * Tags is the distinct post-rule tag set applied across the matching requests
+   * in the session (empty strings excluded). Empty when no rule tagged them.
+   */
+  tags: string[];
+  /**
    * StartedAt / LastActivity are the first and last request times — the
    * session's real bounds, which may fall outside the query window.
    */

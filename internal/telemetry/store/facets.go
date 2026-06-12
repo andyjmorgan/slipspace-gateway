@@ -7,7 +7,7 @@ import (
 
 // Facets is the set of distinct dimension values the message browser's dropdowns
 // offer. Each slice is sorted ascending and excludes the empty string; Tags is
-// flattened out of every event's span_event->'tags' array. Populated by Facets.
+// flattened out of every event's promoted tags text[] column. Populated by Facets.
 type Facets struct {
 	// Providers is the distinct post-rule upstream provider names.
 	Providers []string
@@ -24,9 +24,9 @@ type Facets struct {
 
 // Facets returns the distinct values per filter dimension for the dropdowns.
 // The scalar columns use SELECT DISTINCT (empty strings excluded); Tags unnests
-// span_event->'tags' (GIN-indexed) so the AND tag filter and its dropdown share
-// one source. The result is small and cacheable — the server layer holds it behind
-// a short TTL so a dropdown open is instant after the first scan.
+// the promoted tags text[] column (GIN-indexed) so the AND tag filter and its
+// dropdown share one source. The result is small and cacheable — the server layer
+// holds it behind a short TTL so a dropdown open is instant after the first scan.
 func (s *Store) Facets(ctx context.Context) (Facets, error) {
 	var f Facets
 	cols := []struct {
@@ -48,8 +48,12 @@ func (s *Store) Facets(ctx context.Context) (Facets, error) {
 		}
 		*c.dst = vals
 	}
+	// Tags unnests the promoted tags text[] column (v12) — empty arrays yield no
+	// rows, so no WHERE guard is needed. This replaced a
+	// jsonb_array_elements_text(span_event->'tags') scan that detoasted every
+	// span (~30 s on prod) and emptied all dropdowns when it blew the deadline.
 	tags, err := s.distinctStrings(ctx,
-		`SELECT DISTINCT t FROM request_events, LATERAL jsonb_array_elements_text(span_event->'tags') AS t WHERE span_event ? 'tags' ORDER BY 1`)
+		`SELECT DISTINCT t FROM request_events, LATERAL unnest(tags) AS t ORDER BY 1`)
 	if err != nil {
 		return Facets{}, fmt.Errorf("store: facets tags: %w", err)
 	}

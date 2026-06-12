@@ -110,6 +110,23 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		}
 	})
 
+	// The migration-v12 tags-column backfill runs out-of-band for the same
+	// reason as the token columns (re-deriving tags from span_event detoasts
+	// every span — the 30 s scan the column exists to replace). Run-once via
+	// backfill_runs, non-fatal — a failure only leaves pre-v12 rows reading an
+	// empty tag set (excluded from tag facets/filters) until the next boot.
+	safego.Go(ctx, "telemetry.backfill.tags", log, nil, func() {
+		n, err := st.BackfillTags(ctx, 0)
+		switch {
+		case err != nil && ctx.Err() != nil:
+			log.Info("tags column backfill interrupted by shutdown", "rows_updated", n)
+		case err != nil:
+			log.Error("tags column backfill failed", "rows_updated", n, "err", err)
+		case n > 0:
+			log.Info("tags column backfill complete", "rows_updated", n)
+		}
+	})
+
 	// Ingest surfaces: HMAC Record webhook (HTTP) for the full per-request
 	// digital record, OTLP gRPC for the gen_ai telemetry feed + sluice meters.
 	reg := registry.New(cfg.Gateways)

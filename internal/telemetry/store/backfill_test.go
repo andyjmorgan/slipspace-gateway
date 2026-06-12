@@ -192,6 +192,39 @@ func TestBackfillTokenColumns_ContextCancelled(t *testing.T) {
 	}
 }
 
+func TestBackfillTags(t *testing.T) {
+	// One open-ended UPDATE (no page bounds) running the tags projection, then
+	// the completion record under the tags bookkeeping name.
+	q := &backfillQuerier{affected: 7}
+	got, err := newStore(q).BackfillTags(ctx(), 0)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got != 7 {
+		t.Errorf("rows = %d, want 7", got)
+	}
+	var sawUpdate, sawRecord bool
+	for i, sql := range q.execSQL {
+		switch {
+		case strings.Contains(sql, "backfill_runs"):
+			sawRecord = true
+			if name, _ := q.execArgs[i][0].(string); name != backfillTagsColumnName {
+				t.Errorf("recorded name = %q, want %q", name, backfillTagsColumnName)
+			}
+		case strings.Contains(sql, "span_event->'tags'"):
+			sawUpdate = true
+		default:
+			t.Errorf("unexpected exec: %q", sql)
+		}
+	}
+	if !sawUpdate {
+		t.Error("tags projection UPDATE never ran")
+	}
+	if !sawRecord {
+		t.Error("completion not recorded")
+	}
+}
+
 // TestStoreSQL_UsesLiveV10Columns is the regression tripwire for the
 // 2026-06-10 prod errors (`column "streaming" does not exist`, `column "blob"
 // does not exist`): every package SQL constant that touches request_events or
@@ -202,8 +235,9 @@ func TestStoreSQL_UsesLiveV10Columns(t *testing.T) {
 	stmts := map[string]string{
 		"requestEventColumns":    requestEventColumns,
 		"insertEventSQL":         insertEventSQL,
-		"backfillTokenPageSQL":   backfillTokenPageSQL,
+		"backfillPageSQL":        backfillPageSQL,
 		"backfillTokenUpdateSQL": backfillTokenUpdateSQL,
+		"backfillTagsUpdateSQL":  backfillTagsUpdateSQL,
 		"backfillCompletedSQL":   backfillCompletedSQL,
 		"backfillRecordSQL":      backfillRecordSQL,
 		"createSchemaMigrations": createSchemaMigrations,
@@ -214,10 +248,16 @@ func TestStoreSQL_UsesLiveV10Columns(t *testing.T) {
 			t.Errorf("%s references dropped/nonexistent column %q", name, m)
 		}
 	}
-	// The backfill must project from the span blob into the promoted columns.
+	// The token backfill must project from the span blob into the promoted columns.
 	for _, want := range []string{"tokens_in", "tokens_out", "span_event->>'gen_ai.usage.input_tokens'", "span_event->>'gen_ai.usage.output_tokens'"} {
 		if !strings.Contains(backfillTokenUpdateSQL, want) {
 			t.Errorf("backfillTokenUpdateSQL missing %q", want)
+		}
+	}
+	// The tags backfill must project the blob's tags array into the tags column.
+	for _, want := range []string{"tags =", "span_event->'tags'"} {
+		if !strings.Contains(backfillTagsUpdateSQL, want) {
+			t.Errorf("backfillTagsUpdateSQL missing %q", want)
 		}
 	}
 }

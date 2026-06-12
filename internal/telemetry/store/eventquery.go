@@ -40,7 +40,8 @@ type EventFilter struct {
 	// box; empty means no predicate.
 	UserID string
 	// Tags narrows to events whose post-rule tag set contains ALL listed tags
-	// (JSONB containment). Empty/nil means no predicate.
+	// (text[] containment on the promoted tags column). Empty/nil means no
+	// predicate.
 	Tags []string
 }
 
@@ -75,14 +76,13 @@ func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 		args = append(args, f.Gateway)
 		where = append(where, fmt.Sprintf("span_event->>'gateway_id' = $%d", len(args)))
 	}
-	// Tags is an AND containment: the event's span_event->'tags' array must
-	// contain every requested tag. We bind the requested set as a single jsonb
-	// array param so the @> operator can use the GIN index on
-	// (span_event->'tags').
+	// Tags is an AND containment: the event's tags array must contain every
+	// requested tag. We bind the requested set as a text[] param so the @>
+	// operator uses the GIN index on the promoted tags column (v12) — no
+	// span_event detoast.
 	if len(f.Tags) > 0 {
-		tagsJSON, _ := json.Marshal(f.Tags)
-		args = append(args, string(tagsJSON))
-		where = append(where, fmt.Sprintf("span_event->'tags' @> $%d::jsonb", len(args)))
+		args = append(args, f.Tags)
+		where = append(where, fmt.Sprintf("tags @> $%d", len(args)))
 	}
 	if lo, hi, ok := statusClassBounds(f.StatusClass); ok {
 		args = append(args, lo)
@@ -252,6 +252,10 @@ type SessionSummary struct {
 	TotalTokens int64
 	// Models is the distinct requested model names, empty strings excluded.
 	Models []string
+	// Tags is the distinct post-rule tag set across the matching rows (empty
+	// strings excluded), aggregated from the promoted tags text[] column. Empty
+	// for a session whose requests carried no tags.
+	Tags []string
 	// Started / LastAt are the first and last observed_at across the matching
 	// rows — the session's real bounds, which may fall outside the query window.
 	Started time.Time
@@ -316,21 +320,24 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
 		limit = eventListPageMax
 	}
 
-	// Filter predicates bind first ($1..$k) and live in the CTE WHERE; the
-	// window + keyset predicates bind after and live in the outer WHERE, reading
-	// the aggregated started/last_at. The args slice is built in the same order
-	// the $N placeholders appear in the SQL text.
+	// Filter predicates bind first ($1..$k) and live in BOTH CTE WHEREs (the same
+	// $N are referenced twice — Postgres allows param reuse — so the args slice
+	// carries each filter value once); the window + keyset predicates bind after
+	// and live in the outer WHERE, reading the aggregated started/last_at off the
+	// agg side (a.). The args slice is built in the same order the $N placeholders
+	// appear in the SQL text.
 	inner := []string{"session_id <> ''"}
 	inner, args := appendFilter(inner, nil, p.Filter)
+	innerWhere := strings.Join(inner, " AND ")
 
 	var outer []string
 	if !p.From.IsZero() {
 		args = append(args, p.From)
-		outer = append(outer, fmt.Sprintf("last_at >= $%d", len(args)))
+		outer = append(outer, fmt.Sprintf("a.last_at >= $%d", len(args)))
 	}
 	if !p.To.IsZero() {
 		args = append(args, p.To)
-		outer = append(outer, fmt.Sprintf("started < $%d", len(args)))
+		outer = append(outer, fmt.Sprintf("a.started < $%d", len(args)))
 	}
 	if p.Cursor != "" {
 		cur, err := decodeSessionCursor(p.Cursor)
@@ -340,13 +347,19 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
 		args = append(args, cur.LastAt)
 		lIdx := len(args)
 		args = append(args, cur.SessionID)
-		outer = append(outer, fmt.Sprintf("(last_at, session_id) < ($%d, $%d)", lIdx, len(args)))
+		outer = append(outer, fmt.Sprintf("(a.last_at, a.session_id) < ($%d, $%d)", lIdx, len(args)))
 	}
 
 	// total_tokens sums the promoted tokens_in/tokens_out columns (#318) — NOT
 	// span_event. The pre-#318 form summed the usage out of the JSONB blob, which
 	// detoasted every ~95 kB span per row (~3.8 s); reading the columns keeps the
 	// whole aggregate off the blob so it never detoasts.
+	//
+	// Tags are aggregated in a SEPARATE CTE that does its own GROUP BY over
+	// LATERAL unnest(tags): folding the unnest into agg would multiply rows and
+	// corrupt COUNT(*)/SUM(tokens). Both CTEs read only columns (the promoted
+	// tags text[], v12) — still no detoast — and share the same $1..$k filter
+	// predicates; the LEFT JOIN keeps sessions whose rows carry no tags.
 	q := `WITH agg AS (
   SELECT session_id,
          COUNT(*) AS messages,
@@ -358,15 +371,23 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
          MAX(observed_at) AS last_at,
          COALESCE(array_agg(DISTINCT model) FILTER (WHERE model <> ''), '{}') AS models
   FROM request_events
-  WHERE ` + strings.Join(inner, " AND ") + `
+  WHERE ` + innerWhere + `
+  GROUP BY session_id
+), session_tags AS (
+  SELECT session_id,
+         COALESCE(array_agg(DISTINCT tag) FILTER (WHERE tag <> ''), '{}') AS tags
+  FROM request_events, LATERAL unnest(tags) AS tag
+  WHERE ` + innerWhere + `
   GROUP BY session_id
 )
-SELECT session_id, messages, subagents, total_tokens, started, last_at, models FROM agg`
+SELECT a.session_id, a.messages, a.subagents, a.total_tokens, a.started, a.last_at,
+       a.models, COALESCE(t.tags, '{}') AS tags
+FROM agg a LEFT JOIN session_tags t USING (session_id)`
 	if len(outer) > 0 {
 		q += ` WHERE ` + strings.Join(outer, " AND ")
 	}
 	args = append(args, limit+1)
-	q += fmt.Sprintf(` ORDER BY last_at DESC, session_id DESC LIMIT $%d`, len(args))
+	q += fmt.Sprintf(` ORDER BY a.last_at DESC, a.session_id DESC LIMIT $%d`, len(args))
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -377,7 +398,7 @@ SELECT session_id, messages, subagents, total_tokens, started, last_at, models F
 	var out []SessionSummary
 	for rows.Next() {
 		var sum SessionSummary
-		if serr := rows.Scan(&sum.SessionID, &sum.Messages, &sum.Subagents, &sum.TotalTokens, &sum.Started, &sum.LastAt, &sum.Models); serr != nil {
+		if serr := rows.Scan(&sum.SessionID, &sum.Messages, &sum.Subagents, &sum.TotalTokens, &sum.Started, &sum.LastAt, &sum.Models, &sum.Tags); serr != nil {
 			return nil, "", fmt.Errorf("store: scan session summary: %w", serr)
 		}
 		out = append(out, sum)
