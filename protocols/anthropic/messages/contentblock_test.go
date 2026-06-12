@@ -69,8 +69,11 @@ func TestUnmarshalContentBlock_TextWithCitations(t *testing.T) {
 		c.URL != "https://example.com" || c.Title != "Sky Facts" {
 		t.Fatalf("citation = %+v", c)
 	}
-	if string(c.Extra["encrypted_index"]) != `"abc"` {
-		t.Fatalf("location-specific field not preserved in Extra: %v", c.Extra)
+	if c.EncryptedIndex != "abc" {
+		t.Fatalf("encrypted_index not typed: %q (extra=%v)", c.EncryptedIndex, c.Extra)
+	}
+	if len(c.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked on citation: %v", c.Extra)
 	}
 	if len(tb.Extra) != 0 {
 		t.Fatalf("unmapped fields leaked on block: %v", tb.Extra)
@@ -137,6 +140,101 @@ func TestUnmarshalContentBlock_ToolResult(t *testing.T) {
 	}
 	if tr.BlockType() != "tool_result" {
 		t.Fatalf("block type = %q", tr.BlockType())
+	}
+	roundTrip(t, in, v)
+}
+
+// TestUnmarshalContentBlock_ServerToolUse covers the server-side tool
+// invocation block (web_search/web_fetch), shape captured from a live
+// claude-opus-4-8 streamed response.
+func TestUnmarshalContentBlock_ServerToolUse(t *testing.T) {
+	in := []byte(`{"caller":{"type":"direct"},"id":"srvtoolu_1","input":{"query":"tool_calls schema"},"name":"web_search","type":"server_tool_use"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	stu, ok := v.(*ServerToolUseBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if stu.ID != "srvtoolu_1" || stu.Name != "web_search" {
+		t.Fatalf("server_tool_use = %+v", stu)
+	}
+	if string(stu.Input) != `{"query":"tool_calls schema"}` {
+		t.Fatalf("input = %s", stu.Input)
+	}
+	if stu.Caller == nil || stu.Caller.Type != "direct" {
+		t.Fatalf("caller = %+v", stu.Caller)
+	}
+	if stu.BlockType() != "server_tool_use" {
+		t.Fatalf("block type = %q", stu.BlockType())
+	}
+	if len(stu.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked: %v", stu.Extra)
+	}
+	roundTrip(t, in, v)
+}
+
+// TestUnmarshalContentBlock_WebSearchToolResult covers the web_search result
+// block; Content is an array of web_search_result items kept raw. Shape
+// captured from a live claude-opus-4-8 streamed response.
+func TestUnmarshalContentBlock_WebSearchToolResult(t *testing.T) {
+	in := []byte(`{"caller":{"type":"direct"},"content":[{"encrypted_content":"abc","title":"Docs","type":"web_search_result","url":"https://example.com"}],"tool_use_id":"srvtoolu_1","type":"web_search_tool_result"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	res, ok := v.(*WebSearchToolResultBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if res.ToolUseID != "srvtoolu_1" {
+		t.Fatalf("tool_use_id = %q", res.ToolUseID)
+	}
+	if res.Caller == nil || res.Caller.Type != "direct" {
+		t.Fatalf("caller = %+v", res.Caller)
+	}
+	if res.BlockType() != "web_search_tool_result" {
+		t.Fatalf("block type = %q", res.BlockType())
+	}
+	if len(res.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked: %v", res.Extra)
+	}
+	roundTrip(t, in, v)
+}
+
+// TestUnmarshalContentBlock_WebSearchToolResultError covers the error variant
+// of the result block (Content is an object, not an array) — both shapes must
+// round-trip through the raw Content field.
+func TestUnmarshalContentBlock_WebSearchToolResultError(t *testing.T) {
+	in := []byte(`{"content":{"error_code":"max_uses_exceeded","type":"web_search_tool_result_error"},"tool_use_id":"srvtoolu_2","type":"web_search_tool_result"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := v.(*WebSearchToolResultBlock); !ok {
+		t.Fatalf("got %T", v)
+	}
+	roundTrip(t, in, v)
+}
+
+// TestUnmarshalContentBlock_WebFetchToolResult covers the web_fetch result
+// block; Content is a web_fetch_result object kept raw.
+func TestUnmarshalContentBlock_WebFetchToolResult(t *testing.T) {
+	in := []byte(`{"content":{"retrieved_at":"2026-01-01T00:00:00Z","type":"web_fetch_result","url":"https://example.com"},"tool_use_id":"srvtoolu_3","type":"web_fetch_tool_result"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	res, ok := v.(*WebFetchToolResultBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if res.ToolUseID != "srvtoolu_3" {
+		t.Fatalf("tool_use_id = %q", res.ToolUseID)
+	}
+	if res.BlockType() != "web_fetch_tool_result" {
+		t.Fatalf("block type = %q", res.BlockType())
 	}
 	roundTrip(t, in, v)
 }
@@ -299,6 +397,9 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ToolUseBlock{}),
 		reflect.TypeOf(ToolCaller{}),
 		reflect.TypeOf(ToolResultBlock{}),
+		reflect.TypeOf(ServerToolUseBlock{}),
+		reflect.TypeOf(WebSearchToolResultBlock{}),
+		reflect.TypeOf(WebFetchToolResultBlock{}),
 		reflect.TypeOf(ThinkingBlock{}),
 		reflect.TypeOf(RedactedThinkingBlock{}),
 		reflect.TypeOf(UnknownBlock{}),
@@ -319,7 +420,7 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 }
 
 func TestContentBlock_RegistryCoversAllConcreteTypes(t *testing.T) {
-	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "thinking": false, "redacted_thinking": false}
+	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "server_tool_use": false, "web_search_tool_result": false, "web_fetch_tool_result": false, "thinking": false, "redacted_thinking": false}
 	for k := range blockRegistry.Factories {
 		if _, ok := want[k]; !ok {
 			t.Errorf("unexpected registry key %q", k)

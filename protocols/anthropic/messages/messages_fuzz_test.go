@@ -122,6 +122,7 @@ func FuzzMessagesResponseUnmarshal(f *testing.F) {
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":1,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"output_tokens_details":{"thinking_tokens":0},"inference_geo":"not_available"}}`),
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"tool_use","id":"t1","name":"f","input":{},"caller":{"type":"direct"}}],"stop_reason":"tool_use","stop_details":null,"context_management":{"applied_edits":[]},"usage":{"input_tokens":1,"output_tokens":1}}`),
 		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"text","text":"hi","citations":[{"type":"web_search_result_location","cited_text":"c","url":"https://e.com","title":"T","encrypted_index":"z"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`),
+		[]byte(`{"id":"x","model":"m","role":"assistant","type":"message","content":[{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"q"}},{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","caller":{"type":"direct"},"content":[{"type":"web_search_result","title":"t","url":"https://e.com","encrypted_content":"z"}]}],"usage":{"input_tokens":1,"output_tokens":1,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}}`),
 	}
 	for _, s := range seeds {
 		f.Add(s)

@@ -184,6 +184,9 @@ var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
         "image":             func() ContentBlock { return &ImageBlock{} },
         "tool_use":          func() ContentBlock { return &ToolUseBlock{} },
         "tool_result":       func() ContentBlock { return &ToolResultBlock{} },
+        "server_tool_use":   func() ContentBlock { return &ServerToolUseBlock{} },
+        "web_search_tool_result": func() ContentBlock { return &WebSearchToolResultBlock{} },
+        "web_fetch_tool_result":  func() ContentBlock { return &WebFetchToolResultBlock{} },
         "thinking":          func() ContentBlock { return &ThinkingBlock{} },
         "redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
     },
@@ -191,12 +194,12 @@ var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
 }
 ```
 
-A content block with a `type` Anthropic adds next quarter — say
-`"server_tool_use"` — has no factory, so the registry builds an `UnknownBlock`
-carrying `Type: "server_tool_use"` and routes the rest of the object into
+A content block with a `type` Anthropic adds next quarter — say a hypothetical
+`"computer_tool_result"` — has no factory, so the registry builds an
+`UnknownBlock` carrying that `Type` and routes the rest of the object into
 `Extra`. The block re-marshals byte-equivalent and forwards to the provider
-intact (`contentblock.go:283-301`). **A new union member added without an
-`UnknownX` fallback is a regression** against invariant #1.
+intact. **A new union member added without an `UnknownX` fallback is a
+regression** against invariant #1.
 
 Three unions use the shared registry:
 

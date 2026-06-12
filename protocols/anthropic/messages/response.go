@@ -239,6 +239,12 @@ type ServerToolUseUsage struct {
 	// server.
 	WebSearchRequests *int `json:"web_search_requests,omitempty"`
 
+	// WebFetchRequests counts web-fetch calls the model made on the server;
+	// sibling of WebSearchRequests, emitted on the terminal usage of requests
+	// that used the hosted web_fetch tool.
+	// Ref: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool
+	WebFetchRequests *int `json:"web_fetch_requests,omitempty"`
+
 	models.DynamicProperties
 }
 

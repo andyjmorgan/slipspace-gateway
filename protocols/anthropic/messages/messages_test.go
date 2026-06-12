@@ -243,6 +243,8 @@ func TestMessagesResponse_RoundTripWithToolUse(t *testing.T) {
 		"model": "claude-sonnet-4-5",
 		"content": [
 			{"type":"text","text":"thinking..."},
+			{"type":"server_tool_use","id":"srvtoolu_01","name":"web_search","input":{"query":"weather"}},
+			{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01","content":[{"type":"web_search_result","title":"W","url":"https://e.com","encrypted_content":"z"}]},
 			{"type":"tool_use","id":"toolu_01","name":"search","input":{"q":"weather"}},
 			{"type":"future_block","payload":"keep"}
 		],
@@ -253,7 +255,7 @@ func TestMessagesResponse_RoundTripWithToolUse(t *testing.T) {
 			"cache_read_input_tokens": 0,
 			"input_tokens": 10,
 			"output_tokens": 25,
-			"server_tool_use": {"web_search_requests": 1},
+			"server_tool_use": {"web_search_requests": 1, "web_fetch_requests": 2},
 			"service_tier": "standard"
 		},
 		"container": {"expires_at":"2026-05-15T00:00:00Z","id":"c1"},
@@ -266,17 +268,23 @@ func TestMessagesResponse_RoundTripWithToolUse(t *testing.T) {
 	if resp.ID != "msg_01" || resp.Role != "assistant" {
 		t.Fatalf("typed fields wrong: %+v", resp)
 	}
-	if len(resp.Content) != 3 {
+	if len(resp.Content) != 5 {
 		t.Fatalf("content len = %d", len(resp.Content))
 	}
 	if _, ok := resp.Content[0].(*TextBlock); !ok {
 		t.Fatalf("content[0] = %T", resp.Content[0])
 	}
-	if tu, ok := resp.Content[1].(*ToolUseBlock); !ok || tu.Name != "search" {
+	if stu, ok := resp.Content[1].(*ServerToolUseBlock); !ok || stu.Name != "web_search" {
 		t.Fatalf("content[1] = %T %+v", resp.Content[1], resp.Content[1])
 	}
-	if u, ok := resp.Content[2].(*UnknownBlock); !ok || u.Type != "future_block" {
+	if res, ok := resp.Content[2].(*WebSearchToolResultBlock); !ok || res.ToolUseID != "srvtoolu_01" {
 		t.Fatalf("content[2] = %T %+v", resp.Content[2], resp.Content[2])
+	}
+	if tu, ok := resp.Content[3].(*ToolUseBlock); !ok || tu.Name != "search" {
+		t.Fatalf("content[3] = %T %+v", resp.Content[3], resp.Content[3])
+	}
+	if u, ok := resp.Content[4].(*UnknownBlock); !ok || u.Type != "future_block" {
+		t.Fatalf("content[4] = %T %+v", resp.Content[4], resp.Content[4])
 	}
 	if resp.StopReason == nil || *resp.StopReason != "tool_use" {
 		t.Fatalf("stop_reason = %v", resp.StopReason)
@@ -286,6 +294,9 @@ func TestMessagesResponse_RoundTripWithToolUse(t *testing.T) {
 	}
 	if resp.Usage.ServerToolUse == nil || resp.Usage.ServerToolUse.WebSearchRequests == nil || *resp.Usage.ServerToolUse.WebSearchRequests != 1 {
 		t.Fatalf("server_tool_use = %+v", resp.Usage.ServerToolUse)
+	}
+	if resp.Usage.ServerToolUse.WebFetchRequests == nil || *resp.Usage.ServerToolUse.WebFetchRequests != 2 {
+		t.Fatalf("web_fetch_requests = %v", resp.Usage.ServerToolUse.WebFetchRequests)
 	}
 	if resp.Container == nil || resp.Container.ID != "c1" {
 		t.Fatalf("container = %+v", resp.Container)
