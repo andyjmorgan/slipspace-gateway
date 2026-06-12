@@ -12,7 +12,7 @@ import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
 import { fetchFacets, type Facets } from "@/lib/messages"
 import { fetchSessions, type SessionSummary } from "@/lib/sessions"
-import { Dash } from "../components/messages-table"
+import { Dash, TagCell } from "../components/messages-table"
 
 // TIME_RANGES are the relative-window presets for the session list. "all" omits
 // the lower bound so the grouped scan walks the full history (heaviest query, so
@@ -197,6 +197,7 @@ function SessionsList() {
               <th className="text-right font-medium px-4 py-2">Subagents</th>
               <th className="text-right font-medium px-4 py-2">Tokens</th>
               <th className="text-left font-medium px-4 py-2">Models</th>
+              <th className="text-left font-medium px-4 py-2">Tags</th>
               <th className="text-left font-medium px-4 py-2">Started</th>
               <th className="text-left font-medium px-4 py-2">Last activity</th>
             </tr>
@@ -205,7 +206,7 @@ function SessionsList() {
             {status === "loading" && (
               <SkeletonRows
                 rows={Math.min(limit, 12)}
-                cols={[{ w: "12rem" }, { w: "2.5rem", align: "right" }, { w: "2.5rem", align: "right" }, { w: "3rem", align: "right" }, { w: "8rem" }, { w: "9rem" }, { w: "4rem" }]}
+                cols={[{ w: "12rem" }, { w: "2.5rem", align: "right" }, { w: "2.5rem", align: "right" }, { w: "3rem", align: "right" }, { w: "8rem" }, { w: "6rem" }, { w: "9rem" }, { w: "4rem" }]}
               />
             )}
             {status !== "loading" && sessions.map((s) => (
@@ -225,12 +226,13 @@ function SessionsList() {
                   {s.total_tokens > 0 ? fmt.compact(s.total_tokens) : <Dash />}
                 </td>
                 <td className="px-4 py-2"><ModelsCell models={s.models} /></td>
+                <td className="px-4 py-2"><TagCell tags={s.tags} /></td>
                 <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap" title={fmt.fullTime(s.started_at)}>{fmt.fullTime(s.started_at)}</td>
                 <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap" title={fmt.fullTime(s.last_activity)}>{fmt.ago(s.last_activity)}</td>
               </tr>
             ))}
             {status === "ok" && sessions.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No sessions match these filters." : "No sessions in this window."}</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No sessions match these filters." : "No sessions in this window."}</td></tr>
             )}
           </tbody>
         </TableScroll>

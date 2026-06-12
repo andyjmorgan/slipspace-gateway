@@ -5,6 +5,7 @@ package telemetry_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
@@ -69,6 +70,58 @@ func TestBackfillTokenColumns_Postgres(t *testing.T) {
 	n2, err := st.BackfillTokenColumns(ctx, 2)
 	if err != nil {
 		t.Fatalf("second BackfillTokenColumns: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second run updated %d rows, want 0 (bookkeeping no-op)", n2)
+	}
+}
+
+// TestBackfillTags_Postgres proves the migration-v12 out-of-band tags backfill
+// through real Postgres: a pre-v12 row carries its tag only in the span_event
+// blob (the promoted tags column at its '{}' default), and BackfillTags
+// re-projects the column from the blob. Verified through the tag facet, which
+// reads the column — so the tag is absent before the backfill and present
+// after. A second run is a bookkeeping no-op.
+func TestBackfillTags_Postgres(t *testing.T) {
+	st := migratedStore(t)
+	ctx := context.Background()
+
+	// Pre-v12 shape: tag only in the blob, Tags left nil so the column stays '{}'.
+	const uniq = "bf-tags-uniq"
+	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
+		CorrelationID: "bft-1", SessionID: "bft-sess", StatusCode: 200,
+		ObservedAt: time.Now(), SpanEvent: []byte(`{"tags":["` + uniq + `"]}`),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	hasTag := func() bool {
+		f, err := st.Facets(ctx)
+		if err != nil {
+			t.Fatalf("Facets: %v", err)
+		}
+		for _, tg := range f.Tags {
+			if tg == uniq {
+				return true
+			}
+		}
+		return false
+	}
+
+	// The facet reads the column, still empty for this pre-v12 row.
+	if hasTag() {
+		t.Fatal("tag present before backfill: column unexpectedly populated")
+	}
+	if _, err := st.BackfillTags(ctx, 2); err != nil {
+		t.Fatalf("BackfillTags: %v", err)
+	}
+	if !hasTag() {
+		t.Error("tag absent after backfill: column not re-projected from blob")
+	}
+
+	n2, err := st.BackfillTags(ctx, 2)
+	if err != nil {
+		t.Fatalf("second BackfillTags: %v", err)
 	}
 	if n2 != 0 {
 		t.Errorf("second run updated %d rows, want 0 (bookkeeping no-op)", n2)

@@ -417,6 +417,7 @@ func mapSessionSummary(s store.SessionSummary) adminc.SessionSummary {
 		Subagents:    s.Subagents,
 		TotalTokens:  s.TotalTokens,
 		Models:       models,
+		Tags:         nonNil(s.Tags),
 		StartedAt:    s.Started.UTC(),
 		LastActivity: s.LastAt.UTC(),
 	}

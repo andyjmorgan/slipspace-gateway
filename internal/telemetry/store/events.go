@@ -64,6 +64,13 @@ type RequestEvent struct {
 	// (no aggregate reads them yet).
 	TokensIn  int64
 	TokensOut int64
+	// Tags is the post-rule tag set (AddTagAction) projected from sluice.tags —
+	// the same values SpanFields decodes from the blob, promoted to a GIN-indexed
+	// text[] column so the facet enumeration, the AND-filter, and the session-list
+	// rollup never detoast span_event (v12). Write-only on the entity: read paths
+	// (MessageEntry) still decode tags from the blob, so scanRequestEvent does not
+	// project this column. Nil/empty when no rule tagged the request.
+	Tags []string
 	// SpanEvent is the COMPLETE span as received — every attribute plus the
 	// gen_ai content — stored verbatim and never stripped. The columns above are
 	// projections of it. nil only on a freshly built event before ingest sets it.
@@ -162,8 +169,8 @@ const requestEventColumns = `correlation_id, observed_at, session_id, conversati
 // overwritten from the latest span — there is one writer, so there is no
 // cross-feed merge to preserve.
 const insertEventSQL = `
-INSERT INTO request_events (correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, tokens_in, tokens_out, span_event)
-VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+INSERT INTO request_events (correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, tokens_in, tokens_out, tags, span_event)
+VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 ON CONFLICT (correlation_id) DO UPDATE SET
   observed_at            = COALESCE(EXCLUDED.observed_at, request_events.observed_at),
   session_id             = EXCLUDED.session_id,
@@ -178,6 +185,7 @@ ON CONFLICT (correlation_id) DO UPDATE SET
   status_code            = EXCLUDED.status_code,
   tokens_in              = EXCLUDED.tokens_in,
   tokens_out             = EXCLUDED.tokens_out,
+  tags                   = EXCLUDED.tags,
   span_event             = EXCLUDED.span_event`
 
 // UpsertRequestEvent inserts or replaces a request event from the OTel span
@@ -188,10 +196,16 @@ func (s *Store) UpsertRequestEvent(ctx context.Context, e RequestEvent) error {
 	if len(span) == 0 {
 		span = []byte("{}")
 	}
+	// pgx encodes a nil slice as SQL NULL; the tags column is NOT NULL DEFAULT
+	// '{}', so normalize an untagged request to an empty array.
+	tags := e.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	_, err := s.db.Exec(ctx, insertEventSQL,
 		e.CorrelationID, nullTime(e.ObservedAt), e.SessionID, e.ConversationID, e.ParentConversationID,
 		e.AgentID, e.UserID,
-		e.Provider, e.Model, e.Configuration, e.Protocol, e.StatusCode, e.TokensIn, e.TokensOut, span)
+		e.Provider, e.Model, e.Configuration, e.Protocol, e.StatusCode, e.TokensIn, e.TokensOut, tags, span)
 	if err != nil {
 		return fmt.Errorf("store: upsert request event: %w", err)
 	}

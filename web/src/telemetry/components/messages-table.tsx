@@ -25,8 +25,8 @@ const TAG_CELL_MAX = 3
 
 // TagCell renders a request's tags as compact chips, capped at TAG_CELL_MAX
 // with a "+N" overflow. The full list is on the row's hover title, so the cap
-// loses nothing — it just keeps rows uniform.
-function TagCell({ tags }: { tags?: string[] }) {
+// loses nothing — it just keeps rows uniform. Shared with the sessions table.
+export function TagCell({ tags }: { tags?: string[] }) {
   if (!tags || tags.length === 0) return <Dash />
   const shown = tags.slice(0, TAG_CELL_MAX)
   const overflow = tags.length - shown.length

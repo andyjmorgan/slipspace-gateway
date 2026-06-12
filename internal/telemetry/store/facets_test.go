@@ -62,7 +62,7 @@ func TestAppendFilter_SessionCorrelationTags(t *testing.T) {
 		Tags:                 []string{"eu", "pii"},
 	})
 	// session_id + correlation_id + conversation_id + parent_conversation_id +
-	// agent_id + user_id + the single jsonb tags param.
+	// agent_id + user_id + the single text[] tags param.
 	if len(args) != 7 {
 		t.Fatalf("args = %v", args)
 	}
@@ -72,13 +72,14 @@ func TestAppendFilter_SessionCorrelationTags(t *testing.T) {
 	}
 	if !contains(joined, "session_id =") || !contains(joined, "correlation_id =") ||
 		!contains(joined, "conversation_id =") || !contains(joined, "parent_conversation_id =") ||
-		!contains(joined, "agent_id =") || !contains(joined, "user_id =") || !contains(joined, "span_event->'tags' @>") {
+		!contains(joined, "agent_id =") || !contains(joined, "user_id =") || !contains(joined, "tags @>") {
 		t.Errorf("where = %q", joined)
 	}
-	// The tags arg is a JSON array string binding both tags.
-	tagArg, ok := args[6].(string)
-	if !ok || !contains(tagArg, `"eu"`) || !contains(tagArg, `"pii"`) {
-		t.Errorf("tags arg = %#v", args[4])
+	// The tags arg is the requested set bound directly as a []string (pgx encodes
+	// it as text[] for the @> containment).
+	tagArg, ok := args[6].([]string)
+	if !ok || len(tagArg) != 2 || tagArg[0] != "eu" || tagArg[1] != "pii" {
+		t.Errorf("tags arg = %#v", args[6])
 	}
 }
 

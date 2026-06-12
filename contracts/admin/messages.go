@@ -236,6 +236,10 @@ type SessionSummary struct {
 	// Models is the distinct requested model names (empty strings excluded).
 	Models []string `json:"models"`
 
+	// Tags is the distinct post-rule tag set applied across the matching requests
+	// in the session (empty strings excluded). Empty when no rule tagged them.
+	Tags []string `json:"tags"`
+
 	// StartedAt / LastActivity are the first and last request times — the
 	// session's real bounds, which may fall outside the query window.
 	StartedAt    time.Time `json:"started_at"`

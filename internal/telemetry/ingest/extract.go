@@ -110,6 +110,7 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 		StatusCode:           int(intAttr(attrs, attrStatusCode)),
 		TokensIn:             intAttr(attrs, attrInputTokens),
 		TokensOut:            intAttr(attrs, attrOutputTokens),
+		Tags:                 strSliceAttr(attrs, attrSluiceTags),
 		SpanEvent:            buildSpanEvent(attrs, span, contentMaxBytes),
 	}, true
 }
