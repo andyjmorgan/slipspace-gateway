@@ -100,19 +100,21 @@ export function MCard({
 
 // DetailsCard is the collapsible sibling of MCard (native <details>), used
 // for cards whose bodies are bulky (tool responses, system prompts, raw
-// span, wire bodies). The marker arrow rotates on open; copyText renders the
-// same top-right copy button, which works while collapsed.
+// span, wire bodies). It shares MCard's disclosure chevron exactly — same
+// glyph, same rotation, same dim color — so the expand/collapse affordance
+// reads identically across every card in the inspector; the card's semantic
+// color lives on the head's ● dot, not the chevron. The only behavioral
+// difference from MCard is defaultOpen=false. copyText renders the same
+// top-right copy button, which works while collapsed.
 export function DetailsCard({
   head,
   copyText,
   defaultOpen = false,
-  markerColor = "var(--warn)",
   children,
 }: {
   head: React.ReactNode
   copyText?: string
   defaultOpen?: boolean
-  markerColor?: string
   children: React.ReactNode
 }) {
   return (
@@ -121,9 +123,7 @@ export function DetailsCard({
       open={defaultOpen}
     >
       <summary className="flex items-center gap-2 px-3.5 py-2 bg-[color:var(--bg-2)] text-[12.5px] text-[color:var(--text-3)] flex-wrap min-h-[35px] cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-        <span className="transition-transform group-open:-rotate-90" style={{ color: markerColor }}>
-          ↩
-        </span>
+        <span className="text-[9px] text-[color:var(--text-4)] transition-transform group-open:rotate-90">▶</span>
         {head}
         {copyText ? <CardCopy text={copyText} /> : null}
       </summary>
@@ -717,7 +717,6 @@ function ToolDefCard({ def }: { def: GenAIToolDefinition }) {
   return (
     <DetailsCard
       copyText={copyText}
-      markerColor="var(--accent)"
       head={
         <>
           <ToolChip name={def.name} />
@@ -743,9 +742,13 @@ function ToolDefCard({ def }: { def: GenAIToolDefinition }) {
 // only, never the span) fires ONLY when this tab is first opened.
 export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
   const st = useMessageBody(cid, wanted, "report")
-  const [sub, setSub] = useState<"request" | "response" | "stream" | "headers">("request")
+  const [sub, setSub] = useState<"request" | "response" | "stream" | "headers" | "json">("request")
   const body = st.state === "ready" ? st.body : null
   const req = useMemo(() => (body ? prettyJSON(body.request) : ""), [body])
+  // The complete MessageBodyDetail the report fetch returned, every field
+  // verbatim — the operator's escape hatch when a sub-tab projection isn't
+  // enough (raw byte counts, truncation flags, the whole envelope at once).
+  const fullJSON = useMemo(() => (body ? JSON.stringify(body, null, 2) : ""), [body])
   const assembled = useMemo(() => (body ? prettyJSON(body.response_assembled) : ""), [body])
   // streaming = the accumulator produced a rollup; the raw SSE bytes then
   // live on the Stream sub-tab. Non-streaming responses pretty-print on the
@@ -766,6 +769,7 @@ export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
         <SubTab on={sub === "response"} onClick={() => setSub("response")} label="Response" meta={body?.response_total_bytes ? `${fmt.compact(body.response_total_bytes)} B` : undefined} />
         <SubTab on={sub === "stream"} onClick={() => setSub("stream")} label="Stream" meta={streaming ? "sse" : undefined} />
         <SubTab on={sub === "headers"} onClick={() => setSub("headers")} label="Headers" meta={body ? String(nHdr) : undefined} />
+        <SubTab on={sub === "json"} onClick={() => setSub("json")} label="JSON" meta={body ? `${fmt.compact(fullJSON.length)} chars` : undefined} />
       </div>
       {st.state === "loading" && <PaneNote>loading report…</PaneNote>}
       {st.state === "error" && <PaneNote warn>failed to load the report — try re-opening the tab</PaneNote>}
@@ -829,12 +833,20 @@ export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
           <>
             <WellHead copyText={headersCopyText(reqHdr, respHdr)}>credential values redacted at capture</WellHead>
             <HeaderList label="Request headers" headers={reqHdr} />
-            <div className="h-2.5" />
             <HeaderList label="Response headers" headers={respHdr} />
           </>
         ) : (
           <PaneNote>no headers captured</PaneNote>
         )
+      )}
+      {body && sub === "json" && (
+        <>
+          <WellHead copyText={fullJSON}>
+            the complete report payload, every field verbatim ·{" "}
+            <b className="text-[color:var(--text-2)]">{fmt.compact(fullJSON.length)}</b> chars
+          </WellHead>
+          <PreBlock text={fullJSON} />
+        </>
       )}
     </div>
   )
@@ -846,20 +858,39 @@ function headersCopyText(req: Record<string, string[]>, resp: Record<string, str
   return `${block("# request", req)}\n\n${block("# response", resp)}`
 }
 
+// HeaderList renders one redacted header snapshot as a collapsible card,
+// matching the inspector's card idiom (DetailsCard) so request/response
+// header blocks fold away like every other section. Open by default — the
+// operator chose the Headers sub-tab, so show the content.
 function HeaderList({ label, headers }: { label: string; headers: Record<string, string[]> }) {
   const keys = Object.keys(headers).sort()
-  if (!keys.length) return <div className="text-[12px] text-[color:var(--text-4)]">No {label.toLowerCase()}.</div>
+  const copyText = keys.length ? keys.map((k) => `${k}: ${headers[k].join(", ")}`).join("\n") : undefined
   return (
-    <div className="flex flex-col gap-1">
-      <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[color:var(--text-4)]">{label}</div>
-      <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg)] p-2 text-[11.5px] mono flex flex-col gap-0.5">
-        {keys.map((k) => (
-          <div key={k} className="flex gap-2 break-all">
-            <span className="text-[color:var(--text-3)] shrink-0">{k}:</span>
-            <span className="text-[color:var(--text-2)]">{headers[k].join(", ")}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <DetailsCard
+      defaultOpen
+      copyText={copyText}
+      head={
+        <>
+          <span style={{ color: "var(--text-3)" }}>●</span>
+          <span>{label}</span>
+          <span className="ml-auto mono tnum text-[11.5px] text-[color:var(--text-3)] pl-2.5 whitespace-nowrap">
+            <b className="text-[color:var(--text-2)]">{keys.length}</b> {keys.length === 1 ? "header" : "headers"}
+          </span>
+        </>
+      }
+    >
+      {keys.length ? (
+        <div className="rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg)] p-2 text-[11.5px] mono flex flex-col gap-0.5">
+          {keys.map((k) => (
+            <div key={k} className="flex gap-2 break-all">
+              <span className="text-[color:var(--text-3)] shrink-0">{k}:</span>
+              <span className="text-[color:var(--text-2)]">{headers[k].join(", ")}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-[12px] text-[color:var(--text-4)]">No {label.toLowerCase()}.</div>
+      )}
+    </DetailsCard>
   )
 }
