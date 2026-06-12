@@ -229,9 +229,18 @@ function buildViewModel(spansIn: SessionSpan[]): ViewModel | null {
           callT: s.tEnd,
           server: false,
         }
-        if ((s.output_parts ?? []).some((q) => q.type === "tool_call_response" && q.id === p.id)) {
+        // Executor is authoritative when the gateway tagged it (provider-
+        // hosted tools like OpenAI web_search fold their result into the model
+        // output, so there is no same-span tool_call_response to pair — the
+        // flag is the only server signal). The same-span pairing below stays
+        // as the fallback for legacy spans and for providers whose result
+        // does ride a discrete part (Anthropic).
+        const sameSpanResp = (s.output_parts ?? []).some(
+          (q) => q.type === "tool_call_response" && q.id === p.id,
+        )
+        if (p.executor === "server" || (p.executor !== "client" && sameSpanResp)) {
           row.server = true
-          row.resultT = s.t
+          if (sameSpanResp) row.resultT = s.t
           row.hostMs = s.latency_ms
         } else {
           for (let j = si + 1; j < flow.length; j++) {
@@ -331,15 +340,26 @@ export function SessionLifecyclePage() {
   if (!routeId) return null
   return (
     <div className="flex flex-col gap-3.5">
-      <LifecycleBreadcrumb sessionId={routeId} />
       <LifecycleBody key={routeId} sessionId={routeId} />
     </div>
   )
 }
 
-// LifecycleBreadcrumb: Sessions / <id> — the first segment routes back to the
-// list; the id IS this page (the lifecycle dashboard is the session view).
-function LifecycleBreadcrumb({ sessionId }: { sessionId: string }) {
+// LifecycleBreadcrumb: Sessions / <id> [ / <agent> ] — the first segment
+// routes back to the list; the id IS this page (the lifecycle dashboard is the
+// session view). The trailing agent segment appears only while a sub-agent is
+// focused (drilldown), and clicking it clears the focus.
+function LifecycleBreadcrumb({
+  sessionId,
+  focusedConv,
+  agentLabel,
+  onClear,
+}: {
+  sessionId: string
+  focusedConv: string | null
+  agentLabel: string | null
+  onClear: () => void
+}) {
   const nav = useNavigate()
   return (
     <div className="flex items-center gap-1.5 text-[13px] min-w-0 shrink-0">
@@ -351,9 +371,26 @@ function LifecycleBreadcrumb({ sessionId }: { sessionId: string }) {
         Sessions
       </button>
       <ChevronRight size={14} className="text-[color:var(--text-4)] shrink-0" />
-      <span className="mono text-[12px] text-[color:var(--text-2)] truncate" title={sessionId}>
+      <button
+        type="button"
+        onClick={onClear}
+        className={
+          "mono text-[12px] truncate shrink min-w-0 " +
+          (focusedConv ? "text-[color:var(--accent)] hover:underline" : "text-[color:var(--text-2)] cursor-default")
+        }
+        title={sessionId}
+        disabled={!focusedConv}
+      >
         {sessionId}
-      </span>
+      </button>
+      {focusedConv && agentLabel && (
+        <>
+          <ChevronRight size={14} className="text-[color:var(--text-4)] shrink-0" />
+          <span className="text-[12px] text-[color:var(--text-2)] truncate shrink-0" title={focusedConv}>
+            {agentLabel}
+          </span>
+        </>
+      )}
     </div>
   )
 }
@@ -404,9 +441,29 @@ function LifecycleBody({ sessionId }: { sessionId: string }) {
 
   const vm = useMemo(() => (status === "ok" ? buildViewModel(spans) : null), [status, spans])
 
+  // focusedConv is the sub-agent drilldown, seeded from #agent=<conv> so a
+  // focused view is shareable; null = whole session. onFocus mirrors it back
+  // to the hash (a handler, never during render).
+  const [focusedConv, setFocusedConvState] = useState<string | null>(() => {
+    const m = window.location.hash.match(/^#agent=(.+)$/)
+    return m ? decodeURIComponent(m[1]) : null
+  })
+  const onFocus = useCallback((conv: string | null) => {
+    setFocusedConvState(conv)
+    const next = conv ? `#agent=${encodeURIComponent(conv)}` : window.location.pathname + window.location.search
+    window.history.replaceState(null, "", next)
+  }, [])
+  // Only honor a focus that maps to a real conversation in this session.
+  const effFocus = vm && focusedConv && vm.byConv.has(focusedConv) ? focusedConv : null
+  const agentLabel = effFocus ? (effFocus === vm!.sid ? "main" : (vm!.alias.get(effFocus) ?? effFocus.slice(0, 10))) : null
+  const crumb = (
+    <LifecycleBreadcrumb sessionId={sessionId} focusedConv={effFocus} agentLabel={agentLabel} onClear={() => onFocus(null)} />
+  )
+
   if (status === "loading") {
     return (
       <>
+        {crumb}
         <SkeletonTiles count={8} className="grid grid-cols-2 lg:grid-cols-4 gap-3" />
         <PanelCard className="p-4">
           <SkeletonBlock height={60} />
@@ -419,22 +476,33 @@ function LifecycleBody({ sessionId }: { sessionId: string }) {
   }
   if (status === "error") {
     return (
-      <div
-        className="rounded-[var(--radius-lg)] border border-[color:var(--border)] p-8 text-center text-[13px]"
-        style={{ color: "var(--err)", background: "var(--err-bg)" }}
-      >
-        Failed to load spans: <span className="mono">{err}</span>
-      </div>
+      <>
+        {crumb}
+        <div
+          className="rounded-[var(--radius-lg)] border border-[color:var(--border)] p-8 text-center text-[13px]"
+          style={{ color: "var(--err)", background: "var(--err-bg)" }}
+        >
+          Failed to load spans: <span className="mono">{err}</span>
+        </div>
+      </>
     )
   }
   if (!vm) {
     return (
-      <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-8 text-center text-[13px] text-[color:var(--text-3)]">
-        No gen_ai spans captured for session <span className="mono">{sessionId}</span>.
-      </div>
+      <>
+        {crumb}
+        <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-8 text-center text-[13px] text-[color:var(--text-3)]">
+          No gen_ai spans captured for session <span className="mono">{sessionId}</span>.
+        </div>
+      </>
     )
   }
-  return <LifecycleView vm={vm} source={source} partial={partial} />
+  return (
+    <>
+      {crumb}
+      <LifecycleView vm={vm} source={source} partial={partial} focusedConv={effFocus} onFocus={onFocus} />
+    </>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -445,10 +513,14 @@ function LifecycleView({
   vm,
   source,
   partial,
+  focusedConv,
+  onFocus,
 }: {
   vm: ViewModel
   source: "api" | "fixture"
   partial: boolean
+  focusedConv: string | null
+  onFocus: (conv: string | null) => void
 }) {
   // useNames toggles rule-6 aliases vs raw agent ids everywhere a
   // conversation is named (lanes, ledger, modal).
@@ -515,6 +587,8 @@ function LifecycleView({
         useNames={useNames}
         onToggleNames={() => setUseNames((v) => !v)}
         onOpen={setSelectedCid}
+        focusedConv={focusedConv}
+        onFocus={onFocus}
       />
       <SessionDataTabs
         vm={vm}
@@ -523,6 +597,7 @@ function LifecycleView({
         dispName={dispName}
         onOpenMessage={openSpan}
         onOpenSpan={setSelectedCid}
+        focusedConv={focusedConv}
       />
       {selectedCid && (
         <SpanInspector
@@ -951,6 +1026,8 @@ function TimelinePanel({
   useNames,
   onToggleNames,
   onOpen,
+  focusedConv,
+  onFocus,
 }: {
   vm: ViewModel
   slice: SliceRange | null
@@ -959,6 +1036,11 @@ function TimelinePanel({
   useNames: boolean
   onToggleNames: () => void
   onOpen: (cid: string) => void
+  // focusedConv is the sub-agent conversation the operator drilled into (null
+  // = whole session); onFocus toggles it. Drives lane dimming + the agents
+  // strip; the messages table re-queries to the focused conversation.
+  focusedConv: string | null
+  onFocus: (conv: string | null) => void
 }) {
   // Measured width: the SVGs fill the panel, never narrower than MIN_PLOT_W
   // (horizontal scroll takes over below that).
@@ -1111,11 +1193,14 @@ function TimelinePanel({
   // carries an SVG <title> with the run size so it still explains itself.
   const lanes = useMemo(() => {
     const MIN_BAR_PX = 1.5
-    const nodes: React.ReactNode[] = []
+    const groups: React.ReactNode[] = []
     vm.convIds.forEach((conv, i) => {
       const yTop = GEO.t + i * (LANE_H + LANE_GAP)
       const col = vm.colors.get(conv) ?? "var(--text-3)"
       const flow = vm.byConv.get(conv) ?? []
+      // Each lane's nodes collect into their own array so the whole lane can
+      // be wrapped in a <g> and dimmed when another sub-agent is focused.
+      const nodes: React.ReactNode[] = []
       if (i % 2 === 0) {
         nodes.push(
           <rect
@@ -1135,8 +1220,11 @@ function TimelinePanel({
           x={GEO.l - 12}
           y={yTop + LANE_H / 2 + 4}
           textAnchor="end"
-          style={{ fill: col, font: "11px var(--font-mono)" }}
+          className="cursor-pointer hover:underline"
+          style={{ fill: col, font: `${focusedConv === conv ? "600 " : ""}11px var(--font-mono)` }}
+          onClick={() => onFocus(focusedConv === conv ? null : conv)}
         >
+          <title>{conv === vm.sid ? "Focus the main session" : "Focus this sub-agent"}</title>
           {conv === vm.sid ? "◆ session" : dispName(conv)}
         </text>,
       )
@@ -1278,9 +1366,17 @@ function TimelinePanel({
         }
       })
       flushRun()
+      // Wrap the lane and dim it when a different sub-agent is focused, so the
+      // focused flow reads clearly against the rest.
+      const dim = focusedConv != null && conv !== focusedConv
+      groups.push(
+        <g key={`lane-${conv}`} opacity={dim ? 0.18 : 1} style={{ transition: "opacity 120ms ease" }}>
+          {nodes}
+        </g>,
+      )
     })
-    return nodes
-  }, [vm, dispName, d0, d1, plotW, xz, clampX, onOpen, pushTip, cancelPendingTip])
+    return groups
+  }, [vm, dispName, d0, d1, plotW, xz, clampX, onOpen, pushTip, cancelPendingTip, focusedConv, onFocus])
 
   // Minimap content: time ticks + every span as a slim bar (main lane on
   // top, sub-agents below), under the brush overlay. The tick step adapts to
@@ -1481,6 +1577,44 @@ function TimelinePanel({
             names: {useNames ? "on" : "off"}
           </button>
         </div>
+
+        {/* agents strip — click to drill into one conversation's requests */}
+        {vm.convIds.length > 1 && (
+          <div className="flex items-center gap-2 flex-wrap px-4 py-2 border-t border-[color:var(--border)]">
+            <span className="text-[11px] uppercase tracking-[0.06em] text-[color:var(--text-4)] mr-0.5">Agents</span>
+            {vm.convIds.map((conv) => {
+              const on = focusedConv === conv
+              const col = vm.colors.get(conv) ?? "var(--text-3)"
+              return (
+                <button
+                  key={conv}
+                  type="button"
+                  onClick={() => onFocus(on ? null : conv)}
+                  aria-pressed={on}
+                  title={conv === vm.sid ? conv : `Focus ${dispName(conv)} · ${conv}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11.5px] hover:bg-[color:var(--hover)]"
+                  style={{
+                    borderColor: on ? col : "var(--border)",
+                    background: on ? "color-mix(in oklab, " + col + " 14%, transparent)" : "var(--bg-1)",
+                    color: on ? "var(--text)" : "var(--text-2)",
+                  }}
+                >
+                  <span className="inline-block w-2 h-2 rounded-[2px] shrink-0" style={{ background: col }} />
+                  {conv === vm.sid ? "session" : dispName(conv)}
+                </button>
+              )
+            })}
+            {focusedConv != null && (
+              <button
+                type="button"
+                onClick={() => onFocus(null)}
+                className="ml-1 rounded-full border border-[color:var(--border)] bg-[color:var(--bg-1)] px-2.5 py-0.5 text-[11.5px] text-[color:var(--text-3)] hover:bg-[color:var(--hover)] hover:text-[color:var(--text)]"
+              >
+                clear focus
+              </button>
+            )}
+          </div>
+        )}
       </PanelCard>
 
       {/* hover tooltip */}
@@ -1536,11 +1670,17 @@ function SessionMessagesPanel({
   slice,
   source,
   onOpen,
+  focusedConv,
+  dispName,
 }: {
   vm: ViewModel
   slice: SliceRange | null
   source: "api" | "fixture"
   onOpen: (cid: string) => void
+  // focusedConv (sub-agent drilldown) narrows the table to one conversation;
+  // null = the whole session. dispName + vm.colors back the Agent column.
+  focusedConv: string | null
+  dispName: (conv: string) => string
 }) {
   const nav = useNavigate()
   const debounced = useDebounced(slice, 300)
@@ -1550,16 +1690,18 @@ function SessionMessagesPanel({
   const [limit, setLimit] = useState<number>(SESSION_MESSAGES_PAGE_SIZE)
   const isFixture = source === "fixture"
 
-  // Query filters: session-scoped always; from/to only when sliced — the full
-  // session needs no time bounds, session_id already scopes the scan.
+  // Query filters: session-scoped always; conversation-scoped when a sub-agent
+  // is focused; from/to only when sliced — the full session needs no time
+  // bounds, session_id already scopes the scan.
   const filters = useMemo<MessageFilters>(() => {
     const f: MessageFilters = { sessionId: vm.sid }
+    if (focusedConv) f.conversationId = focusedConv
     if (debounced) {
       f.from = new Date(vm.t0ms + debounced.d0 * 1000).toISOString()
       f.to = new Date(vm.t0ms + debounced.d1 * 1000).toISOString()
     }
     return f
-  }, [vm.sid, vm.t0ms, debounced])
+  }, [vm.sid, vm.t0ms, debounced, focusedConv])
 
   const pager = useMessagesPager({
     filters,
@@ -1574,11 +1716,13 @@ function SessionMessagesPanel({
     if (!isFixture) return []
     return vm.spans
       .filter((s) => s.t >= d0 && s.t <= d1)
+      .filter((s) => !focusedConv || s.conversation_id === focusedConv)
       .slice()
       .reverse()
       .map((s) => ({
         event_id: s.cid,
         correlation_id: s.cid,
+        conversation_id: s.conversation_id,
         at: s.at,
         status_code: s.status ?? 0,
         model: s.model ?? undefined,
@@ -1586,7 +1730,7 @@ function SessionMessagesPanel({
         tokens_in: s.usage.input ?? 0,
         tokens_out: s.usage.output ?? 0,
       }))
-  }, [isFixture, vm, d0, d1])
+  }, [isFixture, vm, d0, d1, focusedConv])
   // Fixture paging is tagged with the row set + page size it belongs to, so a
   // window or size change derives page one during render (no reset effect).
   const [fixNav, setFixNav] = useState<{ rows: MessageEntry[]; limit: number; page: number } | null>(null)
@@ -1624,8 +1768,18 @@ function SessionMessagesPanel({
         entries={entries}
         status={status}
         limit={limit}
-        emptyText={full ? "No requests recorded for this session." : "No requests in the sliced window."}
+        emptyText={
+          focusedConv
+            ? "No requests for this agent in view."
+            : full
+              ? "No requests recorded for this session."
+              : "No requests in the sliced window."
+        }
         onRowClick={(e) => onOpen(e.correlation_id || e.event_id)}
+        agent={(e) => {
+          const conv = e.conversation_id ?? vm.sid
+          return { label: dispName(conv), color: vm.colors.get(conv) }
+        }}
       />
       <MessagesPagerBar
         limit={limit}
@@ -1652,6 +1806,7 @@ function SessionDataTabs({
   dispName,
   onOpenMessage,
   onOpenSpan,
+  focusedConv,
 }: {
   vm: ViewModel
   slice: SliceRange | null
@@ -1659,8 +1814,12 @@ function SessionDataTabs({
   dispName: (conv: string) => string
   onOpenMessage: (cid: string) => void
   onOpenSpan: (cid: string) => void
+  focusedConv: string | null
 }) {
   const [tab, setTab] = useState<"messages" | "tools">("messages")
+  // Request count reflects the focus: the messages tab is conversation-scoped
+  // when a sub-agent is drilled into.
+  const msgCount = focusedConv ? (vm.byConv.get(focusedConv)?.length ?? 0) : vm.spans.length
   return (
     <div className="flex flex-col gap-3.5">
       <div className="flex border-b border-[color:var(--border)]">
@@ -1668,7 +1827,7 @@ function SessionDataTabs({
           on={tab === "messages"}
           onClick={() => setTab("messages")}
           label="Messages"
-          meta={`${vm.spans.length} request${vm.spans.length === 1 ? "" : "s"}`}
+          meta={`${msgCount} request${msgCount === 1 ? "" : "s"}${focusedConv ? ` · ${dispName(focusedConv)}` : ""}`}
         />
         <IOTab
           on={tab === "tools"}
@@ -1678,7 +1837,7 @@ function SessionDataTabs({
         />
       </div>
       {tab === "messages" ? (
-        <SessionMessagesPanel vm={vm} slice={slice} source={source} onOpen={onOpenMessage} />
+        <SessionMessagesPanel vm={vm} slice={slice} source={source} onOpen={onOpenMessage} focusedConv={focusedConv} dispName={dispName} />
       ) : (
         <>
           <div className="grid md:grid-cols-2 gap-3.5 items-start">
@@ -1722,7 +1881,7 @@ const ToolTable = memo(function ToolTable({ vm, kind }: { vm: ViewModel; kind: "
     <PanelCard>
       <PanelHead
         title={kind === "client" ? "Tools — client-executed" : "Tools — server-executed"}
-        sub={kind === "client" ? "result returns in a later request" : "call + response in the same span"}
+        sub={kind === "client" ? "result returns in a later request" : "provider runs it inline within the request"}
       />
       <TableScroll className="min-w-0">
         <thead>
@@ -1757,7 +1916,7 @@ const ToolTable = memo(function ToolTable({ vm, kind }: { vm: ViewModel; kind: "
           {rows.length === 0 && (
             <tr className="border-t border-[color:var(--border)]">
               <td colSpan={4} className="px-4 py-6 text-center text-[12px] text-[color:var(--text-4)]">
-                {kind === "client" ? "no client-executed tool calls" : "none detected (no same-span tool_call_response)"}
+                {kind === "client" ? "no client-executed tool calls" : "no server-executed tool calls"}
               </td>
             </tr>
           )}

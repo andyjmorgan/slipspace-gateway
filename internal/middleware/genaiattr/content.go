@@ -33,6 +33,16 @@ type Part struct {
 
 	// Result is the tool result text on a "tool_call_response" part.
 	Result string
+
+	// Executor marks who runs a "tool_call" / "tool_call_response" part:
+	// "server" for a provider-hosted tool the upstream executes inline
+	// (OpenAI Responses web_search_call/file_search_call/…, Anthropic
+	// server_tool_use/mcp_tool_use and their *_tool_result), "client" for an
+	// ordinary function call the caller executes and returns on a later turn.
+	// Empty for non-tool parts (and legacy spans predating the field) — the
+	// console treats empty as unknown and falls back to its same-span
+	// pairing heuristic.
+	Executor string
 }
 
 // Message is one role-tagged turn carrying an ordered parts[] list, matching

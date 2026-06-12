@@ -294,6 +294,10 @@ func TestExtractResponse_ToolCalls(t *testing.T) {
 		if len(tc) != 1 || tc[0].ID != "toolu_1" || tc[0].Name != "get_weather" || !strings.Contains(string(tc[0].Arguments), "Paris") {
 			t.Fatalf("tool calls = %+v", tc)
 		}
+		// A plain tool_use is client-executed (distinct from server_tool_use).
+		if tc[0].Executor != "client" {
+			t.Errorf("tool_use executor = %q, want client", tc[0].Executor)
+		}
 	})
 
 	// Anthropic streaming: tool_use header then input_json_delta fragments.
@@ -398,12 +402,18 @@ func TestExtractResponse_Anthropic_ServerTools(t *testing.T) {
 		if call.Type != "tool_call" || call.ID != "srvtoolu_01AAA" || call.Name != "web_search" {
 			t.Errorf("part0 = %+v, want tool_call srvtoolu_01AAA/web_search", call)
 		}
+		if call.Executor != "server" {
+			t.Errorf("server_tool_use executor = %q, want server", call.Executor)
+		}
 		if string(call.Arguments) != `{"query":"julien thibeaut"}` {
 			t.Errorf("arguments = %s", call.Arguments)
 		}
 		res := got.OutputParts[1]
 		if res.Type != "tool_call_response" || res.ID != "srvtoolu_01AAA" {
 			t.Errorf("part1 = %+v, want tool_call_response srvtoolu_01AAA", res)
+		}
+		if res.Executor != "server" {
+			t.Errorf("*_tool_result executor = %q, want server", res.Executor)
 		}
 		if strings.Contains(res.Result, "OPAQUEBLOB") {
 			t.Errorf("encrypted_content survived into result: %q", res.Result)
@@ -554,12 +564,21 @@ func TestExtractResponse_OpenAIResponses_ServerTools(t *testing.T) {
 		if ws.Type != "tool_call" || ws.ID != "ws_1" || ws.Name != "web_search" {
 			t.Errorf("web_search part = %+v", ws)
 		}
+		// web_search is provider-hosted: it must be flagged server even though
+		// its result folds into the model output (no same-span response). This
+		// is the executor signal the console relies on to bucket it correctly.
+		if ws.Executor != "server" {
+			t.Errorf("web_search executor = %q, want server", ws.Executor)
+		}
 		if string(ws.Arguments) != `{"action":{"type":"search","query":"positive news"}}` {
 			t.Errorf("web_search arguments = %s", ws.Arguments)
 		}
 		fs := got.OutputParts[2]
 		if fs.Type != "tool_call" || fs.ID != "fs_1" || fs.Name != "file_search" {
 			t.Errorf("file_search part = %+v", fs)
+		}
+		if fs.Executor != "server" {
+			t.Errorf("file_search executor = %q, want server", fs.Executor)
 		}
 		if string(fs.Arguments) != `{"queries":["deep research"]}` {
 			t.Errorf("file_search arguments = %s", fs.Arguments)
@@ -574,6 +593,11 @@ func TestExtractResponse_OpenAIResponses_ServerTools(t *testing.T) {
 		fn := got.OutputParts[4]
 		if fn.Type != "tool_call" || fn.ID != "call_1" || fn.Name != "get_weather" || string(fn.Arguments) != `{"loc":"Paris"}` {
 			t.Errorf("function_call part = %+v", fn)
+		}
+		// function_call is client-executed — the caller runs it and returns the
+		// result on a later turn.
+		if fn.Executor != "client" {
+			t.Errorf("function_call executor = %q, want client", fn.Executor)
 		}
 	})
 

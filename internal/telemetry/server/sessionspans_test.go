@@ -147,8 +147,8 @@ func TestSessionSpanFromEvent(t *testing.T) {
 						"output_messages": []any{map[string]any{
 							"role": "assistant",
 							"parts": []any{
-								map[string]any{"type": "tool_call", "id": "srvtoolu_01", "name": "web_search", "arguments": map[string]any{"query": "go 1.26"}},
-								map[string]any{"type": "tool_call_response", "id": "srvtoolu_01", "result": "10 results"},
+								map[string]any{"type": "tool_call", "id": "srvtoolu_01", "name": "web_search", "arguments": map[string]any{"query": "go 1.26"}, "executor": "server"},
+								map[string]any{"type": "tool_call_response", "id": "srvtoolu_01", "result": "10 results", "executor": "server"},
 								map[string]any{"type": "text", "content": "found it"},
 							},
 						}},
@@ -165,8 +165,8 @@ func TestSessionSpanFromEvent(t *testing.T) {
 					ServerToolUse: map[string]int64{"web_search_requests": 2},
 				},
 				OutputParts: []adminc.SessionSpanOutputPart{
-					{Type: "tool_call", ID: "srvtoolu_01", Name: "web_search", Args: `{"query":"go 1.26"}`, ArgsChars: iptr(19)},
-					{Type: "tool_call_response", ID: "srvtoolu_01", Chars: iptr(10), Text: "10 results"},
+					{Type: "tool_call", ID: "srvtoolu_01", Name: "web_search", Args: `{"query":"go 1.26"}`, ArgsChars: iptr(19), Executor: "server"},
+					{Type: "tool_call_response", ID: "srvtoolu_01", Chars: iptr(10), Text: "10 results", Executor: "server"},
 					{Type: "text", Chars: iptr(8)},
 				},
 				InputParts:      []adminc.SessionSpanInputPart{},

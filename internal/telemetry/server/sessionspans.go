@@ -338,6 +338,7 @@ type spanPart struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
 	Result    string          `json:"result"`
+	Executor  string          `json:"executor"`
 }
 
 // outputEnvelope flattens the assistant output messages into the DTO's
@@ -370,7 +371,7 @@ func outputEnvelope(msgs []spanMessage, fieldCap int, bodies bool) ([]adminc.Ses
 				n := charCount(p.Content)
 				parts = append(parts, adminc.SessionSpanOutputPart{Type: "reasoning", Chars: &n})
 			case "tool_call":
-				part := adminc.SessionSpanOutputPart{Type: "tool_call", ID: p.ID, Name: p.Name}
+				part := adminc.SessionSpanOutputPart{Type: "tool_call", ID: p.ID, Name: p.Name, Executor: p.Executor}
 				if len(p.Arguments) > 0 {
 					args := string(p.Arguments)
 					n := charCount(args)
@@ -382,7 +383,7 @@ func outputEnvelope(msgs []spanMessage, fieldCap int, bodies bool) ([]adminc.Ses
 				parts = append(parts, part)
 			case "tool_call_response":
 				n := charCount(p.Result)
-				part := adminc.SessionSpanOutputPart{Type: "tool_call_response", ID: p.ID, Chars: &n}
+				part := adminc.SessionSpanOutputPart{Type: "tool_call_response", ID: p.ID, Chars: &n, Executor: p.Executor}
 				if bodies {
 					part.Text = capText(p.Result, fieldCap)
 				}

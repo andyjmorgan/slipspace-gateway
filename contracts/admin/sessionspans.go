@@ -146,6 +146,15 @@ type SessionSpanOutputPart struct {
 	// server-executed tool's result, carried on the same span as its call).
 	// Server-capped; Chars carries the uncapped size.
 	Text string `json:"text,omitempty"`
+
+	// Executor marks who runs a tool_call / tool_call_response part: "server"
+	// for a provider-hosted tool the upstream executes inline (OpenAI
+	// web_search_call/file_search_call/…, Anthropic server_tool_use and its
+	// *_tool_result), "client" for an ordinary function call the caller runs
+	// and returns on a later turn. Empty on non-tool parts and on legacy
+	// spans captured before the field existed — the console treats empty as
+	// unknown and falls back to its same-span pairing heuristic.
+	Executor string `json:"executor,omitempty"`
 }
 
 // SessionSpanInputPart is one part of the trailing input delta. Type is

@@ -47,6 +47,20 @@ function TagCell({ tags }: { tags?: string[] }) {
   )
 }
 
+// AgentCell renders the per-row agent identity as a color-dotted label — the
+// lane color from the session view's alias map, so a subagent's requests read
+// the same hue here as in the timeline.
+function AgentCell({ label, color }: { label: string; color?: string }) {
+  return (
+    <td className="px-4 py-2 whitespace-nowrap">
+      <span className="inline-flex items-center gap-1.5 text-[12px]" style={{ color: color ?? "var(--text-2)" }} title={label}>
+        <span className="inline-block w-2 h-2 rounded-[2px] shrink-0" style={{ background: color ?? "var(--text-4)" }} />
+        <span className="truncate max-w-[9rem]">{label}</span>
+      </span>
+    </td>
+  )
+}
+
 // rowTime renders a row's completion time with millisecond precision.
 function rowTime(iso: string): string {
   const d = new Date(iso)
@@ -65,18 +79,26 @@ export function MessagesTableView({
   limit,
   emptyText,
   onRowClick,
+  agent,
 }: {
   entries: MessageEntry[]
   status: "loading" | "ok" | "error"
   limit: number
   emptyText: string
   onRowClick: (entry: MessageEntry, index: number) => void
+  // agent, when provided, renders an "Agent" column resolving each row to a
+  // display label + lane color (the session lifecycle page passes its alias
+  // map). Omitted by the global messages browser, which has no session scope
+  // and so no alias pool — the column simply doesn't render there.
+  agent?: (entry: MessageEntry) => { label: string; color?: string }
 }) {
+  const cols = agent ? 10 : 9
   return (
     <TableScroll>
       <thead>
         <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
           <th className="text-left font-medium px-4 py-2">Time</th>
+          {agent && <th className="text-left font-medium px-4 py-2">Agent</th>}
           <th className="text-left font-medium px-4 py-2">Status</th>
           <th className="text-left font-medium px-4 py-2">Provider</th>
           <th className="text-left font-medium px-4 py-2">Protocol</th>
@@ -91,7 +113,7 @@ export function MessagesTableView({
         {status === "loading" && (
           <SkeletonRows
             rows={Math.min(limit, 12)}
-            cols={[{ w: "5rem" }, { w: "2.5rem" }, { w: "4rem" }, { w: "3.5rem" }, { w: "6rem" }, { w: "5rem" }, { w: "5rem" }, { w: "3rem", align: "right" }, { w: "3.5rem", align: "right" }]}
+            cols={[{ w: "5rem" }, ...(agent ? [{ w: "5rem" }] : []), { w: "2.5rem" }, { w: "4rem" }, { w: "3.5rem" }, { w: "6rem" }, { w: "5rem" }, { w: "5rem" }, { w: "3rem", align: "right" as const }, { w: "3.5rem", align: "right" as const }]}
           />
         )}
         {status !== "loading" && entries.map((e, i) => (
@@ -101,6 +123,7 @@ export function MessagesTableView({
             className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)]"
           >
             <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap">{rowTime(e.at)}</td>
+            {agent && <AgentCell {...agent(e)} />}
             <td className="px-4 py-2"><StatusPill code={e.status_code} /></td>
             <td className="px-4 py-2">{e.provider ? <ProviderChip name={e.provider} /> : <Dash />}</td>
             <td className="mono text-[12px] px-4 py-2">{e.protocol || <Dash />}</td>
@@ -114,7 +137,7 @@ export function MessagesTableView({
           </tr>
         ))}
         {status === "ok" && entries.length === 0 && (
-          <tr><td colSpan={9} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{emptyText}</td></tr>
+          <tr><td colSpan={cols} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{emptyText}</td></tr>
         )}
       </tbody>
     </TableScroll>
