@@ -343,11 +343,16 @@ func bindingRowsFromConfiguration(configName string, cfg contractsconfig.Configu
 		gen = append(gen, BindingRow{
 			Configuration: configName,
 			Protocol:      b.Protocol,
-			Models:        append([]string(nil), b.Models...),
-			Provider:      b.Provider,
-			Group:         b.Group,
-			Alias:         b.Alias,
-			Tags:          append([]string(nil), b.Tags...),
+			// Always a non-nil slice: the generated TS contract types
+			// `models` as `string[]` (non-null), and the console reads
+			// `b.models.length` directly. A catch-all binding (no models)
+			// must serialise as `[]`, not `null`, or the bindings view and
+			// configuration detail page crash on render.
+			Models:   append([]string{}, b.Models...),
+			Provider: b.Provider,
+			Group:    b.Group,
+			Alias:    b.Alias,
+			Tags:     append([]string(nil), b.Tags...),
 		})
 	}
 	pass := make([]PassthroughBindingRow, 0, len(cfg.PassthroughBindings))
