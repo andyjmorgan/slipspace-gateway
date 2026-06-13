@@ -20,29 +20,29 @@ import (
 
 // fakeQueries is a programmable Queries (no DB).
 type fakeQueries struct {
-	summary      store.DashboardSummary
-	summaryErr   error
-	series       []store.DashboardSeriesBucket
-	seriesErr    error
-	events         []store.RequestEvent
-	next           string
-	eventsErr      error
-	eventsTotal    int64
-	eventsCountErr error
-	event        store.RequestEvent
-	eventErr     error
-	recordBody   []byte
-	recordErr    error
-	session      []store.RequestEvent
-	sessionErr   error
+	summary          store.DashboardSummary
+	summaryErr       error
+	series           []store.DashboardSeriesBucket
+	seriesErr        error
+	events           []store.RequestEvent
+	next             string
+	eventsErr        error
+	eventsTotal      int64
+	eventsCountErr   error
+	event            store.RequestEvent
+	eventErr         error
+	recordBody       []byte
+	recordErr        error
+	session          []store.RequestEvent
+	sessionErr       error
 	sessions         []store.SessionSummary
 	sessionsNext     string
 	sessionsErr      error
 	sessionsTotal    int64
 	sessionsCountErr error
-	facets       store.Facets
-	facetsErr    error
-	facetsHits   int
+	facets           store.Facets
+	facetsErr        error
+	facetsHits       int
 	// lastParams records the EventListParams of the most recent
 	// ListEventsFiltered call so filter-plumbing tests can assert on it.
 	lastParams store.EventListParams
