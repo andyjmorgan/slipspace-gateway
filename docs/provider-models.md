@@ -114,7 +114,9 @@ Request highlights:
 - **`Input`** is polymorphic (bare string *or* an array of typed input items),
   kept raw (`responses.go:25-28`).
 - **`Reasoning *ReasoningOptions`** (`effort` + `summary`) configures reasoning
-  models (`responses.go:46-47`, `:337-347`); `MaxOutputTokens` caps generated
+  models (`responses.go:48`; `ReasoningOptions` at `responses.go:303-313`, `Effort`
+  `:306`, `Summary` `:310` — note `responses.go:337-347` is the separate
+  response-side `ReasoningOutput`); `MaxOutputTokens` caps generated
   *and* reasoning tokens (`responses.go:42-44`).
 - **Statefulness:** `PreviousResponseID` chains to a prior stored response
   server-side (`responses.go:70-72`); `Store` + `Metadata` persist it
@@ -178,28 +180,32 @@ Two fields accept either a bare string or an array and are kept as
 
 ### Content blocks — the `type`-discriminated union
 
-Registry at `contentblock.go:341-352`:
+Registry at `contentblock.go:473-491` (`blockRegistry`, discriminator field
+`type`; 9 factories including `server_tool_use`, `web_search_tool_result`,
+`web_fetch_tool_result`):
 
 | `type` | Type | Notes |
 |---|---|---|
 | `text` | `TextBlock` (`contentblock.go:43`) | |
-| `image` | `ImageBlock` (`contentblock.go:136`) | `ImageSource` is base64 *or* URL (`contentblock.go:108`) |
-| `tool_use` | `ToolUseBlock` (`contentblock.go:162`) | `Input` raw; optional `Caller` attributes the call (`ToolCaller`, `contentblock.go:180`) |
-| `tool_result` | `ToolResultBlock` (`contentblock.go:218`) | `Content` is itself string-or-array, kept raw |
-| `thinking` | `ThinkingBlock` (`contentblock.go:258`) | See signature echo below |
-| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:291`) | Opaque encrypted `Data` |
+| `image` | `ImageBlock` (`contentblock.go:144`) | `ImageSource` is base64 *or* URL (`contentblock.go:116`) |
+| `tool_use` | `ToolUseBlock` (`contentblock.go:170`) | `Input` raw; optional `Caller` attributes the call (`ToolCaller`, `contentblock.go:195`) |
+| `tool_result` | `ToolResultBlock` (`contentblock.go:226`) | `Content` is itself string-or-array, kept raw |
+| `thinking` | `ThinkingBlock` (`contentblock.go:390`) | See signature echo below |
+| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:423`) | Opaque encrypted `Data` |
 | *(any other)* | `UnknownBlock` (`contentblock.go:321`) | Fallback |
 
 ### Thinking blocks and the signature-echo requirement
 
 Extended thinking is **load-bearing for round-tripping**, not just informational:
 
-- `ThinkingBlock.Signature` (`contentblock.go:268`) is a cryptographic
+- `ThinkingBlock.Signature` (`contentblock.go:400`; invariant documented at
+  `contentblock.go:386-389`) is a cryptographic
   attestation over the thinking trace. The client **MUST echo it back verbatim**
   on the assistant turn or tool use cannot resume — so it must round-trip
   exactly. In streaming it arrives as a terminal `signature_delta` after the
   `thinking_delta` fragments (`stream.go`, `SignatureDelta`).
-- `RedactedThinkingBlock.Data` (`contentblock.go:291-296`) is thinking the
+- `RedactedThinkingBlock.Data` (`contentblock.go:428`; invariant documented at
+  `contentblock.go:418-422`) is thinking the
   provider encrypted after tripping a safety classifier. It carries no
   human-readable content but must likewise be echoed back verbatim alongside any
   sibling thinking blocks.
@@ -215,18 +221,18 @@ carry several beta / accounting structures:
 - **`ContextManagement`** (`response.go:61-69`) reports the context-editing
   operations the server applied under the context-management beta. `AppliedEdits`
   is kept raw so an empty array round-trips intact rather than collapsing.
-- **`Container`** (`response.go:300-309`) describes the code-execution sandbox
+- **`Container`** (`response.go:306-315`) describes the code-execution sandbox
   (`ID` + `ExpiresAt`) when the request used the code-execution tool; the `ID`
   can be reused across requests to preserve workspace state.
 - **`Usage.ServerToolUse`** (`ServerToolUseUsage`, `response.go:200-206`) counts
   server-side tool calls (e.g. web search).
 - **Cache accounting** is tiered: `Usage.CacheCreationInputTokens` /
   `CacheReadInputTokens` (`response.go:198-202`) plus `CacheCreation`
-  (`response.go:257-267`) which splits writes into the 5-minute and 1-hour
+  (`response.go:263-273`) which splits writes into the 5-minute and 1-hour
   ephemeral tiers (`Ephemeral5mInputTokens` / `Ephemeral1hInputTokens`). The
   request marks cacheable spans with `CacheControl` (`type: "ephemeral"`,
   `messages.go:396-401`) on system blocks, tools, and content blocks.
-- **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:279-285`) reports
+- **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:285-291`) reports
   output tokens spent inside thinking blocks.
 
 The request also exposes `OutputConfig.Effort` (reasoning-effort hint,

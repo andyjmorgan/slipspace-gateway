@@ -1,6 +1,6 @@
 # Deployment
 
-Sluice ships as a single multi-arch container image with the SPA baked in. The image runs as a data-plane process plus an optional admin listener inside the same pod; configuration is mounted as a directory of YAML files; the connector spool persists on a PVC; telemetry is wired through env vars. This page is the operator's reference for the production deployment shape — container image, Kubernetes topology, mount conventions, multi-pod considerations, rolling updates — and the local-dev shortcut that mirrors it.
+Sluice ships as a single-arch (linux/amd64) container image with the SPA baked in. The image runs as a data-plane process plus an optional admin listener inside the same pod; configuration is mounted as a directory of YAML files; the connector spool persists on a PVC; telemetry is wired through env vars. This page is the operator's reference for the production deployment shape — container image, Kubernetes topology, mount conventions, multi-pod considerations, rolling updates — and the local-dev shortcut that mirrors it.
 
 ---
 

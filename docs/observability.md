@@ -430,10 +430,11 @@ One agent conversation is many HTTP requests — Claude Code or Codex fires a re
 **Resolution order.** The correlation middleware resolves the session id from the inbound headers, Sluice-first then a fallback chain walked top-down:
 
 1. `X-Sluice-Session-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
-2. `Thread_id` — Codex's durable conversation id.
-3. `Session_id` — Codex's runtime session (same UUID as `Thread_id` in current Codex builds; kept as a fallback).
-4. `x-claude-code-session-id` — Claude Code.
-5. Operator extras from [`SLUICE_SESSION_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's header (e.g. `X-Acme-Conversation-Id`) bundles with no code change.
+2. `Session-Id` — Codex's root session id (hyphenated, verified live; **not** the underscore `Session_id` we previously and wrongly chased), shared across all subagent threads.
+3. `X-Claude-Code-Session-Id` — Claude Code.
+4. Operator extras from [`SLUICE_SESSION_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's header (e.g. `X-Acme-Conversation-Id`) bundles with no code change.
+
+The per-turn thread/subagent id is a **separate axis** resolved by `ConversationResolver` (`DefaultThreadIDHeaders`: `Thread-Id`, `X-Claude-Code-Agent-Id`), not a session fallback.
 
 The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `session_id_source` (the bundle's provenance, which the console uses to label "Codex thread" vs "Claude Code session" vs a custom source).
 
@@ -454,8 +455,9 @@ Alongside the session, the correlation middleware resolves an **agent id** — t
 **Resolution order.** Sluice-first, then a fallback chain walked top-down:
 
 1. `X-Sluice-Agent-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
-2. `X-Claude-Code-Agent-Id` — Claude Code's acting-agent id (the one shipped default).
-3. Operator extras from [`SLUICE_AGENT_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's agent header is promoted with no code change.
+2. Operator extras from [`SLUICE_AGENT_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's agent header is promoted with no code change.
+
+There is no shipped default fallback: `DefaultAgentIDHeaders` is intentionally empty because `gen_ai.agent.id` is reserved for a genuinely named agent. `X-Claude-Code-Agent-Id` was deliberately moved **off** this axis to the conversation/thread axis (`DefaultThreadIDHeaders`) because its values are opaque per-invocation instance ids, not named agents.
 
 The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `agent_id_source` (the provenance the console labels the agent with). A candidate matching the redactor (built-ins plus `SLUICE_REDACT_EXTRA_HEADERS`) counts as *absent* and resolution falls through, so a promoted `agent_id` can never resurface a redacted value.
 

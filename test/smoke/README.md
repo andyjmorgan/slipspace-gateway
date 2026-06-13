@@ -55,6 +55,7 @@ secrets are configured.
 | `test_gemini_chat.py` | `POST /gemini/v1beta/openai/chat/completions` (OpenAI-compat surface) |
 | `test_changeprovider_redirect.py` | model-keyed `changeProvider` rules: claude-* / gemini-* on the openai surface |
 | `test_qwen_redirect.py` | cluster-side qwen rules (opt-in via `SLUICE_SMOKE_QWEN=true`) |
+| `test_gptoss_translate.py` | model-keyed `translate`-action redirect onto the gpt-oss surface (opt-in via `SLUICE_SMOKE_GPTOSS=true`) |
 
 ## Adding a new smoke
 

@@ -115,7 +115,7 @@ messages/recent, events). Each maps to a column predicate in
 | `correlation_id` | `correlation_id` | exact match |
 | `agent_id` | `agent_id` | exact match (the resolved agent/sub-agent id) |
 | `user_id` | `user_id` | exact match (the resolved end-user id) |
-| `tags` | `span_event->'tags'` | **repeatable**; `?tags=a&tags=b` requires the event's post-rule tag set to contain **ALL** listed tags (JSONB `@>` containment against the GIN-indexed blob path). Blank values are dropped (`nonEmpty`). |
+| `tags` | `tags` | **repeatable**; `?tags=a&tags=b` requires the event's post-rule tag set to contain **ALL** listed tags (array `@>` containment against the promoted `tags text[]` column, GIN-indexed via `request_events_tags_arr`). Blank values are dropped (`nonEmpty`). |
 
 An absent or empty param adds no predicate on that dimension. All present
 predicates are AND-combined.
@@ -296,9 +296,13 @@ values for the message browser:
 
 Each list is sorted, excludes the empty string, and renders as `[]` rather than
 `null` when empty (`nonNil`). `protocols` is the `protocol` column (see the
-naming note above). `tags` is flattened out of every event's
-`span_event->'tags'` — GIN-indexed inside the blob, not a promoted column
-(`store/facets.go::Facets`).
+naming note above). `tags` is flattened out of the promoted `tags text[]`
+column (migration v12), GIN-indexed via `request_events_tags_arr` — not the
+`span_event->'tags'` blob path (`store/facets.go::Facets`). The prior blob scan
+(`jsonb_array_elements_text(span_event->'tags')`) detoasted every ~95 kB span
+and emptied all dropdowns past the request deadline; the column projection
+(`unnest(tags)`) is what fixed it. The blob remains the source of truth for the
+inspector, but facets and filters read the column.
 
 **Caching.** Facets are memoized behind a mutex with a **30-second TTL**
 (`facetsTTL`, `observability.go` lines 194-223). The lock is held *across* the

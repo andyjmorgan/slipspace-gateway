@@ -205,7 +205,7 @@ Three unions use the shared registry:
 
 | Union | Discriminator | Registry | Fallback type |
 |---|---|---|---|
-| Anthropic `ContentBlock` | `type` | `contentblock.go:303` | `UnknownBlock` |
+| Anthropic `ContentBlock` | `type` | `contentblock.go:473-491` | `UnknownBlock` |
 | OpenAI chat `RequestMessage` | `role` | `messages.go:275` | `UnknownRequestMessage` |
 | OpenAI chat `ContentPart` | `type` | `content_parts.go:294` | `UnknownContentPart` |
 

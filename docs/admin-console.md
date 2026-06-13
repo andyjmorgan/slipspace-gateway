@@ -4,7 +4,7 @@ Sluice's admin console is a management surface bolted onto the gateway binary. I
 
 The console exposes both read-only inspection surfaces (dashboard, live messages, policies, bindings, export) and a write API spanning most of the policy YAML: full CRUD for **Configurations, Providers, Groups, Connectors, Rules, and API Keys**. Bindings are exposed read-only (they are edited as part of a Configuration). Every write clones the live config snapshot, validates the clone, persists the YAML atomically, and publishes via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLUICE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
 
-The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `gateway.admin.enabled: true` *and* a password is configured. With either condition false, the listener never opens.
+The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `admin.enabled: true` *and* a password is configured. With either condition false, the listener never opens.
 
 This page is the operator's reference: enabling the console, configuring the password, every env var the live-feed honours, every route the API exposes, every SPA page that consumes them.
 

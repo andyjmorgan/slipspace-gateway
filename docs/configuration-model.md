@@ -382,7 +382,7 @@ api_keys:
 | `secret` | string | yes | The bearer token clients present. Conventionally prefixed `sk_live_…` / `sk_dev_…`, but the loader does not enforce a prefix. Empty aborts validation; duplicate secrets abort. Authentication resolves this via an O(1) hash-map lookup in `ResolvedConfig.SecretIndex` (`internal/middleware/auth/resolver.go`), not a constant-time comparison. |
 | `name` | string | no | Human-readable label surfaced in logs and reporting events. Unvalidated — carries no auth meaning. |
 | `configuration` | string | yes | Name of the configuration this key resolves to. Unknown name aborts load with `ErrUnknownConfiguration`. |
-| `enabled` | bool | yes | Toggles the key without removing it. A disabled key authenticates structurally but is rejected before forwarding. |
+| `enabled` | bool | yes | Toggles the key without removing it. A disabled key fails authentication (the resolver returns `ErrUnauthorized`) — it is rejected at the auth layer, deliberately with the same unauthorized response as an unknown secret so configuration names cannot be probed. |
 
 Lookups use `SecretIndex` (built post-validate); the slice exists for enumeration in the admin console and audit reporting.
 
