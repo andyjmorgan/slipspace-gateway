@@ -182,12 +182,15 @@ func (s *Server) handleObsMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	sort, asc := sortFromQuery(r)
 	events, next, err := s.queries.ListEventsFiltered(r.Context(), store.EventListParams{
 		From:   from,
 		To:     to,
 		Filter: filterFromQuery(r),
 		Cursor: q.Get("cursor"),
 		Limit:  limitParam(r, 0),
+		Sort:   sort,
+		Asc:    asc,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {

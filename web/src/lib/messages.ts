@@ -77,7 +77,7 @@ type MessagesPageWire = {
  */
 export async function fetchMessagesPage(
   filters: MessageFilters,
-  opts: { cursor?: string; limit?: number } = {},
+  opts: { cursor?: string; limit?: number; sort?: string; order?: "asc" | "desc" } = {},
 ): Promise<MessagesPage> {
   const p = new URLSearchParams()
   const put = (k: string, v?: string) => {
@@ -98,6 +98,10 @@ export async function fetchMessagesPage(
   for (const t of filters.tags ?? []) p.append("tags", t)
   put("cursor", opts.cursor)
   if (opts.limit && opts.limit > 0) p.set("limit", String(opts.limit))
+  // sort defaults (newest-first by time) are the server's default — only send
+  // a column when set, and only send order=asc (desc is the implicit default).
+  put("sort", opts.sort)
+  if (opts.order === "asc") p.set("order", "asc")
   const r = await apiFetch<MessagesPageWire>(`/api/v1/messages?${p.toString()}`)
   return { entries: r.entries ?? [], nextCursor: r.next_cursor ?? "" }
 }

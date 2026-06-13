@@ -64,14 +64,18 @@ export function useMessagesPager(opts: {
   enabled?: boolean
   resolveWindow?: () => { from?: string; to?: string }
   windowKey?: string
+  // sort selects the server-side ordering column + direction. Changing it
+  // invalidates the keyset cursor stack (a cursor is only valid for the sort
+  // that minted it), so it's part of the paging identity below.
+  sort?: { key: string; desc: boolean }
   onUnauthorized?: () => void
 }): MessagesPager {
-  const { filters, limit, reloadNonce = 0, enabled = true, windowKey = "" } = opts
+  const { filters, limit, reloadNonce = 0, enabled = true, windowKey = "", sort } = opts
   // filtersKey is the paging identity. Both callers build MessageFilters with
   // a fixed field order, so JSON.stringify is a stable serial.
   const filtersKey = useMemo(
-    () => JSON.stringify([filters, windowKey, limit]),
-    [filters, windowKey, limit],
+    () => JSON.stringify([filters, windowKey, limit, sort ?? null]),
+    [filters, windowKey, limit, sort],
   )
   const [nav, setNav] = useState<pagerNav>({ key: "", pageIndex: 0, cursors: [""] })
   const cur: pagerNav = nav.key === filtersKey ? nav : { key: filtersKey, pageIndex: 0, cursors: [""] }
@@ -93,7 +97,10 @@ export function useMessagesPager(opts: {
     if (!enabled) return
     let cancelled = false
     const win = resolveWindowRef.current?.() ?? {}
-    fetchMessagesPage({ ...filters, ...win }, { cursor, limit })
+    fetchMessagesPage(
+      { ...filters, ...win },
+      { cursor, limit, sort: sort?.key, order: sort && !sort.desc ? "asc" : "desc" },
+    )
       .then((p) => {
         if (cancelled) return
         setResult({ key: reqKey, entries: p.entries, nextCursor: p.nextCursor, err: "" })
@@ -109,7 +116,7 @@ export function useMessagesPager(opts: {
     return () => {
       cancelled = true
     }
-  }, [filters, cursor, limit, reqKey, enabled])
+  }, [filters, cursor, limit, sort, reqKey, enabled])
 
   // A result tagged with a superseded request key reads as loading — the
   // matching fetch is already in flight.
