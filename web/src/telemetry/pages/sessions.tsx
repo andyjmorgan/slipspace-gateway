@@ -12,7 +12,7 @@ import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
 import { fetchFacets, type Facets } from "@/lib/messages"
 import { fetchSessions, type SessionSummary } from "@/lib/sessions"
-import { Dash, SortHeader, TagCell, toggleSort, type SortState } from "../components/messages-table"
+import { Dash, rangeLabel, SortHeader, TagCell, toggleSort, type SortState } from "../components/messages-table"
 
 // TIME_RANGES are the relative-window presets for the session list. "all" omits
 // the lower bound so the grouped scan walks the full history (heaviest query, so
@@ -62,9 +62,10 @@ function SessionsList() {
   const [tags, setTags] = useState<string[]>([])
   const [timeRange, setTimeRange] = useState<SessionTimeRange>("24h")
   const [limit, setLimit] = useState<number>(SESSION_DEFAULT_PAGE_SIZE)
-  // sort is undefined for the default (newest-activity first); a header click
-  // sets it. A sort change restarts paging like a filter change.
-  const [sort, setSort] = useState<SortState | undefined>(undefined)
+  // sort defaults to last-activity descending — the natural order, set
+  // explicitly so the "Last activity" header reads as the active sort. A header
+  // click changes it; a sort change restarts paging like a filter change.
+  const [sort, setSort] = useState<SortState>({ key: "last", desc: true })
 
   const activeCount = useMemo(
     () =>
@@ -82,6 +83,7 @@ function SessionsList() {
   const [facets, setFacets] = useState<Facets>(EMPTY_FACETS)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [nextCursor, setNextCursor] = useState("")
+  const [total, setTotal] = useState(0)
   const [pageIndex, setPageIndex] = useState(0)
   const cursorsRef = useRef<string[]>([""])
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading")
@@ -108,6 +110,7 @@ function SessionsList() {
         if (cancelled) return
         setSessions(p.sessions)
         setNextCursor(p.nextCursor)
+        setTotal(p.total)
         setStatus("ok")
       })
       .catch((e) => {
@@ -282,7 +285,7 @@ function SessionsList() {
             />
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <span className="text-[11px] text-[color:var(--text-4)] mono">page {pageIndex + 1}</span>
+            <span className="text-[11px] text-[color:var(--text-4)] mono">{rangeLabel(pageIndex, limit, sessions.length, total)}</span>
             <Button variant="ghost" size="icon-xs" onClick={onPrev} disabled={pageIndex === 0} aria-label="Previous page"><ChevronLeft /></Button>
             <Button variant="ghost" size="icon-xs" onClick={onNext} disabled={!nextCursor} aria-label="Next page"><ChevronRight /></Button>
           </div>

@@ -136,33 +136,41 @@ type EventListParams struct {
 	Asc  bool
 }
 
-// eventSort describes a sortable event column: its SQL ordering expression and,
-// for a numeric column, how to read the keyset value off a scanned row. num is
-// nil for the time-keyed default, whose cursor uses observed_at instead.
+// eventSort describes a sortable event column: its SQL ordering expression and
+// how to read the keyset value off a scanned row. Exactly one of num/str is
+// non-nil for a numeric / text column; both nil is the time-keyed default,
+// whose cursor uses observed_at.
 type eventSort struct {
 	expr string
 	num  func(RequestEvent) int64
+	str  func(RequestEvent) string
 }
 
-// eventSorts is the allowlist of message-browser sort columns. Only promoted
-// columns are sortable — duration is blob-only (decoded from span_event), so
-// it is intentionally absent (sorting it would detoast every row). Keys not in
-// the map fall back to the default (newest-first by observed_at).
+// eventSorts is the allowlist of message-browser sort columns — the promoted
+// columns the table renders. Duration is blob-only (decoded from span_event),
+// so it is intentionally absent (sorting it would detoast every row); tags is
+// an array (no meaningful scalar order). Keys not in the map fall back to the
+// default (newest-first by observed_at).
 var eventSorts = map[string]eventSort{
-	"":       {expr: "observed_at"},
-	"time":   {expr: "observed_at"},
-	"status": {expr: "status_code", num: func(e RequestEvent) int64 { return int64(e.StatusCode) }},
-	"tokens": {expr: "(tokens_in + tokens_out)", num: func(e RequestEvent) int64 { return e.TokensIn + e.TokensOut }},
+	"":              {expr: "observed_at"},
+	"time":          {expr: "observed_at"},
+	"status":        {expr: "status_code", num: func(e RequestEvent) int64 { return int64(e.StatusCode) }},
+	"tokens":        {expr: "(tokens_in + tokens_out)", num: func(e RequestEvent) int64 { return e.TokensIn + e.TokensOut }},
+	"provider":      {expr: "provider", str: func(e RequestEvent) string { return e.Provider }},
+	"model":         {expr: "model", str: func(e RequestEvent) string { return e.Model }},
+	"configuration": {expr: "configuration", str: func(e RequestEvent) string { return e.Configuration }},
+	"protocol":      {expr: "protocol", str: func(e RequestEvent) string { return e.Protocol }},
 }
 
 // eventCursor is the keyset position encoded into next_cursor: the last row's
-// (sort value, correlation_id), the tuple the ordering seeks past. ObservedAt
-// holds the value for the time-keyed default; Num holds it for a numeric sort
-// (status / tokens). Correlation is the unique tiebreaker in every case.
+// (sort value, correlation_id), the tuple the ordering seeks past. Exactly one
+// of ObservedAt / Num / Str carries the value, matching the active sort's
+// column type. Correlation is the unique tiebreaker in every case.
 type eventCursor struct {
 	ObservedAt  time.Time `json:"o"`
 	Correlation string    `json:"c"`
 	Num         int64     `json:"n,omitempty"`
+	Str         string    `json:"s,omitempty"`
 }
 
 func encodeCursor(c eventCursor) string {
@@ -229,11 +237,13 @@ func (s *Store) ListEventsFiltered(ctx context.Context, p EventListParams) ([]Re
 			return nil, "", err
 		}
 		// The keyset value is the sort column's value: observed_at for the
-		// time-keyed default, the numeric value otherwise. correlation_id is the
-		// tiebreaker, so the row comparison seeks strictly past the last row.
+		// time-keyed default, the numeric or text value otherwise. correlation_id
+		// is the tiebreaker, so the row comparison seeks strictly past the last row.
 		var sortArg any = cur.ObservedAt
 		if sort.num != nil {
 			sortArg = cur.Num
+		} else if sort.str != nil {
+			sortArg = cur.Str
 		}
 		args = append(args, sortArg)
 		vIdx := len(args)
@@ -273,10 +283,48 @@ func (s *Store) ListEventsFiltered(ctx context.Context, p EventListParams) ([]Re
 		c := eventCursor{ObservedAt: last.ObservedAt, Correlation: last.CorrelationID}
 		if sort.num != nil {
 			c.Num = sort.num(last)
+		} else if sort.str != nil {
+			c.Str = sort.str(last)
 		}
 		next = encodeCursor(c)
 	}
 	return out, next, nil
+}
+
+// EventCountParams is the input to CountEventsFiltered: the same window + filter
+// as the list. There is no cursor/sort/limit — a total is page- and
+// order-independent.
+type EventCountParams struct {
+	From   time.Time
+	To     time.Time
+	Filter EventFilter
+}
+
+// CountEventsFiltered returns the total number of request events matching the
+// window + filter — the denominator the message browser's pager shows ("of N").
+// It shares appendFilter with ListEventsFiltered so the count and the page
+// agree on membership.
+func (s *Store) CountEventsFiltered(ctx context.Context, p EventCountParams) (int64, error) {
+	var where []string
+	var args []any
+	if !p.From.IsZero() {
+		args = append(args, p.From)
+		where = append(where, fmt.Sprintf("observed_at >= $%d", len(args)))
+	}
+	if !p.To.IsZero() {
+		args = append(args, p.To)
+		where = append(where, fmt.Sprintf("observed_at < $%d", len(args)))
+	}
+	where, args = appendFilter(where, args, p.Filter)
+	q := `SELECT COUNT(*) FROM request_events`
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, " AND ")
+	}
+	var n int64
+	if err := s.db.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count events: %w", err)
+	}
+	return n, nil
 }
 
 // SessionSummary is one row of the session list: a session's id plus the
@@ -509,6 +557,49 @@ FROM agg a LEFT JOIN session_tags t USING (session_id)`
 		next = encodeSessionCursor(c)
 	}
 	return out, next, nil
+}
+
+// SessionCountParams is the input to CountSessions: the same window + filter as
+// the session list (no cursor/sort/limit).
+type SessionCountParams struct {
+	From   time.Time
+	To     time.Time
+	Filter EventFilter
+}
+
+// CountSessions returns the number of sessions matching the filter + window —
+// the membership ListSessions paginates, so the pager can show "of N". It
+// reuses the aggregating CTE (filter predicates before the GROUP BY, window on
+// the aggregated bounds) and counts the surviving groups.
+func (s *Store) CountSessions(ctx context.Context, p SessionCountParams) (int64, error) {
+	inner := []string{"session_id <> ''"}
+	inner, args := appendFilter(inner, nil, p.Filter)
+	innerWhere := strings.Join(inner, " AND ")
+
+	var outer []string
+	if !p.From.IsZero() {
+		args = append(args, p.From)
+		outer = append(outer, fmt.Sprintf("last_at >= $%d", len(args)))
+	}
+	if !p.To.IsZero() {
+		args = append(args, p.To)
+		outer = append(outer, fmt.Sprintf("started < $%d", len(args)))
+	}
+	q := `WITH agg AS (
+  SELECT session_id, MIN(observed_at) AS started, MAX(observed_at) AS last_at
+  FROM request_events
+  WHERE ` + innerWhere + `
+  GROUP BY session_id
+)
+SELECT COUNT(*) FROM agg`
+	if len(outer) > 0 {
+		q += ` WHERE ` + strings.Join(outer, " AND ")
+	}
+	var n int64
+	if err := s.db.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count sessions: %w", err)
+	}
+	return n, nil
 }
 
 // sessionRollupColumns is the narrow projection the session rollup reads: the

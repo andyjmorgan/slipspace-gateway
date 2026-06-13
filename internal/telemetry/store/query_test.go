@@ -86,6 +86,10 @@ func TestListEventsFiltered_Sort(t *testing.T) {
 		{"time-asc", "time", true, "ORDER BY observed_at ASC, correlation_id ASC"},
 		{"status", "status", false, "ORDER BY status_code DESC, correlation_id DESC"},
 		{"tokens-asc", "tokens", true, "ORDER BY (tokens_in + tokens_out) ASC, correlation_id ASC"},
+		{"provider", "provider", false, "ORDER BY provider DESC, correlation_id DESC"},
+		{"model-asc", "model", true, "ORDER BY model ASC, correlation_id ASC"},
+		{"configuration", "configuration", false, "ORDER BY configuration DESC, correlation_id DESC"},
+		{"protocol", "protocol", false, "ORDER BY protocol DESC, correlation_id DESC"},
 		{"unknown-falls-back", "duration", false, "ORDER BY observed_at DESC, correlation_id DESC"},
 	}
 	for _, c := range cases {
@@ -111,6 +115,34 @@ func TestListEventsFiltered_SortCursorPredicate(t *testing.T) {
 	}
 	if !strings.Contains(q.querySQL[0], "((tokens_in + tokens_out), correlation_id) <") {
 		t.Fatalf("numeric cursor predicate missing:\n%s", q.querySQL[0])
+	}
+}
+
+func TestListEventsFiltered_TextSortCursorPredicate(t *testing.T) {
+	// A text sort keys its cursor on the text column (provider), seeking past
+	// the last row's (provider, correlation_id).
+	cur := encodeCursor(eventCursor{Str: "openai", Correlation: "c"})
+	q := &fakeQuerier{query: rowsN(1)}
+	if _, _, err := newStore(q).ListEventsFiltered(ctx(), EventListParams{Sort: "provider", Cursor: cur, Limit: 5}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(q.querySQL[0], "(provider, correlation_id) <") {
+		t.Fatalf("text cursor predicate missing:\n%s", q.querySQL[0])
+	}
+}
+
+func TestCountEventsFiltered(t *testing.T) {
+	q := &fakeQuerier{row: fakeRow{}}
+	n, err := newStore(q).CountEventsFiltered(ctx(), EventCountParams{
+		From:   time.Unix(1, 0),
+		To:     time.Unix(2, 0),
+		Filter: EventFilter{Provider: "openai", Tags: []string{"eu"}},
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("count=%d err=%v", n, err)
+	}
+	if _, err := newStore(&fakeQuerier{row: fakeRow{err: errors.New("boom")}}).CountEventsFiltered(ctx(), EventCountParams{}); err == nil {
+		t.Fatal("want count error")
 	}
 }
 
@@ -222,6 +254,21 @@ func TestListSessions_SortCursorPredicate(t *testing.T) {
 	}
 	if !strings.Contains(q.querySQL[0], "(a.messages, a.session_id) <") {
 		t.Fatalf("numeric session cursor predicate missing:\n%s", q.querySQL[0])
+	}
+}
+
+func TestCountSessions(t *testing.T) {
+	q := &fakeQuerier{row: fakeRow{}}
+	n, err := newStore(q).CountSessions(ctx(), SessionCountParams{
+		From:   time.Unix(1, 0),
+		To:     time.Unix(2, 0),
+		Filter: EventFilter{Configuration: "prod"},
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("count=%d err=%v", n, err)
+	}
+	if _, err := newStore(&fakeQuerier{row: fakeRow{err: errors.New("boom")}}).CountSessions(ctx(), SessionCountParams{}); err == nil {
+		t.Fatal("want count error")
 	}
 }
 

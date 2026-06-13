@@ -26,6 +26,10 @@ func (r fakeRow) Scan(dest ...any) error {
 		if p, ok := dest[0].(*int); ok {
 			*p = 1
 		}
+		// COUNT(*) scans land in an *int64 (CountEventsFiltered / CountSessions).
+		if p, ok := dest[0].(*int64); ok {
+			*p = 1
+		}
 	}
 	return nil
 }

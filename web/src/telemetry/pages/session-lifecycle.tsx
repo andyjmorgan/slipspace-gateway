@@ -1811,6 +1811,7 @@ function SessionMessagesPanel({
   const hasNext = isFixture ? (fixPage + 1) * limit < fixtureRows.length : pager.hasNext
   const onNext = isFixture ? () => setFixPage(fixPage + 1) : pager.onNext
   const onPrev = isFixture ? () => setFixPage(Math.max(0, fixPage - 1)) : pager.onPrev
+  const total = isFixture ? fixtureRows.length : pager.total
 
   return (
     <PanelCard>
@@ -1853,6 +1854,8 @@ function SessionMessagesPanel({
         limit={limit}
         onLimit={setLimit}
         pageIndex={pageIndex}
+        shown={entries.length}
+        total={total}
         hasPrev={pageIndex > 0}
         hasNext={hasNext}
         onPrev={onPrev}

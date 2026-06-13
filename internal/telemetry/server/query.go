@@ -17,9 +17,11 @@ type Queries interface {
 	QueryDashboardSummary(ctx context.Context, p store.DashboardParams) (store.DashboardSummary, error)
 	QueryDashboardSeries(ctx context.Context, p store.DashboardSeriesParams) ([]store.DashboardSeriesBucket, error)
 	ListEventsFiltered(ctx context.Context, p store.EventListParams) ([]store.RequestEvent, string, error)
+	CountEventsFiltered(ctx context.Context, p store.EventCountParams) (int64, error)
 	GetRequestEvent(ctx context.Context, correlationID string) (store.RequestEvent, error)
 	GetRecordBody(ctx context.Context, correlationID string) ([]byte, error)
 	ListSessions(ctx context.Context, p store.SessionListParams) ([]store.SessionSummary, string, error)
+	CountSessions(ctx context.Context, p store.SessionCountParams) (int64, error)
 	// EventsBySessionRollup is the whole-session scan in the NARROW projection
 	// (span_event stripped of gen_ai_content) — bounded per row, safe to hold
 	// for a session. EventsBySessionPage is the only full-blob session read and
@@ -207,10 +209,11 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sort, asc := sortFromQuery(r)
+	filter := filterFromQuery(r)
 	sessions, next, err := s.queries.ListSessions(r.Context(), store.SessionListParams{
 		From:   from,
 		To:     to,
-		Filter: filterFromQuery(r),
+		Filter: filter,
 		Cursor: r.URL.Query().Get("cursor"),
 		Limit:  limitParam(r, 0),
 		Sort:   sort,
@@ -224,7 +227,16 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		s.queryError(w, "list sessions", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, mapSessionList(sessions, next))
+	// total is the full matching count (filter + window, page-independent) so
+	// the pager can show "X–Y of N".
+	total, err := s.queries.CountSessions(r.Context(), store.SessionCountParams{From: from, To: to, Filter: filter})
+	if err != nil {
+		s.queryError(w, "count sessions", err)
+		return
+	}
+	out := mapSessionList(sessions, next)
+	out.Total = total
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleSession serves the session rollup. It reads the narrow rollup

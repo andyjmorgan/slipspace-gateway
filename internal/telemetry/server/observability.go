@@ -183,10 +183,11 @@ func (s *Server) handleObsMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	sort, asc := sortFromQuery(r)
+	filter := filterFromQuery(r)
 	events, next, err := s.queries.ListEventsFiltered(r.Context(), store.EventListParams{
 		From:   from,
 		To:     to,
-		Filter: filterFromQuery(r),
+		Filter: filter,
 		Cursor: q.Get("cursor"),
 		Limit:  limitParam(r, 0),
 		Sort:   sort,
@@ -200,12 +201,19 @@ func (s *Server) handleObsMessages(w http.ResponseWriter, r *http.Request) {
 		s.queryError(w, "messages", err)
 		return
 	}
+	// total is the full matching count (filter + window, page-independent) so the
+	// pager can show "X–Y of N".
+	total, err := s.queries.CountEventsFiltered(r.Context(), store.EventCountParams{From: from, To: to, Filter: filter})
+	if err != nil {
+		s.queryError(w, "count messages", err)
+		return
+	}
 	// Keep store order (newest-first) — this is a browser, not the live feed.
 	entries := make([]adminc.MessageEntry, 0, len(events))
 	for _, e := range events {
 		entries = append(entries, mapEntry(e))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "next_cursor": next})
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "next_cursor": next, "total": total})
 }
 
 // handleFacets emits the distinct dropdown values for the message browser. The

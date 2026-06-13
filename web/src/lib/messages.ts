@@ -59,15 +59,17 @@ export type MessageFilters = {
 }
 
 // MessagesPage is one keyset page of the filtered browser. nextCursor is empty
-// on the last page.
+// on the last page; total is the full match count (page-independent).
 export type MessagesPage = {
   entries: MessageEntry[]
   nextCursor: string
+  total: number
 }
 
 type MessagesPageWire = {
   entries: MessageEntry[]
   next_cursor: string
+  total: number
 }
 
 /**
@@ -103,7 +105,7 @@ export async function fetchMessagesPage(
   put("sort", opts.sort)
   if (opts.order === "asc") p.set("order", "asc")
   const r = await apiFetch<MessagesPageWire>(`/api/v1/messages?${p.toString()}`)
-  return { entries: r.entries ?? [], nextCursor: r.next_cursor ?? "" }
+  return { entries: r.entries ?? [], nextCursor: r.next_cursor ?? "", total: r.total ?? 0 }
 }
 
 // Facets is the distinct dropdown values for the browser. Each list is sorted

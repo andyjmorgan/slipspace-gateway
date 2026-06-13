@@ -255,6 +255,10 @@ type SessionList struct {
 
 	// NextCursor advances to the next page; empty means the last page.
 	NextCursor string `json:"next_cursor"`
+
+	// Total is the full count of sessions matching the filter + window
+	// (page-independent), so the pager can show "X–Y of N".
+	Total int64 `json:"total"`
 }
 
 // MessageBodyDetail is the JSON shape returned by

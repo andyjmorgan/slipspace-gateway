@@ -20,6 +20,7 @@ export type { SessionSummary }
 export type SessionListPage = {
   sessions: SessionSummary[]
   nextCursor: string
+  total: number
 }
 
 // SessionListFilters is the session list's filter set. Empty fields are omitted
@@ -57,5 +58,5 @@ export async function fetchSessions(
   if (opts.sort) p.set("sort", opts.sort)
   if (opts.order === "asc") p.set("order", "asc")
   const r = await apiFetch<SessionListWire>(`/api/v1/sessions?${p.toString()}`)
-  return { sessions: r.sessions ?? [], nextCursor: r.next_cursor ?? "" }
+  return { sessions: r.sessions ?? [], nextCursor: r.next_cursor ?? "", total: r.total ?? 0 }
 }
