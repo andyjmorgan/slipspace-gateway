@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router"
 import { Activity, Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Sun } from "lucide-react"
 import { auth } from "@/lib/auth"
@@ -61,6 +61,16 @@ const NAV = [
 
 function TelemetryLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  // Close the mobile nav drawer on Escape — the drawer behaves as a modal
+  // overlay (scrim + above content), so it needs a keyboard dismiss too.
+  useEffect(() => {
+    if (!mobileNavOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false)
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [mobileNavOpen])
   return (
     <div className="flex min-h-screen bg-[color:var(--bg)]">
       <TelemetrySidebar isOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
@@ -115,9 +125,6 @@ function TelemetrySidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
           </NavLink>
         ))}
       </nav>
-      <div className="px-4 py-3 border-t border-[color:var(--border)] text-[11px] text-[color:var(--text-4)]">
-        Read-only observability
-      </div>
     </aside>
   )
 }
@@ -201,8 +208,7 @@ function LoginPage() {
           <span className="text-[16px] font-semibold tracking-tight">Sluice Telemetry</span>
         </div>
 
-        <h1 className="text-[20px] font-semibold tracking-[-0.02em] mb-1">Sign in</h1>
-        <p className="text-[13px] text-[color:var(--text-3)] mb-5">Read-only observability console</p>
+        <h1 className="text-[20px] font-semibold tracking-[-0.02em] mb-5">Sign in</h1>
 
         <form onSubmit={submit} className="flex flex-col gap-3.5">
           <div className="flex flex-col gap-1.5">

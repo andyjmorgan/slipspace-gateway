@@ -41,7 +41,7 @@ export function DashboardPage() {
             Last {state.status === "ok" ? state.data.window : range}
           </h1>
           <div className="text-[13px] text-[color:var(--text-3)] mt-1">
-            Fleet-wide, aggregated from the telemetry store · refreshed every 30s
+            Across all gateways · refreshed every 30s
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -180,13 +180,13 @@ function Center({ children, tone }: { children: React.ReactNode; tone?: "err" })
 type StripRow = { requests: number; error_rate: number }
 function Strip<T extends StripRow>({ title, sub, rows, label, rowKey }: { title: string; sub: string; rows: T[]; label: (r: T) => React.ReactNode; rowKey: (r: T) => string }) {
   if (!rows.length) return <Empty title={title} sub={sub} message="No traffic recorded yet." />
-  const max = Math.max(...rows.map((r) => r.requests))
+  const max = Math.max(1, ...rows.map((r) => r.requests))
   return (
     <PanelCard>
       <PanelHead title={title} sub={sub} />
-      <div className="px-4 py-3 flex flex-col gap-2.5 overflow-x-auto">
+      <div className="px-4 py-3 flex flex-col gap-2.5">
         {rows.map((r) => (
-          <div key={rowKey(r)} className="grid grid-cols-[170px_1fr_auto_auto] items-center gap-3 min-w-[24rem]">
+          <div key={rowKey(r)} className="grid grid-cols-[6.5rem_1fr_auto_auto] sm:grid-cols-[170px_1fr_auto_auto] items-center gap-2 sm:gap-3">
             <div className="min-w-0">{label(r)}</div>
             <div className="h-2 rounded-full bg-[color:var(--bg-2)] overflow-hidden">
               <div className="h-full rounded-full" style={{ width: `${(r.requests / max) * 100}%`, background: "var(--accent)" }} />
@@ -202,7 +202,7 @@ function Strip<T extends StripRow>({ title, sub, rows, label, rowKey }: { title:
 
 function Fired({ title, sub, rows }: { title: string; sub: string; rows: { key: string; count: number; configs: string[] }[] }) {
   if (!rows.length) return <Empty title={title} sub={sub} message="Nothing recorded yet." />
-  const max = Math.max(...rows.map((r) => r.count))
+  const max = Math.max(1, ...rows.map((r) => r.count))
   return (
     <PanelCard>
       <PanelHead title={title} sub={sub} />
@@ -232,15 +232,15 @@ function ProviderHealth({ rows }: { rows: DashboardSummary["provider_health"] })
   return (
     <PanelCard accent={anyUnhealthy ? "warn" : "ok"}>
       <PanelHead title="Provider health" sub="5m error rate" />
-      <div className="grid grid-cols-2">
-        {rows.map((p, i) => {
-          const isLastRow = i >= rows.length - 2
-          const isRight = i % 2 === 1
+      <div className="grid grid-cols-1 sm:grid-cols-2">
+        {rows.map((p) => {
           const hasTraffic = p.requests_5m > 0
+          const status = !hasTraffic ? "No traffic" : p.healthy ? "Healthy" : "Degraded"
           const dotColor = !hasTraffic ? "var(--text-4)" : p.healthy ? "var(--ok)" : "var(--err)"
           return (
-            <div key={p.provider} className="flex items-center gap-2 px-3.5 py-2.5" style={{ borderRight: isRight ? "none" : "1px solid var(--border)", borderBottom: isLastRow ? "none" : "1px solid var(--border)" }}>
-              <span className="inline-block size-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
+            <div key={p.provider} className="flex items-center gap-2 px-3.5 py-2.5 border-[color:var(--border)] border-b [&:last-child]:border-b-0 sm:[&:nth-last-child(-n+2)]:border-b-0 sm:[&:nth-child(odd)]:border-r">
+              <span className="inline-block size-1.5 rounded-full shrink-0" style={{ background: dotColor }} title={status} />
+              <span className="sr-only">{status}:</span>
               <ProviderChip name={p.provider} />
               <span className="mono tnum ml-auto text-[11px] shrink-0" style={{ color: hasTraffic ? (p.healthy ? "var(--ok)" : "var(--err)") : "var(--text-4)" }}>
                 {hasTraffic ? fmt.pct(p.error_rate_5m, 1) : "—"}

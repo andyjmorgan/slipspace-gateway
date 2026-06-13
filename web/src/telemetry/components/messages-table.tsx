@@ -54,7 +54,7 @@ function AgentCell({ label, color }: { label: string; color?: string }) {
   return (
     <td className="px-4 py-2 whitespace-nowrap">
       <span className="inline-flex items-center gap-1.5 text-[12px]" style={{ color: color ?? "var(--text-2)" }} title={label}>
-        <span className="inline-block w-2 h-2 rounded-[2px] shrink-0" style={{ background: color ?? "var(--text-4)" }} />
+        <span aria-hidden="true" className="inline-block w-2 h-2 rounded-[2px] shrink-0" style={{ background: color ?? "var(--text-4)" }} />
         <span className="truncate max-w-[9rem]">{label}</span>
       </span>
     </td>
@@ -97,16 +97,18 @@ export function MessagesTableView({
     <TableScroll>
       <thead>
         <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-          <th className="text-left font-medium px-4 py-2">Time</th>
-          {agent && <th className="text-left font-medium px-4 py-2">Agent</th>}
-          <th className="text-left font-medium px-4 py-2">Status</th>
-          <th className="text-left font-medium px-4 py-2">Provider</th>
-          <th className="text-left font-medium px-4 py-2">Protocol</th>
-          <th className="text-left font-medium px-4 py-2">Model</th>
-          <th className="text-left font-medium px-4 py-2">Configuration</th>
-          <th className="text-left font-medium px-4 py-2">Tags</th>
-          <th className="text-right font-medium px-4 py-2">Duration</th>
-          <th className="text-right font-medium px-4 py-2">Tokens</th>
+          <th scope="col" className="text-left font-medium px-4 py-2">Time</th>
+          {agent && <th scope="col" className="text-left font-medium px-4 py-2">Agent</th>}
+          <th scope="col" className="text-left font-medium px-4 py-2">Status</th>
+          <th scope="col" className="text-left font-medium px-4 py-2">Provider</th>
+          <th scope="col" className="text-left font-medium px-4 py-2">Protocol</th>
+          <th scope="col" className="text-left font-medium px-4 py-2">Model</th>
+          <th scope="col" className="text-left font-medium px-4 py-2">Configuration</th>
+          <th scope="col" className="text-left font-medium px-4 py-2">Tags</th>
+          <th scope="col" className="text-right font-medium px-4 py-2">Duration</th>
+          <th scope="col" className="text-right font-medium px-4 py-2" title="tokens in / tokens out">
+            Tokens <span className="normal-case tracking-normal text-[color:var(--text-4)]">(in/out)</span>
+          </th>
         </tr>
       </thead>
       <tbody aria-busy={status === "loading"}>
@@ -119,8 +121,17 @@ export function MessagesTableView({
         {status !== "loading" && entries.map((e, i) => (
           <tr
             key={e.event_id}
+            role="button"
+            tabIndex={0}
+            aria-label={`Open request ${e.model || e.provider || ""} at ${rowTime(e.at)}, status ${e.status_code}`}
             onClick={() => onRowClick(e, i)}
-            className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)]"
+            onKeyDown={(ev) => {
+              if (ev.key === "Enter" || ev.key === " ") {
+                ev.preventDefault()
+                onRowClick(e, i)
+              }
+            }}
+            className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[color:var(--accent)]"
           >
             <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap">{rowTime(e.at)}</td>
             {agent && <AgentCell {...agent(e)} />}

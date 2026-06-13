@@ -153,20 +153,24 @@ export function PreBlock({ text }: { text: string }) {
   )
 }
 
-// IOTab is one tab of the inspector's tab strip.
+// IOTab is one tab of the inspector's tab strip. The meta sub-label is hidden
+// below `sm` — on a narrow dialog it would otherwise crowd the primary label
+// off the strip (the labels collapsed to meta fragments on phones).
 export function IOTab({ on, onClick, label, meta }: { on: boolean; onClick: () => void; label: string; meta: string }) {
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={on}
       onClick={onClick}
       className={cn(
-        "px-4 py-2 -mb-px text-[12.5px] font-semibold border-b-2 transition-colors",
+        "whitespace-nowrap px-3 sm:px-4 py-2 -mb-px text-[12.5px] font-semibold border-b-2 transition-colors",
         on
           ? "text-[color:var(--text)] border-[color:var(--accent)]"
           : "text-[color:var(--text-3)] border-transparent hover:text-[color:var(--text-2)]",
       )}
     >
-      {label} <span className="font-normal text-[11px] text-[color:var(--text-4)] ml-1">{meta}</span>
+      {label} <span className="hidden sm:inline font-normal text-[11px] text-[color:var(--text-4)] ml-1">{meta}</span>
     </button>
   )
 }
@@ -586,9 +590,11 @@ function SubTab({ on, onClick, label, meta }: { on: boolean; onClick: () => void
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={on}
       onClick={onClick}
       className={cn(
-        "px-3 py-1.5 -mb-px text-[11.5px] font-medium border-b-2 transition-colors",
+        "whitespace-nowrap px-3 py-2 -mb-px text-[11.5px] font-medium border-b-2 transition-colors",
         on
           ? "text-[color:var(--text)] border-[color:var(--text-3)]"
           : "text-[color:var(--text-4)] border-transparent hover:text-[color:var(--text-2)]",
@@ -627,10 +633,10 @@ export function TelemetryPane({ cid, wanted }: { cid: string; wanted: boolean })
   const defs = genAI?.tool_definitions ?? []
   return (
     <div className="pt-2.5">
-      <div className="flex border-b border-[color:var(--border)] flex-wrap">
+      <div role="tablist" aria-label="Telemetry views" className="flex border-b border-[color:var(--border)] flex-wrap overflow-x-auto">
         <SubTab on={sub === "system"} onClick={() => setSub("system")} label="System prompts" meta={body ? String(sys.length) : undefined} />
         <SubTab on={sub === "tools"} onClick={() => setSub("tools")} label="Tools" meta={body ? String(defs.length) : undefined} />
-        <SubTab on={sub === "raw"} onClick={() => setSub("raw")} label="Raw" meta="otel span" />
+        <SubTab on={sub === "raw"} onClick={() => setSub("raw")} label="Raw span" />
       </div>
       {st.state === "loading" && <PaneNote>loading telemetry…</PaneNote>}
       {st.state === "error" && <PaneNote warn>failed to load telemetry — try re-opening the tab</PaneNote>}
@@ -777,7 +783,7 @@ export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
   const nHdr = Object.keys(reqHdr).length + Object.keys(respHdr).length
   return (
     <div className="pt-2.5">
-      <div className="flex border-b border-[color:var(--border)] flex-wrap">
+      <div role="tablist" aria-label="Report views" className="flex border-b border-[color:var(--border)] flex-wrap overflow-x-auto">
         <SubTab on={sub === "request"} onClick={() => setSub("request")} label="Request" meta={body?.request_total_bytes ? `${fmt.compact(body.request_total_bytes)} B` : undefined} />
         <SubTab on={sub === "response"} onClick={() => setSub("response")} label="Response" meta={body?.response_total_bytes ? `${fmt.compact(body.response_total_bytes)} B` : undefined} />
         <SubTab on={sub === "stream"} onClick={() => setSub("stream")} label="Stream" meta={streaming ? "sse" : undefined} />

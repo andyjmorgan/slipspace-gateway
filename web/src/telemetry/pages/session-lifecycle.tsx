@@ -493,7 +493,7 @@ function LifecycleBody({ sessionId }: { sessionId: string }) {
       <>
         {crumb}
         <div className="rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-8 text-center text-[13px] text-[color:var(--text-3)]">
-          No gen_ai spans captured for session <span className="mono">{sessionId}</span>.
+          No AI requests captured for session <span className="mono">{sessionId}</span>.
         </div>
       </>
     )
@@ -637,13 +637,13 @@ function LifecycleHeader({
       <div className="flex-1 min-w-0">
         <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Session lifecycle</h1>
         <div className="text-[13px] text-[color:var(--text-3)] mt-1">
-          Reconstructed from gen_ai spans — every value derived at render time
+          Reconstructed from this session's request telemetry
         </div>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         {source === "fixture" && (
           <HeaderChip>
-            <span style={{ color: "var(--warn)" }}>fixture data</span> — no /spans endpoint on this backend
+            <span style={{ color: "var(--warn)" }}>sample data</span> — live telemetry unavailable
           </HeaderChip>
         )}
         {partial && (
@@ -919,12 +919,12 @@ function TokenBurnPanel({ vm, slice }: { vm: ViewModel; slice: SliceRange | null
         action={
           <div className="flex items-center gap-3 flex-wrap text-[11px] text-[color:var(--text-2)]">
             <BurnSwatch color="var(--p-input)" label="tokens in" line />
-            <BurnSwatch color="var(--p-output)" label="tokens out" line />
+            <BurnSwatch color="var(--p-output)" label="tokens out" line dash />
           </div>
         }
         lines={[
           { key: "tin", color: "var(--p-input)" },
-          { key: "tout", color: "var(--p-output)" },
+          { key: "tout", color: "var(--p-output)", dash: "5 3" },
         ]}
       />
       <BurnChartCard
@@ -965,7 +965,7 @@ function BurnChartCard({
   title: string
   sub: ReactNode
   action: ReactNode
-  lines: { key: keyof BurnPoint; color: string }[]
+  lines: { key: keyof BurnPoint; color: string; dash?: string }[]
 }) {
   const axis = "var(--text-4)"
   return (
@@ -1002,6 +1002,7 @@ function BurnChartCard({
                   type="monotone"
                   stroke={l.color}
                   strokeWidth={1.5}
+                  strokeDasharray={l.dash}
                   dot={false}
                   isAnimationActive={false}
                 />
@@ -1015,13 +1016,19 @@ function BurnChartCard({
 }
 
 // BurnSwatch is the token chart's legend chip: a square for a bar series, a
-// line for the cumulative curve.
-function BurnSwatch({ color, label, line }: { color: string; label: string; line?: boolean }) {
+// line for the cumulative curve. `dash` renders the line swatch dashed to
+// mirror a dashed series, so the two token curves are told apart by line
+// style as well as color (color-blind safe).
+function BurnSwatch({ color, label, line, dash }: { color: string; label: string; line?: boolean; dash?: boolean }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span
         className={line ? "inline-block w-3 h-[2px] rounded-full" : "inline-block w-2.5 h-2.5 rounded-[2px]"}
-        style={{ backgroundColor: color }}
+        style={
+          line && dash
+            ? { backgroundImage: `repeating-linear-gradient(to right, ${color} 0 3px, transparent 3px 5px)` }
+            : { backgroundColor: color }
+        }
       />
       <span>{label}</span>
     </span>
@@ -1061,6 +1068,11 @@ const LANE_GAP = 4
 const MINI_H = 58
 const MINI_AXIS = 18
 const MIN_PLOT_W = 1000
+
+// MODAL_FOCUSABLE selects the tabbable descendants the span-modal focus trap
+// cycles through.
+const MODAL_FOCUSABLE =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
 // Drag mode for the minimap brush: create a new slice, resize an edge, or pan
 // the window.
@@ -1194,12 +1206,16 @@ function TimelinePanel({
     }
   }, [mt, setBrush, vm.dur])
 
-  // Wheel zoom on the lanes chart, centered on the cursor. Native listener
-  // because React's onWheel is passive and we must preventDefault the scroll.
+  // Wheel zoom on the lanes chart, centered on the cursor. Gated behind
+  // Ctrl/⌘ (trackpad pinch also sets ctrlKey) so a plain wheel scrolls the
+  // page through the chart instead of being trapped by zoom — otherwise the
+  // tall waterfall swallows vertical scroll on long sessions. Native listener
+  // because React's onWheel is passive and we must preventDefault to zoom.
   useEffect(() => {
     const svg = chartRef.current
     if (!svg) return
     const onWheel = (ev: WheelEvent) => {
+      if (!ev.ctrlKey && !ev.metaKey) return // let the page scroll
       ev.preventDefault()
       const px = ev.clientX - svg.getBoundingClientRect().left
       if (px < GEO.l || px > w - GEO.r) return
@@ -1487,7 +1503,7 @@ function TimelinePanel({
       <div className="flex items-baseline gap-2 px-0.5">
         <span className="text-[13px] font-medium">Timeline</span>
         <span className="text-[11px] text-[color:var(--text-4)]">
-          requests per conversation — drag the minimap to slice; scroll to zoom
+          requests per conversation — drag the minimap to slice; ⌘/ctrl-scroll to zoom
         </span>
       </div>
       <PanelCard>
@@ -1874,7 +1890,7 @@ function SessionDataTabs({
   const msgCount = focusedConv ? (vm.byConv.get(focusedConv)?.length ?? 0) : vm.spans.length
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex border-b border-[color:var(--border)]">
+      <div role="tablist" aria-label="Session detail" className="flex border-b border-[color:var(--border)]">
         <IOTab
           on={tab === "messages"}
           onClick={() => setTab("messages")}
@@ -1938,10 +1954,10 @@ const ToolTable = memo(function ToolTable({ vm, kind }: { vm: ViewModel; kind: "
       <TableScroll className="min-w-0">
         <thead>
           <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-            <th className="text-left font-medium px-4 py-2">Tool</th>
-            <th className="text-right font-medium px-4 py-2">Calls</th>
-            <th className="text-right font-medium px-4 py-2">Convs</th>
-            <th className="text-right font-medium px-4 py-2">{kind === "client" ? "Median exec" : "Median host span"}</th>
+            <th scope="col" className="text-left font-medium px-4 py-2">Tool</th>
+            <th scope="col" className="text-right font-medium px-4 py-2">Calls</th>
+            <th scope="col" className="text-right font-medium px-4 py-2">Convs</th>
+            <th scope="col" className="text-right font-medium px-4 py-2">{kind === "client" ? "Median exec" : "Median host span"}</th>
           </tr>
         </thead>
         <tbody>
@@ -2001,26 +2017,35 @@ const LedgerTable = memo(function LedgerTable({
   const rows = showAll ? vm.ledger : vm.ledger.slice(0, LEDGER_PREVIEW)
   return (
     <PanelCard>
-      <PanelHead title="Tool call ledger" sub="joined by tool_call id · parameters shown raw" />
+      <PanelHead title="Tool call ledger" sub="joined by call ID · arguments shown raw" />
       <div className="max-h-[430px] overflow-y-auto">
         <TableScroll>
           <thead className="sticky top-0 bg-[color:var(--bg-1)] z-[1]">
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">tool_call id</th>
-              <th className="text-left font-medium px-4 py-2">Tool</th>
-              <th className="text-left font-medium px-4 py-2">Conversation</th>
-              <th className="text-left font-medium px-4 py-2">Called</th>
-              <th className="text-left font-medium px-4 py-2">Response</th>
-              <th className="text-right font-medium px-4 py-2">Exec</th>
-              <th className="text-left font-medium px-4 py-2">Arguments (raw)</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Call ID</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Tool</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Conversation</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Called</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Response</th>
+              <th scope="col" className="text-right font-medium px-4 py-2">Exec</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Arguments (raw)</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r, i) => (
               <tr
                 key={`${r.id}-${i}`}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open calling span for ${r.name}`}
                 onClick={() => onOpen(r.callCid)}
-                className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)]"
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault()
+                    onOpen(r.callCid)
+                  }
+                }}
+                className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[color:var(--accent)]"
                 title="Open the calling span"
               >
                 <td className="mono text-[11px] px-4 py-2 text-[color:var(--text-4)]">{id8(r.id)}</td>
@@ -2038,7 +2063,7 @@ const LedgerTable = memo(function LedgerTable({
                   ) : r.execS != null ? (
                     `${r.execS.toFixed(1)}s`
                   ) : (
-                    <span className="text-[color:var(--text-4)]">unjoined</span>
+                    <span className="text-[color:var(--text-4)]">no result</span>
                   )}
                   {r.isError && (
                     <b className="ml-1.5" style={{ color: "var(--err)" }}>
@@ -2173,11 +2198,18 @@ function SpanInspector({
 
   // Body scrolls back to the top when stepping prev/next to another span.
   const bodyRef = useRef<HTMLDivElement>(null)
+  // panelRef is the dialog surface, for focus-in / Tab-trap / focus-restore.
+  const panelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: 0 })
   }, [cid])
 
   useEffect(() => {
+    // Remember the trigger so focus returns to it when the modal closes, and
+    // move focus into the dialog on open (it opens via a row/bar click or the
+    // #span= deep-link). Tab is trapped within the panel.
+    const restoreTo = document.activeElement as HTMLElement | null
+    panelRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
       else if (e.key === "ArrowLeft") {
@@ -2186,10 +2218,32 @@ function SpanInspector({
       } else if (e.key === "ArrowRight") {
         e.preventDefault()
         goNext()
+      } else if (e.key === "Tab") {
+        const panel = panelRef.current
+        if (!panel) return
+        const items = panel.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE)
+        if (items.length === 0) {
+          e.preventDefault()
+          panel.focus()
+          return
+        }
+        const first = items[0]
+        const last = items[items.length - 1]
+        const active = document.activeElement
+        if (e.shiftKey && (active === first || active === panel)) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("keydown", onKey)
+      if (restoreTo && document.contains(restoreTo)) restoreTo.focus()
+    }
   }, [goPrev, goNext, onClose])
 
   // Ledger joins for the shared panes, pre-formatted here because the clocks
@@ -2224,7 +2278,9 @@ function SpanInspector({
       onClick={onClose}
     >
       <div
-        className="flex h-[94vh] w-[min(1100px,95vw)] flex-col rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] shadow-[var(--shadow-pop)]"
+        ref={panelRef}
+        tabIndex={-1}
+        className="flex h-[94vh] w-[min(1100px,95vw)] flex-col rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] shadow-[var(--shadow-pop)] outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* header: name + chips + ids */}
@@ -2276,7 +2332,7 @@ function SpanInspector({
 
           {/* Tab strip — Output default, choice persists across prev/next.
               Telemetry and Report mount (and fetch) only when clicked. */}
-          <div className="flex border-b border-[color:var(--border)] mt-5">
+          <div role="tablist" aria-label="Span detail views" className="flex border-b border-[color:var(--border)] mt-5 overflow-x-auto">
             <IOTab on={ioTab === "output"} onClick={() => onTab("output")} label="Output" meta={outputMeta(s)} />
             <IOTab on={ioTab === "input"} onClick={() => onTab("input")} label="Input" meta={inputMeta(s)} />
             <IOTab on={ioTab === "telemetry"} onClick={() => onTab("telemetry")} label="Telemetry" meta="system · tools · raw" />

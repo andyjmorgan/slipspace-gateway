@@ -1,7 +1,11 @@
-import { useEffect, type ReactNode } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { ChevronDown, ChevronUp, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+
+// FOCUSABLE selects the tabbable descendants the focus trap cycles through.
+const FOCUSABLE =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
 // InspectorModal is the shared per-request detail shell used by both the admin
 // live-messages view and the telemetry messages browser. It owns the parts that
@@ -41,7 +45,18 @@ export function InspectorModal({
   nextTitle?: string
   children: ReactNode
 }) {
+  // panelRef is the dialog surface; focus management traps Tab within it and
+  // restores focus to the trigger on close, so the modal is operable and
+  // escapable by keyboard alone (it opens via a deep-link / row click).
+  const panelRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
+    // Remember what had focus so we can restore it when the modal unmounts.
+    const restoreTo = document.activeElement as HTMLElement | null
+    // Move focus into the dialog on open — onto the panel itself (tabIndex -1),
+    // so a screen reader announces the dialog and Tab starts inside it.
+    panelRef.current?.focus()
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         onClose()
@@ -51,10 +66,34 @@ export function InspectorModal({
       } else if (e.key === "ArrowDown" && onNext) {
         e.preventDefault()
         onNext()
+      } else if (e.key === "Tab") {
+        // Trap Tab inside the dialog: wrap from last→first and first→last.
+        const panel = panelRef.current
+        if (!panel) return
+        const items = panel.querySelectorAll<HTMLElement>(FOCUSABLE)
+        if (items.length === 0) {
+          e.preventDefault()
+          panel.focus()
+          return
+        }
+        const first = items[0]
+        const last = items[items.length - 1]
+        const active = document.activeElement
+        if (e.shiftKey && (active === first || active === panel)) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("keydown", onKey)
+      // Restore focus to the element that opened the modal (if still in the DOM).
+      if (restoreTo && document.contains(restoreTo)) restoreTo.focus()
+    }
   }, [onPrev, onNext, onClose])
 
   return createPortal(
@@ -66,7 +105,9 @@ export function InspectorModal({
       onClick={onClose}
     >
       <div
-        className="relative flex h-[92vh] w-[92vw] max-w-7xl flex-col rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl"
+        ref={panelRef}
+        tabIndex={-1}
+        className="relative flex h-[92vh] w-[92vw] max-w-7xl flex-col rounded-[var(--radius-lg)] border border-[color:var(--border)] bg-[color:var(--bg-1)] p-4 shadow-xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex flex-none items-start gap-2">
