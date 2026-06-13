@@ -75,6 +75,45 @@ func TestListEventsFiltered_Errors(t *testing.T) {
 	}
 }
 
+func TestListEventsFiltered_Sort(t *testing.T) {
+	cases := []struct {
+		name      string
+		sort      string
+		asc       bool
+		wantOrder string
+	}{
+		{"default", "", false, "ORDER BY observed_at DESC, correlation_id DESC"},
+		{"time-asc", "time", true, "ORDER BY observed_at ASC, correlation_id ASC"},
+		{"status", "status", false, "ORDER BY status_code DESC, correlation_id DESC"},
+		{"tokens-asc", "tokens", true, "ORDER BY (tokens_in + tokens_out) ASC, correlation_id ASC"},
+		{"unknown-falls-back", "duration", false, "ORDER BY observed_at DESC, correlation_id DESC"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := &fakeQuerier{query: rowsN(1)}
+			if _, _, err := newStore(q).ListEventsFiltered(ctx(), EventListParams{Sort: c.sort, Asc: c.asc, Limit: 5}); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if !strings.Contains(q.querySQL[0], c.wantOrder) {
+				t.Fatalf("sort %q: SQL missing %q:\n%s", c.sort, c.wantOrder, q.querySQL[0])
+			}
+		})
+	}
+}
+
+func TestListEventsFiltered_SortCursorPredicate(t *testing.T) {
+	// A numeric sort keys its cursor on the sort expression (not observed_at),
+	// so the seek-past row comparison uses (tokens_in + tokens_out).
+	cur := encodeCursor(eventCursor{Num: 42, Correlation: "c"})
+	q := &fakeQuerier{query: rowsN(1)}
+	if _, _, err := newStore(q).ListEventsFiltered(ctx(), EventListParams{Sort: "tokens", Cursor: cur, Limit: 5}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(q.querySQL[0], "((tokens_in + tokens_out), correlation_id) <") {
+		t.Fatalf("numeric cursor predicate missing:\n%s", q.querySQL[0])
+	}
+}
+
 func TestDecodeCursor_BadJSON(t *testing.T) {
 	// valid base64 but not JSON -> ErrInvalidCursor (covers the unmarshal branch)
 	if _, err := decodeCursor("YWJj"); !errors.Is(err, ErrInvalidCursor) { // "abc"
@@ -143,6 +182,46 @@ func TestListSessions_Errors(t *testing.T) {
 	}
 	if _, _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{nil}, finalErr: errors.New("rows")}}).ListSessions(ctx(), SessionListParams{}); err == nil {
 		t.Fatal("want rows.Err")
+	}
+}
+
+func TestListSessions_Sort(t *testing.T) {
+	cases := []struct {
+		name      string
+		sort      string
+		asc       bool
+		wantOrder string
+	}{
+		{"default", "", false, "ORDER BY a.last_at DESC, a.session_id DESC"},
+		{"started-asc", "started", true, "ORDER BY a.started ASC, a.session_id ASC"},
+		{"messages", "messages", false, "ORDER BY a.messages DESC, a.session_id DESC"},
+		{"subagents", "subagents", false, "ORDER BY a.subagents DESC, a.session_id DESC"},
+		{"tokens-asc", "tokens", true, "ORDER BY a.total_tokens ASC, a.session_id ASC"},
+		{"unknown-falls-back", "bogus", false, "ORDER BY a.last_at DESC, a.session_id DESC"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := &fakeQuerier{query: rowsN(1)}
+			if _, _, err := newStore(q).ListSessions(ctx(), SessionListParams{Sort: c.sort, Asc: c.asc, Limit: 5}); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if !strings.Contains(q.querySQL[0], c.wantOrder) {
+				t.Fatalf("sort %q: SQL missing %q:\n%s", c.sort, c.wantOrder, q.querySQL[0])
+			}
+		})
+	}
+}
+
+func TestListSessions_SortCursorPredicate(t *testing.T) {
+	// A numeric session sort keys its cursor on the aggregate (a.messages),
+	// not a.last_at.
+	cur := encodeSessionCursor(sessionCursor{Num: 7, SessionID: "s"})
+	q := &fakeQuerier{query: rowsN(1)}
+	if _, _, err := newStore(q).ListSessions(ctx(), SessionListParams{Sort: "messages", Cursor: cur, Limit: 5}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.Contains(q.querySQL[0], "(a.messages, a.session_id) <") {
+		t.Fatalf("numeric session cursor predicate missing:\n%s", q.querySQL[0])
 	}
 }
 

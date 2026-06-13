@@ -12,7 +12,7 @@ import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
 import { fetchFacets, type Facets } from "@/lib/messages"
 import { fetchSessions, type SessionSummary } from "@/lib/sessions"
-import { Dash, TagCell } from "../components/messages-table"
+import { Dash, SortHeader, TagCell, toggleSort, type SortState } from "../components/messages-table"
 
 // TIME_RANGES are the relative-window presets for the session list. "all" omits
 // the lower bound so the grouped scan walks the full history (heaviest query, so
@@ -53,15 +53,28 @@ function SessionsList() {
     if (id) nav(`/sessions/${encodeURIComponent(id)}`)
   }
 
-  // Filters: tags (AND containment) + configuration + relative window preset.
+  // Filters: tags (AND containment) + configuration/provider/model/protocol
+  // equality + relative window preset.
   const [configuration, setConfiguration] = useState("")
+  const [provider, setProvider] = useState("")
+  const [model, setModel] = useState("")
+  const [protocol, setProtocol] = useState("")
   const [tags, setTags] = useState<string[]>([])
   const [timeRange, setTimeRange] = useState<SessionTimeRange>("24h")
   const [limit, setLimit] = useState<number>(SESSION_DEFAULT_PAGE_SIZE)
+  // sort is undefined for the default (newest-activity first); a header click
+  // sets it. A sort change restarts paging like a filter change.
+  const [sort, setSort] = useState<SortState | undefined>(undefined)
 
   const activeCount = useMemo(
-    () => (configuration ? 1 : 0) + tags.length + (timeRange !== "all" ? 1 : 0),
-    [configuration, tags, timeRange],
+    () =>
+      (configuration ? 1 : 0) +
+      (provider ? 1 : 0) +
+      (model ? 1 : 0) +
+      (protocol ? 1 : 0) +
+      tags.length +
+      (timeRange !== "all" ? 1 : 0),
+    [configuration, provider, model, protocol, tags, timeRange],
   )
 
   // Data + keyset paging. cursorsRef holds the cursor that fetches each page
@@ -80,14 +93,17 @@ function SessionsList() {
   useEffect(() => {
     cursorsRef.current = [""]
     setPageIndex(0)
-  }, [configuration, tags, timeRange, limit])
+  }, [configuration, provider, model, protocol, tags, timeRange, limit, sort])
 
   useEffect(() => {
     let cancelled = false
     setStatus("loading")
     const range = SESSION_TIME_RANGES.find((r) => r.value === timeRange)
     const from = range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined
-    fetchSessions({ from, configuration, tags }, { cursor: cursorsRef.current[pageIndex] ?? "", limit })
+    fetchSessions(
+      { from, configuration, provider, model, protocol, tags },
+      { cursor: cursorsRef.current[pageIndex] ?? "", limit, sort: sort?.key, order: sort && !sort.desc ? "asc" : "desc" },
+    )
       .then((p) => {
         if (cancelled) return
         setSessions(p.sessions)
@@ -106,7 +122,7 @@ function SessionsList() {
     return () => {
       cancelled = true
     }
-  }, [configuration, tags, timeRange, pageIndex, limit, reloadNonce, nav])
+  }, [configuration, provider, model, protocol, tags, timeRange, sort, pageIndex, limit, reloadNonce, nav])
 
   // Facets back the dropdowns (cached server-side, cheap to re-fetch on Refresh).
   useEffect(() => {
@@ -133,8 +149,12 @@ function SessionsList() {
   const onPrev = () => {
     if (pageIndex > 0) setPageIndex(pageIndex - 1)
   }
+  const onSort = (key: string) => setSort((s) => toggleSort(s, key))
   const clearFilters = () => {
     setConfiguration("")
+    setProvider("")
+    setModel("")
+    setProtocol("")
     setTags([])
     // Clear restores the default window (24h), not the unbounded all-time scan
     // ("all" is the heaviest query — see the timeRange default above).
@@ -171,6 +191,9 @@ function SessionsList() {
         <div className="flex flex-wrap items-center gap-2 p-3 border-b border-[color:var(--border)]">
           <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-44" />
           <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} className="w-44" />
+          <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} className="w-40" />
+          <Select label="Model" value={model} options={facets.models} onChange={setModel} className="w-44" />
+          <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} className="w-40" />
           <Segmented
             value={timeRange}
             onChange={setTimeRange}
@@ -196,13 +219,13 @@ function SessionsList() {
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
               <th scope="col" className="text-left font-medium px-4 py-2">Session</th>
-              <th scope="col" className="text-right font-medium px-4 py-2">Messages</th>
-              <th scope="col" className="text-right font-medium px-4 py-2">Subagents</th>
-              <th scope="col" className="text-right font-medium px-4 py-2">Tokens</th>
+              <SortHeader label="Messages" col="messages" sort={sort} onSort={onSort} align="right" />
+              <SortHeader label="Subagents" col="subagents" sort={sort} onSort={onSort} align="right" />
+              <SortHeader label="Tokens" col="tokens" sort={sort} onSort={onSort} align="right" />
               <th scope="col" className="text-left font-medium px-4 py-2">Models</th>
               <th scope="col" className="text-left font-medium px-4 py-2">Tags</th>
-              <th scope="col" className="text-left font-medium px-4 py-2">Started</th>
-              <th scope="col" className="text-left font-medium px-4 py-2">Last activity</th>
+              <SortHeader label="Started" col="started" sort={sort} onSort={onSort} />
+              <SortHeader label="Last activity" col="last" sort={sort} onSort={onSort} />
             </tr>
           </thead>
           <tbody aria-busy={status === "loading"}>

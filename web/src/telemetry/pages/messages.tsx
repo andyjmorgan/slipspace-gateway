@@ -18,7 +18,7 @@ import {
 } from "@/lib/messages"
 import { fetchEventSpan, type SessionSpan } from "@/lib/session-spans"
 import { MESSAGE_DEFAULT_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
-import { MessagesPagerBar, MessagesTableView } from "../components/messages-table"
+import { MessagesPagerBar, MessagesTableView, toggleSort, type SortState } from "../components/messages-table"
 import { inputMeta, outputMeta } from "@/lib/span-view"
 import {
   IOTab,
@@ -79,6 +79,10 @@ export function MessagesPage() {
   // widen via the time-range presets / row-size control as needed.
   const [timeRange, setTimeRange] = useState<TimeRange>("1h")
   const [limit, setLimit] = useState<number>(MESSAGE_DEFAULT_PAGE_SIZE)
+  // sort is undefined for the server's default ordering (newest-first by time);
+  // clicking a sortable header sets it. A sort change resets paging (the pager
+  // folds sort into its keyset identity).
+  const [sort, setSort] = useState<SortState | undefined>(undefined)
 
   // filters holds the pure (input-derived) predicates. The relative time bound
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
@@ -117,6 +121,7 @@ export function MessagesPage() {
   const { entries, status, err, pageIndex, hasNext, onNext, onPrev } = useMessagesPager({
     filters,
     limit,
+    sort,
     reloadNonce,
     resolveWindow: () => {
       const range = TIME_RANGES.find((r) => r.value === timeRange)
@@ -223,6 +228,8 @@ export function MessagesPage() {
           limit={limit}
           emptyText={activeCount > 0 ? "No requests match these filters." : "No requests recorded yet."}
           onRowClick={(_e, i) => setSelected(i)}
+          sort={sort}
+          onSort={(key) => setSort((s) => toggleSort(s, key))}
         />
 
         <MessagesPagerBar

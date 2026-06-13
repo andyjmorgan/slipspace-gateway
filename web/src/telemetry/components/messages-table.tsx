@@ -4,19 +4,81 @@
 // the exact same row/paging conventions instead of duplicating them. The
 // fetch/paging hook lives in lib/messages-pager.ts.
 
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { ProviderChip } from "@/components/atoms/provider-chip"
 import { TableScroll } from "@/components/atoms/card"
 import { SkeletonRows } from "@/components/atoms/skeleton"
 import { Segmented } from "@/components/atoms/segmented"
+import { cn } from "@/lib/utils"
 import { fmt } from "@/lib/fmt"
 import { MESSAGE_PAGE_SIZES } from "@/lib/messages-pager"
 import type { MessageEntry } from "@/lib/messages"
 
 export function Dash() {
   return <span className="text-[color:var(--text-4)]">—</span>
+}
+
+// SortState is the active column sort a table view renders + reports through
+// onSort: the column key and whether it's descending.
+export type SortState = { key: string; desc: boolean }
+
+// toggleSort is the shared header-click reducer: clicking the active column
+// flips direction; clicking a new column selects it descending-first (the
+// useful default for time/counts). Callers pass it the previous state.
+export function toggleSort(prev: SortState | undefined, key: string): SortState {
+  return prev?.key === key ? { key, desc: !prev.desc } : { key, desc: true }
+}
+
+// SortHeader is a table <th>: a sortable column button (with an asc/desc/idle
+// indicator + aria-sort) when onSort is supplied, else a plain header. Shared
+// by the messages and sessions tables so both sort the same way.
+export function SortHeader({
+  label,
+  col,
+  sort,
+  onSort,
+  align = "left",
+  title,
+}: {
+  label: React.ReactNode
+  col: string
+  sort?: SortState
+  onSort?: (key: string) => void
+  align?: "left" | "right"
+  title?: string
+}) {
+  const base = cn("font-medium px-4 py-2", align === "right" ? "text-right" : "text-left")
+  if (!onSort) {
+    return (
+      <th scope="col" className={base} title={title}>
+        {label}
+      </th>
+    )
+  }
+  const active = sort?.key === col
+  return (
+    <th scope="col" className={base} aria-sort={active ? (sort!.desc ? "descending" : "ascending") : "none"}>
+      <button
+        type="button"
+        onClick={() => onSort(col)}
+        title={title ?? "Sort by this column"}
+        className={cn(
+          "inline-flex items-center gap-1 -mx-1 px-1 rounded-[3px] hover:text-[color:var(--text)] focus-visible:outline-2 focus-visible:outline-[color:var(--accent)]",
+          align === "right" && "flex-row-reverse",
+          active && "text-[color:var(--text)]",
+        )}
+      >
+        {label}
+        {active ? (
+          sort!.desc ? <ArrowDown size={12} /> : <ArrowUp size={12} />
+        ) : (
+          <ArrowUpDown size={12} className="opacity-40" />
+        )}
+      </button>
+    </th>
+  )
 }
 
 // TAG_CELL_MAX caps how many tag chips a row renders inline; the rest collapse
@@ -80,6 +142,8 @@ export function MessagesTableView({
   emptyText,
   onRowClick,
   agent,
+  sort,
+  onSort,
 }: {
   entries: MessageEntry[]
   status: "loading" | "ok" | "error"
@@ -91,24 +155,34 @@ export function MessagesTableView({
   // map). Omitted by the global messages browser, which has no session scope
   // and so no alias pool — the column simply doesn't render there.
   agent?: (entry: MessageEntry) => { label: string; color?: string }
+  // sort / onSort make the Time, Status, and Tokens columns sortable. Supplied
+  // by the global browser (server-side sort); omitted by the session embed,
+  // whose rows are a client-side slice — its headers stay plain.
+  sort?: SortState
+  onSort?: (key: string) => void
 }) {
   const cols = agent ? 10 : 9
   return (
     <TableScroll>
       <thead>
         <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-          <th scope="col" className="text-left font-medium px-4 py-2">Time</th>
+          <SortHeader label="Time" col="time" sort={sort} onSort={onSort} />
           {agent && <th scope="col" className="text-left font-medium px-4 py-2">Agent</th>}
-          <th scope="col" className="text-left font-medium px-4 py-2">Status</th>
+          <SortHeader label="Status" col="status" sort={sort} onSort={onSort} />
           <th scope="col" className="text-left font-medium px-4 py-2">Provider</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Protocol</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Model</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Configuration</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Tags</th>
           <th scope="col" className="text-right font-medium px-4 py-2">Duration</th>
-          <th scope="col" className="text-right font-medium px-4 py-2" title="tokens in / tokens out">
-            Tokens <span className="normal-case tracking-normal text-[color:var(--text-4)]">(in/out)</span>
-          </th>
+          <SortHeader
+            col="tokens"
+            sort={sort}
+            onSort={onSort}
+            align="right"
+            title="tokens in / tokens out"
+            label={<>Tokens <span className="normal-case tracking-normal text-[color:var(--text-4)]">(in/out)</span></>}
+          />
         </tr>
       </thead>
       <tbody aria-busy={status === "loading"}>

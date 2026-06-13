@@ -129,13 +129,40 @@ type EventListParams struct {
 	Filter EventFilter
 	Cursor string
 	Limit  int
+	// Sort selects the ordering column (see eventSorts); empty/"time" default
+	// to observed_at. Asc flips the direction (default DESC = newest/largest
+	// first). An unknown Sort degrades to the default rather than erroring.
+	Sort string
+	Asc  bool
+}
+
+// eventSort describes a sortable event column: its SQL ordering expression and,
+// for a numeric column, how to read the keyset value off a scanned row. num is
+// nil for the time-keyed default, whose cursor uses observed_at instead.
+type eventSort struct {
+	expr string
+	num  func(RequestEvent) int64
+}
+
+// eventSorts is the allowlist of message-browser sort columns. Only promoted
+// columns are sortable — duration is blob-only (decoded from span_event), so
+// it is intentionally absent (sorting it would detoast every row). Keys not in
+// the map fall back to the default (newest-first by observed_at).
+var eventSorts = map[string]eventSort{
+	"":       {expr: "observed_at"},
+	"time":   {expr: "observed_at"},
+	"status": {expr: "status_code", num: func(e RequestEvent) int64 { return int64(e.StatusCode) }},
+	"tokens": {expr: "(tokens_in + tokens_out)", num: func(e RequestEvent) int64 { return e.TokensIn + e.TokensOut }},
 }
 
 // eventCursor is the keyset position encoded into next_cursor: the last row's
-// (observed_at, correlation_id), the tuple the DESC ordering seeks past.
+// (sort value, correlation_id), the tuple the ordering seeks past. ObservedAt
+// holds the value for the time-keyed default; Num holds it for a numeric sort
+// (status / tokens). Correlation is the unique tiebreaker in every case.
 type eventCursor struct {
 	ObservedAt  time.Time `json:"o"`
 	Correlation string    `json:"c"`
+	Num         int64     `json:"n,omitempty"`
 }
 
 func encodeCursor(c eventCursor) string {
@@ -187,15 +214,31 @@ func (s *Store) ListEventsFiltered(ctx context.Context, p EventListParams) ([]Re
 	}
 	where, args = appendFilter(where, args, p.Filter)
 
+	sort, ok := eventSorts[p.Sort]
+	if !ok {
+		sort = eventSorts[""]
+	}
+	dir, cmp := "DESC", "<"
+	if p.Asc {
+		dir, cmp = "ASC", ">"
+	}
+
 	if p.Cursor != "" {
 		cur, err := decodeCursor(p.Cursor)
 		if err != nil {
 			return nil, "", err
 		}
-		args = append(args, cur.ObservedAt)
-		oIdx := len(args)
+		// The keyset value is the sort column's value: observed_at for the
+		// time-keyed default, the numeric value otherwise. correlation_id is the
+		// tiebreaker, so the row comparison seeks strictly past the last row.
+		var sortArg any = cur.ObservedAt
+		if sort.num != nil {
+			sortArg = cur.Num
+		}
+		args = append(args, sortArg)
+		vIdx := len(args)
 		args = append(args, cur.Correlation)
-		where = append(where, fmt.Sprintf("(observed_at, correlation_id) < ($%d, $%d)", oIdx, len(args)))
+		where = append(where, fmt.Sprintf("(%s, correlation_id) %s ($%d, $%d)", sort.expr, cmp, vIdx, len(args)))
 	}
 
 	q := `SELECT ` + requestEventColumns + ` FROM request_events`
@@ -203,7 +246,7 @@ func (s *Store) ListEventsFiltered(ctx context.Context, p EventListParams) ([]Re
 		q += ` WHERE ` + strings.Join(where, " AND ")
 	}
 	args = append(args, limit+1)
-	q += fmt.Sprintf(` ORDER BY observed_at DESC, correlation_id DESC LIMIT $%d`, len(args))
+	q += fmt.Sprintf(` ORDER BY %s %s, correlation_id %s LIMIT $%d`, sort.expr, dir, dir, len(args))
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -227,7 +270,11 @@ func (s *Store) ListEventsFiltered(ctx context.Context, p EventListParams) ([]Re
 	if len(out) > limit {
 		last := out[limit-1]
 		out = out[:limit]
-		next = encodeCursor(eventCursor{ObservedAt: last.ObservedAt, Correlation: last.CorrelationID})
+		c := eventCursor{ObservedAt: last.ObservedAt, Correlation: last.CorrelationID}
+		if sort.num != nil {
+			c.Num = sort.num(last)
+		}
+		next = encodeCursor(c)
 	}
 	return out, next, nil
 }
@@ -273,13 +320,42 @@ type SessionListParams struct {
 	Filter EventFilter
 	Cursor string
 	Limit  int
+	// Sort selects the ordering column (see sessionSorts); empty/"last" default
+	// to last_at. Asc flips the direction (default DESC). Unknown ⇒ default.
+	Sort string
+	Asc  bool
+}
+
+// sessionSort describes a sortable session-list column: the SQL expression
+// (referencing the agg CTE alias) and how to read the keyset value off a
+// summary row. Exactly one of num/tm is non-nil — num for the count/token
+// aggregates, tm for the time bounds.
+type sessionSort struct {
+	expr string
+	num  func(SessionSummary) int64
+	tm   func(SessionSummary) time.Time
+}
+
+// sessionSorts is the allowlist of session-list sort columns — the rollup
+// aggregates the discovery table renders. Keys not in the map fall back to the
+// default (newest-activity-first by last_at).
+var sessionSorts = map[string]sessionSort{
+	"":          {expr: "a.last_at", tm: func(s SessionSummary) time.Time { return s.LastAt }},
+	"last":      {expr: "a.last_at", tm: func(s SessionSummary) time.Time { return s.LastAt }},
+	"started":   {expr: "a.started", tm: func(s SessionSummary) time.Time { return s.Started }},
+	"messages":  {expr: "a.messages", num: func(s SessionSummary) int64 { return int64(s.Messages) }},
+	"subagents": {expr: "a.subagents", num: func(s SessionSummary) int64 { return int64(s.Subagents) }},
+	"tokens":    {expr: "a.total_tokens", num: func(s SessionSummary) int64 { return s.TotalTokens }},
 }
 
 // sessionCursor is the keyset position encoded into a session-list next_cursor:
-// the last row's (last_at, session_id), the tuple the DESC ordering seeks past.
+// the last row's (sort value, session_id), the tuple the ordering seeks past.
+// LastAt holds the value for a time-keyed sort (last_at / started); Num holds
+// it for a numeric aggregate. session_id is the unique tiebreaker.
 type sessionCursor struct {
 	LastAt    time.Time `json:"l"`
 	SessionID string    `json:"s"`
+	Num       int64     `json:"n,omitempty"`
 }
 
 func encodeSessionCursor(c sessionCursor) string {
@@ -339,15 +415,28 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
 		args = append(args, p.To)
 		outer = append(outer, fmt.Sprintf("a.started < $%d", len(args)))
 	}
+	sort, ok := sessionSorts[p.Sort]
+	if !ok {
+		sort = sessionSorts[""]
+	}
+	dir, cmp := "DESC", "<"
+	if p.Asc {
+		dir, cmp = "ASC", ">"
+	}
+
 	if p.Cursor != "" {
 		cur, err := decodeSessionCursor(p.Cursor)
 		if err != nil {
 			return nil, "", err
 		}
-		args = append(args, cur.LastAt)
+		var sortArg any = cur.LastAt
+		if sort.num != nil {
+			sortArg = cur.Num
+		}
+		args = append(args, sortArg)
 		lIdx := len(args)
 		args = append(args, cur.SessionID)
-		outer = append(outer, fmt.Sprintf("(a.last_at, a.session_id) < ($%d, $%d)", lIdx, len(args)))
+		outer = append(outer, fmt.Sprintf("(%s, a.session_id) %s ($%d, $%d)", sort.expr, cmp, lIdx, len(args)))
 	}
 
 	// total_tokens sums the promoted tokens_in/tokens_out columns (#318) — NOT
@@ -387,7 +476,7 @@ FROM agg a LEFT JOIN session_tags t USING (session_id)`
 		q += ` WHERE ` + strings.Join(outer, " AND ")
 	}
 	args = append(args, limit+1)
-	q += fmt.Sprintf(` ORDER BY a.last_at DESC, a.session_id DESC LIMIT $%d`, len(args))
+	q += fmt.Sprintf(` ORDER BY %s %s, a.session_id %s LIMIT $%d`, sort.expr, dir, dir, len(args))
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -411,7 +500,13 @@ FROM agg a LEFT JOIN session_tags t USING (session_id)`
 	if len(out) > limit {
 		last := out[limit-1]
 		out = out[:limit]
-		next = encodeSessionCursor(sessionCursor{LastAt: last.LastAt, SessionID: last.SessionID})
+		c := sessionCursor{SessionID: last.SessionID}
+		if sort.num != nil {
+			c.Num = sort.num(last)
+		} else {
+			c.LastAt = sort.tm(last)
+		}
+		next = encodeSessionCursor(c)
 	}
 	return out, next, nil
 }

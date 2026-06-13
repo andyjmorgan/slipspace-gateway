@@ -277,6 +277,24 @@ func TestMessages_FiltersAndPaging(t *testing.T) {
 	}
 }
 
+func TestMessages_SortPlumbed(t *testing.T) {
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	if resp := get(t, h, "/api/v1/messages?sort=tokens&order=asc", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if q.lastParams.Sort != "tokens" || !q.lastParams.Asc {
+		t.Errorf("sort/order not plumbed: %+v", q.lastParams)
+	}
+	// Absent order defaults to descending (Asc=false).
+	if resp := get(t, h, "/api/v1/messages?sort=status", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if q.lastParams.Sort != "status" || q.lastParams.Asc {
+		t.Errorf("default order should be desc: %+v", q.lastParams)
+	}
+}
+
 func TestMessages_BadParamsAndErrors(t *testing.T) {
 	h := newQueryServer(t, &fakeQueries{})
 	if resp := get(t, h, "/api/v1/messages?from=x", true); resp.Code != http.StatusBadRequest {
@@ -439,12 +457,24 @@ func TestSessions_ListFilters(t *testing.T) {
 	// via filterFromQuery — the same path the message browser uses.
 	q := &fakeQueries{}
 	h := newQueryServer(t, q)
-	if resp := get(t, h, "/api/v1/sessions?configuration=prod&tags=a&tags=b", true); resp.Code != http.StatusOK {
+	if resp := get(t, h, "/api/v1/sessions?configuration=prod&provider=anthropic&model=claude&protocol=messages&tags=a&tags=b", true); resp.Code != http.StatusOK {
 		t.Fatalf("status = %d", resp.Code)
 	}
 	f := q.lastSessionParams.Filter
-	if f.Configuration != "prod" || len(f.Tags) != 2 || f.Tags[0] != "a" || f.Tags[1] != "b" {
+	if f.Configuration != "prod" || f.Provider != "anthropic" || f.Model != "claude" || f.Protocol != "messages" ||
+		len(f.Tags) != 2 || f.Tags[0] != "a" || f.Tags[1] != "b" {
 		t.Errorf("filter not plumbed: %+v", f)
+	}
+}
+
+func TestSessions_SortPlumbed(t *testing.T) {
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	if resp := get(t, h, "/api/v1/sessions?sort=tokens&order=asc", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if q.lastSessionParams.Sort != "tokens" || !q.lastSessionParams.Asc {
+		t.Errorf("sort/order not plumbed: %+v", q.lastSessionParams)
 	}
 }
 

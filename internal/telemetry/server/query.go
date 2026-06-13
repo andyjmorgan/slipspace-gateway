@@ -102,6 +102,15 @@ func nonEmpty(in []string) []string {
 	return out
 }
 
+// sortFromQuery reads the optional ?sort column key and ?order direction. The
+// direction defaults to descending; order=asc flips it. The sort key is passed
+// through verbatim — the store allowlists it and degrades an unknown key to its
+// default ordering, so a stale/typo'd key never errors.
+func sortFromQuery(r *http.Request) (sort string, asc bool) {
+	q := r.URL.Query()
+	return q.Get("sort"), q.Get("order") == "asc"
+}
+
 // parseWindowBounds reads optional RFC3339 ?from / ?to bounds. A bad value is a
 // reported error; an absent bound is the zero time (no predicate), so the
 // browser can page across all history unless explicitly bounded.
@@ -133,12 +142,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	sort, asc := sortFromQuery(r)
 	events, next, err := s.queries.ListEventsFiltered(r.Context(), store.EventListParams{
 		From:   from,
 		To:     to,
 		Filter: filterFromQuery(r),
 		Cursor: q.Get("cursor"),
 		Limit:  limitParam(r, 0),
+		Sort:   sort,
+		Asc:    asc,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
@@ -194,12 +206,15 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid "+bad)
 		return
 	}
+	sort, asc := sortFromQuery(r)
 	sessions, next, err := s.queries.ListSessions(r.Context(), store.SessionListParams{
 		From:   from,
 		To:     to,
 		Filter: filterFromQuery(r),
 		Cursor: r.URL.Query().Get("cursor"),
 		Limit:  limitParam(r, 0),
+		Sort:   sort,
+		Asc:    asc,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
