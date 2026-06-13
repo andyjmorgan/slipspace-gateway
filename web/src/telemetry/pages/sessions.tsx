@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { PanelCard, TableScroll } from "@/components/atoms/card"
+import { Sheet } from "@/components/atoms/sheet"
+import { ActiveFilterChips, FilterField, FiltersButton, type Chip } from "@/components/atoms/filters"
 import { SkeletonRows } from "@/components/atoms/skeleton"
 import { Segmented } from "@/components/atoms/segmented"
 import { Select } from "@/components/atoms/select"
@@ -66,17 +68,9 @@ function SessionsList() {
   // explicitly so the "Last activity" header reads as the active sort. A header
   // click changes it; a sort change restarts paging like a filter change.
   const [sort, setSort] = useState<SortState>({ key: "last", desc: true })
-
-  const activeCount = useMemo(
-    () =>
-      (configuration ? 1 : 0) +
-      (provider ? 1 : 0) +
-      (model ? 1 : 0) +
-      (protocol ? 1 : 0) +
-      tags.length +
-      (timeRange !== "all" ? 1 : 0),
-    [configuration, provider, model, protocol, tags, timeRange],
-  )
+  // Filter controls live in a right-side slide-over; applied filters show as
+  // removable toolbar chips. filtersOpen toggles the panel.
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   // Data + keyset paging. cursorsRef holds the cursor that fetches each page
   // (index 0 = "" = page one); navigational, not render state.
@@ -164,55 +158,49 @@ function SessionsList() {
     setTimeRange("24h")
   }
 
+  const chips: Chip[] = [
+    configuration && { key: "config", label: "Config", value: configuration, onClear: () => setConfiguration("") },
+    provider && { key: "provider", label: "Provider", value: provider, onClear: () => setProvider("") },
+    model && { key: "model", label: "Model", value: model, onClear: () => setModel("") },
+    protocol && { key: "protocol", label: "Protocol", value: protocol, onClear: () => setProtocol("") },
+    ...tags.map((t) => ({ key: `tag:${t}`, label: "Tag", value: t, onClear: () => setTags(tags.filter((x) => x !== t)) })),
+  ].filter(Boolean) as Chip[]
+
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex items-start gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
         <div className="flex-1 min-w-0">
           <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Sessions</h1>
           <div className="text-[13px] text-[color:var(--text-3)] mt-1">
             Conversations active in the selected window, newest activity first
           </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => setReloadNonce((n) => n + 1)} aria-label="Refresh">
-          <RefreshCw /> <span className="hidden sm:inline">Refresh</span>
-        </Button>
         <form onSubmit={jump} className="flex items-center gap-2">
           <Input
             aria-label="Open session by ID"
             placeholder="Session ID"
             value={jumpInput}
             onChange={(e) => setJumpInput(e.target.value)}
-            className="h-9 w-48 text-[12px] mono"
+            className="h-9 w-40 text-[12px] mono"
           />
           <Button type="submit" size="sm" variant="secondary" disabled={!jumpInput.trim()} aria-label="Open session">
             <Search /> <span className="hidden sm:inline">Open</span>
           </Button>
         </form>
+        <Segmented
+          value={timeRange}
+          onChange={setTimeRange}
+          options={SESSION_TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))}
+        />
+        <FiltersButton count={chips.length} onClick={() => setFiltersOpen(true)} />
+        <Button variant="ghost" size="sm" onClick={() => setReloadNonce((n) => n + 1)} aria-label="Refresh">
+          <RefreshCw /> <span className="hidden sm:inline">Refresh</span>
+        </Button>
       </div>
 
-      <PanelCard>
-        <div className="flex flex-wrap items-center gap-2 p-3 border-b border-[color:var(--border)]">
-          <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-44" />
-          <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} className="w-44" />
-          <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} className="w-40" />
-          <Select label="Model" value={model} options={facets.models} onChange={setModel} className="w-44" />
-          <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} className="w-40" />
-          <Segmented
-            value={timeRange}
-            onChange={setTimeRange}
-            options={SESSION_TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))}
-          />
-          {activeCount > 0 && (
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              <X /> Clear
-            </Button>
-          )}
-        </div>
+      <ActiveFilterChips chips={chips} onClearAll={clearFilters} />
 
-        <PanelHead
-          title="Sessions"
-          sub={`page ${pageIndex + 1} · ${sessions.length} shown${activeCount > 0 ? ` · ${activeCount} filter${activeCount > 1 ? "s" : ""}` : ""}`}
-        />
+      <PanelCard>
         {status === "error" && (
           <div className="m-3 rounded-[var(--radius-lg)] border p-4 text-[13px]" style={{ color: "var(--err)", background: "var(--err-bg)" }}>
             Failed to load sessions: <span className="mono">{err}</span>
@@ -270,7 +258,7 @@ function SessionsList() {
               </tr>
             ))}
             {status === "ok" && sessions.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{activeCount > 0 ? "No sessions match these filters." : "No sessions in this window."}</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{chips.length > 0 ? "No sessions match these filters." : "No sessions in this window."}</td></tr>
             )}
           </tbody>
         </TableScroll>
@@ -291,6 +279,48 @@ function SessionsList() {
           </div>
         </div>
       </PanelCard>
+
+      <Sheet
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        title={
+          <>
+            Filters
+            {chips.length > 0 && <span className="ml-1.5 font-normal text-[color:var(--text-4)]">{chips.length} active</span>}
+          </>
+        }
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={clearFilters} disabled={chips.length === 0}>
+              Clear all
+            </Button>
+            <div className="flex-1" />
+            <Button size="sm" onClick={() => setFiltersOpen(false)}>
+              Done
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3.5">
+          <div className="grid grid-cols-2 gap-3">
+            <FilterField label="Configuration">
+              <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} className="w-full" />
+            </FilterField>
+            <FilterField label="Provider">
+              <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} className="w-full" />
+            </FilterField>
+            <FilterField label="Model">
+              <Select label="Model" value={model} options={facets.models} onChange={setModel} className="w-full" />
+            </FilterField>
+            <FilterField label="Protocol">
+              <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} className="w-full" />
+            </FilterField>
+          </div>
+          <FilterField label="Tags (match all)">
+            <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-full" />
+          </FilterField>
+        </div>
+      </Sheet>
     </div>
   )
 }

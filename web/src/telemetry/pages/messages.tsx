@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
-import { Check, Copy, RefreshCw, X } from "lucide-react"
+import { Check, Copy, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { InspectorModal } from "@/components/atoms/inspector-modal"
-import { PanelCard, PanelHead } from "@/components/atoms/card"
+import { PanelCard } from "@/components/atoms/card"
+import { Sheet } from "@/components/atoms/sheet"
+import { ActiveFilterChips, FilterField, FiltersButton, type Chip } from "@/components/atoms/filters"
 import { Segmented } from "@/components/atoms/segmented"
 import { Select } from "@/components/atoms/select"
 import { MultiSelect } from "@/components/atoms/multi-select"
@@ -84,6 +86,9 @@ export function MessagesPage() {
   // it produces no visible change and looks broken). Clicking a header sets it;
   // a sort change resets paging (the pager folds sort into its keyset identity).
   const [sort, setSort] = useState<SortState>({ key: "time", desc: true })
+  // The filter controls live in a right-side slide-over so the toolbar stays
+  // clean; applied filters surface as removable chips. filtersOpen toggles it.
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   // filters holds the pure (input-derived) predicates. The relative time bound
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
@@ -92,26 +97,6 @@ export function MessagesPage() {
     () => ({ correlationId, sessionId, conversationId, agentId, userId, provider, model, configuration, protocol, statusClass, tags }),
     [correlationId, sessionId, conversationId, agentId, userId, provider, model, configuration, protocol, statusClass, tags],
   )
-
-  const activeCount = useMemo(() => {
-    const f = filters
-    return (
-      [
-        f.correlationId,
-        f.sessionId,
-        f.conversationId,
-        f.agentId,
-        f.userId,
-        f.provider,
-        f.model,
-        f.configuration,
-        f.protocol,
-        f.statusClass,
-      ].filter(Boolean).length +
-      (f.tags?.length ?? 0) +
-      (timeRange !== "all" ? 1 : 0)
-    )
-  }, [filters, timeRange])
 
   // Data + paging state. The shared pager hook owns the keyset cursor stack;
   // the time bound resolves from the relative preset at fetch time (Date.now()
@@ -173,51 +158,40 @@ export function MessagesPage() {
     setTimeRange("1h")
   }
 
+  // sheetFilterChips are the applied predicates shown as removable toolbar pills
+  // (time range stays inline, so it isn't a chip). Their count badges the
+  // Filters button — the bare time window doesn't read as a "filter".
+  const chips: Chip[] = [
+    corrInput && { key: "corr", label: "Correlation", value: corrInput, onClear: () => setCorrInput("") },
+    sessInput && { key: "sess", label: "Session", value: sessInput, onClear: () => setSessInput("") },
+    convInput && { key: "conv", label: "Thread", value: convInput, onClear: () => setConvInput("") },
+    agentInput && { key: "agent", label: "Agent", value: agentInput, onClear: () => setAgentInput("") },
+    userInput && { key: "user", label: "User", value: userInput, onClear: () => setUserInput("") },
+    provider && { key: "provider", label: "Provider", value: provider, onClear: () => setProvider("") },
+    model && { key: "model", label: "Model", value: model, onClear: () => setModel("") },
+    configuration && { key: "config", label: "Config", value: configuration, onClear: () => setConfiguration("") },
+    protocol && { key: "protocol", label: "Protocol", value: protocol, onClear: () => setProtocol("") },
+    statusClass && { key: "status", label: "Status", value: statusClass, onClear: () => setStatusClass("") },
+    ...tags.map((t) => ({ key: `tag:${t}`, label: "Tag", value: t, onClear: () => setTags(tags.filter((x) => x !== t)) })),
+  ].filter(Boolean) as Chip[]
+
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex items-center gap-3">
-        <div className="flex-1">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <div className="flex-1 min-w-0">
           <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Messages</h1>
           <div className="text-[13px] text-[color:var(--text-3)] mt-1">Search, filter, and page through captured requests</div>
         </div>
+        <Segmented value={timeRange} onChange={setTimeRange} options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))} />
+        <FiltersButton count={chips.length} onClick={() => setFiltersOpen(true)} />
         <Button variant="ghost" size="sm" onClick={() => setReloadNonce((n) => n + 1)} aria-label="Refresh">
           <RefreshCw /> <span className="hidden sm:inline">Refresh</span>
         </Button>
       </div>
 
-      <PanelCard>
-        <div className="flex flex-col gap-2.5 p-3 border-b border-[color:var(--border)]">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2">
-            <Input aria-label="Filter by correlation ID" placeholder="Correlation ID" value={corrInput} onChange={(e) => setCorrInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Input aria-label="Filter by session ID" placeholder="Session ID" value={sessInput} onChange={(e) => setSessInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Input aria-label="Filter by thread or conversation ID" placeholder="Thread / Conversation ID" value={convInput} onChange={(e) => setConvInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Input aria-label="Filter by agent ID" placeholder="Agent ID" value={agentInput} onChange={(e) => setAgentInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Input aria-label="Filter by user ID" placeholder="User ID" value={userInput} onChange={(e) => setUserInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} />
-            <Select label="Model" value={model} options={facets.models} onChange={setModel} />
-            <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} />
-            <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-44" />
-            <Segmented
-              value={statusClass}
-              onChange={setStatusClass}
-              options={STATUS_CLASSES.map((s) => ({ value: s.value, label: s.label }))}
-            />
-            <Segmented value={timeRange} onChange={setTimeRange} options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))} />
-            {activeCount > 0 && (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                <X /> Clear
-              </Button>
-            )}
-          </div>
-        </div>
+      <ActiveFilterChips chips={chips} onClearAll={clearFilters} />
 
-        <PanelHead
-          title="Requests"
-          sub={`page ${pageIndex + 1} · ${entries.length} shown${activeCount > 0 ? ` · ${activeCount} filter${activeCount > 1 ? "s" : ""}` : ""}`}
-        />
+      <PanelCard>
         {status === "error" && (
           <div className="m-3 rounded-[var(--radius-lg)] border p-4 text-[13px]" style={{ color: "var(--err)", background: "var(--err-bg)" }}>
             Failed to load messages: <span className="mono">{err}</span>
@@ -227,7 +201,7 @@ export function MessagesPage() {
           entries={entries}
           status={status}
           limit={limit}
-          emptyText={activeCount > 0 ? "No requests match these filters." : "No requests recorded yet."}
+          emptyText={chips.length > 0 ? "No requests match these filters." : "No requests in this window."}
           onRowClick={(_e, i) => setSelected(i)}
           sort={sort}
           onSort={(key) => setSort((s) => toggleSort(s, key))}
@@ -255,6 +229,68 @@ export function MessagesPage() {
           onNext={selected < entries.length - 1 ? () => setSelected(selected + 1) : undefined}
         />
       )}
+
+      <Sheet
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        title={
+          <>
+            Filters
+            {chips.length > 0 && <span className="ml-1.5 font-normal text-[color:var(--text-4)]">{chips.length} active</span>}
+          </>
+        }
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={clearFilters} disabled={chips.length === 0}>
+              Clear all
+            </Button>
+            <div className="flex-1" />
+            <Button size="sm" onClick={() => setFiltersOpen(false)}>
+              Done
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3.5">
+          <FilterField label="Correlation ID">
+            <Input aria-label="Filter by correlation ID" placeholder="exact id" value={corrInput} onChange={(e) => setCorrInput(e.target.value)} className="h-9 w-full text-[12px] mono" />
+          </FilterField>
+          <FilterField label="Session ID">
+            <Input aria-label="Filter by session ID" placeholder="exact id" value={sessInput} onChange={(e) => setSessInput(e.target.value)} className="h-9 w-full text-[12px] mono" />
+          </FilterField>
+          <FilterField label="Thread / Conversation ID">
+            <Input aria-label="Filter by thread or conversation ID" placeholder="exact id" value={convInput} onChange={(e) => setConvInput(e.target.value)} className="h-9 w-full text-[12px] mono" />
+          </FilterField>
+          <div className="grid grid-cols-2 gap-3">
+            <FilterField label="Agent ID">
+              <Input aria-label="Filter by agent ID" placeholder="exact id" value={agentInput} onChange={(e) => setAgentInput(e.target.value)} className="h-9 w-full text-[12px] mono" />
+            </FilterField>
+            <FilterField label="User ID">
+              <Input aria-label="Filter by user ID" placeholder="exact id" value={userInput} onChange={(e) => setUserInput(e.target.value)} className="h-9 w-full text-[12px] mono" />
+            </FilterField>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FilterField label="Provider">
+              <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} className="w-full" />
+            </FilterField>
+            <FilterField label="Model">
+              <Select label="Model" value={model} options={facets.models} onChange={setModel} className="w-full" />
+            </FilterField>
+            <FilterField label="Configuration">
+              <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} className="w-full" />
+            </FilterField>
+            <FilterField label="Protocol">
+              <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} className="w-full" />
+            </FilterField>
+          </div>
+          <FilterField label="Tags (match all)">
+            <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-full" />
+          </FilterField>
+          <FilterField label="Status">
+            <Segmented value={statusClass} onChange={setStatusClass} options={STATUS_CLASSES.map((s) => ({ value: s.value, label: s.label }))} />
+          </FilterField>
+        </div>
+      </Sheet>
     </div>
   )
 }
