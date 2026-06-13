@@ -136,7 +136,9 @@ function SessionsList() {
   const clearFilters = () => {
     setConfiguration("")
     setTags([])
-    setTimeRange("all")
+    // Clear restores the default window (24h), not the unbounded all-time scan
+    // ("all" is the heaviest query — see the timeRange default above).
+    setTimeRange("24h")
   }
 
   return (
@@ -153,12 +155,13 @@ function SessionsList() {
         </Button>
         <form onSubmit={jump} className="flex items-center gap-2">
           <Input
+            aria-label="Open session by ID"
             placeholder="Session ID"
             value={jumpInput}
             onChange={(e) => setJumpInput(e.target.value)}
             className="h-9 w-48 text-[12px] mono"
           />
-          <Button type="submit" size="sm" variant="secondary" disabled={!jumpInput.trim()}>
+          <Button type="submit" size="sm" variant="secondary" disabled={!jumpInput.trim()} aria-label="Open session">
             <Search /> <span className="hidden sm:inline">Open</span>
           </Button>
         </form>
@@ -192,14 +195,14 @@ function SessionsList() {
         <TableScroll>
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
-              <th className="text-left font-medium px-4 py-2">Session</th>
-              <th className="text-right font-medium px-4 py-2">Messages</th>
-              <th className="text-right font-medium px-4 py-2">Subagents</th>
-              <th className="text-right font-medium px-4 py-2">Tokens</th>
-              <th className="text-left font-medium px-4 py-2">Models</th>
-              <th className="text-left font-medium px-4 py-2">Tags</th>
-              <th className="text-left font-medium px-4 py-2">Started</th>
-              <th className="text-left font-medium px-4 py-2">Last activity</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Session</th>
+              <th scope="col" className="text-right font-medium px-4 py-2">Messages</th>
+              <th scope="col" className="text-right font-medium px-4 py-2">Subagents</th>
+              <th scope="col" className="text-right font-medium px-4 py-2">Tokens</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Models</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Tags</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Started</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">Last activity</th>
             </tr>
           </thead>
           <tbody aria-busy={status === "loading"}>
@@ -212,10 +215,19 @@ function SessionsList() {
             {status !== "loading" && sessions.map((s) => (
               <tr
                 key={s.session_id}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open session ${s.session_id}`}
                 onClick={() => nav(`/sessions/${encodeURIComponent(s.session_id)}`)}
-                className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)]"
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault()
+                    nav(`/sessions/${encodeURIComponent(s.session_id)}`)
+                  }
+                }}
+                className="border-t border-[color:var(--border)] cursor-pointer hover:bg-[color:var(--hover)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[color:var(--accent)]"
               >
-                <td className="mono text-[12px] px-4 py-2 max-w-[22rem] truncate" title={s.session_id}>{s.session_id}</td>
+                <td className="mono text-[12px] px-4 py-2 max-w-[14rem] truncate" title={s.session_id}>{s.session_id}</td>
                 <td className="mono tnum text-[12px] text-right px-4 py-2">{fmt.compact(s.messages)}</td>
                 <td className="mono tnum text-[12px] text-right px-4 py-2">
                   {s.subagents > 0

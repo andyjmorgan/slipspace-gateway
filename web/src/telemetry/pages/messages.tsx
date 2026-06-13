@@ -152,6 +152,7 @@ export function MessagesPage() {
   const clearFilters = () => {
     setCorrInput("")
     setSessInput("")
+    setConvInput("")
     setAgentInput("")
     setUserInput("")
     setProvider("")
@@ -160,7 +161,10 @@ export function MessagesPage() {
     setProtocol("")
     setStatusClass("")
     setTags([])
-    setTimeRange("all")
+    // Clear restores the default landing window (1h), not the unbounded all-time
+    // scan — see the timeRange default above. Clearing to "all" would silently
+    // widen to the heaviest query the page deliberately avoids on load.
+    setTimeRange("1h")
   }
 
   return (
@@ -178,11 +182,11 @@ export function MessagesPage() {
       <PanelCard>
         <div className="flex flex-col gap-2.5 p-3 border-b border-[color:var(--border)]">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2">
-            <Input placeholder="Correlation ID" value={corrInput} onChange={(e) => setCorrInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Input placeholder="Session ID" value={sessInput} onChange={(e) => setSessInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Input placeholder="Thread / Conversation ID" value={convInput} onChange={(e) => setConvInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Input placeholder="Agent ID" value={agentInput} onChange={(e) => setAgentInput(e.target.value)} className="h-9 text-[12px] mono" />
-            <Input placeholder="User ID" value={userInput} onChange={(e) => setUserInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Input aria-label="Filter by correlation ID" placeholder="Correlation ID" value={corrInput} onChange={(e) => setCorrInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Input aria-label="Filter by session ID" placeholder="Session ID" value={sessInput} onChange={(e) => setSessInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Input aria-label="Filter by thread or conversation ID" placeholder="Thread / Conversation ID" value={convInput} onChange={(e) => setConvInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Input aria-label="Filter by agent ID" placeholder="Agent ID" value={agentInput} onChange={(e) => setAgentInput(e.target.value)} className="h-9 text-[12px] mono" />
+            <Input aria-label="Filter by user ID" placeholder="User ID" value={userInput} onChange={(e) => setUserInput(e.target.value)} className="h-9 text-[12px] mono" />
             <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} />
             <Select label="Model" value={model} options={facets.models} onChange={setModel} />
             <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} />
@@ -384,7 +388,7 @@ function Inspector({
                 no gen_ai span captured for this request — the report may still carry the wire bodies
               </div>
             )}
-            <div className="flex border-b border-[color:var(--border)] mt-2 flex-wrap">
+            <div role="tablist" aria-label="Request detail views" className="flex border-b border-[color:var(--border)] mt-2 flex-wrap overflow-x-auto">
               {span && <IOTab on={effTab === "output"} onClick={() => setTab("output")} label="Output" meta={outputMeta(span)} />}
               {span && <IOTab on={effTab === "input"} onClick={() => setTab("input")} label="Input" meta={inputMeta(span)} />}
               <IOTab on={effTab === "telemetry"} onClick={() => setTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
