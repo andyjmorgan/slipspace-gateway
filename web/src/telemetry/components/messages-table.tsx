@@ -169,10 +169,10 @@ export function MessagesTableView({
           <SortHeader label="Time" col="time" sort={sort} onSort={onSort} />
           {agent && <th scope="col" className="text-left font-medium px-4 py-2">Agent</th>}
           <SortHeader label="Status" col="status" sort={sort} onSort={onSort} />
-          <th scope="col" className="text-left font-medium px-4 py-2">Provider</th>
-          <th scope="col" className="text-left font-medium px-4 py-2">Protocol</th>
-          <th scope="col" className="text-left font-medium px-4 py-2">Model</th>
-          <th scope="col" className="text-left font-medium px-4 py-2">Configuration</th>
+          <SortHeader label="Provider" col="provider" sort={sort} onSort={onSort} />
+          <SortHeader label="Protocol" col="protocol" sort={sort} onSort={onSort} />
+          <SortHeader label="Model" col="model" sort={sort} onSort={onSort} />
+          <SortHeader label="Configuration" col="configuration" sort={sort} onSort={onSort} />
           <th scope="col" className="text-left font-medium px-4 py-2">Tags</th>
           <th scope="col" className="text-right font-medium px-4 py-2">Duration</th>
           <SortHeader
@@ -230,13 +230,15 @@ export function MessagesTableView({
 }
 
 /**
- * MessagesPagerBar is the table footer: the rows-per-page segment plus the
- * page indicator and Next/Prev keyset navigation.
+ * MessagesPagerBar is the table footer: the rows-per-page segment, a
+ * "X–Y of N" range readout, and Next/Prev keyset navigation.
  */
 export function MessagesPagerBar({
   limit,
   onLimit,
   pageIndex,
+  shown,
+  total,
   hasPrev,
   hasNext,
   onPrev,
@@ -245,6 +247,9 @@ export function MessagesPagerBar({
   limit: number
   onLimit: (n: number) => void
   pageIndex: number
+  // shown is the row count on the current page; total is the full match count.
+  shown: number
+  total: number
   hasPrev: boolean
   hasNext: boolean
   onPrev: () => void
@@ -261,10 +266,19 @@ export function MessagesPagerBar({
         />
       </div>
       <div className="ml-auto flex items-center gap-2">
-        <span className="text-[11px] text-[color:var(--text-4)] mono">page {pageIndex + 1}</span>
+        <span className="text-[11px] text-[color:var(--text-4)] mono">{rangeLabel(pageIndex, limit, shown, total)}</span>
         <Button variant="ghost" size="icon-xs" onClick={onPrev} disabled={!hasPrev} aria-label="Previous page"><ChevronLeft /></Button>
         <Button variant="ghost" size="icon-xs" onClick={onNext} disabled={!hasNext} aria-label="Next page"><ChevronRight /></Button>
       </div>
     </div>
   )
+}
+
+// rangeLabel renders the "X–Y of N" pager readout from the keyset page position.
+// With no rows it reads "0 of N"; the start index is derived from the page
+// index and limit (keyset pages are uniform until the last).
+export function rangeLabel(pageIndex: number, limit: number, shown: number, total: number): string {
+  if (shown === 0) return `0 of ${fmt.num(total)}`
+  const start = pageIndex * limit + 1
+  return `${fmt.num(start)}–${fmt.num(start + shown - 1)} of ${fmt.num(total)}`
 }

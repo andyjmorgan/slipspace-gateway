@@ -79,10 +79,11 @@ export function MessagesPage() {
   // widen via the time-range presets / row-size control as needed.
   const [timeRange, setTimeRange] = useState<TimeRange>("1h")
   const [limit, setLimit] = useState<number>(MESSAGE_DEFAULT_PAGE_SIZE)
-  // sort is undefined for the server's default ordering (newest-first by time);
-  // clicking a sortable header sets it. A sort change resets paging (the pager
-  // folds sort into its keyset identity).
-  const [sort, setSort] = useState<SortState | undefined>(undefined)
+  // sort defaults to time-descending — the server's natural order, set
+  // explicitly so the Time header reads as the active sort (otherwise clicking
+  // it produces no visible change and looks broken). Clicking a header sets it;
+  // a sort change resets paging (the pager folds sort into its keyset identity).
+  const [sort, setSort] = useState<SortState>({ key: "time", desc: true })
 
   // filters holds the pure (input-derived) predicates. The relative time bound
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
@@ -118,7 +119,7 @@ export function MessagesPage() {
   // timeRange as the invalidation key.
   const [facets, setFacets] = useState<Facets>(EMPTY_FACETS)
   const [reloadNonce, setReloadNonce] = useState(0)
-  const { entries, status, err, pageIndex, hasNext, onNext, onPrev } = useMessagesPager({
+  const { entries, status, err, pageIndex, hasNext, total, onNext, onPrev } = useMessagesPager({
     filters,
     limit,
     sort,
@@ -236,6 +237,8 @@ export function MessagesPage() {
           limit={limit}
           onLimit={setLimit}
           pageIndex={pageIndex}
+          shown={entries.length}
+          total={total}
           hasPrev={pageIndex > 0}
           hasNext={hasNext}
           onPrev={onPrev}

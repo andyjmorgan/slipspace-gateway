@@ -601,6 +601,11 @@ export interface SessionList {
    * NextCursor advances to the next page; empty means the last page.
    */
   next_cursor: string;
+  /**
+   * Total is the full count of sessions matching the filter + window
+   * (page-independent), so the pager can show "X–Y of N".
+   */
+  total: number /* int64 */;
 }
 /**
  * MessageBodyDetail is the JSON shape returned by

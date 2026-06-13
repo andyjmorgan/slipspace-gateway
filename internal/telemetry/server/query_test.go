@@ -24,18 +24,22 @@ type fakeQueries struct {
 	summaryErr   error
 	series       []store.DashboardSeriesBucket
 	seriesErr    error
-	events       []store.RequestEvent
-	next         string
-	eventsErr    error
+	events         []store.RequestEvent
+	next           string
+	eventsErr      error
+	eventsTotal    int64
+	eventsCountErr error
 	event        store.RequestEvent
 	eventErr     error
 	recordBody   []byte
 	recordErr    error
 	session      []store.RequestEvent
 	sessionErr   error
-	sessions     []store.SessionSummary
-	sessionsNext string
-	sessionsErr  error
+	sessions         []store.SessionSummary
+	sessionsNext     string
+	sessionsErr      error
+	sessionsTotal    int64
+	sessionsCountErr error
 	facets       store.Facets
 	facetsErr    error
 	facetsHits   int
@@ -59,6 +63,12 @@ func (f *fakeQueries) QueryDashboardSeries(context.Context, store.DashboardSerie
 func (f *fakeQueries) ListEventsFiltered(_ context.Context, p store.EventListParams) ([]store.RequestEvent, string, error) {
 	f.lastParams = p
 	return f.events, f.next, f.eventsErr
+}
+func (f *fakeQueries) CountEventsFiltered(_ context.Context, _ store.EventCountParams) (int64, error) {
+	return f.eventsTotal, f.eventsCountErr
+}
+func (f *fakeQueries) CountSessions(_ context.Context, _ store.SessionCountParams) (int64, error) {
+	return f.sessionsTotal, f.sessionsCountErr
 }
 func (f *fakeQueries) Facets(context.Context) (store.Facets, error) {
 	f.facetsHits++
@@ -295,6 +305,29 @@ func TestMessages_SortPlumbed(t *testing.T) {
 	}
 }
 
+func TestMessages_Total(t *testing.T) {
+	q := &fakeQueries{events: []store.RequestEvent{{CorrelationID: "c1"}}, eventsTotal: 4242}
+	h := newQueryServer(t, q)
+	resp := get(t, h, "/api/v1/messages", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	var body struct {
+		Total int64 `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Total != 4242 {
+		t.Errorf("total = %d, want 4242", body.Total)
+	}
+	// A count failure is a 500, not a partial page.
+	hErr := newQueryServer(t, &fakeQueries{eventsCountErr: errors.New("db")})
+	if resp := get(t, hErr, "/api/v1/messages", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("count err: %d", resp.Code)
+	}
+}
+
 func TestMessages_BadParamsAndErrors(t *testing.T) {
 	h := newQueryServer(t, &fakeQueries{})
 	if resp := get(t, h, "/api/v1/messages?from=x", true); resp.Code != http.StatusBadRequest {
@@ -475,6 +508,28 @@ func TestSessions_SortPlumbed(t *testing.T) {
 	}
 	if q.lastSessionParams.Sort != "tokens" || !q.lastSessionParams.Asc {
 		t.Errorf("sort/order not plumbed: %+v", q.lastSessionParams)
+	}
+}
+
+func TestSessions_Total(t *testing.T) {
+	q := &fakeQueries{sessions: []store.SessionSummary{{SessionID: "s1"}}, sessionsTotal: 99}
+	h := newQueryServer(t, q)
+	resp := get(t, h, "/api/v1/sessions", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	var body struct {
+		Total int64 `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Total != 99 {
+		t.Errorf("total = %d, want 99", body.Total)
+	}
+	hErr := newQueryServer(t, &fakeQueries{sessionsCountErr: errors.New("db")})
+	if resp := get(t, hErr, "/api/v1/sessions", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("count err: %d", resp.Code)
 	}
 }
 

@@ -34,6 +34,9 @@ export type MessagesPager = {
   err: string
   pageIndex: number
   hasNext: boolean
+  // total is the full match count across all pages (page-independent), for the
+  // pager's "X–Y of N" readout; 0 until the first page settles.
+  total: number
   onNext: () => void
   onPrev: () => void
 }
@@ -46,7 +49,7 @@ type pagerNav = { key: string; pageIndex: number; cursors: string[] }
 
 // pagerResult is one settled fetch, tagged with the request identity it
 // answered; a stale tag (filters/page moved on) reads as still-loading.
-type pagerResult = { key: string; entries: MessageEntry[]; nextCursor: string; err: string }
+type pagerResult = { key: string; entries: MessageEntry[]; nextCursor: string; total: number; err: string }
 
 /**
  * useMessagesPager drives a filtered, keyset-paged walk of /api/v1/messages.
@@ -103,7 +106,7 @@ export function useMessagesPager(opts: {
     )
       .then((p) => {
         if (cancelled) return
-        setResult({ key: reqKey, entries: p.entries, nextCursor: p.nextCursor, err: "" })
+        setResult({ key: reqKey, entries: p.entries, nextCursor: p.nextCursor, total: p.total, err: "" })
       })
       .catch((e) => {
         if (cancelled) return
@@ -111,7 +114,7 @@ export function useMessagesPager(opts: {
           onUnauthorizedRef.current?.()
           return
         }
-        setResult({ key: reqKey, entries: [], nextCursor: "", err: e instanceof Error ? e.message : String(e) })
+        setResult({ key: reqKey, entries: [], nextCursor: "", total: 0, err: e instanceof Error ? e.message : String(e) })
       })
     return () => {
       cancelled = true
@@ -139,6 +142,7 @@ export function useMessagesPager(opts: {
     err: fresh?.err ?? "",
     pageIndex: cur.pageIndex,
     hasNext: !!fresh?.nextCursor,
+    total: fresh?.total ?? 0,
     onNext,
     onPrev,
   }
