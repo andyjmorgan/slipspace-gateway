@@ -1,0 +1,12 @@
+# Code generation for the detector contract. Go messages + gRPC service stub
+# into gen/, mirroring the proto path (paths=source_relative). The go_package
+# option in each .proto sets the import path. Run via `make generate` (buf
+# before tygo).
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: gen
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: gen
+    opt: paths=source_relative

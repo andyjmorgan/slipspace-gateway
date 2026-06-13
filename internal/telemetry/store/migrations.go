@@ -442,4 +442,86 @@ CREATE TABLE IF NOT EXISTS backfill_runs (
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS request_events_tags_arr ON request_events USING gin (tags);`,
 	},
+	{
+		version: 13,
+		name:    "arbiter_scanner_tables",
+		// SlipSpace Arbiter async security scanner (REF-007/REF-008). Four tables,
+		// all decoupled from request_events by design (ADR-003): they reference
+		// correlation_id but carry NO foreign key, so a finding that lands before
+		// (or without) its span simply waits to be joined and never blocks ingest.
+		//
+		// check_tasks is the transactional outbox (ADR-004): one row per
+		// (correlation_id, unit_id, check_type), exploded in the SAME tx as the
+		// span upsert so the work survives a pod crash. The dispatcher claims due
+		// rows with SELECT ... FOR UPDATE SKIP LOCKED + a locked_until lease, so
+		// multi-pod drain needs no extra infrastructure. finding holds per-hit
+		// rows; verdict is the reduced per-span outcome (FLAGGED ▸ PARTIAL ▸ CLEAN,
+		// ADR-017) with provenance; evidence stores ONLY the offending field, as
+		// application-side ciphertext (ADR-018 — the evidence store is a PII
+		// concentrator: encrypted at rest, retention-bounded). The full body is
+		// never stored. All additive, forward-only; regular tx (no hypertable).
+		sql: `
+CREATE TABLE IF NOT EXISTS check_tasks (
+    correlation_id  TEXT        NOT NULL,
+    unit_id         TEXT        NOT NULL,
+    check_type      TEXT        NOT NULL,
+    status          TEXT        NOT NULL DEFAULT 'pending',
+    attempt         INT         NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    locked_until    TIMESTAMPTZ,
+    stage           INT         NOT NULL DEFAULT 0,
+    unit_locator    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    result          JSONB,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (correlation_id, unit_id, check_type)
+);
+CREATE INDEX IF NOT EXISTS check_tasks_claimable
+    ON check_tasks (next_attempt_at)
+    WHERE status IN ('pending', 'processing');
+
+CREATE TABLE IF NOT EXISTS finding (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    correlation_id   TEXT        NOT NULL,
+    unit_id          TEXT        NOT NULL,
+    check_type       TEXT        NOT NULL,
+    category         TEXT        NOT NULL,
+    score            REAL        NOT NULL DEFAULT 0,
+    raw_label        TEXT        NOT NULL DEFAULT '',
+    span_start       INT,
+    span_end         INT,
+    span_basis       TEXT        NOT NULL DEFAULT '',
+    localization     TEXT        NOT NULL DEFAULT '',
+    detector_id      TEXT        NOT NULL DEFAULT '',
+    detector_version TEXT        NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS finding_correlation ON finding (correlation_id);
+
+CREATE TABLE IF NOT EXISTS verdict (
+    correlation_id TEXT        PRIMARY KEY,
+    state          TEXT        NOT NULL,
+    max_score      REAL        NOT NULL DEFAULT 0,
+    top_category   TEXT        NOT NULL DEFAULT '',
+    finding_count  INT         NOT NULL DEFAULT 0,
+    inconclusive   TEXT[]      NOT NULL DEFAULT '{}',
+    provenance     JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    decided_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS verdict_state_time ON verdict (state, decided_at DESC);
+
+CREATE TABLE IF NOT EXISTS evidence (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    correlation_id TEXT        NOT NULL,
+    unit_id        TEXT        NOT NULL,
+    check_type     TEXT        NOT NULL,
+    ciphertext     BYTEA       NOT NULL,
+    nonce          BYTEA       NOT NULL,
+    key_id         TEXT        NOT NULL DEFAULT '',
+    expires_at     TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS evidence_correlation ON evidence (correlation_id);
+CREATE INDEX IF NOT EXISTS evidence_expiry ON evidence (expires_at) WHERE expires_at IS NOT NULL;`,
+	},
 }
