@@ -62,6 +62,17 @@ func TestObsSummary_ParityShape(t *testing.T) {
 	}
 }
 
+func TestObsSummary_LongWindowsHonored(t *testing.T) {
+	// 7d / 30d must be accepted and echoed back, not silently defaulted to 1h.
+	h := newQueryServer(t, &fakeQueries{})
+	for _, win := range []string{"7d", "30d"} {
+		got := decodeAdmin[adminc.DashboardSummary](t, get(t, h, "/api/v1/dashboard/summary?window="+win, true))
+		if got.Window != win {
+			t.Errorf("window %q not honored, got %q", win, got.Window)
+		}
+	}
+}
+
 func TestObsSummary_DefaultWindowAndError(t *testing.T) {
 	h := newQueryServer(t, &fakeQueries{})
 	got := decodeAdmin[adminc.DashboardSummary](t, get(t, h, "/api/v1/dashboard/summary?window=bogus", true))

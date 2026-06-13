@@ -28,6 +28,7 @@ var allowedWindows = map[string]time.Duration{
 	"6h":  6 * time.Hour,
 	"24h": 24 * time.Hour,
 	"7d":  7 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
 }
 
 // parseWindow resolves the ?window token to (token, duration), defaulting to 1h

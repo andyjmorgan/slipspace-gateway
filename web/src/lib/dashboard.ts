@@ -108,7 +108,7 @@ function useFetch<T>(path: string, pollMs = DEFAULT_POLL_MS): FetchHandle<T> {
 }
 
 /** The set of windows the dashboard server accepts on ?window=. */
-export type DashboardWindow = "1h" | "24h"
+export type DashboardWindow = "1h" | "24h" | "7d" | "30d"
 
 export function useDashboardSummary(window: DashboardWindow, pollMs?: number): FetchHandle<DashboardSummary> {
   return useFetch<DashboardSummary>(`/api/v1/dashboard/summary?window=${window}`, pollMs)
