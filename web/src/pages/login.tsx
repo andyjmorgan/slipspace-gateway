@@ -91,7 +91,7 @@ export function LoginPage() {
             height={36}
             className="size-9 rounded-md"
           />
-          <span className="text-[16px] font-semibold tracking-tight">sluice</span>
+          <span className="text-[16px] font-semibold tracking-tight">SlipSpace</span>
           <span className="mono ml-auto text-[11px] text-[color:var(--text-4)]">{version ?? "…"}</span>
         </div>
 
