@@ -27,7 +27,7 @@ func TestNew(t *testing.T) {
 			{CheckType: "injection", Endpoint: "http://inj", Threshold: 0.5},
 		},
 	}}
-	s, err := New(cfg, testLogger())
+	s, err := New(context.Background(), cfg, testLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestNew(t *testing.T) {
 
 func TestNew_BadEvidenceKey(t *testing.T) {
 	cfg := config.Config{Scanner: config.Scanner{Enabled: true, EvidenceKey: "!!not-base64"}}
-	if _, err := New(cfg, testLogger()); err == nil {
+	if _, err := New(context.Background(), cfg, testLogger()); err == nil {
 		t.Error("expected error for bad evidence key")
 	}
 }

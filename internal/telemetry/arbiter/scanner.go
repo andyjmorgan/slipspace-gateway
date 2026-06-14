@@ -78,10 +78,11 @@ type Scanner struct {
 	reduceInterval   time.Duration
 }
 
-// New builds a Scanner from the validated config. Returns an error only if the
+// New builds a Scanner from the validated config; ctx scopes the enriched-export
+// exporter setup. Returns an error only if the
 // evidence key fails to load (Validate already checked it). The enabled check
 // types are exactly those with a configured detector.
-func New(cfg config.Config, logger *slog.Logger) (*Scanner, error) {
+func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Scanner, error) {
 	key, err := cfg.EvidenceKeyBytes()
 	if err != nil {
 		return nil, err
@@ -90,7 +91,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Scanner, error) {
 	if err != nil {
 		return nil, err
 	}
-	emitter, err := newEmitter(context.Background(), cfg.Scanner.EnrichedExport)
+	emitter, err := newEmitter(ctx, cfg.Scanner.EnrichedExport)
 	if err != nil {
 		return nil, err
 	}
