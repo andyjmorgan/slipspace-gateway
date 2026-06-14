@@ -1,0 +1,6 @@
+# CPU-only PyTorch wheel + the HF stack the reference detector needs.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1
+transformers>=4.50
+fastapi>=0.115
+uvicorn[standard]>=0.32
