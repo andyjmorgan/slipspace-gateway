@@ -49,7 +49,7 @@ export function Sidebar({
           className="size-7 rounded-md"
         />
         <div className="flex flex-col min-w-0">
-          <span className="font-semibold tracking-tight text-[15px] leading-tight">sluice</span>
+          <span className="font-semibold tracking-tight text-[15px] leading-tight">SlipSpace</span>
           <span
             className="mono text-[10.5px] text-[color:var(--text-4)] truncate"
             title={version ?? ""}
