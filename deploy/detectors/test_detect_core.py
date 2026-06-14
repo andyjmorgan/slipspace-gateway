@@ -65,6 +65,21 @@ class ReduceFindings(unittest.TestCase):
         self.assertEqual(cats, ["toxicity.insult", "toxicity.toxic"])  # "threat" not mapped
 
 
+class NormalizeScores(unittest.TestCase):
+    def test_flat_list_of_dicts(self):
+        raw = [{"label": "INJECTION", "score": 0.9}, {"label": "SAFE", "score": 0.1}]
+        self.assertEqual(dc.normalize_scores(raw), [("INJECTION", 0.9), ("SAFE", 0.1)])
+
+    def test_nested_single_wrapper(self):
+        # some transformers versions wrap the per-input result in an extra list
+        raw = [[{"label": "toxic", "score": 0.8}, {"label": "insult", "score": 0.2}]]
+        self.assertEqual(dc.normalize_scores(raw), [("toxic", 0.8), ("insult", 0.2)])
+
+    def test_empty(self):
+        self.assertEqual(dc.normalize_scores([]), [])
+        self.assertEqual(dc.normalize_scores(None), [])
+
+
 class Contract(unittest.TestCase):
     def test_parse_camel_and_snake(self):
         camel = dc.parse_request({
