@@ -72,8 +72,8 @@ def _classify_chunks(text: str, max_tokens: int):
     per_chunk = []
     for start, end in windows:
         chunk_text = tokenizer.decode(ids[start:end], skip_special_tokens=True)
-        scores = nlp(chunk_text)  # top_k=None => [{label, score}, ...]
-        per_chunk.append([(s["label"], float(s["score"])) for s in scores])
+        # top_k=None returns [{label,score},...] or [[...]] across versions.
+        per_chunk.append(dc.normalize_scores(nlp(chunk_text)))
     return per_chunk, total, len(windows), truncated
 
 

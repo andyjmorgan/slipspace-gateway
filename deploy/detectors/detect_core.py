@@ -83,6 +83,20 @@ def chunk_windows(total: int, window: int, overlap: int) -> list[tuple[int, int]
     return out
 
 
+def normalize_scores(raw) -> list[tuple[str, float]]:
+    """Flatten a transformers text-classification (top_k=None) result.
+
+    Depending on the transformers version, classifying one string returns either
+    a list of {label, score} dicts or a single-element list wrapping that list.
+    Normalize both to a flat [(label, score)] list.
+    """
+    if not raw:
+        return []
+    if isinstance(raw[0], list):
+        raw = raw[0]
+    return [(d["label"], float(d["score"])) for d in raw]
+
+
 def reduce_findings(
     per_chunk: list[list[tuple[str, float]]],
     threshold: float,
