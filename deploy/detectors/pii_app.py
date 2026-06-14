@@ -168,6 +168,11 @@ async def detect(request: Request):
         return JSONResponse(resp, status_code=200)
 
     merged = dc.merge_spans(raw_findings, threshold)
+    # Coalesce the NER model's adjacent sub-span fragments into whole entities,
+    # then drop values the captured content repeats within the unit — otherwise
+    # one name surfaces as several split + doubled findings.
+    merged = dc.coalesce_adjacent(merged, req.text)
+    merged = dc.dedupe_by_value(merged, req.text)
     findings = dc.to_byte_spans(merged, req.text)
     resp = dc.build_response(
         req.correlation_id,

@@ -341,3 +341,59 @@ def to_byte_spans(findings: list[Finding], text: str) -> list[Finding]:
         end_b = len(text[: f.end].encode("utf-8"))
         out.append(Finding(category=f.category, score=f.score, raw_label=f.raw_label, start=start_b, end=end_b))
     return out
+
+
+def coalesce_adjacent(findings: list[Finding], text: str, max_gap: int = 2) -> list[Finding]:
+    """Join same-category spans the NER model split into adjacent fragments.
+
+    openai/privacy-filter emits one entity as several touching sub-spans —
+    "Marcus Delacro" + "ix", "4002-1199-8830-774" + "1" — which otherwise
+    surface as separate findings ("splitting"). This merges consecutive
+    same-category spans whose gap in `text` is <= max_gap chars (covering a
+    zero-gap subword split and a small separator like ", "), keeping the higher
+    score's raw_label. Whole-unit findings (no offsets) pass through.
+    """
+    spanned = sorted(
+        (f for f in findings if f.start is not None and f.end is not None),
+        key=lambda f: (f.category, f.start, f.end),
+    )
+    whole = [f for f in findings if f.start is None or f.end is None]
+    out: list[Finding] = []
+    for f in spanned:
+        if out:
+            g = out[-1]
+            # same category and f starts within max_gap of g's end (covers a
+            # small positive gap and any overlap the earlier merge missed).
+            if g.category == f.category and f.start <= g.end + max_gap:
+                out[-1] = Finding(
+                    category=g.category,
+                    score=max(g.score, f.score),
+                    raw_label=g.raw_label if g.score >= f.score else f.raw_label,
+                    start=g.start,
+                    end=max(g.end, f.end),
+                )
+                continue
+        out.append(f)
+    out.extend(whole)
+    return out
+
+
+def dedupe_by_value(findings: list[Finding], text: str) -> list[Finding]:
+    """Collapse identical (category, substring) spans to one, highest score.
+
+    The captured content often repeats a value within a single unit (the same
+    message echoed in the request), so the same entity is detected several times
+    ("doubling"). Keep one finding per distinct (category, trimmed text) value.
+    Whole-unit findings pass through (deduped per category by merge_spans).
+    """
+    best: dict[tuple[str, str], Finding] = {}
+    passthrough: list[Finding] = []
+    for f in findings:
+        if f.start is None or f.end is None:
+            passthrough.append(f)
+            continue
+        key = (f.category, text[f.start : f.end].strip())
+        cur = best.get(key)
+        if cur is None or f.score > cur.score:
+            best[key] = f
+    return list(best.values()) + passthrough
