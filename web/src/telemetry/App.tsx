@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router"
-import { Activity, Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Sun } from "lucide-react"
+import { Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Sun } from "lucide-react"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -101,8 +101,8 @@ function TelemetrySidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
       )}
     >
       <div className="flex items-center gap-2 px-4 h-[var(--header-h)] border-b border-[color:var(--border)]">
-        <Activity size={18} className="text-[color:var(--accent)]" />
-        <span className="font-semibold tracking-[-0.01em]">Sluice Telemetry</span>
+        <img src="/arbiter.svg" alt="" width={18} height={18} className="rounded-[4px]" />
+        <span className="font-semibold tracking-[-0.01em]">Arbiter</span>
       </div>
       <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
         {NAV.map((item) => (
@@ -204,8 +204,8 @@ function LoginPage() {
         style={{ boxShadow: "var(--shadow-md)" }}
       >
         <div className="flex items-center gap-2.5 pb-5 mb-5 border-b border-[color:var(--border)]">
-          <Activity size={20} className="text-[color:var(--accent)]" />
-          <span className="text-[16px] font-semibold tracking-tight">Sluice Telemetry</span>
+          <img src="/arbiter.svg" alt="" width={20} height={20} className="rounded-[5px]" />
+          <span className="text-[16px] font-semibold tracking-tight">Arbiter</span>
         </div>
 
         <h1 className="text-[20px] font-semibold tracking-[-0.02em] mb-5">Sign in</h1>
