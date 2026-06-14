@@ -108,6 +108,15 @@ export async function fetchMessagesPage(
   return { entries: r.entries ?? [], nextCursor: r.next_cursor ?? "", total: r.total ?? 0 }
 }
 
+// fetchMessageByCorrelation looks up the single request behind a correlation id,
+// returning its full MessageEntry (or null when none matches). The Security view
+// uses it to open the shared message Inspector for a finding's source request:
+// the findings list carries only the id, so the row resolves the entry on click.
+export async function fetchMessageByCorrelation(correlationId: string): Promise<MessageEntry | null> {
+  const page = await fetchMessagesPage({ correlationId }, { limit: 1 })
+  return page.entries[0] ?? null
+}
+
 // Facets is the distinct dropdown values for the browser. Each list is sorted
 // and de-duplicated server-side.
 export type Facets = {

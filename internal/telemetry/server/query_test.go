@@ -47,6 +47,13 @@ type fakeQueries struct {
 	verdictErr       error
 	findings         []store.Finding
 	findingsErr      error
+	findingRows      []store.FindingRow
+	findingRowsErr   error
+	// lastFindingsLimit / lastFindingsSession record the args of the most recent
+	// ListRecentFindings / ListFindingsBySession call so the Security-view
+	// plumbing tests can assert which path fired and with what args.
+	lastFindingsLimit   int
+	lastFindingsSession string
 	// lastParams records the EventListParams of the most recent
 	// ListEventsFiltered call so filter-plumbing tests can assert on it.
 	lastParams store.EventListParams
@@ -89,6 +96,14 @@ func (f *fakeQueries) GetVerdict(context.Context, string) (store.Verdict, error)
 }
 func (f *fakeQueries) ListFindings(context.Context, string) ([]store.Finding, error) {
 	return f.findings, f.findingsErr
+}
+func (f *fakeQueries) ListRecentFindings(_ context.Context, limit int) ([]store.FindingRow, error) {
+	f.lastFindingsLimit = limit
+	return f.findingRows, f.findingRowsErr
+}
+func (f *fakeQueries) ListFindingsBySession(_ context.Context, sessionID string) ([]store.FindingRow, error) {
+	f.lastFindingsSession = sessionID
+	return f.findingRows, f.findingRowsErr
 }
 func (f *fakeQueries) EventsBySessionRollup(context.Context, string) ([]store.RequestEvent, error) {
 	return f.session, f.sessionErr

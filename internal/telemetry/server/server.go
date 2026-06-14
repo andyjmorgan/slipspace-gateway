@@ -39,6 +39,11 @@ type Server struct {
 	store   Pinger
 	queries Queries
 	webhook http.Handler
+	// appliedConfig is the redacted snapshot of the running service's loaded
+	// config, served read-only at GET /api/v1/settings so an operator can see
+	// what is in effect (listeners, caps, scanner block) without seeing a
+	// secret. Set via WithAppliedConfig; the settings route is omitted when nil.
+	appliedConfig *config.Config
 	// spanFieldCap bounds each served content field of the session-spans
 	// projection, in bytes (<= 0 disables). Resolved from the telemetry
 	// config's span_field_max_bytes (config.SpanFieldCap).
@@ -64,6 +69,15 @@ func New(console config.Console, st Pinger, queries Queries, webhook http.Handle
 	return &Server{console: console, store: st, queries: queries, webhook: webhook, spanFieldCap: spanFieldCap, log: log}
 }
 
+// WithAppliedConfig attaches the redacted applied-config snapshot the settings
+// endpoint serves and returns the server for chaining. cfg is stored verbatim —
+// the caller is responsible for passing an already-redacted Config (see
+// config.Config.Redacted). When never called, GET /api/v1/settings is omitted.
+func (s *Server) WithAppliedConfig(cfg config.Config) *Server {
+	s.appliedConfig = &cfg
+	return s
+}
+
 // Handler returns the routed HTTP handler. Probes and the HMAC-authed webhook
 // are open (the webhook authenticates itself via signature); the console API and
 // shell are behind Basic auth.
@@ -76,6 +90,12 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/v1/ingest/record", s.webhook)
 	}
 	s.registerQueryRoutes(mux)
+	// Applied-config (settings) view: Basic-auth gated, registered only when a
+	// redacted snapshot was attached (WithAppliedConfig). Independent of the
+	// query store so it works even when the DB-backed routes are disabled.
+	if s.appliedConfig != nil {
+		mux.Handle("GET /api/v1/settings", s.basicAuth(withGzip(http.HandlerFunc(s.handleSettings))))
+	}
 	// The SPA + its assets are public (the API it calls is Basic-auth gated);
 	// this catch-all sits behind the API + probe routes.
 	mux.Handle("GET /", spaHandler())

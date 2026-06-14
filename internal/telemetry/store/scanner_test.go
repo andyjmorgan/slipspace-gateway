@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,6 +120,59 @@ func TestCorrelationsReadyForVerdict(t *testing.T) {
 		t.Error("want query error")
 	}
 	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).CorrelationsReadyForVerdict(ctx(), 10); err == nil {
+		t.Error("want scan error")
+	}
+}
+
+func TestListRecentFindings(t *testing.T) {
+	// success — default limit (limit <= 0) and a populated page.
+	q := &fakeQuerier{freshRows: 2}
+	items, err := newStore(q).ListRecentFindings(ctx(), 0)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("findings = %d, err %v", len(items), err)
+	}
+	if len(q.querySQL) != 1 {
+		t.Fatalf("query calls = %d, want 1", len(q.querySQL))
+	}
+	// projects the unit kind/role from the check task locator and joins the
+	// request facts, newest-first.
+	if !strings.Contains(q.querySQL[0], "unit_locator->>'kind'") || !strings.Contains(q.querySQL[0], "request_events") {
+		t.Errorf("query missing locator/event join: %q", q.querySQL[0])
+	}
+	if !strings.Contains(q.querySQL[0], "ORDER BY e.observed_at DESC") {
+		t.Errorf("query is not newest-first: %q", q.querySQL[0])
+	}
+
+	// explicit limit passes through without error.
+	if _, err := newStore(&fakeQuerier{freshRows: 1}).ListRecentFindings(ctx(), 5); err != nil {
+		t.Errorf("explicit limit: %v", err)
+	}
+	// query error
+	if _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).ListRecentFindings(ctx(), 0); err == nil {
+		t.Error("want query error")
+	}
+	// scan error
+	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).ListRecentFindings(ctx(), 0); err == nil {
+		t.Error("want scan error")
+	}
+}
+
+func TestListFindingsBySession(t *testing.T) {
+	// success — scoped by session_id, newest-first.
+	q := &fakeQuerier{freshRows: 3}
+	items, err := newStore(q).ListFindingsBySession(ctx(), "sess-1")
+	if err != nil || len(items) != 3 {
+		t.Fatalf("findings = %d, err %v", len(items), err)
+	}
+	if len(q.querySQL) != 1 || !strings.Contains(q.querySQL[0], "e.session_id = $1") {
+		t.Errorf("query not session-scoped: %q", q.querySQL)
+	}
+	// query error
+	if _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).ListFindingsBySession(ctx(), "s"); err == nil {
+		t.Error("want query error")
+	}
+	// scan error
+	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).ListFindingsBySession(ctx(), "s"); err == nil {
 		t.Error("want scan error")
 	}
 }

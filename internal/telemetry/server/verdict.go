@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
@@ -47,6 +48,48 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 			RawLabel:     f.RawLabel,
 			Detector:     f.DetectorID,
 			Localization: f.Localization,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleFindings serves the operator Security view: a flat list of findings,
+// newest first. With ?session=<id> it returns every finding in that one session
+// (the session view's Security tab); without it, the most recent findings across
+// all sessions (the top-level Security page), bounded by ?limit (store default
+// ~100). One endpoint, one row shape — the reusable FindingsTable renders both.
+func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
+	var (
+		rows []store.FindingRow
+		err  error
+	)
+	if session := r.URL.Query().Get("session"); session != "" {
+		rows, err = s.queries.ListFindingsBySession(r.Context(), session)
+	} else {
+		rows, err = s.queries.ListRecentFindings(r.Context(), limitParam(r, 0))
+	}
+	if err != nil {
+		s.queryError(w, "list findings", err)
+		return
+	}
+	resp := admin.FindingsListResponse{Items: make([]admin.FindingRow, 0, len(rows))}
+	for _, f := range rows {
+		var observed string
+		if !f.ObservedAt.IsZero() {
+			observed = f.ObservedAt.UTC().Format(time.RFC3339)
+		}
+		resp.Items = append(resp.Items, admin.FindingRow{
+			Category:      f.Category,
+			CheckType:     f.CheckType,
+			Score:         f.Score,
+			RawLabel:      f.RawLabel,
+			UnitKind:      f.UnitKind,
+			UnitRole:      f.UnitRole,
+			CorrelationID: f.CorrelationID,
+			SessionID:     f.SessionID,
+			ObservedAt:    observed,
+			Model:         f.Model,
+			Configuration: f.Configuration,
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
