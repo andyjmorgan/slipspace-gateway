@@ -27,6 +27,11 @@ const (
 	// a span unusable (no entity key, no record join).
 	attrCorrelationID = "sluice.correlation_id"
 
+	// attrEnriched flags a span Arbiter itself emitted (mirrors
+	// arbiter.AttrEnriched). The receiver declines re-admitting flagged spans so
+	// an enriched span routed back into the collector cannot loop (ADR-002).
+	attrEnriched = "slipspace.enriched"
+
 	// gen_ai semconv attributes the columns project from.
 	attrModel         = "gen_ai.request.model"
 	attrGenAIProvider = "gen_ai.provider.name"
@@ -89,6 +94,12 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 		return store.RequestEvent{}, false
 	}
 	attrs := mergeAttrs(resourceAttrs, span.GetAttributes())
+
+	// Loop prevention: decline Arbiter's own enriched spans (ADR-002), so an
+	// enriched span a customer routes back into the collector is not re-ingested.
+	if boolAttr(attrs, attrEnriched) {
+		return store.RequestEvent{}, false
+	}
 
 	corr := strAttr(attrs, attrCorrelationID)
 	if corr == "" {

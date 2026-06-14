@@ -133,7 +133,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	// and drains the outbox in the background. Disabled => ingest is untouched.
 	var exploder ingest.Exploder
 	if cfg.ScannerEnabled() {
-		scanner, err := arbiter.New(cfg, log)
+		scanner, err := arbiter.New(ctx, cfg, log)
 		if err != nil {
 			return fmt.Errorf("telemetry: arbiter: %w", err)
 		}
