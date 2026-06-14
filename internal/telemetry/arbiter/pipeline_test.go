@@ -233,6 +233,7 @@ func testScanner(fake *fakeStore, injectionEndpoint string) *Scanner {
 		checkTypes:    []string{CheckInjection},
 		client:        newDetectorClient(nil),
 		enc:           enc,
+		emitter:       noopEmitter{},
 		store:         fake,
 		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workers:       1,

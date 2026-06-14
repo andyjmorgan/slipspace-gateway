@@ -92,6 +92,20 @@ type Scanner struct {
 	// RetentionDays bounds how long evidence rows are kept. nil applies
 	// DefaultScannerRetentionDays.
 	RetentionDays *int `yaml:"retention_days,omitempty"`
+	// EnrichedExport optionally re-emits the verdict as an enriched OTLP span
+	// (ADR-002). Disabled when Endpoint is empty (the default).
+	EnrichedExport EnrichedExport `yaml:"enriched_export"`
+}
+
+// EnrichedExport configures the optional re-emission of verdicts as enriched
+// OTLP spans (ADR-002 — findings travel back over OTel, never a separate
+// stream). When Endpoint is empty the emitter is a no-op.
+type EnrichedExport struct {
+	// Endpoint is the OTLP collector endpoint to export enriched spans to.
+	// Empty disables enriched emit.
+	Endpoint string `yaml:"endpoint"`
+	// Protocol selects the OTLP transport: "grpc" (default) or "http".
+	Protocol string `yaml:"protocol"`
 }
 
 // Detector is one detector endpoint Arbiter calls for a given check type.

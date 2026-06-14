@@ -63,7 +63,8 @@ type Scanner struct {
 	checkTypes []string // configured check types, sorted, stable
 	client     *detectorClient
 	enc        *evidenceCipher
-	store      Store // set by Run
+	emitter    verdictEmitter // enriched-span emit (no-op unless configured)
+	store      Store          // set by Run
 	logger     *slog.Logger
 
 	// tunables (defaulted in New; tests may shrink them in white-box).
@@ -89,6 +90,10 @@ func New(cfg config.Config, logger *slog.Logger) (*Scanner, error) {
 	if err != nil {
 		return nil, err
 	}
+	emitter, err := newEmitter(context.Background(), cfg.Scanner.EnrichedExport)
+	if err != nil {
+		return nil, err
+	}
 	dets := make(map[string]detector, len(cfg.Scanner.Detectors))
 	cts := make([]string, 0, len(cfg.Scanner.Detectors))
 	for _, d := range cfg.Scanner.Detectors {
@@ -106,6 +111,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Scanner, error) {
 		checkTypes:       cts,
 		client:           newDetectorClient(nil),
 		enc:              enc,
+		emitter:          emitter,
 		logger:           logger,
 		workers:          cfg.ScannerWorkers(),
 		leaseSeconds:     detectLease,
@@ -178,6 +184,14 @@ func (s *Scanner) Run(ctx context.Context, st Store) {
 	}
 	safego.Go(ctx, "arbiter.dispatch", s.logger, nil, func() { s.dispatchLoop(ctx, tasks) })
 	safego.Go(ctx, "arbiter.reduce", s.logger, nil, func() { s.reduceLoop(ctx) })
+	safego.Go(ctx, "arbiter.emit.shutdown", s.logger, nil, func() {
+		<-ctx.Done()
+		// Detached from the cancelled run ctx on purpose — the shutdown budget
+		// must outlive it to flush the exporter's batch processor.
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.emitter.shutdown(sctx) //nolint:contextcheck // intentional detached shutdown ctx (see above)
+	})
 }
 
 // dispatchLoop claims due tasks and feeds them to the workers. It is the sole

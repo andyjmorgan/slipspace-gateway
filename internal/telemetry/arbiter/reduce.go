@@ -56,9 +56,13 @@ func (s *Scanner) reduce(ctx context.Context, correlationID string) {
 		s.logger.Warn("arbiter: inconclusive check types", "correlation_id", correlationID, "error", err)
 		return
 	}
-	if err := s.store.UpsertVerdict(ctx, reduceVerdict(correlationID, findings, inconclusive)); err != nil {
+	v := reduceVerdict(correlationID, findings, inconclusive)
+	if err := s.store.UpsertVerdict(ctx, v); err != nil {
 		s.logger.Warn("arbiter: upsert verdict", "correlation_id", correlationID, "error", err)
+		return
 	}
+	// Re-emit the verdict as an enriched span (ADR-002); no-op unless configured.
+	s.emitter.EmitVerdict(ctx, correlationID, v)
 }
 
 // reduceVerdict is the pure reduce: highest-risk-wins over the hit set, then the
