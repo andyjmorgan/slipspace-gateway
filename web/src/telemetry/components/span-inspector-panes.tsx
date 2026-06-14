@@ -20,10 +20,11 @@
 //     tab (`wanted`), never on modal open: these payloads are the heavy
 //     ones, and most inspections never leave Output/Input.
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Check, Copy } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { fmt } from "@/lib/fmt"
+import { apiFetch } from "@/lib/api"
 import {
   parseGenAIContent,
   type GenAIMessagePart,
@@ -31,6 +32,7 @@ import {
 } from "@/lib/messages"
 import { id8, useMessageBody } from "@/lib/span-view"
 import type { InputPart, OutputPart, SessionSpan } from "@/lib/session-spans"
+import type { VerdictResponse, VerdictView, FindingView } from "@/lib/generated/admin"
 
 // ─────────────────────────────────────────────────────────────────────────
 // Primitives
@@ -911,5 +913,94 @@ function HeaderList({ label, headers }: { label: string; headers: Record<string,
         <div className="text-[12px] text-[color:var(--text-4)]">No {label.toLowerCase()}.</div>
       )}
     </DetailsCard>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Security pane — the Arbiter verdict + findings for this request.
+// ─────────────────────────────────────────────────────────────────────────
+
+// verdictColor maps a verdict state to its semantic token. Unknown states fall
+// back to a neutral text color.
+const verdictColor: Record<string, string> = {
+  flagged: "var(--err)",
+  partial: "var(--warn)",
+  clean: "var(--ok)",
+}
+
+// SecurityPane lazy-fetches GET /api/v1/verdict/{cid} when first opened and
+// renders the verdict badge + findings. A missing verdict (scan pending or the
+// scanner disabled) is a normal state, not an error.
+export function SecurityPane({ cid, wanted }: { cid: string; wanted: boolean }) {
+  // Keyed by cid so stepping prev/next derives "loading" during render rather
+  // than resetting via setState-in-effect (a v null = fetch failed; mirrors the
+  // Inspector's spanSt pattern). The effect only sets state in async callbacks.
+  const [res, setRes] = useState<{ cid: string; v: VerdictResponse | null } | null>(null)
+
+  useEffect(() => {
+    if (!wanted) return
+    let cancelled = false
+    apiFetch<VerdictResponse>(`/api/v1/verdict/${encodeURIComponent(cid)}`)
+      .then((v) => { if (!cancelled) setRes({ cid, v }) })
+      .catch(() => { if (!cancelled) setRes({ cid, v: null }) })
+    return () => { cancelled = true }
+  }, [cid, wanted])
+
+  const ready = res && res.cid === cid ? res : null
+  if (!ready) return <PaneNote>loading verdict…</PaneNote>
+  if (ready.v === null) return <PaneNote warn>could not load verdict</PaneNote>
+
+  const { verdict, findings } = ready.v
+  return (
+    <div className="pt-2.5 flex flex-col gap-3">
+      {verdict ? (
+        <VerdictBadge v={verdict} />
+      ) : (
+        <PaneNote>no verdict yet — the scan is pending or the scanner is disabled</PaneNote>
+      )}
+      {findings.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          {findings.map((f, i) => (
+            <FindingRow key={`${f.unit_id}:${f.check_type}:${i}`} f={f} />
+          ))}
+        </div>
+      ) : (
+        verdict && <PaneNote>no findings</PaneNote>
+      )}
+    </div>
+  )
+}
+
+function VerdictBadge({ v }: { v: VerdictView }) {
+  const color = verdictColor[v.state] ?? "var(--text-3)"
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-[12px]">
+      <span
+        className="inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[10.5px] mono uppercase tracking-[0.04em] border"
+        style={{ color, borderColor: color }}
+      >
+        {v.state}
+      </span>
+      {v.top_category && <span className="mono text-[color:var(--text-2)]">{v.top_category}</span>}
+      <span className="mono tnum text-[color:var(--text-3)]">score {v.max_score.toFixed(2)}</span>
+      <span className="mono text-[color:var(--text-4)]">
+        {v.finding_count} finding{v.finding_count === 1 ? "" : "s"}
+      </span>
+      {(v.inconclusive?.length ?? 0) > 0 && (
+        <span className="mono text-[10.5px] text-[color:var(--warn)]">
+          inconclusive: {v.inconclusive!.join(", ")}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function FindingRow({ f }: { f: FindingView }) {
+  return (
+    <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[12px] border-b border-[color:var(--border)] py-1">
+      <span className="mono text-[10.5px] uppercase tracking-[0.04em] text-[color:var(--text-4)]">{f.check_type}</span>
+      <span className="mono truncate text-[color:var(--text-2)]">{f.category}</span>
+      <span className="mono tnum text-[color:var(--text-3)]">{f.score.toFixed(2)}</span>
+    </div>
   )
 }

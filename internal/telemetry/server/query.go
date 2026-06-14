@@ -30,6 +30,9 @@ type Queries interface {
 	EventsBySessionRollup(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
 	EventsBySessionPage(ctx context.Context, p store.SessionPageParams, fn func(store.RequestEvent) error) (string, error)
 	Facets(ctx context.Context) (store.Facets, error)
+	// Arbiter security surface — the verdict + findings for one request.
+	GetVerdict(ctx context.Context, correlationID string) (store.Verdict, error)
+	ListFindings(ctx context.Context, correlationID string) ([]store.Finding, error)
 }
 
 // registerQueryRoutes mounts the Basic-auth-gated, DB-backed console API.
@@ -60,6 +63,8 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	// same SessionSpan element as the lifecycle modal but reaches it by
 	// correlation id alone (its rows aren't guaranteed a session id).
 	mux.Handle("GET /api/v1/events/{id}/span", gated(s.handleEventSpan))
+	// Arbiter security verdict + findings for one request (correlation id).
+	mux.Handle("GET /api/v1/verdict/{id}", gated(s.handleVerdict))
 	mux.Handle("GET /api/v1/sessions", gated(s.handleSessions))
 	mux.Handle("GET /api/v1/sessions/{id}", gated(s.handleSession))
 	// Session lifecycle feed — the SessionSpansDTO v1 projection the lifecycle

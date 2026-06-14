@@ -27,6 +27,7 @@ import {
   InputPane,
   OutputPane,
   ReportPane,
+  SecurityPane,
   TelemetryPane,
   Tile,
   TKV,
@@ -326,7 +327,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 
 // InspectorTab mirrors the session lifecycle modal's strip: the span's own
 // Output/Input panes plus the on-demand bridge tabs (Telemetry, Report).
-type InspectorTab = "output" | "input" | "telemetry" | "report"
+type InspectorTab = "output" | "input" | "telemetry" | "report" | "security"
 
 // Inspector is the per-request detail modal, rendered inside the shared
 // InspectorModal shell. The message content is the SAME SessionSpan DTO
@@ -439,11 +440,13 @@ function Inspector({
               {span && <IOTab on={effTab === "input"} onClick={() => setTab("input")} label="Input" meta={inputMeta(span)} />}
               <IOTab on={effTab === "telemetry"} onClick={() => setTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
               <IOTab on={effTab === "report"} onClick={() => setTab("report")} label="Report" meta="request · response · stream · headers" />
+              <IOTab on={effTab === "security"} onClick={() => setTab("security")} label="Security" meta="verdict · findings" />
             </div>
             {effTab === "output" && span && <OutputPane span={span} />}
             {effTab === "input" && span && <InputPane span={span} />}
             {effTab === "telemetry" && <TelemetryPane cid={cid} wanted />}
             {effTab === "report" && <ReportPane cid={cid} wanted />}
+            {effTab === "security" && <SecurityPane cid={cid} wanted />}
           </div>
         )}
       </div>
