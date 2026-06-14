@@ -464,7 +464,9 @@ condition catalogue: [rules.md](rules.md).
 ## How do I change rules without restarting?
 
 Rule edits go through the admin write API and apply **live** — the gateway clones
-the live config, validates, persists `policy.yaml`, and atomically swaps it in, so
+the live config, validates, persists each edited block back to its source file
+(via `config.WriteConfig`, which routes to the block's `SourceFiles` origin — not a
+fixed `policy.yaml`), and atomically swaps it in, so
 in-flight requests see either the old or new rule set, never a torn mix
 (invariant #9):
 

@@ -352,7 +352,7 @@ It is a process-global flag by design, so a misconfiguration cannot quietly down
 
 ### Caveats
 
-- **At-most-once, lossy under pressure.** A full queue, a slow receiver, or any non-2xx response drops the record permanently. There is no retry and no on-disk durability — use `s3`/`azure_blob` when you need an audit trail that survives backpressure.
+- **At-most-once-per-success, lossy under sustained pressure.** A full queue drops the record at `Enqueue` (reason `queue_full`). Transient failures (network error, 408/429/5xx) are retried with capped exponential backoff (default 5 attempts) before the record is declared lost (reason `exhausted`); a permanent non-2xx (other 4xx, e.g. bad HMAC) is lost immediately (reason `rejected`). There is no on-disk durability — use `s3`/`azure_blob` when you need an audit trail that survives a prolonged outage.
 - **One record per request.** Each POST carries a single `cc.Record`; the receiver does not get batched ndjson. High request rates produce a high POST rate — size the receiver accordingly.
 - **No client-supplied idempotency header.** The record body carries its own identifiers (`correlation_id`, `ts_ns`); a receiver that needs dedupe uses those, not a transport header.
 

@@ -97,7 +97,7 @@ Published at `ghcr.io/andyjmorgan/sluice-gateway`. Multi-stage build defined in 
 | `certs` | `alpine:3` | Pulls `ca-certificates` so the scratch image can speak TLS to upstream providers. |
 | `spa-builder` | `node:22-alpine` | `npm ci` + `npm run build` in `web/`. Vite emits to `internal/admin/webdist/`; the stage moves the result to `/out/webdist` for an unambiguous COPY. |
 | `builder` | `golang:1.25-alpine` | Overlays the SPA bundle on top of the committed `placeholder.html` so `go:embed` picks up the real assets, then builds `cmd/gateway` static with `CGO_ENABLED=0`. |
-| final | `scratch` | Carries `/gateway` binary + CA bundle. ~5.5 MB total. |
+| (final stage) | `scratch` | Carries `/gateway` binary + CA bundle. ~5.5 MB total. Unnamed in the Dockerfile — `FROM scratch` with no `AS final`; only `certs`, `spa-builder`, and `builder` are named stages. |
 
 The version string baked into `/gateway` via `-ldflags "-X .../version.Version=${VERSION}"` is whatever the build pipeline passes — `git describe --tags --always`, so tagged builds report `v1.1.4` and main builds report `v1.1.4-3-gabc1234`. The admin console exposes it at `GET /admin/api/v1/version`.
 

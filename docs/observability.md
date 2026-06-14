@@ -115,7 +115,7 @@ The histogram and the input/output counters carry the **same totals** by deliber
 | `sluice.tokens.cached.total` | counter | the shared request labelset (no status code) | 1 | Share of the input tokens the provider served from its prompt cache and billed at the cached-read price. Informational; already counted in input, not a deduction. |
 | `sluice.tokens.cache_creation.total` | counter | the shared request labelset (no status code) | 1 | Share of the input tokens billed at the cache-write premium. Anthropic-only today — OpenAI and Gemini cache writes are implicit and not separately billed, so this stays zero for them. |
 
-Token capture is gated on the live-feed response buffer being attached to context. When body capture is disabled (`SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0`, the knob `ServerEnv.BodyCaptureEnabled` keys off — see [`internal/config/env.go`](../internal/config/env.go)) tokens stay zero and the counters don't fire.
+Token capture is gated on the live-feed response buffer being attached to context. When body capture is disabled (`SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0`, the knob `ServerEnv.LiveFeedBodiesEnabled()` keys off — see [`internal/config/env.go`](../internal/config/env.go); the gate is `LiveFeedEnabled() && AdminLiveFeedBodyBytes > 0`) tokens stay zero and the counters don't fire.
 
 ### Rules
 

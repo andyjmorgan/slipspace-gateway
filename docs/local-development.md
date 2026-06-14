@@ -292,23 +292,21 @@ Total: 21 `.PHONY` targets, plus `web-telemetry` (a real target that isn't decla
 
 ## Testing layers
 
-Five layers, each catching a different class of regression. A feature is not done until both unit and e2e cover it.
+Four layers, each catching a different class of regression. A feature is not done until both unit and e2e cover it.
 
 ```mermaid
 flowchart TB
     subgraph fast[Pre-commit, fast]
         Unit[Unit<br/>per-package, 95% gate<br/>make coverage]
-        Integ[Integration<br/>//go:build integration<br/>testcontainers-bound]
     end
     subgraph slow[Pre-commit, slower]
-        E2E[E2E<br/>tag: e2e<br/>spawned binary + mockllm<br/>make e2e]
+        E2E[E2E<br/>tag: e2e<br/>spawned binary + mockllm<br/>+ testcontainers<br/>make e2e]
         PyCompat[Wire-compat<br/>official OpenAI/Anthropic/Gemini SDKs<br/>make py-compat]
     end
     subgraph post[Post-deploy]
         Smoke[Smoke<br/>live gateway + real provider creds<br/>SLUICE_API_KEY=... make smoke]
     end
     Unit --> E2E
-    Integ --> E2E
     E2E --> PyCompat
     PyCompat --> Smoke
 ```
@@ -326,12 +324,6 @@ Per-package, fast, focused. `*_test.go` next to the code under test. Stdlib `tes
 
 Race detector is always on (`-race`). Goroutine leak detection via `goleak` runs in tests that own background workers.
 
-### Integration — verify with real dependencies
-
-`*_test.go` with the `//go:build integration` build tag. testcontainers-bound — these tests bring up the dependencies the code under test needs (e.g. a MinIO container for the S3 connector), run the code against them, and assert against the dependency's state. Slower than unit (container startup overhead) but cheap relative to e2e (no spawned binaries).
-
-Integration tests live alongside the package they test; they're separated from unit by the build tag, not by directory. The `internal/connector/s3/` MinIO-backed round-trip tests are a canonical example.
-
 ### E2E — verify the wire contract end-to-end
 
 `test/e2e/`, build tag `e2e`. Each test:
@@ -343,6 +335,8 @@ Integration tests live alongside the package they test; they're separated from u
 5. Drives real HTTP against the gateway, asserts on the response, captured spool records, and Prometheus scrape
 
 The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), the S3 and Azure connectors (`connector_s3/`, `connector_azure/`), record reporting (`reporting/`), telemetry (`telemetry/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`); `types/` holds shared fixtures. Webhook receivers spin up a local `httptest.Server` per test; the `SLUICE_WEBHOOK_ALLOW_PRIVATE=true` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
+
+Integration-style tests that need real dependencies live in this layer too, not behind a separate build tag — they bring up the dependency via testcontainers (SeaweedFS for S3, Azurite for Azure Blob, Postgres for telemetry), run the code against it, and assert on the dependency's state. `test/e2e/connector_s3/seaweedfs_test.go` is the canonical container-backed example.
 
 `make e2e` runs the whole suite with the race detector and a 5-minute timeout. `TESTCONTAINERS_RYUK_DISABLED=true` keeps the reaper container from interfering on developer machines. Docker is required.
 
