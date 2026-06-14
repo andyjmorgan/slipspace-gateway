@@ -173,3 +173,171 @@ def build_response(
     if error:
         resp["error"] = error
     return resp
+
+
+# ---------------------------------------------------------------------------
+# PII span detectors (NER) — used by pii_app.py.
+#
+# Unlike the sequence classifiers above (one label per unit), PII detectors
+# return *spans*: typed substrings (email, person, SSN…) at byte offsets. Two
+# engines feed one /detect endpoint — OpenAI's openai/privacy-filter token
+# classifier and Microsoft Presidio — so their two label vocabularies are
+# normalized to one pii.<category> taxonomy here, and their spans are unioned
+# (overlapping same-category spans collapse to the highest score). All of this
+# is pure and unit-tested; pii_app.py only wires the two models around it.
+# ---------------------------------------------------------------------------
+
+# PII_CATEGORY_MAP maps a raw engine entity label (upper-cased, '_'-joined) to a
+# canonical pii.<category>. It spans both vocabularies: Presidio's entity types
+# (PERSON, EMAIL_ADDRESS, …) and the openai/privacy-filter / ai4privacy-style
+# labels (EMAIL, FIRSTNAME, …). Labels absent from the map are NOT dropped —
+# pii_category falls back to pii.<lowercased_raw> so a new entity type still
+# surfaces as a finding (recall over a fixed taxonomy).
+PII_CATEGORY_MAP: dict[str, str] = {
+    # people / names
+    "PERSON": "pii.person",
+    "NAME": "pii.person",
+    "FIRSTNAME": "pii.person",
+    "LASTNAME": "pii.person",
+    "MIDDLENAME": "pii.person",
+    "FULLNAME": "pii.person",
+    "USERNAME": "pii.username",
+    # contact
+    "EMAIL": "pii.email",
+    "EMAIL_ADDRESS": "pii.email",
+    "PHONE": "pii.phone",
+    "PHONE_NUMBER": "pii.phone",
+    "PHONENUMBER": "pii.phone",
+    "PHONEIMEI": "pii.device_id",
+    # location / address
+    "LOCATION": "pii.location",
+    "ADDRESS": "pii.address",
+    "STREETADDRESS": "pii.address",
+    "STREET": "pii.address",
+    "CITY": "pii.location",
+    "STATE": "pii.location",
+    "COUNTY": "pii.location",
+    "ZIPCODE": "pii.location",
+    "ZIP": "pii.location",
+    "NRP": "pii.nrp",
+    # government / financial ids
+    "US_SSN": "pii.ssn",
+    "SSN": "pii.ssn",
+    "US_ITIN": "pii.itin",
+    "US_PASSPORT": "pii.passport",
+    "US_DRIVER_LICENSE": "pii.drivers_license",
+    "CREDIT_CARD": "pii.credit_card",
+    "CREDITCARDNUMBER": "pii.credit_card",
+    "CREDITCARDCVV": "pii.credit_card_cvv",
+    "US_BANK_NUMBER": "pii.bank_account",
+    "IBAN_CODE": "pii.iban",
+    "IBAN": "pii.iban",
+    "BIC": "pii.bic",
+    "ACCOUNTNUMBER": "pii.bank_account",
+    "MEDICAL_LICENSE": "pii.medical_license",
+    # network / device / crypto
+    "IP_ADDRESS": "pii.ip_address",
+    "IP": "pii.ip_address",
+    "IPV4": "pii.ip_address",
+    "IPV6": "pii.ip_address",
+    "MAC": "pii.mac_address",
+    "URL": "pii.url",
+    "CRYPTO": "pii.crypto_wallet",
+    "ETHEREUMADDRESS": "pii.crypto_wallet",
+    "BITCOINADDRESS": "pii.crypto_wallet",
+    # temporal / misc identifiers
+    "DATE_TIME": "pii.date_time",
+    "DATE": "pii.date_time",
+    "DOB": "pii.date_of_birth",
+    "AGE": "pii.age",
+    "PASSWORD": "pii.password",
+    "SECRET": "pii.secret",
+    "ACCOUNT_NUMBER": "pii.bank_account",
+}
+
+
+def pii_category(raw_label: str) -> str:
+    """Normalize a raw engine entity label to a canonical pii.<category>.
+
+    openai/privacy-filter prefixes its entity types with PRIVATE_
+    (private_email, private_person, …) where Presidio uses the bare entity
+    (EMAIL_ADDRESS, PERSON); stripping the prefix lands both engines on the
+    same pii.<category> so merge_spans can collapse cross-engine duplicates.
+    Unknown labels fall back to pii.<slug> rather than being dropped, so a new
+    entity type a model learns still surfaces as a finding.
+    """
+    key = raw_label.strip().upper().replace(" ", "_").replace("-", "_")
+    candidates = [key]
+    if key.startswith("PRIVATE_"):
+        candidates.append(key[len("PRIVATE_") :])
+    for c in candidates:
+        if c in PII_CATEGORY_MAP:
+            return PII_CATEGORY_MAP[c]
+    slug = candidates[-1].lower()  # PRIVATE_-stripped form when applicable
+    return f"pii.{slug}" if slug else "pii.unknown"
+
+
+def merge_spans(findings: list[Finding], threshold: float) -> list[Finding]:
+    """Union PII spans from both engines into one deduped, sorted list.
+
+    Drops sub-threshold findings, then collapses overlapping spans that share a
+    category to a single finding keeping the highest score (so OpenAI + Presidio
+    both flagging the same email yield one finding, not two). Spans of different
+    categories are kept even when they overlap. Findings without offsets
+    (whole-unit) are kept as-is, deduped per category to the highest score.
+    Operates in whatever offset unit the inputs use (char or byte); pii_app
+    merges in char space then converts the survivors with to_byte_spans.
+    """
+    spanned = [f for f in findings if f.score >= threshold and f.start is not None and f.end is not None]
+    whole = [f for f in findings if f.score >= threshold and (f.start is None or f.end is None)]
+
+    # whole-unit: one per category, highest score.
+    whole_best: dict[str, Finding] = {}
+    for f in whole:
+        cur = whole_best.get(f.category)
+        if cur is None or f.score > cur.score:
+            whole_best[f.category] = f
+
+    # spanned: sort by (start, -end); within a category, merge overlaps.
+    spanned.sort(key=lambda f: (f.start, -f.end, f.category))
+    out: list[Finding] = []
+    for f in spanned:
+        merged = False
+        for i, g in enumerate(out):
+            if g.category == f.category and f.start < g.end and g.start < f.end:
+                # overlap, same category → keep the wider span + higher score.
+                out[i] = Finding(
+                    category=g.category,
+                    score=max(g.score, f.score),
+                    raw_label=g.raw_label if g.score >= f.score else f.raw_label,
+                    start=min(g.start, f.start),
+                    end=max(g.end, f.end),
+                )
+                merged = True
+                break
+        if not merged:
+            out.append(f)
+
+    out.extend(whole_best.values())
+    out.sort(key=lambda f: (f.start if f.start is not None else -1, f.category))
+    return out
+
+
+def to_byte_spans(findings: list[Finding], text: str) -> list[Finding]:
+    """Convert char-offset findings to UTF-8 byte offsets (the contract basis).
+
+    _finding_json declares OFFSET_BASIS_UTF8_BYTE, so the span numbers the Go
+    side stores must be byte offsets. NER engines report char (code-point)
+    offsets; this remaps them once, at the boundary. Whole-unit findings (no
+    offsets) pass through unchanged.
+    """
+    # Precompute a cumulative byte-length prefix so each conversion is O(1).
+    out: list[Finding] = []
+    for f in findings:
+        if f.start is None or f.end is None:
+            out.append(f)
+            continue
+        start_b = len(text[: f.start].encode("utf-8"))
+        end_b = len(text[: f.end].encode("utf-8"))
+        out.append(Finding(category=f.category, score=f.score, raw_label=f.raw_label, start=start_b, end=end_b))
+    return out

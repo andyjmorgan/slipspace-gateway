@@ -1,0 +1,12 @@
+# PII detector (pii_app.py): two engines on CPU.
+#   OpenAI    — openai/privacy-filter via the HF transformers token-classifier.
+#   Microsoft — Presidio (presidio-analyzer) over a spaCy pipeline.
+# The spaCy model itself (en_core_web_lg) is installed separately as a pinned
+# wheel — see the deployment init container / Dockerfile.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1
+transformers>=4.50
+presidio-analyzer>=2.2
+spacy>=3.8,<3.9
+fastapi>=0.115
+uvicorn[standard]>=0.32

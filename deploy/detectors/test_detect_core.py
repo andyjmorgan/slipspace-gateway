@@ -130,5 +130,110 @@ class Contract(unittest.TestCase):
         self.assertEqual(f["localization"], "LOCALIZATION_EXACT")
 
 
+class PiiCategory(unittest.TestCase):
+    def test_known_presidio_labels(self):
+        self.assertEqual(dc.pii_category("EMAIL_ADDRESS"), "pii.email")
+        self.assertEqual(dc.pii_category("US_SSN"), "pii.ssn")
+        self.assertEqual(dc.pii_category("PERSON"), "pii.person")
+
+    def test_known_openai_labels(self):
+        self.assertEqual(dc.pii_category("EMAIL"), "pii.email")
+        self.assertEqual(dc.pii_category("CREDITCARDNUMBER"), "pii.credit_card")
+        self.assertEqual(dc.pii_category("FIRSTNAME"), "pii.person")
+
+    def test_case_and_separator_insensitive(self):
+        self.assertEqual(dc.pii_category("email_address"), "pii.email")
+        self.assertEqual(dc.pii_category("phone-number"), "pii.phone")
+        self.assertEqual(dc.pii_category(" Person "), "pii.person")
+
+    def test_openai_private_prefix_unifies_with_presidio(self):
+        # openai/privacy-filter labels carry a private_ prefix; both engines
+        # must converge on the same canonical category.
+        self.assertEqual(dc.pii_category("private_email"), dc.pii_category("EMAIL_ADDRESS"))
+        self.assertEqual(dc.pii_category("private_person"), "pii.person")
+        self.assertEqual(dc.pii_category("private_phone"), "pii.phone")
+        self.assertEqual(dc.pii_category("private_address"), "pii.address")
+        self.assertEqual(dc.pii_category("private_url"), "pii.url")
+        self.assertEqual(dc.pii_category("account_number"), "pii.bank_account")
+        self.assertEqual(dc.pii_category("secret"), "pii.secret")
+
+    def test_unknown_private_prefix_stripped_in_fallback(self):
+        # a future private_<x> with no mapping slugs the bare entity, not private_x.
+        self.assertEqual(dc.pii_category("private_passport"), "pii.passport")
+        self.assertEqual(dc.pii_category("private_widget"), "pii.widget")
+
+    def test_unknown_label_falls_back_not_dropped(self):
+        # a new entity type still surfaces as a finding, slugged.
+        self.assertEqual(dc.pii_category("VEHICLE_VIN"), "pii.vehicle_vin")
+        self.assertEqual(dc.pii_category(""), "pii.unknown")
+
+
+class MergeSpans(unittest.TestCase):
+    def test_below_threshold_dropped(self):
+        fs = [dc.Finding(category="pii.email", score=0.3, start=0, end=5)]
+        self.assertEqual(dc.merge_spans(fs, 0.5), [])
+
+    def test_overlapping_same_category_collapses_to_max(self):
+        # two engines flag the same email at slightly different spans.
+        fs = [
+            dc.Finding(category="pii.email", score=0.8, raw_label="openai:EMAIL", start=10, end=25),
+            dc.Finding(category="pii.email", score=0.95, raw_label="presidio:EMAIL_ADDRESS", start=10, end=27),
+        ]
+        out = dc.merge_spans(fs, 0.5)
+        self.assertEqual(len(out), 1)
+        self.assertAlmostEqual(out[0].score, 0.95)
+        self.assertEqual(out[0].start, 10)
+        self.assertEqual(out[0].end, 27)  # widened to the union
+        self.assertEqual(out[0].raw_label, "presidio:EMAIL_ADDRESS")  # higher score's label
+
+    def test_overlapping_different_category_both_kept(self):
+        fs = [
+            dc.Finding(category="pii.person", score=0.9, start=0, end=10),
+            dc.Finding(category="pii.location", score=0.9, start=5, end=15),
+        ]
+        out = dc.merge_spans(fs, 0.5)
+        self.assertEqual(len(out), 2)
+
+    def test_disjoint_same_category_both_kept(self):
+        fs = [
+            dc.Finding(category="pii.email", score=0.9, start=0, end=5),
+            dc.Finding(category="pii.email", score=0.9, start=20, end=30),
+        ]
+        out = dc.merge_spans(fs, 0.5)
+        self.assertEqual(len(out), 2)
+
+    def test_whole_unit_findings_deduped_per_category(self):
+        fs = [
+            dc.Finding(category="pii.email", score=0.7),
+            dc.Finding(category="pii.email", score=0.9),
+        ]
+        out = dc.merge_spans(fs, 0.5)
+        self.assertEqual(len(out), 1)
+        self.assertAlmostEqual(out[0].score, 0.9)
+
+
+class ToByteSpans(unittest.TestCase):
+    def test_ascii_offsets_unchanged(self):
+        text = "email me at a@b.com"
+        fs = [dc.Finding(category="pii.email", score=0.9, start=12, end=19)]
+        out = dc.to_byte_spans(fs, text)
+        self.assertEqual((out[0].start, out[0].end), (12, 19))
+        self.assertEqual(text[12:19], "a@b.com")
+
+    def test_multibyte_chars_shift_offsets(self):
+        # "café " is 5 chars but 6 bytes (é = 2 bytes); span after it shifts.
+        text = "café x@y.com"
+        cstart, cend = text.index("x@y.com"), text.index("x@y.com") + 7
+        fs = [dc.Finding(category="pii.email", score=0.9, start=cstart, end=cend)]
+        out = dc.to_byte_spans(fs, text)
+        self.assertEqual(out[0].start, len(text[:cstart].encode("utf-8")))
+        self.assertEqual(text.encode("utf-8")[out[0].start:out[0].end].decode("utf-8"), "x@y.com")
+
+    def test_whole_unit_passes_through(self):
+        fs = [dc.Finding(category="pii.email", score=0.9)]
+        out = dc.to_byte_spans(fs, "text")
+        self.assertIsNone(out[0].start)
+
+
 if __name__ == "__main__":
     unittest.main()
