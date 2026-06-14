@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/arbiter"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/ingest"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/registry"
@@ -127,12 +128,26 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		}
 	})
 
+	// Arbiter security scanner (optional, REF-008). When enabled it explodes
+	// each ingested span into check tasks at ingest (atomically with the span)
+	// and drains the outbox in the background. Disabled => ingest is untouched.
+	var exploder ingest.Exploder
+	if cfg.ScannerEnabled() {
+		scanner, err := arbiter.New(cfg, log)
+		if err != nil {
+			return fmt.Errorf("telemetry: arbiter: %w", err)
+		}
+		exploder = scanner
+		scanner.Run(ctx, st)
+		log.Info("arbiter scanner enabled", "check_types", scanner.CheckTypes(), "workers", cfg.ScannerWorkers())
+	}
+
 	// Ingest surfaces: HMAC Record webhook (HTTP) for the full per-request
 	// digital record, OTLP gRPC for the gen_ai telemetry feed + sluice meters.
 	reg := registry.New(cfg.Gateways)
 	recordIngest := ingest.NewRecordHandler(reg, st, log)
 	otlp := ingest.NewOTLPServer(
-		ingest.NewTraceReceiver(st, log, cfg.ContentCap()),
+		ingest.NewTraceReceiver(st, log, cfg.ContentCap(), exploder),
 		ingest.NewMetricsReceiver(st, log),
 	)
 

@@ -60,14 +60,20 @@ jobs:
           check-latest: true
           cache: true
       - run: go mod download
-      - name: install tygo
-        run: go install github.com/gzuidhof/tygo@v0.2.21
-      - name: regenerate generated types
-        run: tygo generate
-      - name: fail on stale generated types
+      - name: install codegen tools
         run: |
-          if ! git diff --exit-code -- web/src/lib/generated/; then
-            echo "::error::web/src/lib/generated/ is out of date — run 'make generate' and commit the result."
+          go install github.com/gzuidhof/tygo@v0.2.21
+          go install github.com/bufbuild/buf/cmd/buf@v1.47.2
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - name: regenerate generated code
+        run: |
+          buf generate
+          tygo generate
+      - name: fail on stale generated code
+        run: |
+          if ! git diff --exit-code -- gen/ web/src/lib/generated/; then
+            echo "::error::generated code (gen/ or web/src/lib/generated/) is out of date — run 'make generate' and commit the result."
             exit 1
           fi
 

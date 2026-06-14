@@ -134,7 +134,7 @@ func TestPointsFromMetric_SumDouble(t *testing.T) {
 }
 
 func TestNewOTLPServer(t *testing.T) {
-	srv := NewOTLPServer(NewTraceReceiver(&eventSink{}, discard(), testContentCap), NewMetricsReceiver(&metricSink{}, discard()))
+	srv := NewOTLPServer(NewTraceReceiver(&eventSink{}, discard(), testContentCap, nil), NewMetricsReceiver(&metricSink{}, discard()))
 	if srv == nil {
 		t.Fatal("nil server")
 	}
@@ -145,7 +145,7 @@ func TestNewOTLPServer(t *testing.T) {
 }
 
 func TestTraceReceiver_EmptyBatch(t *testing.T) {
-	r := NewTraceReceiver(&eventSink{}, discard(), testContentCap)
+	r := NewTraceReceiver(&eventSink{}, discard(), testContentCap, nil)
 	if _, err := r.Export(context.Background(), &collectortrace.ExportTraceServiceRequest{}); err != nil {
 		t.Fatalf("empty Export: %v", err)
 	}

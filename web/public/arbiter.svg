@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 100 100" role="img" aria-label="Sluice Arbiter">
+  <defs>
+    <radialGradient id="arbiter-bg" cx="0.5" cy="0.42" r="0.8">
+      <stop offset="0" stop-color="oklch(0.46 0.16 330)" />
+      <stop offset="1" stop-color="oklch(0.20 0.08 335)" />
+    </radialGradient>
+  </defs>
+  <rect width="100" height="100" rx="22" fill="url(#arbiter-bg)" />
+  <rect width="100" height="100" rx="22" fill="none" stroke="oklch(1 0 0 / 0.10)" />
+  <g transform="translate(0, 5)">
+    <g stroke="oklch(0.95 0.05 330)" stroke-width="13" fill="none" stroke-linecap="round" opacity="0.22">
+      <path d="M50 58 Q25 43 42 13" />
+      <path d="M50 58 Q75 43 58 13" />
+      <circle cx="50" cy="68" r="9" />
+    </g>
+    <g stroke="oklch(0.95 0.05 330)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M50 58 Q25 43 42 13" stroke-width="7" />
+      <path d="M50 58 Q75 43 58 13" stroke-width="7" />
+      <line x1="50" y1="54" x2="50" y2="33" stroke-width="4" />
+    </g>
+    <circle cx="50" cy="68" r="9" fill="none" stroke="oklch(0.95 0.05 330)" stroke-width="5.5" />
+  </g>
+</svg>

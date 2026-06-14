@@ -128,10 +128,16 @@ clean:
 tools:
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	$(GO) install github.com/gzuidhof/tygo@v0.2.21
+	$(GO) install github.com/bufbuild/buf/cmd/buf@v1.47.2
+	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
-# generate regenerates the frontend TypeScript types from the Go contracts
-# (issue #235). The output under web/src/lib/generated/ is the source of truth
-# for the admin console's wire DTOs and must be committed; CI fails on a stale
-# diff (see .github/workflows/ci.yaml). tygo is installed via `make tools`.
+# generate runs the codegen pipeline: `buf generate` first (the detector
+# contract proto -> Go under gen/), then `tygo generate` (the Go contracts ->
+# frontend TypeScript under web/src/lib/generated/). Both outputs are the source
+# of truth for their wire shapes and must be committed; CI fails on a stale diff
+# (see .github/workflows/ci.yaml). buf is installed via `make tools` (with
+# protoc-gen-go / protoc-gen-go-grpc); tygo too.
 generate:
+	buf generate
 	tygo generate

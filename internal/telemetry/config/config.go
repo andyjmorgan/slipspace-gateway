@@ -11,6 +11,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -65,7 +66,55 @@ type Config struct {
 	// Gateways is the registry of appliances permitted to push payloads.
 	// A webhook is trusted iff its signature verifies against one of these.
 	Gateways []Gateway `yaml:"gateways"`
+	// Scanner is the optional Arbiter async security scanner. Disabled by
+	// default — the telemetry service is fully functional without it.
+	Scanner Scanner `yaml:"scanner"`
 }
+
+// Scanner configures the optional Arbiter async security scanner: the detector
+// endpoints it calls, the evidence-store key, and retention. When Enabled is
+// false (the default) the ingest path is untouched and no scanner goroutines
+// run.
+type Scanner struct {
+	// Enabled turns the scanner on. Default false.
+	Enabled bool `yaml:"enabled"`
+	// Detectors is the set of detector endpoints, one per check type. The
+	// explode step only emits check_tasks for the check types listed here, and
+	// the dispatcher only calls these endpoints.
+	Detectors []Detector `yaml:"detectors"`
+	// Workers is the dispatcher's concurrent worker count. nil applies
+	// DefaultScannerWorkers.
+	Workers *int `yaml:"workers,omitempty"`
+	// EvidenceKey is the base64-encoded 32-byte AES-256 key the evidence store
+	// encrypts offending fields with (ADR-018 — the store is a PII
+	// concentrator). Required when Enabled.
+	EvidenceKey string `yaml:"evidence_key"`
+	// RetentionDays bounds how long evidence rows are kept. nil applies
+	// DefaultScannerRetentionDays.
+	RetentionDays *int `yaml:"retention_days,omitempty"`
+}
+
+// Detector is one detector endpoint Arbiter calls for a given check type.
+type Detector struct {
+	// CheckType is the logical check this detector serves: "injection",
+	// "toxicity", "pii". Unique within Detectors.
+	CheckType string `yaml:"check_type"`
+	// Family is the detector family name recorded as provenance.
+	Family string `yaml:"family"`
+	// Endpoint is the detector's HTTP /detect URL (protojson).
+	Endpoint string `yaml:"endpoint"`
+	// Threshold is the emit floor passed to the detector; below it, findings
+	// are not returned. 0 lets the detector use its own default.
+	Threshold float32 `yaml:"threshold"`
+}
+
+// Scanner defaults.
+const (
+	// DefaultScannerWorkers is the dispatcher's worker-pool size when unset.
+	DefaultScannerWorkers = 4
+	// DefaultScannerRetentionDays bounds evidence retention when unset.
+	DefaultScannerRetentionDays = 30
+)
 
 // Postgres is the central store connection.
 type Postgres struct {
@@ -154,6 +203,38 @@ func (c Config) SpanFieldCap() int {
 	return *c.SpanFieldMaxBytes
 }
 
+// ScannerEnabled reports whether the Arbiter security scanner is on.
+func (c Config) ScannerEnabled() bool { return c.Scanner.Enabled }
+
+// ScannerWorkers resolves the dispatcher worker count.
+func (c Config) ScannerWorkers() int {
+	if c.Scanner.Workers == nil || *c.Scanner.Workers <= 0 {
+		return DefaultScannerWorkers
+	}
+	return *c.Scanner.Workers
+}
+
+// ScannerRetentionDays resolves the evidence retention window in days.
+func (c Config) ScannerRetentionDays() int {
+	if c.Scanner.RetentionDays == nil || *c.Scanner.RetentionDays <= 0 {
+		return DefaultScannerRetentionDays
+	}
+	return *c.Scanner.RetentionDays
+}
+
+// EvidenceKeyBytes decodes the base64 AES-256 evidence key. Returns an error
+// unless the decoded key is exactly 32 bytes.
+func (c Config) EvidenceKeyBytes() ([]byte, error) {
+	key, err := base64.StdEncoding.DecodeString(c.Scanner.EvidenceKey)
+	if err != nil {
+		return nil, fmt.Errorf("scanner.evidence_key: not valid base64: %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("scanner.evidence_key: must decode to 32 bytes, got %d", len(key))
+	}
+	return key, nil
+}
+
 // Validate enforces the invariants the service depends on at startup: a store
 // to write to, console credentials to guard it, and a well-formed,
 // duplicate-free gateway registry.
@@ -180,6 +261,28 @@ func (c Config) Validate() error {
 			return fmt.Errorf("gateways[%d]: duplicate id %q", i, g.ID)
 		}
 		seen[g.ID] = struct{}{}
+	}
+
+	if c.Scanner.Enabled {
+		if len(c.Scanner.Detectors) == 0 {
+			return errors.New("scanner.detectors is required when scanner.enabled")
+		}
+		if _, err := c.EvidenceKeyBytes(); err != nil {
+			return err
+		}
+		seenCheck := make(map[string]struct{}, len(c.Scanner.Detectors))
+		for i, d := range c.Scanner.Detectors {
+			if d.CheckType == "" {
+				return fmt.Errorf("scanner.detectors[%d]: check_type is required", i)
+			}
+			if d.Endpoint == "" {
+				return fmt.Errorf("scanner.detectors[%d] (%s): endpoint is required", i, d.CheckType)
+			}
+			if _, dup := seenCheck[d.CheckType]; dup {
+				return fmt.Errorf("scanner.detectors[%d]: duplicate check_type %q", i, d.CheckType)
+			}
+			seenCheck[d.CheckType] = struct{}{}
+		}
 	}
 	return nil
 }

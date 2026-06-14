@@ -1,0 +1,11 @@
+# buf module for the SlipSpace detector contract (slipspace.detect.v1).
+# Proto lives under proto/; generated Go lands in gen/ (see buf.gen.yaml).
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

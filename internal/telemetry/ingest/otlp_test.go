@@ -40,6 +40,7 @@ func strSliceKV(k string, vs ...string) *commonpb.KeyValue {
 
 type eventSink struct {
 	events []store.RequestEvent
+	checks [][]store.CheckTask
 	err    error
 }
 
@@ -48,6 +49,15 @@ func (s *eventSink) UpsertRequestEvent(_ context.Context, e store.RequestEvent) 
 		return s.err
 	}
 	s.events = append(s.events, e)
+	return nil
+}
+
+func (s *eventSink) UpsertRequestEventWithChecks(_ context.Context, e store.RequestEvent, checks []store.CheckTask) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.events = append(s.events, e)
+	s.checks = append(s.checks, checks)
 	return nil
 }
 
@@ -325,7 +335,7 @@ func traceReq(spans ...*tracepb.Span) *collectortrace.ExportTraceServiceRequest 
 
 func TestTraceReceiver_Export(t *testing.T) {
 	sink := &eventSink{}
-	r := NewTraceReceiver(sink, discard(), testContentCap)
+	r := NewTraceReceiver(sink, discard(), testContentCap, nil)
 	good := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrCorrelationID, "c1")}}
 	skip := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrModel, "m")}} // no corr id
 	if _, err := r.Export(context.Background(), traceReq(good, skip)); err != nil {
@@ -337,7 +347,7 @@ func TestTraceReceiver_Export(t *testing.T) {
 }
 
 func TestTraceReceiver_StoreErrorIsSwallowed(t *testing.T) {
-	r := NewTraceReceiver(&eventSink{err: errors.New("db down")}, discard(), testContentCap)
+	r := NewTraceReceiver(&eventSink{err: errors.New("db down")}, discard(), testContentCap, nil)
 	good := &tracepb.Span{Attributes: []*commonpb.KeyValue{strKV(attrCorrelationID, "c1")}}
 	if _, err := r.Export(context.Background(), traceReq(good)); err != nil {
 		t.Fatalf("Export must not propagate store errors: %v", err)

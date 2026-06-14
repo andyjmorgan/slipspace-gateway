@@ -1,0 +1,225 @@
+// Package slipspace.detect.v1 is the SlipSpace Arbiter <-> detector contract.
+//
+// One contract, both transports, identical shape for PII, injection, and
+// toxicity (ADR-014). Variation between detector families is in values, never
+// structure: every response is a list of findings, and a finding's span is
+// optional — a null span means the finding applies to the whole unit, which is
+// how sequence detectors (injection, toxicity) fit a span-oriented schema
+// alongside span detectors (PII).
+//
+// Transport this release is protojson over HTTP (async). The gRPC service is
+// defined here so the IDL is shape-locked (invariant #5); its server arrives
+// with the deferred inline path. Detectors stay dumb: they return score +
+// raw_label only, never a decision or risk level — Arbiter owns the verdict
+// (ADR-017). See REF-008 for the build-time decisions this encodes.
+syntax = "proto3";
+
+package slipspace.detect.v1;
+
+option go_package = "github.com/andyjmorgan/sluice-gateway/gen/slipspace/detect/v1;detectv1";
+
+// DetectionService scans one content unit and returns findings. Detect is the
+// async entry point shipping this release (protojson/HTTP or unary gRPC).
+//
+// The inline path's streaming early-termination RPC (ADR-005) — a server-stream
+// of findings as each fires, so an inline caller can cut the response short on
+// the first blocking verdict — is deliberately NOT declared here yet. It will
+// be added with the inline path using its own DetectStreamRequest /
+// DetectStreamResponse types. The message contract below is the shape-lock
+// (invariant #5); the streaming RPC is a thin additive surface later.
+service DetectionService {
+  // Detect scans a single unit and returns all findings at once.
+  rpc Detect(DetectRequest) returns (DetectResponse);
+}
+
+// DetectRequest carries one unit to scan plus the detector-agnostic options.
+message DetectRequest {
+  // schema_version pins the contract version for additive evolution (ADR-007).
+  string schema_version = 1;
+
+  // correlation_id is the span id — the golden thread end to end.
+  string correlation_id = 2;
+
+  // session_id scopes the unit to its conversation (may be empty).
+  string session_id = 3;
+
+  // unit is the content block to scan.
+  Unit unit = 4;
+
+  // labels are consumed by zero-shot detectors; fixed-label detectors ignore
+  // them.
+  repeated string labels = 5;
+
+  // options tune the scan; all fields are optional with sane detector defaults.
+  Options options = 6;
+}
+
+// Unit is one content block to scan — a single genaiattr part in v1 (ADR-018
+// unit model). The detector scans `text`; kind/role/id give context a detector
+// may use (e.g. treating a tool_call_response as untrusted) and let Arbiter
+// re-attach the finding to its source part.
+message Unit {
+  // id is the Arbiter-side unit identifier (stable per content block).
+  string id = 1;
+
+  // kind is the part type: "text", "tool_call", "tool_call_response",
+  // "reasoning", or "opaque" for a residual-captured block (ADR-015 #1).
+  string kind = 2;
+
+  // role is the turn author: "user", "assistant", "system", "tool".
+  string role = 3;
+
+  // text is the content to scan, already rendered to plain text by Arbiter.
+  string text = 4;
+}
+
+// Options tune one scan.
+message Options {
+  // max_tokens caps how much of `text` the detector scans; 0 means the
+  // detector's own default. Detectors MUST cap to their model window (the
+  // 512-token validation, REF-008) and set scanned.truncated when they do.
+  uint32 max_tokens = 1;
+
+  // threshold is the emit floor: findings scoring below it are not returned.
+  // 0 means the detector default. This gates what is stored at all and is
+  // distinct from the alert and enforcement thresholds Arbiter owns (ADR-017).
+  float threshold = 2;
+
+  // localize requests span granularity in the response.
+  Localize localize = 3;
+}
+
+// Localize is the requested span granularity (a request option).
+enum Localize {
+  LOCALIZE_UNSPECIFIED = 0;
+  LOCALIZE_NONE = 1;
+  LOCALIZE_SENTENCE = 2;
+  LOCALIZE_TOKEN = 3;
+}
+
+// DetectResponse is one detector's verdict on one unit: a list of findings
+// (empty = clean) plus the scan's status and what was scanned.
+message DetectResponse {
+  // schema_version echoes the contract version the detector spoke.
+  string schema_version = 1;
+
+  // correlation_id echoes the request's golden thread.
+  string correlation_id = 2;
+
+  // detector identifies who produced this response.
+  Detector detector = 3;
+
+  // status distinguishes a clean scan from an inconclusive/errored one. An
+  // INCONCLUSIVE (e.g. timeout) is NOT clean (ADR-017 determinism).
+  Status status = 4;
+
+  // scanned reports coverage; scanned.truncated marks a partial scan so a
+  // clean-on-truncated result is not trusted as fully clean.
+  Scanned scanned = 5;
+
+  // findings is the list of hits; empty means clean for this detector.
+  repeated Finding findings = 6;
+
+  // elapsed_ms is the detector's own wall-clock for the scan.
+  uint32 elapsed_ms = 7;
+
+  // error carries a human-readable reason when status is ERROR.
+  string error = 8;
+}
+
+// Status is the per-scan terminal state.
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_OK = 1;
+  STATUS_INCONCLUSIVE = 2;
+  STATUS_ERROR = 3;
+  STATUS_UNSUPPORTED = 4;
+}
+
+// Detector identifies the model behind a response.
+message Detector {
+  // id is the deployment id (e.g. "protectai-deberta-injection-v2").
+  string id = 1;
+
+  // model is the underlying model ref (e.g. the HF id).
+  string model = 2;
+
+  // version is the detector container/model version, recorded as provenance.
+  string version = 3;
+
+  // family is the detector family.
+  Family family = 4;
+}
+
+// Family is the detector family. Variation between families is in values, not
+// structure (ADR-014).
+enum Family {
+  FAMILY_UNSPECIFIED = 0;
+  FAMILY_PII = 1;
+  FAMILY_INJECTION = 2;
+  FAMILY_TOXICITY = 3;
+  FAMILY_SAFETY = 4;
+}
+
+// Scanned reports what the detector actually covered.
+message Scanned {
+  // tokens is the token count the detector scanned.
+  uint32 tokens = 1;
+
+  // truncated is true when the unit exceeded the model window and was cut.
+  bool truncated = 2;
+
+  // chunks is the number of chunks the unit was split into.
+  uint32 chunks = 3;
+}
+
+// Finding is one hit. category is the normalized taxonomy entry; Arbiter maps
+// score + raw_label to a verdict from policy (ADR-017). span absent means the
+// finding applies to the whole unit.
+message Finding {
+  // category is the normalized taxonomy entry, e.g. "pii.email".
+  string category = 1;
+
+  // score is the detector confidence in [0,1].
+  float score = 2;
+
+  // span locates the finding within the unit text; absent => whole unit.
+  Span span = 3;
+
+  // quote is advisory; the authoritative evidence is the offending field
+  // Arbiter stores (ADR-018).
+  string quote = 4;
+
+  // localization records how the span was derived.
+  Localization localization = 5;
+
+  // raw_label is the detector's native label, preserved as provenance.
+  string raw_label = 6;
+
+  // explanation is an optional human-readable note.
+  string explanation = 7;
+}
+
+// Span locates a finding within the unit text. v1 basis is UTF8_BYTE (ADR-016);
+// conversion from a detector's native offsets happens once, in the runtime.
+message Span {
+  uint32 start = 1;
+  uint32 end = 2;
+  OffsetBasis basis = 3;
+}
+
+// OffsetBasis is the unit of Span offsets. v1 is UTF8_BYTE everywhere
+// server-side; future bases are additive (ADR-016).
+enum OffsetBasis {
+  OFFSET_BASIS_UNSPECIFIED = 0;
+  OFFSET_BASIS_UTF8_BYTE = 1;
+  OFFSET_BASIS_UTF16_CODE_UNIT = 2;
+}
+
+// Localization records how a finding's span was derived.
+enum Localization {
+  LOCALIZATION_UNSPECIFIED = 0;
+  LOCALIZATION_NONE = 1;
+  LOCALIZATION_EXACT = 2;
+  LOCALIZATION_SENTENCE = 3;
+}
