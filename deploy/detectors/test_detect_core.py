@@ -212,6 +212,78 @@ class MergeSpans(unittest.TestCase):
         self.assertAlmostEqual(out[0].score, 0.9)
 
 
+class CoalesceAdjacent(unittest.TestCase):
+    def test_zero_gap_subword_split_joins(self):
+        # "Marcus Delacroix" split as "Marcus Delacro" + "ix".
+        text = "Marcus Delacroix here"
+        fs = [
+            dc.Finding(category="pii.person", score=0.9, start=0, end=14),
+            dc.Finding(category="pii.person", score=1.0, start=14, end=16),
+        ]
+        out = dc.coalesce_adjacent(fs, text)
+        self.assertEqual(len(out), 1)
+        self.assertEqual((out[0].start, out[0].end), (0, 16))
+        self.assertEqual(text[out[0].start : out[0].end], "Marcus Delacroix")
+        self.assertAlmostEqual(out[0].score, 1.0)
+
+    def test_small_separator_gap_joins(self):
+        # "742 Evergreen Terrace, Springfield": ", " is a 2-char gap.
+        text = "742 Evergreen Terrace, Springfield"
+        fs = [
+            dc.Finding(category="pii.address", score=0.9, start=0, end=21),
+            dc.Finding(category="pii.address", score=0.9, start=23, end=34),
+        ]
+        out = dc.coalesce_adjacent(fs, text, max_gap=2)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(text[out[0].start : out[0].end], text)
+
+    def test_large_gap_kept_separate(self):
+        text = "a@b.com" + (" " * 40) + "c@d.com"
+        fs = [
+            dc.Finding(category="pii.email", score=0.9, start=0, end=7),
+            dc.Finding(category="pii.email", score=0.9, start=47, end=54),
+        ]
+        self.assertEqual(len(dc.coalesce_adjacent(fs, text)), 2)
+
+    def test_different_category_not_joined(self):
+        text = "Jane jane@x.io"
+        fs = [
+            dc.Finding(category="pii.person", score=0.9, start=0, end=4),
+            dc.Finding(category="pii.email", score=0.9, start=5, end=14),
+        ]
+        self.assertEqual(len(dc.coalesce_adjacent(fs, text)), 2)
+
+
+class DedupeByValue(unittest.TestCase):
+    def test_repeated_value_collapses(self):
+        # same name twice in one unit → one finding, highest score.
+        text = "Marcus ... Marcus"
+        fs = [
+            dc.Finding(category="pii.person", score=0.8, start=0, end=6),
+            dc.Finding(category="pii.person", score=0.95, start=11, end=17),
+        ]
+        out = dc.dedupe_by_value(fs, text)
+        self.assertEqual(len(out), 1)
+        self.assertAlmostEqual(out[0].score, 0.95)
+
+    def test_distinct_values_kept(self):
+        text = "alice@x.io bob@y.io"
+        fs = [
+            dc.Finding(category="pii.email", score=0.9, start=0, end=10),
+            dc.Finding(category="pii.email", score=0.9, start=11, end=19),
+        ]
+        self.assertEqual(len(dc.dedupe_by_value(fs, text)), 2)
+
+    def test_trims_whitespace_before_compare(self):
+        text = "Marcus  Marcus"  # second has a leading space in its span
+        fs = [
+            dc.Finding(category="pii.person", score=0.9, start=0, end=6),
+            dc.Finding(category="pii.person", score=0.9, start=7, end=14),
+        ]
+        # both trim to "Marcus" → one finding.
+        self.assertEqual(len(dc.dedupe_by_value(fs, text)), 1)
+
+
 class ToByteSpans(unittest.TestCase):
     def test_ascii_offsets_unchanged(self):
         text = "email me at a@b.com"
