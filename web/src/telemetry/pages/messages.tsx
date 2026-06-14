@@ -327,25 +327,32 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 
 // InspectorTab mirrors the session lifecycle modal's strip: the span's own
 // Output/Input panes plus the on-demand bridge tabs (Telemetry, Report).
-type InspectorTab = "output" | "input" | "telemetry" | "report" | "security"
+export type InspectorTab = "output" | "input" | "telemetry" | "report" | "security"
 
 // Inspector is the per-request detail modal, rendered inside the shared
 // InspectorModal shell. The message content is the SAME SessionSpan DTO
 // element the session lifecycle modal renders (fetched per-event through
 // /events/{id}/span), so one request looks identical on both surfaces; the
 // heavier Telemetry/Report payloads load only when their tab is clicked.
-function Inspector({
+//
+// Exported so the Security page can reuse it verbatim (it opens this same modal
+// on the Security tab via initialTab) — one inspector, never a near-duplicate.
+export function Inspector({
   entry,
   position,
   onClose,
   onPrev,
   onNext,
+  initialTab = "output",
 }: {
   entry: MessageEntry
   position: string
   onClose: () => void
   onPrev?: () => void
   onNext?: () => void
+  // initialTab seeds which detail tab opens first. The Security page passes
+  // "security" so a flagged row lands straight on its verdict + findings.
+  initialTab?: InspectorTab
 }) {
   const cid = entry.correlation_id || entry.event_id
   // Keyed by cid so stepping prev/next derives "loading" during render (no
@@ -362,7 +369,7 @@ function Inspector({
   }, [cid])
 
   // Tab choice persists across prev/next (the component survives the step).
-  const [tab, setTab] = useState<InspectorTab>("output")
+  const [tab, setTab] = useState<InspectorTab>(initialTab)
   // A record-only event has no Output/Input panes — fall to the bridge tabs.
   const effTab: InspectorTab = span === null && (tab === "output" || tab === "input") ? "telemetry" : tab
 

@@ -21,7 +21,9 @@ import {
   type SessionSpan,
 } from "@/lib/session-spans"
 import { SESSION_MESSAGES_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
+import { fetchFindings, type FindingRow } from "@/lib/findings"
 import { Dash, MessagesPagerBar, MessagesTableView } from "../components/messages-table"
+import { FindingsTable } from "../components/findings-table"
 import { id8, inputMeta, outputMeta } from "@/lib/span-view"
 import {
   CardCopy,
@@ -1887,7 +1889,7 @@ function SessionDataTabs({
   onOpenSpan: (cid: string) => void
   focusedConv: string | null
 }) {
-  const [tab, setTab] = useState<"messages" | "tools">("messages")
+  const [tab, setTab] = useState<"messages" | "tools" | "security">("messages")
   // Request count reflects the focus: the messages tab is conversation-scoped
   // when a sub-agent is drilled into.
   const msgCount = focusedConv ? (vm.byConv.get(focusedConv)?.length ?? 0) : vm.spans.length
@@ -1906,10 +1908,17 @@ function SessionDataTabs({
           label="Tools"
           meta={`${vm.ledger.length} call${vm.ledger.length === 1 ? "" : "s"}`}
         />
+        <IOTab
+          on={tab === "security"}
+          onClick={() => setTab("security")}
+          label="Security"
+          meta="detector findings"
+        />
       </div>
-      {tab === "messages" ? (
+      {tab === "messages" && (
         <SessionMessagesPanel vm={vm} slice={slice} source={source} onOpen={onOpenMessage} focusedConv={focusedConv} dispName={dispName} />
-      ) : (
+      )}
+      {tab === "tools" && (
         <>
           <div className="grid md:grid-cols-2 gap-3.5 items-start">
             <ToolTable vm={vm} kind="client" />
@@ -1918,7 +1927,82 @@ function SessionDataTabs({
           <LedgerTable vm={vm} dispName={dispName} onOpen={onOpenSpan} />
         </>
       )}
+      {tab === "security" && <SessionSecurityPanel sid={vm.sid} source={source} onOpenSpan={onOpenSpan} />}
     </div>
+  )
+}
+
+// SessionSecurityPanel is the session view's Security tab: every detector
+// finding in this session, scoped by session id, in the SAME FindingsTable the
+// top-level Security page mounts (showSession hidden — every row is this
+// session). A finding's row opens its source request in the session's in-place
+// span inspector via onOpenSpan; that inspector only resolves spans this session
+// carries, so a finding whose span wasn't captured simply doesn't open. Findings
+// load lazily when the tab is first opened, and only against a live backend (the
+// fixture session has no findings endpoint).
+function SessionSecurityPanel({
+  sid,
+  source,
+  onOpenSpan,
+}: {
+  sid: string
+  source: "api" | "fixture"
+  onOpenSpan: (cid: string) => void
+}) {
+  // Keyed by sid so the panel derives "loading" during render rather than
+  // resetting via setState-in-effect; the effect only setStates in callbacks.
+  const [res, setRes] = useState<{ sid: string; rows: FindingRow[] | null; err: string | null } | null>(null)
+  const nav = useNavigate()
+  // A fixture session has no findings endpoint — short-circuit to an empty list
+  // during render (not via setState-in-effect) so the table shows its empty state.
+  const isFixture = source !== "api"
+
+  useEffect(() => {
+    if (isFixture) return
+    let cancelled = false
+    fetchFindings({ session: sid })
+      .then((rows) => {
+        if (!cancelled) setRes({ sid, rows, err: null })
+      })
+      .catch((e) => {
+        if (cancelled) return
+        if (e instanceof UnauthorizedError) {
+          nav("/login", { replace: true })
+          return
+        }
+        setRes({ sid, rows: null, err: e instanceof Error ? e.message : String(e) })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sid, isFixture, nav])
+
+  const ready = isFixture
+    ? { sid, rows: [] as FindingRow[], err: null }
+    : res && res.sid === sid
+      ? res
+      : null
+  const status: "loading" | "ok" | "error" = !ready ? "loading" : ready.err ? "error" : "ok"
+
+  return (
+    <PanelCard>
+      {status === "error" && (
+        <div className="m-3 rounded-[var(--radius-lg)] border p-4 text-[13px]" style={{ color: "var(--err)", background: "var(--err-bg)" }}>
+          Failed to load findings: <span className="mono">{ready?.err}</span>
+        </div>
+      )}
+      <FindingsTable
+        findings={ready?.rows ?? []}
+        status={status}
+        limit={SESSION_MESSAGES_PAGE_SIZE}
+        emptyText="No findings in this session — nothing flagged, or the scanner is disabled."
+        onOpenMessage={(f) => onOpenSpan(f.correlation_id)}
+        // Every row is this session; the Session link column is hidden, so this
+        // pivot never fires — wired to a self-navigation only for completeness.
+        onOpenSession={(s) => nav(`/sessions/${encodeURIComponent(s)}`)}
+        showSession={false}
+      />
+    </PanelCard>
   )
 }
 

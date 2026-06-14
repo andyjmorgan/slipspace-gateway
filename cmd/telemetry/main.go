@@ -151,7 +151,13 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		ingest.NewMetricsReceiver(st, log),
 	)
 
-	httpSrv := server.New(cfg.Console, st, st, recordIngest, cfg.SpanFieldCap(), log).HTTPServer(cfg.HTTPBind)
+	// WithAppliedConfig serves the redacted snapshot at GET /api/v1/settings so
+	// an operator can see the running config (incl. the scanner block) without
+	// any secret leaking — the password hash, HMAC secrets, evidence key, and DSN
+	// password are all redacted by Redacted().
+	httpSrv := server.New(cfg.Console, st, st, recordIngest, cfg.SpanFieldCap(), log).
+		WithAppliedConfig(cfg.Redacted()).
+		HTTPServer(cfg.HTTPBind)
 
 	errCh := make(chan error, 1)
 	safego.Go(ctx, "telemetry.serve.http", log, nil, func() {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router"
-import { Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Sun } from "lucide-react"
+import { Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Settings2, ShieldAlert, Sun } from "lucide-react"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -11,6 +11,8 @@ import { DashboardPage } from "./pages/dashboard"
 import { MessagesPage } from "./pages/messages"
 import { SessionsPage } from "./pages/sessions"
 import { SessionLifecyclePage } from "./pages/session-lifecycle"
+import { SecurityPage } from "./pages/security"
+import { SettingsPage } from "./pages/settings"
 
 // App is the telemetry console root: a Basic-auth login gate wrapping the
 // shared app shell (sidebar + topbar) the gateway admin console uses, themed
@@ -24,6 +26,8 @@ export default function App() {
         <Route element={<TelemetryLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="messages" element={<MessagesPage />} />
+          <Route path="security" element={<SecurityPage />} />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="sessions/:id" element={<SessionLifecyclePage />} />
           <Route path="sessions/:id/lifecycle" element={<LifecycleAlias />} />
@@ -53,10 +57,23 @@ function Guard() {
   return <Outlet />
 }
 
-const NAV = [
+// NavItem is one sidebar link; NavDivider is a subtle rule between groups. The
+// nav is a flat ordered list of both so the group boundaries are explicit in the
+// data, not implied by render-time slicing.
+type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end: boolean }
+type NavDivider = { divider: true }
+type NavEntry = NavItem | NavDivider
+
+const isDivider = (e: NavEntry): e is NavDivider => "divider" in e
+
+const NAV: NavEntry[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/messages", label: "Messages", icon: ListTree, end: false },
+  { divider: true },
   { to: "/sessions", label: "Sessions", icon: MessagesSquare, end: false },
+  { to: "/security", label: "Security", icon: ShieldAlert, end: false },
+  { to: "/messages", label: "Messages", icon: ListTree, end: false },
+  { divider: true },
+  { to: "/settings", label: "Settings", icon: Settings2, end: false },
 ]
 
 function TelemetryLayout() {
@@ -105,25 +122,29 @@ function TelemetrySidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
         <span className="font-semibold tracking-[-0.01em]">Arbiter</span>
       </div>
       <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            onClick={onClose}
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-2.5 rounded-[var(--radius)] px-3 py-2 text-[13px] transition-colors",
-                isActive
-                  ? "bg-[color:var(--hover)] text-[color:var(--text)]"
-                  : "text-[color:var(--text-3)] hover:bg-[color:var(--hover)] hover:text-[color:var(--text)]",
-              )
-            }
-          >
-            <item.icon size={16} />
-            {item.label}
-          </NavLink>
-        ))}
+        {NAV.map((item, i) =>
+          isDivider(item) ? (
+            <hr key={`div-${i}`} className="my-2 border-t border-[color:var(--border)]" aria-hidden="true" />
+          ) : (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={onClose}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-2.5 rounded-[var(--radius)] px-3 py-2 text-[13px] transition-colors",
+                  isActive
+                    ? "bg-[color:var(--hover)] text-[color:var(--text)]"
+                    : "text-[color:var(--text-3)] hover:bg-[color:var(--hover)] hover:text-[color:var(--text)]",
+                )
+              }
+            >
+              <item.icon size={16} />
+              {item.label}
+            </NavLink>
+          ),
+        )}
       </nav>
     </aside>
   )

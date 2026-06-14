@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
@@ -71,6 +72,81 @@ func TestHandleVerdict_Errors(t *testing.T) {
 	}
 	// unauthenticated
 	if rec := get(t, newQueryServer(t, &fakeQueries{}), "/api/v1/verdict/c", false); rec.Code != http.StatusUnauthorized {
+		t.Errorf("unauth status = %d, want 401", rec.Code)
+	}
+}
+
+func TestHandleFindings_Recent(t *testing.T) {
+	observed := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
+	q := &fakeQueries{findingRows: []store.FindingRow{
+		{Category: "injection.jailbreak", CheckType: "injection", Score: 0.9, RawLabel: "INJECTION", UnitKind: "text", UnitRole: "user", CorrelationID: "c1", SessionID: "s1", ObservedAt: observed, Model: "gpt-4o", Configuration: "default"},
+		{Category: "pii.email", CheckType: "pii", Score: 0.6, CorrelationID: "c2"},
+	}}
+	resp := get(t, newQueryServer(t, q), "/api/v1/findings?limit=25", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	var body admin.FindingsListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(body.Items))
+	}
+	if body.Items[0].CorrelationID != "c1" || body.Items[0].Category != "injection.jailbreak" || body.Items[0].UnitRole != "user" {
+		t.Errorf("item[0] = %+v", body.Items[0])
+	}
+	if body.Items[0].ObservedAt != "2026-06-14T09:30:00Z" {
+		t.Errorf("observed_at = %q, want RFC3339 UTC", body.Items[0].ObservedAt)
+	}
+	// a finding whose event aged out has a zero observed_at -> empty string.
+	if body.Items[1].ObservedAt != "" {
+		t.Errorf("aged-out observed_at = %q, want empty", body.Items[1].ObservedAt)
+	}
+	// no ?session -> the recent path fired, with ?limit plumbed through.
+	if q.lastFindingsLimit != 25 || q.lastFindingsSession != "" {
+		t.Errorf("recent path args: limit=%d session=%q", q.lastFindingsLimit, q.lastFindingsSession)
+	}
+}
+
+func TestHandleFindings_BySession(t *testing.T) {
+	q := &fakeQueries{findingRows: []store.FindingRow{{Category: "pii.email", CheckType: "pii", CorrelationID: "c1", SessionID: "sess-7"}}}
+	resp := get(t, newQueryServer(t, q), "/api/v1/findings?session=sess-7", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	// ?session -> the per-session path fired with that id (recent path untouched).
+	if q.lastFindingsSession != "sess-7" || q.lastFindingsLimit != 0 {
+		t.Errorf("session path args: session=%q limit=%d", q.lastFindingsSession, q.lastFindingsLimit)
+	}
+}
+
+func TestHandleFindings_EmptyIsArray(t *testing.T) {
+	// no rows -> items serializes as [] not null.
+	resp := get(t, newQueryServer(t, &fakeQueries{}), "/api/v1/findings", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw["items"]) != "[]" {
+		t.Errorf("items = %s, want []", raw["items"])
+	}
+}
+
+func TestHandleFindings_Errors(t *testing.T) {
+	// recent-path error
+	if rec := get(t, newQueryServer(t, &fakeQueries{findingRowsErr: errors.New("db")}), "/api/v1/findings", true); rec.Code != http.StatusInternalServerError {
+		t.Errorf("recent error status = %d", rec.Code)
+	}
+	// session-path error
+	if rec := get(t, newQueryServer(t, &fakeQueries{findingRowsErr: errors.New("db")}), "/api/v1/findings?session=s", true); rec.Code != http.StatusInternalServerError {
+		t.Errorf("session error status = %d", rec.Code)
+	}
+	// unauthenticated
+	if rec := get(t, newQueryServer(t, &fakeQueries{}), "/api/v1/findings", false); rec.Code != http.StatusUnauthorized {
 		t.Errorf("unauth status = %d, want 401", rec.Code)
 	}
 }

@@ -318,6 +318,110 @@ func (s *Store) UpsertVerdict(ctx context.Context, v Verdict) error {
 	return nil
 }
 
+// FindingRow is one finding joined to its source request_events row (and the
+// originating check task for the unit's kind/role) — the operator Security
+// view's unit. It carries the finding itself plus the deep-link keys
+// (CorrelationID → message inspector, SessionID → session view) and the request
+// facts (ObservedAt, Model, Configuration) the operator triages by. The same
+// row type backs both the recent-across-all-sessions list and the
+// per-session list.
+type FindingRow struct {
+	// Category is the normalized taxonomy entry, e.g. "pii.email".
+	Category string
+	// CheckType is the check that produced the finding.
+	CheckType string
+	// Score is the detector confidence in [0,1].
+	Score float32
+	// RawLabel is the detector's native label.
+	RawLabel string
+	// UnitKind / UnitRole are the offending content block's kind/role, projected
+	// from the check task's unit_locator JSONB; empty when the locator carried
+	// none (or the task row has been pruned).
+	UnitKind string
+	UnitRole string
+	// CorrelationID is the request the finding came from.
+	CorrelationID string
+	// SessionID / ObservedAt / Model / Configuration come from the joined
+	// request_events row; empty when the join finds no matching event (a finding
+	// can outlive its event under retention skew).
+	SessionID     string
+	ObservedAt    time.Time
+	Model         string
+	Configuration string
+}
+
+// defaultFindingsListLimit is the page size ListRecentFindings applies when the
+// caller passes a non-positive limit.
+const defaultFindingsListLimit = 100
+
+// findingRowSelect is the shared SELECT for both findings-list queries: the
+// finding fields, the unit kind/role pulled from the originating check task's
+// locator, and the request facts from request_events. The LEFT JOINs keep a
+// finding whose check task or event has aged out (those columns come back
+// empty). Ordering by observed_at then id keeps it newest-first with a stable
+// tie-break when many findings share a request.
+const findingRowSelect = `
+SELECT f.category, f.check_type, f.score, f.raw_label,
+       COALESCE(t.unit_locator->>'kind', ''), COALESCE(t.unit_locator->>'role', ''),
+       f.correlation_id,
+       COALESCE(e.session_id, ''), e.observed_at,
+       COALESCE(e.model, ''), COALESCE(e.configuration, '')
+FROM finding f
+LEFT JOIN check_tasks t
+  ON t.correlation_id = f.correlation_id AND t.unit_id = f.unit_id AND t.check_type = f.check_type
+LEFT JOIN request_events e ON e.correlation_id = f.correlation_id`
+
+// scanFindingRows drains a findings-list query into FindingRow values. ObservedAt
+// is nullable (the LEFT JOIN may miss), so it scans through *time.Time.
+func scanFindingRows(rows rows) ([]FindingRow, error) {
+	defer rows.Close()
+	var out []FindingRow
+	for rows.Next() {
+		var f FindingRow
+		var observed *time.Time
+		if err := rows.Scan(&f.Category, &f.CheckType, &f.Score, &f.RawLabel,
+			&f.UnitKind, &f.UnitRole, &f.CorrelationID,
+			&f.SessionID, &observed, &f.Model, &f.Configuration); err != nil {
+			return nil, fmt.Errorf("store: scan finding row: %w", err)
+		}
+		if observed != nil {
+			f.ObservedAt = *observed
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// ListRecentFindings returns the most recent findings across all sessions,
+// newest first — the top-level Security page's backing query. limit caps the
+// page (<= 0 applies the default).
+func (s *Store) ListRecentFindings(ctx context.Context, limit int) ([]FindingRow, error) {
+	if limit <= 0 {
+		limit = defaultFindingsListLimit
+	}
+	rows, err := s.db.Query(ctx, findingRowSelect+`
+ORDER BY e.observed_at DESC NULLS LAST, f.id DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list recent findings: %w", err)
+	}
+	return scanFindingRows(rows)
+}
+
+// ListFindingsBySession returns every finding whose source request belongs to
+// the given session, newest first — the session view's Security tab. Scoped by
+// the request_events.session_id join column, so a finding whose event has aged
+// out (no session_id) never appears here.
+func (s *Store) ListFindingsBySession(ctx context.Context, sessionID string) ([]FindingRow, error) {
+	rows, err := s.db.Query(ctx, findingRowSelect+`
+WHERE e.session_id = $1
+ORDER BY e.observed_at DESC NULLS LAST, f.id DESC`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list findings by session: %w", err)
+	}
+	return scanFindingRows(rows)
+}
+
 // GetVerdict returns the verdict for a correlation id, or ErrVerdictNotFound.
 func (s *Store) GetVerdict(ctx context.Context, correlationID string) (Verdict, error) {
 	row := s.db.QueryRow(ctx,

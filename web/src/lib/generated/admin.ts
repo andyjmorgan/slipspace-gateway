@@ -1029,6 +1029,25 @@ export interface SessionSpanInputPart {
 }
 
 //////////
+// source: settings.go
+
+/**
+ * SettingsResponse is the telemetry service's applied (loaded) config, served
+ * read-only and secret-redacted at GET /api/v1/settings. Config is the config
+ * document as a generic tree (keys mirror the snake_case YAML the operator
+ * wrote), so the console can pretty-print it as JSON or stringify it back to
+ * YAML without a typed schema. Secrets (Postgres password, console password
+ * hash, gateway HMAC secrets, scanner evidence key) are already redacted to
+ * "***" by the time they reach this shape.
+ */
+export interface SettingsResponse {
+  /**
+   * Config is the redacted applied config as a generic JSON object.
+   */
+  config: { [key: string]: unknown};
+}
+
+//////////
 // source: verdict.go
 
 /**
@@ -1076,6 +1095,79 @@ export interface VerdictView {
    * that raises the request to PARTIAL. Never read as clean.
    */
   inconclusive?: string[];
+}
+/**
+ * FindingsListResponse is the operator Security view: a flat list of detector
+ * findings, newest first, served at GET /api/v1/findings. The same shape backs
+ * two surfaces — the top-level Security page (recent findings across all
+ * sessions) and the session view's Security tab (?session=<id>, all findings in
+ * one session) — so both render with one reusable table. It is finding-centric,
+ * not verdict-centric: each row is one hit, linking back to BOTH the message it
+ * came from (correlation_id) and the session it came from (session_id).
+ */
+export interface FindingsListResponse {
+  /**
+   * Items is the page of findings, ordered by observed_at desc.
+   */
+  items: FindingRow[];
+}
+/**
+ * FindingRow is one detector finding joined to its request's facts: the finding
+ * itself (category, check_type, score, raw_label, the offending unit's kind/role)
+ * plus the deep-link targets (correlation_id → message inspector, session_id →
+ * session view) and the request context (observed_at, model, configuration) the
+ * operator triages by. Kept deliberately lean — the row shows the finding and
+ * where it came from, nothing more.
+ */
+export interface FindingRow {
+  /**
+   * Category is the normalized taxonomy entry, e.g. "pii.email".
+   */
+  category: string;
+  /**
+   * CheckType is the check that produced it ("injection", "toxicity", "pii").
+   */
+  check_type: string;
+  /**
+   * Score is the detector confidence in [0,1].
+   */
+  score: number /* float32 */;
+  /**
+   * RawLabel is the detector's native label, kept as provenance.
+   */
+  raw_label?: string;
+  /**
+   * UnitKind is the kind of the offending content block (e.g. "text",
+   * "tool_use"), projected from the check task's unit locator; empty when the
+   * locator carried none.
+   */
+  unit_kind?: string;
+  /**
+   * UnitRole is the role of the offending content block (e.g. "user",
+   * "assistant"), projected from the same locator; empty when none.
+   */
+  unit_role?: string;
+  /**
+   * CorrelationID is the request this finding came from — the row's deep-link
+   * into the message inspector.
+   */
+  correlation_id: string;
+  /**
+   * SessionID is the session this finding came from — the row's deep-link into
+   * the session view; empty when the request carried no session.
+   */
+  session_id?: string;
+  /**
+   * ObservedAt is the source request's observation time (RFC3339), the list's
+   * sort key; empty when the finding's request_events row has aged out.
+   */
+  observed_at?: string;
+  /**
+   * Model / Configuration are the post-rule gateway facts on the source
+   * request; empty when the request_events row has aged out of retention.
+   */
+  model?: string;
+  configuration?: string;
 }
 /**
  * FindingView is one detector hit shown in the console's findings list.
