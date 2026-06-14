@@ -41,13 +41,14 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, f := range findings {
 		resp.Findings = append(resp.Findings, admin.FindingView{
-			UnitID:       f.UnitID,
-			CheckType:    f.CheckType,
-			Category:     f.Category,
-			Score:        f.Score,
-			RawLabel:     f.RawLabel,
-			Detector:     f.DetectorID,
-			Localization: f.Localization,
+			UnitID:        f.UnitID,
+			CheckType:     f.CheckType,
+			Category:      f.Category,
+			Score:         f.Score,
+			RawLabel:      f.RawLabel,
+			Detector:      f.DetectorID,
+			Localization:  f.Localization,
+			OffendingText: f.OffendingText,
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -90,6 +91,7 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 			ObservedAt:    observed,
 			Model:         f.Model,
 			Configuration: f.Configuration,
+			OffendingText: f.OffendingText,
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)

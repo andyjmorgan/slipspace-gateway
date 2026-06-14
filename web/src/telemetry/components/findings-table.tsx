@@ -75,7 +75,7 @@ export function FindingsTable({
   // this session, so the link would only point back at the current view.
   showSession?: boolean
 }) {
-  const cols = showSession ? 8 : 7
+  const cols = showSession ? 9 : 8
   return (
     <TableScroll>
       <thead>
@@ -83,6 +83,7 @@ export function FindingsTable({
           <th scope="col" className="text-left font-medium px-4 py-2">Time</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Check</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Category</th>
+          <th scope="col" className="text-left font-medium px-4 py-2">Offending text</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Unit</th>
           <th scope="col" className="text-right font-medium px-4 py-2">Score</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Model</th>
@@ -98,6 +99,7 @@ export function FindingsTable({
               { w: "9rem" },
               { w: "4.5rem" },
               { w: "7rem" },
+              { w: "12rem" },
               { w: "4rem" },
               { w: "2.5rem", align: "right" as const },
               { w: "5rem" },
@@ -129,6 +131,13 @@ export function FindingsTable({
                 </td>
                 <td className="px-4 py-2"><CheckTypeBadge checkType={f.check_type} /></td>
                 <td className="mono text-[12px] px-4 py-2 text-[color:var(--text-2)]">{f.category || <Dash />}</td>
+                <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-2)] max-w-[18rem]">
+                  {f.offending_text ? (
+                    <span className="block truncate" title={f.offending_text}>{f.offending_text}</span>
+                  ) : (
+                    <Dash />
+                  )}
+                </td>
                 <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)]">{unit || <Dash />}</td>
                 <td className="text-right px-4 py-2"><ScoreCell score={f.score} /></td>
                 <td className="mono text-[12px] px-4 py-2">{f.model || <Dash />}</td>

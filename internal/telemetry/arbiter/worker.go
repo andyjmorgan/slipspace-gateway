@@ -137,6 +137,7 @@ func (s *Scanner) storeFindings(ctx context.Context, task store.CheckTask, det d
 			Localization:    f.GetLocalization().String(),
 			DetectorID:      detID,
 			DetectorVersion: detVer,
+			OffendingText:   offendingText(text, f.GetSpan()),
 		}
 		if sp := f.GetSpan(); sp != nil {
 			start, end := int(sp.GetStart()), int(sp.GetEnd())
@@ -146,6 +147,24 @@ func (s *Scanner) storeFindings(ctx context.Context, task store.CheckTask, det d
 			s.logger.Warn("arbiter: insert finding", "error", err)
 		}
 	}
+}
+
+// offendingText returns the flagged text for a finding, denormalized onto the
+// finding row so the Security report can show it without a join or decrypt: the
+// exact span substring when the detector localized the hit (UTF-8 byte offsets,
+// the contract's only basis), the whole unit otherwise. A malformed or
+// out-of-range span falls back to the whole unit rather than panicking — better
+// to show too much context than to drop the evidence.
+func offendingText(unit string, sp *detectv1.Span) string {
+	if sp == nil || sp.GetBasis() != detectv1.OffsetBasis_OFFSET_BASIS_UTF8_BYTE {
+		return unit
+	}
+	b := []byte(unit)
+	start, end := int(sp.GetStart()), int(sp.GetEnd())
+	if end > len(b) || start >= end {
+		return unit
+	}
+	return string(b[start:end])
 }
 
 // handleFailure retries with backoff while attempts remain, else marks the task

@@ -524,4 +524,17 @@ CREATE TABLE IF NOT EXISTS evidence (
 CREATE INDEX IF NOT EXISTS evidence_correlation ON evidence (correlation_id);
 CREATE INDEX IF NOT EXISTS evidence_expiry ON evidence (expires_at) WHERE expires_at IS NOT NULL;`,
 	},
+	{
+		version: 14,
+		name:    "finding_offending_text",
+		// Denormalize the offending text onto each finding so the Security
+		// reports can show it directly. Stored plaintext, per finding (the exact
+		// span substring for localized hits, the whole unit otherwise) — accepting
+		// duplication across a unit's findings, and with the span_event copy. The
+		// encrypted evidence table (ADR-018) stays for the at-rest-encrypted lane,
+		// but the same content already lives in span_event in plaintext, so the
+		// finding-level copy adds no new exposure while making the report legible.
+		// Additive, forward-only; backfilled rows keep the '' default.
+		sql: `ALTER TABLE finding ADD COLUMN IF NOT EXISTS offending_text TEXT NOT NULL DEFAULT '';`,
+	},
 }

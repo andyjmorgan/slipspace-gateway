@@ -997,10 +997,20 @@ function VerdictBadge({ v }: { v: VerdictView }) {
 
 function FindingRow({ f }: { f: FindingView }) {
   return (
-    <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[12px] border-b border-[color:var(--border)] py-1">
-      <span className="mono text-[10.5px] uppercase tracking-[0.04em] text-[color:var(--text-4)]">{f.check_type}</span>
-      <span className="mono truncate text-[color:var(--text-2)]">{f.category}</span>
-      <span className="mono tnum text-[color:var(--text-3)]">{f.score.toFixed(2)}</span>
+    <div className="flex flex-col gap-1 text-[12px] border-b border-[color:var(--border)] py-1.5">
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+        <span className="mono text-[10.5px] uppercase tracking-[0.04em] text-[color:var(--text-4)]">{f.check_type}</span>
+        <span className="mono truncate text-[color:var(--text-2)]">{f.category}</span>
+        <span className="mono tnum text-[color:var(--text-3)]">{f.score.toFixed(2)}</span>
+      </div>
+      {f.offending_text && (
+        // The flagged text itself — the offending span for localized hits, the
+        // whole unit otherwise. Wrapped + clamped so a long unit stays readable
+        // without blowing out the pane.
+        <code className="block max-h-24 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius)] bg-[color:var(--bg-2)] px-2 py-1 text-[11.5px] text-[color:var(--text-2)]">
+          {f.offending_text}
+        </code>
+      )}
     </div>
   )
 }

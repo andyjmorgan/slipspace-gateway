@@ -1168,6 +1168,12 @@ export interface FindingRow {
    */
   model?: string;
   configuration?: string;
+  /**
+   * OffendingText is the flagged text the finding fired on — the exact span
+   * substring for localized hits, the whole offending unit otherwise. Shown
+   * inline in the Security report so the operator sees WHAT was flagged.
+   */
+  offending_text?: string;
 }
 /**
  * FindingView is one detector hit shown in the console's findings list.
@@ -1201,4 +1207,9 @@ export interface FindingView {
    * Localization records how the finding's span was derived.
    */
   localization?: string;
+  /**
+   * OffendingText is the flagged text the finding fired on — the exact span
+   * substring for localized hits, the whole offending unit otherwise.
+   */
+  offending_text?: string;
 }
