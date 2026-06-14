@@ -43,6 +43,10 @@ type fakeQueries struct {
 	facets           store.Facets
 	facetsErr        error
 	facetsHits       int
+	verdict          store.Verdict
+	verdictErr       error
+	findings         []store.Finding
+	findingsErr      error
 	// lastParams records the EventListParams of the most recent
 	// ListEventsFiltered call so filter-plumbing tests can assert on it.
 	lastParams store.EventListParams
@@ -79,6 +83,12 @@ func (f *fakeQueries) GetRequestEvent(context.Context, string) (store.RequestEve
 }
 func (f *fakeQueries) GetRecordBody(context.Context, string) ([]byte, error) {
 	return f.recordBody, f.recordErr
+}
+func (f *fakeQueries) GetVerdict(context.Context, string) (store.Verdict, error) {
+	return f.verdict, f.verdictErr
+}
+func (f *fakeQueries) ListFindings(context.Context, string) ([]store.Finding, error) {
+	return f.findings, f.findingsErr
 }
 func (f *fakeQueries) EventsBySessionRollup(context.Context, string) ([]store.RequestEvent, error) {
 	return f.session, f.sessionErr

@@ -1027,3 +1027,86 @@ export interface SessionSpanInputPart {
    */
   is_error?: boolean;
 }
+
+//////////
+// source: verdict.go
+
+/**
+ * VerdictResponse is the SlipSpace Arbiter security verdict plus findings for
+ * one request, served at GET /api/v1/verdict/{correlation_id} and rendered in
+ * the console's Security pane. Verdict is nil when the scan has not reached
+ * quiescence yet (no verdict row); Findings is empty for a clean request.
+ */
+export interface VerdictResponse {
+  /**
+   * CorrelationID is the request this verdict describes.
+   */
+  correlation_id: string;
+  /**
+   * Verdict is the reduced per-request outcome, or nil when none exists yet.
+   */
+  verdict?: VerdictView;
+  /**
+   * Findings is the per-hit detail behind the verdict (empty when clean).
+   */
+  findings: FindingView[];
+}
+/**
+ * VerdictView is the reduced verdict shown as a badge in the console.
+ */
+export interface VerdictView {
+  /**
+   * State is "flagged", "partial", or "clean" (ADR-017).
+   */
+  state: string;
+  /**
+   * MaxScore is the highest finding score (highest-risk-wins).
+   */
+  max_score: number /* float32 */;
+  /**
+   * TopCategory is the category of the highest-scoring finding.
+   */
+  top_category?: string;
+  /**
+   * FindingCount is the number of findings on this request.
+   */
+  finding_count: number /* int */;
+  /**
+   * Inconclusive lists the check types that timed out or failed — the set
+   * that raises the request to PARTIAL. Never read as clean.
+   */
+  inconclusive?: string[];
+}
+/**
+ * FindingView is one detector hit shown in the console's findings list.
+ */
+export interface FindingView {
+  /**
+   * UnitID identifies the content block the finding came from.
+   */
+  unit_id: string;
+  /**
+   * CheckType is the check that produced it ("injection", "toxicity", "pii").
+   */
+  check_type: string;
+  /**
+   * Category is the normalized taxonomy entry, e.g. "pii.email".
+   */
+  category: string;
+  /**
+   * Score is the detector confidence in [0,1].
+   */
+  score: number /* float32 */;
+  /**
+   * RawLabel is the detector's native label, kept as provenance.
+   */
+  raw_label?: string;
+  /**
+   * Detector identifies the detector that produced the finding.
+   */
+  detector?: string;
+  /**
+   * Localization records how the finding's span was derived.
+   */
+  localization?: string;
+}
