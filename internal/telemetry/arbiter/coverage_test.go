@@ -171,6 +171,38 @@ func TestStoreFindings_WithSpan(t *testing.T) {
 	if f.SpanStart == nil || *f.SpanStart != 2 || f.SpanEnd == nil || *f.SpanEnd != 7 || f.SpanBasis == "" {
 		t.Errorf("span not mapped: %+v", f)
 	}
+	// Offending text is the span substring (bytes 2:7 of "email me at a@b.com").
+	if want := "ail m"; f.OffendingText != want {
+		t.Errorf("offending_text = %q, want %q", f.OffendingText, want)
+	}
+}
+
+func TestOffendingText(t *testing.T) {
+	const unit = "email me at a@b.com"
+	span := func(s, e uint32, basis detectv1.OffsetBasis) *dv1Span {
+		return &dv1Span{Start: s, End: e, Basis: basis}
+	}
+	cases := []struct {
+		name string
+		unit string
+		span *dv1Span
+		want string
+	}{
+		{"nil span → whole unit", unit, nil, unit},
+		{"byte span → substring", unit, span(12, 19, dv1ByteBasis), "a@b.com"},
+		{"non-byte basis → whole unit", unit, span(0, 4, detectv1.OffsetBasis_OFFSET_BASIS_UTF16_CODE_UNIT), unit},
+		{"end out of range → whole unit", unit, span(0, 999, dv1ByteBasis), unit},
+		{"start>=end → whole unit", unit, span(5, 5, dv1ByteBasis), unit},
+		// "café x@y.com": é is 2 bytes, so x@y.com starts at byte 6 (char 5).
+		{"multibyte byte offsets", "café x@y.com", span(6, 13, dv1ByteBasis), "x@y.com"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := offendingText(c.unit, c.span); got != c.want {
+				t.Errorf("offendingText = %q, want %q", got, c.want)
+			}
+		})
+	}
 }
 
 func TestStoreFindings_InsertErrorsLogged(t *testing.T) {

@@ -90,6 +90,11 @@ type FindingRow struct {
 	// request; empty when the request_events row has aged out of retention.
 	Model         string `json:"model,omitempty"`
 	Configuration string `json:"configuration,omitempty"`
+
+	// OffendingText is the flagged text the finding fired on — the exact span
+	// substring for localized hits, the whole offending unit otherwise. Shown
+	// inline in the Security report so the operator sees WHAT was flagged.
+	OffendingText string `json:"offending_text,omitempty"`
 }
 
 // FindingView is one detector hit shown in the console's findings list.
@@ -114,4 +119,8 @@ type FindingView struct {
 
 	// Localization records how the finding's span was derived.
 	Localization string `json:"localization,omitempty"`
+
+	// OffendingText is the flagged text the finding fired on — the exact span
+	// substring for localized hits, the whole offending unit otherwise.
+	OffendingText string `json:"offending_text,omitempty"`
 }

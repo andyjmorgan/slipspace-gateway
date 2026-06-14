@@ -44,6 +44,10 @@ type Finding struct {
 	Localization    string
 	DetectorID      string
 	DetectorVersion string
+	// OffendingText is the flagged text, denormalized onto the finding so the
+	// Security report can show it directly (migration v14): the exact span
+	// substring for localized hits, the whole unit otherwise. Plaintext.
+	OffendingText string
 }
 
 // Evidence is one offending-field record (migration v13 evidence table),
@@ -193,10 +197,10 @@ func (s *Store) RetryCheckTask(ctx context.Context, correlationID, unitID, check
 func (s *Store) InsertFinding(ctx context.Context, f Finding) error {
 	_, err := s.db.Exec(ctx,
 		`INSERT INTO finding (correlation_id, unit_id, check_type, category, score, raw_label,
-		   span_start, span_end, span_basis, localization, detector_id, detector_version)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		   span_start, span_end, span_basis, localization, detector_id, detector_version, offending_text)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		f.CorrelationID, f.UnitID, f.CheckType, f.Category, f.Score, f.RawLabel,
-		f.SpanStart, f.SpanEnd, f.SpanBasis, f.Localization, f.DetectorID, f.DetectorVersion)
+		f.SpanStart, f.SpanEnd, f.SpanBasis, f.Localization, f.DetectorID, f.DetectorVersion, f.OffendingText)
 	if err != nil {
 		return fmt.Errorf("store: insert finding: %w", err)
 	}
@@ -220,7 +224,7 @@ func (s *Store) InsertEvidence(ctx context.Context, ev Evidence) error {
 func (s *Store) ListFindings(ctx context.Context, correlationID string) ([]Finding, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT correlation_id, unit_id, check_type, category, score, raw_label,
-		   span_start, span_end, span_basis, localization, detector_id, detector_version
+		   span_start, span_end, span_basis, localization, detector_id, detector_version, offending_text
 		 FROM finding WHERE correlation_id=$1`, correlationID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list findings: %w", err)
@@ -231,7 +235,7 @@ func (s *Store) ListFindings(ctx context.Context, correlationID string) ([]Findi
 	for rows.Next() {
 		var f Finding
 		if err := rows.Scan(&f.CorrelationID, &f.UnitID, &f.CheckType, &f.Category, &f.Score, &f.RawLabel,
-			&f.SpanStart, &f.SpanEnd, &f.SpanBasis, &f.Localization, &f.DetectorID, &f.DetectorVersion); err != nil {
+			&f.SpanStart, &f.SpanEnd, &f.SpanBasis, &f.Localization, &f.DetectorID, &f.DetectorVersion, &f.OffendingText); err != nil {
 			return nil, fmt.Errorf("store: scan finding: %w", err)
 		}
 		out = append(out, f)
@@ -348,6 +352,9 @@ type FindingRow struct {
 	ObservedAt    time.Time
 	Model         string
 	Configuration string
+	// OffendingText is the flagged text the finding fired on (migration v14):
+	// the exact span substring for localized hits, the whole unit otherwise.
+	OffendingText string
 }
 
 // defaultFindingsListLimit is the page size ListRecentFindings applies when the
@@ -365,7 +372,7 @@ SELECT f.category, f.check_type, f.score, f.raw_label,
        COALESCE(t.unit_locator->>'kind', ''), COALESCE(t.unit_locator->>'role', ''),
        f.correlation_id,
        COALESCE(e.session_id, ''), e.observed_at,
-       COALESCE(e.model, ''), COALESCE(e.configuration, '')
+       COALESCE(e.model, ''), COALESCE(e.configuration, ''), f.offending_text
 FROM finding f
 LEFT JOIN check_tasks t
   ON t.correlation_id = f.correlation_id AND t.unit_id = f.unit_id AND t.check_type = f.check_type
@@ -381,7 +388,7 @@ func scanFindingRows(rows rows) ([]FindingRow, error) {
 		var observed *time.Time
 		if err := rows.Scan(&f.Category, &f.CheckType, &f.Score, &f.RawLabel,
 			&f.UnitKind, &f.UnitRole, &f.CorrelationID,
-			&f.SessionID, &observed, &f.Model, &f.Configuration); err != nil {
+			&f.SessionID, &observed, &f.Model, &f.Configuration, &f.OffendingText); err != nil {
 			return nil, fmt.Errorf("store: scan finding row: %w", err)
 		}
 		if observed != nil {
