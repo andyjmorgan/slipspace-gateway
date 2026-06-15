@@ -32,6 +32,7 @@ import {
   Tile,
   TKV,
 } from "../components/span-inspector-panes"
+import { loadVerdict } from "@/lib/verdict"
 
 // TIME_RANGES are the relative-window presets. "all" omits the bound so the
 // keyset scan can walk the full history.
@@ -368,6 +369,19 @@ export function Inspector({
     return () => { cancelled = true }
   }, [cid])
 
+  // Eagerly load the verdict (cached + shared with SecurityPane) so the Security
+  // tab can carry a finding-count badge before it's opened. Same keyed-state
+  // pattern as the span fetch — state is only set in the async callback.
+  const [findingSt, setFindingSt] = useState<{ cid: string; count: number } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    loadVerdict(cid)
+      .then((v) => { if (!cancelled) setFindingSt({ cid, count: v?.findings.length ?? 0 }) })
+      .catch(() => { if (!cancelled) setFindingSt({ cid, count: 0 }) })
+    return () => { cancelled = true }
+  }, [cid])
+  const findingCount = findingSt && findingSt.cid === cid ? findingSt.count : 0
+
   // Tab choice persists across prev/next (the component survives the step).
   const [tab, setTab] = useState<InspectorTab>(initialTab)
   // A record-only event has no Output/Input panes — fall to the bridge tabs.
@@ -447,7 +461,7 @@ export function Inspector({
               {span && <IOTab on={effTab === "input"} onClick={() => setTab("input")} label="Input" meta={inputMeta(span)} />}
               <IOTab on={effTab === "telemetry"} onClick={() => setTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
               <IOTab on={effTab === "report"} onClick={() => setTab("report")} label="Report" meta="request · response · stream · headers" />
-              <IOTab on={effTab === "security"} onClick={() => setTab("security")} label="Security" meta="verdict · findings" />
+              <IOTab on={effTab === "security"} onClick={() => setTab("security")} label="Security" meta="verdict · findings" badge={findingCount} />
             </div>
             {effTab === "output" && span && <OutputPane span={span} />}
             {effTab === "input" && span && <InputPane span={span} />}

@@ -21,7 +21,7 @@ import {
   type SessionSpan,
 } from "@/lib/session-spans"
 import { SESSION_MESSAGES_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
-import { fetchFindings, type FindingRow } from "@/lib/findings"
+import { loadSessionFindings, type FindingRow } from "@/lib/findings"
 import { Dash, MessagesPagerBar, MessagesTableView } from "../components/messages-table"
 import { FindingsTable } from "../components/findings-table"
 import { id8, inputMeta, outputMeta } from "@/lib/span-view"
@@ -1893,6 +1893,23 @@ function SessionDataTabs({
   // Request count reflects the focus: the messages tab is conversation-scoped
   // when a sub-agent is drilled into.
   const msgCount = focusedConv ? (vm.byConv.get(focusedConv)?.length ?? 0) : vm.spans.length
+
+  // Eagerly load the session's findings (cached + shared with the Security
+  // panel) so the Security tab carries a count badge before it's opened. Fixture
+  // sessions have no findings endpoint, so they stay unbadged. Keyed-state, set
+  // only in the async callback (no setState-in-effect during render).
+  const isFixture = source !== "api"
+  const [findCount, setFindCount] = useState<{ sid: string; n: number } | null>(null)
+  useEffect(() => {
+    if (isFixture) return
+    let cancelled = false
+    loadSessionFindings(vm.sid)
+      .then((rows) => { if (!cancelled) setFindCount({ sid: vm.sid, n: rows.length }) })
+      .catch(() => { if (!cancelled) setFindCount({ sid: vm.sid, n: 0 }) })
+    return () => { cancelled = true }
+  }, [vm.sid, isFixture])
+  const securityCount = findCount && findCount.sid === vm.sid ? findCount.n : 0
+
   return (
     <div className="flex flex-col gap-3.5">
       <div role="tablist" aria-label="Session detail" className="flex border-b border-[color:var(--border)]">
@@ -1913,6 +1930,7 @@ function SessionDataTabs({
           onClick={() => setTab("security")}
           label="Security"
           meta="detector findings"
+          badge={securityCount}
         />
       </div>
       {tab === "messages" && (
@@ -1960,7 +1978,7 @@ function SessionSecurityPanel({
   useEffect(() => {
     if (isFixture) return
     let cancelled = false
-    fetchFindings({ session: sid })
+    loadSessionFindings(sid)
       .then((rows) => {
         if (!cancelled) setRes({ sid, rows, err: null })
       })
