@@ -19,3 +19,18 @@ export async function fetchFindings(opts: { session?: string; limit?: number } =
   const r = await apiFetch<FindingsListResponse>(`/api/v1/findings${qs ? `?${qs}` : ""}`)
   return r.items ?? []
 }
+
+// sessionFindingsCache dedupes the per-session findings fetch so the session
+// view can badge its Security tab with the finding count (loaded eagerly) and
+// the Security panel reuses the same result when opened — one request per
+// session. Mirrors the verdict / span module caches.
+const sessionFindingsCache = new Map<string, Promise<FindingRow[]>>()
+
+export function loadSessionFindings(sid: string): Promise<FindingRow[]> {
+  let p = sessionFindingsCache.get(sid)
+  if (!p) {
+    p = fetchFindings({ session: sid })
+    sessionFindingsCache.set(sid, p)
+  }
+  return p
+}

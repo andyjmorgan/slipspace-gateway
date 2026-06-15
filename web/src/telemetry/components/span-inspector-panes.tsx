@@ -24,7 +24,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Check, Copy } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { fmt } from "@/lib/fmt"
-import { apiFetch } from "@/lib/api"
+import { loadVerdict } from "@/lib/verdict"
 import {
   parseGenAIContent,
   type GenAIMessagePart,
@@ -158,7 +158,21 @@ export function PreBlock({ text }: { text: string }) {
 // IOTab is one tab of the inspector's tab strip. The meta sub-label is hidden
 // below `sm` — on a narrow dialog it would otherwise crowd the primary label
 // off the strip (the labels collapsed to meta fragments on phones).
-export function IOTab({ on, onClick, label, meta }: { on: boolean; onClick: () => void; label: string; meta: string }) {
+export function IOTab({
+  on,
+  onClick,
+  label,
+  meta,
+  badge,
+}: {
+  on: boolean
+  onClick: () => void
+  label: string
+  meta: string
+  // badge renders a small count chip after the label (e.g. the Security tab's
+  // finding count). Omitted or <= 0 renders nothing.
+  badge?: number
+}) {
   return (
     <button
       type="button"
@@ -172,7 +186,16 @@ export function IOTab({ on, onClick, label, meta }: { on: boolean; onClick: () =
           : "text-[color:var(--text-3)] border-transparent hover:text-[color:var(--text-2)]",
       )}
     >
-      {label} <span className="hidden sm:inline font-normal text-[11px] text-[color:var(--text-4)] ml-1">{meta}</span>
+      {label}
+      {badge != null && badge > 0 && (
+        <span
+          className="ml-1.5 inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-full text-[10px] mono tnum font-semibold align-middle bg-[color:var(--err-bg)] text-[color:var(--err)]"
+          aria-label={`${badge} ${badge === 1 ? "finding" : "findings"}`}
+        >
+          {badge}
+        </span>
+      )}
+      <span className="hidden sm:inline font-normal text-[11px] text-[color:var(--text-4)] ml-1">{meta}</span>
     </button>
   )
 }
@@ -940,7 +963,7 @@ export function SecurityPane({ cid, wanted }: { cid: string; wanted: boolean }) 
   useEffect(() => {
     if (!wanted) return
     let cancelled = false
-    apiFetch<VerdictResponse>(`/api/v1/verdict/${encodeURIComponent(cid)}`)
+    loadVerdict(cid)
       .then((v) => { if (!cancelled) setRes({ cid, v }) })
       .catch(() => { if (!cancelled) setRes({ cid, v: null }) })
     return () => { cancelled = true }
