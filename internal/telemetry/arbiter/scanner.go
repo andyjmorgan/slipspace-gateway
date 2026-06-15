@@ -16,8 +16,8 @@ import (
 // the lease outlives the budget so a task is not reclaimed mid-flight.
 const (
 	schemaVersion           = "v1"
-	detectTimeout           = 90 * time.Second
-	detectLease             = 120 // seconds; > detectTimeout so an in-flight task is not reclaimed
+	detectTimeout           = 240 * time.Second
+	detectLease             = 300 // seconds; > detectTimeout so an in-flight task is not reclaimed
 	maxAttempts             = 5
 	claimBatch              = 32
 	defaultDispatchInterval = 1 * time.Second
