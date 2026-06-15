@@ -12,6 +12,7 @@ import { MessagesPage } from "./pages/messages"
 import { SessionsPage } from "./pages/sessions"
 import { SessionLifecyclePage } from "./pages/session-lifecycle"
 import { SecurityPage } from "./pages/security"
+import { SecurityAuditPage } from "./pages/security-audit"
 import { SettingsPage } from "./pages/settings"
 
 // App is the telemetry console root: a Basic-auth login gate wrapping the
@@ -26,7 +27,11 @@ export default function App() {
         <Route element={<TelemetryLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="messages" element={<MessagesPage />} />
-          <Route path="security" element={<SecurityPage />} />
+          {/* Security is a section: Findings (flagged traffic) + Audit (scan
+              failures). /security redirects to Findings for old links. */}
+          <Route path="security" element={<Navigate to="/security/findings" replace />} />
+          <Route path="security/findings" element={<SecurityPage />} />
+          <Route path="security/audit" element={<SecurityAuditPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="sessions/:id" element={<SessionLifecyclePage />} />
@@ -57,20 +62,31 @@ function Guard() {
   return <Outlet />
 }
 
-// NavItem is one sidebar link; NavDivider is a subtle rule between groups. The
-// nav is a flat ordered list of both so the group boundaries are explicit in the
+// NavItem is one sidebar link; NavSection is a labeled group with indented child
+// links (Security → Findings + Audit); NavDivider is a subtle rule between
+// groups. The nav is a flat ordered list so group boundaries are explicit in the
 // data, not implied by render-time slicing.
-type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end: boolean }
+type NavLeaf = { to: string; label: string; end: boolean }
+type NavItem = NavLeaf & { icon: typeof LayoutDashboard }
+type NavSection = { label: string; icon: typeof LayoutDashboard; items: NavLeaf[] }
 type NavDivider = { divider: true }
-type NavEntry = NavItem | NavDivider
+type NavEntry = NavItem | NavSection | NavDivider
 
 const isDivider = (e: NavEntry): e is NavDivider => "divider" in e
+const isSection = (e: NavEntry): e is NavSection => "items" in e
 
 const NAV: NavEntry[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { divider: true },
   { to: "/sessions", label: "Sessions", icon: MessagesSquare, end: false },
-  { to: "/security", label: "Security", icon: ShieldAlert, end: false },
+  {
+    label: "Security",
+    icon: ShieldAlert,
+    items: [
+      { to: "/security/findings", label: "Findings", end: false },
+      { to: "/security/audit", label: "Audit", end: false },
+    ],
+  },
   { to: "/messages", label: "Messages", icon: ListTree, end: false },
   { divider: true },
   { to: "/settings", label: "Settings", icon: Settings2, end: false },
@@ -122,31 +138,72 @@ function TelemetrySidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
         <span className="font-semibold tracking-[-0.01em]">Arbiter</span>
       </div>
       <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
-        {NAV.map((item, i) =>
-          isDivider(item) ? (
-            <hr key={`div-${i}`} className="my-2 border-t border-[color:var(--border)]" aria-hidden="true" />
-          ) : (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              onClick={onClose}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-2.5 rounded-[var(--radius)] px-3 py-2 text-[13px] transition-colors",
-                  isActive
-                    ? "bg-[color:var(--hover)] text-[color:var(--text)]"
-                    : "text-[color:var(--text-3)] hover:bg-[color:var(--hover)] hover:text-[color:var(--text)]",
-                )
-              }
-            >
-              <item.icon size={16} />
+        {NAV.map((item, i) => {
+          if (isDivider(item)) {
+            return <hr key={`div-${i}`} className="my-2 border-t border-[color:var(--border)]" aria-hidden="true" />
+          }
+          if (isSection(item)) {
+            return (
+              <div key={item.label} className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2.5 px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-[0.07em] text-[color:var(--text-4)]">
+                  <item.icon size={16} />
+                  {item.label}
+                </div>
+                {item.items.map((sub) => (
+                  <SidebarLink key={sub.to} to={sub.to} end={sub.end} onClick={onClose} nested>
+                    {sub.label}
+                  </SidebarLink>
+                ))}
+              </div>
+            )
+          }
+          return (
+            <SidebarLink key={item.to} to={item.to} end={item.end} onClick={onClose} icon={item.icon}>
               {item.label}
-            </NavLink>
-          ),
-        )}
+            </SidebarLink>
+          )
+        })}
       </nav>
     </aside>
+  )
+}
+
+// SidebarLink is one nav link, shared by top-level items (with a leading icon)
+// and section children (nested: no icon, indented to align under the section
+// label). Active state is the same filled treatment in both cases.
+function SidebarLink({
+  to,
+  end,
+  onClick,
+  icon: Icon,
+  nested,
+  children,
+}: {
+  to: string
+  end: boolean
+  onClick: () => void
+  icon?: typeof LayoutDashboard
+  nested?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      onClick={onClick}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-2.5 rounded-[var(--radius)] py-2 text-[13px] transition-colors",
+          nested ? "pl-9 pr-3" : "px-3",
+          isActive
+            ? "bg-[color:var(--hover)] text-[color:var(--text)]"
+            : "text-[color:var(--text-3)] hover:bg-[color:var(--hover)] hover:text-[color:var(--text)]",
+        )
+      }
+    >
+      {Icon && <Icon size={16} />}
+      {children}
+    </NavLink>
   )
 }
 

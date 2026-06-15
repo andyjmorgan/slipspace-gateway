@@ -13,10 +13,8 @@ import {
   useDashboardSummary,
   useDashboardTimeseries,
   useDashboardSecurity,
-  useDashboardSecurityAudit,
   type DashboardSummary,
   type DashboardSecurityCount,
-  type ScanAuditEntry,
   type DashboardWindow,
 } from "@/lib/dashboard"
 
@@ -262,63 +260,7 @@ function SecuritySection({ window }: { window: DashboardWindow }) {
         <CountStrip title="Findings by check type" sub={`finding counts · ${d.window}`} rows={d.by_check_type ?? []} empty="No findings recorded yet." />
         <CountStrip title="Top finding categories" sub={`most common · ${d.window}`} rows={d.top_categories ?? []} empty="No findings recorded yet." />
       </div>
-      <ScanFailures window={window} />
     </>
-  )
-}
-
-// reasonTone maps a scan-failure reason to a design-system tone for its chip.
-// A timeout is a soft (warn) failure — the detector is reachable but slow; the
-// rest are harder failures (transport down, detector erroring, misconfiguration)
-// shown in the error tone.
-function reasonTone(reason: string): "warn" | "err" {
-  return reason === "timeout" ? "warn" : "err"
-}
-
-// ScanFailures renders the append-only log of operational scan failures — the
-// WHEN behind the aggregate Partial count. It self-fetches and shows the Empty
-// state when no failures fall in the window (detectors healthy). Full-width row;
-// each entry is a local timestamp, a reason chip, the check type + detector,
-// and a short correlation id.
-function ScanFailures({ window }: { window: DashboardWindow }) {
-  const { state } = useDashboardSecurityAudit(window)
-  const title = "Scan failures"
-  const sub = `operational · ${window}`
-  if (state.status !== "ok") return <Empty title={title} sub={sub} message="Loading scan failures…" />
-  const items = state.data.items ?? []
-  if (!items.length) return <Empty title={title} sub={sub} message="No scan failures in this window — detectors healthy." />
-  return (
-    <PanelCard>
-      <PanelHead title={title} sub={`${items.length} · ${window}`} />
-      <div className="flex flex-col">
-        {items.map((e: ScanAuditEntry, i: number) => {
-          const tone = reasonTone(e.reason)
-          const color = tone === "warn" ? "var(--warn)" : "var(--err)"
-          return (
-            <div
-              key={`${e.correlation_id}:${e.unit_id}:${e.occurred_at}:${i}`}
-              className="grid grid-cols-[auto_auto_1fr_auto] items-center gap-2.5 px-4 py-2 border-t border-[color:var(--border)] first:border-t-0"
-            >
-              <span className="mono tnum text-[11.5px] text-[color:var(--text-4)] shrink-0">{fmt.shortTime(e.occurred_at)}</span>
-              <span
-                className="text-[10.5px] uppercase tracking-[0.06em] font-medium rounded px-1.5 py-0.5 shrink-0"
-                style={{ color, background: "var(--bg-2)" }}
-              >
-                {e.reason.replace(/_/g, " ")}
-              </span>
-              <span className="text-[12px] truncate min-w-0">
-                <span className="mono">{e.check_type || "—"}</span>
-                {e.detector_id ? <span className="text-[color:var(--text-4)]"> · {e.detector_id}</span> : null}
-                {e.detail ? <span className="text-[color:var(--text-4)]" title={e.detail}> · {e.detail}</span> : null}
-              </span>
-              <span className="mono text-[11px] text-[color:var(--text-4)] text-right shrink-0" title={e.correlation_id}>
-                {e.correlation_id.slice(0, 8)}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-    </PanelCard>
   )
 }
 
