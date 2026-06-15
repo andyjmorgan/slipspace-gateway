@@ -180,6 +180,45 @@ type DashboardProviderHealth struct {
 	Requests5m  int64   `json:"requests_5m"`
 }
 
+// DashboardSecurity is the response shape for GET /api/v1/dashboard/security —
+// the SlipSpace Arbiter scanner's posture + finding breakdown for the console
+// dashboard's security rows. When the scanner is disabled Enabled is false and
+// the counts are zero (the SPA hides the rows entirely). Window-scoped only:
+// the verdict/finding tables carry no provider/configuration dimensions, so the
+// dashboard's equality filters do not narrow this panel.
+type DashboardSecurity struct {
+	// Enabled reports whether the Arbiter scanner is running. The SPA renders
+	// the security rows only when true.
+	Enabled bool `json:"enabled"`
+
+	// Window is the time range covered (e.g. "24h"), echoed for the SPA.
+	Window string `json:"window"`
+
+	// Scanned is the number of requests that reached a verdict in Window.
+	Scanned int64 `json:"scanned"`
+
+	// Flagged / Partial / Clean split Scanned by terminal verdict state.
+	// PARTIAL is first-class and never folds into Clean.
+	Flagged int64 `json:"flagged"`
+	Partial int64 `json:"partial"`
+	Clean   int64 `json:"clean"`
+
+	// ByCheckType counts findings per detector check type (injection / pii /
+	// toxicity) over Window, descending by count.
+	ByCheckType []DashboardSecurityCount `json:"by_check_type"`
+
+	// TopCategories is the most-common finding categories over Window, capped
+	// server-side so the panel stays bounded.
+	TopCategories []DashboardSecurityCount `json:"top_categories"`
+}
+
+// DashboardSecurityCount is one (key, count) breakdown row — a detector check
+// type or a finding category.
+type DashboardSecurityCount struct {
+	Key   string `json:"key"`
+	Count int64  `json:"count"`
+}
+
 // DashboardTimeseries is the response shape for
 // GET /api/v1/dashboard/timeseries. The endpoint returns one Series per
 // labelled curve — a single-series query (RPS, overall error rate) is

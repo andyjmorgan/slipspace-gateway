@@ -12,7 +12,9 @@ import { fmt } from "@/lib/fmt"
 import {
   useDashboardSummary,
   useDashboardTimeseries,
+  useDashboardSecurity,
   type DashboardSummary,
+  type DashboardSecurityCount,
   type DashboardWindow,
 } from "@/lib/dashboard"
 
@@ -149,6 +151,8 @@ function Body({ data: d, window }: { data: DashboardSummary; window: DashboardWi
         <Fired title="Tags fired" sub={`apply counts · ${d.window}`} rows={(d.tags_fired ?? []).map((r) => ({ key: r.tag, count: r.apply_count, configs: r.used_by_configurations }))} />
       </div>
 
+      <SecuritySection window={window} />
+
       <Models rows={d.by_model ?? []} window={d.window} />
     </>
   )
@@ -220,6 +224,65 @@ function Fired({ title, sub, rows }: { title: string; sub: string; rows: { key: 
             </div>
             <div className="text-[11px] text-[color:var(--text-3)] truncate">
               {(r.configs?.length ?? 0) === 1 ? r.configs[0] : `${r.configs?.length ?? 0} configs`}
+            </div>
+          </div>
+        ))}
+      </div>
+    </PanelCard>
+  )
+}
+
+// SecuritySection renders the SlipSpace Arbiter dashboard rows — a posture
+// strip (scanned / flagged / partial / clean) and the finding breakdowns (by
+// check type, top categories). It self-fetches and renders nothing unless the
+// scanner is enabled and the data has loaded: a scanner-off deployment shows
+// no security rows at all, and a transient load/error simply omits the section
+// rather than disturbing the rest of the dashboard. The top-categories list is
+// already capped server-side, so the strip never grows unbounded.
+function SecuritySection({ window }: { window: DashboardWindow }) {
+  const { state } = useDashboardSecurity(window)
+  if (state.status !== "ok" || !state.data.enabled) return null
+  const d = state.data
+  const flaggedPct = d.scanned > 0 ? d.flagged / d.scanned : 0
+  return (
+    <>
+      <div className="flex items-baseline gap-2 pt-1 px-0.5">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[color:var(--text-3)]">Security</span>
+        <span className="text-[11px] text-[color:var(--text-4)]">SlipSpace Arbiter · {d.window}</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KPI label="Scanned" value={fmt.compact(d.scanned)} sub={`requests · ${d.window}`} />
+        <KPI label="Flagged" value={fmt.compact(d.flagged)} sub={`${fmt.pct(flaggedPct, 1)} of scanned`} accent={d.flagged > 0 ? "err" : "ok"} />
+        <KPI label="Partial" value={fmt.compact(d.partial)} sub="inconclusive scans" accent={d.partial > 0 ? "warn" : undefined} />
+        <KPI label="Clean" value={fmt.compact(d.clean)} sub="no findings" accent="ok" />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+        <CountStrip title="Findings by check type" sub={`finding counts · ${d.window}`} rows={d.by_check_type ?? []} empty="No findings recorded yet." />
+        <CountStrip title="Top finding categories" sub={`most common · ${d.window}`} rows={d.top_categories ?? []} empty="No findings recorded yet." />
+      </div>
+    </>
+  )
+}
+
+// CountStrip is the security breakdown bar-row: a key label, a count bar, the
+// count. Simpler than Fired (no configurations / error rate) — findings carry
+// only (key, count). Rows arrive pre-sorted + (for categories) pre-capped from
+// the server.
+function CountStrip({ title, sub, rows, empty }: { title: string; sub: string; rows: DashboardSecurityCount[]; empty: string }) {
+  if (!rows.length) return <Empty title={title} sub={sub} message={empty} />
+  const max = Math.max(1, ...rows.map((r) => r.count))
+  return (
+    <PanelCard>
+      <PanelHead title={title} sub={sub} />
+      <div className="px-4 py-3 flex flex-col gap-2.5">
+        {rows.map((r) => (
+          <div key={r.key} className="grid grid-cols-[1fr_auto] items-center gap-3">
+            <div className="mono text-[12px] truncate" title={r.key}>{r.key}</div>
+            <div className="flex items-center gap-2">
+              <div className="w-28 h-2 rounded-full bg-[color:var(--bg-2)] overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${(r.count / max) * 100}%`, background: "var(--accent)" }} />
+              </div>
+              <div className="mono tnum text-[12px] w-12 text-right">{fmt.compact(r.count)}</div>
             </div>
           </div>
         ))}

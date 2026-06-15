@@ -85,6 +85,75 @@ func TestObsSummary_DefaultWindowAndError(t *testing.T) {
 	}
 }
 
+func TestObsSecurity_Enabled(t *testing.T) {
+	q := &fakeQueries{security: store.DashboardSecurity{
+		Scanned: 100, Flagged: 7, Partial: 3, Clean: 90,
+		ByCheckType:   []store.DashboardSecurityCount{{Key: "injection", Count: 5}, {Key: "pii", Count: 4}},
+		TopCategories: []store.DashboardSecurityCount{{Key: "pii.email", Count: 4}, {Key: "injection.jailbreak", Count: 3}},
+	}}
+	h := newScannerServer(t, q, true)
+	resp := get(t, h, "/api/v1/dashboard/security?window=24h", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	got := decodeAdmin[adminc.DashboardSecurity](t, resp)
+	if !got.Enabled {
+		t.Fatal("enabled should be true when the scanner is on")
+	}
+	if got.Window != "24h" {
+		t.Errorf("window = %q", got.Window)
+	}
+	if got.Scanned != 100 || got.Flagged != 7 || got.Partial != 3 || got.Clean != 90 {
+		t.Errorf("posture = %+v", got)
+	}
+	if len(got.ByCheckType) != 2 || got.ByCheckType[0].Key != "injection" || got.ByCheckType[0].Count != 5 {
+		t.Errorf("by_check_type = %+v", got.ByCheckType)
+	}
+	if len(got.TopCategories) != 2 || got.TopCategories[0].Key != "pii.email" {
+		t.Errorf("top_categories = %+v", got.TopCategories)
+	}
+}
+
+func TestObsSecurity_Disabled_SkipsQuery(t *testing.T) {
+	// Scanner off: the handler must report enabled=false with zero counts and
+	// MUST NOT touch the store (securityErr would surface as a 500 if read).
+	q := &fakeQueries{securityErr: errors.New("must not be read")}
+	h := newScannerServer(t, q, false)
+	resp := get(t, h, "/api/v1/dashboard/security?window=1h", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Code)
+	}
+	got := decodeAdmin[adminc.DashboardSecurity](t, resp)
+	if got.Enabled {
+		t.Fatal("enabled should be false when the scanner is off")
+	}
+	if got.Scanned != 0 || len(got.ByCheckType) != 0 || len(got.TopCategories) != 0 {
+		t.Errorf("disabled response should be empty: %+v", got)
+	}
+	// Empty slices must serialize as [] not null (the SPA maps over them).
+	if got.ByCheckType == nil || got.TopCategories == nil {
+		t.Error("breakdown slices should be non-nil ([] not null)")
+	}
+}
+
+func TestObsSecurity_NoAppliedConfig_Disabled(t *testing.T) {
+	// Without WithAppliedConfig the snapshot is nil — scannerEnabled must read
+	// as off, not panic.
+	h := newQueryServer(t, &fakeQueries{})
+	got := decodeAdmin[adminc.DashboardSecurity](t, get(t, h, "/api/v1/dashboard/security", true))
+	if got.Enabled {
+		t.Fatal("nil applied-config should read as scanner-off")
+	}
+}
+
+func TestObsSecurity_Error(t *testing.T) {
+	q := &fakeQueries{securityErr: errors.New("db")}
+	h := newScannerServer(t, q, true)
+	if resp := get(t, h, "/api/v1/dashboard/security?window=1h", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
+	}
+}
+
 func TestObsTimeseries(t *testing.T) {
 	ts := time.Unix(1000, 0)
 	q := &fakeQueries{series: []store.DashboardSeriesBucket{{Ts: ts, Requests: 120, Errored: 12, TokensIn: 42}}}

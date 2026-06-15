@@ -24,6 +24,8 @@ type fakeQueries struct {
 	summaryErr       error
 	series           []store.DashboardSeriesBucket
 	seriesErr        error
+	security         store.DashboardSecurity
+	securityErr      error
 	events           []store.RequestEvent
 	next             string
 	eventsErr        error
@@ -70,6 +72,9 @@ func (f *fakeQueries) QueryDashboardSummary(context.Context, store.DashboardPara
 }
 func (f *fakeQueries) QueryDashboardSeries(context.Context, store.DashboardSeriesParams) ([]store.DashboardSeriesBucket, error) {
 	return f.series, f.seriesErr
+}
+func (f *fakeQueries) QueryDashboardSecurity(context.Context, time.Time, time.Time) (store.DashboardSecurity, error) {
+	return f.security, f.securityErr
 }
 func (f *fakeQueries) ListEventsFiltered(_ context.Context, p store.EventListParams) ([]store.RequestEvent, string, error) {
 	f.lastParams = p
@@ -156,6 +161,21 @@ func newQueryServer(t *testing.T, q Queries) http.Handler {
 	}
 	console := config.Console{Username: "admin", PasswordHash: string(hash)}
 	return New(console, stubPinger{}, q, nil, config.DefaultSpanFieldMaxBytes, discardLogger()).Handler()
+}
+
+// newScannerServer is newQueryServer with an applied-config snapshot whose
+// scanner.enabled is `enabled` — so the security dashboard route reports the
+// scanner on/off correctly (scannerEnabled reads appliedConfig).
+func newScannerServer(t *testing.T, q Queries, enabled bool) http.Handler {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	console := config.Console{Username: "admin", PasswordHash: string(hash)}
+	return New(console, stubPinger{}, q, nil, config.DefaultSpanFieldMaxBytes, discardLogger()).
+		WithAppliedConfig(config.Config{Scanner: config.Scanner{Enabled: enabled}}).
+		Handler()
 }
 
 // get runs a GET through the handler and returns the recorder (no http.Response,

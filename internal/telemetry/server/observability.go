@@ -87,6 +87,52 @@ func (s *Server) handleObsTimeseries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, mapTimeseries(buckets, series, float64(bucket)))
 }
 
+// handleObsSecurity emits contracts/admin.DashboardSecurity — the Arbiter
+// posture + finding breakdown for the dashboard's security rows. When the
+// scanner is disabled it returns enabled=false with zero counts and never
+// touches the DB, so operators not running the scanner pay nothing.
+func (s *Server) handleObsSecurity(w http.ResponseWriter, r *http.Request) {
+	tok, dur := parseWindow(r)
+	out := adminc.DashboardSecurity{
+		Enabled:       s.scannerEnabled(),
+		Window:        tok,
+		ByCheckType:   []adminc.DashboardSecurityCount{},
+		TopCategories: []adminc.DashboardSecurityCount{},
+	}
+	if out.Enabled {
+		from, to := windowBounds(time.Now(), dur)
+		sec, err := s.queries.QueryDashboardSecurity(r.Context(), from, to)
+		if err != nil {
+			s.queryError(w, "dashboard security", err)
+			return
+		}
+		out.Scanned = sec.Scanned
+		out.Flagged = sec.Flagged
+		out.Partial = sec.Partial
+		out.Clean = sec.Clean
+		out.ByCheckType = mapSecurityCounts(sec.ByCheckType)
+		out.TopCategories = mapSecurityCounts(sec.TopCategories)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// mapSecurityCounts maps the store breakdown rows to the contract shape,
+// always returning a non-nil slice so the JSON carries [] not null.
+func mapSecurityCounts(in []store.DashboardSecurityCount) []adminc.DashboardSecurityCount {
+	out := make([]adminc.DashboardSecurityCount, 0, len(in))
+	for _, c := range in {
+		out = append(out, adminc.DashboardSecurityCount{Key: c.Key, Count: c.Count})
+	}
+	return out
+}
+
+// scannerEnabled reports whether the Arbiter scanner is on, read from the
+// applied-config snapshot. nil snapshot (WithAppliedConfig never called) reads
+// as disabled.
+func (s *Server) scannerEnabled() bool {
+	return s.appliedConfig != nil && s.appliedConfig.ScannerEnabled()
+}
+
 // handleObsMessagesRecent emits contracts/admin.MessagesRecentResponse mapped
 // from the most recent events (oldest-first, matching the gateway live feed).
 func (s *Server) handleObsMessagesRecent(w http.ResponseWriter, r *http.Request) {
