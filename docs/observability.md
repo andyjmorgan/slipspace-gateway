@@ -317,7 +317,7 @@ The dashboard handlers subtract two `Sample`s to derive windowed totals, rates, 
 | `Capacity` | 290 samples | not exposed | One 5-min window per chart point in a 24h view (288), plus a small margin so a slow consumer doesn't lose the most recent point to a snapshot writer mid-collect. |
 | `Now` | `time.Now` | test seam | Production should always leave nil. |
 
-**Lifecycle.** `Setup` returns a constructed-but-not-started Snapshotter. The data plane's startup calls `Snapshotter.Start(ctx)` once with the server lifetime context; the immediate first call to `Snapshot` happens synchronously inside `Start` so consumers don't have to wait an entire interval before the dashboard renders anything. The collection loop runs in a `safego`-style goroutine with `recover()` — a panic during collect logs but does not tear the process down.
+**Lifecycle.** `internal/observability/setup.go::Setup` returns a constructed-but-not-started Snapshotter. The data plane's startup calls `obs.Snapshotter.Start(ctx)` (in `cmd/gateway/main.go`) once with the server lifetime context; the immediate first call to `Snapshot` happens synchronously inside `Start` so consumers don't have to wait an entire interval before the dashboard renders anything. The collection loop runs in a `safego`-style goroutine with `recover()` — a panic during collect logs but does not tear the process down.
 
 **Sample shape.** `Sample` is two maps:
 
