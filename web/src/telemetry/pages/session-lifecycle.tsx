@@ -31,12 +31,14 @@ import {
   InputPane,
   OutputPane,
   ReportPane,
+  SecurityPane,
   TelemetryPane,
   Tile,
   TKV,
   type CallJoin,
   type RespJoin,
 } from "../components/span-inspector-panes"
+import { loadVerdict } from "@/lib/verdict"
 
 // SessionLifecyclePage renders THE session view — the lifecycle dashboard
 // derived from a SessionSpansDTO (GET /api/v1/sessions/{id}/spans): stat
@@ -576,6 +578,14 @@ function LifecycleView({
     [vm],
   )
 
+  // openSpanSecurity opens a span's inspector straight on the Security tab —
+  // used by the session's Security findings list so clicking a finding lands
+  // on its verdict + offending text, not the default Output pane.
+  const openSpanSecurity = useCallback((cid: string) => {
+    setIoTab("security")
+    setSelectedCid(cid)
+  }, [])
+
   return (
     <>
       <LifecycleHeader vm={vm} source={source} partial={partial} />
@@ -600,6 +610,7 @@ function LifecycleView({
         dispName={dispName}
         onOpenMessage={openSpan}
         onOpenSpan={setSelectedCid}
+        onOpenSecurity={openSpanSecurity}
         focusedConv={focusedConv}
       />
       {selectedCid && (
@@ -1879,6 +1890,7 @@ function SessionDataTabs({
   dispName,
   onOpenMessage,
   onOpenSpan,
+  onOpenSecurity,
   focusedConv,
 }: {
   vm: ViewModel
@@ -1887,6 +1899,9 @@ function SessionDataTabs({
   dispName: (conv: string) => string
   onOpenMessage: (cid: string) => void
   onOpenSpan: (cid: string) => void
+  // onOpenSecurity opens a span on the Security tab (the findings list); kept
+  // distinct from onOpenSpan, which the tool ledger uses to land on Output.
+  onOpenSecurity: (cid: string) => void
   focusedConv: string | null
 }) {
   const [tab, setTab] = useState<"messages" | "tools" | "security">("messages")
@@ -1945,7 +1960,7 @@ function SessionDataTabs({
           <LedgerTable vm={vm} dispName={dispName} onOpen={onOpenSpan} />
         </>
       )}
-      {tab === "security" && <SessionSecurityPanel sid={vm.sid} source={source} onOpenSpan={onOpenSpan} />}
+      {tab === "security" && <SessionSecurityPanel sid={vm.sid} source={source} onOpenSpan={onOpenSecurity} />}
     </div>
   )
 }
@@ -2217,9 +2232,9 @@ const LedgerTable = memo(function LedgerTable({
 // ─────────────────────────────────────────────────────────────────────────
 
 // InspectorTab is the modal's tab strip: the span's own Output/Input panes
-// plus the on-demand bridge tabs (Telemetry, Report), which fetch their
-// heavier payloads only when first opened.
-type InspectorTab = "output" | "input" | "telemetry" | "report"
+// plus the on-demand bridge tabs (Telemetry, Report, Security), which fetch
+// their heavier payloads only when first opened.
+type InspectorTab = "output" | "input" | "telemetry" | "report" | "security"
 
 function SpanInspector({
   vm,
@@ -2277,6 +2292,21 @@ function SpanInspector({
       cancelled = true
     }
   }, [vm.sid, cid, source])
+
+  // Eagerly load the verdict (cached + shared with SecurityPane) so the
+  // Security tab carries a finding-count badge before it's opened. Fixture
+  // sessions have no verdict endpoint, so they stay unbadged. Keyed-state, set
+  // only in the async callback (no setState-in-effect during render).
+  const [findingSt, setFindingSt] = useState<{ cid: string; count: number } | null>(null)
+  useEffect(() => {
+    if (source !== "api") return
+    let cancelled = false
+    loadVerdict(cid)
+      .then((v) => { if (!cancelled) setFindingSt({ cid, count: v?.findings.length ?? 0 }) })
+      .catch(() => { if (!cancelled) setFindingSt({ cid, count: 0 }) })
+    return () => { cancelled = true }
+  }, [cid, source])
+  const findingCount = findingSt && findingSt.cid === cid ? findingSt.count : 0
 
   // The rendered span: the full element when fetched, overlaid on the view
   // model's session-relative timing (t/tEnd never come over the wire).
@@ -2442,12 +2472,14 @@ function SpanInspector({
             <IOTab on={ioTab === "input"} onClick={() => onTab("input")} label="Input" meta={inputMeta(s)} />
             <IOTab on={ioTab === "telemetry"} onClick={() => onTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
             <IOTab on={ioTab === "report"} onClick={() => onTab("report")} label="Report" meta="request · response · stream · headers" />
+            <IOTab on={ioTab === "security"} onClick={() => onTab("security")} label="Security" meta="verdict · findings" badge={findingCount} />
           </div>
 
           {ioTab === "output" && <OutputPane span={s} joinCall={joinCall} />}
           {ioTab === "input" && <InputPane span={s} joinResp={joinResp} />}
           {ioTab === "telemetry" && <TelemetryPane cid={s.cid} wanted />}
           {ioTab === "report" && <ReportPane cid={s.cid} wanted />}
+          {ioTab === "security" && <SecurityPane cid={s.cid} wanted />}
         </div>
 
         {/* footer pinned to the modal bottom */}
