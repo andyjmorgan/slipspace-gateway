@@ -537,4 +537,18 @@ CREATE INDEX IF NOT EXISTS evidence_expiry ON evidence (expires_at) WHERE expire
 		// Additive, forward-only; backfilled rows keep the '' default.
 		sql: `ALTER TABLE finding ADD COLUMN IF NOT EXISTS offending_text TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 15,
+		name:    "security_dashboard_time_indexes",
+		// The security dashboard rollups time-bucket the verdict + finding tables
+		// by their timestamps (QueryDashboardSecurity). finding has only a
+		// correlation index, and verdict's only time index leads with state — so a
+		// bare time-window count over either would seq-scan. Add a created_at /
+		// decided_at index on each so the dashboard window scan stays cheap as the
+		// scanner accumulates rows. Additive, forward-only; regular tx (no
+		// hypertable involved — these are plain relational tables).
+		sql: `
+CREATE INDEX IF NOT EXISTS finding_created_at ON finding (created_at DESC);
+CREATE INDEX IF NOT EXISTS verdict_decided_at ON verdict (decided_at DESC);`,
+	},
 }

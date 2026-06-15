@@ -16,6 +16,9 @@ import (
 type Queries interface {
 	QueryDashboardSummary(ctx context.Context, p store.DashboardParams) (store.DashboardSummary, error)
 	QueryDashboardSeries(ctx context.Context, p store.DashboardSeriesParams) ([]store.DashboardSeriesBucket, error)
+	// QueryDashboardSecurity is the Arbiter posture + finding breakdown over a
+	// [from, to) window (verdict/finding tables, window-only).
+	QueryDashboardSecurity(ctx context.Context, from, to time.Time) (store.DashboardSecurity, error)
 	ListEventsFiltered(ctx context.Context, p store.EventListParams) ([]store.RequestEvent, string, error)
 	CountEventsFiltered(ctx context.Context, p store.EventCountParams) (int64, error)
 	GetRequestEvent(ctx context.Context, correlationID string) (store.RequestEvent, error)
@@ -53,6 +56,9 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	// observability components decode without translation.
 	mux.Handle("GET /api/v1/dashboard/summary", gated(s.handleObsSummary))
 	mux.Handle("GET /api/v1/dashboard/timeseries", gated(s.handleObsTimeseries))
+	// Arbiter security posture + finding breakdown for the dashboard's security
+	// rows. Returns enabled=false (and skips the query) when the scanner is off.
+	mux.Handle("GET /api/v1/dashboard/security", gated(s.handleObsSecurity))
 	mux.Handle("GET /api/v1/messages/recent", gated(s.handleObsMessagesRecent))
 	mux.Handle("GET /api/v1/messages/{id}/body", gated(s.handleObsMessageBody))
 	// Message browser — filtered + keyset-paged events in the rich MessageEntry

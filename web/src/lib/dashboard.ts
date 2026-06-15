@@ -18,6 +18,8 @@ import type {
   DashboardPoint,
   DashboardSeries,
   DashboardTimeseries,
+  DashboardSecurity,
+  DashboardSecurityCount,
 } from "./generated/admin"
 
 export type {
@@ -32,6 +34,8 @@ export type {
   DashboardPoint,
   DashboardSeries,
   DashboardTimeseries,
+  DashboardSecurity,
+  DashboardSecurityCount,
 }
 
 export type FetchState<T> =
@@ -119,4 +123,11 @@ export function useDashboardTimeseries(name: string, window: DashboardWindow, po
     `/api/v1/dashboard/timeseries?series=${encodeURIComponent(name)}&window=${window}`,
     pollMs,
   )
+}
+
+// useDashboardSecurity fetches the Arbiter posture + finding breakdown for the
+// dashboard's security rows. The response carries `enabled`; when false the
+// page renders nothing, so the rows cost nothing on a scanner-off deployment.
+export function useDashboardSecurity(window: DashboardWindow, pollMs?: number): FetchHandle<DashboardSecurity> {
+  return useFetch<DashboardSecurity>(`/api/v1/dashboard/security?window=${window}`, pollMs)
 }

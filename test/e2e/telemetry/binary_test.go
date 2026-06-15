@@ -604,6 +604,28 @@ func TestE2E_DashboardFiredFromMeters(t *testing.T) {
 	}
 }
 
+// TestE2E_DashboardSecurityDisabled proves the security dashboard route is
+// wired through the real binary and reports the scanner as off when it is not
+// configured — the default deployment. enabled=false short-circuits the query,
+// so the breakdown slices come back as [] (the SPA maps over them).
+func TestE2E_DashboardSecurityDisabled(t *testing.T) {
+	svc := startService(t)
+
+	var sec adminc.DashboardSecurity
+	if code := svc.getJSON(t, "/api/v1/dashboard/security?window=24h", &sec); code != http.StatusOK {
+		t.Fatalf("security status = %d", code)
+	}
+	if sec.Enabled {
+		t.Fatal("scanner should report disabled when not configured")
+	}
+	if sec.Window != "24h" {
+		t.Errorf("window = %q", sec.Window)
+	}
+	if sec.Scanned != 0 || sec.ByCheckType == nil || sec.TopCategories == nil {
+		t.Errorf("disabled response should be empty with non-nil slices: %+v", sec)
+	}
+}
+
 func TestE2E_StreamingResponseCaptured(t *testing.T) {
 	svc := startService(t)
 	// The gateway escapes raw SSE bytes to a JSON string before they ride
