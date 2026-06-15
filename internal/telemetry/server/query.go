@@ -19,6 +19,9 @@ type Queries interface {
 	// QueryDashboardSecurity is the Arbiter posture + finding breakdown over a
 	// [from, to) window (verdict/finding tables, window-only).
 	QueryDashboardSecurity(ctx context.Context, from, to time.Time) (store.DashboardSecurity, error)
+	// ListScanAudit is the append-only operational-scan-failure log over a
+	// [from, to) window, newest first, capped at limit (scan_audit table).
+	ListScanAudit(ctx context.Context, from, to time.Time, limit int) ([]store.ScanAuditEntry, error)
 	ListEventsFiltered(ctx context.Context, p store.EventListParams) ([]store.RequestEvent, string, error)
 	CountEventsFiltered(ctx context.Context, p store.EventCountParams) (int64, error)
 	GetRequestEvent(ctx context.Context, correlationID string) (store.RequestEvent, error)
@@ -59,6 +62,11 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	// Arbiter security posture + finding breakdown for the dashboard's security
 	// rows. Returns enabled=false (and skips the query) when the scanner is off.
 	mux.Handle("GET /api/v1/dashboard/security", gated(s.handleObsSecurity))
+	// Append-only log of operational scan failures (timeout / unreachable /
+	// detector_error / no_detector / unit_missing) for the dashboard's scan-
+	// failures panel. Like /security, returns empty (and skips the query) when
+	// the scanner is off.
+	mux.Handle("GET /api/v1/dashboard/security/audit", gated(s.handleObsSecurityAudit))
 	mux.Handle("GET /api/v1/messages/recent", gated(s.handleObsMessagesRecent))
 	mux.Handle("GET /api/v1/messages/{id}/body", gated(s.handleObsMessageBody))
 	// Message browser — filtered + keyset-paged events in the rich MessageEntry
