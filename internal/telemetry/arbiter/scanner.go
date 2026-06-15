@@ -41,6 +41,7 @@ type Store interface {
 	RetryCheckTask(ctx context.Context, correlationID, unitID, checkType string, nextAttemptAt time.Time) error
 	InsertFinding(ctx context.Context, f store.Finding) error
 	InsertEvidence(ctx context.Context, ev store.Evidence) error
+	InsertScanAudit(ctx context.Context, e store.ScanAuditEntry) error
 	ListFindings(ctx context.Context, correlationID string) ([]store.Finding, error)
 	InconclusiveCheckTypes(ctx context.Context, correlationID string) ([]string, error)
 	CorrelationsReadyForVerdict(ctx context.Context, limit int) ([]string, error)

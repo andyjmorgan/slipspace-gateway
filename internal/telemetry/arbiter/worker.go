@@ -3,6 +3,7 @@ package arbiter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"time"
@@ -37,6 +38,7 @@ func (s *Scanner) process(ctx context.Context, task store.CheckTask) {
 	det, ok := s.detectors[task.CheckType]
 	if !ok {
 		// No detector configured for this check type (config changed under us).
+		s.audit(ctx, task, "", store.ScanReasonNoDetector, fmt.Sprintf("no detector for %q", task.CheckType))
 		s.complete(ctx, task, statusFailed, resultErr(statusFailed, fmt.Errorf("no detector for %q", task.CheckType)))
 		return
 	}
@@ -45,6 +47,7 @@ func (s *Scanner) process(ctx context.Context, task store.CheckTask) {
 	if !ok {
 		// Span or unit gone / unscannable — we could not scan, so this is not
 		// clean: mark inconclusive so the verdict reflects partial coverage.
+		s.audit(ctx, task, det.checkType, store.ScanReasonUnitMissing, fmt.Sprintf("unit %q not found", task.UnitID))
 		s.complete(ctx, task, statusInconclusive, resultErr(statusInconclusive, fmt.Errorf("unit %q not found", task.UnitID)))
 		return
 	}
@@ -65,6 +68,13 @@ func (s *Scanner) process(ctx context.Context, task store.CheckTask) {
 	defer cancel()
 	resp, err := s.client.Detect(callCtx, det.endpoint, req)
 	if err != nil {
+		// A detector call that didn't return: timeout when it hit the per-call
+		// deadline, otherwise a transport/dial failure.
+		reason := store.ScanReasonUnreachable
+		if errors.Is(err, context.DeadlineExceeded) {
+			reason = store.ScanReasonTimeout
+		}
+		s.audit(ctx, task, det.checkType, reason, err.Error())
 		s.handleFailure(ctx, task, err)
 		return
 	}
@@ -97,7 +107,11 @@ func (s *Scanner) handleResponse(ctx context.Context, task store.CheckTask, det 
 	case detectv1.Status_STATUS_INCONCLUSIVE:
 		s.complete(ctx, task, statusInconclusive, resultOf(statusInconclusive, det, resp))
 	default:
-		s.handleFailure(ctx, task, fmt.Errorf("detector status %s: %s", resp.GetStatus(), resp.GetError()))
+		// The detector answered with an error status (e.g. STATUS_ERROR) — the
+		// call completed but the scan did not, an operational failure.
+		err := fmt.Errorf("detector status %s: %s", resp.GetStatus(), resp.GetError())
+		s.audit(ctx, task, det.checkType, store.ScanReasonDetectorError, err.Error())
+		s.handleFailure(ctx, task, err)
 	}
 }
 
@@ -195,6 +209,27 @@ func (s *Scanner) backoffFor(attempt int) time.Duration {
 	}
 	base := s.backoff[i]
 	return base + time.Duration(rand.Int64N(int64(base)/4+1)) //nolint:gosec // jitter only; backoff de-correlation is not security-sensitive
+}
+
+// audit appends one operational scan-failure row to the append-only scan_audit
+// log so the dashboard can show WHEN scans fail, not just the aggregate
+// inconclusive count. Non-fatal by design: a failed audit insert must never
+// fail the task path (the scan failure is already being handled), so an insert
+// error is logged at Warn and swallowed. detectorID is the detector that failed
+// when known (empty for the no-detector site, where no detector call was made).
+func (s *Scanner) audit(ctx context.Context, task store.CheckTask, detectorID, reason, detail string) {
+	if err := s.store.InsertScanAudit(ctx, store.ScanAuditEntry{
+		CorrelationID: task.CorrelationID,
+		UnitID:        task.UnitID,
+		CheckType:     task.CheckType,
+		DetectorID:    detectorID,
+		Reason:        reason,
+		Attempts:      task.Attempt,
+		Detail:        detail,
+	}); err != nil {
+		s.logger.Warn("arbiter: insert scan audit", "error", err, "reason", reason,
+			"correlation_id", task.CorrelationID, "check", task.CheckType)
+	}
 }
 
 func (s *Scanner) complete(ctx context.Context, task store.CheckTask, status string, result json.RawMessage) {

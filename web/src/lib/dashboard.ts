@@ -20,6 +20,8 @@ import type {
   DashboardTimeseries,
   DashboardSecurity,
   DashboardSecurityCount,
+  DashboardSecurityAudit,
+  ScanAuditEntry,
 } from "./generated/admin"
 
 export type {
@@ -36,6 +38,8 @@ export type {
   DashboardTimeseries,
   DashboardSecurity,
   DashboardSecurityCount,
+  DashboardSecurityAudit,
+  ScanAuditEntry,
 }
 
 export type FetchState<T> =
@@ -130,4 +134,12 @@ export function useDashboardTimeseries(name: string, window: DashboardWindow, po
 // page renders nothing, so the rows cost nothing on a scanner-off deployment.
 export function useDashboardSecurity(window: DashboardWindow, pollMs?: number): FetchHandle<DashboardSecurity> {
   return useFetch<DashboardSecurity>(`/api/v1/dashboard/security?window=${window}`, pollMs)
+}
+
+// useDashboardSecurityAudit fetches the append-only log of operational scan
+// failures (timeout / unreachable / detector_error / no_detector /
+// unit_missing) for the dashboard's scan-failures panel. Empty `items` when
+// the scanner is off or no failures fall in the window.
+export function useDashboardSecurityAudit(window: DashboardWindow, pollMs?: number): FetchHandle<DashboardSecurityAudit> {
+  return useFetch<DashboardSecurityAudit>(`/api/v1/dashboard/security/audit?window=${window}`, pollMs)
 }

@@ -551,4 +551,33 @@ CREATE INDEX IF NOT EXISTS evidence_expiry ON evidence (expires_at) WHERE expire
 CREATE INDEX IF NOT EXISTS finding_created_at ON finding (created_at DESC);
 CREATE INDEX IF NOT EXISTS verdict_decided_at ON verdict (decided_at DESC);`,
 	},
+	{
+		version: 16,
+		name:    "scan_audit_log",
+		// Append-only audit log of security scans that did NOT complete cleanly —
+		// the operational failures (timeout, unreachable, detector_error,
+		// no_detector, unit_missing), each tagged with a reason. Distinct from the
+		// check_tasks outbox, which is a MUTATING work queue (claimed, retried,
+		// marked terminal, and pruned under retention): once a task ends terminal
+		// its failure history is gone, so check_tasks cannot answer "when did scans
+		// fail?". This table is the immutable record of those events, never updated
+		// or deleted by the scanner, so the dashboard can surface WHEN failures
+		// happen — not just the aggregate inconclusive count the verdict posture
+		// carries. Append-only, forward-only; regular tx (no hypertable — a plain
+		// relational table like finding/verdict). The occurred_at DESC index backs
+		// the dashboard's newest-first window scan.
+		sql: `
+CREATE TABLE IF NOT EXISTS scan_audit (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    correlation_id TEXT        NOT NULL,
+    unit_id        TEXT        NOT NULL,
+    check_type     TEXT        NOT NULL,
+    detector_id    TEXT        NOT NULL DEFAULT '',
+    reason         TEXT        NOT NULL,
+    attempts       INT         NOT NULL DEFAULT 0,
+    detail         TEXT        NOT NULL DEFAULT '',
+    occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS scan_audit_occurred_at ON scan_audit (occurred_at DESC);`,
+	},
 }

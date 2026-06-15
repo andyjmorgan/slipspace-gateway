@@ -154,6 +154,89 @@ func TestObsSecurity_Error(t *testing.T) {
 	}
 }
 
+func TestObsSecurityAudit_Enabled(t *testing.T) {
+	occurred := time.Unix(1700000000, 0)
+	q := &fakeQueries{scanAudit: []store.ScanAuditEntry{
+		{CorrelationID: "c1", UnitID: "in:0:0", CheckType: "injection", DetectorID: "inj",
+			Reason: store.ScanReasonTimeout, Attempts: 5, Detail: "deadline", OccurredAt: occurred},
+		{CorrelationID: "c2", CheckType: "pii", Reason: store.ScanReasonNoDetector},
+	}}
+	h := newScannerServer(t, q, true)
+	resp := get(t, h, "/api/v1/dashboard/security/audit?window=24h", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	got := decodeAdmin[adminc.DashboardSecurityAudit](t, resp)
+	if got.Window != "24h" {
+		t.Errorf("window = %q", got.Window)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(got.Items))
+	}
+	it := got.Items[0]
+	if it.CorrelationID != "c1" || it.UnitID != "in:0:0" || it.CheckType != "injection" ||
+		it.DetectorID != "inj" || it.Reason != store.ScanReasonTimeout || it.Attempts != 5 || it.Detail != "deadline" {
+		t.Errorf("item[0] not mapped: %+v", it)
+	}
+	if !it.OccurredAt.Equal(occurred.UTC()) {
+		t.Errorf("occurred_at = %v, want %v", it.OccurredAt, occurred.UTC())
+	}
+	// Default limit reached the store (no ?limit given).
+	if q.lastAuditLimit != scanAuditDefaultLimit {
+		t.Errorf("limit = %d, want default %d", q.lastAuditLimit, scanAuditDefaultLimit)
+	}
+}
+
+func TestObsSecurityAudit_LimitCappedAndPlumbed(t *testing.T) {
+	q := &fakeQueries{}
+	h := newScannerServer(t, q, true)
+	// An over-cap ?limit is clamped to the max.
+	if resp := get(t, h, "/api/v1/dashboard/security/audit?limit=9999", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if q.lastAuditLimit != scanAuditMaxLimit {
+		t.Errorf("limit = %d, want cap %d", q.lastAuditLimit, scanAuditMaxLimit)
+	}
+	// A non-positive ?limit falls back to the default.
+	if resp := get(t, h, "/api/v1/dashboard/security/audit?limit=0", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if q.lastAuditLimit != scanAuditDefaultLimit {
+		t.Errorf("limit = %d, want default %d", q.lastAuditLimit, scanAuditDefaultLimit)
+	}
+}
+
+func TestObsSecurityAudit_Disabled_SkipsQuery(t *testing.T) {
+	// Scanner off: empty (non-nil) item list, no DB read (scanAuditErr would 500).
+	q := &fakeQueries{scanAuditErr: errors.New("must not be read")}
+	h := newScannerServer(t, q, false)
+	resp := get(t, h, "/api/v1/dashboard/security/audit?window=1h", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Code)
+	}
+	got := decodeAdmin[adminc.DashboardSecurityAudit](t, resp)
+	if got.Window != "1h" || len(got.Items) != 0 {
+		t.Errorf("disabled response = %+v", got)
+	}
+	if got.Items == nil {
+		t.Error("items should be non-nil ([] not null)")
+	}
+}
+
+func TestObsSecurityAudit_DefaultWindowAndError(t *testing.T) {
+	// Unknown window defaults to 1h.
+	h := newScannerServer(t, &fakeQueries{}, true)
+	got := decodeAdmin[adminc.DashboardSecurityAudit](t, get(t, h, "/api/v1/dashboard/security/audit?window=bogus", true))
+	if got.Window != "1h" {
+		t.Errorf("unknown window should default to 1h, got %q", got.Window)
+	}
+	// A store error is a 500.
+	hErr := newScannerServer(t, &fakeQueries{scanAuditErr: errors.New("db")}, true)
+	if resp := get(t, hErr, "/api/v1/dashboard/security/audit?window=1h", true); resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
+	}
+}
+
 func TestObsTimeseries(t *testing.T) {
 	ts := time.Unix(1000, 0)
 	q := &fakeQueries{series: []store.DashboardSeriesBucket{{Ts: ts, Requests: 120, Errored: 12, TokensIn: 42}}}

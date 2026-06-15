@@ -26,6 +26,9 @@ type fakeQueries struct {
 	seriesErr        error
 	security         store.DashboardSecurity
 	securityErr      error
+	scanAudit        []store.ScanAuditEntry
+	scanAuditErr     error
+	lastAuditLimit   int
 	events           []store.RequestEvent
 	next             string
 	eventsErr        error
@@ -75,6 +78,10 @@ func (f *fakeQueries) QueryDashboardSeries(context.Context, store.DashboardSerie
 }
 func (f *fakeQueries) QueryDashboardSecurity(context.Context, time.Time, time.Time) (store.DashboardSecurity, error) {
 	return f.security, f.securityErr
+}
+func (f *fakeQueries) ListScanAudit(_ context.Context, _, _ time.Time, limit int) ([]store.ScanAuditEntry, error) {
+	f.lastAuditLimit = limit
+	return f.scanAudit, f.scanAuditErr
 }
 func (f *fakeQueries) ListEventsFiltered(_ context.Context, p store.EventListParams) ([]store.RequestEvent, string, error) {
 	f.lastParams = p

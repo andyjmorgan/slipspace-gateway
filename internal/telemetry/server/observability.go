@@ -116,6 +116,62 @@ func (s *Server) handleObsSecurity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// scanAuditDefaultLimit / scanAuditMaxLimit bound the scan-failure panel: a
+// sensible default page when ?limit is absent, and a hard cap so a hostile or
+// stale query can't ask for an unbounded scan.
+const (
+	scanAuditDefaultLimit = 100
+	scanAuditMaxLimit     = 500
+)
+
+// handleObsSecurityAudit emits contracts/admin.DashboardSecurityAudit — the
+// append-only log of operational scan failures for the dashboard's scan-
+// failures panel. When the scanner is disabled it returns an empty (non-nil)
+// item list and never touches the DB, mirroring handleObsSecurity.
+func (s *Server) handleObsSecurityAudit(w http.ResponseWriter, r *http.Request) {
+	tok, dur := parseWindow(r)
+	out := adminc.DashboardSecurityAudit{
+		Window: tok,
+		Items:  []adminc.ScanAuditEntry{},
+	}
+	if s.scannerEnabled() {
+		limit := limitParam(r, scanAuditDefaultLimit)
+		if limit <= 0 {
+			limit = scanAuditDefaultLimit
+		}
+		if limit > scanAuditMaxLimit {
+			limit = scanAuditMaxLimit
+		}
+		from, to := windowBounds(time.Now(), dur)
+		entries, err := s.queries.ListScanAudit(r.Context(), from, to, limit)
+		if err != nil {
+			s.queryError(w, "dashboard security audit", err)
+			return
+		}
+		out.Items = mapScanAudit(entries)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// mapScanAudit maps the store scan-failure rows to the contract shape, always
+// returning a non-nil slice so the JSON carries [] not null.
+func mapScanAudit(in []store.ScanAuditEntry) []adminc.ScanAuditEntry {
+	out := make([]adminc.ScanAuditEntry, 0, len(in))
+	for _, e := range in {
+		out = append(out, adminc.ScanAuditEntry{
+			CorrelationID: e.CorrelationID,
+			UnitID:        e.UnitID,
+			CheckType:     e.CheckType,
+			DetectorID:    e.DetectorID,
+			Reason:        e.Reason,
+			Attempts:      e.Attempts,
+			Detail:        e.Detail,
+			OccurredAt:    e.OccurredAt.UTC(),
+		})
+	}
+	return out
+}
+
 // mapSecurityCounts maps the store breakdown rows to the contract shape,
 // always returning a non-nil slice so the JSON carries [] not null.
 func mapSecurityCounts(in []store.DashboardSecurityCount) []adminc.DashboardSecurityCount {

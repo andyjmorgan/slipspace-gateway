@@ -303,6 +303,68 @@ export interface DashboardSecurityCount {
   count: number /* int64 */;
 }
 /**
+ * DashboardSecurityAudit is the response shape for
+ * GET /api/v1/dashboard/security/audit — the append-only log of security scans
+ * that did NOT complete (operational failures), newest first. It lets an
+ * operator see WHEN scan failures happen, not just the aggregate inconclusive
+ * count the posture carries. Items is always a non-nil slice (so the SPA maps
+ * over it); empty when no failures fall in the window — detectors are healthy.
+ */
+export interface DashboardSecurityAudit {
+  /**
+   * Window is the time range covered (e.g. "24h"), echoed for the SPA.
+   */
+  window: string;
+  /**
+   * Items is the scan-failure rows in the window, newest first, capped by the
+   * endpoint's limit.
+   */
+  items: ScanAuditEntry[];
+}
+/**
+ * ScanAuditEntry is one operational scan-failure row — a security scan that did
+ * not complete cleanly, tagged with a reason. Reason is one of: timeout (the
+ * detector call hit the context deadline), unreachable (transport/dial error),
+ * detector_error (the detector returned an error status), no_detector (no
+ * configured detector for the check type), unit_missing (the scanned unit was
+ * not found).
+ */
+export interface ScanAuditEntry {
+  /**
+   * CorrelationID is the request the failed scan belonged to.
+   */
+  correlation_id: string;
+  /**
+   * UnitID identifies the content block within the span the scan targeted.
+   */
+  unit_id: string;
+  /**
+   * CheckType is the logical check that failed (injection / pii / toxicity).
+   */
+  check_type: string;
+  /**
+   * DetectorID is the detector that failed, when known (empty when no detector
+   * call was made — no_detector / unit_missing).
+   */
+  detector_id: string;
+  /**
+   * Reason is the operational-failure reason (see the type doc).
+   */
+  reason: string;
+  /**
+   * Attempts is how many times the scan had been attempted when it failed.
+   */
+  attempts: number /* int */;
+  /**
+   * Detail is a short human-readable failure description (e.g. the error text).
+   */
+  detail: string;
+  /**
+   * OccurredAt is when the failure was recorded.
+   */
+  occurred_at: string;
+}
+/**
  * DashboardTimeseries is the response shape for
  * GET /api/v1/dashboard/timeseries. The endpoint returns one Series per
  * labelled curve — a single-series query (RPS, overall error rate) is

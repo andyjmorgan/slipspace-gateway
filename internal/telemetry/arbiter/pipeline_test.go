@@ -36,6 +36,7 @@ type fakeStore struct {
 	findings []store.Finding
 	evidence []store.Evidence
 	verdicts map[string]store.Verdict
+	audits   []store.ScanAuditEntry
 }
 
 func newFakeStore() *fakeStore {
@@ -134,6 +135,24 @@ func (f *fakeStore) InsertEvidence(_ context.Context, ev store.Evidence) error {
 	defer f.mu.Unlock()
 	f.evidence = append(f.evidence, ev)
 	return nil
+}
+
+func (f *fakeStore) InsertScanAudit(_ context.Context, e store.ScanAuditEntry) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.audits = append(f.audits, e)
+	return nil
+}
+
+// auditReasons returns the recorded scan-audit reasons (test helper).
+func (f *fakeStore) auditReasons() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.audits))
+	for i, a := range f.audits {
+		out[i] = a.Reason
+	}
+	return out
 }
 
 func (f *fakeStore) ListFindings(_ context.Context, correlationID string) ([]store.Finding, error) {

@@ -219,6 +219,54 @@ type DashboardSecurityCount struct {
 	Count int64  `json:"count"`
 }
 
+// DashboardSecurityAudit is the response shape for
+// GET /api/v1/dashboard/security/audit — the append-only log of security scans
+// that did NOT complete (operational failures), newest first. It lets an
+// operator see WHEN scan failures happen, not just the aggregate inconclusive
+// count the posture carries. Items is always a non-nil slice (so the SPA maps
+// over it); empty when no failures fall in the window — detectors are healthy.
+type DashboardSecurityAudit struct {
+	// Window is the time range covered (e.g. "24h"), echoed for the SPA.
+	Window string `json:"window"`
+
+	// Items is the scan-failure rows in the window, newest first, capped by the
+	// endpoint's limit.
+	Items []ScanAuditEntry `json:"items"`
+}
+
+// ScanAuditEntry is one operational scan-failure row — a security scan that did
+// not complete cleanly, tagged with a reason. Reason is one of: timeout (the
+// detector call hit the context deadline), unreachable (transport/dial error),
+// detector_error (the detector returned an error status), no_detector (no
+// configured detector for the check type), unit_missing (the scanned unit was
+// not found).
+type ScanAuditEntry struct {
+	// CorrelationID is the request the failed scan belonged to.
+	CorrelationID string `json:"correlation_id"`
+
+	// UnitID identifies the content block within the span the scan targeted.
+	UnitID string `json:"unit_id"`
+
+	// CheckType is the logical check that failed (injection / pii / toxicity).
+	CheckType string `json:"check_type"`
+
+	// DetectorID is the detector that failed, when known (empty when no detector
+	// call was made — no_detector / unit_missing).
+	DetectorID string `json:"detector_id"`
+
+	// Reason is the operational-failure reason (see the type doc).
+	Reason string `json:"reason"`
+
+	// Attempts is how many times the scan had been attempted when it failed.
+	Attempts int `json:"attempts"`
+
+	// Detail is a short human-readable failure description (e.g. the error text).
+	Detail string `json:"detail"`
+
+	// OccurredAt is when the failure was recorded.
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
 // DashboardTimeseries is the response shape for
 // GET /api/v1/dashboard/timeseries. The endpoint returns one Series per
 // labelled curve — a single-series query (RPS, overall error rate) is
