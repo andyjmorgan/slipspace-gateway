@@ -994,6 +994,14 @@ export function SecurityPane({ cid, wanted }: { cid: string; wanted: boolean }) 
   )
 }
 
+// severityColor maps an operator-assigned finding level to its semantic token:
+// error loudest, warning amber, info muted.
+const severityColor: Record<string, string> = {
+  error: "var(--err)",
+  warning: "var(--warn)",
+  info: "var(--text-3)",
+}
+
 function VerdictBadge({ v }: { v: VerdictView }) {
   const color = verdictColor[v.state] ?? "var(--text-3)"
   return (
@@ -1004,6 +1012,14 @@ function VerdictBadge({ v }: { v: VerdictView }) {
       >
         {v.state}
       </span>
+      {v.severity && (
+        <span
+          className="inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[10.5px] mono uppercase tracking-[0.04em] border"
+          style={{ color: severityColor[v.severity] ?? "var(--text-3)", borderColor: severityColor[v.severity] ?? "var(--text-3)" }}
+        >
+          {v.severity}
+        </span>
+      )}
       {v.top_category && <span className="mono text-[color:var(--text-2)]">{v.top_category}</span>}
       <span className="mono tnum text-[color:var(--text-3)]">score {v.max_score.toFixed(2)}</span>
       <span className="mono text-[color:var(--text-4)]">
@@ -1021,8 +1037,14 @@ function VerdictBadge({ v }: { v: VerdictView }) {
 function FindingRow({ f }: { f: FindingView }) {
   return (
     <div className="flex flex-col gap-1 text-[12px] border-b border-[color:var(--border)] py-1.5">
-      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+      <div className="grid grid-cols-[auto_auto_1fr_auto] items-center gap-2">
         <span className="mono text-[10.5px] uppercase tracking-[0.04em] text-[color:var(--text-4)]">{f.check_type}</span>
+        <span
+          className="mono text-[10.5px] uppercase tracking-[0.04em]"
+          style={{ color: f.severity ? severityColor[f.severity] ?? "var(--text-4)" : "var(--text-4)" }}
+        >
+          {f.severity || "—"}
+        </span>
         <span className="mono truncate text-[color:var(--text-2)]">{f.category}</span>
         <span className="mono tnum text-[color:var(--text-3)]">{f.score.toFixed(2)}</span>
       </div>

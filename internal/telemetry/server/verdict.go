@@ -24,6 +24,7 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 			State:        v.State,
 			MaxScore:     v.MaxScore,
 			TopCategory:  v.TopCategory,
+			Severity:     v.Severity,
 			FindingCount: v.FindingCount,
 			Inconclusive: v.Inconclusive,
 		}
@@ -49,6 +50,7 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 			Detector:      f.DetectorID,
 			Localization:  f.Localization,
 			OffendingText: f.OffendingText,
+			Severity:      f.Severity,
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -92,6 +94,7 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 			Model:         f.Model,
 			Configuration: f.Configuration,
 			OffendingText: f.OffendingText,
+			Severity:      f.Severity,
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)

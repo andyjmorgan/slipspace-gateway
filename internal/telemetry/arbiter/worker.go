@@ -102,10 +102,13 @@ func (s *Scanner) resolveUnit(ctx context.Context, task store.CheckTask) (Unit, 
 func (s *Scanner) handleResponse(ctx context.Context, task store.CheckTask, det detector, resp *detectv1.DetectResponse, text string) {
 	switch resp.GetStatus() {
 	case detectv1.Status_STATUS_OK:
-		s.storeFindings(ctx, task, det, resp, text)
-		s.complete(ctx, task, statusCompleted, resultOf(statusCompleted, det, resp))
+		// Filter + classify before persisting so evidence, the finding table, the
+		// task result, and the verdict all see the same surviving set.
+		findings := s.survivingFindings(task, det, resp, text)
+		s.storeFindings(ctx, task, findings, text)
+		s.complete(ctx, task, statusCompleted, resultOf(statusCompleted, det, findings))
 	case detectv1.Status_STATUS_INCONCLUSIVE:
-		s.complete(ctx, task, statusInconclusive, resultOf(statusInconclusive, det, resp))
+		s.complete(ctx, task, statusInconclusive, resultOf(statusInconclusive, det, nil))
 	default:
 		// The detector answered with an error status (e.g. STATUS_ERROR) — the
 		// call completed but the scan did not, an operational failure.
@@ -115,10 +118,57 @@ func (s *Scanner) handleResponse(ctx context.Context, task store.CheckTask, det 
 	}
 }
 
-// storeFindings persists each hit plus one encrypted evidence row per unit (the
-// offending field is the whole unit, kept for dashboard context — ADR-018).
-func (s *Scanner) storeFindings(ctx context.Context, task store.CheckTask, det detector, resp *detectv1.DetectResponse, text string) {
-	if len(resp.GetFindings()) == 0 {
+// survivingFindings maps a detector's OK response to the findings we persist:
+// each hit minus the categories in scanner.finding_exclude, with its severity
+// stamped from scanner.severity. Pure — no I/O.
+func (s *Scanner) survivingFindings(task store.CheckTask, det detector, resp *detectv1.DetectResponse, text string) []store.Finding {
+	raw := resp.GetFindings()
+	if len(raw) == 0 {
+		return nil
+	}
+	detID, detVer := det.checkType, ""
+	if d := resp.GetDetector(); d != nil {
+		if d.GetId() != "" {
+			detID = d.GetId()
+		}
+		detVer = d.GetVersion()
+	}
+	out := make([]store.Finding, 0, len(raw))
+	for _, f := range raw {
+		category := f.GetCategory()
+		// Exclude-only result filter: a category an operator suppressed is
+		// dropped before any persistence (and so cannot flag the verdict).
+		if matchesAnyGlob(s.findingExclude, category) {
+			continue
+		}
+		fin := store.Finding{
+			CorrelationID:   task.CorrelationID,
+			UnitID:          task.UnitID,
+			CheckType:       task.CheckType,
+			Category:        category,
+			Score:           f.GetScore(),
+			RawLabel:        f.GetRawLabel(),
+			Localization:    f.GetLocalization().String(),
+			DetectorID:      detID,
+			DetectorVersion: detVer,
+			OffendingText:   offendingText(text, f.GetSpan()),
+			Severity:        s.severity.level(category),
+		}
+		if sp := f.GetSpan(); sp != nil {
+			start, end := int(sp.GetStart()), int(sp.GetEnd())
+			fin.SpanStart, fin.SpanEnd, fin.SpanBasis = &start, &end, sp.GetBasis().String()
+		}
+		out = append(out, fin)
+	}
+	return out
+}
+
+// storeFindings persists the surviving findings plus one encrypted evidence row
+// per unit (the offending field is the whole unit, kept for dashboard context —
+// ADR-018). When nothing survives finding_exclude it writes neither: there is
+// nothing left to evidence.
+func (s *Scanner) storeFindings(ctx context.Context, task store.CheckTask, findings []store.Finding, text string) {
+	if len(findings) == 0 {
 		return
 	}
 	if ct, nonce, err := s.enc.seal(text); err == nil {
@@ -133,30 +183,7 @@ func (s *Scanner) storeFindings(ctx context.Context, task store.CheckTask, det d
 		s.logger.Warn("arbiter: seal evidence", "error", err)
 	}
 
-	detID, detVer := det.checkType, ""
-	if d := resp.GetDetector(); d != nil {
-		if d.GetId() != "" {
-			detID = d.GetId()
-		}
-		detVer = d.GetVersion()
-	}
-	for _, f := range resp.GetFindings() {
-		fin := store.Finding{
-			CorrelationID:   task.CorrelationID,
-			UnitID:          task.UnitID,
-			CheckType:       task.CheckType,
-			Category:        f.GetCategory(),
-			Score:           f.GetScore(),
-			RawLabel:        f.GetRawLabel(),
-			Localization:    f.GetLocalization().String(),
-			DetectorID:      detID,
-			DetectorVersion: detVer,
-			OffendingText:   offendingText(text, f.GetSpan()),
-		}
-		if sp := f.GetSpan(); sp != nil {
-			start, end := int(sp.GetStart()), int(sp.GetEnd())
-			fin.SpanStart, fin.SpanEnd, fin.SpanBasis = &start, &end, sp.GetBasis().String()
-		}
+	for _, fin := range findings {
 		if err := s.store.InsertFinding(ctx, fin); err != nil {
 			s.logger.Warn("arbiter: insert finding", "error", err)
 		}
@@ -238,16 +265,18 @@ func (s *Scanner) complete(ctx context.Context, task store.CheckTask, status str
 	}
 }
 
-func resultOf(status string, det detector, resp *detectv1.DetectResponse) json.RawMessage {
+// resultOf builds the compact task-result summary from the SURVIVING findings
+// (post finding_exclude), so the inspector count matches what was persisted.
+func resultOf(status string, det detector, findings []store.Finding) json.RawMessage {
 	var maxScore float32
-	for _, f := range resp.GetFindings() {
-		if f.GetScore() > maxScore {
-			maxScore = f.GetScore()
+	for _, f := range findings {
+		if f.Score > maxScore {
+			maxScore = f.Score
 		}
 	}
 	b, _ := json.Marshal(taskResult{
 		Status:   status,
-		Findings: len(resp.GetFindings()),
+		Findings: len(findings),
 		MaxScore: maxScore,
 		Detector: det.checkType,
 	})

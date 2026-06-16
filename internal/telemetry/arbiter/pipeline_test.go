@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	detectv1 "github.com/andyjmorgan/sluice-gateway/gen/slipspace/detect/v1"
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
@@ -374,6 +375,91 @@ func TestPipeline_CleanEndToEnd(t *testing.T) {
 	}
 	if len(fake.findings) != 0 {
 		t.Errorf("findings = %d, want 0", len(fake.findings))
+	}
+}
+
+// twoFindingPIIServer returns a detector that flags both pii.url and pii.email
+// on any unit — the fixture for the finding_exclude + severity tests.
+func twoFindingPIIServer(t *testing.T) string {
+	t.Helper()
+	srv := detectorServer(t, func(req *detectv1.DetectRequest) (*detectv1.DetectResponse, int) {
+		return &detectv1.DetectResponse{
+			CorrelationId: req.GetCorrelationId(),
+			Status:        detectv1.Status_STATUS_OK,
+			Findings: []*detectv1.Finding{
+				{Category: "pii.url", Score: 0.9},
+				{Category: "pii.email", Score: 0.8},
+			},
+			Detector: &detectv1.Detector{Id: "mock-pii", Version: "t1"},
+		}, http.StatusOK
+	})
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestPipeline_FindingExcludeAndSeverity(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeStore()
+	s := testScanner(fake, twoFindingPIIServer(t))
+	// Drop pii.url; classify what survives (pii.email falls through to unmapped).
+	s.findingExclude = []string{"pii.url"}
+	s.severity = newSeverityClassifier(config.Severity{
+		Unmapped: config.SeverityWarning,
+		Rules:    []config.SeverityRule{{Match: "pii.url", Level: config.SeverityInfo}},
+	})
+
+	e := spanWith("c1", map[string]any{"input_messages": []map[string]any{
+		msg("user", textPart("mail me at a@b.com or see http://x")),
+	}})
+	if err := fake.UpsertRequestEventWithChecks(ctx, e, s.Explode(e)); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, ctx, s, fake)
+	s.reduce(ctx, "c1")
+
+	if len(fake.findings) != 1 {
+		t.Fatalf("findings = %d, want 1 (pii.url excluded)", len(fake.findings))
+	}
+	if f := fake.findings[0]; f.Category != "pii.email" {
+		t.Errorf("surviving category = %q, want pii.email", f.Category)
+	}
+	if f := fake.findings[0]; f.Severity != config.SeverityWarning {
+		t.Errorf("severity = %q, want warning (unmapped)", f.Severity)
+	}
+	// A finding survived, so its evidence row is written.
+	if len(fake.evidence) != 1 {
+		t.Errorf("evidence = %d, want 1", len(fake.evidence))
+	}
+	if v := fake.verdicts["c1"]; v.State != StateFlagged || v.Severity != config.SeverityWarning {
+		t.Errorf("verdict = %+v, want flagged/warning", v)
+	}
+}
+
+func TestPipeline_AllFindingsExcludedSuppressesEvidence(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeStore()
+	s := testScanner(fake, twoFindingPIIServer(t))
+	// Exclude every pii.* category: nothing survives, so no finding, no evidence,
+	// and the span reduces to clean.
+	s.findingExclude = []string{"pii.*"}
+
+	e := spanWith("c1", map[string]any{"input_messages": []map[string]any{
+		msg("user", textPart("mail me at a@b.com")),
+	}})
+	if err := fake.UpsertRequestEventWithChecks(ctx, e, s.Explode(e)); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, ctx, s, fake)
+	s.reduce(ctx, "c1")
+
+	if len(fake.findings) != 0 {
+		t.Errorf("findings = %d, want 0", len(fake.findings))
+	}
+	if len(fake.evidence) != 0 {
+		t.Errorf("evidence = %d, want 0 (no surviving finding to evidence)", len(fake.evidence))
+	}
+	if v := fake.verdicts["c1"]; v.State != StateClean || v.Severity != "" {
+		t.Errorf("verdict = %+v, want clean/no-severity", v)
 	}
 }
 

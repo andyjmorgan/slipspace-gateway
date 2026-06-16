@@ -580,4 +580,19 @@ CREATE TABLE IF NOT EXISTS scan_audit (
 );
 CREATE INDEX IF NOT EXISTS scan_audit_occurred_at ON scan_audit (occurred_at DESC);`,
 	},
+	{
+		version: 17,
+		name:    "finding_verdict_severity",
+		// Operator-assigned severity for the scanner's tag/finding controls
+		// (Scanner Tag Selection + Finding Filtering + Severity design note). The
+		// scanner maps each finding's category to info/warning/error via
+		// scanner.severity at scan time and stamps it on the finding; the reduce
+		// step rolls the max up onto the verdict so the Security dashboard can
+		// triage by level. Both additive, forward-only; a plain DEFAULT '' makes
+		// ADD COLUMN metadata-only (PG11+), so this is instant — existing rows read
+		// '' (no severity) until re-scanned. Regular tx (no hypertable).
+		sql: `
+ALTER TABLE finding ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT '';
+ALTER TABLE verdict ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT '';`,
+	},
 }

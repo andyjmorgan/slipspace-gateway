@@ -68,6 +68,11 @@ type Scanner struct {
 	store      Store          // set by Run
 	logger     *slog.Logger
 
+	// scan-scoping + result filtering (compiled from config; zero values inert).
+	tagSelector    tagSelector        // span-level scan_tags gate, applied in Explode
+	findingExclude []string           // categories dropped before persist (globs)
+	severity       severityClassifier // category→level for surviving findings
+
 	// tunables (defaulted in New; tests may shrink them in white-box).
 	workers          int
 	leaseSeconds     int
@@ -123,6 +128,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Scanner,
 		retention:        time.Duration(cfg.ScannerRetentionDays()) * 24 * time.Hour,
 		dispatchInterval: defaultDispatchInterval,
 		reduceInterval:   defaultReduceInterval,
+		tagSelector:      tagSelector{include: cfg.Scanner.ScanTags.Include, exclude: cfg.Scanner.ScanTags.Exclude},
+		findingExclude:   cfg.Scanner.FindingExclude,
+		severity:         newSeverityClassifier(cfg.Scanner.Severity),
 	}, nil
 }
 
@@ -131,10 +139,17 @@ func (s *Scanner) CheckTypes() []string { return s.checkTypes }
 
 // Explode builds the check tasks for a request event: every scannable unit
 // crossed with every configured check type the selection policy admits
-// (ADR-018). Returns nil when there is nothing to scan, so the ingest path
-// falls back to a plain upsert. Pure — no I/O — so the receiver can call it
-// inside the upsert transaction.
+// (ADR-018). The span-level scan_tags gate runs first — a span the tag policy
+// excludes produces no tasks. Returns nil when there is nothing to scan, so the
+// ingest path falls back to a plain upsert. Pure — no I/O — so the receiver can
+// call it inside the upsert transaction.
 func (s *Scanner) Explode(e store.RequestEvent) []store.CheckTask {
+	// Span-level scan selection (scan_tags): a span the tag policy excludes is
+	// not scanned at all — return nil so ingest falls back to a plain upsert,
+	// exactly as if the scanner were disabled for it.
+	if !s.tagSelector.admits(e.Tags) {
+		return nil
+	}
 	units := BuildUnits(e)
 	if len(units) == 0 {
 		return nil
