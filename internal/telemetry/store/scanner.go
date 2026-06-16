@@ -48,6 +48,10 @@ type Finding struct {
 	// Security report can show it directly (migration v14): the exact span
 	// substring for localized hits, the whole unit otherwise. Plaintext.
 	OffendingText string
+	// Severity is the operator-assigned level for this finding's category
+	// ("info"/"warning"/"error"), resolved from scanner.severity at scan time
+	// (migration v17). Empty on rows written before the column existed.
+	Severity string
 }
 
 // Evidence is one offending-field record (migration v13 evidence table),
@@ -71,7 +75,11 @@ type Verdict struct {
 	TopCategory   string
 	FindingCount  int
 	Inconclusive  []string
-	Provenance    json.RawMessage
+	// Severity is the highest finding severity on the span ("info"/"warning"/
+	// "error"), rolled up by the reduce step (migration v17). Empty when the
+	// span has no findings.
+	Severity   string
+	Provenance json.RawMessage
 }
 
 // ErrVerdictNotFound is returned when no verdict matches a correlation id.
@@ -197,10 +205,10 @@ func (s *Store) RetryCheckTask(ctx context.Context, correlationID, unitID, check
 func (s *Store) InsertFinding(ctx context.Context, f Finding) error {
 	_, err := s.db.Exec(ctx,
 		`INSERT INTO finding (correlation_id, unit_id, check_type, category, score, raw_label,
-		   span_start, span_end, span_basis, localization, detector_id, detector_version, offending_text)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		   span_start, span_end, span_basis, localization, detector_id, detector_version, offending_text, severity)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		f.CorrelationID, f.UnitID, f.CheckType, f.Category, f.Score, f.RawLabel,
-		f.SpanStart, f.SpanEnd, f.SpanBasis, f.Localization, f.DetectorID, f.DetectorVersion, f.OffendingText)
+		f.SpanStart, f.SpanEnd, f.SpanBasis, f.Localization, f.DetectorID, f.DetectorVersion, f.OffendingText, f.Severity)
 	if err != nil {
 		return fmt.Errorf("store: insert finding: %w", err)
 	}
@@ -224,7 +232,7 @@ func (s *Store) InsertEvidence(ctx context.Context, ev Evidence) error {
 func (s *Store) ListFindings(ctx context.Context, correlationID string) ([]Finding, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT correlation_id, unit_id, check_type, category, score, raw_label,
-		   span_start, span_end, span_basis, localization, detector_id, detector_version, offending_text
+		   span_start, span_end, span_basis, localization, detector_id, detector_version, offending_text, severity
 		 FROM finding WHERE correlation_id=$1`, correlationID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list findings: %w", err)
@@ -235,7 +243,7 @@ func (s *Store) ListFindings(ctx context.Context, correlationID string) ([]Findi
 	for rows.Next() {
 		var f Finding
 		if err := rows.Scan(&f.CorrelationID, &f.UnitID, &f.CheckType, &f.Category, &f.Score, &f.RawLabel,
-			&f.SpanStart, &f.SpanEnd, &f.SpanBasis, &f.Localization, &f.DetectorID, &f.DetectorVersion, &f.OffendingText); err != nil {
+			&f.SpanStart, &f.SpanEnd, &f.SpanBasis, &f.Localization, &f.DetectorID, &f.DetectorVersion, &f.OffendingText, &f.Severity); err != nil {
 			return nil, fmt.Errorf("store: scan finding: %w", err)
 		}
 		out = append(out, f)
@@ -293,14 +301,15 @@ func (s *Store) CorrelationsReadyForVerdict(ctx context.Context, limit int) ([]s
 }
 
 const upsertVerdictSQL = `
-INSERT INTO verdict (correlation_id, state, max_score, top_category, finding_count, inconclusive, provenance)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO verdict (correlation_id, state, max_score, top_category, finding_count, inconclusive, severity, provenance)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (correlation_id) DO UPDATE SET
   state = EXCLUDED.state,
   max_score = EXCLUDED.max_score,
   top_category = EXCLUDED.top_category,
   finding_count = EXCLUDED.finding_count,
   inconclusive = EXCLUDED.inconclusive,
+  severity = EXCLUDED.severity,
   provenance = EXCLUDED.provenance,
   decided_at = now()`
 
@@ -315,7 +324,7 @@ func (s *Store) UpsertVerdict(ctx context.Context, v Verdict) error {
 		provenance = []byte("{}")
 	}
 	_, err := s.db.Exec(ctx, upsertVerdictSQL,
-		v.CorrelationID, v.State, v.MaxScore, v.TopCategory, v.FindingCount, inconclusive, provenance)
+		v.CorrelationID, v.State, v.MaxScore, v.TopCategory, v.FindingCount, inconclusive, v.Severity, provenance)
 	if err != nil {
 		return fmt.Errorf("store: upsert verdict: %w", err)
 	}
@@ -355,6 +364,9 @@ type FindingRow struct {
 	// OffendingText is the flagged text the finding fired on (migration v14):
 	// the exact span substring for localized hits, the whole unit otherwise.
 	OffendingText string
+	// Severity is the operator-assigned level for the finding's category
+	// ("info"/"warning"/"error", migration v17); empty on pre-v17 rows.
+	Severity string
 }
 
 // defaultFindingsListLimit is the page size ListRecentFindings applies when the
@@ -372,7 +384,7 @@ SELECT f.category, f.check_type, f.score, f.raw_label,
        COALESCE(t.unit_locator->>'kind', ''), COALESCE(t.unit_locator->>'role', ''),
        f.correlation_id,
        COALESCE(e.session_id, ''), e.observed_at,
-       COALESCE(e.model, ''), COALESCE(e.configuration, ''), f.offending_text
+       COALESCE(e.model, ''), COALESCE(e.configuration, ''), f.offending_text, f.severity
 FROM finding f
 LEFT JOIN check_tasks t
   ON t.correlation_id = f.correlation_id AND t.unit_id = f.unit_id AND t.check_type = f.check_type
@@ -388,7 +400,7 @@ func scanFindingRows(rows rows) ([]FindingRow, error) {
 		var observed *time.Time
 		if err := rows.Scan(&f.Category, &f.CheckType, &f.Score, &f.RawLabel,
 			&f.UnitKind, &f.UnitRole, &f.CorrelationID,
-			&f.SessionID, &observed, &f.Model, &f.Configuration, &f.OffendingText); err != nil {
+			&f.SessionID, &observed, &f.Model, &f.Configuration, &f.OffendingText, &f.Severity); err != nil {
 			return nil, fmt.Errorf("store: scan finding row: %w", err)
 		}
 		if observed != nil {
@@ -432,11 +444,11 @@ ORDER BY e.observed_at DESC NULLS LAST, f.id DESC`, sessionID)
 // GetVerdict returns the verdict for a correlation id, or ErrVerdictNotFound.
 func (s *Store) GetVerdict(ctx context.Context, correlationID string) (Verdict, error) {
 	row := s.db.QueryRow(ctx,
-		`SELECT correlation_id, state, max_score, top_category, finding_count, inconclusive, provenance
+		`SELECT correlation_id, state, max_score, top_category, finding_count, inconclusive, severity, provenance
 		 FROM verdict WHERE correlation_id=$1`, correlationID)
 	var v Verdict
 	var provenance []byte
-	if err := row.Scan(&v.CorrelationID, &v.State, &v.MaxScore, &v.TopCategory, &v.FindingCount, &v.Inconclusive, &provenance); err != nil {
+	if err := row.Scan(&v.CorrelationID, &v.State, &v.MaxScore, &v.TopCategory, &v.FindingCount, &v.Inconclusive, &v.Severity, &provenance); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Verdict{}, ErrVerdictNotFound
 		}

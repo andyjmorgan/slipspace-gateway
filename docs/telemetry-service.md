@@ -181,6 +181,36 @@ When a span's assembled gen_ai content exceeds the effective cap, the service st
 
 An empty `gateways` list is **valid** — the service then accepts no Record pushes (every webhook 401s as an unknown gateway) but still ingests OTLP and serves the console. Listener binds are *not* validated here; an unbindable address surfaces at `net.Listen` / `ListenAndServe` time.
 
+### Scanner scan-scoping, filtering, and severity
+
+When the optional Arbiter scanner is enabled (`scanner.enabled: true`), three additive controls on the `scanner` block scope which traffic is scanned, suppress noisy findings, and classify what survives. All are off by default — an unset block scans every span and keeps every finding, unchanged from before.
+
+```yaml
+scanner:
+  enabled: true
+  # Span-level scan selection by request tag (the post-rule sluice.tags set).
+  scan_tags:
+    include: ["tier:*"]        # empty/omitted = scan all spans
+    exclude: ["env:internal"]  # wins over include
+  # Drop matching finding categories before they are persisted (exclude-only).
+  finding_exclude: ["pii.url"]
+  # Classify surviving findings into info/warning/error. Ordered: FIRST match wins.
+  severity:
+    unmapped: warning          # level for categories no rule matches (default warning)
+    rules:
+      - { match: "pii.url",     level: info }
+      - { match: "pii.*",       level: warning }
+      - { match: "injection.*", level: error }
+  detectors: [ ... ]           # unchanged
+```
+
+- **Patterns are full globs** (`path.Match`, `internal/telemetry/arbiter/match.go`). Tags and finding categories contain no `/`, so `*` spans the whole value: `pii.*`, `*:internal`, and `*.url` all match. A malformed glob is rejected at config load.
+- **`scan_tags`** gates `Scanner.Explode`: a span is scanned iff *(include is empty **or** a tag matches an include glob)* **and** *no tag matches an exclude glob* — exclude wins. A span the policy excludes produces no check tasks and falls back to a plain upsert, exactly as if the scanner were disabled for it. Note a span with **no tags** is not scanned when `include` is non-empty (it matches nothing).
+- **`finding_exclude`** drops findings whose `category` matches any glob before they are persisted, so an excluded category never reaches the `finding` table, never gets an evidence row, and never flags the verdict. If *all* of a unit's findings are excluded, its encrypted evidence row is not written either.
+- **`severity`** maps each surviving finding's category to `info`/`warning`/`error`, evaluated top-to-bottom with first-match-wins (order specific globs before general ones). A category matching no rule takes `unmapped` (default `warning`). The level is stamped on the finding (migration 17) and the worst level across a span's findings (`info < warning < error`) is rolled up onto the verdict — surfaced as a chip in the console Security view and as the `slipspace.security.severity` attribute on the enriched verdict span.
+
+Validation (`config.Validate`) rejects, when the scanner is enabled, a malformed glob in any list and a `severity.rules[].level` / `severity.unmapped` outside `{info, warning, error}`.
+
 ### Generating the console password hash
 
 `console.password_hash` is verified with `bcrypt.CompareHashAndPassword` (`server.go:123`), so the YAML must carry a **bcrypt** hash, never cleartext. Generate one with `htpasswd` (from `apache2-utils` / `httpd-tools`), stripping the `user:` prefix and normalising the variant prefix to `$2a$`:

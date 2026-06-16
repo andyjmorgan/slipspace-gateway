@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/store"
 )
 
@@ -137,6 +138,33 @@ func TestExplode_NothingToScan(t *testing.T) {
 	}
 }
 
+func TestExplode_TagSelection(t *testing.T) {
+	content := map[string]any{"input_messages": []map[string]any{msg("user", textPart("scan me"))}}
+	cases := []struct {
+		name     string
+		selector tagSelector
+		tags     []string
+		wantScan bool
+	}{
+		{"no selector scans", tagSelector{}, []string{"tier:gold"}, true},
+		{"include match scans", tagSelector{include: []string{"tier:*"}}, []string{"tier:gold"}, true},
+		{"include miss skips", tagSelector{include: []string{"tier:*"}}, []string{"env:prod"}, false},
+		{"exclude skips", tagSelector{exclude: []string{"env:internal"}}, []string{"env:internal"}, false},
+		{"untagged with include skips", tagSelector{include: []string{"tier:*"}}, nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := &Scanner{checkTypes: []string{CheckInjection}, tagSelector: c.selector}
+			e := spanWith("c", content)
+			e.Tags = c.tags
+			tasks := s.Explode(e)
+			if got := len(tasks) > 0; got != c.wantScan {
+				t.Errorf("scanned=%v (tasks=%d), want %v", got, len(tasks), c.wantScan)
+			}
+		})
+	}
+}
+
 func TestReduceVerdict(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -171,5 +199,20 @@ func TestReduceVerdict(t *testing.T) {
 				t.Errorf("finding_count = %d, want %d", v.FindingCount, len(c.findings))
 			}
 		})
+	}
+}
+
+func TestReduceVerdict_Severity(t *testing.T) {
+	// Roll-up takes the worst severity across findings (info < warning < error).
+	findings := []store.Finding{
+		{Category: "pii.url", Score: 0.6, Severity: config.SeverityInfo},
+		{Category: "pii.ssn", Score: 0.8, Severity: config.SeverityWarning},
+	}
+	if v := reduceVerdict("corr", findings, nil); v.Severity != config.SeverityWarning {
+		t.Errorf("verdict severity = %q, want warning", v.Severity)
+	}
+	// A clean/partial span (no findings) carries no severity.
+	if v := reduceVerdict("c2", nil, []string{"pii"}); v.Severity != "" {
+		t.Errorf("no-finding severity = %q, want empty", v.Severity)
 	}
 }

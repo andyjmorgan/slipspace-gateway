@@ -1197,6 +1197,11 @@ export interface VerdictView {
    */
   top_category?: string;
   /**
+   * Severity is the worst operator-assigned level across the request's
+   * findings ("info"/"warning"/"error"); empty when there are none.
+   */
+  severity?: string;
+  /**
    * FindingCount is the number of findings on this request.
    */
   finding_count: number /* int */;
@@ -1284,6 +1289,12 @@ export interface FindingRow {
    * inline in the Security report so the operator sees WHAT was flagged.
    */
   offending_text?: string;
+  /**
+   * Severity is the operator-assigned level for this finding's category
+   * ("info"/"warning"/"error"); empty on findings scanned before severity
+   * classification existed.
+   */
+  severity?: string;
 }
 /**
  * FindingView is one detector hit shown in the console's findings list.
@@ -1322,4 +1333,9 @@ export interface FindingView {
    * substring for localized hits, the whole offending unit otherwise.
    */
   offending_text?: string;
+  /**
+   * Severity is the operator-assigned level for this finding's category
+   * ("info"/"warning"/"error"); empty when unclassified.
+   */
+  severity?: string;
 }

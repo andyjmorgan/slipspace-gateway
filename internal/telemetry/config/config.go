@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 
 	"gopkg.in/yaml.v3"
 )
@@ -95,7 +96,63 @@ type Scanner struct {
 	// EnrichedExport optionally re-emits the verdict as an enriched OTLP span
 	// (ADR-002). Disabled when Endpoint is empty (the default).
 	EnrichedExport EnrichedExport `yaml:"enriched_export"`
+	// ScanTags scopes which spans are scanned by their request tags. Empty
+	// Include scans all spans; Exclude wins over Include. Off by default
+	// (no constraint) — the gate lives in Explode.
+	ScanTags ScanTags `yaml:"scan_tags,omitempty"`
+	// FindingExclude drops findings whose category matches any of these globs
+	// before they are persisted — exclude-only result filtering (e.g. keep PII
+	// detection but suppress "pii.url"). Applied in storeFindings.
+	FindingExclude []string `yaml:"finding_exclude,omitempty"`
+	// Severity classifies surviving findings into info/warning/error, stamped
+	// on the finding and rolled up (max) onto the span verdict.
+	Severity Severity `yaml:"severity,omitempty"`
 }
+
+// ScanTags scopes scanning by request tag. Patterns are full globs
+// (path.Match); tags carry no '/', so '*' spans the whole value.
+type ScanTags struct {
+	// Include, when non-empty, restricts scanning to spans carrying a tag that
+	// matches one of these globs. Empty includes all spans. A span with no tags
+	// matches no include glob, so a non-empty Include excludes untagged spans.
+	Include []string `yaml:"include,omitempty"`
+	// Exclude skips spans carrying a tag that matches one of these globs. It
+	// wins over Include — a span matching both is not scanned.
+	Exclude []string `yaml:"exclude,omitempty"`
+}
+
+// Severity maps finding categories to a level. Rules are evaluated in order and
+// first match wins, so an operator orders specific globs before general ones
+// ("pii.url"→info before "pii.*"→warning).
+type Severity struct {
+	// Unmapped is the level applied to a surviving finding whose category
+	// matches no rule. Defaults to SeverityWarning (applyDefaults).
+	Unmapped string `yaml:"unmapped,omitempty"`
+	// Rules is the ordered category→level table (first match wins).
+	Rules []SeverityRule `yaml:"rules,omitempty"`
+}
+
+// SeverityRule assigns Level to findings whose category matches Match (full
+// glob, path.Match).
+type SeverityRule struct {
+	// Match is the category glob.
+	Match string `yaml:"match"`
+	// Level is the assigned severity: SeverityInfo, SeverityWarning, or
+	// SeverityError.
+	Level string `yaml:"level"`
+}
+
+// Severity levels, ranked info < warning < error. The canonical set lives here
+// because config validates it; the arbiter ranks them for verdict roll-up.
+const (
+	// SeverityInfo is the lowest severity.
+	SeverityInfo = "info"
+	// SeverityWarning is the middle severity and the default for unmapped
+	// categories.
+	SeverityWarning = "warning"
+	// SeverityError is the highest severity.
+	SeverityError = "error"
+)
 
 // EnrichedExport configures the optional re-emission of verdicts as enriched
 // OTLP spans (ADR-002 — findings travel back over OTel, never a separate
@@ -193,6 +250,11 @@ func (c *Config) applyDefaults() {
 	}
 	if c.OTLPBind == "" {
 		c.OTLPBind = DefaultOTLPBind
+	}
+	// Unmapped finding categories default to warning — a safe middle ground the
+	// operator can override down to info or up to error.
+	if c.Scanner.Severity.Unmapped == "" {
+		c.Scanner.Severity.Unmapped = SeverityWarning
 	}
 }
 
@@ -297,6 +359,68 @@ func (c Config) Validate() error {
 			}
 			seenCheck[d.CheckType] = struct{}{}
 		}
+		if err := validateScanFilters(c.Scanner); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// validateScanFilters checks the tag-selection, finding-exclude, and severity
+// globs/levels. A bad glob silently never matches, so it is rejected at startup
+// rather than degrading scan scoping unnoticed.
+func validateScanFilters(s Scanner) error {
+	for _, p := range s.ScanTags.Include {
+		if err := validGlob(p); err != nil {
+			return fmt.Errorf("scanner.scan_tags.include: %w", err)
+		}
+	}
+	for _, p := range s.ScanTags.Exclude {
+		if err := validGlob(p); err != nil {
+			return fmt.Errorf("scanner.scan_tags.exclude: %w", err)
+		}
+	}
+	for _, p := range s.FindingExclude {
+		if err := validGlob(p); err != nil {
+			return fmt.Errorf("scanner.finding_exclude: %w", err)
+		}
+	}
+	if u := s.Severity.Unmapped; u != "" && !validSeverityLevel(u) {
+		return fmt.Errorf("scanner.severity.unmapped: invalid level %q (want info|warning|error)", u)
+	}
+	for i, r := range s.Severity.Rules {
+		if r.Match == "" {
+			return fmt.Errorf("scanner.severity.rules[%d]: match is required", i)
+		}
+		if err := validGlob(r.Match); err != nil {
+			return fmt.Errorf("scanner.severity.rules[%d]: %w", i, err)
+		}
+		if !validSeverityLevel(r.Level) {
+			return fmt.Errorf("scanner.severity.rules[%d] (%s): invalid level %q (want info|warning|error)", i, r.Match, r.Level)
+		}
+	}
+	return nil
+}
+
+// validGlob reports whether p is a non-empty, well-formed path.Match pattern.
+func validGlob(p string) error {
+	if p == "" {
+		return errors.New("empty pattern")
+	}
+	// path.Match only returns ErrBadPattern for a malformed pattern; the match
+	// result against a probe string is irrelevant here.
+	if _, err := path.Match(p, ""); err != nil {
+		return fmt.Errorf("invalid glob %q: %w", p, err)
+	}
+	return nil
+}
+
+// validSeverityLevel reports whether l is one of the canonical severity levels.
+func validSeverityLevel(l string) bool {
+	switch l {
+	case SeverityInfo, SeverityWarning, SeverityError:
+		return true
+	default:
+		return false
+	}
 }

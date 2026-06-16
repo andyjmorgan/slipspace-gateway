@@ -74,12 +74,17 @@ func reduceVerdict(correlationID string, findings []store.Finding, inconclusive 
 		FindingCount:  len(findings),
 		Inconclusive:  inconclusive,
 	}
+	levels := make([]string, 0, len(findings))
 	for _, f := range findings {
 		if f.Score > v.MaxScore {
 			v.MaxScore = f.Score
 			v.TopCategory = f.Category
 		}
+		levels = append(levels, f.Severity)
 	}
+	// Roll the operator-assigned severities up to the span's worst level
+	// (info < warning < error); empty when there are no findings.
+	v.Severity = maxSeverity(levels)
 	switch {
 	case len(findings) > 0:
 		v.State = StateFlagged
@@ -92,6 +97,7 @@ func reduceVerdict(correlationID string, findings []store.Finding, inconclusive 
 		"inconclusive":  inconclusive,
 		"max_score":     v.MaxScore,
 		"finding_count": v.FindingCount,
+		"severity":      v.Severity,
 	})
 	v.Provenance = prov
 	return v

@@ -50,6 +50,22 @@ func TestScannerHelpers(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults_UnmappedSeverity(t *testing.T) {
+	// Omitted unmapped level defaults to warning.
+	c := base()
+	c.applyDefaults()
+	if c.Scanner.Severity.Unmapped != SeverityWarning {
+		t.Errorf("default unmapped = %q, want %q", c.Scanner.Severity.Unmapped, SeverityWarning)
+	}
+	// An explicit level is left untouched.
+	c2 := base()
+	c2.Scanner.Severity.Unmapped = SeverityError
+	c2.applyDefaults()
+	if c2.Scanner.Severity.Unmapped != SeverityError {
+		t.Errorf("explicit unmapped overwritten: got %q", c2.Scanner.Severity.Unmapped)
+	}
+}
+
 func TestEvidenceKeyBytes(t *testing.T) {
 	if _, err := (Config{Scanner: Scanner{EvidenceKey: validKey()}}).EvidenceKeyBytes(); err != nil {
 		t.Errorf("valid key: %v", err)
@@ -77,6 +93,16 @@ func TestValidate_Scanner(t *testing.T) {
 		{"missing endpoint", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{{CheckType: "injection"}}}, "endpoint is required"},
 		{"duplicate check_type", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det, det}}, "duplicate check_type"},
 		{"valid", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}}, ""},
+		// scan-filter validation (only reached when enabled + detectors valid).
+		{"bad include glob", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, ScanTags: ScanTags{Include: []string{"["}}}, "scan_tags.include"},
+		{"bad exclude glob", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, ScanTags: ScanTags{Exclude: []string{"a[b"}}}, "scan_tags.exclude"},
+		{"empty include glob", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, ScanTags: ScanTags{Include: []string{""}}}, "empty pattern"},
+		{"bad finding_exclude glob", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, FindingExclude: []string{"[bad"}}, "finding_exclude"},
+		{"bad unmapped level", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, Severity: Severity{Unmapped: "critical"}}, "severity.unmapped"},
+		{"severity rule missing match", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, Severity: Severity{Rules: []SeverityRule{{Level: "info"}}}}, "match is required"},
+		{"severity rule bad glob", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, Severity: Severity{Rules: []SeverityRule{{Match: "a[b", Level: "info"}}}}, "severity.rules[0]"},
+		{"severity rule bad level", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, Severity: Severity{Rules: []SeverityRule{{Match: "pii.*", Level: "nope"}}}}, "invalid level"},
+		{"valid scan filters", Scanner{Enabled: true, EvidenceKey: validKey(), Detectors: []Detector{det}, ScanTags: ScanTags{Include: []string{"tier:*"}, Exclude: []string{"env:internal"}}, FindingExclude: []string{"pii.url"}, Severity: Severity{Unmapped: "warning", Rules: []SeverityRule{{Match: "pii.url", Level: "info"}, {Match: "pii.*", Level: "warning"}}}}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

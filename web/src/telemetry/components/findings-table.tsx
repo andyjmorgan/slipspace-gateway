@@ -28,6 +28,30 @@ function CheckTypeBadge({ checkType }: { checkType: string }) {
   )
 }
 
+// severityColor maps the operator-assigned level to its semantic token: error
+// reads loudest, warning amber, info muted. An unknown/empty level renders as a
+// dash (no classification).
+const severityColor: Record<string, string> = {
+  error: "var(--err)",
+  warning: "var(--warn)",
+  info: "var(--text-3)",
+}
+
+// SeverityBadge renders a finding's severity as a bordered chip, reusing the
+// CheckTypeBadge idiom so the Security view reads consistently.
+function SeverityBadge({ severity }: { severity?: string }) {
+  if (!severity) return <Dash />
+  const color = severityColor[severity] ?? "var(--text-3)"
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[10.5px] mono uppercase tracking-[0.04em] border"
+      style={{ color, borderColor: color }}
+    >
+      {severity}
+    </span>
+  )
+}
+
 // ScoreCell renders a detector score [0,1] tinted by severity: a high score
 // reads as error, a moderate one as warn, low as muted — so the eye lands on the
 // worst hits without reading every number.
@@ -75,13 +99,14 @@ export function FindingsTable({
   // this session, so the link would only point back at the current view.
   showSession?: boolean
 }) {
-  const cols = showSession ? 9 : 8
+  const cols = showSession ? 10 : 9
   return (
     <TableScroll>
       <thead>
         <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
           <th scope="col" className="text-left font-medium px-4 py-2">Time</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Check</th>
+          <th scope="col" className="text-left font-medium px-4 py-2">Severity</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Category</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Offending text</th>
           <th scope="col" className="text-left font-medium px-4 py-2">Unit</th>
@@ -97,6 +122,7 @@ export function FindingsTable({
             rows={Math.min(limit, 12)}
             cols={[
               { w: "9rem" },
+              { w: "4.5rem" },
               { w: "4.5rem" },
               { w: "7rem" },
               { w: "12rem" },
@@ -130,6 +156,7 @@ export function FindingsTable({
                   {f.observed_at ? fmt.fullTime(f.observed_at) : <Dash />}
                 </td>
                 <td className="px-4 py-2"><CheckTypeBadge checkType={f.check_type} /></td>
+                <td className="px-4 py-2"><SeverityBadge severity={f.severity} /></td>
                 <td className="mono text-[12px] px-4 py-2 text-[color:var(--text-2)]">{f.category || <Dash />}</td>
                 <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-2)] max-w-[18rem]">
                   {f.offending_text ? (

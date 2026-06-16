@@ -59,6 +59,7 @@ func (e *otelEmitter) EmitVerdict(ctx context.Context, correlationID string, v s
 		attribute.String("slipspace.security.verdict", v.State),
 		attribute.Float64("slipspace.security.max_score", float64(v.MaxScore)),
 		attribute.String("slipspace.security.top_category", v.TopCategory),
+		attribute.String("slipspace.security.severity", v.Severity),
 		attribute.Int("slipspace.security.finding_count", v.FindingCount),
 		attribute.StringSlice("slipspace.security.inconclusive", v.Inconclusive),
 	)

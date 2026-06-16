@@ -26,6 +26,10 @@ type VerdictView struct {
 	// TopCategory is the category of the highest-scoring finding.
 	TopCategory string `json:"top_category,omitempty"`
 
+	// Severity is the worst operator-assigned level across the request's
+	// findings ("info"/"warning"/"error"); empty when there are none.
+	Severity string `json:"severity,omitempty"`
+
 	// FindingCount is the number of findings on this request.
 	FindingCount int `json:"finding_count"`
 
@@ -95,6 +99,11 @@ type FindingRow struct {
 	// substring for localized hits, the whole offending unit otherwise. Shown
 	// inline in the Security report so the operator sees WHAT was flagged.
 	OffendingText string `json:"offending_text,omitempty"`
+
+	// Severity is the operator-assigned level for this finding's category
+	// ("info"/"warning"/"error"); empty on findings scanned before severity
+	// classification existed.
+	Severity string `json:"severity,omitempty"`
 }
 
 // FindingView is one detector hit shown in the console's findings list.
@@ -123,4 +132,8 @@ type FindingView struct {
 	// OffendingText is the flagged text the finding fired on — the exact span
 	// substring for localized hits, the whole offending unit otherwise.
 	OffendingText string `json:"offending_text,omitempty"`
+
+	// Severity is the operator-assigned level for this finding's category
+	// ("info"/"warning"/"error"); empty when unclassified.
+	Severity string `json:"severity,omitempty"`
 }

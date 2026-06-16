@@ -70,6 +70,7 @@ func TestScanner_OutboxLifecycle(t *testing.T) {
 	if err := st.InsertFinding(ctx, store.Finding{
 		CorrelationID: corr, UnitID: "in:0:0", CheckType: "injection",
 		Category: "injection.jailbreak", Score: 0.95, RawLabel: "INJECTION", DetectorID: "d", DetectorVersion: "1",
+		Severity: "error",
 	}); err != nil {
 		t.Fatalf("finding: %v", err)
 	}
@@ -95,6 +96,10 @@ func TestScanner_OutboxLifecycle(t *testing.T) {
 	if err != nil || len(findings) != 1 || findings[0].Category != "injection.jailbreak" || findings[0].Score != 0.95 {
 		t.Fatalf("findings = %+v, err %v", findings, err)
 	}
+	// Severity round-trips through the v17 column.
+	if findings[0].Severity != "error" {
+		t.Errorf("finding severity = %q, want error", findings[0].Severity)
+	}
 	inc, err := st.InconclusiveCheckTypes(ctx, corr)
 	if err != nil || len(inc) != 1 || inc[0] != "toxicity" {
 		t.Fatalf("inconclusive = %+v, err %v", inc, err)
@@ -103,7 +108,7 @@ func TestScanner_OutboxLifecycle(t *testing.T) {
 	// Verdict round-trip.
 	if err := st.UpsertVerdict(ctx, store.Verdict{
 		CorrelationID: corr, State: "flagged", MaxScore: 0.95, TopCategory: "injection.jailbreak",
-		FindingCount: 1, Inconclusive: []string{"toxicity"}, Provenance: []byte(`{"max_score":0.95}`),
+		FindingCount: 1, Inconclusive: []string{"toxicity"}, Severity: "error", Provenance: []byte(`{"max_score":0.95}`),
 	}); err != nil {
 		t.Fatalf("upsert verdict: %v", err)
 	}
@@ -112,7 +117,7 @@ func TestScanner_OutboxLifecycle(t *testing.T) {
 		t.Fatalf("get verdict: %v", err)
 	}
 	if v.State != "flagged" || v.MaxScore != 0.95 || v.TopCategory != "injection.jailbreak" ||
-		len(v.Inconclusive) != 1 || v.Inconclusive[0] != "toxicity" {
+		len(v.Inconclusive) != 1 || v.Inconclusive[0] != "toxicity" || v.Severity != "error" {
 		t.Errorf("verdict = %+v", v)
 	}
 	// Once a verdict exists, the span drops out of the ready set.
