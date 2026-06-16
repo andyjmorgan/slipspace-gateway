@@ -190,6 +190,9 @@ Registry at `contentblock.go:473-491` (`blockRegistry`, discriminator field
 | `image` | `ImageBlock` (`contentblock.go:144`) | `ImageSource` is base64 *or* URL (`contentblock.go:116`) |
 | `tool_use` | `ToolUseBlock` (`contentblock.go:170`) | `Input` raw; optional `Caller` attributes the call (`ToolCaller`, `contentblock.go:195`) |
 | `tool_result` | `ToolResultBlock` (`contentblock.go:226`) | `Content` is itself string-or-array, kept raw |
+| `server_tool_use` | `ServerToolUseBlock` | Server-side tool invocation |
+| `web_search_tool_result` | `WebSearchToolResultBlock` | Server web-search result |
+| `web_fetch_tool_result` | `WebFetchToolResultBlock` | Server web-fetch result |
 | `thinking` | `ThinkingBlock` (`contentblock.go:390`) | See signature echo below |
 | `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:423`) | Opaque encrypted `Data` |
 | *(any other)* | `UnknownBlock` (`contentblock.go:321`) | Fallback |

@@ -24,7 +24,7 @@ Sluice ships as a single-arch (linux/amd64) container image with the SPA baked i
 
 ## Deployment topology
 
-A Sluice pod runs one container that opens three listeners and reads one config directory. The data-plane listener is the only port that proxies provider traffic; the admin and Prometheus listeners are management surfaces and must not be exposed to clients.
+A Sluice pod runs one container that opens up to three listeners and reads one config directory. Only the data-plane listener is on by default; the admin and Prometheus listeners are opt-in management surfaces (admin via `admin.enabled: true`, Prometheus by setting `SLUICE_PROMETHEUS_BIND` — the binary default is empty/disabled, and `:9090` below is the conventional value the dev compose sets explicitly). The data-plane listener is the only port that proxies provider traffic; the admin and Prometheus listeners must not be exposed to clients.
 
 ### Single-pod
 
@@ -33,7 +33,7 @@ flowchart LR
     subgraph Pod[sluice-gateway pod]
         DP[":8585<br/>data plane"]
         AD[":8081<br/>admin SPA + /api/v1"]
-        PR[":9090<br/>prometheus scrape"]
+        PR[":9090<br/>prometheus scrape<br/>(opt-in)"]
         SP[("spool PVC<br/>/var/lib/sluice/spool")]
     end
 
@@ -56,7 +56,7 @@ flowchart LR
 flowchart LR
     Client[Provider SDKs] --> SVC[Service<br/>:8585]
     Operator[Operator] --> ADSVC[Service<br/>:8081]
-    Scrape[Prometheus] --> PRSVC[Service<br/>:9090]
+    Scrape[Prometheus] --> PRSVC[Service<br/>:9090 (opt-in)]
 
     SVC --> P1[Pod A<br/>:8585<br/>+ spool PVC]
     SVC --> P2[Pod B<br/>:8585<br/>+ spool PVC]

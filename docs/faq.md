@@ -476,10 +476,13 @@ PUT    /admin/api/v1/config/rules/{name}
 DELETE /admin/api/v1/config/rules/{name}
 ```
 
-The visual editor in the [admin console](admin-console.md) drives these. **Only
-rules** are live-editable today; edits to `providers`, `configurations`,
-`api_keys`, `connectors`, and `groups` are still YAML-on-disk and need a process
-restart (hot reload for those is a v1.2+ item). Validate a bundle before deploy
+The visual editor in the [admin console](admin-console.md) drives these. The
+live write API covers `rules`, `providers`, `groups`, `configurations`,
+`api_keys`, and `connectors` — each clones the snapshot, validates, persists back
+to its source file, and republishes through `config.Store.Replace`, no restart.
+Direct on-disk YAML edits and the `admin` / `telemetry` blocks still need a
+process restart (fsnotify auto-reload for the on-disk path is a v1.2+ item).
+Validate a bundle before deploy
 with `sluice-cli config validate` ([auxiliary-binaries.md](auxiliary-binaries.md)).
 
 ---
