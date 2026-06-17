@@ -225,7 +225,7 @@ Model patterns reuse the connector-filter matcher: a trailing-`*` is a prefix ma
 
 ## Credential header resolution
 
-[`cmd/gateway/destination.go::credentialHeaderFor`](../cmd/gateway/destination.go) is the **single mint site** for the upstream credential header in managed mode (invariant 6 in `CLAUDE.md`). By the time it runs, selection has already composed the effective auth onto the resolved `Target` (`Target.Auth` = the protocol's `auth`, or `nil`), so there is no per-request endpoint/provider override walk — the resolver is a two-branch function:
+[`cmd/gateway/destination.go::resolveCredentialHeaders`](../cmd/gateway/destination.go) is the **single mint site** for the upstream credential header (invariant 6 in `CLAUDE.md`) — both [`buildDestination`](../cmd/gateway/destination.go) and [`buildPassthroughDestination`](../cmd/gateway/pipeline.go) funnel through it. In managed mode it calls the helper [`credentialHeaderFor`](../cmd/gateway/destination.go) to format the `(header, value)` pair. By the time `credentialHeaderFor` runs, selection has already composed the effective auth onto the resolved `Target` (`Target.Auth` = the protocol's `auth`, or `nil`), so there is no per-request endpoint/provider override walk — the helper is a two-branch function:
 
 ```mermaid
 flowchart TB
@@ -269,7 +269,7 @@ Whichever header is minted, [`buildDestination`](../cmd/gateway/destination.go) 
 - **Passthrough auth mode** — the inbound `Authorization` is forwarded verbatim and no managed credential is minted ([`buildDestination`](../cmd/gateway/destination.go), `mode == auth.ModePassthrough` branch).
 - **No-credential provider** — when the Configuration holds an empty credential for the provider (`credentials.<provider>: ""`), every credential header is stripped and none is set. This is the typical in-cluster ollama case.
 
-Passthrough-family requests resolve their credential through the same `credentialHeaderFor` ([`cmd/gateway/pipeline.go::buildPassthroughDestination`](../cmd/gateway/pipeline.go)), so the format table cannot fragment between generative and passthrough paths.
+Passthrough-family requests resolve their credential through the same `resolveCredentialHeaders` ([`cmd/gateway/pipeline.go::buildPassthroughDestination`](../cmd/gateway/pipeline.go) funnels through it), so the format table cannot fragment between generative and passthrough paths. Note that in passthrough *auth mode* the inbound `Authorization` is forwarded verbatim and `credentialHeaderFor` is **not** invoked — `resolveCredentialHeaders` only reaches the format helper on the managed-mode branch.
 
 ---
 
