@@ -86,14 +86,14 @@ Group multiple providers behind a resilience policy and Sluice will keep traffic
 
 Every request carries a recorded attempt log. See [docs/resilience.md](docs/resilience.md).
 
-## Observability + the central telemetry service
+## Observability + the Arbiter
 
 Telemetry and reporting are kept as **separate channels** by design (a Grafana panel never reads audit records from S3):
 
 - **Metrics & traces** — OpenTelemetry meters exposed on a Prometheus `/metrics` scrape endpoint *and/or* pushed over OTLP, plus `gen_ai.*` spans following the OTel GenAI semantic conventions. Every request carries its **token usage broken out four ways** — prompt, completion, cache-read, and cache-write — alongside latency (incl. time-to-first-chunk) and `rules_fired` / `tags_fired` counts, so cost and policy dashboards build straight off the meters. Prompt/response content capture is optional, redacted, and size-capped.
 - **Audit records** — the full end-of-request envelope (bodies, headers, post-rule tags, fired-rule chain, resilience attempts) flows through the spool to your destinations.
 
-An optional **central telemetry service** (`cmd/telemetry`) ingests gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from a whole fleet of gateways into Postgres and serves a unified operator console — keeping the two channels physically separate even as it converges them per request. See [docs/observability.md](docs/observability.md) and [docs/telemetry-service.md](docs/telemetry-service.md).
+An optional **Arbiter** (`cmd/arbiter`) ingests gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from a whole fleet of gateways into Postgres and serves a unified operator console — keeping the two channels physically separate even as it converges them per request. See [docs/observability.md](docs/observability.md) and [docs/arbiter.md](docs/arbiter.md).
 
 ## Session, agent & user attribution
 
@@ -115,7 +115,7 @@ End-of-request records buffer to a disk-backed, zstd-compressed `ndjson.zst` spo
 
 ## Quickstart
 
-Turnkey stack from the **published images** (no build, real providers): see [`deploy/quickstart/`](deploy/quickstart/) — three copy-paste Compose stacks (gateway + console, gateway only, gateway + telemetry). Set keys in `.env` and `docker compose up`.
+Turnkey stack from the **published images** (no build, real providers): see [`deploy/quickstart/`](deploy/quickstart/) — three copy-paste Compose stacks (gateway + console, gateway only, gateway + Arbiter). Set keys in `.env` and `docker compose up`.
 
 ```sh
 cd deploy/quickstart
@@ -154,7 +154,7 @@ A Vite + React + shadcn SPA embedded into the gateway binary via `//go:embed` �
 ```
 cmd/
   gateway/      data plane binary
-  telemetry/    central telemetry service (OTLP + HMAC Record-webhook ingest, Postgres, console)
+  telemetry/    Arbiter (OTLP + HMAC Record-webhook ingest, Postgres, console)
   cli/          key generation, config validation
   mockllm/      Go mock LLM for tests + local dev
 internal/       compiler-enforced private engines

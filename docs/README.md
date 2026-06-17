@@ -4,7 +4,7 @@ Operator and developer reference for sluice-gateway. Each page is self-contained
 
 If you're new to the project, the suggested reading order is **Configuration → Providers → Routing → Auth → Rules → Actions → Resilience → Observability → Connectors → Spool → Admin console → Deployment**. The local-dev and auxiliary-binaries pages are useful any time you're running things by hand.
 
-Just want it running? The **[quickstart compose bundle](../deploy/quickstart/)** stands up the gateway (optionally with the admin console and/or the central telemetry service) from the published images — set provider keys in `.env`, `docker compose up`, done.
+Just want it running? The **[quickstart compose bundle](../deploy/quickstart/)** stands up the gateway (optionally with the admin console and/or the Arbiter) from the published images — set provider keys in `.env`, `docker compose up`, done.
 
 In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a model, rewriting request/response bodies, Anthropic batches, Azure OpenAI, load-balancing, live rule edits — each answer grounded in a real config example.
 
@@ -16,7 +16,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 
 | Doc | What it covers |
 |---|---|
-| [Quickstart compose bundle](../deploy/quickstart/) | Turnkey `docker compose` stacks from the published images — gateway + console, gateway only, gateway + telemetry — configured from `.env` |
+| [Quickstart compose bundle](../deploy/quickstart/) | Turnkey `docker compose` stacks from the published images — gateway + console, gateway only, gateway + Arbiter — configured from `.env` |
 | [Configuration model](configuration-model.md) | YAML loader (every `*.yaml` merged by top-level key), top-level blocks, configurations + bindings + api_keys |
 | [Providers](providers.md) | `providers` block schema — base URL, per-protocol auth, passthrough families, the OpenAI-compat surface |
 | [Routing](routing.md) | How inbound paths map to a protocol and select a target via bindings, passthrough matching, X-Sluice headers |
@@ -31,10 +31,10 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | [Admin console](admin-console.md) | Enabling, password, every API route, every SPA page, live messages, body capture |
 | [Environment variables](environment-variables.md) | Every `SLUICE_*` env var with default, type, validation, effect |
 | [Deployment](deployment.md) | Topology, container image, K8s shape, multi-pod considerations, graceful drain |
-| [Telemetry service](telemetry-service.md) | The optional central `cmd/telemetry` service — two-listener topology, YAML config, deploy, shutdown, HMAC trust, invariant #4 compliance |
-| [Telemetry service API](telemetry-service-api.md) | Console query API — dashboard, messages, events, sessions, facets, keyset pagination |
-| [Telemetry webhook](telemetry-webhook.md) | The Record ingest contract — `POST /api/v1/ingest/record`, headers, hex HMAC-SHA256, response codes |
-| [Telemetry database schema](telemetry-database-schema.md) | TimescaleDB ERD, per-table columns/indexes, the single-writer `span_event` projection, the lazy `record` blob, the CAGG metrics plane, migration history |
+| [Arbiter](arbiter.md) | The optional central `cmd/arbiter` service — two-listener topology, YAML config, deploy, shutdown, HMAC trust, invariant #4 compliance |
+| [Arbiter API](arbiter-api.md) | Console query API — dashboard, messages, events, sessions, facets, keyset pagination |
+| [Arbiter webhook](arbiter-webhook.md) | The Record ingest contract — `POST /api/v1/ingest/record`, headers, hex HMAC-SHA256, response codes |
+| [Arbiter database schema](arbiter-database-schema.md) | TimescaleDB ERD, per-table columns/indexes, the single-writer `span_event` projection, the lazy `record` blob, the CAGG metrics plane, migration history |
 
 ### Developers running and testing locally
 
@@ -59,7 +59,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | Proxy Anthropic message batches | [FAQ → Passthrough surfaces](faq.md#how-do-i-support-anthropic-message-batches-and-other-passthrough-surfaces) |
 | Add Azure OpenAI as a provider | [FAQ → Azure OpenAI](faq.md#how-do-i-add-azure-openai-as-a-provider) |
 | Run Sluice from the published images in minutes | [Quickstart compose bundle](../deploy/quickstart/) |
-| Run the gateway alongside the central telemetry service | [Quickstart → gateway + telemetry](../deploy/quickstart/#2-run-a-stack), [Telemetry service](telemetry-service.md) |
+| Run the gateway alongside the Arbiter | [Quickstart → gateway + Arbiter](../deploy/quickstart/#2-run-a-stack), [Arbiter](arbiter.md) |
 | Boot a gateway against a local mock LLM | [Local development → Quickest path](local-development.md#quickest-path-to-a-running-gateway) |
 | Wire a new upstream provider | [Providers → Schema](providers.md#yaml-schema), [Configuration model → providers block](configuration-model.md#providers-block) |
 | Route requests to a different provider by model name | [Rules → modelName condition](rules.md#modelname), [Actions → changeProvider](actions.md#changeprovider) |
@@ -77,8 +77,8 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | Ship every request to an S3 bucket | [Connectors → s3 connector](connectors.md#s3-connector), [Connector bindings → Worked examples](connector-bindings.md#worked-examples) |
 | Pipe a 5% sample of errors to a webhook | [Connectors → webhook connector](connectors.md#webhook-connector), [Connector bindings → Sampling](connector-bindings.md#sampling) |
 | Understand where records sit when a destination is down | [Spool → Lifecycle](spool.md#lifecycle), [Spool → Loss policy](spool.md#loss-policy) |
-| Ship every request record to a central telemetry service | [Telemetry service](telemetry-service.md), [Telemetry webhook → Record ingest](telemetry-webhook.md), [Connectors → webhook connector](connectors.md#webhook-connector) |
-| Query captured requests across gateways in one console | [Telemetry service API](telemetry-service-api.md), [Telemetry database schema](telemetry-database-schema.md) |
+| Ship every request record to an Arbiter | [Arbiter](arbiter.md), [Arbiter webhook → Record ingest](arbiter-webhook.md), [Connectors → webhook connector](connectors.md#webhook-connector) |
+| Query captured requests across gateways in one console | [Arbiter API](arbiter-api.md), [Arbiter database schema](arbiter-database-schema.md) |
 
 ---
 

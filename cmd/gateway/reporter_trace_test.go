@@ -81,7 +81,7 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 		}
 	}
 	// The gen_ai span now carries the bounded sluice.* gateway facts the
-	// central telemetry ingest reads to fill its request_events gen_ai-owned
+	// Arbiter ingest reads to fill its request_events gen_ai-owned
 	// columns (it joins span↔Record by correlation_id). configuration +
 	// protocol ride the span; the full rule chain stays on the Record.
 	if v, ok := attrValue(attrs, observability.AttrSluiceConfiguration); !ok || v.AsString() != "dev" {

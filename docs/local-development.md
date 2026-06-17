@@ -266,7 +266,7 @@ Every target in the `Makefile`, in the order they appear there:
 | `all` | `lint vet test` | — | unit | The default. Matches what CI runs on every PR (minus e2e). |
 | `build` | `go build ./...` | `NO_WEB=1` skips the SPA bundle dependency | — | `make build` rebuilds the SPA via `make web` first. Use `NO_WEB=1` to skip when you've already built it. |
 | `web` | `npm run build` in `web/` | — | — | Vite build of the **admin console** SPA into `internal/admin/webdist/`. Clears generated files before invoking; preserves the committed `placeholder.html` and `.gitignore`. |
-| `web-telemetry` | `npm run build:telemetry` in `web/` | — | — | Vite build of the **telemetry console** SPA into `internal/telemetry/server/webdist/`. Same emptyOutDir-off convention as `web`. Not declared in `.PHONY`. |
+| `web-telemetry` | `npm run build:telemetry` in `web/` | — | — | Vite build of the **Arbiter console** SPA into `internal/arbiter/server/webdist/`. Same emptyOutDir-off convention as `web`. Not declared in `.PHONY`. |
 | `web-install` | `npm install --silent` in `web/` | — | — | Idempotent; `web`, `web-telemetry`, and `web-dev` depend on it. |
 | `web-dev` | `npm run dev` in `web/` | — | — | Vite dev server with HMR. Proxies `/admin/api/v1` to the gateway admin listener on `:8081` (Vite dev server on `:5180`). Pair with a running `make dev-compose` for the full loop. |
 | `vet` | `go vet ./...` | — | unit | Cheap; runs in `all` and in CI. |

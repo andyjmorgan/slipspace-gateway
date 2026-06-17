@@ -49,12 +49,12 @@ const (
 	// token metric in the spec, so this client metric is emitted from the
 	// proxy by deliberate choice. It is the distribution view (Prometheus/
 	// Grafana); the input/output COUNTERS below carry the same totals for the
-	// central telemetry service, whose ingest does not read histograms.
+	// Arbiter, whose ingest does not read histograms.
 	MetricTokenUsage = "gen_ai.client.token.usage" //nolint:gosec // G101 false positive: metric name, not a credential
 
 	// Input/output token COUNTERS, emitted alongside the gen_ai.client.token.usage
 	// histogram above. The histogram serves Prometheus/Grafana (buckets,
-	// distributions); the central telemetry service ingests only counter/gauge
+	// distributions); the Arbiter ingests only counter/gauge
 	// metric points (its OTLP ingest skips histograms by design), so the
 	// dashboard's token-sum continuous aggregates need these counter mirrors.
 	// Same dimensions + temporality as the cache counters below, which the
@@ -84,7 +84,7 @@ const (
 	// by rule_name + configuration. Distinct from gateway.rule.matches.total
 	// (evaluator-emitted, labelled rule_name/rule_id/terminated/action_count
 	// for engine introspection): this Sluice-namespaced counter carries the
-	// configuration so the central telemetry service can roll up
+	// configuration so the Arbiter can roll up
 	// "rule X fired N times under configuration Y" without the gateway's
 	// rule→configuration map — it is the meter the rules-fired dashboard
 	// panel reads (telemetry design channel 2, invariant #4: dashboards
@@ -244,7 +244,7 @@ type Meters struct {
 	TokenUsage metric.Int64Histogram
 
 	// TokensInputTotal / TokensOutputTotal mirror the TokenUsage histogram as
-	// counters so the central telemetry service (which ingests no histograms)
+	// counters so the Arbiter (which ingests no histograms)
 	// can sum per-window token totals in its dashboard continuous aggregates.
 	TokensInputTotal  metric.Int64Counter
 	TokensOutputTotal metric.Int64Counter
@@ -286,7 +286,7 @@ type Meters struct {
 
 	// RuleFiredTotal counts rules that fired, labelled rule_name +
 	// configuration. Emitted by the reporter (where the configuration is
-	// resolved) so the central telemetry service can roll up rule hits per
+	// resolved) so the Arbiter can roll up rule hits per
 	// configuration without the gateway's rule→configuration map.
 	RuleFiredTotal metric.Int64Counter
 
@@ -416,8 +416,8 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		dst              *metric.Int64Counter
 	}{
 		{MetricRequestsTotal, "Total requests completed.", "1", &m.RequestsTotal},
-		{MetricTokensInputTotal, "Sum of provider-reported input tokens (counter mirror of the token-usage histogram for the telemetry service's dashboard rollups).", "1", &m.TokensInputTotal},
-		{MetricTokensOutputTotal, "Sum of provider-reported output tokens (counter mirror of the token-usage histogram for the telemetry service's dashboard rollups).", "1", &m.TokensOutputTotal},
+		{MetricTokensInputTotal, "Sum of provider-reported input tokens (counter mirror of the token-usage histogram for the Arbiter's dashboard rollups).", "1", &m.TokensInputTotal},
+		{MetricTokensOutputTotal, "Sum of provider-reported output tokens (counter mirror of the token-usage histogram for the Arbiter's dashboard rollups).", "1", &m.TokensOutputTotal},
 		{MetricTokensCachedTotal, "Sum of provider-reported cached input tokens (cache reads, billed at the discounted rate).", "1", &m.TokensCachedTotal},
 		{MetricTokensCacheCreationTotal, "Sum of provider-reported cache-write tokens (Anthropic's chargeable cache-creation premium).", "1", &m.TokensCacheCreationTotal},
 		{MetricTagsAppliedTotal, "Count of AddTagAction applications labelled by tag name. Cardinality bounded by configured policy.", "1", &m.TagsAppliedTotal},

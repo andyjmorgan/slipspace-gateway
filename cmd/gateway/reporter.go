@@ -24,6 +24,7 @@ import (
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
 	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/pusher"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/contentredact"
 	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
@@ -39,7 +40,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/observability/unmapped"
 	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
 	"github.com/andyjmorgan/sluice-gateway/internal/spool"
-	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/pusher"
 )
 
 // modelLabelMaxLen caps the length of the `model` metric label value to
@@ -790,7 +790,7 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 
 // recordRuleFired bumps sluice.rule.fired once per drained rule match,
 // labelled rule_name + configuration. This is the channel-2 meter the
-// central telemetry service rolls up for the rules-fired dashboard panel
+// Arbiter rolls up for the rules-fired dashboard panel
 // (invariant #4) — the same fact also rides the Record's rule chain
 // (channel 3) for the per-request inspector, at a different altitude.
 func (r *reporterRun) recordRuleFired(ctx context.Context, matches []events.RuleMatched) {
@@ -977,7 +977,7 @@ func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 	if r.factory.meters == nil || r.factory.meters.TagsAppliedTotal == nil {
 		return
 	}
-	// Carry the configuration alongside the tag so the central telemetry
+	// Carry the configuration alongside the tag so the Arbiter
 	// service can roll up tag applications per configuration (the tags-fired
 	// dashboard panel) without the gateway's tag→configuration map.
 	for _, tag := range state.Tags {
@@ -991,7 +991,7 @@ func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 // populateTokens reads the captured response (when present) and writes
 // the extracted token snapshot onto ev, the gen_ai.client.token.usage
 // histogram (input/output, keyed by gen_ai.token.type), and the four
-// sluice.tokens.* counters (input/output mirrors for the telemetry service,
+// sluice.tokens.* counters (input/output mirrors for the Arbiter,
 // plus the cache-read/cache-creation counters).
 func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	if len(r.responseFrames) == 0 {
@@ -1027,7 +1027,7 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 		r.factory.meters.TokenUsage.Record(ctx, int64(snap.Output),
 			metric.WithAttributes(append(base, attribute.String(observability.AttrGenAITokenType, observability.TokenTypeOutput))...))
 	}
-	// Counter mirrors of the histogram above: the central telemetry service
+	// Counter mirrors of the histogram above: the Arbiter
 	// ingests counters, not histograms, so its dashboard token-sum aggregates
 	// read these. Same base dimensions (no token.type — the name carries it).
 	if snap.Input > 0 && r.factory.meters.TokensInputTotal != nil {
@@ -1150,7 +1150,7 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 
 	// The gen_ai span carries GenAI semconv (model / provider / operation /
 	// usage / duration) plus the standard server.* and HTTP status, and a
-	// bounded set of sluice.* gateway facts the central telemetry ingest reads
+	// bounded set of sluice.* gateway facts the Arbiter ingest reads
 	// to populate the gen_ai-owned columns of its request_events view. The
 	// ingest COALESCEs the span feed with the Record feed by correlation_id
 	// (invariant #4) — correlation_id is the join key, and the gateway scalars

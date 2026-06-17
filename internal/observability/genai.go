@@ -54,7 +54,7 @@ const (
 	// groups every request of a conversation, including all of its subagent
 	// threads. The semconv has no session-vs-thread distinction (conversation.id
 	// covers both) and no parent/child concept, so the root rides this sluice.*
-	// attribute; the telemetry service projects it to request_events.session_id
+	// attribute; the Arbiter projects it to request_events.session_id
 	// for top-down bundling. For a main agent it equals gen_ai.conversation.id.
 	AttrSluiceSessionID = "sluice.session_id"
 
@@ -236,7 +236,7 @@ const (
 
 	// AttrSluiceMethod, AttrSluiceAPIKeyName, AttrSluiceUpstreamStatus,
 	// AttrSluiceTags, and AttrSluiceRulesFired are the gateway facts the
-	// central telemetry ingest reads off the gen_ai span to populate the
+	// Arbiter ingest reads off the gen_ai span to populate the
 	// request_events gateway-owned columns. The span is the SINGLE writer of
 	// that entity — the Record feed lands only a lazy verbatim blob, joined by
 	// correlation_id when an operator opens the inspector (invariant #4) — so

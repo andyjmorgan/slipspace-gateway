@@ -116,7 +116,7 @@ type Connector struct {
 	// --- webhook specifics ---
 
 	// URL is the receiver endpoint each record is POSTed to (e.g. the
-	// telemetry service's /api/v1/ingest/record, or any customer endpoint).
+	// Arbiter's /api/v1/ingest/record, or any customer endpoint).
 	// Required when Type == webhook.
 	URL string `yaml:"url,omitempty" json:"url,omitempty"`
 
@@ -125,9 +125,9 @@ type Connector struct {
 	SecretRef string `yaml:"secret_ref,omitempty" json:"secret_ref,omitempty"`
 
 	// GatewayID is sent as the X-Sluice-Gateway-Id header so a receiver that
-	// keys HMAC secrets by gateway (the telemetry service registry) can look
+	// keys HMAC secrets by gateway (the Arbiter registry) can look
 	// the secret up. Optional for a generic receiver that verifies the
-	// signature alone; required when pushing to the telemetry service.
+	// signature alone; required when pushing to the Arbiter.
 	GatewayID string `yaml:"gateway_id,omitempty" json:"gateway_id,omitempty"`
 
 	// TimeoutMS is the per-call HTTP timeout in milliseconds. Required

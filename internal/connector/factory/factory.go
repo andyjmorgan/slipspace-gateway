@@ -6,7 +6,7 @@
 //
 // Only the spool-backed durable types (s3, azure_blob) are built here. The
 // webhook type is a real-time, non-spooled pusher realized by
-// internal/telemetry/pusher and wired directly in cmd/gateway — it is not a
+// internal/arbiter/pusher and wired directly in cmd/gateway — it is not a
 // connector.Connector and never reaches this factory (the gateway partitions
 // it out before BuildAll); Build rejects it as a safety net.
 package factory

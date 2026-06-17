@@ -43,11 +43,11 @@ web: web-install
 web-telemetry: web-install
 	# Second build target — the telemetry console SPA. Same emptyOutDir-off
 	# convention: clear only generated artefacts, preserve placeholder + ignore.
-	rm -rf internal/telemetry/server/webdist/index.telemetry.html \
-		internal/telemetry/server/webdist/assets \
-		internal/telemetry/server/webdist/favicon.ico \
-		internal/telemetry/server/webdist/sluice.png \
-		internal/telemetry/server/webdist/sluice.svg
+	rm -rf internal/arbiter/server/webdist/index.telemetry.html \
+		internal/arbiter/server/webdist/assets \
+		internal/arbiter/server/webdist/favicon.ico \
+		internal/arbiter/server/webdist/sluice.png \
+		internal/arbiter/server/webdist/sluice.svg
 	cd web && $(NPM) run build:telemetry
 
 web-install:
