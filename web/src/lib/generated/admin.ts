@@ -1142,7 +1142,7 @@ export interface SessionSpanInputPart {
 // source: settings.go
 
 /**
- * SettingsResponse is the telemetry service's applied (loaded) config, served
+ * SettingsResponse is the Arbiter's applied (loaded) config, served
  * read-only and secret-redacted at GET /api/v1/settings. Config is the config
  * document as a generic tree (keys mirror the snake_case YAML the operator
  * wrote), so the console can pretty-print it as JSON or stringify it back to

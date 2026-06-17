@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	binaryName      = "telemetry"
+	binaryName      = "arbiter"
 	shutdownTimeout = 5 * time.Second
 	storeOpenBudget = 15 * time.Second
 )
@@ -48,7 +48,7 @@ func main() {
 }
 
 func mainErr() int {
-	configPath := flag.String("config", os.Getenv("SLUICE_TELEMETRY_CONFIG"), "path to the telemetry config YAML")
+	configPath := flag.String("config", os.Getenv("SLUICE_ARBITER_CONFIG"), "path to the Arbiter config YAML")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -64,7 +64,7 @@ func mainErr() int {
 	defer stop()
 
 	if err := run(ctx, *configPath, log); err != nil {
-		log.Error("telemetry exited with error", "err", err)
+		log.Error("arbiter exited with error", "err", err)
 		return 1
 	}
 	return 0
@@ -87,7 +87,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	defer st.Close()
 
 	if err := st.Migrate(ctx); err != nil {
-		return fmt.Errorf("telemetry: migrate: %w", err)
+		return fmt.Errorf("arbiter: migrate: %w", err)
 	}
 	if v, err := st.SchemaVersion(ctx); err == nil {
 		log.Info("store ready", "schema_version", v)
@@ -97,7 +97,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	// inline it and the boot scan outlasts the liveness probe). Batched, bound
 	// to the process ctx, run-once via backfill_runs, and non-fatal — a failure
 	// only leaves pre-v10 rows reading 0 tokens until the next boot retries.
-	safego.Go(ctx, "telemetry.backfill.tokens", log, nil, func() {
+	safego.Go(ctx, "arbiter.backfill.tokens", log, nil, func() {
 		n, err := st.BackfillTokenColumns(ctx, 0)
 		switch {
 		case err != nil && ctx.Err() != nil:
@@ -116,7 +116,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	// every span — the 30 s scan the column exists to replace). Run-once via
 	// backfill_runs, non-fatal — a failure only leaves pre-v12 rows reading an
 	// empty tag set (excluded from tag facets/filters) until the next boot.
-	safego.Go(ctx, "telemetry.backfill.tags", log, nil, func() {
+	safego.Go(ctx, "arbiter.backfill.tags", log, nil, func() {
 		n, err := st.BackfillTags(ctx, 0)
 		switch {
 		case err != nil && ctx.Err() != nil:
@@ -135,7 +135,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	if cfg.ScannerEnabled() {
 		scanner, err := arbiter.New(ctx, cfg, log)
 		if err != nil {
-			return fmt.Errorf("telemetry: arbiter: %w", err)
+			return fmt.Errorf("arbiter: scanner: %w", err)
 		}
 		exploder = scanner
 		scanner.Run(ctx, st)
@@ -160,7 +160,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		HTTPServer(cfg.HTTPBind)
 
 	errCh := make(chan error, 1)
-	safego.Go(ctx, "telemetry.serve.http", log, nil, func() {
+	safego.Go(ctx, "arbiter.serve.http", log, nil, func() {
 		log.Info("http listening", "addr", cfg.HTTPBind)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
@@ -171,9 +171,9 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 
 	lis, err := net.Listen("tcp", cfg.OTLPBind)
 	if err != nil {
-		return fmt.Errorf("telemetry: otlp listen: %w", err)
+		return fmt.Errorf("arbiter: otlp listen: %w", err)
 	}
-	safego.Go(ctx, "telemetry.serve.otlp", log, nil, func() {
+	safego.Go(ctx, "arbiter.serve.otlp", log, nil, func() {
 		log.Info("otlp listening", "addr", cfg.OTLPBind)
 		if err := otlp.Serve(lis); err != nil {
 			errCh <- err
@@ -188,7 +188,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	case err := <-errCh:
 		if err != nil {
 			otlp.GracefulStop()
-			return fmt.Errorf("telemetry: serve: %w", err)
+			return fmt.Errorf("arbiter: serve: %w", err)
 		}
 		return nil
 	}
@@ -201,7 +201,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	// Detached from the cancelled signal context on purpose — the shutdown
 	// budget must outlive the SIGTERM that triggered it.
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck
-		return fmt.Errorf("telemetry: shutdown: %w", err)
+		return fmt.Errorf("arbiter: shutdown: %w", err)
 	}
 	return nil
 }

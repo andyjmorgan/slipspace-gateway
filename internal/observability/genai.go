@@ -56,13 +56,13 @@ const (
 	// covers both) and no parent/child concept, so the root rides this sluice.*
 	// attribute; the Arbiter projects it to request_events.session_id
 	// for top-down bundling. For a main agent it equals gen_ai.conversation.id.
-	AttrSluiceSessionID = "sluice.session_id"
+	AttrSluiceSessionID = "slipspace.session_id"
 
 	// AttrSluiceParentConversationID carries the parent of a subagent thread —
 	// the hierarchy edge the semconv has no home for. Set only when the resolved
 	// conversation is a subagent thread (distinct from the session); empty for a
 	// main agent. Codex supplies it explicitly via X-Codex-Parent-Thread-Id.
-	AttrSluiceParentConversationID = "sluice.parent_conversation_id"
+	AttrSluiceParentConversationID = "slipspace.parent_conversation_id"
 
 	// AttrGenAIAgentID is the spec home for the GenAI agent identifier (see
 	// the GenAI agent-spans convention). Sluice resolves it from
@@ -245,27 +245,27 @@ const (
 	// — method/api-key/rule names are unbounded cardinality. The ingest reads
 	// these keys as string literals; do not rename without rolling the telemetry
 	// service in lockstep.
-	AttrSluiceMethod         = "sluice.method"
-	AttrSluiceAPIKeyName     = "sluice.api_key_name" //nolint:gosec // G101 false positive: attribute key naming the API key, not its secret value
-	AttrSluiceUpstreamStatus = "sluice.upstream_status"
+	AttrSluiceMethod         = "slipspace.method"
+	AttrSluiceAPIKeyName     = "slipspace.api_key_name" //nolint:gosec // G101 false positive: attribute key naming the API key, not its secret value
+	AttrSluiceUpstreamStatus = "slipspace.upstream_status"
 
 	// AttrSluiceTags is the post-rule tag set attached to the request, as a
 	// string slice. AttrSluiceRulesFired is the set of fired rule names (names
 	// only — actions/termination ride the Record's rule chain, not the span).
-	AttrSluiceTags       = "sluice.tags"
-	AttrSluiceRulesFired = "sluice.rules_fired"
+	AttrSluiceTags       = "slipspace.tags"
+	AttrSluiceRulesFired = "slipspace.rules_fired"
 
 	// AttrSluiceCorrelationID carries the request correlation id on the
 	// span so a trace can be cross-referenced to logs and captured
 	// records (which key on the same id).
-	AttrSluiceCorrelationID = "sluice.correlation_id"
+	AttrSluiceCorrelationID = "slipspace.correlation_id"
 
 	// AttrSluiceResilienceTarget and AttrSluiceResilienceOutcome label a
 	// per-attempt child span with the resilience target name and the
 	// attempt outcome (success, failure_status, transport_error,
 	// cb_blocked).
-	AttrSluiceResilienceTarget  = "sluice.resilience.target"
-	AttrSluiceResilienceOutcome = "sluice.resilience.outcome"
+	AttrSluiceResilienceTarget  = "slipspace.resilience.target"
+	AttrSluiceResilienceOutcome = "slipspace.resilience.outcome"
 
 	// AttrSluiceUnmappedField is the dotted JSON path of a provider field
 	// this build does not model — the per-field dimension on

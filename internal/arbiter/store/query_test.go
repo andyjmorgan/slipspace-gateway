@@ -492,7 +492,7 @@ func TestDecodeSpanFields(t *testing.T) {
 		t.Errorf("malformed blob -> %+v", f)
 	}
 	// Valid blob projects the drill-down fields.
-	e := RequestEvent{SpanEvent: []byte(`{"sluice.method":"POST","sluice.latency_ms":42,"gen_ai.usage.input_tokens":10,"gen_ai.request.stream":true,"tags":["a"],"rules_fired":["r1"]}`)}
+	e := RequestEvent{SpanEvent: []byte(`{"slipspace.method":"POST","slipspace.latency_ms":42,"gen_ai.usage.input_tokens":10,"gen_ai.request.stream":true,"tags":["a"],"rules_fired":["r1"]}`)}
 	f := e.DecodeSpanFields()
 	if f.Method != "POST" || f.LatencyMs != 42 || f.TokensIn != 10 || !f.Streaming {
 		t.Errorf("fields = %+v", f)

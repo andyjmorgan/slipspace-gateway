@@ -38,7 +38,7 @@ func TestBackfillTokenColumns_Postgres(t *testing.T) {
 	seed("bf-1", `{"gen_ai.usage.input_tokens":11,"gen_ai.usage.output_tokens":3}`)
 	seed("bf-2", `{"gen_ai.usage.input_tokens":250,"gen_ai.usage.output_tokens":40}`)
 	seed("bf-3", `{"gen_ai.usage.input_tokens":"not a number","gen_ai.usage.output_tokens":7}`)
-	seed("bf-4", `{"sluice.method":"POST"}`) // no usage keys -> stays 0
+	seed("bf-4", `{"slipspace.method":"POST"}`) // no usage keys -> stays 0
 	seed("bf-5", `{"gen_ai.usage.input_tokens":1,"gen_ai.usage.output_tokens":1}`)
 
 	n, err := st.BackfillTokenColumns(ctx, 2)

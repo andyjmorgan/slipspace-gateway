@@ -25,7 +25,7 @@ import (
 const (
 	// attrCorrelationID is the join key — the only attribute whose absence makes
 	// a span unusable (no entity key, no record join).
-	attrCorrelationID = "sluice.correlation_id"
+	attrCorrelationID = "slipspace.correlation_id"
 
 	// attrEnriched flags a span Arbiter itself emitted (mirrors
 	// arbiter.AttrEnriched). The receiver declines re-admitting flagged spans so
@@ -50,11 +50,11 @@ const (
 	// attribute, since the semconv has no session-vs-thread split). It projects
 	// to session_id; gen_ai.conversation.id is the fallback for spans predating
 	// it (where conversation == session for the main agent).
-	attrSluiceSessionID = "sluice.session_id"
+	attrSluiceSessionID = "slipspace.session_id"
 
 	// attrSluiceParentConversationID is the parent of a subagent thread — the
 	// hierarchy edge with no semconv home. Projects to parent_conversation_id.
-	attrSluiceParentConversationID = "sluice.parent_conversation_id"
+	attrSluiceParentConversationID = "slipspace.parent_conversation_id"
 
 	// Gateway facts the gateway now emits on the span (relaxed channel boundary).
 	// These are the EXACT string keys the destination/reporter writes — the
@@ -65,8 +65,8 @@ const (
 	// arrays for the GIN filters.
 	attrSluiceConfiguration = "sluice.configuration"
 	attrSluiceProtocol      = "sluice.protocol"
-	attrSluiceTags          = "sluice.tags"
-	attrSluiceRulesFired    = "sluice.rules_fired"
+	attrSluiceTags          = "slipspace.tags"
+	attrSluiceRulesFired    = "slipspace.rules_fired"
 
 	// attrResourceGatewayID is the resource attribute the gateway id is lifted
 	// from; folded into span_event (no promoted column unless a filter needs it).
@@ -75,7 +75,7 @@ const (
 	// span_event JSON keys for the projected/derived values. These mirror the
 	// store.SpanFields tags so a drill-down decode reads them back.
 	keyGatewayID = "gateway_id"
-	keyLatencyMs = "sluice.latency_ms"
+	keyLatencyMs = "slipspace.latency_ms"
 	keyTags      = "tags"
 	keyRules     = "rules_fired"
 	keyContent   = "gen_ai_content"

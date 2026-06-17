@@ -57,7 +57,7 @@ func TestMigrate_AppliesAndIsIdempotent(t *testing.T) {
 func TestRequestEvent_RoundTrip(t *testing.T) {
 	st := migratedStore(t)
 	ctx := context.Background()
-	span := []byte(`{"sluice.method":"POST","gen_ai.usage.input_tokens":10,"gen_ai.usage.output_tokens":20,"tags":["a"],"gen_ai_content":{"input_messages":[]}}`)
+	span := []byte(`{"slipspace.method":"POST","gen_ai.usage.input_tokens":10,"gen_ai.usage.output_tokens":20,"tags":["a"],"gen_ai_content":{"input_messages":[]}}`)
 	e := store.RequestEvent{
 		CorrelationID: "evt-rt-1",
 		Provider:      "anthropic",

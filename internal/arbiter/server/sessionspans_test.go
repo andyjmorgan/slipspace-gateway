@@ -49,8 +49,8 @@ func TestSessionSpanFromEvent(t *testing.T) {
 				Model:                "claude-opus-4-8",
 				StatusCode:           200,
 				SpanEvent: spanBlob(t, map[string]any{
-					"sluice.latency_ms":                    1234,
-					"sluice.upstream_status":               200,
+					"slipspace.latency_ms":                 1234,
+					"slipspace.upstream_status":            200,
 					"gen_ai.response.time_to_first_chunk":  0.5,
 					"gen_ai.response.finish_reasons":       []string{"tool_use", "end_turn"},
 					"gen_ai.usage.input_tokens":            100,
@@ -108,7 +108,7 @@ func TestSessionSpanFromEvent(t *testing.T) {
 				SessionID:     "sess-1",
 				StatusCode:    200,
 				SpanEvent: spanBlob(t, map[string]any{
-					"sluice.latency_ms": 50,
+					"slipspace.latency_ms": 50,
 					"gen_ai_content": map[string]any{
 						"input_messages": []any{map[string]any{
 							"role": "user",
@@ -239,10 +239,10 @@ func TestSessionSpanFromEvent(t *testing.T) {
 				SessionID:      "sess-1",
 				ConversationID: "sess-1",
 				SpanEvent: spanBlob(t, map[string]any{
-					"sluice.latency_ms":              "750",
+					"slipspace.latency_ms":           "750",
 					"gen_ai.usage.input_tokens":      "42",
 					"gen_ai.response.finish_reasons": "end_turn",
-					"sluice.upstream_status":         429.0,
+					"slipspace.upstream_status":      429.0,
 				}),
 			},
 			want: adminc.SessionSpan{
@@ -591,7 +591,7 @@ func TestSessionSpansHandler_PoolOrder(t *testing.T) {
 			CorrelationID: "c" + strconv.Itoa(i),
 			ObservedAt:    at.Add(time.Duration(i) * time.Second),
 			SessionID:     "sess-1", ConversationID: "sess-1",
-			SpanEvent: spanBlob(t, map[string]any{"sluice.latency_ms": i}),
+			SpanEvent: spanBlob(t, map[string]any{"slipspace.latency_ms": i}),
 		})
 	}
 	h := newQueryServer(t, &fakeQueries{session: events})

@@ -1,5 +1,5 @@
-# Telemetry service config used by docker-compose.telemetry.yaml. Mounted at
-# /etc/sluice/telemetry.yaml. File contents are trusted (no ${VAR} interpolation
+# Arbiter service config used by docker-compose.arbiter.yaml. Mounted at
+# /etc/sluice/arbiter.yaml. File contents are trusted (no ${VAR} interpolation
 # inside the YAML — only the file path is configurable).
 
 # Console + HMAC-webhook ingest listener.
@@ -21,8 +21,8 @@ content_max_bytes: 65536
 span_field_max_bytes: 65536
 
 postgres:
-  # Matches the telemetry-db service in docker-compose.telemetry.yaml.
-  dsn: "postgres://telemetry:telemetry@telemetry-db:5432/telemetry?sslmode=disable"
+  # Matches the arbiter-db service in docker-compose.arbiter.yaml.
+  dsn: "postgres://telemetry:telemetry@arbiter-db:5432/telemetry?sslmode=disable"
 
 console:
   username: "admin"

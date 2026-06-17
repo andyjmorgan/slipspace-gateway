@@ -1,14 +1,14 @@
-# Quickstart stack 3 — gateway + central telemetry service (+ Postgres).
+# Quickstart stack 3 — gateway + the Arbiter service (+ Postgres).
 #
 #   cp .env.example .env      # then edit in your provider keys
-#   docker compose -f compose.telemetry.yaml up -d --wait
+#   docker compose -f compose.arbiter.yaml up -d --wait
 #
 # Data plane:        http://localhost:8585  (point your SDK base URL here)
 # Gateway console:   http://localhost:8081  (admin / $SLUICE_ADMIN_PASSWORD)
-# Telemetry console: http://localhost:8686  (admin / "sluice-telemetry" default)
+# Arbiter console: http://localhost:8686  (admin / "arbiter" default)
 #
-# The gateway pushes gen_ai spans + sluice meters to the telemetry service over
-# OTLP gRPC (:8687); the telemetry console aggregates them across requests. This
+# The gateway pushes gen_ai spans + sluice meters to the Arbiter over
+# OTLP gRPC (:8687); the Arbiter console aggregates them across requests. This
 # is the OTLP feed only — to also ship the full per-request Record (bodies,
 # headers, rule chain) for the message inspector, see "Full Record feed" in
 # README.md.
@@ -46,8 +46,8 @@ services:
       SLUICE_LOG_FORMAT: json
       SLUICE_LOG_LEVEL: ${SLUICE_LOG_LEVEL:-info}
       SLUICE_ADMIN_PASSWORD: ${SLUICE_ADMIN_PASSWORD:-sluice-gateway}
-      # Push the gen_ai + sluice telemetry feeds to the telemetry service.
-      SLUICE_OTLP_ENDPOINT: telemetry:8687
+      # Push the gen_ai + sluice telemetry feeds to the Arbiter.
+      SLUICE_OTLP_ENDPOINT: arbiter:8687
       SLUICE_OTLP_PROTOCOL: grpc
       SLUICE_ENV: quickstart
     ports:
@@ -59,18 +59,18 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-      telemetry:
+      arbiter:
         condition: service_started
     restart: unless-stopped
 
-  telemetry-db:
+  arbiter-db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: telemetry
       POSTGRES_PASSWORD: telemetry
       POSTGRES_DB: telemetry
     volumes:
-      - telemetry-pg:/var/lib/postgresql/data
+      - arbiter-pg:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U telemetry"]
       interval: 5s
@@ -78,19 +78,19 @@ services:
       retries: 10
     restart: unless-stopped
 
-  telemetry:
-    image: ghcr.io/andyjmorgan/sluice-telemetry:${SLUICE_IMAGE_TAG:-latest}
+  arbiter:
+    image: ghcr.io/andyjmorgan/arbiter:${SLUICE_IMAGE_TAG:-latest}
     ports:
       - "8686:8686" # console + Record webhook ingest
       - "8687:8687" # OTLP gRPC
     volumes:
-      - ./config/telemetry.yaml:/etc/sluice/telemetry.yaml:ro
+      - ./config/arbiter.yaml:/etc/sluice/arbiter.yaml:ro
     depends_on:
-      telemetry-db:
+      arbiter-db:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
   sluice-config:
   sluice-spool:
-  telemetry-pg:
+  arbiter-pg:

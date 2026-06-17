@@ -98,7 +98,7 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 			strKV(attrModel, "claude-x"),
 			strKV(attrSluiceConfiguration, "dev"),
 			strKV(attrSluiceProtocol, "messages"),
-			strKV("sluice.method", "POST"),
+			strKV("slipspace.method", "POST"),
 			intKV(attrStatusCode, 200),
 			intKV(attrInputTokens, 10),
 			intKV(attrOutputTokens, 20),
@@ -262,7 +262,7 @@ func TestBuildSpanEvent_ContentAndDerived(t *testing.T) {
 	if _, ok := blob["gen_ai_content"]; !ok {
 		t.Errorf("content not folded into blob: %s", e.SpanEvent)
 	}
-	if _, ok := blob["sluice.latency_ms"]; !ok {
+	if _, ok := blob["slipspace.latency_ms"]; !ok {
 		t.Errorf("derived latency missing: %s", e.SpanEvent)
 	}
 }

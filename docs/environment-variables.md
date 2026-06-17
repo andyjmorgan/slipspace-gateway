@@ -21,7 +21,7 @@ Ground truth lives in [`internal/config/env.go`](../internal/config/env.go) (the
 7. [Rules engine](#rules-engine)
 8. [Shutdown and drain](#shutdown-and-drain)
 9. [Upstream forwarding](#upstream-forwarding)
-10. [Arbiter](#telemetry-service)
+10. [Arbiter](#arbiter)
 11. [Validation and error sentinels](#validation-and-error-sentinels)
 12. [Notes on parsing semantics](#notes-on-parsing-semantics)
 
@@ -214,8 +214,8 @@ The Arbiter is a **separate binary** (`cmd/arbiter`), not the gateway. It does *
 
 | Variable | Default | Type | Effect |
 |---|---|---|---|
-| `SLUICE_TELEMETRY_CONFIG` | _(empty)_ | string (path) | Path to the Arbiter's YAML config file. Read as the default value of the `-config` flag (the flag wins when both are set). When neither is set, `config.Load` returns `ErrNoConfig` and the process exits non-zero — the service has no usable defaults without a Postgres DSN and gateway registry. |
-| `LOG_LEVEL` | `info` | enum string | Minimum slog level for the telemetry binary's JSON logger: `debug` / `info` / `warn` / `error` (case-insensitive; unknown values fall back to `info`). Note this is bare `LOG_LEVEL`, **not** the gateway's `SLUICE_LOG_LEVEL`. |
+| `SLUICE_ARBITER_CONFIG` | _(empty)_ | string (path) | Path to the Arbiter's YAML config file. Read as the default value of the `-config` flag (the flag wins when both are set). When neither is set, `config.Load` returns `ErrNoConfig` and the process exits non-zero — the service has no usable defaults without a Postgres DSN and gateway registry. |
+| `LOG_LEVEL` | `info` | enum string | Minimum slog level for the arbiter binary's JSON logger: `debug` / `info` / `warn` / `error` (case-insensitive; unknown values fall back to `info`). Note this is bare `LOG_LEVEL`, **not** the gateway's `SLUICE_LOG_LEVEL`. |
 
 Everything else the service needs — the HTTP and OTLP listener binds (defaults `0.0.0.0:8686` and `0.0.0.0:8687`), the Postgres DSN, the console Basic-auth credentials, the per-gateway HMAC secrets, and the gen_ai content cap (`content_max_bytes`, default 16 KiB) — comes from the YAML file, not env vars. Like the gateway, the file is trusted material with no `${VAR}` expansion. See [`arbiter.md`](arbiter.md) for the full reference and [`arbiter-webhook.md`](arbiter-webhook.md) for the Record ingest contract.
 

@@ -53,8 +53,8 @@ import (
 // models. The names are the OTel attribute keys the gateway emits (see
 // internal/observability/genai.go); the blob stores them verbatim.
 const (
-	blobKeyLatencyMs        = "sluice.latency_ms"
-	blobKeyUpstreamStatus   = "sluice.upstream_status"
+	blobKeyLatencyMs        = "slipspace.latency_ms"
+	blobKeyUpstreamStatus   = "slipspace.upstream_status"
 	blobKeyTTFC             = "gen_ai.response.time_to_first_chunk"
 	blobKeyFinishReasons    = "gen_ai.response.finish_reasons"
 	blobKeyInputTokens      = "gen_ai.usage.input_tokens"                //nolint:gosec // attribute key, not a credential

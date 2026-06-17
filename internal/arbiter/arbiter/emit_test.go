@@ -33,8 +33,8 @@ func TestOTelEmitter_EmitVerdict(t *testing.T) {
 	if got[AttrEnriched] != true {
 		t.Errorf("enriched flag = %v, want true", got[AttrEnriched])
 	}
-	if got["sluice.correlation_id"] != "corr-9" {
-		t.Errorf("correlation_id = %v", got["sluice.correlation_id"])
+	if got["slipspace.correlation_id"] != "corr-9" {
+		t.Errorf("correlation_id = %v", got["slipspace.correlation_id"])
 	}
 	if got["slipspace.security.verdict"] != StateFlagged {
 		t.Errorf("verdict = %v", got["slipspace.security.verdict"])

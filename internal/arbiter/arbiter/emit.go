@@ -54,7 +54,7 @@ func newOTelEmitter(tp *sdktrace.TracerProvider) *otelEmitter {
 func (e *otelEmitter) EmitVerdict(ctx context.Context, correlationID string, v store.Verdict) {
 	_, span := e.tracer.Start(ctx, "arbiter.verdict")
 	span.SetAttributes(
-		attribute.String("sluice.correlation_id", correlationID),
+		attribute.String("slipspace.correlation_id", correlationID),
 		attribute.Bool(AttrEnriched, true),
 		attribute.String("slipspace.security.verdict", v.State),
 		attribute.Float64("slipspace.security.max_score", float64(v.MaxScore)),

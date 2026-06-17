@@ -49,7 +49,7 @@ var (
 	buildErr  error
 )
 
-// buildBinary compiles cmd/telemetry once for the package.
+// buildBinary compiles cmd/arbiter once for the package.
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
@@ -379,9 +379,9 @@ func TestE2E_RecordDetailEnriched(t *testing.T) {
 	// The span is the single writer of the entity; it carries the fired-rule
 	// names so the list view can show which rules matched.
 	svc.sendSpan(t,
-		strKV("sluice.correlation_id", "enriched-1"),
+		strKV("slipspace.correlation_id", "enriched-1"),
 		strKV("gen_ai.provider.name", "anthropic"),
-		strSliceKV("sluice.rules_fired", "redirect", "stop"),
+		strSliceKV("slipspace.rules_fired", "redirect", "stop"),
 	)
 
 	rec := recordWith("enriched-1", `{"q":"hi"}`, `{"a":"yo"}`)
@@ -446,12 +446,12 @@ func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 	// ride the span too, alongside the GenAI semconv. The whole span lands in
 	// span_event; the columns + tags project out of it.
 	svc.sendSpan(t,
-		strKV("sluice.correlation_id", "otlp-1"),
+		strKV("slipspace.correlation_id", "otlp-1"),
 		strKV("gen_ai.provider.name", "anthropic"),
 		strKV("gen_ai.request.model", "claude-x"),
 		strKV("sluice.configuration", "dev"),
 		strKV("sluice.protocol", "messages"),
-		strSliceKV("sluice.tags", "alpha", "beta"),
+		strSliceKV("slipspace.tags", "alpha", "beta"),
 		intKV("http.response.status_code", 200),
 		intKV("gen_ai.usage.input_tokens", 10),
 		intKV("gen_ai.usage.output_tokens", 20),
@@ -539,7 +539,7 @@ func TestE2E_SessionRollup(t *testing.T) {
 	svc := startService(t)
 	for _, id := range []string{"sess-a", "sess-b"} {
 		svc.sendSpan(t,
-			strKV("sluice.correlation_id", id),
+			strKV("slipspace.correlation_id", id),
 			strKV("gen_ai.conversation.id", "session-1"),
 			strKV("gen_ai.provider.name", "openai"),
 			intKV("http.response.status_code", 200),
@@ -690,7 +690,7 @@ func TestE2E_MessageBrowserFilters(t *testing.T) {
 	mk := func(id, provider, model, cfg, endpoint, session, agent, user string, tags []string) {
 		all := append([]string{"mbf-all"}, tags...)
 		attrs := []*commonpb.KeyValue{
-			strKV("sluice.correlation_id", id),
+			strKV("slipspace.correlation_id", id),
 			strKV("gen_ai.provider.name", provider),
 			strKV("gen_ai.request.model", model),
 			strKV("sluice.configuration", cfg),
@@ -698,7 +698,7 @@ func TestE2E_MessageBrowserFilters(t *testing.T) {
 			strKV("gen_ai.conversation.id", session),
 			strKV("gen_ai.agent.id", agent),
 			strKV("enduser.id", user),
-			strSliceKV("sluice.tags", all...),
+			strSliceKV("slipspace.tags", all...),
 			intKV("http.response.status_code", 200),
 		}
 		svc.sendSpan(t, attrs...)
@@ -853,13 +853,13 @@ func TestE2E_SessionSpansDTO(t *testing.T) {
 	// Span 1: assistant answers with text + a client tool call, and reports a
 	// server-side web_search alongside.
 	svc.sendSpan(t,
-		strKV("sluice.correlation_id", "lcs-a"),
-		strKV("sluice.session_id", "lifecycle-1"),
+		strKV("slipspace.correlation_id", "lcs-a"),
+		strKV("slipspace.session_id", "lifecycle-1"),
 		strKV("gen_ai.conversation.id", "lifecycle-1"),
 		strKV("gen_ai.provider.name", "anthropic"),
 		strKV("gen_ai.request.model", "claude-x"),
 		intKV("http.response.status_code", 200),
-		intKV("sluice.upstream_status", 200),
+		intKV("slipspace.upstream_status", 200),
 		intKV("gen_ai.usage.input_tokens", 100),
 		intKV("gen_ai.usage.output_tokens", 25),
 		intKV("gen_ai.usage.server_tool_use.web_search_requests", 2),
@@ -870,8 +870,8 @@ func TestE2E_SessionSpansDTO(t *testing.T) {
 	)
 	// Span 2: the tool continuation — the result joins span 1's call by id.
 	svc.sendSpan(t,
-		strKV("sluice.correlation_id", "lcs-b"),
-		strKV("sluice.session_id", "lifecycle-1"),
+		strKV("slipspace.correlation_id", "lcs-b"),
+		strKV("slipspace.session_id", "lifecycle-1"),
 		strKV("gen_ai.conversation.id", "lifecycle-1"),
 		strKV("gen_ai.provider.name", "anthropic"),
 		strKV("gen_ai.request.model", "claude-x"),
@@ -1093,8 +1093,8 @@ func TestE2E_SessionSpansLargeSessionPaged(t *testing.T) {
 			StartTimeUnixNano: uint64(start.UnixNano()),                             //nolint:gosec // test timestamp
 			EndTimeUnixNano:   uint64(start.Add(200 * time.Millisecond).UnixNano()), //nolint:gosec // test timestamp
 			Attributes: []*commonpb.KeyValue{
-				strKV("sluice.correlation_id", fmt.Sprintf("big-%03d", i)),
-				strKV("sluice.session_id", "big-session"),
+				strKV("slipspace.correlation_id", fmt.Sprintf("big-%03d", i)),
+				strKV("slipspace.session_id", "big-session"),
 				strKV("gen_ai.conversation.id", "big-session"),
 				strKV("gen_ai.provider.name", "anthropic"),
 				strKV("gen_ai.request.model", "claude-x"),

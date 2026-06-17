@@ -33,8 +33,8 @@ jobs:
             dockerfile: deploy/docker/Dockerfile
           - name: sluice-mockllm
             dockerfile: deploy/docker/Dockerfile.mockllm
-          - name: sluice-telemetry
-            dockerfile: deploy/docker/Dockerfile.telemetry
+          - name: arbiter
+            dockerfile: deploy/docker/Dockerfile.arbiter
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,7 +88,7 @@ jobs:
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             # Also move `:latest` on every default-branch (main) push, not
             # just on v-tags. An image added to the matrix after the last
-            # semver tag (sluice-telemetry, added in #234) otherwise never
+            # semver tag (arbiter, added in #234) otherwise never
             # gets a `:latest` until the next release is cut, even though it
             # builds on every main push. This mirrors the floating `:main`
             # tag from `type=ref,event=branch`; sha-pinned tags remain the
@@ -150,7 +150,7 @@ jobs:
           \`\`\`
           docker pull ghcr.io/${{ github.repository_owner }}/sluice-gateway:${stripped}
           docker pull ghcr.io/${{ github.repository_owner }}/sluice-mockllm:${stripped}
-          docker pull ghcr.io/${{ github.repository_owner }}/sluice-telemetry:${stripped}
+          docker pull ghcr.io/${{ github.repository_owner }}/arbiter:${stripped}
           \`\`\`
 
           ## Quick run

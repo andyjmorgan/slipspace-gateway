@@ -94,11 +94,11 @@ type SpanFields struct {
 	AgentIDSource        string           `json:"sluice.agent_id_source,omitempty"`
 	UserIDSource         string           `json:"sluice.user_id_source,omitempty"`
 	GatewayID            string           `json:"gateway_id,omitempty"`
-	Method               string           `json:"sluice.method,omitempty"`
-	APIKeyName           string           `json:"sluice.api_key_name,omitempty"`
+	Method               string           `json:"slipspace.method,omitempty"`
+	APIKeyName           string           `json:"slipspace.api_key_name,omitempty"`
 	PolicyRef            string           `json:"sluice.policy_ref,omitempty"`
-	UpstreamStatus       int              `json:"sluice.upstream_status,omitempty"`
-	LatencyMs            int64            `json:"sluice.latency_ms,omitempty"`
+	UpstreamStatus       int              `json:"slipspace.upstream_status,omitempty"`
+	LatencyMs            int64            `json:"slipspace.latency_ms,omitempty"`
 	TokensIn             int64            `json:"gen_ai.usage.input_tokens,omitempty"`
 	TokensOut            int64            `json:"gen_ai.usage.output_tokens,omitempty"`
 	TokensCached         int64            `json:"gen_ai.usage.cache_read.input_tokens,omitempty"`

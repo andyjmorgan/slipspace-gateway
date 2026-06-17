@@ -1,6 +1,6 @@
 # Arbiter
 
-The **Arbiter** is a standalone binary (`cmd/arbiter`, image `sluice-telemetry`) that one or more Sluice gateways report into. It is the central, Postgres-backed (TimescaleDB) home for everything a fleet of gateways emits: the gen_ai OTLP spans, the `sluice.*` OTel meters, and the full per-request **Record** (request/response bodies, headers, rule chain, resilience attempts). The gen_ai span is the **single writer** of the per-request entity; the Record lands a lazy verbatim blob joined by `correlation_id` only when an operator opens the inspector; the meters feed pre-aggregated dashboards. The service serves an operator console — the same dashboard + message inspector the gateway's own admin console exposes, but fleet-wide and with full-history retention.
+The **Arbiter** is a standalone binary (`cmd/arbiter`, image `arbiter`) that one or more Sluice gateways report into. It is the central, Postgres-backed (TimescaleDB) home for everything a fleet of gateways emits: the gen_ai OTLP spans, the `sluice.*` OTel meters, and the full per-request **Record** (request/response bodies, headers, rule chain, resilience attempts). The gen_ai span is the **single writer** of the per-request entity; the Record lands a lazy verbatim blob joined by `correlation_id` only when an operator opens the inspector; the meters feed pre-aggregated dashboards. The service serves an operator console — the same dashboard + message inspector the gateway's own admin console exposes, but fleet-wide and with full-history retention.
 
 It is deployed **separately** from the gateway, with its **own Postgres**. The gateway data plane never depends on it: if the Arbiter is down, the gateway keeps forwarding traffic (OTLP export and Record push are best-effort, fire-and-forget). The service never sits on a request path and never signs receipts — it only ever *consumes* telemetry.
 
@@ -139,7 +139,7 @@ span_field_max_bytes: 65536
 
 postgres:
   # libpq/pgx connection string. Required.
-  dsn: "postgres://telemetry:telemetry@telemetry-db:5432/telemetry?sslmode=disable"
+  dsn: "postgres://telemetry:telemetry@arbiter-db:5432/telemetry?sslmode=disable"
 
 console:
   # HTTP Basic login for the operator console. Required.
@@ -229,10 +229,10 @@ The binary reads only two environment variables; everything else lives in the YA
 
 | Variable | Purpose | Source |
 |---|---|---|
-| `SLUICE_TELEMETRY_CONFIG` | Default path to the config YAML when `-config` is not passed | `main.go:46` |
+| `SLUICE_ARBITER_CONFIG` | Default path to the config YAML when `-config` is not passed | `main.go:46` |
 | `LOG_LEVEL` | `debug` / `info` (default) / `warn` / `error` for the `slog` JSON handler | `main.go:55,149` |
 
-Flags: `-config <path>` (overrides `SLUICE_TELEMETRY_CONFIG`) and `-version` (print version and exit). The service logs JSON to **stderr** with a fixed `service=telemetry` + `version` header (`main.go:164`).
+Flags: `-config <path>` (overrides `SLUICE_ARBITER_CONFIG`) and `-version` (print version and exit). The service logs JSON to **stderr** with a fixed `service=arbiter` + `version` header (`main.go:164`).
 
 ---
 
@@ -257,17 +257,17 @@ If either listener returns a non-`ErrServerClosed` error before a signal arrives
 
 ## Deployment model
 
-The Arbiter is a **separate deployable** from the gateway, with its **own Postgres**. It shares no process, no config file, and no database with the gateway; the only coupling is the OTLP + HMAC-webhook wire contract (`deploy/docker/Dockerfile.telemetry` header).
+The Arbiter is a **separate deployable** from the gateway, with its **own Postgres**. It shares no process, no config file, and no database with the gateway; the only coupling is the OTLP + HMAC-webhook wire contract (`deploy/docker/Dockerfile.arbiter` header).
 
-- **Image** — `sluice-telemetry`, built from `deploy/docker/Dockerfile.telemetry`. A multi-stage build compiles the second Vite target (`npm run build:telemetry`) into `internal/arbiter/server/webdist`, embeds it via `go:embed`, builds a static `CGO_ENABLED=0` binary, and ships it on `scratch` as non-root (`USER 65532:65532`). `EXPOSE 8686 8687`.
-- **Local stack** — `docker-compose.telemetry.yaml` brings up Postgres 16 + the telemetry binary, mounting `deploy/compose/telemetry.yaml` at `/etc/sluice/telemetry.yaml`. Run it independently of the gateway compose file:
+- **Image** — `arbiter`, built from `deploy/docker/Dockerfile.arbiter`. A multi-stage build compiles the second Vite target (`npm run build:telemetry`) into `internal/arbiter/server/webdist`, embeds it via `go:embed`, builds a static `CGO_ENABLED=0` binary, and ships it on `scratch` as non-root (`USER 65532:65532`). `EXPOSE 8686 8687`.
+- **Local stack** — `docker-compose.arbiter.yaml` brings up Postgres 16 + the arbiter binary, mounting `deploy/compose/arbiter.yaml` at `/etc/sluice/arbiter.yaml`. Run it independently of the gateway compose file:
 
   ```sh
-  docker compose -f docker-compose.telemetry.yaml up --build
+  docker compose -f docker-compose.arbiter.yaml up --build
   ```
 
-  Before first run, replace the `REPLACE_WITH_BCRYPT_HASH` and `REPLACE_WITH_SHARED_SECRET` placeholders in `deploy/compose/telemetry.yaml`. The console + webhook land on `:8686`, OTLP gRPC on `:8687`.
-- **Postgres / TimescaleDB** — the service expects a dedicated database reachable via `postgres.dsn`, with the **TimescaleDB extension available** (migration 7 runs `CREATE EXTENSION IF NOT EXISTS timescaledb` and turns `metric_points` into a hypertable with continuous aggregates). The `sluice-telemetry` Postgres image / compose stack ships TimescaleDB; a plain Postgres must have the extension installed and loadable by the telemetry role. The service owns its schema end-to-end through the embedded migration runner; no external migration tooling is required. The pool is a plain `pgxpool` (`store/store.go`).
+  Before first run, replace the `REPLACE_WITH_BCRYPT_HASH` and `REPLACE_WITH_SHARED_SECRET` placeholders in `deploy/compose/arbiter.yaml`. The console + webhook land on `:8686`, OTLP gRPC on `:8687`.
+- **Postgres / TimescaleDB** — the service expects a dedicated database reachable via `postgres.dsn`, with the **TimescaleDB extension available** (migration 7 runs `CREATE EXTENSION IF NOT EXISTS timescaledb` and turns `metric_points` into a hypertable with continuous aggregates). The `arbiter` Postgres image / compose stack ships TimescaleDB; a plain Postgres must have the extension installed and loadable by the telemetry role. The service owns its schema end-to-end through the embedded migration runner; no external migration tooling is required. The pool is a plain `pgxpool` (`store/store.go`).
 - **Probes** — wire `GET /healthz` to liveness and `GET /readyz` to readiness; `/readyz` returns `503` while Postgres is unreachable.
 - **Data lifecycle / retention** — the service has **no built-in retention or pruning**. Every ingested span, metric point, and Record persists indefinitely; the store layer has no TTL or `DELETE` path. The `record` table (full request/response bodies, headers, and SSE rollups, one verbatim blob per request) is by far the heaviest and grows with fleet traffic. Operators own retention: size the database for the expected volume, and prune out of band — e.g. a scheduled job deleting `request_events` rows by `observed_at` and `record` rows by `received_at`, and a TimescaleDB retention policy (`add_retention_policy`) dropping old `metric_points` chunks. Lowering `content_max_bytes` bounds the console's gen_ai content copy in `span_event` but **not** the Record bodies in `record`, so it is not a substitute for pruning. Plan disk before pointing a busy fleet at it.
 
