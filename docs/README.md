@@ -1,6 +1,6 @@
-# sluice-gateway documentation
+# slipspace-gateway documentation
 
-Operator and developer reference for sluice-gateway. Each page is self-contained, with cross-references where one surface depends on another.
+Operator and developer reference for slipspace-gateway. Each page is self-contained, with cross-references where one surface depends on another.
 
 If you're new to the project, the suggested reading order is **Configuration → Providers → Routing → Auth → Rules → Actions → Resilience → Observability → Connectors → Spool → Admin console → Deployment**. The local-dev and auxiliary-binaries pages are useful any time you're running things by hand.
 
@@ -58,7 +58,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | Rewrite a field in the request or response body | [FAQ → Rewrite a request field](faq.md#how-do-i-rewrite-a-field-in-the-request-body), [FAQ → Rewrite the response body](faq.md#how-do-i-rewrite-the-response-body) |
 | Proxy Anthropic message batches | [FAQ → Passthrough surfaces](faq.md#how-do-i-support-anthropic-message-batches-and-other-passthrough-surfaces) |
 | Add Azure OpenAI as a provider | [FAQ → Azure OpenAI](faq.md#how-do-i-add-azure-openai-as-a-provider) |
-| Run Sluice from the published images in minutes | [Quickstart compose bundle](../deploy/quickstart/) |
+| Run SlipSpace from the published images in minutes | [Quickstart compose bundle](../deploy/quickstart/) |
 | Run the gateway alongside the Arbiter | [Quickstart → gateway + Arbiter](../deploy/quickstart/#2-run-a-stack), [Arbiter](arbiter.md) |
 | Boot a gateway against a local mock LLM | [Local development → Quickest path](local-development.md#quickest-path-to-a-running-gateway) |
 | Wire a new upstream provider | [Providers → Schema](providers.md#yaml-schema), [Configuration model → providers block](configuration-model.md#providers-block) |

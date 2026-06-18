@@ -10,7 +10,7 @@ fullest single example is the selection engine's golden fixture
 (`internal/selection/selection_test.go`, the `golden` constant), which is the production
 config expressed in the current model.
 
-> **Config model note.** Sluice routes on the **v2 model**: a shared `providers`
+> **Config model note.** SlipSpace routes on the **v2 model**: a shared `providers`
 > catalogue (connections) plus per-configuration `bindings` (the router as data)
 > and `credentials`. Routing is config, not rule actions. The
 > `changeProvider`/`changeUrl`/`useResiliencePolicy` actions are
@@ -246,7 +246,7 @@ Source: `test/e2e/rules/rewrite_test.go`. `appendField` addresses the array
 ## How do I rewrite the *response* body?
 
 Use the same actions with a `response.body.<path>` target. The canonical case is
-rebasing an upstream URL so a client that follows it comes back through Sluice
+rebasing an upstream URL so a client that follows it comes back through SlipSpace
 (keeping auth + telemetry) instead of hitting the provider directly:
 
 ```yaml
