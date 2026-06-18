@@ -24,8 +24,9 @@ type Record struct {
 	// V is the envelope schema version. Always 1 today.
 	V int `json:"v"`
 
-	// ID is a ULID generated when the record is sealed into a segment.
-	// Used as the dedupe key by consumers that see retried deliveries.
+	// ID is a UUID (uuid.NewString) minted per request when the record is
+	// built, not at segment seal. Used as the dedupe key by consumers that
+	// see retried deliveries.
 	ID string `json:"id"`
 
 	// TsNs is the request start time in nanoseconds since the Unix epoch.
@@ -36,7 +37,8 @@ type Record struct {
 	// tiebreaker when TsNs collides across records from the same instance.
 	Seq uint64 `json:"seq"`
 
-	// InstanceID is the gateway pod's stable UUID. Distinguishes records
+	// InstanceID identifies the gateway instance, populated from
+	// os.Hostname() (the pod name under Kubernetes). Distinguishes records
 	// from concurrent replicas with overlapping wall-clock times.
 	InstanceID string `json:"instance_id"`
 
