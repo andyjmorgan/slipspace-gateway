@@ -105,7 +105,7 @@ func TestMetrics_ResilienceCountersAfterFailover(t *testing.T) {
 }
 
 // TestMetrics_RequestsTotalIncrementsOncePerRequest proves the PR-10b
-// per-attempt → per-request meter refactor for sluice_requests_total:
+// per-attempt → per-request meter refactor for slipspace_requests_total:
 // a 2-attempt failover bumps the counter by exactly 1, not 2.
 func TestMetrics_RequestsTotalIncrementsOncePerRequest(t *testing.T) {
 	t.Parallel()
@@ -117,7 +117,7 @@ func TestMetrics_RequestsTotalIncrementsOncePerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("baseline scrape: %v", err)
 	}
-	baseline := parseCounter(baseBody, `sluice_requests_total\{[^}]*gen_ai_request_model="gpt-4o-mini"[^}]*http_response_status_code="200"`)
+	baseline := parseCounter(baseBody, `slipspace_requests_total\{[^}]*gen_ai_request_model="gpt-4o-mini"[^}]*http_response_status_code="200"`)
 
 	sess.Stage(harness.CannedResponse{
 		Method:       http.MethodPost,
@@ -144,7 +144,7 @@ func TestMetrics_RequestsTotalIncrementsOncePerRequest(t *testing.T) {
 	var got int
 	for time.Now().Before(deadline) {
 		body, _ := scrapeText(h.PromURL() + "/metrics")
-		got = parseCounter(body, `sluice_requests_total\{[^}]*gen_ai_request_model="gpt-4o-mini"[^}]*http_response_status_code="200"`)
+		got = parseCounter(body, `slipspace_requests_total\{[^}]*gen_ai_request_model="gpt-4o-mini"[^}]*http_response_status_code="200"`)
 		if got > baseline {
 			break
 		}
@@ -152,7 +152,7 @@ func TestMetrics_RequestsTotalIncrementsOncePerRequest(t *testing.T) {
 	}
 
 	if got-baseline != 1 {
-		t.Errorf("sluice_requests_total{http_response_status_code=200,gen_ai_request_model=gpt-4o-mini} delta = %d; want 1 (one increment per request, not per attempt)", got-baseline)
+		t.Errorf("slipspace_requests_total{http_response_status_code=200,gen_ai_request_model=gpt-4o-mini} delta = %d; want 1 (one increment per request, not per attempt)", got-baseline)
 	}
 }
 

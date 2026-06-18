@@ -1,0 +1,96 @@
+# Quickstart stack 3 — gateway + the Arbiter service (+ Postgres).
+#
+#   cp .env.example .env      # then edit in your provider keys
+#   docker compose -f compose.arbiter.yaml up -d --wait
+#
+# Data plane:        http://localhost:8585  (point your SDK base URL here)
+# Gateway console:   http://localhost:8081  (admin / $SLUICE_ADMIN_PASSWORD)
+# Arbiter console: http://localhost:8686  (admin / "arbiter" default)
+#
+# The gateway pushes gen_ai spans + sluice meters to the Arbiter over
+# OTLP gRPC (:8687); the Arbiter console aggregates them across requests. This
+# is the OTLP feed only — to also ship the full per-request Record (bodies,
+# headers, rule chain) for the message inspector, see "Full Record feed" in
+# README.md.
+#
+# Pulls published images from GHCR. See README.md for the full guide.
+name: sluice-quickstart
+
+services:
+  init:
+    image: alpine:3
+    env_file: .env
+    volumes:
+      - ./config:/in:ro
+      - sluice-config:/out
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache gettext >/dev/null
+        rm -f /out/*.yaml
+        cp "/in/$${PROVIDERS_FILE:-providers.yaml}" /out/providers.yaml
+        cp /in/admin.yaml /out/admin.yaml
+        envsubst '$$OPENAI_API_KEY $$ANTHROPIC_API_KEY $$GEMINI_API_KEY $$SLUICE_CLIENT_API_KEY' \
+          < /in/policy.template.yaml > /out/policy.yaml
+        echo "rendered /etc/sluice: $$(ls /out)"
+
+  gateway:
+    image: ghcr.io/andyjmorgan/sluice-gateway:${SLUICE_IMAGE_TAG:-latest}
+    env_file: .env
+    environment:
+      SLUICE_CONFIG_DIR: /etc/sluice
+      SLUICE_HTTP_BIND: 0.0.0.0:8585
+      SLUICE_SPOOL_ROOT: /var/lib/sluice/spool
+      SLUICE_LOG_FORMAT: json
+      SLUICE_LOG_LEVEL: ${SLUICE_LOG_LEVEL:-info}
+      SLUICE_ADMIN_PASSWORD: ${SLUICE_ADMIN_PASSWORD:-sluice-gateway}
+      # Push the gen_ai + sluice telemetry feeds to the Arbiter.
+      SLUICE_OTLP_ENDPOINT: arbiter:8687
+      SLUICE_OTLP_PROTOCOL: grpc
+      SLUICE_ENV: quickstart
+    ports:
+      - "8585:8585"
+      - "8081:8081"
+    volumes:
+      - sluice-config:/etc/sluice:ro
+      - sluice-spool:/var/lib/sluice/spool
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      arbiter:
+        condition: service_started
+    restart: unless-stopped
+
+  arbiter-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: telemetry
+      POSTGRES_DB: telemetry
+    volumes:
+      - arbiter-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  arbiter:
+    image: ghcr.io/andyjmorgan/arbiter:${SLUICE_IMAGE_TAG:-latest}
+    ports:
+      - "8686:8686" # console + Record webhook ingest
+      - "8687:8687" # OTLP gRPC
+    volumes:
+      - ./config/arbiter.yaml:/etc/sluice/arbiter.yaml:ro
+    depends_on:
+      arbiter-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  sluice-config:
+  sluice-spool:
+  arbiter-pg:

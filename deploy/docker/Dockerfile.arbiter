@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1.7
+#
+# Image for the SlipSpace Arbiter service (binary `arbiter`, image
+# `arbiter`). Built and versioned independently of the gateway image;
+# the two are linked only by the OTLP + HMAC-webhook wire contract.
+
+ARG VERSION=dev
+
+FROM alpine:3 AS certs
+RUN apk add --no-cache ca-certificates
+
+# Stage 1: build the Arbiter console SPA (second Vite target). Output lands at
+# internal/arbiter/server/webdist; moved to /out/webdist for an unambiguous
+# COPY into the Go builder so //go:embed picks up the real bundle.
+FROM node:22-alpine AS spa-builder
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --silent
+COPY web/ ./
+RUN npm run build:telemetry && mkdir -p /out && mv /internal/arbiter/server/webdist /out/webdist
+
+FROM golang:1.25-alpine AS builder
+ARG VERSION
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# Overlay the freshly-built SPA on top of the committed placeholder.html so
+# go:embed sees the real assets.
+COPY --from=spa-builder /out/webdist/ /src/internal/arbiter/server/webdist/
+RUN CGO_ENABLED=0 GOOS=linux go build \
+        -trimpath \
+        -ldflags "-s -w -X github.com/andyjmorgan/sluice-gateway/internal/version.Version=${VERSION}" \
+        -o /out/arbiter \
+        ./cmd/arbiter
+
+FROM scratch
+
+ARG VERSION
+
+LABEL org.opencontainers.image.title="arbiter"
+LABEL org.opencontainers.image.description="SlipSpace Arbiter — central telemetry + security convergence service for Sluice gateways."
+LABEL org.opencontainers.image.source="https://github.com/andyjmorgan/sluice-gateway"
+LABEL org.opencontainers.image.version="${VERSION}"
+
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /out/arbiter /arbiter
+
+# 8686 HTTP (console + webhook ingest), 8687 OTLP gRPC.
+EXPOSE 8686 8687
+USER 65532:65532
+ENTRYPOINT ["/arbiter"]
+CMD ["-config", "/etc/sluice/arbiter.yaml"]

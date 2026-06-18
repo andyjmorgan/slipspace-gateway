@@ -1,0 +1,41 @@
+# Arbiter service stack: Postgres + the arbiter binary. Built and
+# run independently of the gateway (docker-compose.yaml). Gateways feed this
+# service over OTLP (8687) and the HMAC webhook (8686); they are not part of
+# this compose file.
+#
+#   docker compose -f docker-compose.arbiter.yaml up --build
+#
+# Before first run, set a real console password hash in
+# deploy/compose/arbiter.yaml (see the comment there) and a per-gateway HMAC
+# secret. The SPA + API are on :8686, OTLP gRPC on :8687.
+services:
+  arbiter-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: telemetry
+      POSTGRES_DB: telemetry
+    volumes:
+      - arbiter-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  arbiter:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.arbiter
+    image: arbiter:dev
+    ports:
+      - "8686:8686" # console + webhook ingest
+      - "8687:8687" # OTLP gRPC
+    volumes:
+      - ./deploy/compose/arbiter.yaml:/etc/sluice/arbiter.yaml:ro
+    depends_on:
+      arbiter-db:
+        condition: service_healthy
+
+volumes:
+  arbiter-pg:

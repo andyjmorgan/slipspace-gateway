@@ -323,4 +323,4 @@ For the dev compose layout and how mockllm fits in alongside the gateway, see [l
 - [Configuration model](configuration-model.md) — the YAML schema that `sluice-cli config validate` enforces, including every error category the validator can return.
 - [Routing](routing.md) — protocol + binding routing in v2 (the `path_collision` / `prefix_required_empty` codes are legacy v1 holdovers that no longer fire).
 - [Admin console](admin-console.md) — the read-only config-inspection surface embedded in the gateway.
-- [Telemetry service](telemetry-service.md) — the standalone fleet-observability service.
+- [Arbiter](arbiter.md) — the standalone fleet-observability service.

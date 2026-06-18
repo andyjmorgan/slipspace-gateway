@@ -19,6 +19,7 @@ import (
 	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
 	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
 	"github.com/andyjmorgan/sluice-gateway/internal/admin"
+	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/pusher"
 	"github.com/andyjmorgan/sluice-gateway/internal/config"
 	"github.com/andyjmorgan/sluice-gateway/internal/connector/factory"
 	"github.com/andyjmorgan/sluice-gateway/internal/headers"
@@ -32,7 +33,6 @@ import (
 	"github.com/andyjmorgan/sluice-gateway/internal/safego"
 	"github.com/andyjmorgan/sluice-gateway/internal/server"
 	"github.com/andyjmorgan/sluice-gateway/internal/spool"
-	"github.com/andyjmorgan/sluice-gateway/internal/telemetry/pusher"
 	"github.com/andyjmorgan/sluice-gateway/internal/version"
 )
 

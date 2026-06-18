@@ -20,7 +20,7 @@ func TestOperationNameForProtocol(t *testing.T) {
 		{"embeddings", observability.OperationEmbeddings},
 		// Protocols the GenAI spec has no operation for fall through to
 		// their own key; the precise route is still emitted as
-		// sluice.protocol, so nothing is lost.
+		// slipspace.protocol, so nothing is lost.
 		{"models", "models"},
 		{"", ""},
 	}

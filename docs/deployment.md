@@ -125,10 +125,10 @@ The version string baked into `/gateway` via `-ldflags "-X .../version.Version=$
 
 | Trigger | What gets published |
 |---|---|
-| Push to `main` | `ghcr.io/andyjmorgan/sluice-gateway:main`, `:sha-<short>`, and `:latest` (floats on every default-branch build since #248, mirroring `:main`). Same tags for `sluice-mockllm` and `sluice-telemetry`. No GitHub Release. |
+| Push to `main` | `ghcr.io/andyjmorgan/sluice-gateway:main`, `:sha-<short>`, and `:latest` (floats on every default-branch build since #248, mirroring `:main`). Same tags for `sluice-mockllm` and `arbiter`. No GitHub Release. |
 | Tag push `v*.*.*` | All of the above **plus** `:<version>` and `:<major>.<minor>` (`:latest` moves on both events). The release job then creates (or edits, on tag re-push) a GitHub Release with rendered notes pointing at the freshly-pushed image tags. |
 
-All three images in the matrix (`sluice-gateway`, `sluice-mockllm`, `sluice-telemetry` — the latter from `deploy/docker/Dockerfile.telemetry`, added in #234) build for `linux/amd64` only (arm64 was dropped in #224); the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
+All three images in the matrix (`sluice-gateway`, `sluice-mockllm`, `arbiter` — the latter from `deploy/docker/Dockerfile.arbiter`, added in #234) build for `linux/amd64` only (arm64 was dropped in #224); the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
 
 ### Image visibility
 
@@ -308,7 +308,7 @@ The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts
 > **Just want to run Sluice from the published images?** Use the turnkey
 > quickstart bundle at [`deploy/quickstart/`](../deploy/quickstart/) instead of
 > the dev composes below. It ships three copy-paste stacks (gateway + console,
-> gateway only, gateway + telemetry) that pull `ghcr.io/andyjmorgan/sluice-*`,
+> gateway only, gateway + Arbiter) that pull `ghcr.io/andyjmorgan/sluice-*`,
 > proxy the real providers, and are configured entirely from a `.env` file — no
 > source checkout or build toolchain. The composes in *this* section build from
 > source and target the mock LLM for development.

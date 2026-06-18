@@ -1,0 +1,38 @@
+# Arbiter service config used by docker-compose.arbiter.yaml. Mounted at
+# /etc/sluice/arbiter.yaml. File contents are trusted (no ${VAR} interpolation
+# inside the YAML — only the file path is configurable).
+
+# Console + HMAC-webhook ingest listener.
+http_bind: "0.0.0.0:8686"
+# OTLP gRPC listener for the gen_ai + sluice telemetry feeds.
+otlp_bind: "0.0.0.0:8687"
+
+# Per-request cap (bytes) on the gen_ai content the console keeps. Content is a
+# best-effort console aid — the audit copy travels the Record feed. Raise it to
+# keep larger prompts/responses, or omit to take the default (16384). Avoid 0
+# (no cap): unbounded content makes the console's memory profile a function of
+# the largest stored session.
+content_max_bytes: 65536
+
+# Per-field cap (bytes) the session-spans projection applies to served content
+# (text / tool args / input_text / output_text). The *_chars fields keep the
+# true sizes so the console's "showing first N of M" notice stays accurate.
+# Omit to take the default (65536); 0 disables the cap.
+span_field_max_bytes: 65536
+
+postgres:
+  # Matches the arbiter-db service in docker-compose.arbiter.yaml.
+  dsn: "postgres://telemetry:telemetry@arbiter-db:5432/telemetry?sslmode=disable"
+
+console:
+  username: "admin"
+  # bcrypt hash of the console password. REPLACE THIS — the placeholder below is
+  # not a usable credential. Generate with:
+  #   htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'
+  password_hash: "REPLACE_WITH_BCRYPT_HASH"
+
+# Registered gateways permitted to push large payloads. A webhook is trusted iff
+# its X-Sluice-Signature verifies against the matching gateway's hmac_secret.
+gateways:
+  - id: "gw-1"
+    hmac_secret: "REPLACE_WITH_SHARED_SECRET"

@@ -804,7 +804,7 @@ export interface MessageBodyDetail {
   /**
    * SpanEvent is the COMPLETE OTel gen_ai span as captured — every
    * attribute the gateway emitted (model, provider, usage, request
-   * params, response metadata, sluice.* facts, server/service, the
+   * params, response metadata, slipspace.* facts, server/service, the
    * gen_ai content) as a raw JSON object. The console's raw telemetry
    * pane renders this verbatim so operators see the whole span, not just
    * the gen_ai content. Sourced from the request_events.span_event
@@ -975,7 +975,7 @@ export interface SessionSpan {
    */
   ttfc_ms?: number /* int64 */;
   /**
-   * Status is the upstream HTTP status (sluice.upstream_status, falling back
+   * Status is the upstream HTTP status (slipspace.upstream_status, falling back
    * to the client-facing status column); null when neither is known.
    */
   status?: number /* int */;
@@ -1142,7 +1142,7 @@ export interface SessionSpanInputPart {
 // source: settings.go
 
 /**
- * SettingsResponse is the telemetry service's applied (loaded) config, served
+ * SettingsResponse is the Arbiter's applied (loaded) config, served
  * read-only and secret-redacted at GET /api/v1/settings. Config is the config
  * document as a generic tree (keys mirror the snake_case YAML the operator
  * wrote), so the console can pretty-print it as JSON or stringify it back to

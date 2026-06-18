@@ -10,7 +10,7 @@ Three stacks:
 |---|---|---|
 | **Gateway + admin console** | `compose.admin.yaml` | Data plane + the management console |
 | **Gateway only** | `compose.minimal.yaml` | Just the data plane (no console) |
-| **Gateway + telemetry** | `compose.telemetry.yaml` | Data plane + console + the central telemetry service (+ Postgres) |
+| **Gateway + telemetry** | `compose.arbiter.yaml` | Data plane + console + the Arbiter (+ Postgres) |
 
 All three share `config/` and one `.env`.
 
@@ -53,7 +53,7 @@ docker compose -f compose.minimal.yaml up -d --wait
 
 **Gateway + telemetry**
 ```sh
-docker compose -f compose.telemetry.yaml up -d --wait
+docker compose -f compose.arbiter.yaml up -d --wait
 ```
 
 > Switching between stacks reuses one Compose project (`sluice-quickstart`). Add
@@ -81,13 +81,13 @@ provider-native auth headers (`x-api-key`, `x-goog-api-key`).
 | URL | Stack | Login |
 |---|---|---|
 | `http://localhost:8081/admin` | admin, telemetry | `admin` / `SLUICE_ADMIN_PASSWORD` |
-| `http://localhost:8686` | telemetry | `admin` / `sluice-telemetry` (the bcrypt default in `config/telemetry.yaml`) |
+| `http://localhost:8686` | arbiter | `admin` / `arbiter` (the bcrypt default in `config/arbiter.yaml`) |
 
-(The gateway's own console is under `/admin`; the telemetry console is at the
+(The gateway's own console is under `/admin`; the Arbiter console is at the
 root of `:8686`.)
 
 In the telemetry stack the gateway pushes gen_ai spans + sluice meters to the
-telemetry service over OTLP (`:8687`); the telemetry console aggregates them
+Arbiter over OTLP (`:8687`); the Arbiter console aggregates them
 fleet-wide.
 
 ## 5. Tear down
@@ -105,8 +105,8 @@ docker compose -f compose.<stack>.yaml down -v    # also wipe volumes
 |---|---|---|
 | `8585` | Data plane (proxy) | all |
 | `8081` | Admin console (SPA + `/api/v1`) | admin, telemetry |
-| `8686` | Telemetry console + Record webhook ingest | telemetry |
-| `8687` | Telemetry OTLP gRPC | telemetry |
+| `8686` | Arbiter console + Record webhook ingest | arbiter |
+| `8687` | Arbiter OTLP gRPC | arbiter |
 
 Only `:8585` is meant to face clients. Keep the management ports private.
 
@@ -115,8 +115,8 @@ Only `:8585` is meant to face clients. Keep the management ports private.
 The defaults are tuned for a quick local trial, **not** the public internet:
 
 - Change `SLUICE_CLIENT_API_KEY` and `SLUICE_ADMIN_PASSWORD` in `.env`.
-- Change the telemetry console password: replace `console.password_hash` in
-  `config/telemetry.yaml` (generate with
+- Change the Arbiter console password: replace `console.password_hash` in
+  `config/arbiter.yaml` (generate with
   `htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'`).
 - Pin `SLUICE_IMAGE_TAG` to a release (e.g. `v1.1.18`) instead of `latest`.
 
@@ -126,7 +126,7 @@ The defaults are tuned for a quick local trial, **not** the public internet:
 
 By default the gateway → telemetry link is **OTLP only** (dashboard + per-request
 rows + metric panels). To *also* ship the full per-request **Record** — request
-and response bodies, headers, the fired-rule chain — so the telemetry console's
+and response bodies, headers, the fired-rule chain — so the Arbiter console's
 message **inspector** has bodies to show, add the HMAC Record webhook:
 
 1. In `.env`, set a shared secret and allow the private webhook target:
@@ -154,7 +154,7 @@ message **inspector** has bodies to show, add the HMAC Record webhook:
          - { connector: central-telemetry, sampling: 1.0 }
    ```
 
-3. In `config/telemetry.yaml`, register the gateway so its pushes verify
+3. In `config/arbiter.yaml`, register the gateway so its pushes verify
    (id + secret must match step 1/2):
    ```yaml
    gateways:
@@ -164,7 +164,7 @@ message **inspector** has bodies to show, add the HMAC Record webhook:
 
 The webhook is best-effort and non-blocking — a slow/wedged receiver only ever
 costs dropped telemetry, never client latency. See
-[`docs/telemetry-webhook.md`](../../docs/telemetry-webhook.md).
+[`docs/arbiter-webhook.md`](../../docs/arbiter-webhook.md).
 
 ---
 

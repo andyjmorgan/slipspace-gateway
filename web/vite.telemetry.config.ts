@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite"
 
 // The telemetry console is a second build target over the same src/ tree.
 // Output lands in the telemetry binary's embed.FS dir
-// (internal/telemetry/webdist). Unlike the gateway admin SPA (served under
+// (internal/arbiter/webdist). Unlike the gateway admin SPA (served under
 // /admin), the telemetry service serves its console + API at the listener
 // root, so base is "/". `npm run build:telemetry` invokes this config.
 const telemetryURL = process.env.SLUICE_TELEMETRY_URL ?? "http://localhost:8686"
@@ -14,7 +14,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "/",
   build: {
-    outDir: "../internal/telemetry/server/webdist",
+    outDir: "../internal/arbiter/server/webdist",
     emptyOutDir: false,
     rollupOptions: {
       input: path.resolve(__dirname, "index.telemetry.html"),

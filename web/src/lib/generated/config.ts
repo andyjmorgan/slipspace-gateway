@@ -176,7 +176,7 @@ export interface Connector {
   container?: string;
   /**
    * URL is the receiver endpoint each record is POSTed to (e.g. the
-   * telemetry service's /api/v1/ingest/record, or any customer endpoint).
+   * Arbiter's /api/v1/ingest/record, or any customer endpoint).
    * Required when Type == webhook.
    */
   url?: string;
@@ -187,9 +187,9 @@ export interface Connector {
   secret_ref?: string;
   /**
    * GatewayID is sent as the X-Sluice-Gateway-Id header so a receiver that
-   * keys HMAC secrets by gateway (the telemetry service registry) can look
+   * keys HMAC secrets by gateway (the Arbiter registry) can look
    * the secret up. Optional for a generic receiver that verifies the
-   * signature alone; required when pushing to the telemetry service.
+   * signature alone; required when pushing to the Arbiter.
    */
   gateway_id?: string;
   /**

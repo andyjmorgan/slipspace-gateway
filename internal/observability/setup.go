@@ -392,7 +392,7 @@ func newOTLPReader(ctx context.Context, endpoint, protocol string) (*sdkmetric.P
 }
 
 // deltaTemporality selects delta temporality for the OTLP metric export so the
-// central telemetry service can SUM a window of metric_points to an exact count
+// Arbiter can SUM a window of metric_points to an exact count
 // (cumulative would carry running totals that double-count when summed). Sums
 // and histograms go delta; up-down counters (gateway.active_requests) and gauges
 // (gateway.cb.state) MUST stay cumulative — delta is undefined for them. Only

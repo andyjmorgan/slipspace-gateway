@@ -50,7 +50,7 @@ type SessionSpan struct {
 	// non-streaming requests (the attribute is emitted on streams only).
 	TTFCMs *int64 `json:"ttfc_ms"`
 
-	// Status is the upstream HTTP status (sluice.upstream_status, falling back
+	// Status is the upstream HTTP status (slipspace.upstream_status, falling back
 	// to the client-facing status column); null when neither is known.
 	Status *int `json:"status"`
 

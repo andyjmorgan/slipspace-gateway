@@ -80,18 +80,18 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 			t.Errorf("attr %s = %q (ok=%v), want %q", k, got.AsString(), ok, want)
 		}
 	}
-	// The gen_ai span now carries the bounded sluice.* gateway facts the
-	// central telemetry ingest reads to fill its request_events gen_ai-owned
+	// The gen_ai span now carries the bounded slipspace.* gateway facts the
+	// Arbiter ingest reads to fill its request_events gen_ai-owned
 	// columns (it joins span↔Record by correlation_id). configuration +
 	// protocol ride the span; the full rule chain stays on the Record.
 	if v, ok := attrValue(attrs, observability.AttrSluiceConfiguration); !ok || v.AsString() != "dev" {
-		t.Errorf("sluice.configuration = %q (ok=%v), want dev", v.AsString(), ok)
+		t.Errorf("slipspace.configuration = %q (ok=%v), want dev", v.AsString(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceProtocol); !ok || v.AsString() != "chat_completions" {
-		t.Errorf("sluice.protocol = %q (ok=%v), want chat_completions", v.AsString(), ok)
+		t.Errorf("slipspace.protocol = %q (ok=%v), want chat_completions", v.AsString(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceUpstreamStatus); !ok || v.AsInt64() != 200 {
-		t.Errorf("sluice.upstream_status = %d (ok=%v), want 200", v.AsInt64(), ok)
+		t.Errorf("slipspace.upstream_status = %d (ok=%v), want 200", v.AsInt64(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrGenAIUsageInputTokens); !ok || v.AsInt64() != 10 {
 		t.Errorf("input tokens = %d (ok=%v), want 10", v.AsInt64(), ok)
@@ -131,26 +131,26 @@ func TestEmitTrace_SluiceFactAttrs(t *testing.T) {
 
 	attrs := sr.Ended()[0].Attributes()
 	if v, ok := attrValue(attrs, observability.AttrSluiceMethod); !ok || v.AsString() != "POST" {
-		t.Errorf("sluice.method = %q (ok=%v), want POST", v.AsString(), ok)
+		t.Errorf("slipspace.method = %q (ok=%v), want POST", v.AsString(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceAPIKeyName); !ok || v.AsString() != "team-key" {
-		t.Errorf("sluice.api_key_name = %q (ok=%v), want team-key", v.AsString(), ok)
+		t.Errorf("slipspace.api_key_name = %q (ok=%v), want team-key", v.AsString(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceProtocol); !ok || v.AsString() != "chat" {
-		t.Errorf("sluice.protocol = %q (ok=%v), want chat", v.AsString(), ok)
+		t.Errorf("slipspace.protocol = %q (ok=%v), want chat", v.AsString(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceUpstreamStatus); !ok || v.AsInt64() != 200 {
-		t.Errorf("sluice.upstream_status = %d (ok=%v), want 200", v.AsInt64(), ok)
+		t.Errorf("slipspace.upstream_status = %d (ok=%v), want 200", v.AsInt64(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceTags); !ok {
-		t.Errorf("sluice.tags absent")
+		t.Errorf("slipspace.tags absent")
 	} else if got := v.AsStringSlice(); len(got) != 2 || got[0] != "billable" || got[1] != "team:research" {
-		t.Errorf("sluice.tags = %v, want [billable team:research]", got)
+		t.Errorf("slipspace.tags = %v, want [billable team:research]", got)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceRulesFired); !ok {
-		t.Errorf("sluice.rules_fired absent")
+		t.Errorf("slipspace.rules_fired absent")
 	} else if got := v.AsStringSlice(); len(got) != 2 || got[0] != "redirect-qwen" || got[1] != "tag-billable" {
-		t.Errorf("sluice.rules_fired = %v, want [redirect-qwen tag-billable] (empty names skipped)", got)
+		t.Errorf("slipspace.rules_fired = %v, want [redirect-qwen tag-billable] (empty names skipped)", got)
 	}
 }
 
@@ -253,7 +253,7 @@ func TestEmitTrace_ConversationID(t *testing.T) {
 	r, sr := traceHarness(t)
 	// A subagent: the conversation is the thread, the session is the bundle
 	// root, and the parent links the two. gen_ai.conversation.id carries the
-	// thread; sluice.session_id the root; sluice.parent_conversation_id the edge.
+	// thread; slipspace.session_id the root; slipspace.parent_conversation_id the edge.
 	r.sessionID = "bundle-1"
 	r.conversationID = "thread-2"
 	r.parentConversationID = "bundle-1"
@@ -273,10 +273,10 @@ func TestEmitTrace_ConversationID(t *testing.T) {
 		t.Errorf("gen_ai.conversation.id = %q (ok=%v), want thread-2", v.AsString(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceSessionID); !ok || v.AsString() != "bundle-1" {
-		t.Errorf("sluice.session_id = %q (ok=%v), want bundle-1", v.AsString(), ok)
+		t.Errorf("slipspace.session_id = %q (ok=%v), want bundle-1", v.AsString(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrSluiceParentConversationID); !ok || v.AsString() != "bundle-1" {
-		t.Errorf("sluice.parent_conversation_id = %q (ok=%v), want bundle-1", v.AsString(), ok)
+		t.Errorf("slipspace.parent_conversation_id = %q (ok=%v), want bundle-1", v.AsString(), ok)
 	}
 }
 
@@ -288,7 +288,7 @@ func TestEmitTrace_NoConversationIDWhenNoSession(t *testing.T) {
 		t.Errorf("gen_ai.conversation.id should be absent when no conversation resolved")
 	}
 	if _, ok := attrValue(attrs, observability.AttrSluiceSessionID); ok {
-		t.Errorf("sluice.session_id should be absent when no session resolved")
+		t.Errorf("slipspace.session_id should be absent when no session resolved")
 	}
 }
 

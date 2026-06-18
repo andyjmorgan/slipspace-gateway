@@ -8,7 +8,7 @@ package observability
 // Conformance"): the gen_ai.* namespace is owned by the OTel spec. We
 // only ever emit keys and enum values the spec defines; we never mint a
 // new key or value inside gen_ai.*. Everything Sluice-specific lives
-// under sluice.*; where another stable OTel convention already models a
+// under slipspace.*; where another stable OTel convention already models a
 // dimension (http.*, server.*) we reuse it rather than inventing.
 //
 // These keys are declared as our own constants because the gen_ai.*
@@ -40,7 +40,7 @@ const (
 
 	// AttrGenAITokenType keys the gen_ai.client.token.usage histogram by
 	// direction. The spec enum is input|output only — cache tokens have
-	// no value here and ride sluice.* counters instead.
+	// no value here and ride slipspace.* counters instead.
 	AttrGenAITokenType = "gen_ai.token.type" //nolint:gosec // G101 false positive: OTel attribute key, not a credential
 
 	// AttrGenAIConversationID is the spec home for a session/conversation
@@ -53,16 +53,16 @@ const (
 	// AttrSluiceSessionID carries the session bundle root — the stable id that
 	// groups every request of a conversation, including all of its subagent
 	// threads. The semconv has no session-vs-thread distinction (conversation.id
-	// covers both) and no parent/child concept, so the root rides this sluice.*
-	// attribute; the telemetry service projects it to request_events.session_id
+	// covers both) and no parent/child concept, so the root rides this slipspace.*
+	// attribute; the Arbiter projects it to request_events.session_id
 	// for top-down bundling. For a main agent it equals gen_ai.conversation.id.
-	AttrSluiceSessionID = "sluice.session_id"
+	AttrSluiceSessionID = "slipspace.session_id"
 
 	// AttrSluiceParentConversationID carries the parent of a subagent thread —
 	// the hierarchy edge the semconv has no home for. Set only when the resolved
 	// conversation is a subagent thread (distinct from the session); empty for a
 	// main agent. Codex supplies it explicitly via X-Codex-Parent-Thread-Id.
-	AttrSluiceParentConversationID = "sluice.parent_conversation_id"
+	AttrSluiceParentConversationID = "slipspace.parent_conversation_id"
 
 	// AttrGenAIAgentID is the spec home for the GenAI agent identifier (see
 	// the GenAI agent-spans convention). Sluice resolves it from
@@ -92,7 +92,7 @@ const (
 	// for provider-managed prompt-cache tokens (defined on the GenAI
 	// Anthropic page). gen_ai.usage.input_tokens is the cache-inclusive
 	// total. The spec has no cache metric — cache counts live as these
-	// attributes; the former sluice.tokens.cache* counters are dropped in
+	// attributes; the former slipspace.tokens.cache* counters are dropped in
 	// favour of them (conformance: our overlap with OTel gives way to OTel).
 	// Billing aggregation continues to ride the connector Record, not a
 	// meter (invariant #4).
@@ -229,14 +229,14 @@ const (
 	// AttrSluiceProtocol is the precise resolved protocol (chat, messages,
 	// generate_content) or passthrough family, retained beside the coarse
 	// gen_ai.operation.name so the console keeps its per-protocol breakdown.
-	AttrSluiceProtocol = "sluice.protocol"
+	AttrSluiceProtocol = "slipspace.protocol"
 
 	// AttrSluiceConfiguration is the resolved Sluice configuration name.
-	AttrSluiceConfiguration = "sluice.configuration"
+	AttrSluiceConfiguration = "slipspace.configuration"
 
 	// AttrSluiceMethod, AttrSluiceAPIKeyName, AttrSluiceUpstreamStatus,
 	// AttrSluiceTags, and AttrSluiceRulesFired are the gateway facts the
-	// central telemetry ingest reads off the gen_ai span to populate the
+	// Arbiter ingest reads off the gen_ai span to populate the
 	// request_events gateway-owned columns. The span is the SINGLE writer of
 	// that entity — the Record feed lands only a lazy verbatim blob, joined by
 	// correlation_id when an operator opens the inspector (invariant #4) — so
@@ -245,48 +245,48 @@ const (
 	// — method/api-key/rule names are unbounded cardinality. The ingest reads
 	// these keys as string literals; do not rename without rolling the telemetry
 	// service in lockstep.
-	AttrSluiceMethod         = "sluice.method"
-	AttrSluiceAPIKeyName     = "sluice.api_key_name" //nolint:gosec // G101 false positive: attribute key naming the API key, not its secret value
-	AttrSluiceUpstreamStatus = "sluice.upstream_status"
+	AttrSluiceMethod         = "slipspace.method"
+	AttrSluiceAPIKeyName     = "slipspace.api_key_name" //nolint:gosec // G101 false positive: attribute key naming the API key, not its secret value
+	AttrSluiceUpstreamStatus = "slipspace.upstream_status"
 
 	// AttrSluiceTags is the post-rule tag set attached to the request, as a
 	// string slice. AttrSluiceRulesFired is the set of fired rule names (names
 	// only — actions/termination ride the Record's rule chain, not the span).
-	AttrSluiceTags       = "sluice.tags"
-	AttrSluiceRulesFired = "sluice.rules_fired"
+	AttrSluiceTags       = "slipspace.tags"
+	AttrSluiceRulesFired = "slipspace.rules_fired"
 
 	// AttrSluiceCorrelationID carries the request correlation id on the
 	// span so a trace can be cross-referenced to logs and captured
 	// records (which key on the same id).
-	AttrSluiceCorrelationID = "sluice.correlation_id"
+	AttrSluiceCorrelationID = "slipspace.correlation_id"
 
 	// AttrSluiceResilienceTarget and AttrSluiceResilienceOutcome label a
 	// per-attempt child span with the resilience target name and the
 	// attempt outcome (success, failure_status, transport_error,
 	// cb_blocked).
-	AttrSluiceResilienceTarget  = "sluice.resilience.target"
-	AttrSluiceResilienceOutcome = "sluice.resilience.outcome"
+	AttrSluiceResilienceTarget  = "slipspace.resilience.target"
+	AttrSluiceResilienceOutcome = "slipspace.resilience.outcome"
 
 	// AttrSluiceUnmappedField is the dotted JSON path of a provider field
 	// this build does not model — the per-field dimension on
 	// gateway.unmapped_fields.total. Cardinality is bounded by the provider
 	// API surface (tens of field names), not by request volume.
-	AttrSluiceUnmappedField = "sluice.unmapped_field"
+	AttrSluiceUnmappedField = "slipspace.unmapped_field"
 
 	// AttrSluiceUnmappedDirection is "request" or "response", marking which
 	// side of the exchange carried the unmapped field.
-	AttrSluiceUnmappedDirection = "sluice.unmapped_direction"
+	AttrSluiceUnmappedDirection = "slipspace.unmapped_direction"
 
 	// AttrSluiceTranslateSource and AttrSluiceTranslateTarget are the source
 	// and target wire protocols of a cross-provider translation — the
 	// pair dimensions on gateway.translation.field_drops.total.
-	AttrSluiceTranslateSource = "sluice.translate_source"
-	AttrSluiceTranslateTarget = "sluice.translate_target"
+	AttrSluiceTranslateSource = "slipspace.translate_source"
+	AttrSluiceTranslateTarget = "slipspace.translate_target"
 
 	// AttrSluiceTranslateField is the dotted source-side path of a feature
 	// dropped in translation — the per-field dimension on
 	// gateway.translation.field_drops.total. Bounded by the modelled field set.
-	AttrSluiceTranslateField = "sluice.translate_field"
+	AttrSluiceTranslateField = "slipspace.translate_field"
 )
 
 // gen_ai.operation.name values (spec-defined).
@@ -307,7 +307,7 @@ const (
 // OpenAI responses API to "chat", Gemini's generate_content to the dedicated
 // "generate_content" value, embeddings to "embeddings". Protocols the spec
 // has no operation for (e.g. models listing) fall through to their own key —
-// the precise route is always also emitted as sluice.protocol, so nothing is
+// the precise route is always also emitted as slipspace.protocol, so nothing is
 // lost.
 func OperationNameForProtocol(protocol string) string {
 	switch protocol {
