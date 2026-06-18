@@ -490,7 +490,7 @@ The same logic applies to authentication beyond Basic — if you want SSO in fro
 
 ### Cross-pod consistency
 
-Multi-pod deployments have independent admin listeners, each reading from its own snapshotter ring, ring of completed requests, body store, and breaker store. The dashboard you see depends on which pod the ingress routed your `GET /admin/api/v1/dashboard/summary` to. For an aggregated cluster view, scrape Prometheus instead — `gateway.requests.total` and friends roll up across pods naturally.
+Multi-pod deployments have independent admin listeners, each reading from its own snapshotter ring, ring of completed requests, body store, and breaker store. The dashboard you see depends on which pod the ingress routed your `GET /admin/api/v1/dashboard/summary` to. For an aggregated cluster view, scrape Prometheus instead — `slipspace.requests.total` and friends roll up across pods naturally.
 
 The `PoliciesResponse.Pod` field carries `os.Hostname()` so an operator hitting `/policies` knows which pod's CB state they're looking at.
 
