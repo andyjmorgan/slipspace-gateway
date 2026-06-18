@@ -423,7 +423,7 @@ func TestMapBodyDecodesEscapedSSE(t *testing.T) {
 		Request:  cc.RequestPart{Body: json.RawMessage(`{"model":"x"}`)},
 		Response: cc.ResponsePart{Body: json.RawMessage(wrapped)},
 	}
-	span := []byte(`{"gen_ai.request.model":"x","sluice.configuration":"production"}`)
+	span := []byte(`{"gen_ai.request.model":"x","slipspace.configuration":"production"}`)
 	got := mapBody("c", rec, nil, span)
 
 	if got.Response != rawSSE {

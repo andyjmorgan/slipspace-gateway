@@ -43,15 +43,15 @@ erDiagram
     request_events {
         TEXT        correlation_id PK "per-request join key"
         TIMESTAMPTZ observed_at "gateway request-start (span start)"
-        TEXT        session_id "projected from sluice.session_id"
+        TEXT        session_id "projected from slipspace.session_id"
         TEXT        conversation_id "projected from gen_ai.conversation.id"
-        TEXT        parent_conversation_id "projected from sluice.parent_conversation_id"
+        TEXT        parent_conversation_id "projected from slipspace.parent_conversation_id"
         TEXT        agent_id "projected from gen_ai.agent.id"
         TEXT        user_id "projected from enduser.id"
         TEXT        provider "projected from gen_ai.provider.name"
         TEXT        model "projected from gen_ai.request.model"
-        TEXT        configuration "projected from sluice.configuration"
-        TEXT        protocol "projected from sluice.protocol"
+        TEXT        configuration "projected from slipspace.configuration"
+        TEXT        protocol "projected from slipspace.protocol"
         INT         status_code "projected from http.response.status_code"
         BIGINT      tokens_in "projected from gen_ai.usage.input_tokens"
         BIGINT      tokens_out "projected from gen_ai.usage.output_tokens"
@@ -70,7 +70,7 @@ erDiagram
     }
 ```
 
-> `record` is joined to `request_events` by `correlation_id`, but there is **no database-level foreign key** — a record can be webhook-pushed before (or without) its span, and an event can exist with no record (reporting forwarding off), so the relationship is a logical, lazy join. `metric_points` has no join column at all; it correlates to events only by shared label values (e.g. `sluice.configuration`), and the dashboard reads it through its continuous aggregates as an independent timeseries (invariant #4: dashboards read meters, never record scans).
+> `record` is joined to `request_events` by `correlation_id`, but there is **no database-level foreign key** — a record can be webhook-pushed before (or without) its span, and an event can exist with no record (reporting forwarding off), so the relationship is a logical, lazy join. `metric_points` has no join column at all; it correlates to events only by shared label values (e.g. `slipspace.configuration`), and the dashboard reads it through its continuous aggregates as an independent timeseries (invariant #4: dashboards read meters, never record scans).
 
 ---
 
@@ -80,21 +80,21 @@ The single-writer per-request entity. The **OTel span feed is the sole writer**,
 
 | Column | Type | Default | Projected from | Notes |
 |---|---|---|---|---|
-| `correlation_id` | `TEXT` | — | `sluice.correlation_id` | **Primary key**; the per-request join key. The only span attribute whose absence makes a span unusable. |
+| `correlation_id` | `TEXT` | — | `slipspace.correlation_id` | **Primary key**; the per-request join key. The only span attribute whose absence makes a span unusable. |
 | `observed_at` | `TIMESTAMPTZ` | `now()` | span START time | The gateway request-start, **not** ingest `now()` — load-bearing for ordering, pagination, and retention. A zero start defaults to server `now()` only as a last resort. |
-| `session_id` | `TEXT` | `''` | `sluice.session_id` | Resolved session bundle root (falls back to `gen_ai.conversation.id` for spans predating the attribute). |
+| `session_id` | `TEXT` | `''` | `slipspace.session_id` | Resolved session bundle root (falls back to `gen_ai.conversation.id` for spans predating the attribute). |
 | `conversation_id` | `TEXT` | `''` | `gen_ai.conversation.id` | The per-turn conversation/thread (subagent thread when active, else the session). Added by migration 9. |
-| `parent_conversation_id` | `TEXT` | `''` | `sluice.parent_conversation_id` | Links a subagent thread toward its session; empty for a main agent. Added by migration 9. |
+| `parent_conversation_id` | `TEXT` | `''` | `slipspace.parent_conversation_id` | Links a subagent thread toward its session; empty for a main agent. Added by migration 9. |
 | `agent_id` | `TEXT` | `''` | `gen_ai.agent.id` | Resolved id of a genuinely named agent (a subagent thread rides `conversation_id`, not this). |
 | `user_id` | `TEXT` | `''` | `enduser.id` | Resolved end-user id. |
 | `provider` | `TEXT` | `''` | `gen_ai.provider.name` | Post-rule upstream provider. |
 | `model` | `TEXT` | `''` | `gen_ai.request.model` | Requested model. |
-| `configuration` | `TEXT` | `''` | `sluice.configuration` | Resolved policy-bundle name (a gateway span fact). |
-| `protocol` | `TEXT` | `''` | `sluice.protocol` | Post-rule wire protocol / endpoint (a gateway span fact). |
+| `configuration` | `TEXT` | `''` | `slipspace.configuration` | Resolved policy-bundle name (a gateway span fact). |
+| `protocol` | `TEXT` | `''` | `slipspace.protocol` | Post-rule wire protocol / endpoint (a gateway span fact). |
 | `status_code` | `INT` | `0` | `http.response.status_code` | Client-facing HTTP status. |
 | `tokens_in` | `BIGINT` | `0` | `gen_ai.usage.input_tokens` | Promoted by migration 10 (#318/#325) so the session-list aggregate sums tokens without detoasting `span_event`. Pre-v10 rows read 0 until the run-once boot backfill (`store.BackfillTokenColumns`) re-projects them. |
 | `tokens_out` | `BIGINT` | `0` | `gen_ai.usage.output_tokens` | As `tokens_in`. |
-| `tags` | `text[]` | `'{}'` | `sluice.tags` | Promoted by migration 12 (#318 facets-detoast fix) so the facets distinct-tag enumeration and session-list tag rollup read a GIN-indexed column instead of detoasting `span_event`. Pre-v12 rows read `'{}'` until the run-once boot backfill (`store.BackfillTags`) re-projects them. |
+| `tags` | `text[]` | `'{}'` | `slipspace.tags` | Promoted by migration 12 (#318 facets-detoast fix) so the facets distinct-tag enumeration and session-list tag rollup read a GIN-indexed column instead of detoasting `span_event`. Pre-v12 rows read `'{}'` until the run-once boot backfill (`store.BackfillTags`) re-projects them. |
 | `span_event` | `JSONB` | — (NOT NULL) | — | The **complete span** as received — every merged attribute plus the bounded gen_ai content — stored verbatim and never stripped. The scalar columns above are projections of it. |
 
 > **Columns that do NOT exist (common query mistakes).** Everything else lives **inside `span_event`** — there is no `streaming` column (dropped by migration 6; query `(span_event->>'gen_ai.request.stream')::boolean`), no `latency_ms`, `detail`, or `gen_ai_content` columns (all migration-6 casualties, all blob keys now), and the cached / cache-creation token counts are blob-only. On the `record` table the payload column is **`body`**, not `blob` — "the record blob" is prose, not a column name. Both mistakes hit prod on 2026-06-10 (`ERROR: column "streaming" does not exist`, `ERROR: column "blob" does not exist`).
@@ -131,18 +131,18 @@ The blob is built by `buildSpanEvent` ([`ingest/extract.go`](../internal/arbiter
 
 | Field | `span_event` key | Source |
 |---|---|---|
-| `LatencyMs` | `sluice.latency_ms` | Derived from the span's start/end bounds at ingest (the gateway also emits it). |
+| `LatencyMs` | `slipspace.latency_ms` | Derived from the span's start/end bounds at ingest (the gateway also emits it). |
 | `TokensIn` / `TokensOut` | `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` | gen_ai usage attributes. Also promoted to the `tokens_in` / `tokens_out` columns (migration 10) for the session-list aggregate; the blob stays the source of truth. |
 | `TokensCached` / `TokensCacheCreation` | `gen_ai.usage.cache_read.input_tokens` / `gen_ai.usage.cache_creation.input_tokens` | Provider-managed prompt-cache attributes. |
 | `Streaming` | `gen_ai.request.stream` | Whether the upstream response was an SSE stream. |
 | `GatewayID` | `gateway_id` | The producing appliance (lifted from the span/resource attribute). |
-| `Method` | `sluice.method` | Inbound client HTTP verb (a gateway span fact). |
-| `APIKeyName` | `sluice.api_key_name` | Resolved Sluice API-key name (managed mode); empty in passthrough. |
-| `UpstreamStatus` | `sluice.upstream_status` | Provider-reported status, distinct from the client status column. |
-| `PolicyRef` | `sluice.policy_ref` | Resilience policy the rules engine bound. |
-| `SessionIDSource` / `AgentIDSource` / `UserIDSource` | `sluice.session_id_source` etc. | The header each identity id was resolved from. |
-| `Tags` | `tags` | Post-rule tag set, normalised to a JSON `[]string` from `sluice.tags` (GIN-indexed). |
-| `RulesFired` | `rules_fired` | Fired rule names, normalised to a JSON `[]string` from `sluice.rules_fired` (GIN-indexed). |
+| `Method` | `slipspace.method` | Inbound client HTTP verb (a gateway span fact). |
+| `APIKeyName` | `slipspace.api_key_name` | Resolved Sluice API-key name (managed mode); empty in passthrough. |
+| `UpstreamStatus` | `slipspace.upstream_status` | Provider-reported status, distinct from the client status column. |
+| `PolicyRef` | `slipspace.policy_ref` | Resilience policy the rules engine bound. |
+| `SessionIDSource` / `AgentIDSource` / `UserIDSource` | `slipspace.session_id_source` etc. | The header each identity id was resolved from. |
+| `Tags` | `tags` | Post-rule tag set, normalised to a JSON `[]string` from `slipspace.tags` (GIN-indexed). |
+| `RulesFired` | `rules_fired` | Fired rule names, normalised to a JSON `[]string` from `slipspace.rules_fired` (GIN-indexed). |
 | `GenAIContent` | `gen_ai_content` | The bounded `gen_ai.*` content object (`{input_messages, output_messages, tool_definitions, system_instructions}`), `nil` when none was captured. Bounded by `content_max_bytes`. |
 
 The fired-rule **lifecycle** beyond names (`RuleChain` — actions applied, terminated, error) and the resilience `Attempts` are also carried in the blob when the gateway emits them, decoded into `RuleChainEntry` / `AttemptDetail`. Tool results are captured as `tool_call_response` message parts inside `gen_ai_content` across all four protocols.
@@ -179,7 +179,7 @@ Only number points land here. `PointsFromMetric` ([`ingest/otlp.go`](../internal
 
 | Column | Type | Default | Notes |
 |---|---|---|---|
-| `metric_name` | `TEXT` | — | The OTLP metric name (e.g. `sluice.requests.total`). |
+| `metric_name` | `TEXT` | — | The OTLP metric name (e.g. `slipspace.requests.total`). |
 | `labels` | `JSONB` | `'{}'::jsonb` | Merged attribute set; an empty batch entry lands as `{}` rather than `NULL`. |
 | `value` | `DOUBLE PRECISION` | — | The sample value. |
 | `observed_at` | `TIMESTAMPTZ` | — | The sample's timestamp (the hypertable's time dimension; no `now()` default — the producer's clock owns it). |
@@ -192,16 +192,16 @@ Migration 7 (run with autocommit — TimescaleDB forbids creating a continuous a
 
 | CAGG | Source metric(s) | Dimensions | Value | Backs |
 |---|---|---|---|---|
-| `cagg_requests_1m` | `sluice.requests.total` | provider, model, configuration, protocol, status_code | `sum(value)` AS `requests` | Request counts, the success/error outcome split (by `status_code`), and every `By*` / `ProviderHealth` panel. |
-| `cagg_tokens_1m` | `sluice.tokens.{input,output,cached,cache_creation}.total` | metric_name, provider, model, configuration, protocol | `sum(value)` AS `tokens` | Token sums (Totals, ByModel), pivoted by `metric_name`. |
-| `cagg_rules_1m` | `sluice.rule.fired` | rule_name, configuration | `sum(value)` AS `fired` | The RulesFired panel. |
+| `cagg_requests_1m` | `slipspace.requests.total` | provider, model, configuration, protocol, status_code | `sum(value)` AS `requests` | Request counts, the success/error outcome split (by `status_code`), and every `By*` / `ProviderHealth` panel. |
+| `cagg_tokens_1m` | `slipspace.tokens.{input,output,cached,cache_creation}.total` | metric_name, provider, model, configuration, protocol | `sum(value)` AS `tokens` | Token sums (Totals, ByModel), pivoted by `metric_name`. |
+| `cagg_rules_1m` | `slipspace.rule.fired` | rule_name, configuration | `sum(value)` AS `fired` | The RulesFired panel. |
 | `cagg_tags_1m` | `gateway.tags.applied.total` | tag, configuration | `sum(value)` AS `applied` | The TagsFired panel. |
 
 The dashboard ([`store/dashboard.go`](../internal/arbiter/store/dashboard.go)) re-buckets these 1-minute rows up to the requested window with an outer `time_bucket`. Because the CAGGs carry only the dimensions above, the dashboard honors only the window plus the equality filters those views actually have (configuration / model / provider / protocol, plus the status band on the request CAGG); tags / gateway_id / the id search boxes are message-browser-only and are silently ignored at the dashboard layer. This is the scale fix: dashboard rollups read pre-aggregated meters, never the `request_events` entity, never the record spool ([invariant #4](../CLAUDE.md)).
 
 > **Dropped for MVP: latency percentiles.** The pre-rearchitecture schema computed p50/p95/p99 from `request_events.latency_ms` via Postgres `percentile_cont`. The CAGG plane is count/sum only, and the latency histograms never reach `metric_points`, so the dashboard summary and timeseries no longer expose latency quantiles. `latency_ms` is still carried per-request inside `span_event` (`SpanFields.LatencyMs`) for the inspector. Percentiles return when the TimescaleDB toolkit (`percentile_agg`) is adopted post-MVP.
 
-> **New token counters.** Token sums in `cagg_tokens_1m` are fed by `sluice.tokens.input.total` / `sluice.tokens.output.total` — counter mirrors the gateway added alongside the existing `sluice.tokens.cached.total` / `sluice.tokens.cache_creation.total`. The telemetry ingest skips histograms, so the `gen_ai.client.token.usage` histogram cannot feed a token sum; these counters exist precisely so the dashboard's token CAGG has a number-point source. See [observability.md](observability.md#tokens).
+> **New token counters.** Token sums in `cagg_tokens_1m` are fed by `slipspace.tokens.input.total` / `slipspace.tokens.output.total` — counter mirrors the gateway added alongside the existing `slipspace.tokens.cached.total` / `slipspace.tokens.cache_creation.total`. The telemetry ingest skips histograms, so the `gen_ai.client.token.usage` histogram cannot feed a token sum; these counters exist precisely so the dashboard's token CAGG has a number-point source. See [observability.md](observability.md#tokens).
 
 ---
 
@@ -218,7 +218,7 @@ Migrations are a forward-only, append-only ordered set in [`migrations.go`](../i
 | 5 | `add_user_id` | Adds `user_id` / `user_id_source` columns + `request_events_user` index. | End-user drill-down, mirroring `request_events_agent`. |
 | 6 | `single_writer_span_event` | **Re-architecture.** `DROP` + `CREATE` rebuild: drops `request_payloads`; rebuilds `request_events` around the immutable `span_event JSONB` (complete span) with the scalar columns as a projection and tags/rules_fired GIN-indexed inside the blob; drops the measurement/`detail`/`gen_ai_content` columns (they now live in `span_event`); creates the lazy `record(correlation_id, received_at, body)` table. | The OTel span becomes the **single writer** of the entity; the Record lands a lazy verbatim blob joined only when the inspector opens. Eliminates the two-feed COALESCE merge and the per-item payload fan-out. A forward-only rebuild — backfill from spans/records is a separate operational step, not part of the migration. |
 | 7 | `metric_points_hypertable_caggs` (`noTx`) | `CREATE EXTENSION timescaledb`; turns `metric_points` into a hypertable; creates the four 1-minute continuous aggregates (`cagg_requests_1m` / `cagg_tokens_1m` / `cagg_rules_1m` / `cagg_tags_1m`) `WITH NO DATA` + a 1-minute refresh policy each. | **Metrics plane.** The dashboard stops scanning the entity for rollups and reads pre-aggregated CAGGs — the scale fix. Count/sum only; no percentiles for MVP (plain `timescaledb`, no toolkit). Runs with autocommit (`noTx`) because TimescaleDB forbids creating a continuous aggregate inside a transaction block; every statement is idempotent and free of embedded semicolons. |
-| 8 | `drop_dupe_span_keys` | `UPDATE request_events SET span_event = span_event - 'sluice.tags' - 'sluice.rules_fired';` | Strips the byte-identical raw-attr duplicates of the normalised `tags` / `rules_fired` keys from existing blobs (#316); ingest stopped writing them. |
+| 8 | `drop_dupe_span_keys` | `UPDATE request_events SET span_event = span_event - 'slipspace.tags' - 'slipspace.rules_fired';` | Strips the byte-identical raw-attr duplicates of the normalised `tags` / `rules_fired` keys from existing blobs (#316); ingest stopped writing them. |
 | 9 | `add_conversation_parent` | Adds `conversation_id` / `parent_conversation_id` columns + their indexes. | Unified conversation/thread/parent paradigm (#320): models a subagent thread coherently across clients; `session_id` keeps the bundle-root meaning. |
 | 10 | `promote_token_columns` | Adds `tokens_in` / `tokens_out` `BIGINT` columns (`ADD COLUMN ... DEFAULT 0`, metadata-only, instant). | Detoast fix for the session list (#318/#325): the aggregate sums columns instead of reaching into the TOASTed blob. **Columns only** — the original inline backfill UPDATE detoasted every row inside `Migrate()`, outlasted the liveness probe, and crash-looped the rollout (#327). Existing rows read 0 until the run-once boot backfill (below) re-projects them. |
 | 11 | `backfill_bookkeeping` | Creates `backfill_runs (name PK, completed_at)`. | Run-once bookkeeping for the out-of-band backfills migrations defer. `store.BackfillTokenColumns` (spawned in the background at boot, after `Migrate()`, bound to the process ctx) walks `request_events` in `correlation_id` keyset batches re-projecting `tokens_in` / `tokens_out` from `span_event`, then records completion here so later boots skip the scan. |

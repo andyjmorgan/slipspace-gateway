@@ -32,17 +32,17 @@ const MeterName = "sluice-gateway"
 
 // Instrument names. The per-request inference signals follow the
 // OpenTelemetry GenAI semantic conventions (gen_ai.*); Sluice-specific
-// dimensions and convenience aggregates live under sluice.*; gateway.*
+// dimensions and convenience aggregates live under slipspace.*; gateway.*
 // is reserved for instruments the GenAI spec has no concept for (the
 // rule engine, resilience orchestrator, circuit breaker, admin console).
 // See the design note "OTel GenAI Conformance" for the naming discipline.
 const (
-	// MetricRequestsTotal is retained as a Sluice-namespaced convenience
+	// MetricRequestsTotal is retained as a Slipspace-namespaced convenience
 	// counter. The GenAI spec derives request count from the duration
 	// histogram's _count; we keep an explicit counter as a spec-legal
 	// additive extra because the admin console's per-dimension request
 	// counting is built on it (same emit-both rationale as cache tokens).
-	MetricRequestsTotal = "sluice.requests.total"
+	MetricRequestsTotal = "slipspace.requests.total"
 
 	// MetricTokenUsage is the spec gen_ai.client.token.usage histogram,
 	// keyed by gen_ai.token.type=input|output. There is no server-side
@@ -59,15 +59,15 @@ const (
 	// dashboard's token-sum continuous aggregates need these counter mirrors.
 	// Same dimensions + temporality as the cache counters below, which the
 	// telemetry dashboard already sums.
-	MetricTokensInputTotal  = "sluice.tokens.input.total"  //nolint:gosec // G101 false positive: metric name, not a credential
-	MetricTokensOutputTotal = "sluice.tokens.output.total" //nolint:gosec // G101 false positive: metric name, not a credential
+	MetricTokensInputTotal  = "slipspace.tokens.input.total"  //nolint:gosec // G101 false positive: metric name, not a credential
+	MetricTokensOutputTotal = "slipspace.tokens.output.total" //nolint:gosec // G101 false positive: metric name, not a credential
 
 	// Cache tokens have no gen_ai.token.type value (the spec enum is
-	// input|output only), so they ride Sluice-namespaced counters. Both
+	// input|output only), so they ride Slipspace-namespaced counters. Both
 	// are billing-load-bearing: cached is the discounted cache-read,
 	// cache_creation the chargeable cache-write premium.
-	MetricTokensCachedTotal        = "sluice.tokens.cached.total"         //nolint:gosec // G101 false positive: metric name, not a credential
-	MetricTokensCacheCreationTotal = "sluice.tokens.cache_creation.total" //nolint:gosec // G101 false positive: metric name, not a credential
+	MetricTokensCachedTotal        = "slipspace.tokens.cached.total"         //nolint:gosec // G101 false positive: metric name, not a credential
+	MetricTokensCacheCreationTotal = "slipspace.tokens.cache_creation.total" //nolint:gosec // G101 false positive: metric name, not a credential
 
 	MetricTagsAppliedTotal    = "gateway.tags.applied.total"
 	MetricUnmappedFieldsTotal = "gateway.unmapped_fields.total"
@@ -83,19 +83,19 @@ const (
 	// MetricRuleFiredTotal counts rules that fired on a request, labelled
 	// by rule_name + configuration. Distinct from gateway.rule.matches.total
 	// (evaluator-emitted, labelled rule_name/rule_id/terminated/action_count
-	// for engine introspection): this Sluice-namespaced counter carries the
+	// for engine introspection): this Slipspace-namespaced counter carries the
 	// configuration so the Arbiter can roll up
 	// "rule X fired N times under configuration Y" without the gateway's
 	// rule→configuration map — it is the meter the rules-fired dashboard
 	// panel reads (telemetry design channel 2, invariant #4: dashboards
 	// read meters, never record scans).
-	MetricRuleFiredTotal = "sluice.rule.fired"
+	MetricRuleFiredTotal = "slipspace.rule.fired"
 
 	// MetricConfigHitsTotal counts requests resolved to a configuration,
 	// labelled by configuration. The configuration-hit aggregate the
 	// dashboard's by-configuration panel reads from the meter rollup rather
 	// than scanning the per-request record store.
-	MetricConfigHitsTotal     = "sluice.config.hit"
+	MetricConfigHitsTotal     = "slipspace.config.hit"
 	MetricConfigReloadTotal   = "gateway.config_reload.total"
 	MetricUpstreamErrorsTotal = "gateway.upstream_errors.total"
 	MetricErrorResponsesTotal = "gateway.error_responses.total"

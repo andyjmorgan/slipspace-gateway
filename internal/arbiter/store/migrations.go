@@ -113,7 +113,7 @@ CREATE INDEX IF NOT EXISTS metric_points_name_time ON metric_points (metric_name
 		// Vocabulary unification: the configured upstream is "provider"
 		// everywhere else (config schema, admin API, gen_ai OTel label), so the
 		// telemetry dimension follows. Hard cut — no dual-read window; the
-		// gateway emits sluice.provider and ingest reads provider after this.
+		// gateway emits slipspace.provider and ingest reads provider after this.
 		// Postgres rewrites the request_events_filter index definition to the
 		// new column name automatically, so only the rename is needed.
 		sql: `ALTER TABLE request_events RENAME COLUMN backend TO provider;`,
@@ -247,7 +247,7 @@ CREATE INDEX record_received_at ON record (received_at);`,
 		//
 		// CAGG dimensions are projected from the meter labels JSONB (->> is
 		// immutable, so it is legal in a continuous-aggregate GROUP BY):
-		//   - cagg_requests_1m: sluice.requests.total, keyed by
+		//   - cagg_requests_1m: slipspace.requests.total, keyed by
 		//     provider/model/configuration/protocol/status_code → request counts,
 		//     error rate (status_code), and every By* / ProviderHealth panel.
 		//   - cagg_tokens_1m: the four token COUNTERS (input/output added by the
@@ -274,12 +274,12 @@ WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT time_bucket('1 minute', observed_at)        AS bucket,
        labels->>'gen_ai.provider.name'             AS provider,
        labels->>'gen_ai.request.model'             AS model,
-       labels->>'sluice.configuration'             AS configuration,
-       labels->>'sluice.protocol'                  AS protocol,
+       labels->>'slipspace.configuration'          AS configuration,
+       labels->>'slipspace.protocol'               AS protocol,
        labels->>'http.response.status_code'        AS status_code,
        sum(value)                                  AS requests
 FROM metric_points
-WHERE metric_name = 'sluice.requests.total'
+WHERE metric_name = 'slipspace.requests.total'
 GROUP BY bucket, provider, model, configuration, protocol, status_code
 WITH NO DATA;
 
@@ -289,11 +289,11 @@ SELECT time_bucket('1 minute', observed_at)        AS bucket,
        metric_name                                 AS metric_name,
        labels->>'gen_ai.provider.name'             AS provider,
        labels->>'gen_ai.request.model'             AS model,
-       labels->>'sluice.configuration'             AS configuration,
-       labels->>'sluice.protocol'                  AS protocol,
+       labels->>'slipspace.configuration'          AS configuration,
+       labels->>'slipspace.protocol'               AS protocol,
        sum(value)                                  AS tokens
 FROM metric_points
-WHERE metric_name IN ('sluice.tokens.input.total', 'sluice.tokens.output.total', 'sluice.tokens.cached.total', 'sluice.tokens.cache_creation.total')
+WHERE metric_name IN ('slipspace.tokens.input.total', 'slipspace.tokens.output.total', 'slipspace.tokens.cached.total', 'slipspace.tokens.cache_creation.total')
 GROUP BY bucket, metric_name, provider, model, configuration, protocol
 WITH NO DATA;
 
@@ -301,10 +301,10 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS cagg_rules_1m
 WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT time_bucket('1 minute', observed_at)        AS bucket,
        labels->>'rule_name'                        AS rule_name,
-       labels->>'sluice.configuration'             AS configuration,
+       labels->>'slipspace.configuration'          AS configuration,
        sum(value)                                  AS fired
 FROM metric_points
-WHERE metric_name = 'sluice.rule.fired'
+WHERE metric_name = 'slipspace.rule.fired'
 GROUP BY bucket, rule_name, configuration
 WITH NO DATA;
 
@@ -312,7 +312,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS cagg_tags_1m
 WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT time_bucket('1 minute', observed_at)        AS bucket,
        labels->>'tag'                              AS tag,
-       labels->>'sluice.configuration'             AS configuration,
+       labels->>'slipspace.configuration'          AS configuration,
        sum(value)                                  AS applied
 FROM metric_points
 WHERE metric_name = 'gateway.tags.applied.total'
@@ -331,22 +331,22 @@ SELECT add_continuous_aggregate_policy('cagg_tags_1m', start_offset => INTERVAL 
 		version: 8,
 		name:    "drop_dupe_span_keys",
 		// span_event historically stored two byte-identical duplicate pairs: the
-		// raw OTel attrs sluice.tags / sluice.rules_fired (copied verbatim by the
+		// raw OTel attrs slipspace.tags / slipspace.rules_fired (copied verbatim by the
 		// pre-fix buildSpanEvent) alongside the derived, normalised tags /
 		// rules_fired arrays. Every reader (the GIN indexes on
 		// (span_event->'tags') / (span_event->'rules_fired'), the facets unnest,
 		// the EventFilter @> containment, store.SpanFields) consumes only the
-		// bare keys, so the sluice.-prefixed copies were dead weight. Ingest now
+		// bare keys, so the slipspace.-prefixed copies were dead weight. Ingest now
 		// skips them; this strips them from existing rows so the blob carries each
 		// value once. Idempotent: subtracting an absent key is a no-op.
-		sql: `UPDATE request_events SET span_event = span_event - 'sluice.tags' - 'sluice.rules_fired';`,
+		sql: `UPDATE request_events SET span_event = span_event - 'slipspace.tags' - 'slipspace.rules_fired';`,
 	},
 	{
 		version: 9,
 		name:    "add_conversation_parent",
 		// Unified conversation/thread/parent paradigm (Session Bundling design
 		// note). session_id keeps its meaning (the bundle root, now projected
-		// from sluice.session_id); two additive columns split out the per-turn
+		// from slipspace.session_id); two additive columns split out the per-turn
 		// thread and its parent so a subagent is modelled coherently across
 		// clients (Codex Thread-Id / X-Codex-Parent-Thread-Id; Claude Code's
 		// X-Claude-Code-Agent-Id, moved off the squatted agent_id axis).

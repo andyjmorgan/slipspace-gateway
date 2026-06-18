@@ -39,8 +39,8 @@ func TestMetrics_UnmappedFields_RequestFieldEmitted(t *testing.T) {
 	}
 
 	const metric = "gateway_unmapped_fields_total"
-	wantField := `sluice_unmapped_field="` + field + `"`
-	const wantDir = `sluice_unmapped_direction="request"`
+	wantField := `slipspace_unmapped_field="` + field + `"`
+	const wantDir = `slipspace_unmapped_direction="request"`
 
 	deadline := time.Now().Add(5 * time.Second)
 	var lastBody string

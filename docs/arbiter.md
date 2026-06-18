@@ -1,6 +1,6 @@
 # Arbiter
 
-The **Arbiter** is a standalone binary (`cmd/arbiter`, image `arbiter`) that one or more Sluice gateways report into. It is the central, Postgres-backed (TimescaleDB) home for everything a fleet of gateways emits: the gen_ai OTLP spans, the `sluice.*` OTel meters, and the full per-request **Record** (request/response bodies, headers, rule chain, resilience attempts). The gen_ai span is the **single writer** of the per-request entity; the Record lands a lazy verbatim blob joined by `correlation_id` only when an operator opens the inspector; the meters feed pre-aggregated dashboards. The service serves an operator console — the same dashboard + message inspector the gateway's own admin console exposes, but fleet-wide and with full-history retention.
+The **Arbiter** is a standalone binary (`cmd/arbiter`, image `arbiter`) that one or more Sluice gateways report into. It is the central, Postgres-backed (TimescaleDB) home for everything a fleet of gateways emits: the gen_ai OTLP spans, the `slipspace.*` OTel meters, and the full per-request **Record** (request/response bodies, headers, rule chain, resilience attempts). The gen_ai span is the **single writer** of the per-request entity; the Record lands a lazy verbatim blob joined by `correlation_id` only when an operator opens the inspector; the meters feed pre-aggregated dashboards. The service serves an operator console — the same dashboard + message inspector the gateway's own admin console exposes, but fleet-wide and with full-history retention.
 
 It is deployed **separately** from the gateway, with its **own Postgres**. The gateway data plane never depends on it: if the Arbiter is down, the gateway keeps forwarding traffic (OTLP export and Record push are best-effort, fire-and-forget). The service never sits on a request path and never signs receipts — it only ever *consumes* telemetry.
 
@@ -50,7 +50,7 @@ The process binds exactly two listeners (`cmd/arbiter/main.go::run`):
 ```mermaid
 flowchart LR
     subgraph GW["Gateway fleet"]
-        M["sluice.* meters"]
+        M["slipspace.* meters"]
         S["gen_ai OTLP spans"]
         R["Record push<br/>(HMAC-signed)"]
     end
@@ -98,14 +98,14 @@ Under the **single-writer** rearchitecture, two ingest channels land in three ta
 | Channel | Listener / route | Receiver | Table(s) | Role |
 |---|---|---|---|---|
 | **gen_ai spans** | OTLP gRPC `:8687` (trace) | `ingest.TraceReceiver` | `request_events` (**sole writer**) | The complete span in `span_event JSONB`; the filter columns (provider/model/configuration/protocol/status_code + the identity ids) projected from it. Drives recent-history + drill-down. |
-| **`sluice.*` meters** | OTLP gRPC `:8687` (metrics) | `ingest.MetricsReceiver` | `metric_points` (hypertable) → four CAGGs | Raw number data points; the dashboard reads the 1-minute continuous aggregates over them for its rate / token / fired-row panels. |
+| **`slipspace.*` meters** | OTLP gRPC `:8687` (metrics) | `ingest.MetricsReceiver` | `metric_points` (hypertable) → four CAGGs | Raw number data points; the dashboard reads the 1-minute continuous aggregates over them for its rate / token / fired-row panels. |
 | **Record** | HTTP `:8686` `POST /api/v1/ingest/record` | `ingest.RecordHandler` (`ingest/record.go`) | `record` (one verbatim blob per correlation id) | The full audit copy: bodies, headers, rule chain, resilience attempts — stored as the raw `cc.Record` bytes, joined to the entity lazily by `correlation_id` only when the inspector's record tab opens. |
 
 How this complies with invariant #4:
 
 - **Meters never carry bodies.** The metrics feed only ever produces `metric_points` (numeric samples + bounded-cardinality labels); `PointsFromMetric` reads only OTLP number data points (histograms/summaries are dropped). The console's aggregate panels read the `metric_points` continuous aggregates, never the `record` blob.
 - **The Record never replaces a meter.** The HMAC webhook feeds only the `record` table — the heavy, audit-grade verbatim copy. The message **inspector** decodes that blob lazily; the **dashboard** reads the CAGGs. The two are joined only for a human looking at one request, never to compose a metric.
-- **The entity has exactly one writer.** The gen_ai OTLP span owns `request_events` outright via `UpsertRequestEvent` — there is no second feed writing the entity, and therefore no cross-feed COALESCE merge to keep correct. The gateway facts the console needs (configuration, protocol, method, status, tags, rule chain) ride the span as `sluice.*` attributes and are projected into the entity from the span, not merged in from the Record. The Record exists only as the lazily-joined raw audit copy.
+- **The entity has exactly one writer.** The gen_ai OTLP span owns `request_events` outright via `UpsertRequestEvent` — there is no second feed writing the entity, and therefore no cross-feed COALESCE merge to keep correct. The gateway facts the console needs (configuration, protocol, method, status, tags, rule chain) ride the span as `slipspace.*` attributes and are projected into the entity from the span, not merged in from the Record. The Record exists only as the lazily-joined raw audit copy.
 
 The Record feed is the **gateway → service trust boundary**. `RecordHandler.ServeHTTP` (`ingest/record.go`) reads `X-Sluice-Gateway-Id` + `X-Sluice-Signature`, then calls `Registry.Verify` (`internal/arbiter/registry/registry.go`), which recomputes the hex HMAC-SHA256 of the raw body under the registered secret and compares constant-time (`hmac.Equal`). A record is stored **iff** its signature verifies; unknown-gateway and bad-signature both collapse to `401` so the caller learns nothing beyond "rejected". The handler decodes the body only far enough to read `correlation_id`, then stores the raw bytes verbatim — no fan-out into columns or payload rows. The body is capped at **16 MiB** (`maxRecordBytes`, `ingest/record.go`) — the gateway bounds captured bodies at 10 MiB inbound, leaving headroom for the JSON envelope.
 
@@ -188,7 +188,7 @@ When the optional Arbiter scanner is enabled (`scanner.enabled: true`), three ad
 ```yaml
 scanner:
   enabled: true
-  # Span-level scan selection by request tag (the post-rule sluice.tags set).
+  # Span-level scan selection by request tag (the post-rule slipspace.tags set).
   scan_tags:
     include: ["tier:*"]        # empty/omitted = scan all spans
     exclude: ["env:internal"]  # wins over include

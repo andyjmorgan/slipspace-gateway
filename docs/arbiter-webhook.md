@@ -4,7 +4,7 @@ The Record webhook is the **audit channel** of the telemetry design: the full,
 authoritative per-request digital record — request/response bodies, headers, the
 post-rule tag set, the fired-rule chain, and the resilience attempt log — shipped
 from a gateway to the Arbiter in real time. It is the counterpart
-to the two OTLP feeds (`gen_ai.*` spans and `sluice.*` meters); see
+to the two OTLP feeds (`gen_ai.*` spans and `slipspace.*` meters); see
 [arbiter.md](arbiter.md) for the service that terminates all
 three.
 

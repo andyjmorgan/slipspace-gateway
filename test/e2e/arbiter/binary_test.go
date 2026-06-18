@@ -193,8 +193,8 @@ func intKV(k string, v int64) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: v}}}
 }
 
-// strSliceKV builds a string-array attribute (the shape sluice.tags /
-// sluice.rules_fired ride on the span).
+// strSliceKV builds a string-array attribute (the shape slipspace.tags /
+// slipspace.rules_fired ride on the span).
 func strSliceKV(k string, vs ...string) *commonpb.KeyValue {
 	vals := make([]*commonpb.AnyValue, len(vs))
 	for i, v := range vs {
@@ -206,7 +206,7 @@ func strSliceKV(k string, vs ...string) *commonpb.KeyValue {
 }
 
 // sendSpan exports one gen_ai span carrying GenAI semconv attributes plus the
-// sluice.correlation_id join key (the only sluice.* the extractor reads), then
+// slipspace.correlation_id join key (the only slipspace.* the extractor reads), then
 // closes the connection.
 func (s *service) sendSpan(t *testing.T, attrs ...*commonpb.KeyValue) {
 	t.Helper()
@@ -239,7 +239,7 @@ func (s *service) sendSpan(t *testing.T, attrs ...*commonpb.KeyValue) {
 }
 
 // sendCounter exports one delta-temporality sum metric (the shape the gateway's
-// sluice.* counters export under) so the dashboard meter rollups can SUM it.
+// slipspace.* counters export under) so the dashboard meter rollups can SUM it.
 func (s *service) sendCounter(t *testing.T, name string, dps ...*metricspb.NumberDataPoint) {
 	t.Helper()
 	conn, err := grpc.NewClient(s.otlpAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -370,7 +370,7 @@ func TestE2E_RecordTrust(t *testing.T) {
 }
 
 // TestE2E_RecordDetailEnriched proves the lazy-record split: the span carries
-// the post-rule fired-rule NAMES (sluice.rules_fired) onto the entity for the
+// the post-rule fired-rule NAMES (slipspace.rules_fired) onto the entity for the
 // list view, while the full rule lifecycle (actions / terminated / attempts) and
 // the raw headers ride the verbatim record blob, surfaced by the body endpoint.
 func TestE2E_RecordDetailEnriched(t *testing.T) {
@@ -449,8 +449,8 @@ func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 		strKV("slipspace.correlation_id", "otlp-1"),
 		strKV("gen_ai.provider.name", "anthropic"),
 		strKV("gen_ai.request.model", "claude-x"),
-		strKV("sluice.configuration", "dev"),
-		strKV("sluice.protocol", "messages"),
+		strKV("slipspace.configuration", "dev"),
+		strKV("slipspace.protocol", "messages"),
 		strSliceKV("slipspace.tags", "alpha", "beta"),
 		intKV("http.response.status_code", 200),
 		intKV("gen_ai.usage.input_tokens", 10),
@@ -495,21 +495,21 @@ func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 	// invariant #4 + the @100 rearchitecture. So drive the dashboard with the
 	// matching request/token counters the gateway emits alongside the span; the
 	// real-time CAGG view surfaces them without an explicit refresh.
-	svc.sendCounter(t, "sluice.requests.total",
+	svc.sendCounter(t, "slipspace.requests.total",
 		counterDP(1,
 			strKV("gen_ai.provider.name", "anthropic"),
 			strKV("gen_ai.request.model", "claude-x"),
-			strKV("sluice.configuration", "dev"),
-			strKV("sluice.protocol", "messages"),
+			strKV("slipspace.configuration", "dev"),
+			strKV("slipspace.protocol", "messages"),
 			strKV("http.response.status_code", "200"),
 		),
 	)
-	svc.sendCounter(t, "sluice.tokens.input.total",
+	svc.sendCounter(t, "slipspace.tokens.input.total",
 		counterDP(10,
 			strKV("gen_ai.provider.name", "anthropic"),
 			strKV("gen_ai.request.model", "claude-x"),
-			strKV("sluice.configuration", "dev"),
-			strKV("sluice.protocol", "messages"),
+			strKV("slipspace.configuration", "dev"),
+			strKV("slipspace.protocol", "messages"),
 		),
 	)
 
@@ -575,12 +575,12 @@ func TestE2E_SessionRollup(t *testing.T) {
 func TestE2E_DashboardFiredFromMeters(t *testing.T) {
 	svc := startService(t)
 
-	svc.sendCounter(t, "sluice.rule.fired",
-		counterDP(2, strKV("rule_name", "redirect"), strKV("sluice.configuration", "dev")),
-		counterDP(1, strKV("rule_name", "tagit"), strKV("sluice.configuration", "dev")),
+	svc.sendCounter(t, "slipspace.rule.fired",
+		counterDP(2, strKV("rule_name", "redirect"), strKV("slipspace.configuration", "dev")),
+		counterDP(1, strKV("rule_name", "tagit"), strKV("slipspace.configuration", "dev")),
 	)
 	svc.sendCounter(t, "gateway.tags.applied.total",
-		counterDP(3, strKV("tag", "alpha"), strKV("sluice.configuration", "dev")),
+		counterDP(3, strKV("tag", "alpha"), strKV("slipspace.configuration", "dev")),
 	)
 
 	var sum adminc.DashboardSummary
@@ -693,8 +693,8 @@ func TestE2E_MessageBrowserFilters(t *testing.T) {
 			strKV("slipspace.correlation_id", id),
 			strKV("gen_ai.provider.name", provider),
 			strKV("gen_ai.request.model", model),
-			strKV("sluice.configuration", cfg),
-			strKV("sluice.protocol", endpoint),
+			strKV("slipspace.configuration", cfg),
+			strKV("slipspace.protocol", endpoint),
 			strKV("gen_ai.conversation.id", session),
 			strKV("gen_ai.agent.id", agent),
 			strKV("enduser.id", user),

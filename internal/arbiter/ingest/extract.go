@@ -63,8 +63,8 @@ const (
 	// the blob under their own keys (read back via store.SpanFields), so they
 	// need no dedicated const here; tags / rules_fired are normalised to JSON
 	// arrays for the GIN filters.
-	attrSluiceConfiguration = "sluice.configuration"
-	attrSluiceProtocol      = "sluice.protocol"
+	attrSluiceConfiguration = "slipspace.configuration"
+	attrSluiceProtocol      = "slipspace.protocol"
 	attrSluiceTags          = "slipspace.tags"
 	attrSluiceRulesFired    = "slipspace.rules_fired"
 
@@ -128,14 +128,14 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 
 // buildSpanEvent serializes the complete span as the immutable JSONB blob: every
 // merged attribute keyed by its OTLP name (so nothing is discarded — invariant
-// #1's telemetry analogue), the derived sluice.latency_ms, the tags / rules_fired
-// arrays parsed from sluice.tags / sluice.rules_fired, and the bounded gen_ai
+// #1's telemetry analogue), the derived slipspace.latency_ms, the tags / rules_fired
+// arrays parsed from slipspace.tags / slipspace.rules_fired, and the bounded gen_ai
 // content under gen_ai_content. The string keys the projection + drill-down
 // (store.SpanFields) read are stamped here.
 func buildSpanEvent(attrs map[string]*commonpb.AnyValue, span *tracepb.Span, contentMaxBytes int) []byte {
 	out := make(map[string]any, len(attrs)+4)
 	for k, v := range attrs {
-		// sluice.tags / sluice.rules_fired are copied below as the derived,
+		// slipspace.tags / slipspace.rules_fired are copied below as the derived,
 		// normalised tags / rules_fired arrays (keyTags / keyRules) that every
 		// reader (GIN indexes, facets, EventFilter, store.SpanFields) consumes.
 		// Skip the verbatim raw attrs here so the blob carries each value once
@@ -185,7 +185,7 @@ func mergeAttrs(resource, span []*commonpb.KeyValue) map[string]*commonpb.AnyVal
 }
 
 // firstNonEmpty returns the first non-empty string in vals, or "". Used to
-// fall back from sluice.session_id to gen_ai.conversation.id for spans that
+// fall back from slipspace.session_id to gen_ai.conversation.id for spans that
 // predate the session-root attribute (where conversation == session).
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
@@ -229,7 +229,7 @@ func intAttr(attrs map[string]*commonpb.AnyValue, key string) int64 {
 	}
 }
 
-// strSliceAttr reads a string-array attribute (sluice.tags / sluice.rules_fired)
+// strSliceAttr reads a string-array attribute (slipspace.tags / slipspace.rules_fired)
 // into a []string. A single string value is accepted as a one-element slice.
 // Returns nil when absent so the key is omitted from the blob entirely.
 func strSliceAttr(attrs map[string]*commonpb.AnyValue, key string) []string {

@@ -26,14 +26,14 @@ type RequestEvent struct {
 	// ingest now() — load-bearing for ordering, pagination, and retention.
 	ObservedAt time.Time
 	// SessionID is the resolved session bundle root — the stable top-down
-	// grouping key; projected from the span's sluice.session_id (falling back
+	// grouping key; projected from the span's slipspace.session_id (falling back
 	// to gen_ai.conversation.id for spans predating that attribute).
 	SessionID string
 	// ConversationID is the resolved conversation/thread id (subagent thread
 	// when active, else the session); projected from gen_ai.conversation.id.
 	ConversationID string
 	// ParentConversationID links a subagent thread back toward its session;
-	// projected from sluice.parent_conversation_id. Empty for a main agent.
+	// projected from slipspace.parent_conversation_id. Empty for a main agent.
 	ParentConversationID string
 	// AgentID is the resolved id of a genuinely named agent; projected from
 	// gen_ai.agent.id. A subagent thread is NOT an agent — it rides
@@ -48,10 +48,10 @@ type RequestEvent struct {
 	// Model is the requested model; projected from gen_ai.request.model.
 	Model string
 	// Configuration is the resolved policy bundle name; projected from
-	// sluice.configuration.
+	// slipspace.configuration.
 	Configuration string
 	// Protocol is the post-rule wire protocol / endpoint; projected from
-	// sluice.protocol.
+	// slipspace.protocol.
 	Protocol string
 	// StatusCode is the client-facing HTTP status; projected from
 	// http.response.status_code.
@@ -64,7 +64,7 @@ type RequestEvent struct {
 	// (no aggregate reads them yet).
 	TokensIn  int64
 	TokensOut int64
-	// Tags is the post-rule tag set (AddTagAction) projected from sluice.tags —
+	// Tags is the post-rule tag set (AddTagAction) projected from slipspace.tags —
 	// the same values SpanFields decodes from the blob, promoted to a GIN-indexed
 	// text[] column so the facet enumeration, the AND-filter, and the session-list
 	// rollup never detoast span_event (v12). Write-only on the entity: read paths
@@ -89,14 +89,14 @@ type RequestEvent struct {
 // the span, so the blob round-trips the wire shape (invariant: nothing on the
 // span is discarded). Numeric usage is read leniently (int or numeric string).
 type SpanFields struct {
-	SessionIDSource      string           `json:"sluice.session_id_source,omitempty"`
-	ConversationIDSource string           `json:"sluice.conversation_id_source,omitempty"`
-	AgentIDSource        string           `json:"sluice.agent_id_source,omitempty"`
-	UserIDSource         string           `json:"sluice.user_id_source,omitempty"`
+	SessionIDSource      string           `json:"slipspace.session_id_source,omitempty"`
+	ConversationIDSource string           `json:"slipspace.conversation_id_source,omitempty"`
+	AgentIDSource        string           `json:"slipspace.agent_id_source,omitempty"`
+	UserIDSource         string           `json:"slipspace.user_id_source,omitempty"`
 	GatewayID            string           `json:"gateway_id,omitempty"`
 	Method               string           `json:"slipspace.method,omitempty"`
 	APIKeyName           string           `json:"slipspace.api_key_name,omitempty"`
-	PolicyRef            string           `json:"sluice.policy_ref,omitempty"`
+	PolicyRef            string           `json:"slipspace.policy_ref,omitempty"`
 	UpstreamStatus       int              `json:"slipspace.upstream_status,omitempty"`
 	LatencyMs            int64            `json:"slipspace.latency_ms,omitempty"`
 	TokensIn             int64            `json:"gen_ai.usage.input_tokens,omitempty"`

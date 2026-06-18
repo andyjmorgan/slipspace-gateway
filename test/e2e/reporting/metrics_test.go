@@ -15,7 +15,7 @@ import (
 
 // TestMetrics_RequestsTotalCarriesModelLabel scrapes the gateway's
 // Prometheus endpoint after a chat-completions request and asserts the
-// emitted `sluice_requests_total` series carries the outbound model in
+// emitted `slipspace_requests_total` series carries the outbound model in
 // the `gen_ai_request_model` label. This is the end-to-end half of
 // issue #4 — the instrument is wired correctly inside the running
 // binary, not just in the cmd/gateway test ring.
@@ -38,8 +38,8 @@ func TestMetrics_RequestsTotalCarriesModelLabel(t *testing.T) {
 	}
 
 	// The OTel Prometheus exporter publishes counters under their normalized
-	// name; sluice.requests.total → sluice_requests_total.
-	const metric = "sluice_requests_total"
+	// name; slipspace.requests.total → slipspace_requests_total.
+	const metric = "slipspace_requests_total"
 	want := `gen_ai_request_model="` + model + `"`
 
 	deadline := time.Now().Add(5 * time.Second)

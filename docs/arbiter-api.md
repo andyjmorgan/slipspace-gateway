@@ -218,7 +218,7 @@ plus the full filter set. Returns `contracts/admin.DashboardSummary`
 > **Invariant #4.** Every dashboard panel aggregates a continuous aggregate over
 > the meter feed: the request/outcome/`by_*` panels over `cagg_requests_1m`, token
 > totals over `cagg_tokens_1m`, and `rules_fired` / `tags_fired` over
-> `cagg_rules_1m` / `cagg_tags_1m` (`sluice.rule.fired`,
+> `cagg_rules_1m` / `cagg_tags_1m` (`slipspace.rule.fired`,
 > `gateway.tags.applied.total`) — `store/dashboard.go::queryDashFired`. Dashboards
 > read meters, never a scan of the `request_events` entity or the captured record.
 
@@ -505,9 +505,9 @@ projection works whether or not reporting forwarding was on:
 }
 ```
 
-Field sources: `latency_ms` is the blob's derived `sluice.latency_ms`;
+Field sources: `latency_ms` is the blob's derived `slipspace.latency_ms`;
 `ttfc_ms` converts `gen_ai.response.time_to_first_chunk` (seconds, streaming
-only) to ms; `status` prefers `sluice.upstream_status` over the client-facing
+only) to ms; `status` prefers `slipspace.upstream_status` over the client-facing
 column; `finish_reason` is the first `gen_ai.response.finish_reasons` entry;
 the usage counts are presence-keyed (null when the span carried no such
 attribute, distinguishing "not reported" from zero) and `server_tool_use`

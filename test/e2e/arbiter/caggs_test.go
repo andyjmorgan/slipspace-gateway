@@ -49,16 +49,16 @@ func TestContinuousAggregates_BuildRefreshAggregate(t *testing.T) {
 		}
 	}
 
-	const base = `"gen_ai.provider.name":"openai","gen_ai.request.model":"gpt-4o","sluice.configuration":"production","sluice.protocol":"chat"`
+	const base = `"gen_ai.provider.name":"openai","gen_ai.request.model":"gpt-4o","slipspace.configuration":"production","slipspace.protocol":"chat"`
 	// requests: 3 ok + 1 errored, same dimension set.
-	insert("sluice.requests.total", `{`+base+`,"http.response.status_code":"200"}`, 3)
-	insert("sluice.requests.total", `{`+base+`,"http.response.status_code":"500"}`, 1)
+	insert("slipspace.requests.total", `{`+base+`,"http.response.status_code":"200"}`, 3)
+	insert("slipspace.requests.total", `{`+base+`,"http.response.status_code":"500"}`, 1)
 	// tokens: input + output counters.
-	insert("sluice.tokens.input.total", `{`+base+`}`, 100)
-	insert("sluice.tokens.output.total", `{`+base+`}`, 40)
+	insert("slipspace.tokens.input.total", `{`+base+`}`, 100)
+	insert("slipspace.tokens.output.total", `{`+base+`}`, 40)
 	// rule + tag meters.
-	insert("sluice.rule.fired", `{"rule_name":"tag-claude-code","sluice.configuration":"production"}`, 2)
-	insert("gateway.tags.applied.total", `{"tag":"Claude-Code","sluice.configuration":"production"}`, 2)
+	insert("slipspace.rule.fired", `{"rule_name":"tag-claude-code","slipspace.configuration":"production"}`, 2)
+	insert("gateway.tags.applied.total", `{"tag":"Claude-Code","slipspace.configuration":"production"}`, 2)
 
 	for _, cagg := range []string{"cagg_requests_1m", "cagg_tokens_1m", "cagg_rules_1m", "cagg_tags_1m"} {
 		if _, err := conn.Exec(ctx, `CALL refresh_continuous_aggregate($1, NULL, NULL)`, cagg); err != nil {
@@ -104,11 +104,11 @@ func TestContinuousAggregates_BuildRefreshAggregate(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("tokens rows: %v", err)
 	}
-	if tokens["sluice.tokens.input.total"] != 100 {
-		t.Errorf("input tokens = %v, want 100", tokens["sluice.tokens.input.total"])
+	if tokens["slipspace.tokens.input.total"] != 100 {
+		t.Errorf("input tokens = %v, want 100", tokens["slipspace.tokens.input.total"])
 	}
-	if tokens["sluice.tokens.output.total"] != 40 {
-		t.Errorf("output tokens = %v, want 40", tokens["sluice.tokens.output.total"])
+	if tokens["slipspace.tokens.output.total"] != 40 {
+		t.Errorf("output tokens = %v, want 40", tokens["slipspace.tokens.output.total"])
 	}
 
 	// rules + tags.

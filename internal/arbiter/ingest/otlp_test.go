@@ -83,7 +83,7 @@ const testContentCap = 16 * 1024
 
 func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 	// Single-writer model: the span carries GenAI semconv AND the gateway facts
-	// (sluice.*). EventFromSpan projects provider/model/configuration/protocol/
+	// (slipspace.*). EventFromSpan projects provider/model/configuration/protocol/
 	// status/identity AND the input/output token counts (#318) to columns, and
 	// stores the COMPLETE span (every attribute + content + derived latency/tags)
 	// into SpanEvent. The remaining measurements (latency, streaming, method, the
@@ -147,7 +147,7 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 }
 
 func TestEventFromSpan_TagsAndRulesToBlob(t *testing.T) {
-	// sluice.tags / sluice.rules_fired arrays normalise into JSON arrays in the
+	// slipspace.tags / slipspace.rules_fired arrays normalise into JSON arrays in the
 	// blob so the GIN @> filter + the facet unnest see real arrays.
 	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
 		strKV(attrCorrelationID, "corr-tags"),
@@ -166,7 +166,7 @@ func TestEventFromSpan_TagsAndRulesToBlob(t *testing.T) {
 		t.Errorf("rules_fired = %+v", f.RulesFired)
 	}
 	// The blob carries each array exactly once, under the canonical bare key.
-	// The verbatim sluice.-prefixed raw attrs must NOT be duplicated in —
+	// The verbatim slipspace.-prefixed raw attrs must NOT be duplicated in —
 	// nothing reads them, and every reader consumes tags / rules_fired.
 	var blob map[string]json.RawMessage
 	if err := json.Unmarshal(e.SpanEvent, &blob); err != nil {
@@ -370,11 +370,11 @@ func gaugeMetric(name string, v int64) *metricspb.Metric {
 }
 
 func TestPointsFromMetric_GaugeAndSkip(t *testing.T) {
-	pts := PointsFromMetric(nil, gaugeMetric("sluice.requests", 7))
+	pts := PointsFromMetric(nil, gaugeMetric("slipspace.requests", 7))
 	if len(pts) != 1 {
 		t.Fatalf("points = %d, want 1", len(pts))
 	}
-	if pts[0].Name != "sluice.requests" || pts[0].Value != 7 {
+	if pts[0].Name != "slipspace.requests" || pts[0].Value != 7 {
 		t.Errorf("point = %+v", pts[0])
 	}
 	// Histogram is skipped; nil metric is skipped.
@@ -403,8 +403,8 @@ func TestMetricsReceiver_Export(t *testing.T) {
 }
 
 // TestEventFromSpan_ConversationParent covers the unified subagent projection:
-// gen_ai.conversation.id is the thread, sluice.session_id the bundle root, and
-// sluice.parent_conversation_id the hierarchy edge.
+// gen_ai.conversation.id is the thread, slipspace.session_id the bundle root, and
+// slipspace.parent_conversation_id the hierarchy edge.
 func TestEventFromSpan_ConversationParent(t *testing.T) {
 	span := &tracepb.Span{
 		StartTimeUnixNano: 1_000_000_000,
@@ -433,7 +433,7 @@ func TestEventFromSpan_ConversationParent(t *testing.T) {
 }
 
 // TestEventFromSpan_SessionFallsBackToConversation covers a span predating the
-// sluice.session_id attribute: the bundle root falls back to the conversation.
+// slipspace.session_id attribute: the bundle root falls back to the conversation.
 func TestEventFromSpan_SessionFallsBackToConversation(t *testing.T) {
 	span := &tracepb.Span{
 		StartTimeUnixNano: 1_000_000_000,

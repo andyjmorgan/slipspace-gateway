@@ -271,7 +271,7 @@ How an operator gets from a slim trace to the full request/response body. Teleme
 
 The contract is deliberately a **soft promise**:
 
-> `correlation_id` is on the trace (`sluice.correlation_id`) and on every record. A backing payload **may** be fetchable by it — check for it — but its absence is a normal answer, never an error.
+> `correlation_id` is on the trace (`slipspace.correlation_id`) and on every record. A backing payload **may** be fetchable by it — check for it — but its absence is a normal answer, never an error.
 
 "Absent" is expected whenever a record never reached a durable destination: excluded by a binding's `sampling` / `filter`, truncated past `max_body_bytes`, or dropped under the [Loss policy](#loss-policy) (ring full / disk full). A consumer correlating a trace to its payload must treat "no payload" as a first-class outcome and never assume the fetch succeeds.
 

@@ -215,7 +215,7 @@ func TestRegisterCircuitBreakerStateGauge_RegisterErrorIsWrapped(t *testing.T) {
 }
 
 // TestMeters_RequestsTotalCarriesModelAttribute proves the
-// sluice.requests.total instrument accepts and surfaces the
+// slipspace.requests.total instrument accepts and surfaces the
 // gen_ai.request.model attribute. The attribute itself is applied by the
 // cmd/gateway reporter; this test exists per the issue-#4 acceptance
 // check so a meter-level regression (e.g. instrument swapped for one with

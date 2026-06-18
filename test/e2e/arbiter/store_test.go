@@ -397,8 +397,8 @@ func TestMetricPoints_InsertAndList(t *testing.T) {
 	}
 	labels, _ := json.Marshal(map[string]string{"provider": "anthropic"})
 	pts := []store.MetricPoint{
-		{Name: "sluice.requests", Labels: labels, Value: 1, ObservedAt: time.Now()},
-		{Name: "sluice.tokens", Value: 42, ObservedAt: time.Now()}, // nil labels -> {}
+		{Name: "slipspace.requests", Labels: labels, Value: 1, ObservedAt: time.Now()},
+		{Name: "slipspace.tokens", Value: 42, ObservedAt: time.Now()}, // nil labels -> {}
 	}
 	if err := st.InsertMetricPoints(ctx, pts); err != nil {
 		t.Fatalf("InsertMetricPoints: %v", err)

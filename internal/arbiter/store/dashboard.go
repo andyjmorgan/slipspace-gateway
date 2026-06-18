@@ -24,10 +24,10 @@ const (
 
 	// Token metric_name discriminators in cagg_tokens_1m. The "total" suffix
 	// trips gosec's credential heuristic; these are OTel meter names, not secrets.
-	metricTokensIn            = "sluice.tokens.input.total"          //nolint:gosec // OTel meter name, not a credential
-	metricTokensOut           = "sluice.tokens.output.total"         //nolint:gosec // OTel meter name, not a credential
-	metricTokensCached        = "sluice.tokens.cached.total"         //nolint:gosec // OTel meter name, not a credential
-	metricTokensCacheCreation = "sluice.tokens.cache_creation.total" //nolint:gosec // OTel meter name, not a credential
+	metricTokensIn            = "slipspace.tokens.input.total"          //nolint:gosec // OTel meter name, not a credential
+	metricTokensOut           = "slipspace.tokens.output.total"         //nolint:gosec // OTel meter name, not a credential
+	metricTokensCached        = "slipspace.tokens.cached.total"         //nolint:gosec // OTel meter name, not a credential
+	metricTokensCacheCreation = "slipspace.tokens.cache_creation.total" //nolint:gosec // OTel meter name, not a credential
 )
 
 // DashboardParams is the input to the dashboard rollups: a half-open [From, To)

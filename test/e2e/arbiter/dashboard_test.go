@@ -55,21 +55,21 @@ func TestDashboardRollupsReadCaggs(t *testing.T) {
 	// Two providers under one configuration so the provider filter can narrow.
 	const (
 		cfgName = "dash-e2e"
-		oaiBase = `"gen_ai.provider.name":"dash-openai","gen_ai.request.model":"gpt-dash","sluice.configuration":"dash-e2e","sluice.protocol":"chat"`
-		antBase = `"gen_ai.provider.name":"dash-anthropic","gen_ai.request.model":"claude-dash","sluice.configuration":"dash-e2e","sluice.protocol":"messages"`
+		oaiBase = `"gen_ai.provider.name":"dash-openai","gen_ai.request.model":"gpt-dash","slipspace.configuration":"dash-e2e","slipspace.protocol":"chat"`
+		antBase = `"gen_ai.provider.name":"dash-anthropic","gen_ai.request.model":"claude-dash","slipspace.configuration":"dash-e2e","slipspace.protocol":"messages"`
 	)
 	// requests: openai 5 ok + 2 errored; anthropic 3 ok.
-	insert("sluice.requests.total", `{`+oaiBase+`,"http.response.status_code":"200"}`, 5)
-	insert("sluice.requests.total", `{`+oaiBase+`,"http.response.status_code":"500"}`, 2)
-	insert("sluice.requests.total", `{`+antBase+`,"http.response.status_code":"200"}`, 3)
+	insert("slipspace.requests.total", `{`+oaiBase+`,"http.response.status_code":"200"}`, 5)
+	insert("slipspace.requests.total", `{`+oaiBase+`,"http.response.status_code":"500"}`, 2)
+	insert("slipspace.requests.total", `{`+antBase+`,"http.response.status_code":"200"}`, 3)
 	// tokens (openai only).
-	insert("sluice.tokens.input.total", `{`+oaiBase+`}`, 1000)
-	insert("sluice.tokens.output.total", `{`+oaiBase+`}`, 250)
-	insert("sluice.tokens.cached.total", `{`+oaiBase+`}`, 80)
-	insert("sluice.tokens.cache_creation.total", `{`+oaiBase+`}`, 40)
+	insert("slipspace.tokens.input.total", `{`+oaiBase+`}`, 1000)
+	insert("slipspace.tokens.output.total", `{`+oaiBase+`}`, 250)
+	insert("slipspace.tokens.cached.total", `{`+oaiBase+`}`, 80)
+	insert("slipspace.tokens.cache_creation.total", `{`+oaiBase+`}`, 40)
 	// rule + tag meters.
-	insert("sluice.rule.fired", `{"rule_name":"dash-rule","sluice.configuration":"dash-e2e"}`, 4)
-	insert("gateway.tags.applied.total", `{"tag":"dash-tag","sluice.configuration":"dash-e2e"}`, 4)
+	insert("slipspace.rule.fired", `{"rule_name":"dash-rule","slipspace.configuration":"dash-e2e"}`, 4)
+	insert("gateway.tags.applied.total", `{"tag":"dash-tag","slipspace.configuration":"dash-e2e"}`, 4)
 
 	for _, cagg := range []string{"cagg_requests_1m", "cagg_tokens_1m", "cagg_rules_1m", "cagg_tags_1m"} {
 		if _, err := conn.Exec(ctx, `CALL refresh_continuous_aggregate($1, NULL, NULL)`, cagg); err != nil {
