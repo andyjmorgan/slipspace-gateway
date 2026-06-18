@@ -93,7 +93,17 @@ Telemetry and reporting are kept as **separate channels** by design (a Grafana p
 - **Metrics & traces** — OpenTelemetry meters exposed on a Prometheus `/metrics` scrape endpoint *and/or* pushed over OTLP, plus `gen_ai.*` spans following the OTel GenAI semantic conventions. Every request carries its **token usage broken out four ways** — prompt, completion, cache-read, and cache-write — alongside latency (incl. time-to-first-chunk) and `rules_fired` / `tags_fired` counts, so cost and policy dashboards build straight off the meters. Prompt/response content capture is optional, redacted, and size-capped.
 - **Audit records** — the full end-of-request envelope (bodies, headers, post-rule tags, fired-rule chain, resilience attempts) flows through the spool to your destinations.
 
-An optional **Arbiter** (`cmd/arbiter`) ingests gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from a whole fleet of gateways into Postgres and serves a unified operator console — keeping the two channels physically separate even as it converges them per request. See [docs/observability.md](docs/observability.md) and [docs/arbiter.md](docs/arbiter.md).
+An optional **Arbiter** (`cmd/arbiter`) ingests gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from a whole fleet of gateways into Postgres and serves a unified operator console — keeping the two channels physically separate even as it converges them per request. See [docs/observability.md](docs/observability.md) and the dedicated section below.
+
+## Arbiter
+
+The **Arbiter** is the optional converged **security + telemetry** service (formerly the telemetry service) — a separate deployable, with its own Postgres/TimescaleDB datastore, that one or more gateways report into. The gateway data plane never depends on it: if the Arbiter is down the gateway keeps forwarding traffic, since OTLP export and Record push are best-effort and fire-and-forget. It only ever *consumes* telemetry and never sits on a request path.
+
+It binds two listeners. Gateways export gen_ai OTLP spans and `slipspace.*` meters over **OTLP gRPC (`:8687`)**; the operator console, query API, and the HMAC-trusted Record webhook (`POST /api/v1/ingest/record`) live on **HTTP (`:8686`)** behind Basic auth. The fleet-wide console retains full history — the dashboard reads continuous aggregates over the meters, the message inspector lazily joins the verbatim Record blob per request.
+
+On top of telemetry, the Arbiter runs **async, per-message security scanning** via pluggable **detectors** (PII / prompt-injection / toxicity) speaking the `slipspace.detect.v1` contract. Detectors return a score plus a raw label only; the Arbiter owns the **verdict**, reducing findings to one of **flagged / partial / clean** — `partial` (inconclusive) is first-class and never folds into `clean`, and scanning is fail-open by default. Operators tune it with scan-tag scoping (which traffic to scan), finding exclusion (suppress noisy categories), and severity classification (`info`/`warning`/`error`). The verdict and findings are emitted back out as **enriched OTel spans** carrying `slipspace.security.*` attributes.
+
+The image is `ghcr.io/andyjmorgan/arbiter`. The quickstart bundle ships a gateway + Arbiter Compose stack ([`deploy/quickstart/`](deploy/quickstart/)); for the wire-level detail see [docs/arbiter.md](docs/arbiter.md) (service overview) and [docs/arbiter-api.md](docs/arbiter-api.md) (console query API).
 
 ## Session, agent & user attribution
 
