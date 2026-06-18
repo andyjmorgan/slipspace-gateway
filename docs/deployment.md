@@ -99,7 +99,7 @@ Published at `ghcr.io/andyjmorgan/slipspace-gateway`. Multi-stage build defined 
 | `builder` | `golang:1.25-alpine` | Overlays the SPA bundle on top of the committed `placeholder.html` so `go:embed` picks up the real assets, then builds `cmd/gateway` static with `CGO_ENABLED=0`. |
 | (final stage) | `scratch` | Carries `/gateway` binary + CA bundle. ~5.5 MB total. Unnamed in the Dockerfile — `FROM scratch` with no `AS final`; only `certs`, `spa-builder`, and `builder` are named stages. |
 
-The version string baked into `/gateway` via `-ldflags "-X .../version.Version=${VERSION}"` is whatever the build pipeline passes — `git describe --tags --always`, so tagged builds report `v1.1.4` and main builds report `v1.1.4-3-gabc1234`. The admin console exposes it at `GET /admin/api/v1/version`.
+The version string baked into `/gateway` via `-ldflags "-X .../version.Version=${VERSION}"` is whatever the build pipeline passes — `git describe --tags --always`, so tagged builds report `v1.3.0` and main builds report `v1.3.0-3-gabc1234`. The admin console exposes it at `GET /admin/api/v1/version`.
 
 ### What's in the image
 
@@ -132,7 +132,7 @@ All three images in the matrix (`slipspace-gateway`, `slipspace-mockllm`, `arbit
 
 ### Image visibility
 
-Tagged releases run a `Mark package public` step on GHCR per image. Untagged `main` builds inherit the package's current visibility (private by default until the first tagged release flips it public).
+Tagged releases run a best-effort `Mark package public` step (`continue-on-error: true`) on GHCR per image. As of the v1.3.0 rebrand the renamed packages — `slipspace-gateway`, `slipspace-mockllm`, `arbiter` — are **private** on GHCR, so a deployment must pull them with an `imagePullSecret` (the `ghcr-secret` referenced in the pod spec below). Untagged `main` builds inherit the package's current visibility.
 
 ### Idempotence on tag re-push
 
@@ -170,9 +170,11 @@ spec:
     readOnlyRootFilesystem: true
     seccompProfile:
       type: RuntimeDefault
+  imagePullSecrets:
+    - name: ghcr-secret          # the slipspace-* / arbiter packages are private on GHCR
   containers:
     - name: gateway
-      image: ghcr.io/andyjmorgan/slipspace-gateway:v1.1.4
+      image: ghcr.io/andyjmorgan/slipspace-gateway:v1.3.0
       ports:
         - { name: data,    containerPort: 8585 }
         - { name: admin,   containerPort: 8081 }
@@ -205,7 +207,7 @@ Every field above is load-bearing. `runAsNonRoot` + `readOnlyRootFilesystem` are
 
 ## Helm chart status
 
-The `deploy/helm/sluice-gateway/` chart is on the v0.1 milestone but **has not landed in the repo yet**. Operators provisioning Sluice today author their own manifests (or kustomize/Helm bases) against the shape in [Kubernetes deployment shape](#kubernetes-deployment-shape).
+The `deploy/helm/slipspace-gateway/` chart is on the v0.1 milestone but **has not landed in the repo yet**. Operators provisioning SlipSpace today author their own manifests (or kustomize/Helm bases) against the shape in [Kubernetes deployment shape](#kubernetes-deployment-shape).
 
 When the chart lands, it will be a standalone (no parent) chart producing the objects in the table above, with values for:
 
