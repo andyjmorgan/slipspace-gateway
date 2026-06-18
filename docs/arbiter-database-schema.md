@@ -137,7 +137,7 @@ The blob is built by `buildSpanEvent` ([`ingest/extract.go`](../internal/arbiter
 | `Streaming` | `gen_ai.request.stream` | Whether the upstream response was an SSE stream. |
 | `GatewayID` | `gateway_id` | The producing appliance (lifted from the span/resource attribute). |
 | `Method` | `slipspace.method` | Inbound client HTTP verb (a gateway span fact). |
-| `APIKeyName` | `slipspace.api_key_name` | Resolved Sluice API-key name (managed mode); empty in passthrough. |
+| `APIKeyName` | `slipspace.api_key_name` | Resolved SlipSpace API-key name (managed mode); empty in passthrough. |
 | `UpstreamStatus` | `slipspace.upstream_status` | Provider-reported status, distinct from the client status column. |
 | `PolicyRef` | `slipspace.policy_ref` | Resilience policy the rules engine bound. |
 | `SessionIDSource` / `AgentIDSource` / `UserIDSource` | `slipspace.session_id_source` etc. | The header each identity id was resolved from. |

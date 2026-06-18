@@ -97,6 +97,8 @@ An optional **Arbiter** (`cmd/arbiter`) ingests gen_ai OTLP spans/meters and HMA
 
 ## Arbiter
 
+<img src="web/public/arbiter.svg" alt="Arbiter" width="72" height="72" align="right" />
+
 The **Arbiter** is the optional converged **security + telemetry** service (formerly the telemetry service) — a separate deployable, with its own Postgres/TimescaleDB datastore, that one or more gateways report into. The gateway data plane never depends on it: if the Arbiter is down the gateway keeps forwarding traffic, since OTLP export and Record push are best-effort and fire-and-forget. It only ever *consumes* telemetry and never sits on a request path.
 
 It binds two listeners. Gateways export gen_ai OTLP spans and `slipspace.*` meters over **OTLP gRPC (`:8687`)**; the operator console, query API, and the HMAC-trusted Record webhook (`POST /api/v1/ingest/record`) live on **HTTP (`:8686`)** behind Basic auth. The fleet-wide console retains full history — the dashboard reads continuous aggregates over the meters, the message inspector lazily joins the verbatim Record blob per request.
