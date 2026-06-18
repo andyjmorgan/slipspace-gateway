@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	detectv1 "github.com/andyjmorgan/sluice-gateway/gen/slipspace/detect/v1"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	detectv1 "github.com/andyjmorgan/slipspace-gateway/gen/slipspace/detect/v1"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 func (f *fakeStore) verdict(corr string) (store.Verdict, bool) {

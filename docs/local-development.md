@@ -270,7 +270,7 @@ Every target in the `Makefile`, in the order they appear there:
 | `web-install` | `npm install --silent` in `web/` | — | — | Idempotent; `web`, `web-telemetry`, and `web-dev` depend on it. |
 | `web-dev` | `npm run dev` in `web/` | — | — | Vite dev server with HMR. Proxies `/admin/api/v1` to the gateway admin listener on `:8081` (Vite dev server on `:5180`). Pair with a running `make dev-compose` for the full loop. |
 | `vet` | `go vet ./...` | — | unit | Cheap; runs in `all` and in CI. |
-| `fmt` | `go fmt ./...` + `goimports -local github.com/andyjmorgan/sluice-gateway` | — | — | Local convenience. CI fails on dirty diffs. |
+| `fmt` | `go fmt ./...` + `goimports -local github.com/andyjmorgan/slipspace-gateway` | — | — | Local convenience. CI fails on dirty diffs. |
 | `lint` | `golangci-lint run ./...` | — | unit | Non-negotiable before commit. Install with `brew install golangci-lint` if missing. |
 | `test` | `go test -race -coverprofile=coverage.out -covermode=atomic` | — | unit | Skips `web/node_modules`. Race detector on. |
 | `coverage` | `test` + `scripts/coverage-gate.sh coverage.out 95` | — | unit + gate | Same as `test`, then fails if total coverage is under 95%. |

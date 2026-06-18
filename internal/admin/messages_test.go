@@ -13,9 +13,9 @@ import (
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability/livefeed"
 )
 
 // newMessagesTestMeters mints a minimal observability.Meters bundle

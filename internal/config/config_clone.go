@@ -1,7 +1,7 @@
 package config
 
 import (
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 // Clone returns a deep copy of the resolved v2 config suitable for the admin

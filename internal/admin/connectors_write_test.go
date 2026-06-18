@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 const (

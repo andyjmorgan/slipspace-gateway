@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // translatePolicy binds the Anthropic Messages protocol but attaches a

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // spanWith builds a request event whose span_event carries the given gen_ai

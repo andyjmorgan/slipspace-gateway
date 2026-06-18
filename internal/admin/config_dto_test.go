@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func TestSummariseCondition_NilFallsBack(t *testing.T) {

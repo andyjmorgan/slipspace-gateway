@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 )
 
 // Internal-package tests for load_balance — needed so the

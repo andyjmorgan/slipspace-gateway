@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 )
 
 // AttemptBuffer is the per-request bridge between the resilience

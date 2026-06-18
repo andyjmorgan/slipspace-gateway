@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func TestApplyAddTag(t *testing.T) {

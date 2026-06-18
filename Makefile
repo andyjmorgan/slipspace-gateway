@@ -61,7 +61,7 @@ vet:
 
 fmt:
 	$(GO) fmt ./...
-	$(GO) run golang.org/x/tools/cmd/goimports@latest -w -local github.com/andyjmorgan/sluice-gateway .
+	$(GO) run golang.org/x/tools/cmd/goimports@latest -w -local github.com/andyjmorgan/slipspace-gateway .
 
 lint:
 	$(GOLANGCI) run ./...

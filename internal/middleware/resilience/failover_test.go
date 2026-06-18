@@ -6,11 +6,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	resiliencemw "github.com/andyjmorgan/slipspace-gateway/internal/middleware/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 )
 
 // attemptOutcome is the canned response a mockNext returns on a

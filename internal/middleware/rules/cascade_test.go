@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"testing"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	"github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/slipspace-gateway/protocols/openai/responses"
 )
 
 // The cascade tests assert the v1.0.5 semantic change: a rule's

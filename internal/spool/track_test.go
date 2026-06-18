@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 )
 
 // newTestTrack builds a track wired with an in-process Manager so we

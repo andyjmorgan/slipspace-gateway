@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/genaiattr"
 )
 
 func TestExtractResponse_OpenAIChat_JSON(t *testing.T) {

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability/livefeed"
 )
 
 const testPassword = "secret"

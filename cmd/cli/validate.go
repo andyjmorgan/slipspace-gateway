@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // CLI-local aliases for the canonical env var name and default. Exposed so

@@ -5,8 +5,8 @@ import (
 	"math/rand/v2"
 	"strings"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 )
 
 // sampleRandFloat64 is the package-level RNG seam the random-sampling

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // maxConfigBodyBytes caps an inbound config-write JSON body. A provider with a

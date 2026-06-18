@@ -14,17 +14,17 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
-	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
+	resiliencemw "github.com/andyjmorgan/slipspace-gateway/internal/middleware/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/slipspace-gateway/protocols/openai/responses"
 )
 
 func TestOutboundModel(t *testing.T) {

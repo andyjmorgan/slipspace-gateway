@@ -3,7 +3,7 @@ package observability_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func TestOperationNameForProtocol(t *testing.T) {

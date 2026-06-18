@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // healthyErrorRate5mCeiling is the threshold above which a provider's

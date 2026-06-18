@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package slipspace.detect.v1;
 
-option go_package = "github.com/andyjmorgan/sluice-gateway/gen/slipspace/detect/v1;detectv1";
+option go_package = "github.com/andyjmorgan/slipspace-gateway/gen/slipspace/detect/v1;detectv1";
 
 // DetectionService scans one content unit and returns findings. Detect is the
 // async entry point shipping this release (protojson/HTTP or unary gRPC).

@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/selection"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
 
 // TestCredentialHeaderFor exercises the v2 single credential mint site: the

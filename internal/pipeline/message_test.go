@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/pipeline"
+	"github.com/andyjmorgan/slipspace-gateway/internal/pipeline"
 )
 
 func TestMessage_AllConcreteTypesImplementMessage(t *testing.T) {

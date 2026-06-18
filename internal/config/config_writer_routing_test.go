@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 const (

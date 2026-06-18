@@ -1,8 +1,8 @@
 package config
 
 import (
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func cloneAPIKeys(in []contractsconfig.APIKey) []contractsconfig.APIKey {

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/sseframe"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/sseframe"
 )
 
 // ResponseAttrs holds the GenAI response descriptors the spans convention

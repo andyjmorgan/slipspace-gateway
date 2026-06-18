@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // Mode is the auth resolution mode for a request.

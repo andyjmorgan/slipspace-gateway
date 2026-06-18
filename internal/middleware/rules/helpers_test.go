@@ -1,8 +1,8 @@
 package rules_test
 
 import (
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // testStore wraps a per-configuration-rules map in a fresh config.Store

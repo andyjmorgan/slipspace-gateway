@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/admin/configexport"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin/configexport"
 )
 
 func TestRedact_APIKeysSecretsReplacedWithPlaceholder(t *testing.T) {

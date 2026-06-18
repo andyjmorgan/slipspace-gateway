@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
 )
 
 // DefaultDrainTimeout matches Helm's terminationGracePeriodSeconds: 330 with

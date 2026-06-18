@@ -10,8 +10,8 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/guardrails"
-	"github.com/andyjmorgan/sluice-gateway/internal/pipeline"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/guardrails"
+	"github.com/andyjmorgan/slipspace-gateway/internal/pipeline"
 )
 
 func TestMain(m *testing.M) {

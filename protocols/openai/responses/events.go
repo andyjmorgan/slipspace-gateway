@@ -3,7 +3,7 @@ package responses
 import (
 	"encoding/json"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ResponsesStreamEvent is the polymorphic interface implemented by every

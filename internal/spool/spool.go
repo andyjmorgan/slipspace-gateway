@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector"
 )
 
 // defaultQueueSize is the per-track ring depth before drops kick in.

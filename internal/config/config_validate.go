@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 // knownProtocols is the set of generative protocol names a provider may serve

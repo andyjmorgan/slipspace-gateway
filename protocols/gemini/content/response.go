@@ -3,7 +3,7 @@ package content
 import (
 	"encoding/json"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // GenerateContentResponse is the response body returned by Gemini's POST

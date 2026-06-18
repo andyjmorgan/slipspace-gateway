@@ -54,4 +54,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/andyjmorgan/sluice-gateway
+        - github.com/andyjmorgan/slipspace-gateway

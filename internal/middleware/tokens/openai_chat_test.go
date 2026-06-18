@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/tokens"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/tokens"
 )
 
 // TestExtract_OpenAIChat_StreamFixture runs the extractor against a

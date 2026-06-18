@@ -3,7 +3,7 @@ package connector
 import (
 	"context"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 )
 
 // Connector ships sealed segments to a configured destination. The

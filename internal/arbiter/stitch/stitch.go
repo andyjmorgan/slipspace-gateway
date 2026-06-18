@@ -7,8 +7,8 @@
 package stitch
 
 import (
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // RequestView is one request stitched together for the inspector: the entity

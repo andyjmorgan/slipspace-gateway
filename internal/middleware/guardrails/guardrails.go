@@ -8,8 +8,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/pipeline"
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+	"github.com/andyjmorgan/slipspace-gateway/internal/pipeline"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
 )
 
 // Inspector is the seam where v1.2+ DLP engines plug in. Implementations

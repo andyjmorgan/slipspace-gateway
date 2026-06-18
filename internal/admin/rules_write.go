@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // maxRuleBodyBytes caps the inbound JSON body on POST/PUT to keep a

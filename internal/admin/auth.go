@@ -4,7 +4,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 )
 
 // BasicAuth wraps next with HTTP Basic authentication. The expected

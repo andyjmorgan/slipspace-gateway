@@ -6,7 +6,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func litValue(raw string) contractsrules.RewriteValue {

@@ -6,7 +6,7 @@ package resilience
 import (
 	"github.com/google/uuid"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 // ResilienceMode selects which orchestration strategy applies to a Configuration.

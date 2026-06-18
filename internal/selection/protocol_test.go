@@ -3,7 +3,7 @@ package selection_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/selection"
+	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
 
 func TestProtocolForPath(t *testing.T) {

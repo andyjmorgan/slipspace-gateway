@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // providerWriteBody is the POST/PUT decode target: the provider connection fields

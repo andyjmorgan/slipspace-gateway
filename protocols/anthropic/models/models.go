@@ -7,7 +7,7 @@
 package models
 
 import (
-	sluicemodels "github.com/andyjmorgan/sluice-gateway/models"
+	sluicemodels "github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ListModelsResponse is the response body returned by Anthropic's GET

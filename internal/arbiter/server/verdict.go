@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // handleVerdict serves the Arbiter security verdict + findings for one request

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ContentPart is the polymorphic interface implemented by every concrete

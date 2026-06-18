@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	geminicontent "github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	geminicontent "github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
 )
 
 // parseOpenAI is a test helper that unmarshalls the assembled bytes

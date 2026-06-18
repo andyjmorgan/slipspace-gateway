@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/registry"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/registry"
 )
 
 // recordStore captures the verbatim blob the Record handler upserts (no DB).

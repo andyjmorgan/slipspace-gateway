@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 )
 
 // MatchBuffer is the per-request slice of rule-match records the

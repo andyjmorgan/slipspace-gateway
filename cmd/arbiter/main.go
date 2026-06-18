@@ -27,14 +27,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/arbiter"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/ingest"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/registry"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/server"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
-	"github.com/andyjmorgan/sluice-gateway/internal/version"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/arbiter"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/ingest"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/registry"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/server"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
+	"github.com/andyjmorgan/slipspace-gateway/internal/version"
 )
 
 const (

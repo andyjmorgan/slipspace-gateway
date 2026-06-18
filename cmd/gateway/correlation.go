@@ -7,8 +7,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/headers"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 const headerCorrelationID = "X-Sluice-Correlation-Id"

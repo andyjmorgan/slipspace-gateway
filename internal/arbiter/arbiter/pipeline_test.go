@@ -15,9 +15,9 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	detectv1 "github.com/andyjmorgan/sluice-gateway/gen/slipspace/detect/v1"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	detectv1 "github.com/andyjmorgan/slipspace-gateway/gen/slipspace/detect/v1"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // --- fake store implementing arbiter.Store for white-box pipeline tests ---

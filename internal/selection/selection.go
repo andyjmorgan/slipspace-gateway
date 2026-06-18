@@ -23,8 +23,8 @@ import (
 	"regexp"
 	"strings"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 )
 
 // ErrNoBinding is returned by Select when no binding in the configuration

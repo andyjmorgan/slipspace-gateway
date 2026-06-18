@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 )
 
 // Observer receives lifecycle signals from the Forwarder. Implementations

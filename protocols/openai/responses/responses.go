@@ -13,7 +13,7 @@ package responses
 import (
 	"encoding/json"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ResponsesRequest is the request body for OpenAI's POST /v1/responses

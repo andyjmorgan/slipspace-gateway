@@ -3,7 +3,7 @@ package rules
 import (
 	"testing"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func TestApplyUseResiliencePolicy_SetsPolicyRef(t *testing.T) {

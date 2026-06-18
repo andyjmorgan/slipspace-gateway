@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin"
 )
 
 func TestSPAHandler_ServesIndexHTMLAtRoot(t *testing.T) {

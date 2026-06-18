@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // returnStatusPolicy installs a single terminating rule on the dev

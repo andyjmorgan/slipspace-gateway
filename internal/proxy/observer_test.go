@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/contentredact"
+	"github.com/andyjmorgan/slipspace-gateway/internal/contentredact"
 )
 
 func TestRedact_MasksCredentials(t *testing.T) {

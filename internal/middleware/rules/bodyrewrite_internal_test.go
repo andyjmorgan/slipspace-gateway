@@ -12,9 +12,9 @@ import (
 	"github.com/tidwall/gjson"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/bodypatch"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/bodypatch"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func testMeters(t *testing.T) *observability.Meters {

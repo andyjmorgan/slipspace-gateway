@@ -3,7 +3,7 @@ package accumulator
 import (
 	"encoding/json"
 
-	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
+	openairesponses "github.com/andyjmorgan/slipspace-gateway/protocols/openai/responses"
 )
 
 // accumulateOpenAIResponses walks a stream of OpenAI /v1/responses

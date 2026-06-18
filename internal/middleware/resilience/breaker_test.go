@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 )
 
 // Tests in this file must not call t.Parallel() — they mutate the

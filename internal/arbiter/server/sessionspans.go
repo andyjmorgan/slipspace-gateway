@@ -11,9 +11,9 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
 )
 
 // This file is the span -> SessionSpansDTO v1 projection behind

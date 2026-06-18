@@ -7,9 +7,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
 )
 
 // Runtime tunables. The per-call budget and retry schedule implement ADR-008;

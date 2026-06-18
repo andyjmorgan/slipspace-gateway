@@ -7,8 +7,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/selection"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
 
 // golden is the live prod config expressed in the v2 model — the fixture the

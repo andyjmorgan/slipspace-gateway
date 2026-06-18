@@ -11,8 +11,8 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/headers"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func quietLogger() *slog.Logger {

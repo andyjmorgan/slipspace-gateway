@@ -5,7 +5,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 )
 
 // handleSettings serves the running service's applied config, read-only and with

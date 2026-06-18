@@ -1,7 +1,7 @@
 package chat
 
 import (
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // RequestMessage is the polymorphic interface implemented by every concrete

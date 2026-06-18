@@ -3,7 +3,7 @@ package messages
 import (
 	"encoding/json"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // MessagesRequest is the request body for Anthropic's POST /v1/messages

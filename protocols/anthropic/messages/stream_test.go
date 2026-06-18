@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 func TestUnmarshalStreamEvent_MessageStart(t *testing.T) {

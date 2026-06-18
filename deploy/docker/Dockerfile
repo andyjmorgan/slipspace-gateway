@@ -29,7 +29,7 @@ COPY . .
 COPY --from=spa-builder /out/webdist/ /src/internal/admin/webdist/
 RUN CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
-        -ldflags "-s -w -X github.com/andyjmorgan/sluice-gateway/internal/version.Version=${VERSION}" \
+        -ldflags "-s -w -X github.com/andyjmorgan/slipspace-gateway/internal/version.Version=${VERSION}" \
         -o /out/gateway \
         ./cmd/gateway
 
@@ -41,7 +41,7 @@ LABEL org.opencontainers.image.title="sluice-gateway"
 
 LABEL org.opencontainers.image.description="Slim observable AI provider gateway."
 
-LABEL org.opencontainers.image.source="https://github.com/andyjmorgan/sluice-gateway"
+LABEL org.opencontainers.image.source="https://github.com/andyjmorgan/slipspace-gateway"
 
 LABEL org.opencontainers.image.version="${VERSION}"
 

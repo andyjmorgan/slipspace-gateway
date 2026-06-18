@@ -6,7 +6,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 // matchCondition dispatches a Condition to its concrete evaluator.

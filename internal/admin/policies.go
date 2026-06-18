@@ -5,9 +5,9 @@ import (
 	"os"
 	"sort"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // CircuitBreakerStateSource is the read interface PoliciesHandler

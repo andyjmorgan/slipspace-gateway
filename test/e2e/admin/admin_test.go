@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 func TestAdmin_AuthMe_RejectsMissingCredentials(t *testing.T) {

@@ -41,8 +41,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
 )
 
 // Webhook headers, mirroring the Arbiter's ingest contract.

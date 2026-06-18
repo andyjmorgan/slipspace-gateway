@@ -3,7 +3,7 @@ package tokens_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/tokens"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/tokens"
 )
 
 // TestExtract_OpenAIResponses_NonStream covers the static-body shape of

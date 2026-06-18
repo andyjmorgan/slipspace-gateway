@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/stitch"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/stitch"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // The telemetry console reuses the gateway admin SPA's observability

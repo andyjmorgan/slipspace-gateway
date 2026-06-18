@@ -1039,7 +1039,7 @@ const file_slipspace_detect_v1_detect_proto_rawDesc = "" +
 	"\x12LOCALIZATION_EXACT\x10\x02\x12\x19\n" +
 	"\x15LOCALIZATION_SENTENCE\x10\x032e\n" +
 	"\x10DetectionService\x12Q\n" +
-	"\x06Detect\x12\".slipspace.detect.v1.DetectRequest\x1a#.slipspace.detect.v1.DetectResponseBHZFgithub.com/andyjmorgan/sluice-gateway/gen/slipspace/detect/v1;detectv1b\x06proto3"
+	"\x06Detect\x12\".slipspace.detect.v1.DetectRequest\x1a#.slipspace.detect.v1.DetectResponseBKZIgithub.com/andyjmorgan/slipspace-gateway/gen/slipspace/detect/v1;detectv1b\x06proto3"
 
 var (
 	file_slipspace_detect_v1_detect_proto_rawDescOnce sync.Once

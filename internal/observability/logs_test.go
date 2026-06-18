@@ -6,7 +6,7 @@ import (
 
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func TestNewOTLPLogExporter(t *testing.T) {

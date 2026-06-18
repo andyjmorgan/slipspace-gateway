@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/genaiattr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func TestCapText_NoCapPassesThrough(t *testing.T) {

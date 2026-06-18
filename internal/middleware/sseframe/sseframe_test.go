@@ -3,7 +3,7 @@ package sseframe_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/sseframe"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/sseframe"
 )
 
 func TestCollate_JSONBody(t *testing.T) {

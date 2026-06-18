@@ -3,7 +3,7 @@ package selection
 import (
 	"strings"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 // Protocol name constants, re-exported from contracts/config so callers of the

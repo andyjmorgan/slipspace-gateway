@@ -13,7 +13,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // HTTPHandler wraps next with the auth resolution step.

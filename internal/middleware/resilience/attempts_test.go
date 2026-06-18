@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 )
 
 func TestAttemptBuffer_RecordAndDrain(t *testing.T) {

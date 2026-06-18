@@ -7,10 +7,10 @@ import (
 
 	"github.com/google/uuid"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
 )
 
 // newGC builds the GatewayContext most evaluator tests need. The

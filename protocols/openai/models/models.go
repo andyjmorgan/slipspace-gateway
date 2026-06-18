@@ -7,7 +7,7 @@
 package models
 
 import (
-	rootmodels "github.com/andyjmorgan/sluice-gateway/models"
+	rootmodels "github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ListModelsResponse is the response body returned by OpenAI's GET /v1/models

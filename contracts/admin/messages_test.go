@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 )
 
 func TestMessageEntry_RoundTrip(t *testing.T) {

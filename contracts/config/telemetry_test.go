@@ -5,7 +5,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 func TestTelemetry_YAMLRoundTrip_AllFieldsPresent(t *testing.T) {

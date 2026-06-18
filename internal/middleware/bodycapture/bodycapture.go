@@ -18,12 +18,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/headers"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	"github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
+	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/slipspace-gateway/protocols/openai/responses"
 )
 
 // RequestKind enumerates the typed body shapes the middleware knows how to

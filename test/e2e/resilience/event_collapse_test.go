@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/types"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/types"
 )
 
 // TestEventCollapse_MultiAttemptFailover_OneEventWithAttempts is the

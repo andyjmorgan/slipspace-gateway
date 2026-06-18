@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // pathConnectors is the trailing-slash prefix for a single connector's routes.

@@ -3,7 +3,7 @@ package arbiter
 import (
 	"path"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
 )
 
 // matchesAnyGlob reports whether s matches any of the glob patterns
