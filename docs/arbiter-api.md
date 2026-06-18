@@ -32,11 +32,12 @@ flowchart TD
     ingest["POST /api/v1/ingest/record"]
   end
   subgraph gated[HTTP Basic auth]
-    dash["GET /api/v1/dashboard/*"]
+    dash["GET /api/v1/dashboard/* (incl. security, security/audit)"]
     msgs["GET /api/v1/messages*"]
     facets["GET /api/v1/facets"]
     events["GET /api/v1/events*"]
     sessions["GET /api/v1/sessions, /sessions/{id}, /sessions/{id}/spans, /sessions/{id}/spans/{cid}"]
+    security["GET /api/v1/verdict/{id}, /api/v1/findings"]
   end
   client --> open
   client --> hmac
@@ -59,8 +60,8 @@ flowchart TD
 
 ## Authentication
 
-Every `/api/v1/dashboard/*`, `/messages*`, `/facets`, `/events*`, and
-`/sessions/*` route is wrapped by `Server.basicAuth`
+Every `/api/v1/dashboard/*`, `/messages*`, `/facets`, `/events*`,
+`/sessions/*`, `/verdict/{id}`, and `/findings` route is wrapped by `Server.basicAuth`
 (`server.go::basicAuth`, lines 109-127). The credentials are the single console
 user from config (`console.username` + `console.password_hash`, a bcrypt hash;
 see [arbiter.md](arbiter.md#configuration)). There is no env
@@ -234,6 +235,40 @@ of `{timestamp, value}`, zero-filled across empty buckets so the axis stays
 continuous. The series re-buckets the 1-minute `cagg_requests_1m` /
 `cagg_tokens_1m` continuous aggregates up to the requested width
 (`store/dashboard.go::QueryDashboardSeries`).
+
+#### `GET /api/v1/dashboard/security`
+
+Handler `handleObsSecurity` (`observability.go`). The Arbiter scanner posture for
+the dashboard's security rows. Accepts `?window` only (no filter set). Returns
+`contracts/admin.DashboardSecurity` mapped from
+`store/dashboard_security.go::QueryDashboardSecurity`, over the verdict table:
+
+| Field | Meaning |
+|---|---|
+| `enabled` | whether the scanner is on. **When `false` the handler returns this shape with zero counts and never touches the DB** — operators not running the scanner pay nothing, and the SPA renders the security rows only when `true`. |
+| `window` | the resolved window token |
+| `scanned` | requests that reached a verdict in the window |
+| `flagged`, `partial`, `clean` | `scanned` split by terminal verdict state. **`partial` is first-class and never folds into `clean`** (ADR-017 / REF-008: inconclusive is not clean) |
+| `by_check_type` | finding counts per check type (`injection` / `pii` / `toxicity`), `{key, count}`, descending |
+| `top_categories` | most-common finding categories, `{key, count}`, server-capped |
+
+> **Invariant #4.** The breakdown aggregates the `verdict` / `finding` tables the
+> async scanner writes (`store/dashboard_security.go`), populated from the OTel
+> gen_ai span, not from the connector record or S3. The security posture is still a
+> read over the telemetry store.
+
+#### `GET /api/v1/dashboard/security/audit`
+
+Handler `handleObsSecurityAudit` (`observability.go`). The append-only log of
+**operational scan failures** (timeout / detector-unreachable / detector-error /
+no-detector / unit-missing) for the dashboard's scan-failures panel — distinct
+from findings, which are detector *hits*. Accepts `?window` and `?limit` (default
+100, hard cap 500). Like `/dashboard/security`, returns an empty (non-nil) item
+list without a DB hit when the scanner is disabled. Returns
+`contracts/admin.DashboardSecurityAudit` (`{window, items[]}`) mapped from
+`store::ListScanAudit` (migration 16 `scan_audit` table). Each `ScanAuditEntry`:
+`correlation_id`, `unit_id`, `check_type`, `detector_id` (empty when no detector
+call was made), `reason`, `attempts`, `detail`, `occurred_at`.
 
 ### Messages (gateway-parity surface)
 
@@ -540,6 +575,53 @@ empty (same as the sibling `/sessions/{id}`); an empty continuation page (a
 > views from the `request_events` entity (and, for `events/{id}`, the lazily-joined
 > `record` blob) the ingest listeners populate — never from the connector spool or
 > S3. The console is a read view over the telemetry store, not a record-scan reader.
+
+### Security — findings + verdict (Arbiter)
+
+The async SlipSpace Arbiter scanner writes per-finding rows and a reduced
+per-request verdict; these two routes read them back for the console's Security
+surfaces. Both mount unconditionally (like the rest of the query API), but return
+empty/clean shapes when the scanner has written nothing. Detector contract,
+verdict reduction, and storage are in
+[arbiter-database-schema.md](arbiter-database-schema.md) (migrations 13–17)
+and the DonkeyWork *SlipSpace Arbiter* milestone (ADR-014/017/018).
+
+#### `GET /api/v1/verdict/{id}`
+
+Handler `handleVerdict` (`verdict.go`). The verdict **plus** findings for one
+request, keyed by correlation id, for the message inspector's Security pane.
+Returns `contracts/admin.VerdictResponse`. A missing verdict (scan not yet at
+quiescence, or scanner disabled) is **not a 404** — it returns `200` with
+`verdict: null` and whatever findings exist, so the console renders "no verdict
+yet" rather than an error.
+
+| Field | Meaning |
+|---|---|
+| `correlation_id` | the request this describes |
+| `verdict` | reduced outcome, or `null` when no verdict row exists yet |
+| `verdict.state` | `"flagged"` / `"partial"` / `"clean"` (ADR-017) |
+| `verdict.max_score` | highest finding score (highest-risk-wins) |
+| `verdict.top_category` | category of the highest-scoring finding |
+| `verdict.severity` | worst operator-assigned level across findings (`info`/`warning`/`error`); empty when none |
+| `verdict.finding_count` | number of findings on the request |
+| `verdict.inconclusive` | check types that timed out/failed — the set that raises the request to PARTIAL; never read as clean |
+| `findings[]` | per-hit detail: `unit_id`, `check_type`, `category`, `score`, `raw_label`, `detector`, `localization`, `offending_text`, `severity` |
+
+#### `GET /api/v1/findings`
+
+Handler `handleFindings` (`verdict.go`). A flat, newest-first list of findings —
+the operator Security view. With **`?session=<id>`** it returns every finding in
+that one session (the session view's Security tab); without it, the most recent
+findings across all sessions (the top-level Security page), bounded by `?limit`
+(store default ~100). One row shape (`contracts/admin.FindingRow`) backs both,
+sourced from `store::ListFindingsBySession` / `ListRecentFindings`. Returns
+`contracts/admin.FindingsListResponse` (`{items[]}`). Each row is finding-centric
+and carries both deep-link targets — `correlation_id` (→ message inspector) and
+`session_id` (→ session view) — plus the request facts the operator triages by
+(`observed_at`, `model`, `configuration`), the offending unit's `unit_kind` /
+`unit_role`, the `offending_text` that fired, and the `severity` band. Fields
+sourced from the source `request_events` row (`model`, `configuration`,
+`observed_at`) are empty when that row has aged out of retention.
 
 ## Error reference
 
