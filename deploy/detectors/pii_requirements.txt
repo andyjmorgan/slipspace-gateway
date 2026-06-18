@@ -4,7 +4,7 @@
 # The spaCy model itself (en_core_web_lg) is installed separately as a pinned
 # wheel — see the deployment init container / Dockerfile.
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.5.1
+torch==2.12.0+cpu
 transformers>=4.50
 presidio-analyzer>=2.2
 spacy>=3.8,<3.9
