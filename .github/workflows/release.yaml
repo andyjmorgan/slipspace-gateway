@@ -33,7 +33,7 @@ jobs:
             dockerfile: deploy/docker/Dockerfile
           - name: slipspace-mockllm
             dockerfile: deploy/docker/Dockerfile.mockllm
-          - name: arbiter
+          - name: slipspace-arbiter
             dockerfile: deploy/docker/Dockerfile.arbiter
     steps:
       - uses: actions/checkout@v4
@@ -150,7 +150,7 @@ jobs:
           \`\`\`
           docker pull ghcr.io/${{ github.repository_owner }}/slipspace-gateway:${stripped}
           docker pull ghcr.io/${{ github.repository_owner }}/slipspace-mockllm:${stripped}
-          docker pull ghcr.io/${{ github.repository_owner }}/arbiter:${stripped}
+          docker pull ghcr.io/${{ github.repository_owner }}/slipspace-arbiter:${stripped}
           \`\`\`
 
           ## Quick run

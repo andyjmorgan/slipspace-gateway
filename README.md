@@ -105,7 +105,7 @@ It binds two listeners. Gateways export gen_ai OTLP spans and `slipspace.*` mete
 
 On top of telemetry, the Arbiter runs **async, per-message security scanning** via pluggable **detectors** (PII / prompt-injection / toxicity) speaking the `slipspace.detect.v1` contract. Detectors return a score plus a raw label only; the Arbiter owns the **verdict**, reducing findings to one of **flagged / partial / clean** — `partial` (inconclusive) is first-class and never folds into `clean`, and scanning is fail-open by default. Operators tune it with scan-tag scoping (which traffic to scan), finding exclusion (suppress noisy categories), and severity classification (`info`/`warning`/`error`). The verdict and findings are emitted back out as **enriched OTel spans** carrying `slipspace.security.*` attributes.
 
-The image is `ghcr.io/andyjmorgan/arbiter`. The quickstart bundle ships a gateway + Arbiter Compose stack ([`deploy/quickstart/`](deploy/quickstart/)); for the wire-level detail see [docs/arbiter.md](docs/arbiter.md) (service overview) and [docs/arbiter-api.md](docs/arbiter-api.md) (console query API).
+The image is `ghcr.io/andyjmorgan/slipspace-arbiter`. The quickstart bundle ships a gateway + Arbiter Compose stack ([`deploy/quickstart/`](deploy/quickstart/)); for the wire-level detail see [docs/arbiter.md](docs/arbiter.md) (service overview) and [docs/arbiter-api.md](docs/arbiter-api.md) (console query API).
 
 ## Plugging in a security detector
 
