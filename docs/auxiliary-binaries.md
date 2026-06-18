@@ -1,6 +1,6 @@
 # Auxiliary Binaries
 
-Sluice ships three binaries from this repo. `cmd/gateway` is the data plane — every other doc in this directory is about it. This page covers the other two: `cmd/cli` (operator toolkit) and `cmd/mockllm` (test upstream surrogate).
+SlipSpace ships three binaries from this repo. `cmd/gateway` is the data plane — every other doc in this directory is about it. This page covers the other two: `cmd/cli` (operator toolkit) and `cmd/mockllm` (test upstream surrogate).
 
 This page is the reference. It documents every flag, every subcommand, every exit code, plus when an operator or developer would actually reach for each.
 
@@ -10,8 +10,8 @@ This page is the reference. It documents every flag, every subcommand, every exi
 
 1. [Overview](#overview)
 2. [What gets baked into images](#what-gets-baked-into-images)
-3. [`sluice-cli`](#sluice-cli)
-4. [`sluice-mockllm`](#sluice-mockllm)
+3. [`slipspace-cli`](#slipspace-cli)
+4. [`slipspace-mockllm`](#slipspace-mockllm)
 5. [Cross-references](#cross-references)
 
 ---
@@ -51,7 +51,7 @@ The local `docker-compose.yaml` references `slipspace-mockllm:dev` (built from `
 
 ---
 
-## `sluice-cli`
+## `slipspace-cli`
 
 The operator's local toolkit. Two responsibilities: minting new API keys and validating a configuration directory before you mount it into a running gateway. No daemons, no listeners, no state — just a one-shot CLI that prints to stdout and exits.
 
@@ -65,7 +65,7 @@ go run ./cmd/cli <command> [flags]
 cli <command> [flags]
 ```
 
-`go install ./cmd/cli` produces a binary named `cli` (Go names the binary after the `cmd/<name>` directory) — **not** `sluice-cli`. This page uses "sluice-cli" as the friendly product name, but the invocable command is `cli`. There is no `--config` global flag; per-subcommand flags are documented below.
+`go install ./cmd/cli` produces a binary named `cli` (Go names the binary after the `cmd/<name>` directory) — **not** `slipspace-cli`. This page uses "slipspace-cli" as the friendly product name, but the invocable command is `cli`. There is no `--config` global flag; per-subcommand flags are documented below.
 
 ### Top-level flags
 
@@ -175,7 +175,7 @@ The recommended pre-deploy ritual: `cli config validate --dir <bundle>` exits `0
 
 ---
 
-## `sluice-mockllm`
+## `slipspace-mockllm`
 
 A deterministic upstream surrogate. The gateway forwards provider traffic to a configured upstream URL; in dev and e2e that URL is `mockllm`, which serves canned JSON or SSE responses based on the path the gateway hits, with optional behaviour primitives (delays, transport-level close, hang) for resilience scenarios.
 
@@ -320,7 +320,7 @@ For the dev compose layout and how mockllm fits in alongside the gateway, see [l
 
 - [Local development](local-development.md) — how `mockllm` and the gateway compose together for dev iteration.
 - [Deployment](deployment.md) — how the published `gateway` image is rolled out and what auxiliary infrastructure is required.
-- [Configuration model](configuration-model.md) — the YAML schema that `sluice-cli config validate` enforces, including every error category the validator can return.
+- [Configuration model](configuration-model.md) — the YAML schema that `slipspace-cli config validate` enforces, including every error category the validator can return.
 - [Routing](routing.md) — protocol + binding routing in v2 (the `path_collision` / `prefix_required_empty` codes are legacy v1 holdovers that no longer fire).
 - [Admin console](admin-console.md) — the read-only config-inspection surface embedded in the gateway.
 - [Arbiter](arbiter.md) — the standalone fleet-observability service.
