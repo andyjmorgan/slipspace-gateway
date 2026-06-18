@@ -17,8 +17,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 FROM scratch
 ARG VERSION
-LABEL org.opencontainers.image.title="sluice-mockllm" \
-      org.opencontainers.image.description="Mock LLM upstream for sluice-gateway development and end-to-end testing." \
+LABEL org.opencontainers.image.title="slipspace-mockllm" \
+      org.opencontainers.image.description="Mock LLM upstream for slipspace-gateway development and end-to-end testing." \
       org.opencontainers.image.source="https://github.com/andyjmorgan/slipspace-gateway" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=builder /out/mockllm /mockllm

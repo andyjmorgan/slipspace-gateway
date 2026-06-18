@@ -29,9 +29,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: sluice-gateway
+          - name: slipspace-gateway
             dockerfile: deploy/docker/Dockerfile
-          - name: sluice-mockllm
+          - name: slipspace-mockllm
             dockerfile: deploy/docker/Dockerfile.mockllm
           - name: arbiter
             dockerfile: deploy/docker/Dockerfile.arbiter
@@ -148,8 +148,8 @@ jobs:
           linux/amd64, scratch base, ~5.5 MB.
 
           \`\`\`
-          docker pull ghcr.io/${{ github.repository_owner }}/sluice-gateway:${stripped}
-          docker pull ghcr.io/${{ github.repository_owner }}/sluice-mockllm:${stripped}
+          docker pull ghcr.io/${{ github.repository_owner }}/slipspace-gateway:${stripped}
+          docker pull ghcr.io/${{ github.repository_owner }}/slipspace-mockllm:${stripped}
           docker pull ghcr.io/${{ github.repository_owner }}/arbiter:${stripped}
           \`\`\`
 
@@ -162,7 +162,7 @@ jobs:
             -v ./config-dev:/etc/sluice:ro \\
             -v sluice-spool:/var/lib/sluice/spool \\
             -p 8585:8585 \\
-            ghcr.io/${{ github.repository_owner }}/sluice-gateway:${stripped}
+            ghcr.io/${{ github.repository_owner }}/slipspace-gateway:${stripped}
           \`\`\`
 
           Minimal production env: \`SLUICE_CONFIG_DIR\` plus optionally \`SLUICE_SPOOL_ROOT\` (where the connector spool lives — defaults to \`/var/lib/sluice/spool\`) and \`SLUICE_OTLP_ENDPOINT\` (enables OTLP push). See \`CLAUDE.md\` for the full deployment shape.

@@ -135,7 +135,7 @@ End-of-request records buffer to a disk-backed, zstd-compressed `ndjson.zst` spo
 
 ## Mock LLM
 
-`cmd/mockllm` is an in-repo Go mock upstream — a stand-in for OpenAI, Anthropic, and Gemini that returns **rule-driven canned responses** in each provider's wire shape (streaming and non-streaming). It replaces an earlier external C# mock; the published image is `ghcr.io/andyjmorgan/sluice-mockllm` (built by `release.yaml`).
+`cmd/mockllm` is an in-repo Go mock upstream — a stand-in for OpenAI, Anthropic, and Gemini that returns **rule-driven canned responses** in each provider's wire shape (streaming and non-streaming). It replaces an earlier external C# mock; the published image is `ghcr.io/andyjmorgan/slipspace-mockllm` (built by `release.yaml`).
 
 A canned response matches on `method` / `path` / `request_body_contains` and can stage realistic scenarios — multi-step pools (`max_responses`, e.g. "503 twice then 200"), pre-status and inter-chunk delays, and transport-level failures (`close`, `hang`) — which is what makes it a faithful target for resilience and streaming tests. Responses are loaded from a file (`--responses`) or staged per-session over its `/control/responses` endpoint; an empty pool returns a synthetic default.
 

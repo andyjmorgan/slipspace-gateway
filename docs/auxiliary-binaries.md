@@ -43,11 +43,11 @@ The published images are narrowly scoped — only the binaries that need to run 
 
 | Binary | Dockerfile | Published image | Notes |
 |---|---|---|---|
-| `gateway` | [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile) | `ghcr.io/andyjmorgan/sluice-gateway` | Scratch image with the SPA bundle embedded. Exposes `:8585` (data plane) + `:8081` (admin). Runs as `65532:65532`. |
-| `mockllm` | [`deploy/docker/Dockerfile.mockllm`](../deploy/docker/Dockerfile.mockllm) | `ghcr.io/andyjmorgan/sluice-mockllm` | Scratch image. Exposes `:5555`. Dev/test only — **never** for production traffic. |
+| `gateway` | [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile) | `ghcr.io/andyjmorgan/slipspace-gateway` | Scratch image with the SPA bundle embedded. Exposes `:8585` (data plane) + `:8081` (admin). Runs as `65532:65532`. |
+| `mockllm` | [`deploy/docker/Dockerfile.mockllm`](../deploy/docker/Dockerfile.mockllm) | `ghcr.io/andyjmorgan/slipspace-mockllm` | Scratch image. Exposes `:5555`. Dev/test only — **never** for production traffic. |
 | `cli` | none | none | Runs locally via `go run ./cmd/cli` or as a `go install`'d binary. No container shape — it's an operator tool. |
 
-The local `docker-compose.yaml` references `sluice-mockllm:dev` (built from `Dockerfile.mockllm`) for the dev harness; the upstream `ghcr.io/andyjmorgan/sluice-mockllm` tag is the same shape, pre-built.
+The local `docker-compose.yaml` references `slipspace-mockllm:dev` (built from `Dockerfile.mockllm`) for the dev harness; the upstream `ghcr.io/andyjmorgan/slipspace-mockllm` tag is the same shape, pre-built.
 
 ---
 
@@ -188,7 +188,7 @@ A deterministic upstream surrogate. The gateway forwards provider traffic to a c
 go run ./cmd/mockllm [flags]
 
 # Docker (matches what docker-compose brings up)
-docker run --rm -p 5555:5555 ghcr.io/andyjmorgan/sluice-mockllm:latest
+docker run --rm -p 5555:5555 ghcr.io/andyjmorgan/slipspace-mockllm:latest
 
 # In the dev compose stack — auto-started by `make dev`
 make dev
