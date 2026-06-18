@@ -28,10 +28,12 @@ type SealedSegment struct {
 
 	TsMaxNs int64
 
-	// DeliveryID is a ULID generated when the segment is sealed and
-	// remains stable across upload retries. Connectors use it for
-	// idempotency headers (e.g. X-Sluice-Delivery-Id) and as part of the
-	// object key for S3/Azure destinations.
+	// DeliveryID is the sealed segment filename's <unix_ns>-<seq> stem
+	// (derived by deliveryIDFromFilename, dropping the .ndjson.zst
+	// extension). It is monotonic per instance and remains stable across
+	// upload retries. Connectors use it for idempotency headers (e.g.
+	// X-Sluice-Delivery-Id) and as part of the object key for S3/Azure
+	// destinations.
 	DeliveryID string
 
 	// Connector is the name of the connector this segment belongs to.
