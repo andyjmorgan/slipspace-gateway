@@ -8,7 +8,7 @@ import (
 	"context"
 	"io"
 
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 )
 
 // Orchestrator runs the request against one or more targets per the

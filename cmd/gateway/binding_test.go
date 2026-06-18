@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 )
 
 // makeRec returns a baseline Record the binding tests mutate to

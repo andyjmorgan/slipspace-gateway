@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	"github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
 )
 
 // defaultAnthropicMaxTokens is supplied when an OpenAI Chat request carries

@@ -1,7 +1,7 @@
 package main
 
 import (
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 // testDefaultCaps returns the resolved content-capture caps that mirror

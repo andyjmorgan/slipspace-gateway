@@ -11,7 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
 )
 
 // Sentinel errors. Callers map these to 401/403 without leaking which check

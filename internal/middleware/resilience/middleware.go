@@ -11,12 +11,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 )
 
 // Attempt-outcome strings carried in events.AttemptRecord.Outcome and

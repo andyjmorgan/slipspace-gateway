@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func ctxWith(provider, protocol, model string, headers http.Header) GatewayContext {

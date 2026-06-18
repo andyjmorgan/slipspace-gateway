@@ -16,10 +16,10 @@ import (
 	"fmt"
 	"time"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector/azureblob"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector/s3"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector/azureblob"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector/s3"
 )
 
 // Options bundles the wiring deps every connector type may consume.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
 )
 
 func TestMatchBuffer_NilReceiverIsSafe(t *testing.T) {

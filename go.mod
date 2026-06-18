@@ -1,4 +1,4 @@
-module github.com/andyjmorgan/sluice-gateway
+module github.com/andyjmorgan/slipspace-gateway
 
 go 1.25.0
 

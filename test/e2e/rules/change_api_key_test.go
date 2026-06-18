@@ -5,7 +5,7 @@ package rules_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // TestChangeApiKey_LiteralOverride proves the wired changeApiKey action

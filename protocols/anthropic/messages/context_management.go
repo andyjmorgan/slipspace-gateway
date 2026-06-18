@@ -3,7 +3,7 @@ package messages
 import (
 	"encoding/json"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ContextManagementConfig is the request-side context-management configuration

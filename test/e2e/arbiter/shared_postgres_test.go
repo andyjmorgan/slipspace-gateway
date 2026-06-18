@@ -17,7 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // sharedDSN points at a Postgres container started once for the whole package.

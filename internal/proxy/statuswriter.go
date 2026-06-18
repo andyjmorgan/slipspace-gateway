@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/headers"
+	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
 )
 
 // statusWriter is a minimal http.ResponseWriter wrapper that captures the

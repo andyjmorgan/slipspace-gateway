@@ -3,10 +3,10 @@ package bodycapture
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	"github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/slipspace-gateway/protocols/openai/responses"
 )
 
 // TestModel exercises every branch of the centralised type-switch

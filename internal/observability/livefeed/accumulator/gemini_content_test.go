@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	geminicontent "github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
+	geminicontent "github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
 )
 
 // TestAccumulate_GeminiToolThoughtSignature locks the load-bearing behaviour

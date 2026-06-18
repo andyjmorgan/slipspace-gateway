@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
 )
 
 // trackStats is a per-track counter snapshot exposed via Spool.Stats.

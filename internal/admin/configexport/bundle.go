@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // File is one redacted YAML file ready for either the tabbed inspector view or

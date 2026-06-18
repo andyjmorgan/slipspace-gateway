@@ -1,7 +1,7 @@
 package translate
 
 import (
-	cfg "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	cfg "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 // openAIAnthropicChat is the (chat -> messages) translator: it accepts an

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 func TestHandleVerdict_Flagged(t *testing.T) {

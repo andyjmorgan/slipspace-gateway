@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
 )
 
 func stubMatch(provider, endpoint string) rules.MatchFromContextFunc {

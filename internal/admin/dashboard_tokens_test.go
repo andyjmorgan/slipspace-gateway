@@ -6,7 +6,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // TestComputeByModel_PopulatesTokenColumns proves the per-model token

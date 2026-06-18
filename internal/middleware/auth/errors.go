@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // ErrUnauthorized covers every managed-mode failure where we refuse to reveal

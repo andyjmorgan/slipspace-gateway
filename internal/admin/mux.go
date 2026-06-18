@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability/livefeed"
 )
 
 // CircuitBreakerStateSource is re-exported from the policies handler

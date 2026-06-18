@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 )
 
 func TestRequest_MarshalRoundTrip(t *testing.T) {

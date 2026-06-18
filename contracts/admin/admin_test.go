@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 )
 
 func TestConfig_EffectiveBindAddr(t *testing.T) {

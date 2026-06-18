@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // MessagesResponse is the non-streaming response body returned by Anthropic's

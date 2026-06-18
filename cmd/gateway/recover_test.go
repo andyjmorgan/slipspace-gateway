@@ -12,8 +12,8 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // newCountingMeters returns a Meters wired to a manual reader, plus a func that

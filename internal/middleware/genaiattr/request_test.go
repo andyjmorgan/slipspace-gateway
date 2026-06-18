@@ -3,7 +3,7 @@ package genaiattr_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/genaiattr"
 )
 
 func f64(v float64) *float64 { return &v }

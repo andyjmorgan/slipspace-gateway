@@ -6,7 +6,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // makeSample is a test helper that constructs a Sample with the given

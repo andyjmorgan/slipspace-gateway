@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/version"
+	"github.com/andyjmorgan/slipspace-gateway/internal/version"
 )
 
 const binaryName = "cli"

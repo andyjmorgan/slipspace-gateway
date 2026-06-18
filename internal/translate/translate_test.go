@@ -3,7 +3,7 @@ package translate_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/translate"
+	"github.com/andyjmorgan/slipspace-gateway/internal/translate"
 )
 
 // stubTranslator is a minimal Translator for registry tests. It does no real

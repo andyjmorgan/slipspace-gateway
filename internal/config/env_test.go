@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 func TestLoadEnv_AllDefaults(t *testing.T) {

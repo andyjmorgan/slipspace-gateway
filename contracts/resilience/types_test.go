@@ -6,7 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 )
 
 const sampleYAML = `

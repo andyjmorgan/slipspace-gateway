@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/backfill"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/backfill"
 )
 
 // loadFixture reads a committed testdata body or fails the test.

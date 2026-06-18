@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // TestShutdown_SIGTERM_ExitsCleanly asserts the gateway responds to SIGTERM

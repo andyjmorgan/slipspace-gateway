@@ -9,9 +9,9 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/embedded"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/genaiattr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // recordingEventLogger is an in-memory otellog.Logger for asserting the

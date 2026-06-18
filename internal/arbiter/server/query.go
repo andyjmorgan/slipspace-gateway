@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/stitch"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/stitch"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // Queries is the read slice of the store the console API serves. *store.Store

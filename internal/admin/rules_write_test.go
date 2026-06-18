@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // writableFixture loads the config-dev tree into a fresh tmp dir so

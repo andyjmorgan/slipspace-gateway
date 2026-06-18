@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"testing"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
-	"github.com/andyjmorgan/sluice-gateway/internal/selection"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
+	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
 
 // TestBuildDestination_CredentialModes covers the three credential branches

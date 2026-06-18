@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func TestAgentResolver_Resolve(t *testing.T) {

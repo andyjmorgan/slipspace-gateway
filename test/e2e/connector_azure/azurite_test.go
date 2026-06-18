@@ -17,9 +17,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector/azureblob"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector/azureblob"
 )
 
 const (

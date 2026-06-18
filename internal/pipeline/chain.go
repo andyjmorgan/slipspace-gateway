@@ -3,7 +3,7 @@ package pipeline
 import (
 	"context"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
 )
 
 // Middleware is the unit of pipeline composition: it consumes a stream of

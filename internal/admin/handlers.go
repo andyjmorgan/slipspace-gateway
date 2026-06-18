@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/version"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/version"
 )
 
 // AuthMeHandler returns 200 with a minimal JSON body when the request

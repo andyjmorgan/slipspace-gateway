@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
 )
 
 // readHeaderTimeout bounds how long a console request may take to send its

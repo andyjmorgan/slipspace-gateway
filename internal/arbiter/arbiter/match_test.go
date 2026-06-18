@@ -3,7 +3,7 @@ package arbiter
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
 )
 
 func TestMatchesAnyGlob(t *testing.T) {

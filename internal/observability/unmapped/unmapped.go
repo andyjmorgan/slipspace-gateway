@@ -12,11 +12,11 @@ package unmapped
 import (
 	"encoding/json"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
-	anthropicmessages "github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	geminicontent "github.com/andyjmorgan/sluice-gateway/protocols/gemini/content"
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
-	openairesponses "github.com/andyjmorgan/sluice-gateway/protocols/openai/responses"
+	"github.com/andyjmorgan/slipspace-gateway/models"
+	anthropicmessages "github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	geminicontent "github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
+	openairesponses "github.com/andyjmorgan/slipspace-gateway/protocols/openai/responses"
 )
 
 // RequestFields returns the sorted unmapped field paths on the typed request

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func TestUnmarshalAction_ChangeProvider(t *testing.T) {

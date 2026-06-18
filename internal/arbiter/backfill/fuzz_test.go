@@ -3,8 +3,8 @@ package backfill_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/backfill"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/backfill"
 )
 
 // FuzzResolveProtocol drives arbitrary request/response byte pairs through the

@@ -6,7 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 // TestRuleGroup_Marshal_WithExtra covers the Extra-iteration branch of

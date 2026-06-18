@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin"
 )
 
 const samplePolicy = `configurations:

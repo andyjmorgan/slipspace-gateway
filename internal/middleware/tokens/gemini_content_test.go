@@ -3,7 +3,7 @@ package tokens_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/tokens"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/tokens"
 )
 
 // TestExtract_GeminiContent_NonStreamFixture runs the extractor against

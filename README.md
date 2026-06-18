@@ -2,7 +2,7 @@
 
 <img src="web/public/sluice.svg" alt="Sluice logo" width="104" height="104" />
 
-# sluice-gateway
+# slipspace-gateway
 
 **One endpoint in front of every LLM provider — with the policy, observability, and durability your platform team actually needs.**
 

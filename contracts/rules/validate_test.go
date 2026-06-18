@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func TestRuleContract_Validate(t *testing.T) {

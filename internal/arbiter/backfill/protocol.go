@@ -7,7 +7,7 @@ package backfill
 import (
 	"encoding/json"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 // ResolveProtocol infers the gateway protocol from a captured record's request

@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 )
 
 // attemptCaseNext is a stub downstream handler that consumes a queue

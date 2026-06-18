@@ -6,7 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // Condition is the polymorphic interface implemented by every concrete

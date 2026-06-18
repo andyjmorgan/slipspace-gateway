@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	detectv1 "github.com/andyjmorgan/sluice-gateway/gen/slipspace/detect/v1"
+	detectv1 "github.com/andyjmorgan/slipspace-gateway/gen/slipspace/detect/v1"
 )
 
 func TestDetectorClient_Detect(t *testing.T) {

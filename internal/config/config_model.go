@@ -9,9 +9,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 // ResolvedConfig is the merged, validated, indexed runtime view of a

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // twoConfigStore builds a v2 snapshot with two configurations whose bindings

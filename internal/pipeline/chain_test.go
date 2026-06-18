@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/pipeline"
+	"github.com/andyjmorgan/slipspace-gateway/internal/pipeline"
 )
 
 func collect(t *testing.T, ch <-chan pipeline.Message, want int, timeout time.Duration) []pipeline.Message {

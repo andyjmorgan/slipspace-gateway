@@ -12,8 +12,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // recoverMiddleware is the outermost layer in the data-plane handler

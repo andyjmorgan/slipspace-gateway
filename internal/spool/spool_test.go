@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector/testfs"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector/testfs"
 )
 
 func discardLogger() *slog.Logger {

@@ -15,8 +15,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 )
 
 // fakeUploader captures UploadStream calls. Tests program the response.

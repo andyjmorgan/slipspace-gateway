@@ -6,7 +6,7 @@ This file is the standing brief for any AI assistant (or human) working in this 
 
 Sluice is a slim, observable AI provider gateway in Go. It intercepts API calls to OpenAI, Anthropic, and Google Gemini, applies per-tenant policy (auth, rules, resilience, telemetry), and forwards to the upstream provider after credential substitution.
 
-Repo: `git@github.com:andyjmorgan/sluice-gateway.git`
+Repo: `git@github.com:andyjmorgan/slipspace-gateway.git`
 
 Two coexisting auth modes:
 - **Managed:** client uses a Sluice-issued API key (`Authorization: Bearer sk_live_...`); gateway swaps in the upstream provider credentials before forwarding.
@@ -244,7 +244,7 @@ Follow the global working-style rules (drive don't present, one decision at a ti
 
 ## Quick links
 
-- Repo: `git@github.com:andyjmorgan/sluice-gateway.git`
+- Repo: `git@github.com:andyjmorgan/slipspace-gateway.git`
 - DonkeyWork project: `522d9204-c3b6-4719-b0c9-8ef91b968314`
 - .NET predecessor (read-only reference): `~/Source/Repos/airia-ai-gateway`
 - Mock LLM (temporary, never commit): `~/Source/Repos/airia-llmock`

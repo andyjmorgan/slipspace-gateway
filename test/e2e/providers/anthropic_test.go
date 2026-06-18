@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 func TestAnthropic_Messages_NonStreaming_PrefixRouting(t *testing.T) {

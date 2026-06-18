@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // failoverPolicy is the standard 2-target failover policy used by

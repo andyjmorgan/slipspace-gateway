@@ -1,6 +1,6 @@
 package tokens
 
-import "github.com/andyjmorgan/sluice-gateway/internal/middleware/sseframe"
+import "github.com/andyjmorgan/slipspace-gateway/internal/middleware/sseframe"
 
 // extractorFn signs every per-endpoint implementation. The dispatcher
 // collates the response once (via sseframe) and hands each implementation

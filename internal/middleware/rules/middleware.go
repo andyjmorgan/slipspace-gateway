@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 )
 
 // MatchFromContextFunc returns the routed (provider, endpoint, path

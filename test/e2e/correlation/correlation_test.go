@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 func TestCorrelation_Generated_WhenAbsent(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // TestSession_PopSequenceThroughGateway proves the end-to-end session

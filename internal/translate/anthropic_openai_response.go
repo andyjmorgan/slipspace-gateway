@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	"github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
 )
 
 // translateChatResponseToMessages maps a non-streaming OpenAI Chat Completions

@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 // TestValidate_DuplicateAPIKeyID covers the api-key id-uniqueness branch added

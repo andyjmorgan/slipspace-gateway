@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 func TestHarness_Smoke(t *testing.T) {

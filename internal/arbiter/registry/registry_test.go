@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
 )
 
 // sign returns the hex HMAC-SHA256 of body under secret, as a gateway would.

@@ -16,13 +16,13 @@ import (
 
 	"go.opentelemetry.io/otel/metric/noop"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
-	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
+	resiliencemw "github.com/andyjmorgan/slipspace-gateway/internal/middleware/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 )
 
 type capturedUpstream struct {

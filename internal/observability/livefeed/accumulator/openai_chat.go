@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	openaichat "github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	openaichat "github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
 )
 
 // accumulateOpenAIChat walks a stream of OpenAI ChatCompletionChunk

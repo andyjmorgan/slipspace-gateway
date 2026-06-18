@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
 )
 
 // runMessagesStream feeds a sequence of Anthropic SSE event payloads through a

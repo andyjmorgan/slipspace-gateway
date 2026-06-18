@@ -30,7 +30,7 @@ COPY . .
 COPY --from=spa-builder /out/webdist/ /src/internal/arbiter/server/webdist/
 RUN CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
-        -ldflags "-s -w -X github.com/andyjmorgan/sluice-gateway/internal/version.Version=${VERSION}" \
+        -ldflags "-s -w -X github.com/andyjmorgan/slipspace-gateway/internal/version.Version=${VERSION}" \
         -o /out/arbiter \
         ./cmd/arbiter
 
@@ -40,7 +40,7 @@ ARG VERSION
 
 LABEL org.opencontainers.image.title="arbiter"
 LABEL org.opencontainers.image.description="SlipSpace Arbiter — central telemetry + security convergence service for Sluice gateways."
-LABEL org.opencontainers.image.source="https://github.com/andyjmorgan/sluice-gateway"
+LABEL org.opencontainers.image.source="https://github.com/andyjmorgan/slipspace-gateway"
 LABEL org.opencontainers.image.version="${VERSION}"
 
 COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

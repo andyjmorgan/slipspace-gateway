@@ -2,7 +2,7 @@
 # The generated files under web/src/lib/generated/ are the source of truth for
 # the admin console's wire DTOs; do not hand-edit them.
 packages:
-- path: "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+- path: "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
   output_path: "web/src/lib/generated/resilience.ts"
   fallback_type: "unknown"
   type_mappings: &m
@@ -17,7 +17,7 @@ packages:
     "rules.Action": "Record<string, unknown>"
     "resilience.ResilienceMode": "string"
     "models.DynamicProperties": "Record<string, never>"
-- path: "github.com/andyjmorgan/sluice-gateway/contracts/config"
+- path: "github.com/andyjmorgan/slipspace-gateway/contracts/config"
   output_path: "web/src/lib/generated/config.ts"
   fallback_type: "unknown"
   frontmatter: |
@@ -25,11 +25,11 @@ packages:
   type_mappings:
     <<: *m
     "resilience.CircuitBreakerConfig": "CircuitBreakerConfig"
-- path: "github.com/andyjmorgan/sluice-gateway/contracts/admin"
+- path: "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
   output_path: "web/src/lib/generated/admin.ts"
   fallback_type: "unknown"
   type_mappings: *m
-- path: "github.com/andyjmorgan/sluice-gateway/internal/admin"
+- path: "github.com/andyjmorgan/slipspace-gateway/internal/admin"
   output_path: "web/src/lib/generated/admin_dto.ts"
   include_files: ["config_dto.go", "redact.go"]
   fallback_type: "unknown"

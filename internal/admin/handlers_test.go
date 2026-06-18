@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/admin"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin"
 )
 
 func TestAuthMeHandler_ReturnsJSON(t *testing.T) {

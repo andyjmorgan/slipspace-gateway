@@ -30,8 +30,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 )
 
 const (
@@ -59,7 +59,7 @@ func buildBinary(t *testing.T) string {
 			return
 		}
 		binPath = filepath.Join(dir, "telemetry")
-		cmd := exec.Command("go", "build", "-o", binPath, "github.com/andyjmorgan/sluice-gateway/cmd/arbiter")
+		cmd := exec.Command("go", "build", "-o", binPath, "github.com/andyjmorgan/slipspace-gateway/cmd/arbiter")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build telemetry: %v\n%s", err, out)
 		}

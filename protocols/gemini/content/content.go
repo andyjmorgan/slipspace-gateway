@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // GenerateContentRequest is the request body for Gemini's POST

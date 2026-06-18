@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
-	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func v2Fixture() *ResolvedConfig {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func TestRequestLabels_RoundTrip(t *testing.T) {

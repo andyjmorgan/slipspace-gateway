@@ -20,9 +20,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	sluices3 "github.com/andyjmorgan/sluice-gateway/internal/connector/s3"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	sluices3 "github.com/andyjmorgan/slipspace-gateway/internal/connector/s3"
 )
 
 // SeaweedFS exposes S3 on 8333 by default when started with `-s3`.

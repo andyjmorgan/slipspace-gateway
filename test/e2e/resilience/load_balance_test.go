@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // loadBalancePolicy is the standard 50/50 load-balance config used

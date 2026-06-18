@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/safego"
-	"github.com/andyjmorgan/sluice-gateway/internal/version"
+	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
+	"github.com/andyjmorgan/slipspace-gateway/internal/version"
 )
 
 const (

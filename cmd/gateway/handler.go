@@ -5,16 +5,16 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/headers"
-	"github.com/andyjmorgan/sluice-gateway/internal/httperr"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
-	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
-	"github.com/andyjmorgan/sluice-gateway/internal/selection"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
+	resiliencemw "github.com/andyjmorgan/slipspace-gateway/internal/middleware/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
+	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
 
 // buildDataPlaneHandler composes the v2 request chain:

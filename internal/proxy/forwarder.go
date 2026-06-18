@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/headers"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // Forwarder wraps httputil.ReverseProxy with per-destination transports and

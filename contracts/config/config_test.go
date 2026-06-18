@@ -6,7 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 )
 
 func TestAPIKey_JSONRoundTrip(t *testing.T) {

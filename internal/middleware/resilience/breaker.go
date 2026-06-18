@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 )
 
 // State is the circuit breaker's current lifecycle position.

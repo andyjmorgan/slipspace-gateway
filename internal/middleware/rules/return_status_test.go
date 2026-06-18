@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 )
 
 func returnStatusRule(name, body string, status int, bt contractsrules.StatusCodeBodyType) *contractsrules.RuleContract {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 )
 
 func TestResilienceConfig_Validate(t *testing.T) {

@@ -3,8 +3,8 @@ package admin
 import (
 	"sort"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 // ConfigurationSummary is the row shape returned by the configurations

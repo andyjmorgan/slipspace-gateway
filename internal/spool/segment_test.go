@@ -14,7 +14,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 )
 
 func TestOpenSegment_CreatesFile(t *testing.T) {

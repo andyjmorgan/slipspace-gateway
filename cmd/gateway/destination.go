@@ -5,11 +5,11 @@ import (
 	"net/url"
 	"strings"
 
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
-	contractsrules "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/auth"
-	"github.com/andyjmorgan/sluice-gateway/internal/proxy"
-	"github.com/andyjmorgan/sluice-gateway/internal/selection"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
+	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
+	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
 
 // groupToResilienceConfig synthesises the resilience orchestrator's input from

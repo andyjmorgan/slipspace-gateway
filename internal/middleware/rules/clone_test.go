@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
 )
 
 func TestMutableState_Clone_NilReceiver(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/headers"
+	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
 )
 
 // ResponseBuffer is a per-request, bounded byte sink that captures the

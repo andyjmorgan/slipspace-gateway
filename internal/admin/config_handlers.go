@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	rulescontract "github.com/andyjmorgan/sluice-gateway/contracts/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // pathPrefix is the path component the routing tree below strips before

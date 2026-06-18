@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 func TestMergeSecret(t *testing.T) {

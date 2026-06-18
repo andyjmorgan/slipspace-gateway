@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/andyjmorgan/sluice-gateway/models"
+	"github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ErrEmptyPart is returned by UnmarshalPart when the JSON payload is an

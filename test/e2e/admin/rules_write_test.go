@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // authedJSON returns an authenticated request against h.AdminURL.

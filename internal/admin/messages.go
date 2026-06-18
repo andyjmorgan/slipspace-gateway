@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability/livefeed"
 )
 
 // sseRetryMs tells EventSource to back off for one second before

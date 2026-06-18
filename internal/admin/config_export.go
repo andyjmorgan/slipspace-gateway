@@ -9,9 +9,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/admin/configexport"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/version"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin/configexport"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/version"
 )
 
 // ConfigExportFile is the SPA-facing per-file payload returned by the

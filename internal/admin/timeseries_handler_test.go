@@ -12,9 +12,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func TestTimeseriesHandler_RPSWithLiveSnapshotter(t *testing.T) {

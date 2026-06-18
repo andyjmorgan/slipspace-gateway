@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // Part kinds. genaiattr already normalizes every provider into these unified

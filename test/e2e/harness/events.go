@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 )
 
 // PayloadMode discriminates how an Envelope carries its payload.

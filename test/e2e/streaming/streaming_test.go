@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 func TestMain(m *testing.M) {

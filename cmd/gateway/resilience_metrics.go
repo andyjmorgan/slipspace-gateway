@@ -7,8 +7,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	resiliencemw "github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	resiliencemw "github.com/andyjmorgan/slipspace-gateway/internal/middleware/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // circuitBreakerTransitionListener returns the StateListener wired into

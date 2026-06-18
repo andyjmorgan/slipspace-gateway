@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 // TestWatchShutdownSignal proves the gateway emits the "shutting down"

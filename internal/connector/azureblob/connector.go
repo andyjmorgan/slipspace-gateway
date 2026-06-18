@@ -14,9 +14,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector"
 )
 
 // uploader is the narrow surface tests inject a fake into. The real

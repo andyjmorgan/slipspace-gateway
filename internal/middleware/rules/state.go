@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/bodypatch"
+	"github.com/andyjmorgan/slipspace-gateway/internal/bodypatch"
 )
 
 // QueryAddition is a single (key, value) pair from

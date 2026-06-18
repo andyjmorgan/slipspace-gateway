@@ -3,8 +3,8 @@ package stitch
 import (
 	"testing"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 func TestBuildRequestView(t *testing.T) {

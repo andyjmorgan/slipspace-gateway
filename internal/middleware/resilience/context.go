@@ -3,7 +3,7 @@ package resilience
 import (
 	"context"
 
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 )
 
 type resilienceConfigKey struct{}

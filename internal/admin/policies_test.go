@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/config"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
 // stubBreakerStates is the CircuitBreakerStateSource the tests pass to

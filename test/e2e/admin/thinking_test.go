@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	anthropicmessages "github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	anthropicmessages "github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // TestAdmin_ThinkingStream_ReassembledIntoBody drives a streamed Anthropic

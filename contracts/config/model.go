@@ -1,6 +1,6 @@
 package config
 
-import "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+import "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 
 // This file defines the v2 configuration model (providers + bindings), added
 // alongside the v1 model (Provider/Endpoint + Configuration.UpstreamCredentials

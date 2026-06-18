@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/admin/configexport"
+	"github.com/andyjmorgan/slipspace-gateway/internal/admin/configexport"
 )
 
 func writeConfigDir(t *testing.T, files map[string]string) string {

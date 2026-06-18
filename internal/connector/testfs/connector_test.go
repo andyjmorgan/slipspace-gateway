@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 )
 
 func TestNew_RequiresName(t *testing.T) {

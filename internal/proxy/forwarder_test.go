@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
 func newDestination(t *testing.T, upstreamURL string) Destination {

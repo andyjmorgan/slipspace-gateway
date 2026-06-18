@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // headerTimeoutFailoverPolicy is a 2-target failover policy with a 1s

@@ -11,7 +11,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
-    -ldflags "-s -w -X github.com/andyjmorgan/sluice-gateway/internal/version.Version=${VERSION}" \
+    -ldflags "-s -w -X github.com/andyjmorgan/slipspace-gateway/internal/version.Version=${VERSION}" \
     -o /out/mockllm \
     ./cmd/mockllm
 
@@ -19,7 +19,7 @@ FROM scratch
 ARG VERSION
 LABEL org.opencontainers.image.title="sluice-mockllm" \
       org.opencontainers.image.description="Mock LLM upstream for sluice-gateway development and end-to-end testing." \
-      org.opencontainers.image.source="https://github.com/andyjmorgan/sluice-gateway" \
+      org.opencontainers.image.source="https://github.com/andyjmorgan/slipspace-gateway" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=builder /out/mockllm /mockllm
 COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

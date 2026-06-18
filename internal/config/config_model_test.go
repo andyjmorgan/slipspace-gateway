@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	contractsconfig "github.com/andyjmorgan/sluice-gateway/contracts/config"
-	"github.com/andyjmorgan/sluice-gateway/contracts/resilience"
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 )
 
 const v2Providers = `

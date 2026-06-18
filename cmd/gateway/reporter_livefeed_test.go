@@ -9,11 +9,11 @@ import (
 
 	"go.opentelemetry.io/otel/metric/noop"
 
-	"github.com/andyjmorgan/sluice-gateway/contracts/events"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/bodycapture"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/rules"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability"
-	"github.com/andyjmorgan/sluice-gateway/internal/observability/livefeed"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
+	"github.com/andyjmorgan/slipspace-gateway/internal/observability/livefeed"
 )
 
 // newTestReporter builds a reporterRun against a fresh ring and meter

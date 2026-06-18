@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/genaiattr"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/genaiattr"
 )
 
 // textOf joins the text-part content of a parts slice, for terse assertions.

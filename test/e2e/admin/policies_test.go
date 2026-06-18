@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/test/e2e/harness"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
 // failoverPolicyYAML matches the policy used by the resilience E2E

@@ -3,7 +3,7 @@ package tokens_test
 import (
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/tokens"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/tokens"
 )
 
 func TestAggregator_ZeroUsageIsNoOp(t *testing.T) {

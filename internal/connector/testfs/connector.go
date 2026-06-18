@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	cc "github.com/andyjmorgan/sluice-gateway/contracts/connector"
-	"github.com/andyjmorgan/sluice-gateway/internal/connector"
+	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector"
 )
 
 // Options configures a Connector. Dir is required; all other fields have

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/andyjmorgan/sluice-gateway/protocols/openai/chat"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
 )
 
 // decodeChatResp translates an Anthropic Messages response body and decodes the

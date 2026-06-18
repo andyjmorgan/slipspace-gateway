@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	adminc "github.com/andyjmorgan/sluice-gateway/contracts/admin"
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // spanBlob marshals a span_event blob from a key->value map, failing the test

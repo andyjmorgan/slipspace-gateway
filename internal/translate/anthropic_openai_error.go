@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/andyjmorgan/sluice-gateway/protocols/anthropic/messages"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
 )
 
 // anthropicErrorEnvelope is the Anthropic non-streaming error body shape:

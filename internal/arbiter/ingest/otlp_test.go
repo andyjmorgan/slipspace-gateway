@@ -12,7 +12,7 @@ import (
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
-	"github.com/andyjmorgan/sluice-gateway/internal/arbiter/store"
+	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
 // --- attribute builders ---

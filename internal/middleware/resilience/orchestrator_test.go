@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	contractsres "github.com/andyjmorgan/sluice-gateway/contracts/resilience"
-	"github.com/andyjmorgan/sluice-gateway/internal/middleware/resilience"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/resilience"
 )
 
 func TestNoneOrchestrator_FirstTarget(t *testing.T) {
