@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile
-    image: sluice-gateway:dev
+    image: slipspace-gateway:dev
     ports:
       - "8585:8585"  # data plane
       - "8081:8081"  # admin console (SPA + /api/v1)
@@ -38,7 +38,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.mockllm
-    image: sluice-mockllm:dev
+    image: slipspace-mockllm:dev
     # No host port mapping — the gateway reaches mockllm via the
     # compose network alias `mockllm:5555`. Uncomment the ports block
     # if you want to curl the mock LLM directly from the host.

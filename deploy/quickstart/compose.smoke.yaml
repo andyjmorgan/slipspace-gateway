@@ -24,7 +24,7 @@ services:
         condition: service_started
 
   mockllm:
-    image: ghcr.io/andyjmorgan/sluice-mockllm:${SLUICE_IMAGE_TAG:-latest}
+    image: ghcr.io/andyjmorgan/slipspace-mockllm:${SLUICE_IMAGE_TAG:-latest}
     # Reached by the gateway at mockllm:5555 (matches providers.mock.yaml).
     # Published to the host so the verification harness can stage canned
     # responses via POST /control/responses before running the smoke suite.

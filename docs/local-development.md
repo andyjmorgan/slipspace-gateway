@@ -80,8 +80,8 @@ flowchart TB
         Curl[curl / SDK / browser]
     end
     subgraph compose[docker compose network]
-        GW[gateway<br/>image: sluice-gateway:dev<br/>:8585 :8081 :9090]
-        Mock[mockllm<br/>image: sluice-mockllm:dev<br/>:5555 - internal]
+        GW[gateway<br/>image: slipspace-gateway:dev<br/>:8585 :8081 :9090]
+        Mock[mockllm<br/>image: slipspace-mockllm:dev<br/>:5555 - internal]
         Spool[(sluice-spool<br/>named volume)]
     end
     Curl -- "8585 / 8081 / 9090" --> GW
@@ -195,7 +195,7 @@ No `gateway.yaml`. Server-level configuration (HTTP bind, spool root, log level,
 
 ## Mock LLM
 
-`cmd/mockllm` is a Go HTTP server that impersonates OpenAI, Anthropic, and Gemini. It replaces a legacy C# mock that used to live in a sibling workspace (`~/Source/Repos/airia-llmock/`) — the Go rewrite is the committed source of truth and the only mock that's published as a container image (`ghcr.io/andyjmorgan/sluice-mockllm`, though the dev compose still builds from source).
+`cmd/mockllm` is a Go HTTP server that impersonates OpenAI, Anthropic, and Gemini. It replaces a legacy C# mock that used to live in a sibling workspace (`~/Source/Repos/airia-llmock/`) — the Go rewrite is the committed source of truth and the only mock that's published as a container image (`ghcr.io/andyjmorgan/slipspace-mockllm`, though the dev compose still builds from source).
 
 ### Invocation
 
@@ -421,7 +421,7 @@ Not worth tracking down — the assignment is best-effort and a retry almost alw
 golangci-lint cache clean
 ```
 
-**Two mockllm sources.** `ghcr.io/andyjmorgan/sluice-mockllm` is the published image referenced by the committed `docker-compose.yaml`; `cmd/mockllm` is the local Go source. They're the same binary — the image is built from `cmd/mockllm` via `deploy/docker/Dockerfile.mockllm`. If you're iterating on the mock itself, use `make dev-with-overlay` and the `docker-compose.dev.yaml.example` overlay to build the image from your local tree. If you're just consuming the mock, the published image is the safe default.
+**Two mockllm sources.** `ghcr.io/andyjmorgan/slipspace-mockllm` is the published image referenced by the committed `docker-compose.yaml`; `cmd/mockllm` is the local Go source. They're the same binary — the image is built from `cmd/mockllm` via `deploy/docker/Dockerfile.mockllm`. If you're iterating on the mock itself, use `make dev-with-overlay` and the `docker-compose.dev.yaml.example` overlay to build the image from your local tree. If you're just consuming the mock, the published image is the safe default.
 
 **Hardcoding `claude-haiku-4-5` or `gemini-2.0-flash-001` as no-match probes.** Tests that pick a real model name to assert "no rule matches" break when the policy library grows a rule that matches that prefix (happened twice during v1.0.2). Use synthetic names like `nomatch-internal` or `unmapped-model` instead.
 

@@ -2,7 +2,7 @@
 #
 # This file is the sample shape for developers who want to override the
 # published mockllm image with one built locally. The committed
-# docker-compose.yaml always references ghcr.io/andyjmorgan/sluice-mockllm so
+# docker-compose.yaml always references ghcr.io/andyjmorgan/slipspace-mockllm so
 # CI and onboarding work out of the box.
 #
 # Two common overrides:
@@ -22,7 +22,7 @@
 services:
   # Option 1 — local build of the in-repo Go mockllm.
   mockllm:
-    image: sluice-mockllm:dev
+    image: slipspace-mockllm:dev
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.mockllm
@@ -34,7 +34,7 @@ services:
   # commit the resulting docker-compose.dev.yaml; it is gitignored.
   #
   # mockllm:
-  #   image: sluice-mockllm:legacy
+  #   image: slipspace-mockllm:legacy
   #   build:
   #     context: /absolute/path/to/your/legacy/mock
   #   ports:

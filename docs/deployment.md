@@ -88,7 +88,7 @@ Every pod in a replica set reads the same ConfigMap and Secret. Per-pod state (c
 
 ## Container image
 
-Published at `ghcr.io/andyjmorgan/sluice-gateway`. Multi-stage build defined in [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile).
+Published at `ghcr.io/andyjmorgan/slipspace-gateway`. Multi-stage build defined in [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile).
 
 ### Stages
 
@@ -113,7 +113,7 @@ The version string baked into `/gateway` via `-ldflags "-X .../version.Version=$
 - A shell. There is no `/bin/sh` — `kubectl exec` against the pod will fail unless you also override the entrypoint or run an ephemeral debug container.
 - The config directory. The image does not ship `providers.yaml` or `policy.yaml`; the operator mounts those at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`).
 - A writable root filesystem. The image runs as UID `65532:65532` (nonroot); pair it with `readOnlyRootFilesystem: true` in the pod's `securityContext`.
-- The mock LLM. `sluice-mockllm` is a separate image (`ghcr.io/andyjmorgan/sluice-mockllm`) used in local-dev and CI only; never deploy it.
+- The mock LLM. `slipspace-mockllm` is a separate image (`ghcr.io/andyjmorgan/slipspace-mockllm`) used in local-dev and CI only; never deploy it.
 
 ---
 
@@ -125,10 +125,10 @@ The version string baked into `/gateway` via `-ldflags "-X .../version.Version=$
 
 | Trigger | What gets published |
 |---|---|
-| Push to `main` | `ghcr.io/andyjmorgan/sluice-gateway:main`, `:sha-<short>`, and `:latest` (floats on every default-branch build since #248, mirroring `:main`). Same tags for `sluice-mockllm` and `arbiter`. No GitHub Release. |
+| Push to `main` | `ghcr.io/andyjmorgan/slipspace-gateway:main`, `:sha-<short>`, and `:latest` (floats on every default-branch build since #248, mirroring `:main`). Same tags for `slipspace-mockllm` and `arbiter`. No GitHub Release. |
 | Tag push `v*.*.*` | All of the above **plus** `:<version>` and `:<major>.<minor>` (`:latest` moves on both events). The release job then creates (or edits, on tag re-push) a GitHub Release with rendered notes pointing at the freshly-pushed image tags. |
 
-All three images in the matrix (`sluice-gateway`, `sluice-mockllm`, `arbiter` — the latter from `deploy/docker/Dockerfile.arbiter`, added in #234) build for `linux/amd64` only (arm64 was dropped in #224); the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
+All three images in the matrix (`slipspace-gateway`, `slipspace-mockllm`, `arbiter` — the latter from `deploy/docker/Dockerfile.arbiter`, added in #234) build for `linux/amd64` only (arm64 was dropped in #224); the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
 
 ### Image visibility
 
@@ -148,7 +148,7 @@ Sluice has no opinion on whether you ship it via Helm, kustomize, raw manifests,
 
 | Object | Purpose |
 |---|---|
-| `Deployment` | Runs `ghcr.io/andyjmorgan/sluice-gateway:<tag>` with the config volume, env vars, and probes. |
+| `Deployment` | Runs `ghcr.io/andyjmorgan/slipspace-gateway:<tag>` with the config volume, env vars, and probes. |
 | `Service` (data plane) | ClusterIP on `:8585` → pod `:8585`. The one externally-reachable surface. |
 | `Service` (admin) | Optional. ClusterIP on `:8081` → pod `:8081`. Front with an ingress + auth proxy or expose loopback-only inside the cluster. |
 | `Service` (prometheus) | Optional. ClusterIP on `:9090` → pod `:9090`. Or use a `Service`-less `ServiceMonitor` pointing at pod IPs. |
@@ -172,7 +172,7 @@ spec:
       type: RuntimeDefault
   containers:
     - name: gateway
-      image: ghcr.io/andyjmorgan/sluice-gateway:v1.1.4
+      image: ghcr.io/andyjmorgan/slipspace-gateway:v1.1.4
       ports:
         - { name: data,    containerPort: 8585 }
         - { name: admin,   containerPort: 8081 }
@@ -308,12 +308,12 @@ The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts
 > **Just want to run Sluice from the published images?** Use the turnkey
 > quickstart bundle at [`deploy/quickstart/`](../deploy/quickstart/) instead of
 > the dev composes below. It ships three copy-paste stacks (gateway + console,
-> gateway only, gateway + Arbiter) that pull `ghcr.io/andyjmorgan/sluice-*`,
+> gateway only, gateway + Arbiter) that pull `ghcr.io/andyjmorgan/slipspace-*`,
 > proxy the real providers, and are configured entirely from a `.env` file — no
 > source checkout or build toolchain. The composes in *this* section build from
 > source and target the mock LLM for development.
 
-The committed [`docker-compose.yaml`](../docker-compose.yaml) brings up the gateway image + the published `sluice-mockllm`, mounted against `config-dev/` for the policy bundle. This is the path that mirrors production layout most closely — the same image, the same mount conventions, the same env vars.
+The committed [`docker-compose.yaml`](../docker-compose.yaml) brings up the gateway image + the published `slipspace-mockllm`, mounted against `config-dev/` for the policy bundle. This is the path that mirrors production layout most closely — the same image, the same mount conventions, the same env vars.
 
 ```sh
 make dev-compose          # builds + starts gateway, mockllm
@@ -337,7 +337,7 @@ Two overlays sit alongside the committed compose. Both are stacked with `-f dock
 
 | Overlay | Tracked? | Purpose |
 |---|---|---|
-| `docker-compose.dev.yaml` | gitignored | Local mock-LLM override. Sample at [`docker-compose.dev.yaml.example`](../docker-compose.dev.yaml.example) — copy + edit. Two common shapes: build the in-repo Go `cmd/mockllm` locally, or point at the legacy C# mock from a sibling workspace. The committed compose always references the published `ghcr.io/andyjmorgan/sluice-mockllm` image so CI and onboarding work out of the box. |
+| `docker-compose.dev.yaml` | gitignored | Local mock-LLM override. Sample at [`docker-compose.dev.yaml.example`](../docker-compose.dev.yaml.example) — copy + edit. Two common shapes: build the in-repo Go `cmd/mockllm` locally, or point at the legacy C# mock from a sibling workspace. The committed compose always references the published `ghcr.io/andyjmorgan/slipspace-mockllm` image so CI and onboarding work out of the box. |
 | [`docker-compose.real.yaml`](../docker-compose.real.yaml) | committed | Swaps the mock-pointed `config-dev` mount for `config-dev.real`, which `scripts/dev-real-config.sh` materialises from `.env`. Reaches `api.openai.com` / `api.anthropic.com` / `generativelanguage.googleapis.com` plus a host-port-forwarded ollama. Driven by `make dev-real`. |
 
 ### Pure-Go dev loop

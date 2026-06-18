@@ -67,7 +67,7 @@ test/python/
 
 ## Why subprocess and not docker-compose
 
-The `ghcr.io/andyjmorgan/sluice-mockllm` image is not yet published (v0.1
+The `ghcr.io/andyjmorgan/slipspace-mockllm` image is not yet published (v0.1
 task). Until it is, the local Go binary is the source of truth, so we spawn it
 directly. The Go E2E harness in `test/e2e/harness/` follows the same pattern.
 

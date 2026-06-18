@@ -37,7 +37,7 @@ services:
         echo "rendered /etc/sluice: $$(ls /out)"
 
   gateway:
-    image: ghcr.io/andyjmorgan/sluice-gateway:${SLUICE_IMAGE_TAG:-latest}
+    image: ghcr.io/andyjmorgan/slipspace-gateway:${SLUICE_IMAGE_TAG:-latest}
     env_file: .env
     environment:
       SLUICE_CONFIG_DIR: /etc/sluice

@@ -1,6 +1,6 @@
 """Stack fixtures: spawn mockllm and gateway as subprocesses.
 
-Why subprocess: the ghcr.io/andyjmorgan/sluice-mockllm image is not published
+Why subprocess: the ghcr.io/andyjmorgan/slipspace-mockllm image is not published
 yet (v0.1 task), so we build the binaries from source. The Python suite
 exercises wire compat against vanilla provider SDKs — connector reporting
 is exercised separately in the Go e2e harness via the testfs connector.

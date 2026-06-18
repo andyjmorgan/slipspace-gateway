@@ -37,7 +37,7 @@ FROM scratch
 
 ARG VERSION
 
-LABEL org.opencontainers.image.title="sluice-gateway"
+LABEL org.opencontainers.image.title="slipspace-gateway"
 
 LABEL org.opencontainers.image.description="Slim observable AI provider gateway."
 
