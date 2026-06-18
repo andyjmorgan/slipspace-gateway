@@ -105,6 +105,18 @@ On top of telemetry, the Arbiter runs **async, per-message security scanning** v
 
 The image is `ghcr.io/andyjmorgan/arbiter`. The quickstart bundle ships a gateway + Arbiter Compose stack ([`deploy/quickstart/`](deploy/quickstart/)); for the wire-level detail see [docs/arbiter.md](docs/arbiter.md) (service overview) and [docs/arbiter-api.md](docs/arbiter-api.md) (console query API).
 
+## Plugging in a security detector
+
+A **detector** is how you give the Arbiter a security signal — PII, prompt-injection, toxicity, or safety. It's a small, contract-speaking container the Arbiter calls per content unit; you wire it in by config and the Arbiter does the rest.
+
+- **One contract, every family** — the `slipspace.detect.v1` IDL ([`proto/slipspace/detect/v1/detect.proto`](proto/slipspace/detect/v1/detect.proto)) is a single shape for all detectors: a `DetectRequest` carries one content `Unit` to scan, the detector replies with a `DetectResponse` of `Finding`s. A `Finding` is `category` + `score` + `raw_label` (+ optional span); the detector's `Family` is `PII` / `INJECTION` / `TOXICITY` / `SAFETY`. Variation between families lives in values, never structure.
+- **Detectors stay dumb; the Arbiter owns the verdict** — a detector returns a score and its native label only, never a decision or risk level. The Arbiter reduces findings to a verdict (flagged / partial / clean) from policy. An inconclusive or truncated scan is first-class `partial`, never silently `clean`.
+- **Transport is protojson over HTTP today** — async, `POST /detect` with a protojson `DetectRequest`. The gRPC `DetectionService` and the inline streaming early-termination RPC are declared in the proto to shape-lock the contract but are deferred (the inline path is not shipped).
+
+The reference detectors live under [`deploy/detectors/`](deploy/detectors/): `detect_core.py` is the pure, unit-tested contract + chunk-planning logic, and `app.py` (sequence classification for injection / toxicity) and `pii_app.py` (Presidio + a PII model) are the model wiring behind a small FastAPI service. Oversized inputs are chunked with overlap rather than truncated, so the model window can't become a scan-evasion hole.
+
+Today this ships as **per-model FastAPI detectors** — one container per model, configured by env (`DETECTOR_MODEL_ID`, `DETECTOR_FAMILY`, `DETECTOR_LABEL_MAP`, …), so injection and toxicity are the same image with different config. A generic **archetype-driver runtime** (drivers like hf-sequence-classification, hf-token-classification, gliner, presidio, http, with the model expressed as YAML) is the intended direction, not the current default. Either way the seam is the contract: anything that speaks `slipspace.detect.v1` plugs in. See [docs/arbiter.md](docs/arbiter.md) for the full picture.
+
 ## Session, agent & user attribution
 
 Every request is correlated on three orthogonal identity axes on top of its `correlation_id`: **session** (the conversation), **agent** (the agent or sub-agent that issued it), and **user** (the end user it was made for). Each resolves from an authoritative `X-Sluice-Session-Id` / `X-Sluice-Agent-Id` / `X-Sluice-User-Id` header, falling back through a built-in chain (including Claude Code's `x-claude-code-session-id` / `X-Claude-Code-Agent-Id`) that operators extend with `SLUICE_*_ID_HEADERS` — no client code change. The resolved ids are echoed on the response, attached to every span, record, and log line, and let the console group a whole multi-turn **session into one timeline** and filter the fleet by agent or user. See [docs/observability.md → Session bundling](docs/observability.md#session-bundling).
@@ -120,6 +132,19 @@ End-of-request records buffer to a disk-backed, zstd-compressed `ndjson.zst` spo
 - **Wire-compat suite** — the official OpenAI / Anthropic / Gemini Python SDKs run against a spawned stack; any failure is a release blocker.
 - **Fuzzed** — every `UnmarshalJSON`, the YAML loader, and route detection.
 - **Slim dependency graph**, stdlib-first, `-race` everywhere, goroutine-leak checked.
+
+## Mock LLM
+
+`cmd/mockllm` is an in-repo Go mock upstream — a stand-in for OpenAI, Anthropic, and Gemini that returns **rule-driven canned responses** in each provider's wire shape (streaming and non-streaming). It replaces an earlier external C# mock; the published image is `ghcr.io/andyjmorgan/sluice-mockllm` (built by `release.yaml`).
+
+A canned response matches on `method` / `path` / `request_body_contains` and can stage realistic scenarios — multi-step pools (`max_responses`, e.g. "503 twice then 200"), pre-status and inter-chunk delays, and transport-level failures (`close`, `hang`) — which is what makes it a faithful target for resilience and streaming tests. Responses are loaded from a file (`--responses`) or staged per-session over its `/control/responses` endpoint; an empty pool returns a synthetic default.
+
+It backs both loops:
+
+- **Local dev** — `make dev` brings `mockllm` up via `docker-compose.yaml` (compose network alias `mockllm:5555`) and runs the gateway natively, so no real provider credentials are needed.
+- **Tests** — `make e2e` spawns the gateway and `mockllm` for the black-box matrix, and `make py-compat` builds `mockllm` to run the official-SDK wire-compat suite against it.
+
+See [docs/local-development.md → Mock LLM](docs/local-development.md#mock-llm).
 
 ---
 
