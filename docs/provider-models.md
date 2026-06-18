@@ -237,6 +237,13 @@ carry several beta / accounting structures:
   `messages.go:396-401`) on system blocks, tools, and content blocks.
 - **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:285-291`) reports
   output tokens spent inside thinking blocks.
+- **`Usage.Iterations`** (`[]IterationUsage`) breaks usage down per server-side
+  agent-loop iteration on the beta server tool-use loop (sampling `message`,
+  `compaction`, `advisor_message`, `fallback_message`). The wire shape is a
+  discriminated union on `type`, but every variant shares one field set, so it
+  is modelled as a single flat struct keyed by `Type` rather than a
+  concrete-type hierarchy; unknown variant kinds and fields round-trip via
+  `DynamicProperties`.
 
 The request also exposes `OutputConfig.Effort` (reasoning-effort hint,
 `messages.go:345-358`, `Effort` at `messages.go:348`) and `ServiceTier`
