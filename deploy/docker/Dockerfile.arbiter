@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Image for the SlipSpace Arbiter service (binary `arbiter`, image
-# `arbiter`). Built and versioned independently of the gateway image;
+# `slipspace-arbiter`). Built and versioned independently of the gateway image;
 # the two are linked only by the OTLP + HMAC-webhook wire contract.
 
 ARG VERSION=dev
@@ -38,7 +38,7 @@ FROM scratch
 
 ARG VERSION
 
-LABEL org.opencontainers.image.title="arbiter"
+LABEL org.opencontainers.image.title="slipspace-arbiter"
 LABEL org.opencontainers.image.description="SlipSpace Arbiter — central telemetry + security convergence service for Sluice gateways."
 LABEL org.opencontainers.image.source="https://github.com/andyjmorgan/slipspace-gateway"
 LABEL org.opencontainers.image.version="${VERSION}"

@@ -79,7 +79,7 @@ services:
     restart: unless-stopped
 
   arbiter:
-    image: ghcr.io/andyjmorgan/arbiter:${SLUICE_IMAGE_TAG:-latest}
+    image: ghcr.io/andyjmorgan/slipspace-arbiter:${SLUICE_IMAGE_TAG:-latest}
     ports:
       - "8686:8686" # console + Record webhook ingest
       - "8687:8687" # OTLP gRPC
