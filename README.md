@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="web/public/sluice.svg" alt="Sluice logo" width="104" height="104" />
+<img src="web/public/sluice.svg" alt="SlipSpace logo" width="104" height="104" />
 
 # slipspace-gateway
 
@@ -8,21 +8,21 @@
 
 </div>
 
-Sluice is a slim, fast AI provider gateway in Go. Point your SDKs at a single base URL and it routes to OpenAI, Anthropic, and Google Gemini — swapping in upstream credentials, applying per-tenant policy (auth, rules, resilience), translating between provider dialects, emitting GenAI-grade telemetry, and spooling an auditable record of every request to durable storage. All without ever blocking the request path or mangling a payload it doesn't understand.
+SlipSpace is a slim, fast AI provider gateway in Go. Point your SDKs at a single base URL and it routes to OpenAI, Anthropic, and Google Gemini — swapping in upstream credentials, applying per-tenant policy (auth, rules, resilience), translating between provider dialects, emitting GenAI-grade telemetry, and spooling an auditable record of every request to durable storage. All without ever blocking the request path or mangling a payload it doesn't understand.
 
 It speaks the providers' **native wire protocols** (plus their OpenAI-compatible surfaces), streams token-for-token, and forwards unknown fields **byte-for-byte** so it never falls behind a provider's API.
 
 ---
 
-## Why Sluice
+## Why SlipSpace
 
 | | |
 |---|---|
 | **One base URL, every provider** | Protocol-keyed routing — clients send the bare provider-native path; bindings pick the upstream by `(protocol, model)`. No `/<provider>/` prefixes, no per-provider clients. Streaming and non-streaming, OpenAI · Anthropic · Gemini. |
-| **High-fidelity passthrough** | Every model type carries `DynamicProperties`; every polymorphic block has an `Unknown*` fallback. Fields Sluice has never heard of round-trip to the upstream **intact**. The day a provider ships a new param, your callers get it — no gateway release required. |
+| **High-fidelity passthrough** | Every model type carries `DynamicProperties`; every polymorphic block has an `Unknown*` fallback. Fields SlipSpace has never heard of round-trip to the upstream **intact**. The day a provider ships a new param, your callers get it — no gateway release required. |
 | **GenAI telemetry, done right** | OpenTelemetry meters (Prometheus scrape *and* OTLP push) plus `gen_ai.*` spans following the OTel GenAI semconv — latency, model, provider. Optional, redacted prompt/response capture. |
 | **Token & cost accounting** | Per-request prompt, completion, cache-**read**, and cache-**write** token counts on every span — the exact dimensions a spend dashboard needs — aggregated into per-provider / per-model / per-configuration panels. |
-| **Session · agent · user attribution** | Resolve conversation, agent/sub-agent, and end-user identity from a configurable header chain (Sluice-native + Claude Code defaults), stamp it on every span, record, and log line, and drill into a full session timeline in the console. |
+| **Session · agent · user attribution** | Resolve conversation, agent/sub-agent, and end-user identity from a configurable header chain (SlipSpace-native + Claude Code defaults), stamp it on every span, record, and log line, and drill into a full session timeline in the console. |
 | **Tag and slice** | `addTag` rules label any request; the post-rule tag set rides on records and powers tag-fire panels and tag-filtered queries across the fleet. |
 | **Durable, non-blocking audit spool** | End-of-request records buffer to a disk-backed `ndjson.zst` spool and ship out-of-band to S3, Azure Blob, or webhooks. The client **never** waits on backpressure — full ring or full disk drops on the floor and bumps a counter. |
 | **Rich rules engine** | Match on provider, protocol, model, header, tag, or body field (with AND/OR groups); act with `changeProvider`, `changeModelName`, `setHeader`, `addTag`, `rewriteField`, `translate`, `returnStatusCode`, `useResiliencePolicy`, and more. Edit rules **live** through the admin API — no restart. |
@@ -36,7 +36,7 @@ It speaks the providers' **native wire protocols** (plus their OpenAI-compatible
 
 ## One endpoint, every provider
 
-The gateway is keyed by **protocol, not provider**. The inbound path identifies the wire shape; the matched configuration's bindings pick the upstream by `(protocol, model)`, and a `changeProvider` rule can override it. Clients point a vanilla provider SDK at one Sluice base URL — no URL prefixes, no bespoke client.
+The gateway is keyed by **protocol, not provider**. The inbound path identifies the wire shape; the matched configuration's bindings pick the upstream by `(protocol, model)`, and a `changeProvider` rule can override it. Clients point a vanilla provider SDK at one SlipSpace base URL — no URL prefixes, no bespoke client.
 
 | Protocol | Inbound path(s) | Wire shape |
 |---|---|---|
@@ -48,18 +48,18 @@ The gateway is keyed by **protocol, not provider**. The inbound path identifies 
 
 Anything that isn't a generative protocol (provider model-lists, Anthropic message batches, other opaque surfaces) falls through to per-configuration **passthrough** matching and is forwarded verbatim. See [docs/routing.md](docs/routing.md) for the full selection algorithm.
 
-[^compat]: Anthropic and Gemini both accept OpenAI-shaped `chat.completions` requests on the `chat` protocol but expect `Authorization: Bearer <key>` rather than their native `x-api-key` / `x-goog-api-key`. Sluice applies the right credential format automatically whenever `chat` traffic resolves onto one of those providers. See [config-dev/policy.yaml](config-dev/policy.yaml) for a working redirect.
+[^compat]: Anthropic and Gemini both accept OpenAI-shaped `chat.completions` requests on the `chat` protocol but expect `Authorization: Bearer <key>` rather than their native `x-api-key` / `x-goog-api-key`. SlipSpace applies the right credential format automatically whenever `chat` traffic resolves onto one of those providers. See [config-dev/policy.yaml](config-dev/policy.yaml) for a working redirect.
 
 ## Two auth models, one policy bundle
 
-- **Managed** — the client uses a Sluice-issued key (`Authorization: Bearer sk_live_…`, or the provider-native `x-api-key` / `x-goog-api-key`); the gateway swaps in the real upstream credentials before forwarding. Your provider keys never leave the gateway.
+- **Managed** — the client uses a SlipSpace-issued key (`Authorization: Bearer sk_live_…`, or the provider-native `x-api-key` / `x-goog-api-key`); the gateway swaps in the real upstream credentials before forwarding. Your provider keys never leave the gateway.
 - **Passthrough (BYOK)** — the client brings its own upstream token (e.g. Claude Code OAuth); the gateway selects policy via an `X-Sluice-Identity` header and forwards the client's `Authorization` verbatim.
 
 Both resolve to a named **Configuration** — a reusable policy bundle of upstream credentials, bindings, rules, and resilience. Many keys can share one configuration. See [docs/auth.md](docs/auth.md).
 
 ## High fidelity: it never drops a field
 
-Provider APIs move constantly, and a dropped field is a *silent* failure — you forward, the provider responds, the client gets something subtly wrong, and nothing logs. Sluice is built so that can't happen: every wire type embeds `DynamicProperties` and every polymorphic base has an `Unknown*` fallback, so any field the gateway doesn't model is preserved and forwarded unchanged in **both** directions. New provider params work the day they ship — no waiting on a Sluice release. This is a load-bearing invariant backed by golden round-trip tests, fuzzing on every `UnmarshalJSON`, and a reflection meta-test that fails the build if a new field lacks a JSON tag. See [docs/models.md](docs/models.md) and [docs/provider-models.md](docs/provider-models.md).
+Provider APIs move constantly, and a dropped field is a *silent* failure — you forward, the provider responds, the client gets something subtly wrong, and nothing logs. SlipSpace is built so that can't happen: every wire type embeds `DynamicProperties` and every polymorphic base has an `Unknown*` fallback, so any field the gateway doesn't model is preserved and forwarded unchanged in **both** directions. New provider params work the day they ship — no waiting on a SlipSpace release. This is a load-bearing invariant backed by golden round-trip tests, fuzzing on every `UnmarshalJSON`, and a reflection meta-test that fails the build if a new field lacks a JSON tag. See [docs/models.md](docs/models.md) and [docs/provider-models.md](docs/provider-models.md).
 
 ## Rules engine
 
@@ -74,11 +74,11 @@ Rules can be created, updated, and deleted **live** through the admin write API 
 
 ## Cross-provider translation
 
-Send an Anthropic Messages request and have it served by OpenAI — or the reverse — without your client knowing. Sluice ships **bidirectional Anthropic Messages ↔ OpenAI Chat** translation covering the request, the non-streaming **and** streaming response, tool calls, and error responses, triggered by an explicit `translate` rule action. It's **fail-closed** on undeclared or unsupported pairs, surfaces a flag-gated `X-Sluice-Translation-Lossy` header, and counts any dropped fields. Proven by a Go differential matrix plus the official OpenAI **and** Anthropic Python SDK wire-compat suites. See [docs/actions.md → `translate`](docs/actions.md#translate).
+Send an Anthropic Messages request and have it served by OpenAI — or the reverse — without your client knowing. SlipSpace ships **bidirectional Anthropic Messages ↔ OpenAI Chat** translation covering the request, the non-streaming **and** streaming response, tool calls, and error responses, triggered by an explicit `translate` rule action. It's **fail-closed** on undeclared or unsupported pairs, surfaces a flag-gated `X-Sluice-Translation-Lossy` header, and counts any dropped fields. Proven by a Go differential matrix plus the official OpenAI **and** Anthropic Python SDK wire-compat suites. See [docs/actions.md → `translate`](docs/actions.md#translate).
 
 ## Resilience
 
-Group multiple providers behind a resilience policy and Sluice will keep traffic flowing when one degrades:
+Group multiple providers behind a resilience policy and SlipSpace will keep traffic flowing when one degrades:
 
 - **Failover** — try targets in order until one succeeds.
 - **Weighted load-balance** — distribute across targets (latency-biased or strict weights).
@@ -93,7 +93,29 @@ Telemetry and reporting are kept as **separate channels** by design (a Grafana p
 - **Metrics & traces** — OpenTelemetry meters exposed on a Prometheus `/metrics` scrape endpoint *and/or* pushed over OTLP, plus `gen_ai.*` spans following the OTel GenAI semantic conventions. Every request carries its **token usage broken out four ways** — prompt, completion, cache-read, and cache-write — alongside latency (incl. time-to-first-chunk) and `rules_fired` / `tags_fired` counts, so cost and policy dashboards build straight off the meters. Prompt/response content capture is optional, redacted, and size-capped.
 - **Audit records** — the full end-of-request envelope (bodies, headers, post-rule tags, fired-rule chain, resilience attempts) flows through the spool to your destinations.
 
-An optional **Arbiter** (`cmd/arbiter`) ingests gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from a whole fleet of gateways into Postgres and serves a unified operator console — keeping the two channels physically separate even as it converges them per request. See [docs/observability.md](docs/observability.md) and [docs/arbiter.md](docs/arbiter.md).
+An optional **Arbiter** (`cmd/arbiter`) ingests gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from a whole fleet of gateways into Postgres and serves a unified operator console — keeping the two channels physically separate even as it converges them per request. See [docs/observability.md](docs/observability.md) and the dedicated section below.
+
+## Arbiter
+
+The **Arbiter** is the optional converged **security + telemetry** service (formerly the telemetry service) — a separate deployable, with its own Postgres/TimescaleDB datastore, that one or more gateways report into. The gateway data plane never depends on it: if the Arbiter is down the gateway keeps forwarding traffic, since OTLP export and Record push are best-effort and fire-and-forget. It only ever *consumes* telemetry and never sits on a request path.
+
+It binds two listeners. Gateways export gen_ai OTLP spans and `slipspace.*` meters over **OTLP gRPC (`:8687`)**; the operator console, query API, and the HMAC-trusted Record webhook (`POST /api/v1/ingest/record`) live on **HTTP (`:8686`)** behind Basic auth. The fleet-wide console retains full history — the dashboard reads continuous aggregates over the meters, the message inspector lazily joins the verbatim Record blob per request.
+
+On top of telemetry, the Arbiter runs **async, per-message security scanning** via pluggable **detectors** (PII / prompt-injection / toxicity) speaking the `slipspace.detect.v1` contract. Detectors return a score plus a raw label only; the Arbiter owns the **verdict**, reducing findings to one of **flagged / partial / clean** — `partial` (inconclusive) is first-class and never folds into `clean`, and scanning is fail-open by default. Operators tune it with scan-tag scoping (which traffic to scan), finding exclusion (suppress noisy categories), and severity classification (`info`/`warning`/`error`). The verdict and findings are emitted back out as **enriched OTel spans** carrying `slipspace.security.*` attributes.
+
+The image is `ghcr.io/andyjmorgan/arbiter`. The quickstart bundle ships a gateway + Arbiter Compose stack ([`deploy/quickstart/`](deploy/quickstart/)); for the wire-level detail see [docs/arbiter.md](docs/arbiter.md) (service overview) and [docs/arbiter-api.md](docs/arbiter-api.md) (console query API).
+
+## Plugging in a security detector
+
+A **detector** is how you give the Arbiter a security signal — PII, prompt-injection, toxicity, or safety. It's a small, contract-speaking container the Arbiter calls per content unit; you wire it in by config and the Arbiter does the rest.
+
+- **One contract, every family** — the `slipspace.detect.v1` IDL ([`proto/slipspace/detect/v1/detect.proto`](proto/slipspace/detect/v1/detect.proto)) is a single shape for all detectors: a `DetectRequest` carries one content `Unit` to scan, the detector replies with a `DetectResponse` of `Finding`s. A `Finding` is `category` + `score` + `raw_label` (+ optional span); the detector's `Family` is `PII` / `INJECTION` / `TOXICITY` / `SAFETY`. Variation between families lives in values, never structure.
+- **Detectors stay dumb; the Arbiter owns the verdict** — a detector returns a score and its native label only, never a decision or risk level. The Arbiter reduces findings to a verdict (flagged / partial / clean) from policy. An inconclusive or truncated scan is first-class `partial`, never silently `clean`.
+- **Transport is protojson over HTTP today** — async, `POST /detect` with a protojson `DetectRequest`. The gRPC `DetectionService` and the inline streaming early-termination RPC are declared in the proto to shape-lock the contract but are deferred (the inline path is not shipped).
+
+The reference detectors live under [`deploy/detectors/`](deploy/detectors/): `detect_core.py` is the pure, unit-tested contract + chunk-planning logic, and `app.py` (sequence classification for injection / toxicity) and `pii_app.py` (Presidio + a PII model) are the model wiring behind a small FastAPI service. Oversized inputs are chunked with overlap rather than truncated, so the model window can't become a scan-evasion hole.
+
+Today this ships as **per-model FastAPI detectors** — one container per model, configured by env (`DETECTOR_MODEL_ID`, `DETECTOR_FAMILY`, `DETECTOR_LABEL_MAP`, …), so injection and toxicity are the same image with different config. A generic **archetype-driver runtime** (drivers like hf-sequence-classification, hf-token-classification, gliner, presidio, http, with the model expressed as YAML) is the intended direction, not the current default. Either way the seam is the contract: anything that speaks `slipspace.detect.v1` plugs in. See [docs/arbiter.md](docs/arbiter.md) for the full picture.
 
 ## Session, agent & user attribution
 
@@ -110,6 +132,19 @@ End-of-request records buffer to a disk-backed, zstd-compressed `ndjson.zst` spo
 - **Wire-compat suite** — the official OpenAI / Anthropic / Gemini Python SDKs run against a spawned stack; any failure is a release blocker.
 - **Fuzzed** — every `UnmarshalJSON`, the YAML loader, and route detection.
 - **Slim dependency graph**, stdlib-first, `-race` everywhere, goroutine-leak checked.
+
+## Mock LLM
+
+`cmd/mockllm` is an in-repo Go mock upstream — a stand-in for OpenAI, Anthropic, and Gemini that returns **rule-driven canned responses** in each provider's wire shape (streaming and non-streaming). It replaces an earlier external C# mock; the published image is `ghcr.io/andyjmorgan/sluice-mockllm` (built by `release.yaml`).
+
+A canned response matches on `method` / `path` / `request_body_contains` and can stage realistic scenarios — multi-step pools (`max_responses`, e.g. "503 twice then 200"), pre-status and inter-chunk delays, and transport-level failures (`close`, `hang`) — which is what makes it a faithful target for resilience and streaming tests. Responses are loaded from a file (`--responses`) or staged per-session over its `/control/responses` endpoint; an empty pool returns a synthetic default.
+
+It backs both loops:
+
+- **Local dev** — `make dev` brings `mockllm` up via `docker-compose.yaml` (compose network alias `mockllm:5555`) and runs the gateway natively, so no real provider credentials are needed.
+- **Tests** — `make e2e` spawns the gateway and `mockllm` for the black-box matrix, and `make py-compat` builds `mockllm` to run the official-SDK wire-compat suite against it.
+
+See [docs/local-development.md → Mock LLM](docs/local-development.md#mock-llm).
 
 ---
 
@@ -154,7 +189,7 @@ A Vite + React + shadcn SPA embedded into the gateway binary via `//go:embed` �
 ```
 cmd/
   gateway/      data plane binary
-  telemetry/    Arbiter (OTLP + HMAC Record-webhook ingest, Postgres, console)
+  arbiter/      Arbiter (OTLP + HMAC Record-webhook ingest, Postgres, console)
   cli/          key generation, config validation
   mockllm/      Go mock LLM for tests + local dev
 internal/       compiler-enforced private engines
