@@ -216,7 +216,7 @@ reg.MustRegister(
 | `go_info` | Build info label (`version` = the Go toolchain). | A single constant-1 series; the dimension that tells you which Go runtime the pod is on after a base-image bump. |
 | `process_resident_memory_bytes` | OS-reported RSS. | The dispositive answer to "how much memory is this pod using". `go_memstats_alloc_bytes` is heap-only; RSS includes goroutine stacks, runtime metadata, mmap'd files. |
 | `process_virtual_memory_bytes` / `process_virtual_memory_max_bytes` | OS-reported virtual address space, current and max. | RSS is the live answer; VMS surfaces address-space exhaustion on a constrained cgroup. |
-| `process_cpu_seconds_total` | OS-reported user + system CPU. | Pair with `gateway.requests.total` to compute CPU-per-request. The natural diagnostic for "the gateway feels slower today". |
+| `process_cpu_seconds_total` | OS-reported user + system CPU. | Pair with `slipspace.requests.total` to compute CPU-per-request. The natural diagnostic for "the gateway feels slower today". |
 | `process_open_fds` / `process_max_fds` | Currently-open file descriptors against the OS limit. | The spool keeps one fd open per active segment; webhook connectors open a transient fd per upload. `open_fds` climbing toward `max_fds` means an fd leak — usually a missed `Close()` on an error path. |
 | `process_start_time_seconds` | Process start time (unix epoch). | Anchors uptime and makes a silent restart obvious (the value jumps without a deploy). |
 
