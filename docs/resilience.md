@@ -369,7 +369,7 @@ Every layer of the orchestrator emits signal. Three independent channels. The OT
 | `gateway.cb.state` | observable gauge | `policy, target, pod, state_name` | Callback-driven from `BreakerStore.Snapshot()` — always reflects current state at scrape time. Values: `0=closed`, `1=open`, `2=half_open`. |
 | `gateway.cb.transitions.total` | counter | `policy, target, to_state` | Bumped synchronously from the breaker's `StateListener` on every state change. |
 
-Per-request meters (`gateway.requests.total`, `gateway.request.duration`) fire **once per inbound request**, not once per attempt. Per-attempt meters (`gateway.request.time_to_first_byte`, `gateway.upstream_errors.total`) stay attempt-shaped because those are attempt-shaped phenomena.
+Per-request meters (`slipspace.requests.total`, `gen_ai.client.operation.duration`) fire **once per inbound request**, not once per attempt. Per-attempt meters (`gen_ai.client.operation.time_to_first_chunk`, `gateway.upstream_errors.total`) stay attempt-shaped because those are attempt-shaped phenomena.
 
 ### Multi-attempt record shape
 
@@ -556,8 +556,8 @@ The breaker has not observed any traffic on that `(group, provider)` pair yet. T
 **"All my attempts come back 5xx and the client sees the upstream's body, not my fallback."**
 The orchestrator writes its 502/503 fallback **only** when every attempt was either a transport error (no headers) or all targets were CB-blocked. When some attempt got headers + a status that was in your retry set, the **last** attempt's status is what the client sees. If you want a custom fallback shape, add a terminating rule with `returnStatusCode`.
 
-**"My `gateway.requests.total` counter doubled."**
-Check whether you've inadvertently created two events. Multi-attempt requests should emit exactly one `gateway.request` event (and one `gateway_requests_total` increment). If you're seeing two, suspect a misconfigured upstream proxy retrying — the gateway's own retry is internal and never produces a second event.
+**"My `slipspace.requests.total` counter doubled."**
+Check whether you've inadvertently created two events. Multi-attempt requests should emit exactly one `slipspace.request` event (and one `slipspace_requests_total` increment). If you're seeing two, suspect a misconfigured upstream proxy retrying — the gateway's own retry is internal and never produces a second event.
 
 **"My weighted distribution doesn't match the weights over a short window."**
 That's expected. Weighted-random selection converges in the long run; over 100 requests at 70/30 you'll see something like 68/32 or 73/27. Trust the `gateway.resilience.attempts.total` counter for the empirical ratio.
