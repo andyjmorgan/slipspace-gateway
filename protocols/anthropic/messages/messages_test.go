@@ -382,7 +382,11 @@ func TestMessagesResponse_UsageDriftFieldsRoundTrip(t *testing.T) {
 			"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":4},
 			"output_tokens_details":{"thinking_tokens":12},
 			"inference_geo":"not_available",
-			"service_tier":"standard"
+			"service_tier":"standard",
+			"iterations":[
+				{"type":"message","model":"claude-opus-4-7","input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":0}},
+				{"type":"compaction","input_tokens":5,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}
+			]
 		}
 	}`)
 	var resp MessagesResponse
@@ -399,6 +403,21 @@ func TestMessagesResponse_UsageDriftFieldsRoundTrip(t *testing.T) {
 	}
 	if resp.Usage.InferenceGeo != "not_available" {
 		t.Fatalf("inference_geo = %q", resp.Usage.InferenceGeo)
+	}
+	if len(resp.Usage.Iterations) != 2 {
+		t.Fatalf("iterations len = %d, want 2", len(resp.Usage.Iterations))
+	}
+	if it := resp.Usage.Iterations[0]; it.Type != "message" || it.Model != "claude-opus-4-7" ||
+		it.InputTokens != 10 || it.OutputTokens != 20 ||
+		it.CacheCreationInputTokens == nil || *it.CacheCreationInputTokens != 2 ||
+		it.CacheCreation == nil || it.CacheCreation.Ephemeral5mInputTokens == nil ||
+		*it.CacheCreation.Ephemeral5mInputTokens != 2 {
+		t.Fatalf("iterations[0] = %+v", it)
+	}
+	// Compaction iterations carry no model — Model must stay empty, not leak
+	// into Extra.
+	if it := resp.Usage.Iterations[1]; it.Type != "compaction" || it.Model != "" || it.InputTokens != 5 {
+		t.Fatalf("iterations[1] = %+v", it)
 	}
 	out, err := json.Marshal(resp)
 	if err != nil {
@@ -526,6 +545,7 @@ func TestMessages_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(MessagesResponse{}),
 		reflect.TypeOf(Usage{}),
 		reflect.TypeOf(ServerToolUseUsage{}),
+		reflect.TypeOf(IterationUsage{}),
 		reflect.TypeOf(CacheCreation{}),
 		reflect.TypeOf(OutputTokensDetails{}),
 		reflect.TypeOf(Container{}),

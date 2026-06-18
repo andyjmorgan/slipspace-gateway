@@ -217,9 +217,12 @@ func (s *anthropicState) absorbMessageDelta(e *messages.MessageDeltaEvent) {
 	if e.Usage.ServerToolUse != nil {
 		s.base.Usage.ServerToolUse = e.Usage.ServerToolUse
 	}
-	// Unmodeled usage fields (e.g. "iterations") ride in on the terminal
-	// message_delta usage via DynamicProperties. A non-streaming decode keeps
-	// them; merge so the rollup matches rather than dropping them.
+	if len(e.Usage.Iterations) > 0 {
+		s.base.Usage.Iterations = e.Usage.Iterations
+	}
+	// Still-unmodeled usage fields ride in on the terminal message_delta usage
+	// via DynamicProperties. A non-streaming decode keeps them; merge so the
+	// rollup matches rather than dropping them.
 	if len(e.Usage.Extra) > 0 {
 		if s.base.Usage.Extra == nil {
 			s.base.Usage.Extra = make(map[string]json.RawMessage, len(e.Usage.Extra))

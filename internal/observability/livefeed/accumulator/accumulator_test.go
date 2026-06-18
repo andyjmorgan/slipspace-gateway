@@ -849,13 +849,14 @@ func TestAccumulate_AnthropicMessages_PreservesToolCaller(t *testing.T) {
 }
 
 // TestAccumulate_AnthropicMessages_UsageBreakdownsSurvive proves the modeled
-// output_tokens_details and server_tool_use, plus unmodeled usage fields
-// (iterations, via DynamicProperties), survive the terminal message_delta.
+// usage breakdowns (output_tokens_details, server_tool_use, and the now-typed
+// iterations) survive the terminal message_delta, AND that a still-unmodeled
+// usage field round-trips via DynamicProperties.
 func TestAccumulate_AnthropicMessages_UsageBreakdownsSurvive(t *testing.T) {
 	t.Parallel()
 	raw := []byte("" +
 		`data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"x","content":[],"usage":{"input_tokens":5,"output_tokens":1}}}` + "\n\n" +
-		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42,"output_tokens_details":{"thinking_tokens":7},"server_tool_use":{"web_search_requests":3},"iterations":[{"output_tokens":42}]}}` + "\n\n")
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42,"output_tokens_details":{"thinking_tokens":7},"server_tool_use":{"web_search_requests":3},"iterations":[{"type":"message","output_tokens":42}],"future_usage_field":{"x":1}}}` + "\n\n")
 	got := Accumulate("anthropic", "messages", raw)
 	resp := parseAnthropic(t, got.Assembled)
 	if resp.Usage.OutputTokensDetails == nil || resp.Usage.OutputTokensDetails.ThinkingTokens == nil || *resp.Usage.OutputTokensDetails.ThinkingTokens != 7 {
@@ -864,8 +865,11 @@ func TestAccumulate_AnthropicMessages_UsageBreakdownsSurvive(t *testing.T) {
 	if resp.Usage.ServerToolUse == nil || resp.Usage.ServerToolUse.WebSearchRequests == nil || *resp.Usage.ServerToolUse.WebSearchRequests != 3 {
 		t.Errorf("server_tool_use dropped: %+v", resp.Usage.ServerToolUse)
 	}
-	if len(resp.Usage.Extra["iterations"]) == 0 {
-		t.Errorf("unmodeled usage field 'iterations' dropped: %v", resp.Usage.Extra)
+	if len(resp.Usage.Iterations) != 1 || resp.Usage.Iterations[0].Type != "message" || resp.Usage.Iterations[0].OutputTokens != 42 {
+		t.Errorf("modeled usage field 'iterations' dropped: %+v", resp.Usage.Iterations)
+	}
+	if len(resp.Usage.Extra["future_usage_field"]) == 0 {
+		t.Errorf("unmodeled usage field 'future_usage_field' dropped: %v", resp.Usage.Extra)
 	}
 }
 
