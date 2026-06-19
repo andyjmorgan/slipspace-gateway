@@ -125,14 +125,32 @@ func TestWeightedSelect_DistributesByWeight(t *testing.T) {
 	}
 }
 
-func TestWeightedSelect_NoPositiveWeights_ReturnsMinusOne(t *testing.T) {
-	t.Parallel()
+func TestWeightedSelect_AllZeroWeights_FloorsToEven(t *testing.T) {
+	// Per docs/resilience.md (#361), a weight of 0 floors to 1 (even
+	// weighting), so an all-zero pool degrades to uniform random over
+	// every slot — it must NOT return -1.
+	prev := randomIntN
+	t.Cleanup(func() { randomIntN = prev })
+
 	pool := []contractsres.ResilienceTarget{
 		{Name: "a", Weight: 0},
 		{Name: "b", Weight: 0},
 	}
-	if got := weightedSelect(pool); got != -1 {
-		t.Errorf("weightedSelect = %d; want -1 for all-zero pool", got)
+	// total floors to 2; roll 0 → slot 0, roll 1 → slot 1.
+	randomIntN = func(int) int { return 0 }
+	if got := weightedSelect(pool); got != 0 {
+		t.Errorf("weightedSelect = %d; want 0 (roll 0, even-weighted)", got)
+	}
+	randomIntN = func(int) int { return 1 }
+	if got := weightedSelect(pool); got != 1 {
+		t.Errorf("weightedSelect = %d; want 1 (roll 1, even-weighted)", got)
+	}
+}
+
+func TestWeightedSelect_EmptyPool_ReturnsMinusOne(t *testing.T) {
+	t.Parallel()
+	if got := weightedSelect(nil); got != -1 {
+		t.Errorf("weightedSelect = %d; want -1 for empty pool", got)
 	}
 }
 
@@ -144,18 +162,25 @@ func TestWeightedSelect_SingleTarget(t *testing.T) {
 	}
 }
 
-func TestWeightedSelect_SkipsZeroWeightEntries(t *testing.T) {
+func TestWeightedSelect_ZeroWeightEntriesFloorToOne(t *testing.T) {
 	prev := randomIntN
 	t.Cleanup(func() { randomIntN = prev })
-	randomIntN = func(int) int { return 0 } // always roll 0
 
+	// muted-1(0→1), live(5), muted-2(0→1): cumulative bounds 1, 6, 7.
 	pool := []contractsres.ResilienceTarget{
 		{Name: "muted-1", Weight: 0},
 		{Name: "live", Weight: 5},
 		{Name: "muted-2", Weight: 0},
 	}
-	if got := weightedSelect(pool); got != 1 {
-		t.Errorf("weightedSelect = %d; want 1 (zero-weight slots are skipped)", got)
+	// roll 0 lands in the floored weight-0 first slot, not the live one.
+	randomIntN = func(int) int { return 0 }
+	if got := weightedSelect(pool); got != 0 {
+		t.Errorf("weightedSelect = %d; want 0 (weight-0 floors to 1, shares the roll)", got)
+	}
+	// roll 6 (>= cumulative 6) lands in the trailing floored weight-0 slot.
+	randomIntN = func(int) int { return 6 }
+	if got := weightedSelect(pool); got != 2 {
+		t.Errorf("weightedSelect = %d; want 2 (trailing weight-0 floors to 1)", got)
 	}
 }
 
@@ -298,30 +323,36 @@ func TestLoadBalance_ModeLoadBalanceWithFailover_DispatchesSame(t *testing.T) {
 	}
 }
 
-func TestLoadBalance_NoPositiveWeights_Writes502(t *testing.T) {
-	t.Parallel()
+func TestLoadBalance_AllZeroWeights_FloorsAndSelects(t *testing.T) {
+	// Per #361, an all-zero-weight pool floors each target to 1 (even
+	// weighting) instead of selecting nothing — so the orchestrator
+	// picks a target and invokes downstream rather than writing 502.
+	withStubRand(t, 0) // roll 0 → first floored slot
 	pol := &contractsres.ResilienceConfig{
-		Name: "broken",
+		Name: "degenerate",
 		Mode: contractsres.ModeLoadBalance,
 		Targets: []contractsres.ResilienceTarget{
 			{Name: "a", Provider: "openai", Weight: 0, Actions: lbChangeTo("openai")},
 			{Name: "b", Provider: "anthropic", Weight: 0, Actions: lbChangeTo("anthropic")},
 		},
 	}
-	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"broken": pol})
-	next := &lbMockNext{}
+	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"degenerate": pol})
+	next := &lbMockNext{outcomes: []lbAttemptOutcome{{status: 200}}}
 	h := HTTPHandler(lookup, nil, nil, next)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "broken"})
+	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "degenerate"})
 	h.ServeHTTP(rec, req.WithContext(ctx))
 
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("client status = %d; want 502", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("client status = %d; want 200 (zero-weight pool floors to even and selects)", rec.Code)
 	}
-	if len(next.seen) != 0 {
-		t.Errorf("downstream invoked despite zero-weight pool: %v", next.seen)
+	if len(next.seen) == 0 {
+		t.Error("downstream not invoked; want the floored zero-weight pool to select a target")
+	}
+	if len(next.seen) > 0 && next.seen[0] != "openai" {
+		t.Errorf("first selected provider = %q; want openai (roll 0 → first slot)", next.seen[0])
 	}
 }
 
