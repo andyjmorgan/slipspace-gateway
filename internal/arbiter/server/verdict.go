@@ -59,8 +59,9 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 // handleFindings serves the operator Security view: a flat list of findings,
 // newest first. With ?session=<id> it returns every finding in that one session
 // (the session view's Security tab); without it, the most recent findings across
-// all sessions (the top-level Security page), bounded by ?limit (store default
-// ~100). One endpoint, one row shape — the reusable FindingsTable renders both.
+// all sessions in the optional ?from/?to window (the top-level Security page's
+// relative-window preset), capped by ?limit (store safety default). One
+// endpoint, one row shape — the reusable FindingsTable renders both.
 func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 	var (
 		rows []store.FindingRow
@@ -69,7 +70,12 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 	if session := r.URL.Query().Get("session"); session != "" {
 		rows, err = s.queries.ListFindingsBySession(r.Context(), session)
 	} else {
-		rows, err = s.queries.ListRecentFindings(r.Context(), limitParam(r, 0))
+		from, to, bad := parseWindowBounds(r)
+		if bad != "" {
+			writeError(w, http.StatusBadRequest, "invalid "+bad)
+			return
+		}
+		rows, err = s.queries.ListRecentFindings(r.Context(), from, to, limitParam(r, 0))
 	}
 	if err != nil {
 		s.queryError(w, "list findings", err)

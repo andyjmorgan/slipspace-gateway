@@ -9,11 +9,17 @@ import type { FindingsListResponse, FindingRow } from "@/lib/generated/admin"
 export type { FindingRow }
 
 // fetchFindings returns recent findings, newest first. With a session id it
-// scopes to that one session; without, it returns the most recent across all
-// sessions bounded by limit (server default ~100).
-export async function fetchFindings(opts: { session?: string; limit?: number } = {}): Promise<FindingRow[]> {
+// scopes to that one session (no window — every finding in the session). Without
+// one, it returns the most recent across all sessions in the optional from/to
+// window (ISO8601 bounds; the Security page's relative-window preset), capped by
+// the server's safety limit.
+export async function fetchFindings(
+  opts: { session?: string; from?: string; to?: string; limit?: number } = {},
+): Promise<FindingRow[]> {
   const p = new URLSearchParams()
   if (opts.session) p.set("session", opts.session)
+  if (opts.from) p.set("from", opts.from)
+  if (opts.to) p.set("to", opts.to)
   if (opts.limit && opts.limit > 0) p.set("limit", String(opts.limit))
   const qs = p.toString()
   const r = await apiFetch<FindingsListResponse>(`/api/v1/findings${qs ? `?${qs}` : ""}`)

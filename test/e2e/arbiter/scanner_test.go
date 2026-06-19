@@ -161,3 +161,68 @@ func TestScanner_RetryAndNotFound(t *testing.T) {
 		t.Errorf("GetVerdict(absent) err = %v, want ErrVerdictNotFound", err)
 	}
 }
+
+// TestScanner_RecentFindingsWindow proves the Security page's from/to window
+// filters real rows: two findings whose source events sit on either side of a
+// midpoint, asserted against real Postgres through ListRecentFindings — the
+// unbounded scan sees both, a from bound keeps only the newer, a to bound only
+// the older. Guards the SQL the operator's relative-window preset depends on.
+func TestScanner_RecentFindingsWindow(t *testing.T) {
+	ctx := context.Background()
+	st := migratedStore(t)
+
+	old := time.Now().Add(-48 * time.Hour)
+	recent := time.Now().Add(-1 * time.Hour)
+	mid := time.Now().Add(-24 * time.Hour)
+
+	seed := func(corr string, observed time.Time) {
+		if err := st.UpsertRequestEventWithChecks(ctx,
+			store.RequestEvent{CorrelationID: corr, ObservedAt: observed},
+			[]store.CheckTask{{CorrelationID: corr, UnitID: "u", CheckType: "injection", UnitLocator: []byte(`{"kind":"text","role":"user"}`)}}); err != nil {
+			t.Fatalf("seed event %s: %v", corr, err)
+		}
+		if err := st.InsertFinding(ctx, store.Finding{
+			CorrelationID: corr, UnitID: "u", CheckType: "injection",
+			Category: "injection.jailbreak", Score: 0.9, RawLabel: "INJECTION", DetectorID: "d", DetectorVersion: "1", Severity: "error",
+		}); err != nil {
+			t.Fatalf("seed finding %s: %v", corr, err)
+		}
+	}
+	seed("e2e-win-old", old)
+	seed("e2e-win-recent", recent)
+
+	corrs := func(rows []store.FindingRow) []string {
+		out := make([]string, len(rows))
+		for i, r := range rows {
+			out[i] = r.CorrelationID
+		}
+		return out
+	}
+
+	// Unbounded: both findings, newest first.
+	all, err := st.ListRecentFindings(ctx, time.Time{}, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("unbounded: %v", err)
+	}
+	if !containsStr(corrs(all), "e2e-win-old") || !containsStr(corrs(all), "e2e-win-recent") {
+		t.Fatalf("unbounded window missing rows: %v", corrs(all))
+	}
+
+	// from=mid -> only the recent finding.
+	fromOnly, err := st.ListRecentFindings(ctx, mid, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("from-only: %v", err)
+	}
+	if containsStr(corrs(fromOnly), "e2e-win-old") || !containsStr(corrs(fromOnly), "e2e-win-recent") {
+		t.Errorf("from=mid window = %v, want only recent", corrs(fromOnly))
+	}
+
+	// to=mid -> only the old finding.
+	toOnly, err := st.ListRecentFindings(ctx, time.Time{}, mid, 0)
+	if err != nil {
+		t.Fatalf("to-only: %v", err)
+	}
+	if !containsStr(corrs(toOnly), "e2e-win-old") || containsStr(corrs(toOnly), "e2e-win-recent") {
+		t.Errorf("to=mid window = %v, want only old", corrs(toOnly))
+	}
+}

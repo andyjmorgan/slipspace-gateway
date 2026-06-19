@@ -125,9 +125,9 @@ func TestCorrelationsReadyForVerdict(t *testing.T) {
 }
 
 func TestListRecentFindings(t *testing.T) {
-	// success — default limit (limit <= 0) and a populated page.
+	// success — unbounded window (zero from/to) + default limit (limit <= 0).
 	q := &fakeQuerier{freshRows: 2}
-	items, err := newStore(q).ListRecentFindings(ctx(), 0)
+	items, err := newStore(q).ListRecentFindings(ctx(), time.Time{}, time.Time{}, 0)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("findings = %d, err %v", len(items), err)
 	}
@@ -142,17 +142,45 @@ func TestListRecentFindings(t *testing.T) {
 	if !strings.Contains(q.querySQL[0], "ORDER BY e.observed_at DESC") {
 		t.Errorf("query is not newest-first: %q", q.querySQL[0])
 	}
-
-	// explicit limit passes through without error.
-	if _, err := newStore(&fakeQuerier{freshRows: 1}).ListRecentFindings(ctx(), 5); err != nil {
-		t.Errorf("explicit limit: %v", err)
+	// an unbounded window emits no observed_at predicate.
+	if strings.Contains(q.querySQL[0], "WHERE") {
+		t.Errorf("unbounded query should have no WHERE: %q", q.querySQL[0])
 	}
+
+	// from-only bound -> a lower-bound predicate, no upper bound.
+	now := time.Now()
+	qf := &fakeQuerier{freshRows: 1}
+	if _, err := newStore(qf).ListRecentFindings(ctx(), now.Add(-time.Hour), time.Time{}, 5); err != nil {
+		t.Errorf("from-only: %v", err)
+	}
+	if !strings.Contains(qf.querySQL[0], "WHERE e.observed_at >= $1") || strings.Contains(qf.querySQL[0], "<=") {
+		t.Errorf("from-only window predicate wrong: %q", qf.querySQL[0])
+	}
+
+	// to-only bound -> an upper-bound predicate only.
+	qt := &fakeQuerier{freshRows: 1}
+	if _, err := newStore(qt).ListRecentFindings(ctx(), time.Time{}, now, 0); err != nil {
+		t.Errorf("to-only: %v", err)
+	}
+	if !strings.Contains(qt.querySQL[0], "WHERE e.observed_at <= $1") || strings.Contains(qt.querySQL[0], ">=") {
+		t.Errorf("to-only window predicate wrong: %q", qt.querySQL[0])
+	}
+
+	// both bounds -> ANDed predicate, limit at $3.
+	qb := &fakeQuerier{freshRows: 1}
+	if _, err := newStore(qb).ListRecentFindings(ctx(), now.Add(-time.Hour), now, 5); err != nil {
+		t.Errorf("both bounds: %v", err)
+	}
+	if !strings.Contains(qb.querySQL[0], "e.observed_at >= $1 AND e.observed_at <= $2") || !strings.Contains(qb.querySQL[0], "LIMIT $3") {
+		t.Errorf("both-bound window predicate wrong: %q", qb.querySQL[0])
+	}
+
 	// query error
-	if _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).ListRecentFindings(ctx(), 0); err == nil {
+	if _, err := newStore(&fakeQuerier{queryErr: errors.New("q")}).ListRecentFindings(ctx(), time.Time{}, time.Time{}, 0); err == nil {
 		t.Error("want query error")
 	}
 	// scan error
-	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).ListRecentFindings(ctx(), 0); err == nil {
+	if _, err := newStore(&fakeQuerier{query: &fakeRows{scanErrs: []error{errors.New("s")}}}).ListRecentFindings(ctx(), time.Time{}, time.Time{}, 0); err == nil {
 		t.Error("want scan error")
 	}
 }

@@ -42,7 +42,7 @@ type Queries interface {
 	// ListRecentFindings + ListFindingsBySession back the operator Security view:
 	// recent findings across all sessions, and all findings in one session — each
 	// joined to its source request facts.
-	ListRecentFindings(ctx context.Context, limit int) ([]store.FindingRow, error)
+	ListRecentFindings(ctx context.Context, from, to time.Time, limit int) ([]store.FindingRow, error)
 	ListFindingsBySession(ctx context.Context, sessionID string) ([]store.FindingRow, error)
 }
 

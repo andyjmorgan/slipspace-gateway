@@ -369,9 +369,11 @@ type FindingRow struct {
 	Severity string
 }
 
-// defaultFindingsListLimit is the page size ListRecentFindings applies when the
-// caller passes a non-positive limit.
-const defaultFindingsListLimit = 100
+// defaultFindingsListLimit is the safety cap ListRecentFindings applies when the
+// caller passes a non-positive limit. It bounds a wide time-range scan (the
+// Security page now selects by window, not row count) so an "All" preset can't
+// pull unbounded rows; sized generously so a normal 24h window is never clipped.
+const defaultFindingsListLimit = 500
 
 // findingRowSelect is the shared SELECT for both findings-list queries: the
 // finding fields, the unit kind/role pulled from the originating check task's
@@ -412,15 +414,37 @@ func scanFindingRows(rows rows) ([]FindingRow, error) {
 }
 
 // ListRecentFindings returns the most recent findings across all sessions,
-// newest first — the top-level Security page's backing query. limit caps the
-// page (<= 0 applies the default).
-func (s *Store) ListRecentFindings(ctx context.Context, limit int) ([]FindingRow, error) {
+// newest first — the top-level Security page's backing query. from/to bound the
+// window on the request event's observed_at (zero = unbounded on that side), so
+// the Security page can select by relative window like the messages/sessions
+// browsers. limit is a safety cap (<= 0 applies the default). A set from bound
+// excludes findings whose event has aged out (NULL observed_at fails the range
+// predicate); the unbounded "All" preset preserves the prior behavior.
+func (s *Store) ListRecentFindings(ctx context.Context, from, to time.Time, limit int) ([]FindingRow, error) {
 	if limit <= 0 {
 		limit = defaultFindingsListLimit
 	}
-	rows, err := s.db.Query(ctx, findingRowSelect+`
+	args := []any{}
+	where := ""
+	addBound := func(op string, t time.Time) {
+		if t.IsZero() {
+			return
+		}
+		args = append(args, t)
+		if where == "" {
+			where = "\nWHERE "
+		} else {
+			where += " AND "
+		}
+		where += fmt.Sprintf("e.observed_at %s $%d", op, len(args))
+	}
+	addBound(">=", from)
+	addBound("<=", to)
+	args = append(args, limit)
+	q := findingRowSelect + where + fmt.Sprintf(`
 ORDER BY e.observed_at DESC NULLS LAST, f.id DESC
-LIMIT $1`, limit)
+LIMIT $%d`, len(args))
+	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list recent findings: %w", err)
 	}
