@@ -11,7 +11,7 @@ import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
 import { SkeletonTiles, SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
-import type { MessageEntry, MessageFilters } from "@/lib/messages"
+import { fetchMessageByCorrelation, type MessageEntry, type MessageFilters } from "@/lib/messages"
 import {
   fetchFullSpan,
   fetchSessionSpans,
@@ -24,20 +24,14 @@ import { SESSION_MESSAGES_PAGE_SIZE, useDebounced, useMessagesPager } from "@/li
 import { loadSessionFindings, type FindingRow } from "@/lib/findings"
 import { Dash, MessagesPagerBar, MessagesTableView } from "../components/messages-table"
 import { FindingsTable } from "../components/findings-table"
-import { id8, inputMeta, outputMeta } from "@/lib/span-view"
+import { id8 } from "@/lib/span-view"
 import {
   CardCopy,
   IOTab,
-  InputPane,
-  OutputPane,
-  ReportPane,
-  SecurityPane,
-  TelemetryPane,
-  Tile,
-  TKV,
   type CallJoin,
   type RespJoin,
 } from "../components/span-inspector-panes"
+import { InspectorBody, type InspectorTab, type SpanClock } from "../components/inspector-body"
 import { loadVerdict } from "@/lib/verdict"
 
 // SessionLifecyclePage renders THE session view — the lifecycle dashboard
@@ -555,7 +549,7 @@ function LifecycleView({
   }, [vm])
   // ioTab is lifted here so the inspector's tab choice (Output | Input |
   // Telemetry | Report) persists across prev/next while the page lives.
-  const [ioTab, setIoTab] = useState<InspectorTab>("output")
+  const [ioTab, setIoTab] = useState<InspectorTab>("conversation")
   // slice is the timeline brush window [d0, d1] in session seconds, lifted
   // here so the token burn chart and the messages table bind to it. null =
   // the full session — and tracks vm.dur as progressive pages land, so a
@@ -2231,11 +2225,6 @@ const LedgerTable = memo(function LedgerTable({
 // Span inspector modal
 // ─────────────────────────────────────────────────────────────────────────
 
-// InspectorTab is the modal's tab strip: the span's own Output/Input panes
-// plus the on-demand bridge tabs (Telemetry, Report, Security), which fetch
-// their heavier payloads only when first opened.
-type InspectorTab = "output" | "input" | "telemetry" | "report" | "security"
-
 function SpanInspector({
   vm,
   source,
@@ -2308,6 +2297,24 @@ function SpanInspector({
   }, [cid, source])
   const findingCount = findingSt && findingSt.cid === cid ? findingSt.count : 0
 
+  // The shared InspectorBody renders from a MessageEntry, but session spans
+  // don't carry the gateway facts (provider/configuration/tags/rules). Resolve
+  // the request's MessageEntry by correlation id (api mode); fixtures and
+  // lookup misses fall back to a minimal entry synthesized from the span so the
+  // modal still renders. Keyed-state, set only in the async callback.
+  const [entrySt, setEntrySt] = useState<{ cid: string; v: MessageEntry | null } | null>(null)
+  useEffect(() => {
+    // Fixtures have no /messages endpoint — leave entrySt unset so resolvedEntry
+    // stays null and the synthesized fallback (below) is used.
+    if (source !== "api") return
+    let cancelled = false
+    fetchMessageByCorrelation(cid)
+      .then((e) => { if (!cancelled) setEntrySt({ cid, v: e }) })
+      .catch(() => { if (!cancelled) setEntrySt({ cid, v: null }) })
+    return () => { cancelled = true }
+  }, [cid, source])
+  const resolvedEntry = entrySt && entrySt.cid === cid ? entrySt.v : null
+
   // The rendered span: the full element when fetched, overlaid on the view
   // model's session-relative timing (t/tEnd never come over the wire).
   const s = useMemo<SpanVM | undefined>(() => {
@@ -2331,13 +2338,9 @@ function SpanInspector({
     if (idx >= 0 && idx < flow.length - 1) onSelect(flow[idx + 1].cid)
   }, [idx, flow, onSelect])
 
-  // Body scrolls back to the top when stepping prev/next to another span.
-  const bodyRef = useRef<HTMLDivElement>(null)
   // panelRef is the dialog surface, for focus-in / Tab-trap / focus-restore.
+  // (Stepping prev/next resets stage scroll inside InspectorBody, keyed by cid.)
   const panelRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    bodyRef.current?.scrollTo({ top: 0 })
-  }, [cid])
 
   useEffect(() => {
     // Remember the trigger so focus returns to it when the modal closes, and
@@ -2404,6 +2407,22 @@ function SpanInspector({
   if (!s) return null
   const col = vm.colors.get(s.conversation_id)
 
+  // entry feeds the shared InspectorBody: the resolved MessageEntry when found,
+  // else a minimal one from the span (model/status/duration/ids; provider and
+  // policy facts are simply absent on fixtures).
+  const entry: MessageEntry = resolvedEntry ?? {
+    event_id: s.cid,
+    correlation_id: s.cid,
+    at: s.at ?? "",
+    status_code: s.status ?? 0,
+    duration_ms: s.latency_ms ?? 0,
+    model: s.model ?? undefined,
+    conversation_id: s.conversation_id,
+  }
+  // Session clocks are relative to the session t0 (only this page owns it), so
+  // the timing tiles in InspectorBody read in session time, not wall time.
+  const clock: SpanClock = (ms = 0) => clockMsAt(vm.t0ms, s.t + (ms ?? 0) / 1000)
+
   return createPortal(
     <div
       role="dialog"
@@ -2452,34 +2471,25 @@ function SpanInspector({
           </div>
         </div>
 
-        {/* body */}
-        <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
-          <TimingTokensTiles vm={vm} s={s} />
-
-          {bodyState === "loading" && (
-            <div className="mt-3 text-[11.5px] text-[color:var(--text-4)]">loading full content…</div>
-          )}
+        {/* body: the shared trace-detail layout. The session supplies its own
+            enrichments — the ledger joins and a session-relative clock. */}
+        <div className="flex-1 min-h-0 flex flex-col px-6 pt-4 pb-4">
           {bodyState === "unavailable" && (
-            <div className="mt-3 text-[11.5px]" style={{ color: "var(--warn)" }}>
+            <div className="flex-none mb-2 text-[11.5px]" style={{ color: "var(--warn)" }}>
               full content unavailable on this backend — showing structure only
             </div>
           )}
-
-          {/* Tab strip — Output default, choice persists across prev/next.
-              Telemetry and Report mount (and fetch) only when clicked. */}
-          <div role="tablist" aria-label="Span detail views" className="flex border-b border-[color:var(--border)] mt-5 overflow-x-auto">
-            <IOTab on={ioTab === "output"} onClick={() => onTab("output")} label="Output" meta={outputMeta(s)} />
-            <IOTab on={ioTab === "input"} onClick={() => onTab("input")} label="Input" meta={inputMeta(s)} />
-            <IOTab on={ioTab === "telemetry"} onClick={() => onTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
-            <IOTab on={ioTab === "report"} onClick={() => onTab("report")} label="Report" meta="request · response · stream · headers" />
-            <IOTab on={ioTab === "security"} onClick={() => onTab("security")} label="Security" meta="verdict · findings" badge={findingCount} />
-          </div>
-
-          {ioTab === "output" && <OutputPane span={s} joinCall={joinCall} />}
-          {ioTab === "input" && <InputPane span={s} joinResp={joinResp} />}
-          {ioTab === "telemetry" && <TelemetryPane cid={s.cid} wanted />}
-          {ioTab === "report" && <ReportPane cid={s.cid} wanted />}
-          {ioTab === "security" && <SecurityPane cid={s.cid} wanted />}
+          <InspectorBody
+            entry={entry}
+            span={s}
+            cid={s.cid}
+            findingCount={findingCount}
+            tab={ioTab}
+            onTab={onTab}
+            joinCall={joinCall}
+            joinResp={joinResp}
+            clock={clock}
+          />
         </div>
 
         {/* footer pinned to the modal bottom */}
@@ -2504,28 +2514,3 @@ function SpanInspector({
   )
 }
 
-// TimingTokensTiles: the side-by-side Timing / Tokens key-value tiles.
-function TimingTokensTiles({ vm, s }: { vm: ViewModel; s: SpanVM }) {
-  const fresh = (s.usage.input ?? 0) - (s.usage.cache_read ?? 0) - (s.usage.cache_creation ?? 0)
-  const cacheShare = s.usage.input ? `${Math.round(((s.usage.cache_read ?? 0) / s.usage.input) * 100)}%` : "—"
-  return (
-    <div className="grid sm:grid-cols-2 gap-3 mt-1">
-      <Tile label="Timing" accent="var(--warn)">
-        <TKV k="start" v={clockMsAt(vm.t0ms, s.t)} />
-        <TKV k="first chunk" v={s.ttfc_ms != null ? clockMsAt(vm.t0ms, s.t + s.ttfc_ms / 1000) : "—"} />
-        <TKV k="end" v={s.latency_ms != null ? clockMsAt(vm.t0ms, s.tEnd) : "—"} />
-        <TKV k="latency" v={fmt.ms(s.latency_ms)} />
-        <TKV k="ttfc" v={fmt.ms(s.ttfc_ms)} />
-        <TKV k="stream tail" v={s.ttfc_ms != null && s.latency_ms != null ? fmt.ms(s.latency_ms - s.ttfc_ms) : "—"} />
-      </Tile>
-      <Tile label="Tokens" accent="var(--ok)">
-        <TKV k="in" v={fmt.compact(s.usage.input)} />
-        <TKV k="out" v={fmt.compact(s.usage.output)} />
-        <TKV k="fresh in" v={fmt.compact(fresh)} />
-        <TKV k="cache read" v={fmt.compact(s.usage.cache_read)} />
-        <TKV k="cache write" v={fmt.compact(s.usage.cache_creation)} />
-        <TKV k="cache share" v={cacheShare} />
-      </Tile>
-    </div>
-  )
-}

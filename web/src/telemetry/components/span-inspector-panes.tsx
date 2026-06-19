@@ -168,7 +168,9 @@ export function IOTab({
   on: boolean
   onClick: () => void
   label: string
-  meta: string
+  // meta is an optional subtitle rendered after the label on >= sm screens.
+  // Omitted renders nothing (no trailing gap).
+  meta?: string
   // badge renders a small count chip after the label (e.g. the Security tab's
   // finding count). Omitted or <= 0 renders nothing.
   badge?: number
@@ -195,7 +197,7 @@ export function IOTab({
           {badge}
         </span>
       )}
-      <span className="hidden sm:inline font-normal text-[11px] text-[color:var(--text-4)] ml-1">{meta}</span>
+      {meta && <span className="hidden sm:inline font-normal text-[11px] text-[color:var(--text-4)] ml-1">{meta}</span>}
     </button>
   )
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
-import { Check, Copy, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { StatusPill } from "@/components/atoms/status-pill"
@@ -11,7 +11,6 @@ import { ActiveFilterChips, FilterField, FiltersButton, type Chip } from "@/comp
 import { Segmented } from "@/components/atoms/segmented"
 import { Select } from "@/components/atoms/select"
 import { MultiSelect } from "@/components/atoms/multi-select"
-import { fmt } from "@/lib/fmt"
 import {
   fetchFacets,
   type Facets,
@@ -21,17 +20,7 @@ import {
 import { fetchEventSpan, type SessionSpan } from "@/lib/session-spans"
 import { MESSAGE_DEFAULT_PAGE_SIZE, useDebounced, useMessagesPager } from "@/lib/messages-pager"
 import { MessagesPagerBar, MessagesTableView, toggleSort, type SortState } from "../components/messages-table"
-import { inputMeta, outputMeta } from "@/lib/span-view"
-import {
-  IOTab,
-  InputPane,
-  OutputPane,
-  ReportPane,
-  SecurityPane,
-  TelemetryPane,
-  Tile,
-  TKV,
-} from "../components/span-inspector-panes"
+import { InspectorBody, type InspectorTab } from "../components/inspector-body"
 import { loadVerdict } from "@/lib/verdict"
 
 // TIME_RANGES are the relative-window presets. "all" omits the bound so the
@@ -297,39 +286,6 @@ export function MessagesPage() {
   )
 }
 
-// CopyButton copies `value` to the clipboard and flips to a check for a beat.
-// Used beside ids (session id) where the operator's next move is often to paste
-// the value elsewhere.
-function CopyButton({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = () => {
-    navigator.clipboard
-      .writeText(value)
-      .then(() => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1200)
-      })
-      .catch(() => {
-        /* clipboard blocked (insecure context / permissions) — no-op */
-      })
-  }
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className="shrink-0 text-[color:var(--text-4)] hover:text-[color:var(--text)]"
-      aria-label={copied ? `Copied ${label}` : `Copy ${label}`}
-      title={copied ? "Copied" : `Copy ${label}`}
-    >
-      {copied ? <Check size={12} /> : <Copy size={12} />}
-    </button>
-  )
-}
-
-// InspectorTab mirrors the session lifecycle modal's strip: the span's own
-// Output/Input panes plus the on-demand bridge tabs (Telemetry, Report).
-export type InspectorTab = "output" | "input" | "telemetry" | "report" | "security"
-
 // Inspector is the per-request detail modal, rendered inside the shared
 // InspectorModal shell. The message content is the SAME SessionSpan DTO
 // element the session lifecycle modal renders (fetched per-event through
@@ -344,7 +300,7 @@ export function Inspector({
   onClose,
   onPrev,
   onNext,
-  initialTab = "output",
+  initialTab = "conversation",
 }: {
   entry: MessageEntry
   position: string
@@ -384,8 +340,6 @@ export function Inspector({
 
   // Tab choice persists across prev/next (the component survives the step).
   const [tab, setTab] = useState<InspectorTab>(initialTab)
-  // A record-only event has no Output/Input panes — fall to the bridge tabs.
-  const effTab: InspectorTab = span === null && (tab === "output" || tab === "input") ? "telemetry" : tab
 
   return (
     <InspectorModal
@@ -400,214 +354,8 @@ export function Inspector({
         </div>
       }
     >
-      {/* Telemetry content stacks taller than the modal, so it scrolls within
-          the fixed-height shell rather than filling it like the admin view. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto">
-        <MetaGrid entry={entry} />
-
-        {entry.upstream_error && (
-          <div className="rounded-[var(--radius)] border p-3 text-[12px] mono" style={{ color: "var(--err)", background: "var(--err-bg)" }}>{entry.upstream_error}</div>
-        )}
-
-        {(entry.tags?.length ?? 0) > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {entry.tags!.map((t) => (
-              <span key={t} className="inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[10.5px] mono uppercase tracking-[0.04em] border border-[color:var(--border)] text-[color:var(--text-2)] bg-[color:var(--bg-2)]">{t}</span>
-            ))}
-          </div>
-        )}
-
-        {(entry.rules_matched?.length ?? 0) > 0 && (
-          <Section title="Rules fired">
-            <div className="flex flex-col gap-1">
-              {entry.rules_matched!.map((r, i) => (
-                <div key={i} className="flex items-center gap-2 text-[12px]">
-                  <span className="mono">{r.rule_name}</span>
-                  {r.actions_applied?.map((a) => <span key={a} className="text-[10.5px] mono text-[color:var(--text-4)]">{a}</span>)}
-                  {r.terminated && <span className="text-[10.5px] mono text-[color:var(--warn)]">terminated</span>}
-                </div>
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {(entry.attempts?.length ?? 0) > 0 && (
-          <Section title="Resilience attempts">
-            <div className="flex flex-col gap-1">
-              {entry.attempts!.map((a, i) => (
-                <div key={i} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2 text-[12px]">
-                  <span className="mono text-[color:var(--text-4)]">#{i + 1}</span>
-                  <span className="mono truncate">{a.target}</span>
-                  <span className="mono tnum text-[color:var(--text-3)]">{a.status_code || a.error || "—"}</span>
-                  <span className="mono text-[10.5px]" style={{ color: a.outcome === "success" ? "var(--ok)" : "var(--err)" }}>{a.outcome}</span>
-                </div>
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {span === undefined ? (
-          <div className="text-[12px] text-[color:var(--text-4)]">loading span…</div>
-        ) : (
-          <div>
-            {span && <SpanTiles span={span} />}
-            {span === null && (
-              <div className="text-[12px] text-[color:var(--text-4)] mb-1">
-                no gen_ai span captured for this request — the report may still carry the wire bodies
-              </div>
-            )}
-            <div role="tablist" aria-label="Request detail views" className="flex border-b border-[color:var(--border)] mt-2 flex-wrap overflow-x-auto">
-              {span && <IOTab on={effTab === "output"} onClick={() => setTab("output")} label="Output" meta={outputMeta(span)} />}
-              {span && <IOTab on={effTab === "input"} onClick={() => setTab("input")} label="Input" meta={inputMeta(span)} />}
-              <IOTab on={effTab === "telemetry"} onClick={() => setTab("telemetry")} label="Telemetry" meta="system · tools · raw" />
-              <IOTab on={effTab === "report"} onClick={() => setTab("report")} label="Report" meta="request · response · stream · headers" />
-              <IOTab on={effTab === "security"} onClick={() => setTab("security")} label="Security" meta="verdict · findings" badge={findingCount} />
-            </div>
-            {effTab === "output" && span && <OutputPane span={span} />}
-            {effTab === "input" && span && <InputPane span={span} />}
-            {effTab === "telemetry" && <TelemetryPane cid={cid} wanted />}
-            {effTab === "report" && <ReportPane cid={cid} wanted />}
-            {effTab === "security" && <SecurityPane cid={cid} wanted />}
-          </div>
-        )}
-      </div>
+      <InspectorBody entry={entry} span={span} cid={cid} findingCount={findingCount} tab={tab} onTab={setTab} />
     </InspectorModal>
   )
 }
 
-// SpanTiles is the message browser's variant of the lifecycle modal's
-// Timing/Tokens tiles — same layout, but clocks are wall time (there is no
-// session t0 to be relative to).
-function SpanTiles({ span }: { span: SessionSpan }) {
-  const u = span.usage
-  const fresh = (u.input ?? 0) - (u.cache_read ?? 0) - (u.cache_creation ?? 0)
-  const cacheShare = u.input ? `${Math.round(((u.cache_read ?? 0) / u.input) * 100)}%` : "—"
-  return (
-    <div className="grid sm:grid-cols-2 gap-3 mb-3">
-      <Tile label="Timing" accent="var(--warn)">
-        <TKV k="start" v={wallClock(span.at)} />
-        <TKV k="first chunk" v={span.ttfc_ms != null ? wallClock(span.at, span.ttfc_ms) : "—"} />
-        <TKV k="end" v={span.latency_ms != null ? wallClock(span.at, span.latency_ms) : "—"} />
-        <TKV k="latency" v={fmt.ms(span.latency_ms)} />
-        <TKV k="ttfc" v={fmt.ms(span.ttfc_ms)} />
-        <TKV k="stream tail" v={span.ttfc_ms != null && span.latency_ms != null ? fmt.ms(span.latency_ms - span.ttfc_ms) : "—"} />
-      </Tile>
-      <Tile label="Tokens" accent="var(--ok)">
-        <TKV k="in" v={fmt.compact(u.input)} />
-        <TKV k="out" v={fmt.compact(u.output)} />
-        <TKV k="fresh in" v={fmt.compact(fresh)} />
-        <TKV k="cache read" v={fmt.compact(u.cache_read)} />
-        <TKV k="cache write" v={fmt.compact(u.cache_creation)} />
-        <TKV k="cache share" v={cacheShare} />
-      </Tile>
-    </div>
-  )
-}
-
-// wallClock formats an RFC3339 instant (plus an optional offset) as local
-// HH:MM:SS.mmm — the tile clock format, absolute rather than session-relative.
-function wallClock(iso: string, plusMs = 0): string {
-  const d = new Date(new Date(iso).getTime() + plusMs)
-  if (Number.isNaN(d.getTime())) return "—"
-  const p = (n: number, w = 2) => String(n).padStart(w, "0")
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
-}
-
-function MetaGrid({ entry }: { entry: MessageEntry }) {
-  const nav = useNavigate()
-  // The session id links to that session's view — the common pivot from "this
-  // one request" to "the whole conversation". The route switch unmounts this
-  // modal on its own (or re-keys it when already on the sessions page).
-  const sessionNode = entry.session_id ? (
-    <span className="flex items-center gap-1 min-w-0">
-      <button
-        type="button"
-        onClick={() => nav(`/sessions/${encodeURIComponent(entry.session_id!)}`)}
-        className="truncate min-w-0 text-left text-[color:var(--accent)] hover:underline"
-        title={`View session ${entry.session_id}`}
-      >
-        {entry.session_id}
-      </button>
-      <CopyButton value={entry.session_id} label="session id" />
-    </span>
-  ) : (
-    "—"
-  )
-  // Conversation/thread id: the subagent thread when active, else the session.
-  // Shown copyable, titled with its provenance header; a subagent thread also
-  // shows its parent so the operator can walk up toward the session bundle.
-  const threadNode = entry.conversation_id ? (
-    <span className="flex items-center gap-1 min-w-0">
-      <span className="truncate min-w-0" title={entry.conversation_id_source ? `from ${entry.conversation_id_source}` : entry.conversation_id}>
-        {entry.conversation_id}
-      </span>
-      {entry.parent_conversation_id ? (
-        <span className="text-[10.5px] text-[color:var(--text-4)] shrink-0" title={`parent ${entry.parent_conversation_id}`}>
-          ↳ parent
-        </span>
-      ) : null}
-      <CopyButton value={entry.conversation_id} label="conversation id" />
-    </span>
-  ) : (
-    "—"
-  )
-  // Agent id is a leaf dimension (no per-agent page yet): show it copyable,
-  // titled with its provenance header so the operator knows which header it
-  // came from. Reserved for genuinely named agents — a subagent thread rides
-  // the Thread cell, not here.
-  const agentNode = entry.agent_id ? (
-    <span className="flex items-center gap-1 min-w-0">
-      <span className="truncate min-w-0" title={entry.agent_id_source ? `from ${entry.agent_id_source}` : entry.agent_id}>
-        {entry.agent_id}
-      </span>
-      <CopyButton value={entry.agent_id} label="agent id" />
-    </span>
-  ) : (
-    "—"
-  )
-  // User id is a leaf dimension (no per-user page yet): show it copyable, titled
-  // with its provenance header so the operator knows which header it came from.
-  const userNode = entry.user_id ? (
-    <span className="flex items-center gap-1 min-w-0">
-      <span className="truncate min-w-0" title={entry.user_id_source ? `from ${entry.user_id_source}` : entry.user_id}>
-        {entry.user_id}
-      </span>
-      <CopyButton value={entry.user_id} label="user id" />
-    </span>
-  ) : (
-    "—"
-  )
-  const items: [string, React.ReactNode][] = [
-    ["Provider", entry.provider || "—"],
-    ["Protocol", entry.protocol || "—"],
-    ["Model", entry.model || "—"],
-    ["Method", entry.method || "—"],
-    ["Configuration", entry.configuration || "—"],
-    ["Duration", fmt.ms(entry.duration_ms)],
-    ["Streaming", entry.streaming ? "yes" : "no"],
-    ["Session", sessionNode],
-    ["Thread", threadNode],
-    ["Agent", agentNode],
-    ["User", userNode],
-    ["At", fmt.fullTime(entry.at)],
-  ]
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-3">
-      {items.map(([k, v]) => (
-        <div key={k} className="min-w-0">
-          <div className="text-[10.5px] uppercase tracking-[0.06em] text-[color:var(--text-4)]">{k}</div>
-          <div className="mono text-[12px] truncate" title={typeof v === "string" ? v : undefined}>{v}</div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="text-[11px] uppercase tracking-[0.06em] text-[color:var(--text-3)]">{title}</div>
-      {children}
-    </div>
-  )
-}
