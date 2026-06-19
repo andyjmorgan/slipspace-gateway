@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/andyjmorgan/slipspace-gateway/models"
 	geminicontent "github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
 )
 
@@ -18,8 +19,12 @@ import (
 // per-candidate merge across chunks: adjacent TextPart fragments
 // concatenate, FunctionCallPart entries land in arrival order, and
 // the last non-empty FinishReason / UsageMetadata / ModelVersion /
-// ResponseID / PromptFeedback overwrites the running base. Unknown
-// part kinds round-trip via the typed Part registry.
+// ResponseID / PromptFeedback overwrites the running base. Candidate
+// metadata Gemini delivers on its own chunks (groundingMetadata,
+// urlContextMetadata, citationMetadata, safetyRatings, finishMessage,
+// logprobsResult and any unknown fields) is likewise carried
+// last-non-empty-wins so it survives reassembly. Unknown part kinds
+// round-trip via the typed Part registry.
 func accumulateGeminiContent(raw []byte) Result {
 	state := newGeminiState()
 	res := Result{}
@@ -59,6 +64,17 @@ type geminiCandidateState struct {
 	parts        []geminicontent.Part
 	finishReason *string
 	tokenCount   *int
+	// Candidate-level metadata Gemini delivers on its own chunks (usually the
+	// terminal one) — carried last-non-empty-wins so it survives reassembly
+	// rather than being dropped. groundingMetadata is the load-bearing one
+	// (Google Search web grounding); the rest round-trip for fidelity.
+	finishMessage      *string
+	safetyRatings      []geminicontent.SafetyRating
+	citationMetadata   *geminicontent.CitationMetadata
+	groundingMetadata  *geminicontent.GroundingMetadata
+	urlContextMetadata json.RawMessage
+	logprobsResult     json.RawMessage
+	extra              map[string]json.RawMessage
 }
 
 func newGeminiState() *geminiState {
@@ -117,6 +133,31 @@ func (s *geminiState) absorb(chunk *geminicontent.GenerateContentResponse) {
 			tc := *cand.TokenCount
 			st.tokenCount = &tc
 		}
+		if cand.FinishMessage != nil {
+			fm := *cand.FinishMessage
+			st.finishMessage = &fm
+		}
+		if len(cand.SafetyRatings) > 0 {
+			st.safetyRatings = cand.SafetyRatings
+		}
+		if cand.CitationMetadata != nil {
+			st.citationMetadata = cand.CitationMetadata
+		}
+		if cand.GroundingMetadata != nil {
+			st.groundingMetadata = cand.GroundingMetadata
+		}
+		if len(cand.URLContextMetadata) > 0 {
+			st.urlContextMetadata = cand.URLContextMetadata
+		}
+		if len(cand.LogprobsResult) > 0 {
+			st.logprobsResult = cand.LogprobsResult
+		}
+		for k, v := range cand.Extra {
+			if st.extra == nil {
+				st.extra = map[string]json.RawMessage{}
+			}
+			st.extra[k] = v
+		}
 	}
 }
 
@@ -141,10 +182,17 @@ func (s *geminiState) assemble() geminicontent.GenerateContentResponse {
 		}
 		candIdx := st.index
 		cands = append(cands, geminicontent.Candidate{
-			Content:      content,
-			FinishReason: st.finishReason,
-			Index:        &candIdx,
-			TokenCount:   st.tokenCount,
+			Content:            content,
+			FinishReason:       st.finishReason,
+			FinishMessage:      st.finishMessage,
+			Index:              &candIdx,
+			SafetyRatings:      st.safetyRatings,
+			CitationMetadata:   st.citationMetadata,
+			TokenCount:         st.tokenCount,
+			GroundingMetadata:  st.groundingMetadata,
+			URLContextMetadata: st.urlContextMetadata,
+			LogprobsResult:     st.logprobsResult,
+			DynamicProperties:  models.DynamicProperties{Extra: st.extra},
 		})
 	}
 	resp.Candidates = cands

@@ -176,6 +176,26 @@ func TestExtractContent_Gemini_FunctionCallTurn(t *testing.T) {
 	}
 }
 
+func TestExtractContent_Gemini_BuiltinTools(t *testing.T) {
+	t.Parallel()
+	// Built-in tools carry no functionDeclaration — they are key-discriminated
+	// markers — but a request that enabled them should still surface a named
+	// tool def, mirroring the Anthropic server-tool listing.
+	raw := []byte(`{"contents":[{"role":"user","parts":[{"text":"latest F1 champion?"}]}],` +
+		`"tools":[{"googleSearch":{}},{"codeExecution":{}},{"urlContext":{}},{"googleSearchRetrieval":{}},` +
+		`{"functionDeclarations":[{"name":"get_weather","parameters":{"type":"object"}}]}]}`)
+	c := genaiattr.ExtractContent("generate_content", raw)
+	got := map[string]bool{}
+	for _, d := range c.ToolDefinitions {
+		got[d.Name] = true
+	}
+	for _, want := range []string{"google_search", "code_execution", "url_context", "google_search_retrieval", "get_weather"} {
+		if !got[want] {
+			t.Errorf("tool defs %+v missing %q", c.ToolDefinitions, want)
+		}
+	}
+}
+
 func TestExtractContent_OpenAIResponses(t *testing.T) {
 	t.Parallel()
 	// Responses API: instructions = system, input = prompt (string form).

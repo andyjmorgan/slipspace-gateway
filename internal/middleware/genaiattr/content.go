@@ -258,11 +258,11 @@ func anthropicContent(raw []byte) Content {
 func geminiContent(raw []byte) Content {
 	var body struct {
 		SystemInstruction *struct {
-			Parts []geminiPart `json:"parts"`
+			Parts []json.RawMessage `json:"parts"`
 		} `json:"systemInstruction"`
 		Contents []struct {
-			Role  string       `json:"role"`
-			Parts []geminiPart `json:"parts"`
+			Role  string            `json:"role"`
+			Parts []json.RawMessage `json:"parts"`
 		} `json:"contents"`
 		Tools json.RawMessage `json:"tools"`
 	}
@@ -286,33 +286,16 @@ func geminiContent(raw []byte) Content {
 	return c
 }
 
-// geminiPart is one Gemini content part: text, or a functionCall/
-// functionResponse for tool turns.
-type geminiPart struct {
-	Text         string `json:"text"`
-	FunctionCall *struct {
-		Name string          `json:"name"`
-		Args json.RawMessage `json:"args"`
-	} `json:"functionCall"`
-	FunctionResponse *struct {
-		Name     string          `json:"name"`
-		Response json.RawMessage `json:"response"`
-	} `json:"functionResponse"`
-}
-
-func geminiParts(in []geminiPart) []Part {
-	var parts []Part
+// geminiParts maps a Gemini parts array to bounded span parts via the shared
+// builder, so request input turns use the same projection as the response
+// (function calls, code execution, thought fragments, degrade-to-typed).
+func geminiParts(in []json.RawMessage) []Part {
+	b := &geminiPartBuilder{}
 	for _, p := range in {
-		switch {
-		case p.FunctionCall != nil:
-			parts = append(parts, Part{Type: "tool_call", Name: p.FunctionCall.Name, Arguments: nonEmptyRaw(p.FunctionCall.Args)})
-		case p.FunctionResponse != nil:
-			parts = append(parts, Part{Type: "tool_call_response", Name: p.FunctionResponse.Name, Result: string(p.FunctionResponse.Response)})
-		case p.Text != "":
-			parts = append(parts, Part{Type: "text", Content: p.Text})
-		}
+		b.add(p)
 	}
-	return parts
+	b.flushText()
+	return b.parts
 }
 
 // contentParts converts a message "content" field — a plain string or an
@@ -473,9 +456,14 @@ func anthropicToolDefs(raw json.RawMessage) []ToolDefinition {
 	return out
 }
 
-// geminiToolDefs normalises a Gemini tools array — each entry wraps a
+// geminiToolDefs normalises a Gemini tools array. Each entry wraps a
 // functionDeclarations[] list ([{functionDeclarations:[{name,description,
-// parameters}]}]) — flattening every declaration to one spec tool.
+// parameters}]}]), flattened to one spec tool per declaration. The built-in
+// tools (googleSearch, codeExecution, urlContext, googleSearchRetrieval) carry
+// no declaration — they are key-discriminated markers — so each is surfaced as
+// a named tool def, mirroring how the Anthropic path lists its server tools,
+// so a request that enabled web search or code execution is visible on the
+// span rather than appearing tool-less.
 func geminiToolDefs(raw json.RawMessage) []ToolDefinition {
 	if len(nonEmptyRaw(raw)) == 0 {
 		return nil
@@ -486,6 +474,10 @@ func geminiToolDefs(raw json.RawMessage) []ToolDefinition {
 			Description string          `json:"description"`
 			Parameters  json.RawMessage `json:"parameters"`
 		} `json:"functionDeclarations"`
+		GoogleSearch          json.RawMessage `json:"googleSearch"`
+		GoogleSearchRetrieval json.RawMessage `json:"googleSearchRetrieval"`
+		CodeExecution         json.RawMessage `json:"codeExecution"`
+		URLContext            json.RawMessage `json:"urlContext"`
 	}
 	if json.Unmarshal(raw, &tools) != nil {
 		return nil
@@ -499,6 +491,19 @@ func geminiToolDefs(raw json.RawMessage) []ToolDefinition {
 				Description: d.Description,
 				Parameters:  nonEmptyRaw(d.Parameters),
 			})
+		}
+		for _, builtin := range []struct {
+			raw  json.RawMessage
+			name string
+		}{
+			{t.GoogleSearch, "google_search"},
+			{t.GoogleSearchRetrieval, "google_search_retrieval"},
+			{t.CodeExecution, "code_execution"},
+			{t.URLContext, "url_context"},
+		} {
+			if v := builtin.raw; len(v) > 0 && string(v) != "null" {
+				out = append(out, ToolDefinition{Type: "function", Name: builtin.name})
+			}
 		}
 	}
 	return out
