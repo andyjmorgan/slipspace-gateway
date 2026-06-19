@@ -1,20 +1,20 @@
-# Sluice Smoke Suite
+# SlipSpace Smoke Suite
 
 Post-deploy liveness checks. Drives the official OpenAI, Anthropic, and Google
-Gemini Python SDKs against a deployed sluice-gateway with a real managed-mode
+Gemini Python SDKs against a deployed slipspace-gateway with a real managed-mode
 API key — meaning the gateway resolves the key to a configuration and swaps in
 real upstream provider credentials before forwarding.
 
 ## TL;DR
 
 ```sh
-SLUICE_API_KEY=sk_live_... make smoke
+SLIPSPACE_API_KEY=sk_live_... make smoke
 ```
 
 Or, for the qwen redirect tests too (cluster-specific):
 
 ```sh
-SLUICE_API_KEY=sk_live_... SLUICE_SMOKE_QWEN=true make smoke
+SLIPSPACE_API_KEY=sk_live_... SLIPSPACE_SMOKE_QWEN=true make smoke
 ```
 
 Distinct from the wire-compat suite in `test/python/`:
@@ -22,7 +22,7 @@ Distinct from the wire-compat suite in `test/python/`:
 | | `test/python/` (wire-compat) | `test/smoke/` (this dir) |
 |---|---|---|
 | Upstream | mockllm with canned responses | real OpenAI / Anthropic / Gemini |
-| Gateway | spawned subprocess per session | already running at `SLUICE_BASE_URL` |
+| Gateway | spawned subprocess per session | already running at `SLIPSPACE_BASE_URL` |
 | Purpose | catch SDK round-trip regressions pre-merge | confirm a live deploy is healthy |
 | Cost | free | a handful of cheap tokens per run |
 
@@ -30,17 +30,17 @@ Distinct from the wire-compat suite in `test/python/`:
 
 ```sh
 cd test/smoke
-SLUICE_API_KEY=sk_live_... uv run pytest -v
+SLIPSPACE_API_KEY=sk_live_... uv run pytest -v
 ```
 
 Or against a local stack:
 
 ```sh
-SLUICE_BASE_URL=http://127.0.0.1:8080 SLUICE_API_KEY=sk_live_... uv run pytest -v
+SLIPSPACE_BASE_URL=http://127.0.0.1:8080 SLIPSPACE_API_KEY=sk_live_... uv run pytest -v
 ```
 
-`SLUICE_BASE_URL` defaults to `https://sluice.donkeywork.dev`. Without
-`SLUICE_API_KEY`, all tests skip cleanly — safe to wire into CI before
+`SLIPSPACE_BASE_URL` defaults to `https://slipspace.donkeywork.dev`. Without
+`SLIPSPACE_API_KEY`, all tests skip cleanly — safe to wire into CI before
 secrets are configured.
 
 ## What it covers
@@ -54,8 +54,8 @@ secrets are configured.
 | `test_gemini_generate.py` | `POST /gemini/v1beta/models/{model}:generateContent` |
 | `test_gemini_chat.py` | `POST /gemini/v1beta/openai/chat/completions` (OpenAI-compat surface) |
 | `test_changeprovider_redirect.py` | model-keyed `changeProvider` rules: claude-* / gemini-* on the openai surface |
-| `test_qwen_redirect.py` | cluster-side qwen rules (opt-in via `SLUICE_SMOKE_QWEN=true`) |
-| `test_gptoss_translate.py` | model-keyed `translate`-action redirect onto the gpt-oss surface (opt-in via `SLUICE_SMOKE_GPTOSS=true`) |
+| `test_qwen_redirect.py` | cluster-side qwen rules (opt-in via `SLIPSPACE_SMOKE_QWEN=true`) |
+| `test_gptoss_translate.py` | model-keyed `translate`-action redirect onto the gpt-oss surface (opt-in via `SLIPSPACE_SMOKE_GPTOSS=true`) |
 
 ## Adding a new smoke
 

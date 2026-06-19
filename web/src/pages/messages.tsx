@@ -80,7 +80,7 @@ export function MessagesPage() {
           nav("/login", { replace: true })
           return
         }
-        // 503 means the live feed is disabled via SLUICE_ADMIN_LIVE_FEED_CAPACITY=0.
+        // 503 means the live feed is disabled via SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0.
         const msg = String((err as Error).message ?? err)
         if (msg.includes("503")) {
           setFeed({ status: "disabled" })
@@ -146,7 +146,7 @@ export function MessagesPage() {
         title="Live messages"
         sub={
           feed.status === "disabled"
-            ? "Live tail is off. Set SLUICE_ADMIN_LIVE_FEED_CAPACITY > 0 to enable it."
+            ? "Live tail is off. Set SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY > 0 to enable it."
             : `Live tail of requests as they complete — single process, last ${feed.capacity} held in memory, cleared on restart.`
         }
         action={
@@ -679,7 +679,7 @@ function BodyDetail({ eventId, streaming }: { eventId: string; streaming: boolea
     return (
       <div className="mt-3 flex-1 rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg-2)] p-2 text-[11.5px] text-[color:var(--text-3)]">
         Bodies for this request are not available — either body capture is disabled
-        (<span className="mono">SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0</span>) or this
+        (<span className="mono">SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0</span>) or this
         event rolled out of the body cache.
       </div>
     )

@@ -11,10 +11,10 @@ import (
 
 // builtinSensitiveSubstrings is the always-active lowercase-substring
 // list. Catches the common credential header conventions across the
-// providers we forward to plus our own X-Sluice-Identity:
+// providers we forward to plus our own X-Slipspace-Identity:
 // Authorization, Proxy-Authorization, X-Api-Key, x-api-key,
 // Anthropic-Api-Key, X-Goog-Api-Key, Cookie, Set-Cookie,
-// X-Auth-Token, X-CSRF-Token, X-API-Secret, X-Sluice-Identity.
+// X-Auth-Token, X-CSRF-Token, X-API-Secret, X-Slipspace-Identity.
 // Over-redacting on display is the safer error.
 var builtinSensitiveSubstrings = []string{
 	"auth",
@@ -23,7 +23,7 @@ var builtinSensitiveSubstrings = []string{
 	"token",
 	"cookie",
 	"secret",
-	"sluice-identity",
+	"slipspace-identity",
 }
 
 // Redactor masks credential-bearing headers. Construct one via

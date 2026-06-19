@@ -18,7 +18,7 @@ type Entry struct {
 	At time.Time
 
 	// CorrelationID is the gateway-assigned request UUID, also
-	// surfaced on the response as X-Sluice-Correlation-Id.
+	// surfaced on the response as X-Slipspace-Correlation-Id.
 	CorrelationID string
 
 	// SessionID is the resolved session bundle root grouping this request

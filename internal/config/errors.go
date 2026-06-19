@@ -43,8 +43,8 @@ var ErrInvalidAuthFormat = errors.New("config: auth_format must contain {key} ex
 // the format would be silently ignored, which is almost always a mistake.
 var ErrAuthFormatWithoutHeader = errors.New("config: auth_format requires auth_header at the same level")
 
-// ErrInvalidBind is returned when a bind env var (SLUICE_HTTP_BIND,
-// SLUICE_PROMETHEUS_BIND) is not a valid host:port.
+// ErrInvalidBind is returned when a bind env var (SLIPSPACE_HTTP_BIND,
+// SLIPSPACE_PROMETHEUS_BIND) is not a valid host:port.
 var ErrInvalidBind = errors.New("config: bind must be host:port")
 
 // ErrParse is returned when a YAML file is malformed.
@@ -92,21 +92,21 @@ var ErrDuplicateResilienceID = errors.New("config: resilience policy id defined 
 // request time.
 var ErrTargetProviderMissingCredential = errors.New("config: resilience target provider has no upstream credential in referencing configuration")
 
-// ErrInvalidEnv is returned when a SLUICE_* env var fails to parse as the
+// ErrInvalidEnv is returned when a SLIPSPACE_* env var fails to parse as the
 // expected type or violates a numeric range invariant.
 var ErrInvalidEnv = errors.New("config: invalid env var value")
 
-// ErrUnknownLogLevel is returned when SLUICE_LOG_LEVEL is set to a value
+// ErrUnknownLogLevel is returned when SLIPSPACE_LOG_LEVEL is set to a value
 // outside the accepted set.
-var ErrUnknownLogLevel = errors.New("config: SLUICE_LOG_LEVEL must be debug|info|warn|error")
+var ErrUnknownLogLevel = errors.New("config: SLIPSPACE_LOG_LEVEL must be debug|info|warn|error")
 
-// ErrUnknownLogFormat is returned when SLUICE_LOG_FORMAT is set to a value
+// ErrUnknownLogFormat is returned when SLIPSPACE_LOG_FORMAT is set to a value
 // outside the accepted set.
-var ErrUnknownLogFormat = errors.New("config: SLUICE_LOG_FORMAT must be json|text")
+var ErrUnknownLogFormat = errors.New("config: SLIPSPACE_LOG_FORMAT must be json|text")
 
-// ErrUnknownOTLPProtocol is returned when SLUICE_OTLP_PROTOCOL is set to a
+// ErrUnknownOTLPProtocol is returned when SLIPSPACE_OTLP_PROTOCOL is set to a
 // value outside the accepted set.
-var ErrUnknownOTLPProtocol = errors.New("config: SLUICE_OTLP_PROTOCOL must be grpc|http/protobuf")
+var ErrUnknownOTLPProtocol = errors.New("config: SLIPSPACE_OTLP_PROTOCOL must be grpc|http/protobuf")
 
 // ErrDuplicateConnectorName is returned when two entries in the top-level
 // connectors block share the same Name. Names are the reference target for

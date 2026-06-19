@@ -1,6 +1,6 @@
 # Mock-pointed providers, used ONLY by compose.smoke.yaml for key-free
 # verification. Identical protocol/auth shapes to providers.yaml, but every
-# base_url points at the in-stack sluice-mockllm service instead of the real
+# base_url points at the in-stack slipspace-mockllm service instead of the real
 # upstreams. Not part of any real stack.
 providers:
   openai:

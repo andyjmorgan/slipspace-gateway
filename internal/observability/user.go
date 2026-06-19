@@ -9,33 +9,33 @@ import (
 // User-id resolution and context plumbing. A user id identifies the end user
 // on whose behalf a request is made — orthogonal to the session/conversation
 // that groups a turn's requests and to the agent that issues them. Resolution
-// mirrors session and agent id: Sluice-first, then a configured fallback chain
+// mirrors session and agent id: SlipSpace-first, then a configured fallback chain
 // walked top-down. See the design note "Correlating Requests Across Turns
 // (Session Bundling)" → User id.
 
-// SluiceUserHeader is the authoritative user header. When a client or proxy
+// SlipSpaceUserHeader is the authoritative user header. When a client or proxy
 // deliberately sets it, it wins over any ambient client header, so it is
 // always tried before the fallback chain.
-const SluiceUserHeader = "X-Sluice-User-Id"
+const SlipSpaceUserHeader = "X-Slipspace-User-Id"
 
 // DefaultUserIDHeaders is the shipped fallback chain, walked in order after the
-// authoritative Sluice header. It is empty: unlike session and agent id, no
+// authoritative SlipSpace header. It is empty: unlike session and agent id, no
 // client emits a standard end-user header today, so there is nothing to ship.
-// Operators promote a custom client's user header via SLUICE_USER_ID_HEADERS.
+// Operators promote a custom client's user header via SLIPSPACE_USER_ID_HEADERS.
 var DefaultUserIDHeaders = []string{}
 
-// UserResolver resolves a user id from inbound request headers. The Sluice
+// UserResolver resolves a user id from inbound request headers. The SlipSpace
 // header is always attempted first; operator-configured fallbacks follow the
 // shipped defaults, in the order supplied.
 type UserResolver struct {
 	// fallbacks is the ordered fallback chain (shipped defaults plus
-	// operator extras). The Sluice header is implicit and always first.
+	// operator extras). The SlipSpace header is implicit and always first.
 	fallbacks []string
 }
 
 // NewUserResolver builds a resolver whose fallback chain is the shipped
 // DefaultUserIDHeaders (empty) followed by extra — operator-supplied custom
-// headers, kept in the order given. The Sluice header is authoritative and
+// headers, kept in the order given. The SlipSpace header is authoritative and
 // need not appear in extra. Blank entries are dropped.
 func NewUserResolver(extra []string) *UserResolver {
 	fb := make([]string, 0, len(DefaultUserIDHeaders)+len(extra))
@@ -49,7 +49,7 @@ func NewUserResolver(extra []string) *UserResolver {
 }
 
 // Resolve returns the user id and its provenance (the header name it came
-// from, which the console uses to label the value). The Sluice header wins;
+// from, which the console uses to label the value). The SlipSpace header wins;
 // otherwise the fallback chain is walked top-down and the first present,
 // non-empty header wins.
 //
@@ -61,7 +61,7 @@ func (u *UserResolver) Resolve(h http.Header, sensitive func(string) bool) (id, 
 	if h == nil {
 		return "", ""
 	}
-	if id, source = pickHeader(h, SluiceUserHeader, sensitive); id != "" {
+	if id, source = pickHeader(h, SlipSpaceUserHeader, sensitive); id != "" {
 		return id, source
 	}
 	for _, name := range u.fallbacks {

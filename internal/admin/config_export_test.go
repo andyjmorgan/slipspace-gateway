@@ -136,7 +136,7 @@ func TestConfigExportDownloadHandler_ReturnsZipWithManifestAndRedactedFiles(t *t
 		t.Errorf("Content-Type = %q, want application/zip", ct)
 	}
 	cd := rec.Header().Get("Content-Disposition")
-	if !strings.HasPrefix(cd, `attachment; filename="sluice-config-`) || !strings.HasSuffix(cd, `.zip"`) {
+	if !strings.HasPrefix(cd, `attachment; filename="slipspace-config-`) || !strings.HasSuffix(cd, `.zip"`) {
 		t.Errorf("Content-Disposition = %q", cd)
 	}
 	if cl := rec.Header().Get("Content-Length"); cl == "" {

@@ -175,8 +175,8 @@ func (s *service) postRecord(t *testing.T, gwID, secret string, rec cc.Record) *
 	sig := hex.EncodeToString(mac.Sum(nil))
 
 	req, _ := http.NewRequest(http.MethodPost, s.httpBase+"/api/v1/ingest/record", strings.NewReader(string(raw)))
-	req.Header.Set("X-Sluice-Gateway-Id", gwID)
-	req.Header.Set("X-Sluice-Signature", sig)
+	req.Header.Set("X-Slipspace-Gateway-Id", gwID)
+	req.Header.Set("X-Slipspace-Signature", sig)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post record: %v", err)
@@ -490,7 +490,7 @@ func TestE2E_OTLPStitchAndDashboard(t *testing.T) {
 		t.Errorf("body not stitched: %+v", body)
 	}
 
-	// The dashboard rollups now read the sluice meter feed (the continuous
+	// The dashboard rollups now read the slipspace meter feed (the continuous
 	// aggregates over metric_points), NOT the request_events span — see
 	// invariant #4 + the @100 rearchitecture. So drive the dashboard with the
 	// matching request/token counters the gateway emits alongside the span; the
@@ -570,7 +570,7 @@ func TestE2E_SessionRollup(t *testing.T) {
 }
 
 // TestE2E_DashboardFiredFromMeters proves the rules-fired / tags-fired panels
-// read the sluice meter rollups (metric_points), not a request_events.detail
+// read the slipspace meter rollups (metric_points), not a request_events.detail
 // scan (invariant #4). Delta counter samples SUM to exact counts.
 func TestE2E_DashboardFiredFromMeters(t *testing.T) {
 	svc := startService(t)

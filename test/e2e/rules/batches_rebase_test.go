@@ -57,7 +57,7 @@ rules:
 // a real captured Anthropic ended-batch retrieve response (results_url
 // pointing at api.anthropic.com) flows through the gateway, and the
 // response-side rule rebases results_url to the gateway's external URL
-// so a client following it comes back through Sluice — without
+// so a client following it comes back through SlipSpace — without
 // bypassing telemetry/auth. Every other field of the real payload must
 // round-trip untouched.
 func TestRewrite_Batches_ResultsURLRebase(t *testing.T) {
@@ -70,7 +70,7 @@ func TestRewrite_Batches_ResultsURLRebase(t *testing.T) {
 
 	h := harness.NewWithOptions(t, harness.Options{
 		PolicyYAML:  batchesRebasePolicy,
-		ExternalURL: "https://sluice.donkeywork.dev",
+		ExternalURL: "https://slipspace.donkeywork.dev",
 	})
 
 	// The mock serves the captured ended-batch body for the upstream
@@ -87,7 +87,7 @@ func TestRewrite_Batches_ResultsURLRebase(t *testing.T) {
 		t.Fatalf("gateway status=%d body=%s", resp.StatusCode, resp.Body)
 	}
 
-	const wantURL = "https://sluice.donkeywork.dev/anthropic/v1/messages/batches/" + batchID + "/results"
+	const wantURL = "https://slipspace.donkeywork.dev/anthropic/v1/messages/batches/" + batchID + "/results"
 	if got := gjson.GetBytes(resp.Body, "results_url").String(); got != wantURL {
 		t.Errorf("results_url = %s, want %s; body=%s", got, wantURL, resp.Body)
 	}

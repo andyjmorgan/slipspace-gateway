@@ -24,8 +24,8 @@ from helpers import API_KEY, clear_responses
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DEV = REPO_ROOT / "config-dev"
 
-GATEWAY_BIN = Path(os.environ.get("SLUICE_GATEWAY_BIN", "/tmp/sluice-gateway"))
-MOCKLLM_BIN = Path(os.environ.get("SLUICE_MOCKLLM_BIN", "/tmp/sluice-mockllm"))
+GATEWAY_BIN = Path(os.environ.get("SLIPSPACE_GATEWAY_BIN", "/tmp/slipspace-gateway"))
+MOCKLLM_BIN = Path(os.environ.get("SLIPSPACE_MOCKLLM_BIN", "/tmp/slipspace-mockllm"))
 
 STARTUP_TIMEOUT = 30.0
 HEALTH_INTERVAL = 0.1
@@ -36,15 +36,15 @@ def _scrub_ambient_provider_env() -> None:
 
     The official provider SDKs fold environment variables into every client —
     base URL, auth, and (critically) default headers. A developer who routes
-    their own tooling through Sluice has e.g. ANTHROPIC_BASE_URL plus
-    ANTHROPIC_CUSTOM_HEADERS="X-Sluice-Configuration: ..." exported; the
+    their own tooling through SlipSpace has e.g. ANTHROPIC_BASE_URL plus
+    ANTHROPIC_CUSTOM_HEADERS="X-Slipspace-Configuration: ..." exported; the
     anthropic SDK injects that header on every request regardless of an
     explicit base_url or default_headers, which flips the gateway into
     passthrough mode against the wrong configuration and breaks selection.
 
     Scrub the provider routing/auth/header vars at import — before any client
     or the session `stack` fixture is built — so each SDK is a vanilla client
-    pointed only at the spawned gateway. The SLUICE_* harness controls are
+    pointed only at the spawned gateway. The SLIPSPACE_* harness controls are
     deliberately untouched.
     """
     prefixes = ("ANTHROPIC_", "OPENAI_", "GEMINI_", "GOOGLE_")
@@ -91,7 +91,7 @@ def _ensure_binary(bin_path: Path, source_pkg: str) -> Path:
     # working tree. The previous `if bin_path.exists(): return` short-circuit
     # silently tested a stale /tmp binary that predated the source — a pre-#286
     # build lacking the reverse translator passed the forward wire-compat tests
-    # and 501'd the reverse ones until `rm -f /tmp/sluice-gateway` forced a
+    # and 501'd the reverse ones until `rm -f /tmp/slipspace-gateway` forced a
     # rebuild (#287). A false green (stale binary that still happens to pass)
     # is the more dangerous failure mode, so never trust an existing file.
     print(f"[stack] building {bin_path} from {source_pkg}", file=sys.stderr)
@@ -136,17 +136,17 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
         mock_proc.terminate()
         raise
 
-    config_dir = tmp_path_factory.mktemp("sluice-config")
+    config_dir = tmp_path_factory.mktemp("slipspace-config")
     mockllm_host = f"127.0.0.1:{mockllm_port}"
     _materialize_config(config_dir, mockllm_host)
 
     prom_port = _free_port()
     gateway_env = {
         **os.environ,
-        "SLUICE_CONFIG_DIR": str(config_dir),
-        "SLUICE_HTTP_BIND": f"127.0.0.1:{gateway_port}",
-        "SLUICE_PROMETHEUS_BIND": f"127.0.0.1:{prom_port}",
-        "SLUICE_LOG_LEVEL": "warn",
+        "SLIPSPACE_CONFIG_DIR": str(config_dir),
+        "SLIPSPACE_HTTP_BIND": f"127.0.0.1:{gateway_port}",
+        "SLIPSPACE_PROMETHEUS_BIND": f"127.0.0.1:{prom_port}",
+        "SLIPSPACE_LOG_LEVEL": "warn",
     }
 
     gateway_proc = subprocess.Popen(

@@ -2,7 +2,7 @@
 #
 # This file is NOT read by the gateway directly. The `init` service in each
 # compose stack runs `envsubst` over it and writes the rendered result to
-# /etc/sluice/policy.yaml in a shared volume BEFORE the gateway starts. The
+# /etc/slipspace/policy.yaml in a shared volume BEFORE the gateway starts. The
 # gateway therefore only ever reads a fully-literal file — no ${VAR} reaches it,
 # preserving the "config files are trusted, no interpolation" invariant.
 #
@@ -40,7 +40,7 @@ configurations:
 # provider-native x-api-key / x-goog-api-key header); the gateway swaps in the
 # upstream credential above. Substituted from .env by the init service.
 api_keys:
-  - secret: ${SLUICE_CLIENT_API_KEY}
+  - secret: ${SLIPSPACE_CLIENT_API_KEY}
     name: "Quickstart client key"
     configuration: default
     enabled: true

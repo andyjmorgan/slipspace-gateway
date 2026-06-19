@@ -1,9 +1,9 @@
-"""Smoke test: Anthropic Messages API via sluice-gateway managed mode.
+"""Smoke test: Anthropic Messages API via slipspace-gateway managed mode.
 
 Under v2 routing is model-keyed (no provider path prefixes): a claude-* model
 on POST /v1/messages binds to the anthropic backend. Parametrized over both
 inbound auth headers (v1.0.7):
-  - bearer:    Authorization: Bearer sk_live_...   (Sluice's historical signal)
+  - bearer:    Authorization: Bearer sk_live_...   (SlipSpace's historical signal)
   - native:    x-api-key: sk_live_...              (vanilla Anthropic SDK default)
 """
 
@@ -21,7 +21,7 @@ def test_anthropic_messages(
     base_url: str, api_key: str, auth_header: str
 ) -> None:
     # v1.0.7: vanilla anthropic SDK with just api_key= now works because
-    # sluice discovers the Sluice secret from `x-api-key`. Older clients
+    # slipspace discovers the SlipSpace secret from `x-api-key`. Older clients
     # that injected `Authorization: Bearer` still work — covered as the
     # "bearer" parametrization.
     default_headers = (

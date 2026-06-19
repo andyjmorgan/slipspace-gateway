@@ -1,6 +1,6 @@
-# Sluice quickstart — Docker Compose
+# SlipSpace quickstart — Docker Compose
 
-Turnkey Docker Compose stacks that run Sluice from the **published GHCR images**
+Turnkey Docker Compose stacks that run SlipSpace from the **published GHCR images**
 (no source checkout, no build toolchain) and proxy the real OpenAI / Anthropic /
 Gemini APIs. Pick the stack you want, drop your keys in `.env`, and `up`.
 
@@ -31,9 +31,9 @@ cp .env.example .env
 
 `.env` is gitignored, so your keys never get committed. The only value you
 *must* change is at least one provider key; everything else has a working
-default (including `SLUICE_CLIENT_API_KEY`, the key your SDK sends).
+default (including `SLIPSPACE_CLIENT_API_KEY`, the key your SDK sends).
 
-> **How credentials reach the gateway.** Sluice reads fully-literal trusted YAML
+> **How credentials reach the gateway.** SlipSpace reads fully-literal trusted YAML
 > — it does not interpolate `${VAR}` itself. So each stack runs a tiny `init`
 > step that renders `config/policy.template.yaml` (substituting your `.env`
 > keys) into the gateway's config volume *before* the gateway starts. You never
@@ -56,13 +56,13 @@ docker compose -f compose.minimal.yaml up -d --wait
 docker compose -f compose.arbiter.yaml up -d --wait
 ```
 
-> Switching between stacks reuses one Compose project (`sluice-quickstart`). Add
+> Switching between stacks reuses one Compose project (`slipspace-quickstart`). Add
 > `--remove-orphans` when you switch, or `down` the previous stack first.
 
 ## 3. Send a request
 
 Point any OpenAI/Anthropic/Gemini SDK (or curl) at the data plane on `:8585`,
-authenticating with your `SLUICE_CLIENT_API_KEY`:
+authenticating with your `SLIPSPACE_CLIENT_API_KEY`:
 
 ```sh
 curl http://localhost:8585/v1/chat/completions \
@@ -80,13 +80,13 @@ provider-native auth headers (`x-api-key`, `x-goog-api-key`).
 
 | URL | Stack | Login |
 |---|---|---|
-| `http://localhost:8081/admin` | admin, telemetry | `admin` / `SLUICE_ADMIN_PASSWORD` |
+| `http://localhost:8081/admin` | admin, telemetry | `admin` / `SLIPSPACE_ADMIN_PASSWORD` |
 | `http://localhost:8686` | arbiter | `admin` / `arbiter` (the bcrypt default in `config/arbiter.yaml`) |
 
 (The gateway's own console is under `/admin`; the Arbiter console is at the
 root of `:8686`.)
 
-In the telemetry stack the gateway pushes gen_ai spans + sluice meters to the
+In the telemetry stack the gateway pushes gen_ai spans + slipspace meters to the
 Arbiter over OTLP (`:8687`); the Arbiter console aggregates them
 fleet-wide.
 
@@ -114,11 +114,11 @@ Only `:8585` is meant to face clients. Keep the management ports private.
 
 The defaults are tuned for a quick local trial, **not** the public internet:
 
-- Change `SLUICE_CLIENT_API_KEY` and `SLUICE_ADMIN_PASSWORD` in `.env`.
+- Change `SLIPSPACE_CLIENT_API_KEY` and `SLIPSPACE_ADMIN_PASSWORD` in `.env`.
 - Change the Arbiter console password: replace `console.password_hash` in
   `config/arbiter.yaml` (generate with
   `htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'`).
-- Pin `SLUICE_IMAGE_TAG` to a release (e.g. `v1.1.18`) instead of `latest`.
+- Pin `SLIPSPACE_IMAGE_TAG` to a release (e.g. `v1.1.18`) instead of `latest`.
 
 ---
 
@@ -131,8 +131,8 @@ message **inspector** has bodies to show, add the HMAC Record webhook:
 
 1. In `.env`, set a shared secret and allow the private webhook target:
    ```sh
-   SLUICE_TELEMETRY_HMAC_SECRET=change-me-shared-hmac-secret
-   SLUICE_WEBHOOK_ALLOW_PRIVATE=true
+   SLIPSPACE_TELEMETRY_HMAC_SECRET=change-me-shared-hmac-secret
+   SLIPSPACE_WEBHOOK_ALLOW_PRIVATE=true
    ```
    (`telemetry` is a compose service name → a private IP; the gateway's SSRF
    guard blocks private webhook targets unless this is set.)
@@ -144,7 +144,7 @@ message **inspector** has bodies to show, add the HMAC Record webhook:
      - name: central-telemetry
        type: webhook
        url: http://telemetry:8686/api/v1/ingest/record
-       secret_ref: env:SLUICE_TELEMETRY_HMAC_SECRET
+       secret_ref: env:SLIPSPACE_TELEMETRY_HMAC_SECRET
        gateway_id: quickstart-gw
        timeout_ms: 5000
    ```
@@ -171,14 +171,14 @@ costs dropped telemetry, never client latency. See
 ## Verifying the bundle (no provider keys)
 
 `compose.smoke.yaml` is a verification overlay: it swaps the real upstreams for
-the in-stack `sluice-mockllm` (canned, SDK-valid responses) so the whole bundle
+the in-stack `slipspace-mockllm` (canned, SDK-valid responses) so the whole bundle
 can be exercised with no provider credentials.
 
 ```sh
 docker compose -f compose.admin.yaml -f compose.smoke.yaml up -d --wait
 # stage canned responses on the mock (POST http://localhost:5555/control/responses),
 # then run the smoke suite against the local stack:
-SLUICE_BASE_URL=http://localhost:8585 SLUICE_API_KEY=sk_quickstart_demo_key \
+SLIPSPACE_BASE_URL=http://localhost:8585 SLIPSPACE_API_KEY=sk_quickstart_demo_key \
   make -C ../.. smoke
 ```
 

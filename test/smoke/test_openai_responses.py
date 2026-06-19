@@ -1,4 +1,4 @@
-"""Smoke test: OpenAI Responses API via sluice-gateway managed mode."""
+"""Smoke test: OpenAI Responses API via slipspace-gateway managed mode."""
 
 from __future__ import annotations
 

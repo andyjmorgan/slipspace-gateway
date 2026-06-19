@@ -27,7 +27,7 @@ config expressed in the current model.
 > (`changeApiKey` is **wired**: `state.UpstreamCredentialOverride` is read at the
 > single credential mint site, so the action overrides the upstream credential —
 > a literal `apiKey` is minted with the post-rule provider's header format, and
-> `useSluiceKey` forwards the inbound `Authorization` verbatim.)
+> `useSlipSpaceKey` forwards the inbound `Authorization` verbatim.)
 > (`changeModelName` still works — it rewrites the typed body model and the path
 > param, both of which the data plane reads; a binding/group `alias` is the
 > last writer.) Rules are otherwise pure request/response **transforms** (tags,
@@ -65,7 +65,7 @@ A request flows through four decisions:
    (`/v1/chat/completions`), `responses` (`/v1/responses`), `messages`
    (`/v1/messages`), `generate_content` (Gemini), or `embeddings`.
 2. **Configuration** — resolved from the API key (managed mode) or the
-   `X-Sluice-Configuration` header (passthrough). See [auth.md](auth.md).
+   `X-Slipspace-Configuration` header (passthrough). See [auth.md](auth.md).
 3. **Binding** — the configuration's `bindings` are scanned in order;
    the first whose `protocol` matches and whose `models` glob matches the
    body's `model` wins. It names a single `provider` or a resilience `group`.
@@ -73,7 +73,7 @@ A request flows through four decisions:
    chosen request (and, on the way back, the response).
 
 Three top-level blocks carry it (any number of `*.yaml` files in
-`SLUICE_CONFIG_DIR`, merged by top-level key):
+`SLIPSPACE_CONFIG_DIR`, merged by top-level key):
 
 | Block | Holds | Type |
 |---|---|---|
@@ -266,8 +266,8 @@ rules:
 ```
 
 Source: `test/e2e/rules/batches_rebase_test.go`. With `ExternalURL` set to
-`https://sluice.donkeywork.dev`, an upstream `results_url` is rewritten to
-`https://sluice.donkeywork.dev/anthropic/v1/messages/batches/<id>/results` while
+`https://slipspace.donkeywork.dev`, an upstream `results_url` is rewritten to
+`https://slipspace.donkeywork.dev/anthropic/v1/messages/batches/<id>/results` while
 every other field of the payload round-trips untouched.
 
 **Streaming caveat:** response-body rewrites are **dropped on streaming (SSE)
@@ -483,7 +483,7 @@ to its source file, and republishes through `config.Store.Replace`, no restart.
 Direct on-disk YAML edits and the `admin` / `telemetry` blocks still need a
 process restart (fsnotify auto-reload for the on-disk path is a v1.2+ item).
 Validate a bundle before deploy
-with `sluice-cli config validate` ([auxiliary-binaries.md](auxiliary-binaries.md)).
+with `slipspace-cli config validate` ([auxiliary-binaries.md](auxiliary-binaries.md)).
 
 ---
 
@@ -520,7 +520,7 @@ underscores on the Prometheus `/metrics` surface) — see
 ## See also
 
 - [Configuration model](configuration-model.md) — loader, file allow-list, merge rules
-- [Routing](routing.md) — path → protocol matching, `X-Sluice-*` headers
+- [Routing](routing.md) — path → protocol matching, `X-Slipspace-*` headers
 - [Authentication](auth.md) — managed vs passthrough, credential resolution
 - [Rules](rules.md) / [Actions](actions.md) — every condition and action
 - [Resilience](resilience.md) — failover, load-balance, circuit breaker

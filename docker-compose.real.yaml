@@ -21,4 +21,4 @@ services:
     volumes:
       # Replace the mock-pointed config-dev mount with the real-upstream
       # generated tree.
-      - ./config-dev.real:/etc/sluice:ro
+      - ./config-dev.real:/etc/slipspace:ro

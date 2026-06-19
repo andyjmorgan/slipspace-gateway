@@ -47,7 +47,7 @@ func TestTags_AddTagAction_AppearsOnRequestEvent(t *testing.T) {
 }
 
 // TestTags_HeaderTriggered exercises the tag-large-prompt rule —
-// fires on the x-sluice-tag-large: true header — so we cover the
+// fires on the x-slipspace-tag-large: true header — so we cover the
 // HeaderCondition→AddTagAction path in addition to the provider/
 // endpoint one above.
 func TestTags_HeaderTriggered(t *testing.T) {
@@ -62,7 +62,7 @@ func TestTags_HeaderTriggered(t *testing.T) {
 
 	resp := h.PostJSON("/v1/chat/completions",
 		map[string]any{"model": "gpt-4o-mini", "messages": []map[string]string{{"role": "user", "content": "."}}},
-		http.Header{"X-Sluice-Tag-Large": []string{"true"}})
+		http.Header{"X-Slipspace-Tag-Large": []string{"true"}})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
 	}

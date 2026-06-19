@@ -69,10 +69,10 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 	}
 	attrs := span.Attributes()
 	checks := map[string]string{
-		observability.AttrGenAIOperationName:  observability.OperationChat,
-		observability.AttrGenAIProviderName:   "openai",
-		observability.AttrGenAIRequestModel:   "gpt-4o-mini",
-		observability.AttrSluiceCorrelationID: "corr-1",
+		observability.AttrGenAIOperationName:     observability.OperationChat,
+		observability.AttrGenAIProviderName:      "openai",
+		observability.AttrGenAIRequestModel:      "gpt-4o-mini",
+		observability.AttrSlipSpaceCorrelationID: "corr-1",
 	}
 	for k, want := range checks {
 		got, ok := attrValue(attrs, k)
@@ -84,13 +84,13 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 	// Arbiter ingest reads to fill its request_events gen_ai-owned
 	// columns (it joins span↔Record by correlation_id). configuration +
 	// protocol ride the span; the full rule chain stays on the Record.
-	if v, ok := attrValue(attrs, observability.AttrSluiceConfiguration); !ok || v.AsString() != "dev" {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceConfiguration); !ok || v.AsString() != "dev" {
 		t.Errorf("slipspace.configuration = %q (ok=%v), want dev", v.AsString(), ok)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceProtocol); !ok || v.AsString() != "chat_completions" {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceProtocol); !ok || v.AsString() != "chat_completions" {
 		t.Errorf("slipspace.protocol = %q (ok=%v), want chat_completions", v.AsString(), ok)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceUpstreamStatus); !ok || v.AsInt64() != 200 {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceUpstreamStatus); !ok || v.AsInt64() != 200 {
 		t.Errorf("slipspace.upstream_status = %d (ok=%v), want 200", v.AsInt64(), ok)
 	}
 	if v, ok := attrValue(attrs, observability.AttrGenAIUsageInputTokens); !ok || v.AsInt64() != 10 {
@@ -111,7 +111,7 @@ func TestEmitTrace_SingleRequestSpan(t *testing.T) {
 	}
 }
 
-func TestEmitTrace_SluiceFactAttrs(t *testing.T) {
+func TestEmitTrace_SlipSpaceFactAttrs(t *testing.T) {
 	r, sr := traceHarness(t)
 	r.apiKeyName = "team-key"
 	r.method = "POST"
@@ -130,31 +130,31 @@ func TestEmitTrace_SluiceFactAttrs(t *testing.T) {
 	})
 
 	attrs := sr.Ended()[0].Attributes()
-	if v, ok := attrValue(attrs, observability.AttrSluiceMethod); !ok || v.AsString() != "POST" {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceMethod); !ok || v.AsString() != "POST" {
 		t.Errorf("slipspace.method = %q (ok=%v), want POST", v.AsString(), ok)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceAPIKeyName); !ok || v.AsString() != "team-key" {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceAPIKeyName); !ok || v.AsString() != "team-key" {
 		t.Errorf("slipspace.api_key_name = %q (ok=%v), want team-key", v.AsString(), ok)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceProtocol); !ok || v.AsString() != "chat" {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceProtocol); !ok || v.AsString() != "chat" {
 		t.Errorf("slipspace.protocol = %q (ok=%v), want chat", v.AsString(), ok)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceUpstreamStatus); !ok || v.AsInt64() != 200 {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceUpstreamStatus); !ok || v.AsInt64() != 200 {
 		t.Errorf("slipspace.upstream_status = %d (ok=%v), want 200", v.AsInt64(), ok)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceTags); !ok {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceTags); !ok {
 		t.Errorf("slipspace.tags absent")
 	} else if got := v.AsStringSlice(); len(got) != 2 || got[0] != "billable" || got[1] != "team:research" {
 		t.Errorf("slipspace.tags = %v, want [billable team:research]", got)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceRulesFired); !ok {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceRulesFired); !ok {
 		t.Errorf("slipspace.rules_fired absent")
 	} else if got := v.AsStringSlice(); len(got) != 2 || got[0] != "redirect-qwen" || got[1] != "tag-billable" {
 		t.Errorf("slipspace.rules_fired = %v, want [redirect-qwen tag-billable] (empty names skipped)", got)
 	}
 }
 
-func TestEmitTrace_SluiceFactAttrs_OmittedWhenAbsent(t *testing.T) {
+func TestEmitTrace_SlipSpaceFactAttrs_OmittedWhenAbsent(t *testing.T) {
 	// No api-key, no method, no tags, no rules — those attrs stay off the span.
 	r, sr := traceHarness(t)
 	r.apiKeyName = ""
@@ -168,10 +168,10 @@ func TestEmitTrace_SluiceFactAttrs_OmittedWhenAbsent(t *testing.T) {
 	}, nil)
 	attrs := sr.Ended()[0].Attributes()
 	for _, k := range []string{
-		observability.AttrSluiceMethod,
-		observability.AttrSluiceAPIKeyName,
-		observability.AttrSluiceTags,
-		observability.AttrSluiceRulesFired,
+		observability.AttrSlipSpaceMethod,
+		observability.AttrSlipSpaceAPIKeyName,
+		observability.AttrSlipSpaceTags,
+		observability.AttrSlipSpaceRulesFired,
 	} {
 		if _, ok := attrValue(attrs, k); ok {
 			t.Errorf("attr %s should be absent when its source is empty", k)
@@ -223,7 +223,7 @@ func TestEmitTrace_AttemptsBecomeChildSpans(t *testing.T) {
 	var parent sdktrace.ReadOnlySpan
 	children := map[string]sdktrace.ReadOnlySpan{}
 	for _, s := range spans {
-		if v, ok := attrValue(s.Attributes(), observability.AttrSluiceResilienceTarget); ok {
+		if v, ok := attrValue(s.Attributes(), observability.AttrSlipSpaceResilienceTarget); ok {
 			children[v.AsString()] = s
 			continue
 		}
@@ -272,10 +272,10 @@ func TestEmitTrace_ConversationID(t *testing.T) {
 	if v, ok := attrValue(attrs, observability.AttrGenAIConversationID); !ok || v.AsString() != "thread-2" {
 		t.Errorf("gen_ai.conversation.id = %q (ok=%v), want thread-2", v.AsString(), ok)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceSessionID); !ok || v.AsString() != "bundle-1" {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceSessionID); !ok || v.AsString() != "bundle-1" {
 		t.Errorf("slipspace.session_id = %q (ok=%v), want bundle-1", v.AsString(), ok)
 	}
-	if v, ok := attrValue(attrs, observability.AttrSluiceParentConversationID); !ok || v.AsString() != "bundle-1" {
+	if v, ok := attrValue(attrs, observability.AttrSlipSpaceParentConversationID); !ok || v.AsString() != "bundle-1" {
 		t.Errorf("slipspace.parent_conversation_id = %q (ok=%v), want bundle-1", v.AsString(), ok)
 	}
 }
@@ -287,7 +287,7 @@ func TestEmitTrace_NoConversationIDWhenNoSession(t *testing.T) {
 	if _, ok := attrValue(attrs, observability.AttrGenAIConversationID); ok {
 		t.Errorf("gen_ai.conversation.id should be absent when no conversation resolved")
 	}
-	if _, ok := attrValue(attrs, observability.AttrSluiceSessionID); ok {
+	if _, ok := attrValue(attrs, observability.AttrSlipSpaceSessionID); ok {
 		t.Errorf("slipspace.session_id should be absent when no session resolved")
 	}
 }

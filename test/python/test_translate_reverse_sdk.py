@@ -1,7 +1,7 @@
 """Native-SDK wire-compat for the REVERSE cross-provider translation arm.
 
 The official `openai` Python SDK is the client. Each test points it at the
-gateway with the `x-sluice-translate: messages` probe header, which fires the
+gateway with the `x-slipspace-translate: messages` probe header, which fires the
 config-dev `translate-chat-to-messages` rule: the inbound OpenAI Chat request is
 translated to Anthropic Messages and routed to anthropic's messages endpoint,
 the mock returns a NATURAL Anthropic Messages response, and the gateway
@@ -37,7 +37,7 @@ def _xlate_client(gateway_url: str) -> openai.OpenAI:
     return openai.OpenAI(
         base_url=f"{gateway_url}/v1",
         api_key=API_KEY,
-        default_headers={"x-sluice-translate": "messages"},
+        default_headers={"x-slipspace-translate": "messages"},
         max_retries=0,
     )
 

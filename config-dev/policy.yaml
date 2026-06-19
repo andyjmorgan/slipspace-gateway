@@ -81,7 +81,7 @@ api_keys:
     enabled: true
 
   - secret: sk_dev_replica_donkeywork_production_local_only
-    name: "sluice.donkeywork.dev production (replica)"
+    name: "slipspace.donkeywork.dev production (replica)"
     configuration: production
     enabled: true
   - secret: ollama
@@ -130,7 +130,7 @@ rules:
     condition:
       type: header
       keyOperator: Equals
-      keyPattern: x-sluice-tag-large
+      keyPattern: x-slipspace-tag-large
       valueOperator: Equals
       valuePattern: "true"
       caseInsensitive: true
@@ -159,13 +159,13 @@ rules:
       expectedProvider: openai
     actions:
       - type: setHeader
-        headerName: X-Sluice-Redacted
+        headerName: X-Slipspace-Redacted
         headerAction: Set
         headerValue: emails
     behavior: continue
 
   # Cross-provider translation, header-gated so it fires only for the
-  # wire-compat suite's explicit probe (x-sluice-translate: chat). An inbound
+  # wire-compat suite's explicit probe (x-slipspace-translate: chat). An inbound
   # Anthropic Messages request carrying that header is translated to the
   # OpenAI Chat protocol and routed to anthropic's chat endpoint; the response
   # is translated back to Messages. Header-gated to keep every other dev
@@ -174,7 +174,7 @@ rules:
     condition:
       type: header
       keyOperator: Equals
-      keyPattern: x-sluice-translate
+      keyPattern: x-slipspace-translate
       valueOperator: Equals
       valuePattern: chat
       caseInsensitive: true
@@ -184,7 +184,7 @@ rules:
     behavior: continue
 
   # Reverse cross-provider translation, header-gated so it fires only for the
-  # wire-compat suite's explicit probe (x-sluice-translate: messages). An inbound
+  # wire-compat suite's explicit probe (x-slipspace-translate: messages). An inbound
   # OpenAI Chat request carrying that header is translated to the Anthropic
   # Messages protocol and routed to anthropic's messages endpoint; the response
   # is translated back to OpenAI Chat. Header-gated to keep every other dev
@@ -193,7 +193,7 @@ rules:
     condition:
       type: header
       keyOperator: Equals
-      keyPattern: x-sluice-translate
+      keyPattern: x-slipspace-translate
       valueOperator: Equals
       valuePattern: messages
       caseInsensitive: true

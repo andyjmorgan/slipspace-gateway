@@ -1,4 +1,4 @@
-"""Smoke test: Gemini OpenAI-compat chat completions via sluice-gateway.
+"""Smoke test: Gemini OpenAI-compat chat completions via slipspace-gateway.
 
 v1.0.2 wires `/gemini/v1beta/openai/chat/completions` to Gemini's
 OpenAI-shaped surface. Drive it with the OpenAI SDK pointed at

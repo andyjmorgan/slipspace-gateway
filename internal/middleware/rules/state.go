@@ -81,7 +81,7 @@ type MutableState struct {
 	//	nil          → no override; managed-mode default credential stands.
 	//	non-empty    → literal APIKey, minted with the post-rule provider's
 	//	               header format, dropping every other credential header.
-	//	empty string → UseSluiceKey sentinel; forward the inbound bearer
+	//	empty string → UseSlipSpaceKey sentinel; forward the inbound bearer
 	//	               verbatim instead of substituting, stripping nothing.
 	//
 	// Cloned per attempt by Clone so the override survives the resilience

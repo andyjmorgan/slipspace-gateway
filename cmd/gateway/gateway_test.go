@@ -204,8 +204,8 @@ func TestGateway_ManagedHappyPath(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if corr := resp.Header.Get("X-Sluice-Correlation-Id"); corr == "" {
-		t.Errorf("missing X-Sluice-Correlation-Id header")
+	if corr := resp.Header.Get("X-Slipspace-Correlation-Id"); corr == "" {
+		t.Errorf("missing X-Slipspace-Correlation-Id header")
 	}
 
 	method, path, headers, got, _ := env.upstream.snapshot()
@@ -305,7 +305,7 @@ func TestGateway_PassthroughMode(t *testing.T) {
 
 	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{"model":"gpt-4o"}`)
 	req.Header.Set("Authorization", "Bearer customer-supplied-token")
-	req.Header.Set("X-Sluice-Configuration", "dev")
+	req.Header.Set("X-Slipspace-Configuration", "dev")
 	req.Header.Set("Content-Type", "application/json")
 
 	resp := doReq(t, req)
@@ -319,14 +319,14 @@ func TestGateway_PassthroughMode(t *testing.T) {
 	if got := headers.Get("Authorization"); got != "Bearer customer-supplied-token" {
 		t.Errorf("upstream Authorization = %q, want untouched", got)
 	}
-	if got := headers.Get("X-Sluice-Configuration"); got != "" {
-		t.Errorf("upstream X-Sluice-Configuration = %q, want stripped", got)
+	if got := headers.Get("X-Slipspace-Configuration"); got != "" {
+		t.Errorf("upstream X-Slipspace-Configuration = %q, want stripped", got)
 	}
 }
 
 // TestGateway_IdentityPassthroughMode covers the unguessable replacement
-// for X-Sluice-Configuration: the client supplies a Sluice api-key in
-// X-Sluice-Identity to pick a policy, and an arbitrary upstream credential
+// for X-Slipspace-Configuration: the client supplies a SlipSpace api-key in
+// X-Slipspace-Identity to pick a policy, and an arbitrary upstream credential
 // in Authorization that the gateway forwards verbatim. Both selector
 // headers are stripped before the request reaches upstream.
 func TestGateway_IdentityPassthroughMode(t *testing.T) {
@@ -334,7 +334,7 @@ func TestGateway_IdentityPassthroughMode(t *testing.T) {
 
 	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{"model":"gpt-4o"}`)
 	req.Header.Set("Authorization", "Bearer customer-supplied-token")
-	req.Header.Set("X-Sluice-Identity", "sk_dev_local")
+	req.Header.Set("X-Slipspace-Identity", "sk_dev_local")
 	req.Header.Set("Content-Type", "application/json")
 
 	resp := doReq(t, req)
@@ -348,11 +348,11 @@ func TestGateway_IdentityPassthroughMode(t *testing.T) {
 	if got := headers.Get("Authorization"); got != "Bearer customer-supplied-token" {
 		t.Errorf("upstream Authorization = %q, want untouched", got)
 	}
-	if got := headers.Get("X-Sluice-Identity"); got != "" {
-		t.Errorf("upstream X-Sluice-Identity = %q, want stripped", got)
+	if got := headers.Get("X-Slipspace-Identity"); got != "" {
+		t.Errorf("upstream X-Slipspace-Identity = %q, want stripped", got)
 	}
-	if got := headers.Get("X-Sluice-Configuration"); got != "" {
-		t.Errorf("upstream X-Sluice-Configuration = %q, want stripped (always)", got)
+	if got := headers.Get("X-Slipspace-Configuration"); got != "" {
+		t.Errorf("upstream X-Slipspace-Configuration = %q, want stripped (always)", got)
 	}
 }
 
@@ -361,7 +361,7 @@ func TestGateway_IdentityPassthroughMode_UnknownKey(t *testing.T) {
 
 	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{}`)
 	req.Header.Set("Authorization", "Bearer customer-supplied-token")
-	req.Header.Set("X-Sluice-Identity", "sk_dev_does_not_exist")
+	req.Header.Set("X-Slipspace-Identity", "sk_dev_does_not_exist")
 	req.Header.Set("Content-Type", "application/json")
 
 	resp := doReq(t, req)
@@ -467,7 +467,7 @@ func TestGateway_CorrelationIDPropagated(t *testing.T) {
 	id := "test-correlation-7c3"
 	req := newReq(t, http.MethodGet, env.gatewayURL+"/v1/models", "")
 	req.Header.Set("Authorization", "Bearer sk_dev_local")
-	req.Header.Set("X-Sluice-Correlation-Id", id)
+	req.Header.Set("X-Slipspace-Correlation-Id", id)
 
 	resp := doReq(t, req)
 	defer closeBody(resp)
@@ -475,8 +475,8 @@ func TestGateway_CorrelationIDPropagated(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if got := resp.Header.Get("X-Sluice-Correlation-Id"); got != id {
-		t.Errorf("X-Sluice-Correlation-Id = %q, want %q", got, id)
+	if got := resp.Header.Get("X-Slipspace-Correlation-Id"); got != id {
+		t.Errorf("X-Slipspace-Correlation-Id = %q, want %q", got, id)
 	}
 }
 
@@ -485,7 +485,7 @@ func TestGateway_SessionIDEchoed(t *testing.T) {
 
 	req := newReq(t, http.MethodGet, env.gatewayURL+"/v1/models", "")
 	req.Header.Set("Authorization", "Bearer sk_dev_local")
-	req.Header.Set("X-Sluice-Session-Id", "sess-abc")
+	req.Header.Set("X-Slipspace-Session-Id", "sess-abc")
 
 	resp := doReq(t, req)
 	defer closeBody(resp)
@@ -493,8 +493,8 @@ func TestGateway_SessionIDEchoed(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if got := resp.Header.Get("X-Sluice-Session-Id"); got != "sess-abc" {
-		t.Errorf("X-Sluice-Session-Id = %q, want sess-abc", got)
+	if got := resp.Header.Get("X-Slipspace-Session-Id"); got != "sess-abc" {
+		t.Errorf("X-Slipspace-Session-Id = %q, want sess-abc", got)
 	}
 }
 
@@ -518,7 +518,7 @@ func TestGateway_UnknownConfigurationPassthrough(t *testing.T) {
 
 	req := newReq(t, http.MethodPost, env.gatewayURL+"/v1/chat/completions", `{}`)
 	req.Header.Set("Authorization", "Bearer whatever")
-	req.Header.Set("X-Sluice-Configuration", "does-not-exist")
+	req.Header.Set("X-Slipspace-Configuration", "does-not-exist")
 	req.Header.Set("Content-Type", "application/json")
 
 	resp := doReq(t, req)

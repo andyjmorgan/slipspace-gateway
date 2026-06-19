@@ -73,7 +73,7 @@ func NewEvaluator(
 // Result is the engine's per-request evaluation summary handed to
 // the middleware. SourceRule is non-nil only when Outcome.Terminate
 // is true — it names the rule whose action short-circuited the
-// pipeline, used by the middleware to compose X-Sluice-Synthetic
+// pipeline, used by the middleware to compose X-Slipspace-Synthetic
 // and to record the synthetic status on the reporter.
 type Result struct {
 	// Outcome carries the terminating Response when set; zero-value

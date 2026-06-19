@@ -20,7 +20,7 @@ const maxRequestBody = 8 << 20
 // sessionHeader is the inbound HTTP header the server reads to scope a
 // request to a registry session pool. The gateway already echoes this
 // header end-to-end, so tests just set it on the outbound request.
-const sessionHeader = "X-Sluice-Session-Id"
+const sessionHeader = "X-Slipspace-Session-Id"
 
 type server struct {
 	mux *http.ServeMux
@@ -48,7 +48,7 @@ type CapturedRequest struct {
 
 	Body string `json:"body"`
 
-	// SessionID is the value of X-Sluice-Session-Id on the inbound
+	// SessionID is the value of X-Slipspace-Session-Id on the inbound
 	// request, empty when no session header was set. Lets tests
 	// scope captured-request assertions to a single scenario via
 	// the ?session=<id> query on /control/captured.

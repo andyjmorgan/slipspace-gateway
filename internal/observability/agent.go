@@ -8,20 +8,20 @@ import (
 
 // Agent-id resolution and context plumbing. An agent id identifies the agent
 // (or sub-agent) making a request — one axis below the session/conversation
-// that groups a turn's requests. Resolution mirrors session id: Sluice-first,
+// that groups a turn's requests. Resolution mirrors session id: SlipSpace-first,
 // then a configured fallback chain walked top-down. See the design note
 // "Correlating Requests Across Turns (Session Bundling)" → Agent id.
 
-// SluiceAgentHeader is the authoritative agent header. When a client or proxy
+// SlipSpaceAgentHeader is the authoritative agent header. When a client or proxy
 // deliberately sets it, it wins over any ambient client header, so it is
 // always tried before the fallback chain.
-const SluiceAgentHeader = "X-Sluice-Agent-Id"
+const SlipSpaceAgentHeader = "X-Slipspace-Agent-Id"
 
 // DefaultAgentIDHeaders is the shipped fallback chain, walked in order after
-// the authoritative Sluice header. It is intentionally EMPTY: gen_ai.agent.id
+// the authoritative SlipSpace header. It is intentionally EMPTY: gen_ai.agent.id
 // is reserved for a genuinely named agent (the semconv pairs it with
-// agent.name / agent.description), so only the authoritative X-Sluice-Agent-Id
-// — or an operator-supplied SLUICE_AGENT_ID_HEADERS entry that truly names an
+// agent.name / agent.description), so only the authoritative X-Slipspace-Agent-Id
+// — or an operator-supplied SLIPSPACE_AGENT_ID_HEADERS entry that truly names an
 // agent — feeds it.
 //
 // X-Claude-Code-Agent-Id was previously here, but its values are opaque
@@ -31,18 +31,18 @@ const SluiceAgentHeader = "X-Sluice-Agent-Id"
 // subagent is modelled coherently across clients and gen_ai.agent.id is freed.
 var DefaultAgentIDHeaders = []string{}
 
-// AgentResolver resolves an agent id from inbound request headers. The Sluice
+// AgentResolver resolves an agent id from inbound request headers. The SlipSpace
 // header is always attempted first; operator-configured fallbacks follow the
 // shipped defaults, in the order supplied.
 type AgentResolver struct {
 	// fallbacks is the ordered fallback chain (shipped defaults plus
-	// operator extras). The Sluice header is implicit and always first.
+	// operator extras). The SlipSpace header is implicit and always first.
 	fallbacks []string
 }
 
 // NewAgentResolver builds a resolver whose fallback chain is the shipped
 // DefaultAgentIDHeaders followed by extra — operator-supplied custom headers,
-// kept in the order given. The Sluice header is authoritative and need not
+// kept in the order given. The SlipSpace header is authoritative and need not
 // appear in extra. Blank entries are dropped.
 func NewAgentResolver(extra []string) *AgentResolver {
 	fb := make([]string, 0, len(DefaultAgentIDHeaders)+len(extra))
@@ -56,7 +56,7 @@ func NewAgentResolver(extra []string) *AgentResolver {
 }
 
 // Resolve returns the agent id and its provenance (the header name it came
-// from, which the console uses to label the value). The Sluice header wins;
+// from, which the console uses to label the value). The SlipSpace header wins;
 // otherwise the fallback chain is walked top-down and the first present,
 // non-empty header wins.
 //
@@ -68,7 +68,7 @@ func (a *AgentResolver) Resolve(h http.Header, sensitive func(string) bool) (id,
 	if h == nil {
 		return "", ""
 	}
-	if id, source = pickHeader(h, SluiceAgentHeader, sensitive); id != "" {
+	if id, source = pickHeader(h, SlipSpaceAgentHeader, sensitive); id != "" {
 		return id, source
 	}
 	for _, name := range a.fallbacks {

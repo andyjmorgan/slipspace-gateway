@@ -139,14 +139,14 @@ func TestEnrichLogger_AttachesServiceAndVersion(t *testing.T) {
 		t.Fatalf("NewLoggerWithWriter: %v", err)
 	}
 
-	enriched := observability.EnrichLogger(logger, "sluice-gateway", "v0.1.0")
+	enriched := observability.EnrichLogger(logger, "slipspace-gateway", "v0.1.0")
 	enriched.Info("emit")
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if rec[observability.LogFieldService] != "sluice-gateway" {
+	if rec[observability.LogFieldService] != "slipspace-gateway" {
 		t.Errorf("missing service field: %v", rec)
 	}
 	if rec[observability.LogFieldVersion] != "v0.1.0" {

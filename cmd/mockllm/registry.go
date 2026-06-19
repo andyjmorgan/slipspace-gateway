@@ -76,7 +76,7 @@ const BehaviorHang = "hang"
 // registry holds staged canned responses keyed by session ID. The
 // empty-string key is the global pool, which is what file-loaded
 // responses and session-less control-plane calls populate. Session
-// IDs come from the request's X-Sluice-Session-Id header, letting one
+// IDs come from the request's X-Slipspace-Session-Id header, letting one
 // mockllm instance serve multiple independent scenarios in the same
 // test run.
 type registry struct {

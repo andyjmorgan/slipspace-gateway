@@ -41,7 +41,7 @@ type ManifestInfo struct {
 	// reconstruct which pod produced a given snapshot.
 	Hostname string
 
-	// ConfigDir is the SLUICE_CONFIG_DIR the export read from. Useful when
+	// ConfigDir is the SLIPSPACE_CONFIG_DIR the export read from. Useful when
 	// multiple gateway pods serve different config trees.
 	ConfigDir string
 
@@ -129,7 +129,7 @@ func WriteZip(w io.Writer, files []File, info ManifestInfo) error {
 // here are visible to operators reading old exports — change with care.
 func buildManifest(info ManifestInfo, files []File) string {
 	var sb strings.Builder
-	sb.WriteString("Sluice Gateway Configuration Export\n")
+	sb.WriteString("SlipSpace Gateway Configuration Export\n")
 	ts := info.Timestamp.UTC().Format(time.RFC3339)
 	fmt.Fprintf(&sb, "Generated:   %s\n", ts)
 	fmt.Fprintf(&sb, "Version:     %s\n", info.Version)

@@ -9,19 +9,19 @@ import (
 )
 
 // Default values for ServerEnv fields. Each constant pairs with the
-// SLUICE_* env var that overrides it; see LoadEnv for the mapping.
+// SLIPSPACE_* env var that overrides it; see LoadEnv for the mapping.
 const (
 	DefaultHTTPBind             = ":8585"
 	DefaultShutdownDrainSeconds = 300
 	DefaultLogFormat            = "json"
 	DefaultLogLevel             = "info"
 	DefaultOTLPProtocol         = "grpc"
-	DefaultConfigDir            = "/etc/sluice/"
+	DefaultConfigDir            = "/etc/slipspace/"
 
 	// DefaultSpoolRoot is the on-disk root for the connector spool.
 	// Operators point this at a PVC mount in production so the spool
 	// survives process restarts; tests / dev override.
-	DefaultSpoolRoot = "/var/lib/sluice/spool"
+	DefaultSpoolRoot = "/var/lib/slipspace/spool"
 
 	// DefaultRulesMaxGroupDepth caps recursion through nested RuleGroup
 	// children during evaluation. The cap is a guardrail against
@@ -39,7 +39,7 @@ const (
 	DefaultUpstreamResponseHeaderTimeoutSeconds = 120
 
 	// MinUpstreamResponseHeaderTimeoutSeconds is the lower bound Validate
-	// enforces on SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS. Anything
+	// enforces on SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS. Anything
 	// below this risks cancelling slow-but-healthy upstreams mid-handshake,
 	// surfacing as spurious 502s on legitimate long-tail requests.
 	MinUpstreamResponseHeaderTimeoutSeconds = 120
@@ -47,7 +47,7 @@ const (
 	// DefaultAdminSnapshotInterval is how often the admin console's
 	// metric snapshotter reads the in-process registry. 5 minutes
 	// gives the 24h dashboard 288 sample points, matching the design's
-	// chart resolution. E2E tests override via SLUICE_ADMIN_SNAPSHOT_INTERVAL.
+	// chart resolution. E2E tests override via SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL.
 	DefaultAdminSnapshotIntervalMs = 300_000
 
 	// DefaultAdminLiveFeedCapacity sizes the in-process ring of completed
@@ -55,7 +55,7 @@ const (
 	// deliberately small: a 1M-token-context request body can be 4 MB+,
 	// and the pane is honest about the fact that this is a few-minute
 	// live tail, not an audit log. Operators set
-	// SLUICE_ADMIN_LIVE_FEED_CAPACITY=0 to disable the pane entirely.
+	// SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0 to disable the pane entirely.
 	DefaultAdminLiveFeedCapacity = 100
 
 	// DefaultAdminLiveFeedBodyBytes is the total byte budget of the
@@ -78,37 +78,37 @@ const (
 	MaxRulesMaxGroupDepth = 64
 )
 
-// SLUICE_* env var names. Exported so callers (CLI validator, tests,
+// SLIPSPACE_* env var names. Exported so callers (CLI validator, tests,
 // integration harness) can read or set them by symbolic name.
 const (
-	EnvHTTPBind             = "SLUICE_HTTP_BIND"
-	EnvShutdownDrainSeconds = "SLUICE_SHUTDOWN_DRAIN_SECONDS"
-	EnvLogFormat            = "SLUICE_LOG_FORMAT"
-	EnvLogLevel             = "SLUICE_LOG_LEVEL"
-	EnvPrometheusBind       = "SLUICE_PROMETHEUS_BIND"
-	EnvOTLPEndpoint         = "SLUICE_OTLP_ENDPOINT"
-	EnvOTLPProtocol         = "SLUICE_OTLP_PROTOCOL"
-	EnvOTelCaptureContent   = "SLUICE_OTEL_CAPTURE_CONTENT"
-	EnvTranslateLossyHeader = "SLUICE_TRANSLATE_LOSSY_HEADER"
-	EnvConfigDir            = "SLUICE_CONFIG_DIR"
-	EnvSpoolRoot            = "SLUICE_SPOOL_ROOT"
-	EnvRulesMaxGroupDepth   = "SLUICE_RULES_MAX_GROUP_DEPTH"
+	EnvHTTPBind             = "SLIPSPACE_HTTP_BIND"
+	EnvShutdownDrainSeconds = "SLIPSPACE_SHUTDOWN_DRAIN_SECONDS"
+	EnvLogFormat            = "SLIPSPACE_LOG_FORMAT"
+	EnvLogLevel             = "SLIPSPACE_LOG_LEVEL"
+	EnvPrometheusBind       = "SLIPSPACE_PROMETHEUS_BIND"
+	EnvOTLPEndpoint         = "SLIPSPACE_OTLP_ENDPOINT"
+	EnvOTLPProtocol         = "SLIPSPACE_OTLP_PROTOCOL"
+	EnvOTelCaptureContent   = "SLIPSPACE_OTEL_CAPTURE_CONTENT"
+	EnvTranslateLossyHeader = "SLIPSPACE_TRANSLATE_LOSSY_HEADER"
+	EnvConfigDir            = "SLIPSPACE_CONFIG_DIR"
+	EnvSpoolRoot            = "SLIPSPACE_SPOOL_ROOT"
+	EnvRulesMaxGroupDepth   = "SLIPSPACE_RULES_MAX_GROUP_DEPTH"
 
-	EnvUpstreamResponseHeaderTimeoutSeconds = "SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS"
-	EnvAdminSnapshotIntervalMs              = "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS"
-	EnvAdminLiveFeedCapacity                = "SLUICE_ADMIN_LIVE_FEED_CAPACITY"
-	EnvAdminLiveFeedBodyBytes               = "SLUICE_ADMIN_LIVE_FEED_BODY_BYTES"
-	EnvAdminLiveFeedBodyMaxBytes            = "SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
-	EnvRedactExtraHeaders                   = "SLUICE_REDACT_EXTRA_HEADERS"
-	EnvSessionIDHeaders                     = "SLUICE_SESSION_ID_HEADERS"
-	EnvThreadIDHeaders                      = "SLUICE_THREAD_ID_HEADERS"
-	EnvParentIDHeaders                      = "SLUICE_PARENT_ID_HEADERS"
-	EnvAgentIDHeaders                       = "SLUICE_AGENT_ID_HEADERS"
-	EnvUserIDHeaders                        = "SLUICE_USER_ID_HEADERS"
-	EnvExternalURL                          = "SLUICE_EXTERNAL_URL"
+	EnvUpstreamResponseHeaderTimeoutSeconds = "SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS"
+	EnvAdminSnapshotIntervalMs              = "SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS"
+	EnvAdminLiveFeedCapacity                = "SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY"
+	EnvAdminLiveFeedBodyBytes               = "SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES"
+	EnvAdminLiveFeedBodyMaxBytes            = "SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES"
+	EnvRedactExtraHeaders                   = "SLIPSPACE_REDACT_EXTRA_HEADERS"
+	EnvSessionIDHeaders                     = "SLIPSPACE_SESSION_ID_HEADERS"
+	EnvThreadIDHeaders                      = "SLIPSPACE_THREAD_ID_HEADERS"
+	EnvParentIDHeaders                      = "SLIPSPACE_PARENT_ID_HEADERS"
+	EnvAgentIDHeaders                       = "SLIPSPACE_AGENT_ID_HEADERS"
+	EnvUserIDHeaders                        = "SLIPSPACE_USER_ID_HEADERS"
+	EnvExternalURL                          = "SLIPSPACE_EXTERNAL_URL"
 )
 
-// envVarNames lists every SLUICE_* var LoadEnv consults. Used by the CLI
+// envVarNames lists every SLIPSPACE_* var LoadEnv consults. Used by the CLI
 // validator's success line ("N vars resolved") and by tests that need an
 // authoritative list of inputs.
 var envVarNames = []string{
@@ -138,7 +138,7 @@ var envVarNames = []string{
 	EnvExternalURL,
 }
 
-// EnvVarNames returns the set of SLUICE_* env vars consulted by LoadEnv,
+// EnvVarNames returns the set of SLIPSPACE_* env vars consulted by LoadEnv,
 // in the canonical order. The returned slice is a fresh copy; callers may
 // modify it without affecting the package.
 func EnvVarNames() []string {
@@ -148,7 +148,7 @@ func EnvVarNames() []string {
 }
 
 // ServerEnv carries the per-process server configuration parsed from the
-// SLUICE_* env vars. Server config is restart-to-change by design — there
+// SLIPSPACE_* env vars. Server config is restart-to-change by design — there
 // is no live-reload pathway, so the values land on the struct once at
 // startup and are read-only thereafter.
 type ServerEnv struct {
@@ -180,7 +180,7 @@ type ServerEnv struct {
 	// content otherwise stays in the connector spool (invariant #4).
 	OTelCaptureContent bool
 
-	// TranslateLossyHeader, when true, emits an X-Sluice-Translation-Lossy
+	// TranslateLossyHeader, when true, emits an X-Slipspace-Translation-Lossy
 	// response header listing source features dropped during cross-provider
 	// translation. Default false — the drop counter (operator telemetry) is
 	// always on, but the consumer-facing header is a developer/debug aid.
@@ -238,7 +238,7 @@ type ServerEnv struct {
 	// of these has its value replaced by "[REDACTED]" before it lands
 	// in the live-messages ring, connector Records, or proxy log
 	// envelopes. The built-in list (auth / api-key / token / cookie /
-	// secret / sluice-identity) is always active; this slice extends
+	// secret / slipspace-identity) is always active; this slice extends
 	// it for environment-specific headers (internal tracing IDs that
 	// carry tenant identifiers, custom auth schemes, etc.).
 	RedactExtraHeaders []string
@@ -246,7 +246,7 @@ type ServerEnv struct {
 	// SessionIDHeaders is the operator-supplied addendum to the built-in
 	// session-id fallback chain (observability.DefaultSessionIDHeaders).
 	// Each entry is a header name appended, in order, after the shipped
-	// defaults; the authoritative X-Sluice-Session-Id is always tried
+	// defaults; the authoritative X-Slipspace-Session-Id is always tried
 	// first regardless. Lets an operator bundle a custom client's
 	// conversation header (e.g. X-Acme-Conversation-Id) without a code
 	// change. A header also present in RedactExtraHeaders is skipped
@@ -256,20 +256,20 @@ type ServerEnv struct {
 	// ThreadIDHeaders is the operator-supplied addendum to the built-in
 	// conversation/thread fallback chain (observability.DefaultThreadIDHeaders,
 	// Thread-Id / X-Claude-Code-Agent-Id). Appended in order after the shipped
-	// defaults; the authoritative X-Sluice-Thread-Id is always tried first. A
+	// defaults; the authoritative X-Slipspace-Thread-Id is always tried first. A
 	// header also present in RedactExtraHeaders is skipped during resolution.
 	ThreadIDHeaders []string
 
 	// ParentIDHeaders is the operator-supplied addendum to the built-in
 	// parent-conversation fallback chain (observability.DefaultParentIDHeaders,
 	// X-Codex-Parent-Thread-Id). Appended in order after the shipped defaults;
-	// the authoritative X-Sluice-Parent-Conversation-Id is always tried first.
+	// the authoritative X-Slipspace-Parent-Conversation-Id is always tried first.
 	ParentIDHeaders []string
 
 	// AgentIDHeaders is the operator-supplied addendum to the built-in
 	// agent-id fallback chain (observability.DefaultAgentIDHeaders, now empty —
 	// gen_ai.agent.id is reserved for genuinely named agents). Each entry is a
-	// header name appended, in order; the authoritative X-Sluice-Agent-Id is
+	// header name appended, in order; the authoritative X-Slipspace-Agent-Id is
 	// always tried first regardless. A header also present in RedactExtraHeaders
 	// is skipped during resolution so a promoted agent id can't bypass
 	// redaction.
@@ -279,14 +279,14 @@ type ServerEnv struct {
 	// user-id fallback chain (observability.DefaultUserIDHeaders, which is
 	// empty — no client ships a standard end-user header). Each entry is a
 	// header name appended, in order, after the (empty) defaults; the
-	// authoritative X-Sluice-User-Id is always tried first regardless. Lets
+	// authoritative X-Slipspace-User-Id is always tried first regardless. Lets
 	// an operator promote a custom client's user header without a code
 	// change. A header also present in RedactExtraHeaders is skipped during
 	// resolution so a promoted user id can't bypass redaction.
 	UserIDHeaders []string
 
 	// ExternalURL is the gateway's externally reachable base URL (e.g.
-	// https://sluice.example.com), used to resolve the {external_url}
+	// https://slipspace.example.com), used to resolve the {external_url}
 	// template reference in response-side body rewrites — chiefly
 	// rebasing provider-returned URLs (Anthropic batches results_url)
 	// back through the gateway. Empty leaves {external_url} unresolved,
@@ -316,7 +316,7 @@ func (e *ServerEnv) LiveFeedBodiesEnabled() bool {
 	return e.LiveFeedEnabled() && e.AdminLiveFeedBodyBytes > 0
 }
 
-// LoadEnv parses the SLUICE_* env vars and returns a populated
+// LoadEnv parses the SLIPSPACE_* env vars and returns a populated
 // ServerEnv. Absent or empty vars fall back to the documented defaults.
 // Parse failures wrap ErrInvalidEnv; validation against the allowed
 // enum sets is deferred to Validate.

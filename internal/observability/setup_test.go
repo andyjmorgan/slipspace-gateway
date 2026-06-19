@@ -14,7 +14,7 @@ import (
 )
 
 func build() observability.BuildInfo {
-	return observability.BuildInfo{Service: "sluice-gateway", Version: "v0.0.0-test"}
+	return observability.BuildInfo{Service: "slipspace-gateway", Version: "v0.0.0-test"}
 }
 
 // shutdownProv bounds the OTel provider Shutdown to a short deadline.

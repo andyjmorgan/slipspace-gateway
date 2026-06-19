@@ -83,7 +83,7 @@ rules:
       expectedProvider: openai
     actions:
       - type: rewriteField
-        target: request.body.x_sluice_tracking
+        target: request.body.x_slipspace_tracking
         value: "t1"
     behavior: continue
 
@@ -140,8 +140,8 @@ func TestRewrite_RequestSide_Streaming(t *testing.T) {
 	if gjson.Get(body, "user").Exists() {
 		t.Errorf("user should have been removed; body=%s", body)
 	}
-	if got := gjson.Get(body, "x_sluice_tracking").String(); got != "t1" {
-		t.Errorf("x_sluice_tracking = %q, want t1; body=%s", got, body)
+	if got := gjson.Get(body, "x_slipspace_tracking").String(); got != "t1" {
+		t.Errorf("x_slipspace_tracking = %q, want t1; body=%s", got, body)
 	}
 	msgs := gjson.Get(body, "messages").Array()
 	if len(msgs) != 2 {
@@ -186,7 +186,7 @@ func TestRewrite_RequestSide_NonStreaming(t *testing.T) {
 	if gjson.Get(body, "user").Exists() {
 		t.Errorf("user should still be removed regardless of stream; body=%s", body)
 	}
-	if gjson.Get(body, "x_sluice_tracking").String() != "t1" {
+	if gjson.Get(body, "x_slipspace_tracking").String() != "t1" {
 		t.Errorf("tracking field missing; body=%s", body)
 	}
 }

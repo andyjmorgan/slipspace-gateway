@@ -127,7 +127,7 @@ Ships records to S3 or any S3-compatible backend (MinIO, SeaweedFS, Garage, Ceph
 connectors:
   - name: prod-audit
     type: s3
-    bucket: sluice-audit
+    bucket: slipspace-audit
     region: us-east-1
     prefix: events/
     endpoint_url: ""              # default: real AWS S3
@@ -184,7 +184,7 @@ auth:
 # assume_role
 auth:
   mode: assume_role
-  role_arn: arn:aws:iam::123456789012:role/sluice-audit-writer
+  role_arn: arn:aws:iam::123456789012:role/slipspace-audit-writer
   external_id_ref: env:S3_AUDIT_EXTERNAL_ID
 ```
 
@@ -209,7 +209,7 @@ Ships records to Azure Blob Storage. The fields and key layout mirror s3 but use
 connectors:
   - name: prod-audit-azure
     type: azure_blob
-    account: sluiceprod
+    account: slipspaceprod
     container: audit
     prefix: events/
     rotation:
@@ -281,7 +281,7 @@ connectors:
   - name: telemetry-records
     type: webhook
     url: https://telemetry.example.com/api/v1/ingest/record
-    secret_ref: env:SLUICE_TELEMETRY_SECRET
+    secret_ref: env:SLIPSPACE_TELEMETRY_SECRET
     gateway_id: prod-gateway-1
     timeout_ms: 5000
 ```
@@ -290,7 +290,7 @@ connectors:
 |---|---|---|---|
 | `url` | string (URL) | yes | The endpoint each record is POSTed to. Scheme must be `http` or `https`. Loopback / private / link-local hosts are rejected at config-load unless the test-only override is set (see [SSRF guard](#ssrf-guard)). |
 | `secret_ref` | secret_ref | yes | HMAC-SHA256 signing key. Resolved via [secret_ref indirection](#secret_ref-indirection) at startup; a missing env var / unreadable file fails boot loudly rather than silently dropping every push. |
-| `gateway_id` | string | no | Sent as the `X-Sluice-Gateway-Id` header so a receiver that keys HMAC secrets per gateway (the Arbiter registry) can look the secret up. Optional for a generic receiver that verifies the signature alone; **required** when pushing to the Arbiter. |
+| `gateway_id` | string | no | Sent as the `X-Slipspace-Gateway-Id` header so a receiver that keys HMAC secrets per gateway (the Arbiter registry) can look the secret up. Optional for a generic receiver that verifies the signature alone; **required** when pushing to the Arbiter. |
 | `timeout_ms` | int (ms) | yes | Per-push HTTP timeout. Must be in `(0, 60000]`. |
 
 `rotation:` and `auth:` are not used by webhook connectors, and cloud-storage fields (`bucket`, `region`, `account`, `container`, `endpoint_url`, `use_path_style`) are explicitly rejected at config-load ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) `validateWebhook`).
@@ -302,8 +302,8 @@ For each evaluated record that passes its binding's sampling / filter / body-cap
 | Header | Value | Notes |
 |---|---|---|
 | `Content-Type` | `application/json` | The body is a single JSON-encoded `cc.Record`. |
-| `X-Sluice-Gateway-Id` | the `gateway_id` field | Identifies the sending gateway to the receiver's registry so it can select the right HMAC secret. Empty when `gateway_id` is unset. |
-| `X-Sluice-Signature` | `<hex_hmac_sha256>` | Hex-encoded HMAC-SHA256 of the **raw request body** under the resolved secret. No timestamp, no `t=`/`v1=` prefix — just the bare hex digest. |
+| `X-Slipspace-Gateway-Id` | the `gateway_id` field | Identifies the sending gateway to the receiver's registry so it can select the right HMAC secret. Empty when `gateway_id` is unset. |
+| `X-Slipspace-Signature` | `<hex_hmac_sha256>` | Hex-encoded HMAC-SHA256 of the **raw request body** under the resolved secret. No timestamp, no `t=`/`v1=` prefix — just the bare hex digest. |
 
 The standard Go `User-Agent` is sent (no custom build-version header). Body bodies above the binding's `max_body_bytes` (no per-type default cap — [`contracts/config/connectors.go`](../contracts/config/connectors.go) `DefaultMaxBodyBytes` returns 0 for every connector type including webhook; the 1 MiB webhook default was removed) are stripped or the record dropped *before* it reaches the pusher. The only ceiling is the bodycapture middleware's 10 MiB inbound read limit; see [connector-bindings.md](connector-bindings.md).
 
@@ -312,7 +312,7 @@ The standard Go `User-Agent` is sent (no custom build-version header). Body bodi
 The signature is the hex HMAC-SHA256 of the exact raw request body under the shared secret — nothing else is mixed in. Verification, in pseudocode:
 
 ```python
-sig_hex = req.headers["X-Sluice-Signature"]                      # bare hex digest
+sig_hex = req.headers["X-Slipspace-Signature"]                      # bare hex digest
 expected = hmac.new(secret, req.body, hashlib.sha256).hexdigest()
 if not hmac.compare_digest(expected, sig_hex):
     return 401
@@ -320,7 +320,7 @@ if not hmac.compare_digest(expected, sig_hex):
 record = json.loads(req.body)
 ```
 
-The Arbiter does exactly this ([`internal/arbiter/registry/registry.go`](../internal/arbiter/registry/registry.go)): it selects the secret by `X-Sluice-Gateway-Id`, recomputes the HMAC over the body, and `hmac.Equal`-compares it to the supplied hex. There is **no** timestamp component and **no** replay window — those are not implemented. A receiver that wants replay protection must add its own freshness check from a field inside the record (e.g. the record's `ts_ns`), not from the signature.
+The Arbiter does exactly this ([`internal/arbiter/registry/registry.go`](../internal/arbiter/registry/registry.go)): it selects the secret by `X-Slipspace-Gateway-Id`, recomputes the HMAC over the body, and `hmac.Equal`-compares it to the supplied hex. There is **no** timestamp component and **no** replay window — those are not implemented. A receiver that wants replay protection must add its own freshness check from a field inside the record (e.g. the record's `ts_ns`), not from the signature.
 
 ### Outcome handling
 
@@ -346,7 +346,7 @@ The guard has one escape hatch:
 
 | Env var | Default | Notes |
 |---|---|---|
-| `SLUICE_WEBHOOK_ALLOW_PRIVATE` | unset | Setting to `1` or `true` makes config-load validation accept loopback / RFC1918 / link-local hosts for **every** webhook connector in the process. **Test-only.** The e2e harness sets it so its `httptest.Server` (bound to 127.0.0.1) can be wired as a webhook receiver. **Never set this in production.** |
+| `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE` | unset | Setting to `1` or `true` makes config-load validation accept loopback / RFC1918 / link-local hosts for **every** webhook connector in the process. **Test-only.** The e2e harness sets it so its `httptest.Server` (bound to 127.0.0.1) can be wired as a webhook receiver. **Never set this in production.** |
 
 It is a process-global flag by design, so a misconfiguration cannot quietly downgrade only one connector's posture.
 
@@ -364,7 +364,7 @@ It is a process-global flag by design, so a misconfiguration cannot quietly down
 - [spool.md](spool.md) — the disk-backed runtime for `s3`/`azure_blob`; rotation, retry, breaker, recovery.
 - [arbiter-webhook.md](arbiter-webhook.md) — the webhook push contract end-to-end, including the Arbiter ingest side, the gateway registry, and HMAC secret management.
 - [configuration-model.md](configuration-model.md) — where the `connectors:` block sits in the YAML file allow-list.
-- [environment-variables.md](environment-variables.md) — `SLUICE_SPOOL_ROOT`, `SLUICE_WEBHOOK_ALLOW_PRIVATE`.
+- [environment-variables.md](environment-variables.md) — `SLIPSPACE_SPOOL_ROOT`, `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE`.
 - [`contracts/config/connectors.go`](../contracts/config/connectors.go) — struct shapes.
 - [`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) — per-type validators.
 - [`internal/connector/s3/`](../internal/connector/s3/), [`internal/connector/azureblob/`](../internal/connector/azureblob/) — spool-backed connector implementations; [`internal/connector/factory/factory.go`](../internal/connector/factory/factory.go) builds them.

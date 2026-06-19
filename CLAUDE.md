@@ -1,22 +1,22 @@
-# Sluice Gateway — Claude Project Instructions
+# SlipSpace Gateway — Claude Project Instructions
 
 This file is the standing brief for any AI assistant (or human) working in this repo. Read it before touching code.
 
 ## What this is
 
-Sluice is a slim, observable AI provider gateway in Go. It intercepts API calls to OpenAI, Anthropic, and Google Gemini, applies per-tenant policy (auth, rules, resilience, telemetry), and forwards to the upstream provider after credential substitution.
+SlipSpace is a slim, observable AI provider gateway in Go. It intercepts API calls to OpenAI, Anthropic, and Google Gemini, applies per-tenant policy (auth, rules, resilience, telemetry), and forwards to the upstream provider after credential substitution.
 
 Repo: `git@github.com:andyjmorgan/slipspace-gateway.git`
 
 Two coexisting auth modes:
-- **Managed:** client uses a Sluice-issued API key (`Authorization: Bearer sk_live_...`); gateway swaps in the upstream provider credentials before forwarding.
-- **Passthrough:** client uses their own upstream token (e.g., Claude Code OAuth); gateway picks the policy via `X-Sluice-Identity: <sk_live_... api-key secret>` (preferred) or the deprecated legacy `X-Sluice-Configuration: <name>` header, and forwards the `Authorization` header verbatim.
+- **Managed:** client uses a SlipSpace-issued API key (`Authorization: Bearer sk_live_...`); gateway swaps in the upstream provider credentials before forwarding.
+- **Passthrough:** client uses their own upstream token (e.g., Claude Code OAuth); gateway picks the policy via `X-Slipspace-Identity: <sk_live_... api-key secret>` (preferred) or the deprecated legacy `X-Slipspace-Configuration: <name>` header, and forwards the `Authorization` header verbatim.
 
 Both modes resolve to a named **Configuration** — a reusable policy bundle (upstream credentials, rules, resilience). Many API keys can share one configuration.
 
 ## Where the canonical design lives
 
-**DonkeyWork project `522d9204-c3b6-4719-b0c9-8ef91b968314`** ("Sluice Gateway") holds the source of truth: 20+ design notes, 16 milestones, 120+ tasks with acceptance criteria.
+**DonkeyWork project `522d9204-c3b6-4719-b0c9-8ef91b968314`** ("SlipSpace Gateway") holds the source of truth: 20+ design notes, 16 milestones, 120+ tasks with acceptance criteria.
 
 Fetch via:
 - `mcp__donkeywork__notes_list_by_project` for the design notes
@@ -46,7 +46,7 @@ When in doubt, check the notes — they're the long-form. This file is the index
 
 Shipped through **v1.1.18**: data plane forwarding for all three providers (streaming + non-streaming), rules engine, resilience orchestrator (failover + load_balance, circuit breaker), connector spool (s3 / azure_blob / webhook), admin console (dashboard + config inspector + live messages), and the rules read-write API + visual editor. OpenAI-compat chat surfaces on Anthropic + Gemini.
 
-**Cross-provider translation (v1.2):** shipped **bidirectionally** for **Anthropic Messages ↔ OpenAI Chat** — both `messages`→`chat` and `chat`→`messages` are registered translators (direct pairwise matrix, no hub), each covering request, non-streaming + streaming response, tool calls, and error responses — triggered by the explicit `translate` rule action (`internal/translate/`), fail-closed on undeclared/unsupported pairs, with a drop counter + flag-gated `X-Sluice-Translation-Lossy` header. Proven by a Go e2e differential matrix on both arms, the native Anthropic **and** OpenAI Python SDK wire-compat suites, and a property-coverage meta-test. See [docs/actions.md → `translate`](docs/actions.md#translate). Deferred post-MVP: Gemini translation, mixed-protocol resilience groups (cross-dialect failover), base-config auto-mapping.
+**Cross-provider translation (v1.2):** shipped **bidirectionally** for **Anthropic Messages ↔ OpenAI Chat** — both `messages`→`chat` and `chat`→`messages` are registered translators (direct pairwise matrix, no hub), each covering request, non-streaming + streaming response, tool calls, and error responses — triggered by the explicit `translate` rule action (`internal/translate/`), fail-closed on undeclared/unsupported pairs, with a drop counter + flag-gated `X-Slipspace-Translation-Lossy` header. Proven by a Go e2e differential matrix on both arms, the native Anthropic **and** OpenAI Python SDK wire-compat suites, and a property-coverage meta-test. See [docs/actions.md → `translate`](docs/actions.md#translate). Deferred post-MVP: Gemini translation, mixed-protocol resilience groups (cross-dialect failover), base-config auto-mapping.
 
 **Queued:** v1.0.3 real `llmImpersonation` synthesisers; v1.2+ DLP guardrails, Bedrock, hot reload, RBAC.
 
@@ -162,12 +162,12 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 
 ## Configuration model
 
-- YAML directory at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`)
+- YAML directory at `SLIPSPACE_CONFIG_DIR` (default `/etc/slipspace/`)
 - Loader scans all `*.yaml`, merges by top-level key, errors on duplicate keys
 - Top-level keys: `providers`, `groups`, `configurations`, `api_keys`, `rules`, `connectors`, `admin`, `telemetry`
 - **File contents are trusted** (mounted from k8s Secrets or filesystem-permissioned). No `${VAR}` or `env:` syntax inside YAML. Only file paths are env-overridable.
 - API keys are flat references to named Configurations. Configurations carry rules + resilience + default upstream credentials.
-- Two auth modes (see *Authentication & Auth Modes* note) — passthrough wins if both `X-Sluice-Configuration` header and Sluice-issued bearer are present.
+- Two auth modes (see *Authentication & Auth Modes* note) — passthrough wins if both `X-Slipspace-Configuration` header and SlipSpace-issued bearer are present.
 - **Config edits via the admin write API apply live** — rules, providers, groups, configurations, api-keys, and connectors all have CRUD endpoints under `/admin/api/v1/config/...` that clone the snapshot, validate, persist back to each block's source file (`config.WriteConfig` routes to the block's `SourceFiles` origin, not a fixed `policy.yaml`), then publish through `config.Store.Replace` — no restart. The data plane reads each request's snapshot atomically, so mid-flight requests see either the pre-swap or post-swap config, never a torn mix. Direct YAML file edits on disk and the `admin` / `telemetry` blocks still require a process restart; v1.2+ adds `fsnotify`-based automatic reload for that path.
 
 ## Testing requirements
@@ -188,7 +188,7 @@ Unit (internal correctness) and E2E (wire contract through the real binary) are 
 | Integration | `test/e2e/` (`e2e` tag — no separate `integration` tag exists) | testcontainers-go (SeaweedFS for S3, Azurite for Azure Blob, Postgres for telemetry) |
 | E2E | `test/e2e/` (`e2e` tag) | spawn `gateway` + mockllm, per-test tmp spool, `httptest.Server` webhook receivers. `make e2e` |
 | Wire compat | `test/python/` | pytest + official SDKs vs spawned stack. `make py-compat`. Release-blocking. |
-| Smoke | `test/smoke/` | pytest + SDKs vs **live deploy** (`SLUICE_BASE_URL`, `SLUICE_API_KEY`). `make smoke`; `SLUICE_SMOKE_QWEN=true` for cluster qwen redirect tests. |
+| Smoke | `test/smoke/` | pytest + SDKs vs **live deploy** (`SLIPSPACE_BASE_URL`, `SLIPSPACE_API_KEY`). `make smoke`; `SLIPSPACE_SMOKE_QWEN=true` for cluster qwen redirect tests. |
 
 ### Non-obvious gotchas
 
@@ -211,17 +211,17 @@ E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`
 
 - HTTP status correct; body shape round-trips via the typed `providers` package.
 - Captured connector record matches the **post-rule** labels + body envelope; **no** record when the configuration has no `connector_bindings` or sampling/filter excludes the request.
-- `X-Sluice-Correlation-Id` set on response; `X-Sluice-Session-Id` echoed when sent.
+- `X-Slipspace-Correlation-Id` set on response; `X-Slipspace-Session-Id` echoed when sent.
 
 ## Local dev
 
-- `make dev` brings up the mock LLM via docker-compose and runs the gateway natively; the spool root defaults to `/var/lib/sluice/spool` (`SLUICE_SPOOL_ROOT`) — `export SLUICE_SPOOL_ROOT=./tmp/spool` for a repo-local path. docker-compose persists the spool in the named volume `sluice-spool` mounted at `/var/lib/sluice/spool`
+- `make dev` brings up the mock LLM via docker-compose and runs the gateway natively; the spool root defaults to `/var/lib/slipspace/spool` (`SLIPSPACE_SPOOL_ROOT`) — `export SLIPSPACE_SPOOL_ROOT=./tmp/spool` for a repo-local path. docker-compose persists the spool in the named volume `slipspace-spool` mounted at `/var/lib/slipspace/spool`
 - The C# mock LLM at `~/Source/Repos/airia-llmock/` is used pre-v0.1; `cmd/mockllm/` (Go) replaces it
 - `docker-compose.dev.yaml` is gitignored and overlays the local C# mock image until the Go rewrite ships
-- For captured-record introspection during dev, `zstd -dc "$SLUICE_SPOOL_ROOT"/records/<connector>/sealed/*.ndjson.zst | jq .` shows the records on disk (default root `/var/lib/sluice/spool`)
+- For captured-record introspection during dev, `zstd -dc "$SLIPSPACE_SPOOL_ROOT"/records/<connector>/sealed/*.ndjson.zst | jq .` shows the records on disk (default root `/var/lib/slipspace/spool`)
 - `make e2e` runs the e2e matrix against a spawned binary (Docker required for connector integration containers)
 - `make py-compat` runs the wire-compat suite against a spawned stack
-- `SLUICE_API_KEY=sk_live_... make smoke` runs the post-deploy harness against `sluice.donkeywork.dev` (or `SLUICE_BASE_URL=...`). Use this after every cluster roll. `SLUICE_SMOKE_QWEN=true` enables the cluster-side qwen redirect tests.
+- `SLIPSPACE_API_KEY=sk_live_... make smoke` runs the post-deploy harness against `slipspace.donkeywork.dev` (or `SLIPSPACE_BASE_URL=...`). Use this after every cluster roll. `SLIPSPACE_SMOKE_QWEN=true` enables the cluster-side qwen redirect tests.
 - See the *Local Dev Setup + Mock LLM* note for the full setup
 
 ## PR discipline

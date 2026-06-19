@@ -8,7 +8,7 @@ import (
 
 // NewOTLPServer builds a gRPC server with the OTLP trace + metrics receivers
 // registered. The caller owns the lifecycle (Serve on a listener, GracefulStop
-// on shutdown). This is the gen_ai + sluice telemetry ingest surface; gateways
+// on shutdown). This is the gen_ai + slipspace telemetry ingest surface; gateways
 // export to it directly or via an OTel collector.
 func NewOTLPServer(trace *TraceReceiver, metrics *MetricsReceiver, opts ...grpc.ServerOption) *grpc.Server {
 	srv := grpc.NewServer(opts...)

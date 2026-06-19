@@ -9,27 +9,27 @@ func TestRedactor_IsSensitive_Builtins(t *testing.T) {
 	t.Parallel()
 	r := NewRedactor(nil)
 	cases := map[string]bool{
-		"Authorization":           true,
-		"authorization":           true,
-		"Proxy-Authorization":     true,
-		"X-Api-Key":               true,
-		"x-api-key":               true,
-		"Anthropic-Api-Key":       true,
-		"X-Goog-Api-Key":          true,
-		"X-Apikey":                true,
-		"X-Sluice-Identity":       true,
-		"x-sluice-identity":       true,
-		"Cookie":                  true,
-		"Set-Cookie":              true,
-		"X-Auth-Token":            true,
-		"Bearer-Token":            true,
-		"X-CSRF-Token":            true,
-		"X-API-Secret":            true,
-		"Content-Type":            false,
-		"User-Agent":              false,
-		"X-Sluice-Correlation-Id": false,
-		"X-Custom-Header":         false,
-		"Accept":                  false,
+		"Authorization":              true,
+		"authorization":              true,
+		"Proxy-Authorization":        true,
+		"X-Api-Key":                  true,
+		"x-api-key":                  true,
+		"Anthropic-Api-Key":          true,
+		"X-Goog-Api-Key":             true,
+		"X-Apikey":                   true,
+		"X-Slipspace-Identity":       true,
+		"x-slipspace-identity":       true,
+		"Cookie":                     true,
+		"Set-Cookie":                 true,
+		"X-Auth-Token":               true,
+		"Bearer-Token":               true,
+		"X-CSRF-Token":               true,
+		"X-API-Secret":               true,
+		"Content-Type":               false,
+		"User-Agent":                 false,
+		"X-Slipspace-Correlation-Id": false,
+		"X-Custom-Header":            false,
+		"Accept":                     false,
 	}
 	for name, want := range cases {
 		if got := r.IsSensitive(name); got != want {
@@ -108,19 +108,19 @@ func TestRedactor_Redact_MasksCredentials(t *testing.T) {
 	t.Parallel()
 	r := NewRedactor([]string{"acme-trace-id"})
 	in := http.Header{
-		"Authorization":     []string{"Bearer sk-abc123"},
-		"X-Api-Key":         []string{"sk-secret"},
-		"X-Sluice-Identity": []string{"sk_live_supersecret_must_not_leak"},
-		"X-Acme-Trace-Id":   []string{"tenant-tenant-tenant"}, // operator extra
-		"Cookie":            []string{"session=xyz; other=qux"},
-		"Content-Type":      []string{"application/json"},
-		"User-Agent":        []string{"sluice/1.0"},
+		"Authorization":        []string{"Bearer sk-abc123"},
+		"X-Api-Key":            []string{"sk-secret"},
+		"X-Slipspace-Identity": []string{"sk_live_supersecret_must_not_leak"},
+		"X-Acme-Trace-Id":      []string{"tenant-tenant-tenant"}, // operator extra
+		"Cookie":               []string{"session=xyz; other=qux"},
+		"Content-Type":         []string{"application/json"},
+		"User-Agent":           []string{"slipspace/1.0"},
 	}
 	got := r.Redact(in)
 	for _, name := range []string{
 		"Authorization",
 		"X-Api-Key",
-		"X-Sluice-Identity",
+		"X-Slipspace-Identity",
 		"X-Acme-Trace-Id",
 		"Cookie",
 	} {
@@ -132,7 +132,7 @@ func TestRedactor_Redact_MasksCredentials(t *testing.T) {
 	if v := got["Content-Type"]; len(v) != 1 || v[0] != "application/json" {
 		t.Errorf("Content-Type leaked or mangled: %v", v)
 	}
-	if v := got["User-Agent"]; len(v) != 1 || v[0] != "sluice/1.0" {
+	if v := got["User-Agent"]; len(v) != 1 || v[0] != "slipspace/1.0" {
 		t.Errorf("User-Agent leaked or mangled: %v", v)
 	}
 }

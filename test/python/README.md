@@ -1,7 +1,7 @@
 # Python SDK Compatibility Suite
 
 Drives the official **OpenAI**, **Anthropic**, and **Google Gemini** Python
-SDKs against a running sluice-gateway. Failures here are tagged
+SDKs against a running slipspace-gateway. Failures here are tagged
 "wire-compatibility regression" and are a release blocker.
 
 ## Prerequisites
@@ -16,11 +16,11 @@ SDKs against a running sluice-gateway. Failures here are tagged
 
 | Component | How |
 |---|---|
-| `mockllm` | `subprocess.Popen` of `/tmp/sluice-mockllm` (built from `cmd/mockllm` if missing) on a random port |
-| `gateway` | `subprocess.Popen` of `/tmp/sluice-gateway` (built from `cmd/gateway` if missing) with a materialized `config-dev/` snapshot |
+| `mockllm` | `subprocess.Popen` of `/tmp/slipspace-mockllm` (built from `cmd/mockllm` if missing) on a random port |
+| `gateway` | `subprocess.Popen` of `/tmp/slipspace-gateway` (built from `cmd/gateway` if missing) with a materialized `config-dev/` snapshot |
 
-The pre-built binary paths can be overridden via `SLUICE_GATEWAY_BIN` and
-`SLUICE_MOCKLLM_BIN` env vars.
+The pre-built binary paths can be overridden via `SLIPSPACE_GATEWAY_BIN` and
+`SLIPSPACE_MOCKLLM_BIN` env vars.
 
 Each test stages canned responses via the mockllm control API
 (`POST/DELETE /control/responses`) and the suite clears them per-test via an

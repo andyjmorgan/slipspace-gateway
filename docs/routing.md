@@ -1,6 +1,6 @@
 # Routing
 
-Under the v2 config model, Sluice does not have a path-to-endpoint route table. Routing is **config data**: the inbound path maps to a *protocol* (the wire shape), and the resolved configuration's *bindings* map `(protocol, model)` to a provider or a resilience group. There is no `RouteIndex`, no `accepted_paths`, no `prefix_required`/`prefix_optional`, and no `emitRoutes` — all of that was retired when routing moved into the configuration.
+Under the v2 config model, SlipSpace does not have a path-to-endpoint route table. Routing is **config data**: the inbound path maps to a *protocol* (the wire shape), and the resolved configuration's *bindings* map `(protocol, model)` to a provider or a resilience group. There is no `RouteIndex`, no `accepted_paths`, no `prefix_required`/`prefix_optional`, and no `emitRoutes` — all of that was retired when routing moved into the configuration.
 
 Two surfaces do the work:
 
@@ -20,7 +20,7 @@ This page is the operator's reference: how a request is mapped to a protocol, ho
 5. [Binding model matching](#binding-model-matching)
 6. [Passthrough selection (`MatchPassthrough`)](#passthrough-selection-matchpassthrough)
 7. [`kindFromProtocol` — protocol drives body capture](#kindfromprotocol--protocol-drives-body-capture)
-8. [X-Sluice headers](#x-sluice-headers)
+8. [X-SlipSpace headers](#x-slipspace-headers)
 9. [Worked examples](#worked-examples)
 10. [The error set](#the-error-set)
 
@@ -61,7 +61,7 @@ The real order is **`protocol → auth → bodycapture → selection → rules �
 - **`selection` is where 404/405 can fire**, and it runs *after* auth (which resolves the configuration) and bodycapture (which decodes the model). It is the only stage that picks a provider.
 - **The final handler builds the upstream URL** from the resolved `Target.Path` (provider protocol path ∪ per-target override), not from any endpoint declaration or matched path. See [`buildDestination`](../cmd/gateway/destination.go).
 
-`correlationMiddleware` ([`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go)) wraps the whole chain ahead of `protocolMiddleware`, so every stage shares one correlation ID — see [X-Sluice headers](#x-sluice-headers).
+`correlationMiddleware` ([`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go)) wraps the whole chain ahead of `protocolMiddleware`, so every stage shares one correlation ID — see [X-SlipSpace headers](#x-slipspace-headers).
 
 ---
 
@@ -247,13 +247,13 @@ Bodycapture needs to know which typed model to deserialise the body into. In v2 
 
 ---
 
-## X-Sluice headers
+## X-SlipSpace headers
 
-Sluice owns a small set of `X-Sluice-*` HTTP headers. Two are observability hooks set by `correlationMiddleware`; one selects the passthrough-mode configuration in auth.
+SlipSpace owns a small set of `X-Slipspace-*` HTTP headers. Two are observability hooks set by `correlationMiddleware`; one selects the passthrough-mode configuration in auth.
 
-### `X-Sluice-Correlation-Id`
+### `X-Slipspace-Correlation-Id`
 
-Per-request correlation token, joined across captured records, logs, and the admin console. Handled in [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) (`headerCorrelationID = "X-Sluice-Correlation-Id"`), which runs ahead of every data-plane stage so they all share one value.
+Per-request correlation token, joined across captured records, logs, and the admin console. Handled in [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) (`headerCorrelationID = "X-Slipspace-Correlation-Id"`), which runs ahead of every data-plane stage so they all share one value.
 
 | Direction | Behaviour |
 |---|---|
@@ -261,23 +261,23 @@ Per-request correlation token, joined across captured records, logs, and the adm
 | Inbound absent | A fresh ID is minted via [`observability.NewCorrelationID`](../internal/observability/correlation.go). |
 | Outbound | **Always set** on the response, regardless of inbound state. |
 
-### `X-Sluice-Session-Id`
+### `X-Slipspace-Session-Id`
 
-Optional session/bundle marker. [`observability.SluiceSessionHeader`](../internal/observability/session.go) (`"X-Sluice-Session-Id"`) is the authoritative session header; a [`SessionResolver`](../internal/observability/session.go) also honours configured client-specific aliases. The resolved session ID is promoted to context (onto records, spans, and the live feed) but **never** becomes an OTel metric label — it has unbounded cardinality.
+Optional session/bundle marker. [`observability.SlipSpaceSessionHeader`](../internal/observability/session.go) (`"X-Slipspace-Session-Id"`) is the authoritative session header; a [`SessionResolver`](../internal/observability/session.go) also honours configured client-specific aliases. The resolved session ID is promoted to context (onto records, spans, and the live feed) but **never** becomes an OTel metric label — it has unbounded cardinality.
 
 | Direction | Behaviour |
 |---|---|
-| Inbound | Resolved from the Sluice header (or a configured alias) and recorded on the request. |
-| Outbound | When a session ID was resolved, echoed back under `X-Sluice-Session-Id`. Absent inbound means absent outbound. |
+| Inbound | Resolved from the SlipSpace header (or a configured alias) and recorded on the request. |
+| Outbound | When a session ID was resolved, echoed back under `X-Slipspace-Session-Id`. Absent inbound means absent outbound. |
 
-### `X-Sluice-Identity` / `X-Sluice-Configuration`
+### `X-Slipspace-Identity` / `X-Slipspace-Configuration`
 
-Passthrough-mode configuration selector: the client brings its own upstream credential and names the Sluice configuration to apply on top of it. [`auth.HeaderIdentity`](../internal/middleware/auth/resolver.go) (`"X-Sluice-Identity"`) is the current header; [`auth.HeaderConfiguration`](../internal/middleware/auth/resolver.go) (`"X-Sluice-Configuration"`) is the **deprecated** legacy spelling, still accepted. When both are present, `X-Sluice-Identity` wins and the legacy header is flagged.
+Passthrough-mode configuration selector: the client brings its own upstream credential and names the SlipSpace configuration to apply on top of it. [`auth.HeaderIdentity`](../internal/middleware/auth/resolver.go) (`"X-Slipspace-Identity"`) is the current header; [`auth.HeaderConfiguration`](../internal/middleware/auth/resolver.go) (`"X-Slipspace-Configuration"`) is the **deprecated** legacy spelling, still accepted. When both are present, `X-Slipspace-Identity` wins and the legacy header is flagged.
 
 | Direction | Behaviour |
 |---|---|
 | Inbound | When set, the resolver enters passthrough mode unconditionally — passthrough wins even if a managed-mode bearer is also present. The value names a configuration; an unknown name fails the request. |
-| Forwarded upstream | **Stripped.** Auth adds the identity/configuration header to the destination builder's `DropHeaders` set so the upstream provider never sees the Sluice-internal selector. |
+| Forwarded upstream | **Stripped.** Auth adds the identity/configuration header to the destination builder's `DropHeaders` set so the upstream provider never sees the SlipSpace-internal selector. |
 
 The full resolution algorithm (managed vs passthrough, credential discovery order, drop-header set) is in [docs/auth.md](auth.md).
 

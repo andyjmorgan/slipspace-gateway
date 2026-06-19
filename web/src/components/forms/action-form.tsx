@@ -62,7 +62,7 @@ function defaultsFor(type: string): ActionValue {
     case "changeUrl":
       return { type, new_url: "" }
     case "changeApiKey":
-      return { type, api_key: "", use_sluice_key: false }
+      return { type, api_key: "", use_slipspace_key: false }
     case "setHeader":
       return { type, header_action: "Set", header_name: "", header_value: "" }
     case "appendQueryString":
@@ -153,9 +153,9 @@ function Subform({ value, onChange }: { value: ActionValue; onChange: (v: Action
             mono
           />
           <CheckboxField
-            label="Use the inbound Sluice key as the upstream credential"
-            checked={Boolean(value.use_sluice_key)}
-            onChange={(b) => onChange({ ...value, use_sluice_key: b })}
+            label="Use the inbound SlipSpace key as the upstream credential"
+            checked={Boolean(value.use_slipspace_key)}
+            onChange={(b) => onChange({ ...value, use_slipspace_key: b })}
             hint="If checked, the api_key field is ignored and the inbound credential is forwarded verbatim."
           />
         </>
@@ -176,7 +176,7 @@ function Subform({ value, onChange }: { value: ActionValue; onChange: (v: Action
               label="Header name"
               value={String(value.header_name ?? "")}
               onChange={(v) => onChange({ ...value, header_name: v })}
-              placeholder="X-Sluice-Configuration"
+              placeholder="X-Slipspace-Configuration"
               mono
             />
           </FieldGrid>

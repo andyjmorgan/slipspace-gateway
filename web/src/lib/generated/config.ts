@@ -186,7 +186,7 @@ export interface Connector {
    */
   secret_ref?: string;
   /**
-   * GatewayID is sent as the X-Sluice-Gateway-Id header so a receiver that
+   * GatewayID is sent as the X-Slipspace-Gateway-Id header so a receiver that
    * keys HMAC secrets by gateway (the Arbiter registry) can look
    * the secret up. Optional for a generic receiver that verifies the
    * signature alone; required when pushing to the Arbiter.

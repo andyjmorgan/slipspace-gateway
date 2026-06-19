@@ -86,7 +86,7 @@ func sampleRecord() cc.Record {
 		AgentID:       "agt-1",
 		AgentIDSource: "X-Claude-Code-Agent-Id",
 		UserID:        "usr-1",
-		UserIDSource:  "X-Sluice-User-Id",
+		UserIDSource:  "X-Slipspace-User-Id",
 		Tags:          []string{"a", "b"},
 		Request: cc.RequestPart{
 			Method:  "POST",

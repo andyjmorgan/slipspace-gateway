@@ -39,7 +39,7 @@ FROM scratch
 ARG VERSION
 
 LABEL org.opencontainers.image.title="slipspace-arbiter"
-LABEL org.opencontainers.image.description="SlipSpace Arbiter — central telemetry + security convergence service for Sluice gateways."
+LABEL org.opencontainers.image.description="SlipSpace Arbiter — central telemetry + security convergence service for SlipSpace gateways."
 LABEL org.opencontainers.image.source="https://github.com/andyjmorgan/slipspace-gateway"
 LABEL org.opencontainers.image.version="${VERSION}"
 
@@ -50,4 +50,4 @@ COPY --from=builder /out/arbiter /arbiter
 EXPOSE 8686 8687
 USER 65532:65532
 ENTRYPOINT ["/arbiter"]
-CMD ["-config", "/etc/sluice/arbiter.yaml"]
+CMD ["-config", "/etc/slipspace/arbiter.yaml"]

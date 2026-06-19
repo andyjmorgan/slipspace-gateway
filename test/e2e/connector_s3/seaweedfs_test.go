@@ -22,7 +22,7 @@ import (
 
 	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
-	sluices3 "github.com/andyjmorgan/slipspace-gateway/internal/connector/s3"
+	slipspaces3 "github.com/andyjmorgan/slipspace-gateway/internal/connector/s3"
 )
 
 // SeaweedFS exposes S3 on 8333 by default when started with `-s3`.
@@ -120,7 +120,7 @@ func TestSeaweedFS_UploadRoundTrip(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	admin := seaweedAdminClient(t, endpoint)
-	const bucket = "sluice-test"
+	const bucket = "slipspace-test"
 
 	// Create the bucket. SeaweedFS auto-creates buckets on PUT in some
 	// modes but it's cleaner to be explicit.
@@ -134,9 +134,9 @@ func TestSeaweedFS_UploadRoundTrip(t *testing.T) {
 
 	// Connector under test, pointed at SeaweedFS via endpoint_url +
 	// path-style.
-	t.Setenv("SLUICE_TEST_AK", seaweedAccess)
-	t.Setenv("SLUICE_TEST_SK", seaweedSecret)
-	c, err := sluices3.New(ctx, sluices3.Options{
+	t.Setenv("SLIPSPACE_TEST_AK", seaweedAccess)
+	t.Setenv("SLIPSPACE_TEST_SK", seaweedSecret)
+	c, err := slipspaces3.New(ctx, slipspaces3.Options{
 		Config: contractsconfig.Connector{
 			Type:         "s3",
 			Name:         "seaweedfs-test",
@@ -147,8 +147,8 @@ func TestSeaweedFS_UploadRoundTrip(t *testing.T) {
 			UsePathStyle: true,
 			Auth: &contractsconfig.ConnectorAuth{
 				Mode:               contractsconfig.AuthModeStatic,
-				AccessKeyIDRef:     "env:SLUICE_TEST_AK",
-				SecretAccessKeyRef: "env:SLUICE_TEST_SK",
+				AccessKeyIDRef:     "env:SLIPSPACE_TEST_AK",
+				SecretAccessKeyRef: "env:SLIPSPACE_TEST_SK",
 			},
 		},
 		InstanceID: "test-instance",

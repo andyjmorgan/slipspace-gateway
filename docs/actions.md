@@ -135,7 +135,7 @@ Actions write through a [`rules.MutableState`](../internal/middleware/rules/stat
 | `SourceProtocol` | `string` | `translate` | **Yes (wired).** Records the inbound protocol so the response leg translates back — see [`translate`](#translate). |
 | `MatchedPath` | `string` | no action (read-only) | Yes — the un-prefixed `accepted_paths` value the router matched, used by the destination builder as the upstream path template when the endpoint declares no explicit `Path`. Untouched by every action; a `changeUrl` retarget bypasses it entirely. |
 | `UpstreamURL` | `*url.URL` | `changeUrl` | **No (inert).** `buildDestination` sets `dest.UpstreamURL` from the resolved target; `applyStateOverlays` never reads this field — see [`changeUrl`](#changeurl). |
-| `UpstreamCredentialOverride` | `*string` | `changeApiKey` | **Yes (wired).** Read by `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), the single credential mint site, which honours it over the auth mode: a literal key is minted with the post-rule provider's header format, the `useSluiceKey` sentinel (empty string) forwards the inbound `Authorization` verbatim — see [`changeApiKey`](#changeapikey). |
+| `UpstreamCredentialOverride` | `*string` | `changeApiKey` | **Yes (wired).** Read by `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), the single credential mint site, which honours it over the auth mode: a literal key is minted with the post-rule provider's header format, the `useSlipSpaceKey` sentinel (empty string) forwards the inbound `Authorization` verbatim — see [`changeApiKey`](#changeapikey). |
 | `OutgoingHeaders` | `http.Header` | `setHeader` | Yes — layered onto the destination by `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 262-266). |
 | `QueryAdditions` | `[]QueryAddition` | `appendQueryString` | Yes — layered onto `dest.UpstreamURL` by `applyStateOverlays` (pipeline.go lines 255-261). |
 | `PathParams` | `map[string]string` | `changeModelName` (writes `"model"` key) | Yes — drives Gemini `{model}` path substitution and the outbound-model telemetry label. |
@@ -222,7 +222,7 @@ Shipped pairs (v1.2): `messages` → `chat` **and** `chat` → `messages` (Anthr
 
 ### How the data plane translates
 
-The final handler resolves the endpoint on `state.Protocol`, fails closed (501) if no translator is registered for the `(source, target)` pair, then translates the outgoing request body (per resilience attempt). The forwarder's `ModifyResponse` hook translates the response — non-streaming bodies buffered, streaming bodies wrapped in a pull-based translating reader, and error responses (`>= 400`) mapped to the source protocol's error shape. Features with no target equivalent (e.g. `top_k`, `thinking`) are dropped, counted on `gateway.translation.field_drops.total`, and — when `SLUICE_TRANSLATE_LOSSY_HEADER` is on — listed on the `X-Sluice-Translation-Lossy` response header.
+The final handler resolves the endpoint on `state.Protocol`, fails closed (501) if no translator is registered for the `(source, target)` pair, then translates the outgoing request body (per resilience attempt). The forwarder's `ModifyResponse` hook translates the response — non-streaming bodies buffered, streaming bodies wrapped in a pull-based translating reader, and error responses (`>= 400`) mapped to the source protocol's error shape. Features with no target equivalent (e.g. `top_k`, `thinking`) are dropped, counted on `gateway.translation.field_drops.total`, and — when `SLIPSPACE_TRANSLATE_LOSSY_HEADER` is on — listed on the `X-Slipspace-Translation-Lossy` response header.
 
 ### Gotchas
 
@@ -329,9 +329,9 @@ Writes `state.UpstreamURL`. Non-terminating.
 
 ## `changeApiKey`
 
-Writes `state.UpstreamCredentialOverride`. Substitutes the upstream API key, or signals "forward the inbound Sluice bearer verbatim" for passthrough scenarios. Non-terminating.
+Writes `state.UpstreamCredentialOverride`. Substitutes the upstream API key, or signals "forward the inbound SlipSpace bearer verbatim" for passthrough scenarios. Non-terminating.
 
-> **v2 status — wired.** `applyChangeApiKey` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) lines 154-169) writes `state.UpstreamCredentialOverride` (a non-empty pointer for a literal key, or a pointer to the empty string as the "forward inbound bearer" sentinel), and the v2 data plane now **reads it**. Credential selection runs through `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), the single credential mint site, which `buildDestination` threads `state.UpstreamCredentialOverride` into. The override takes precedence over the auth `Mode` (rules win the last word on the wire): a non-empty literal is minted with the **post-rule** provider's header format and every other credential header is dropped; the empty-string `useSluiceKey` sentinel forwards the inbound `Authorization` verbatim. Because the orchestrator clones the post-rule state into each attempt, the override carries across resilience attempts. Minting stays at the one site, honouring [`CLAUDE.md`](../CLAUDE.md) invariant 6.
+> **v2 status — wired.** `applyChangeApiKey` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) lines 154-169) writes `state.UpstreamCredentialOverride` (a non-empty pointer for a literal key, or a pointer to the empty string as the "forward inbound bearer" sentinel), and the v2 data plane now **reads it**. Credential selection runs through `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 169), the single credential mint site, which `buildDestination` threads `state.UpstreamCredentialOverride` into. The override takes precedence over the auth `Mode` (rules win the last word on the wire): a non-empty literal is minted with the **post-rule** provider's header format and every other credential header is dropped; the empty-string `useSlipSpaceKey` sentinel forwards the inbound `Authorization` verbatim. Because the orchestrator clones the post-rule state into each attempt, the override carries across resilience attempts. Minting stays at the one site, honouring [`CLAUDE.md`](../CLAUDE.md) invariant 6.
 
 ### YAML
 
@@ -342,7 +342,7 @@ Writes `state.UpstreamCredentialOverride`. Substitutes the upstream API key, or 
 
 # passthrough — forward whatever Authorization header the client sent
 - type: changeApiKey
-  useSluiceKey: true
+  useSlipSpaceKey: true
 ```
 
 ### Fields
@@ -350,13 +350,13 @@ Writes `state.UpstreamCredentialOverride`. Substitutes the upstream API key, or 
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `changeApiKey`. |
-| `APIKey` | `apiKey` | `api_key` | conditional | Literal upstream key substituted on the way out. Required unless `UseSluiceKey` is true; trimmed empty value is rejected. Ignored when `UseSluiceKey` is true. |
-| `UseSluiceKey` | `useSluiceKey` | `use_sluice_key` | no | When `true`, forwards the inbound `Authorization` header verbatim. Used for passthrough auth flows. |
+| `APIKey` | `apiKey` | `api_key` | conditional | Literal upstream key substituted on the way out. Required unless `UseSlipSpaceKey` is true; trimmed empty value is rejected. Ignored when `UseSlipSpaceKey` is true. |
+| `UseSlipSpaceKey` | `useSlipSpaceKey` | `use_slipspace_key` | no | When `true`, forwards the inbound `Authorization` header verbatim. Used for passthrough auth flows. |
 
 ### What it mutates
 
-- `state.UpstreamCredentialOverride` = `&trimmedAPIKey` when `UseSluiceKey=false`.
-- `state.UpstreamCredentialOverride` = `&""` (a pointer to the empty string) when `UseSluiceKey=true`.
+- `state.UpstreamCredentialOverride` = `&trimmedAPIKey` when `UseSlipSpaceKey=false`.
+- `state.UpstreamCredentialOverride` = `&""` (a pointer to the empty string) when `UseSlipSpaceKey=true`.
 
 Both writes are read in v2 (see the status note above) — `buildDestination` threads the override into the single mint site.
 
@@ -368,7 +368,7 @@ Credential selection is the precedence `switch` in `resolveCredentialHeaders` ([
 flowchart TB
     Start[resolveCredentialHeaders] --> Ovr{changeApiKey override?}
     Ovr -- "literal key (non-empty)" --> Lit[mint the override key with the<br/>post-rule provider's header format,<br/>drop the other credential headers]
-    Ovr -- "useSluiceKey (empty sentinel)" --> Fwd[forward the inbound<br/>Authorization verbatim]
+    Ovr -- "useSlipSpaceKey (empty sentinel)" --> Fwd[forward the inbound<br/>Authorization verbatim]
     Ovr -- none --> Mode{auth mode}
     Mode -- passthrough --> Fwd
     Mode -- "managed, target.Credential empty" --> Strip[strip every credential header,<br/>set none]
@@ -380,8 +380,8 @@ The same `resolveCredentialHeaders` mint site is reused for passthrough-family r
 ### Gotchas
 
 - A literal `apiKey` override is minted with the **post-rule** provider's header convention, not the inbound one — a `changeApiKey` paired with a binding that lands on Anthropic mints `x-api-key`, not `Authorization: Bearer`.
-- `useSluiceKey: true` forwards the inbound `Authorization` even on a managed configuration — use it to thread a client-supplied upstream token through a config that would otherwise mint its own credential.
-- Sluice does not redact upstream keys in YAML it loads; treat the YAML file as secret material. Mount from a k8s Secret, never check it in.
+- `useSlipSpaceKey: true` forwards the inbound `Authorization` even on a managed configuration — use it to thread a client-supplied upstream token through a config that would otherwise mint its own credential.
+- SlipSpace does not redact upstream keys in YAML it loads; treat the YAML file as secret material. Mount from a k8s Secret, never check it in.
 
 ---
 
@@ -421,7 +421,7 @@ Mutates an outgoing HTTP header on the upstream request. Non-terminating.
 ### Special behaviour
 
 - **Multi-value concatenation uses `", "` (comma + space).** RFC 7230 §3.2.2 specifies comma as the list separator for multi-value headers when serialised to the wire. The .NET predecessor concatenated without a separator (so `"a" + "b" = "ab"`), which is a deliberate divergence — the comma form is the standards-compliant one.
-- **Append/Prepend create the header when missing.** The .NET behaviour of "silently no-op on Append-to-missing" was a footgun; Sluice creates the header instead so the action's intent always lands.
+- **Append/Prepend create the header when missing.** The .NET behaviour of "silently no-op on Append-to-missing" was a footgun; SlipSpace creates the header instead so the action's intent always lands.
 - **Rules win the last word on the wire.** `buildDestination` seeds the destination's headers first — the provider's required headers (e.g. `anthropic-version`) and the resolved credential header — and `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 262-266) then overlays `state.OutgoingHeaders` last, deleting and re-adding each named header. A `setHeader` therefore overrides a provider-required header (or even the credential header) of the same name. Use that deliberately; an accidental `setHeader Authorization: …` will clobber the minted credential for the request.
 
 ### Worked example — propagate a tenant tier downstream
@@ -657,7 +657,7 @@ Identifier segments only — no array indices (`messages.0`), no brackets, no gj
 
 Template strings resolve `{ref}` placeholders. A string that is **exactly** one `{ref}` passes the referenced value's JSON type through; any other template stringifies the substituted result. Supported references: `{request.body.<dotted>}`, `{response.body.<dotted>}`, `{path_params.X}`, `{state.provider}`, `{state.protocol}`, `{external_url}`. A single-reference template whose ref cannot be resolved drops the op (`template_ref_miss`); a missing ref inside mixed content substitutes empty string. No silent coercion — declare `"1024"` for an int field and the wire gets the string `"1024"`; upstream rejection is the backstop.
 
-Reference scoping follows the phase. On a **request.body** target, `{request.body.x}` reads the evolving request body and `{response.body.x}` is out of scope. On a **response.body** target, `{response.body.x}` reads the response body and `{request.body.x}` reads the original request snapshot. `{external_url}` is the gateway's externally reachable base URL from `SLUICE_EXTERNAL_URL`; unset, it misses (dropping any rewrite that depends on it).
+Reference scoping follows the phase. On a **request.body** target, `{request.body.x}` reads the evolving request body and `{response.body.x}` is out of scope. On a **response.body** target, `{response.body.x}` reads the response body and `{request.body.x}` reads the original request snapshot. `{external_url}` is the gateway's externally reachable base URL from `SLIPSPACE_EXTERNAL_URL`; unset, it misses (dropping any rewrite that depends on it).
 
 ### `removeField` vs `rewriteField value: null`
 
@@ -720,7 +720,7 @@ rules:
           content: "You are a governed assistant."
 
   # Response-side: rebase a provider-returned URL through the gateway so
-  # the client follows it back through Sluice (requires SLUICE_EXTERNAL_URL).
+  # the client follows it back through SlipSpace (requires SLIPSPACE_EXTERNAL_URL).
   - name: rebase-batches-results-url
     condition:
       type: group
@@ -785,7 +785,7 @@ Outcome{
 ### Special behaviour
 
 - **StatusCode is clamped to `[100, 599]`**, with out-of-band values mapping to `500`. This guarantees a misconfigured rule produces a recognisably-bad response rather than a `panic` in `net/http.WriteHeader`.
-- `BodyType` selects only the `Content-Type` family; Sluice does not validate that `Body` is well-formed JSON when `BodyType: json`. The bytes are written verbatim.
+- `BodyType` selects only the `Content-Type` family; SlipSpace does not validate that `Body` is well-formed JSON when `BodyType: json`. The bytes are written verbatim.
 - Empty `Body` is allowed — `204 No Content` with no body is the obvious use case.
 
 ### `BodyType` values and Content-Type mapping

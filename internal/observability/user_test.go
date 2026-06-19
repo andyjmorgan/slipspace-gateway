@@ -11,9 +11,9 @@ import (
 func TestUserResolver_Resolve(t *testing.T) {
 	t.Parallel()
 
-	// sensitiveSluice reports the Sluice user header as redacted, to exercise
+	// sensitiveSlipSpace reports the SlipSpace user header as redacted, to exercise
 	// the redaction-bypass fall-through.
-	sensitiveSluice := func(name string) bool { return name == observability.SluiceUserHeader }
+	sensitiveSlipSpace := func(name string) bool { return name == observability.SlipSpaceUserHeader }
 
 	cases := []struct {
 		name       string
@@ -24,20 +24,20 @@ func TestUserResolver_Resolve(t *testing.T) {
 		wantSource string
 	}{
 		{
-			name:       "sluice header wins over operator fallbacks",
+			name:       "slipspace header wins over operator fallbacks",
 			extra:      []string{"X-Acme-User-Id"},
-			headers:    map[string]string{observability.SluiceUserHeader: "usr-1", "X-Acme-User-Id": "acme-9"},
+			headers:    map[string]string{observability.SlipSpaceUserHeader: "usr-1", "X-Acme-User-Id": "acme-9"},
 			wantID:     "usr-1",
-			wantSource: observability.SluiceUserHeader,
+			wantSource: observability.SlipSpaceUserHeader,
 		},
 		{
-			name:       "sluice header alone (no shipped default chain)",
-			headers:    map[string]string{observability.SluiceUserHeader: "usr-1"},
+			name:       "slipspace header alone (no shipped default chain)",
+			headers:    map[string]string{observability.SlipSpaceUserHeader: "usr-1"},
 			wantID:     "usr-1",
-			wantSource: observability.SluiceUserHeader,
+			wantSource: observability.SlipSpaceUserHeader,
 		},
 		{
-			name:       "operator custom header resolves when sluice absent",
+			name:       "operator custom header resolves when slipspace absent",
 			extra:      []string{"X-Acme-User-Id"},
 			headers:    map[string]string{"X-Acme-User-Id": "acme-3"},
 			wantID:     "acme-3",
@@ -51,16 +51,16 @@ func TestUserResolver_Resolve(t *testing.T) {
 			wantSource: "X-First-User",
 		},
 		{
-			name:       "redacted sluice header falls through to operator extra",
+			name:       "redacted slipspace header falls through to operator extra",
 			extra:      []string{"X-Acme-User-Id"},
-			headers:    map[string]string{observability.SluiceUserHeader: "usr-1", "X-Acme-User-Id": "acme-9"},
-			sensitive:  sensitiveSluice,
+			headers:    map[string]string{observability.SlipSpaceUserHeader: "usr-1", "X-Acme-User-Id": "acme-9"},
+			sensitive:  sensitiveSlipSpace,
 			wantID:     "acme-9",
 			wantSource: "X-Acme-User-Id",
 		},
 		{
 			name:    "whitespace-only value is treated as absent",
-			headers: map[string]string{observability.SluiceUserHeader: "   "},
+			headers: map[string]string{observability.SlipSpaceUserHeader: "   "},
 			wantID:  "",
 		},
 		{
@@ -102,8 +102,8 @@ func TestUserResolver_BlankExtraDropped(t *testing.T) {
 	t.Parallel()
 	r := observability.NewUserResolver([]string{"  ", ""})
 	// The default chain is empty and blank extras never match, so only the
-	// authoritative Sluice header can resolve.
-	if id, _ := r.Resolve(hdr(observability.SluiceUserHeader, "usr"), nil); id != "usr" {
+	// authoritative SlipSpace header can resolve.
+	if id, _ := r.Resolve(hdr(observability.SlipSpaceUserHeader, "usr"), nil); id != "usr" {
 		t.Errorf("id = %q, want usr", id)
 	}
 	if id, _ := r.Resolve(hdr("X-Unrelated", "x"), nil); id != "" {
@@ -113,12 +113,12 @@ func TestUserResolver_BlankExtraDropped(t *testing.T) {
 
 func TestUserContext_RoundTrip(t *testing.T) {
 	t.Parallel()
-	ctx := observability.WithUserID(context.Background(), "usr-1", observability.SluiceUserHeader)
+	ctx := observability.WithUserID(context.Background(), "usr-1", observability.SlipSpaceUserHeader)
 	if got := observability.UserIDFromContext(ctx); got != "usr-1" {
 		t.Errorf("id = %q, want usr-1", got)
 	}
-	if got := observability.UserIDSourceFromContext(ctx); got != observability.SluiceUserHeader {
-		t.Errorf("source = %q, want %q", got, observability.SluiceUserHeader)
+	if got := observability.UserIDSourceFromContext(ctx); got != observability.SlipSpaceUserHeader {
+		t.Errorf("source = %q, want %q", got, observability.SlipSpaceUserHeader)
 	}
 }
 

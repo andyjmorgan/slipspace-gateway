@@ -234,7 +234,7 @@ func TestActions_AppendQueryString_ExtendsQuery(t *testing.T) {
     actions:
       - type: appendQueryString
         key: trace
-        value: sluice-rules
+        value: slipspace-rules
 `, "tag-with-query")
 	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
 	stageChatOK(h)
@@ -244,7 +244,7 @@ func TestActions_AppendQueryString_ExtendsQuery(t *testing.T) {
 	if cap == nil {
 		t.Fatal("upstream not called")
 	}
-	if !strings.Contains(cap.Query, "trace=sluice-rules") {
+	if !strings.Contains(cap.Query, "trace=slipspace-rules") {
 		t.Errorf("upstream query missing appended param; got %q", cap.Query)
 	}
 }

@@ -132,7 +132,7 @@ CREATE INDEX IF NOT EXISTS metric_points_name_time ON metric_points (metric_name
 		version: 4,
 		name:    "add_agent_id",
 		// Agent identification rides alongside session bundling: the gateway
-		// resolves an agent id (X-Sluice-Agent-Id / X-Claude-Code-Agent-Id /
+		// resolves an agent id (X-Slipspace-Agent-Id / X-Claude-Code-Agent-Id /
 		// custom) and emits it as gen_ai.agent.id on the span and agent_id on
 		// the Record. Additive columns + a single-column index so the message
 		// browser can drill down by agent, mirroring request_events_session.
@@ -145,7 +145,7 @@ CREATE INDEX IF NOT EXISTS request_events_agent ON request_events (agent_id);`,
 		version: 5,
 		name:    "add_user_id",
 		// End-user identification rides the same rails as session/agent: the
-		// gateway resolves a user id (X-Sluice-User-Id / custom) and emits it as
+		// gateway resolves a user id (X-Slipspace-User-Id / custom) and emits it as
 		// enduser.id on the span and user_id on the Record. Additive columns + a
 		// single-column index so the message browser can drill down by end user,
 		// mirroring request_events_agent.

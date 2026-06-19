@@ -14,7 +14,7 @@ import (
 // validateWebhook accepts loopback / RFC1918 / link-local URLs so the e2e
 // harness's httptest.Server (bound to 127.0.0.1) can be wired as a webhook
 // receiver. Production never sets it.
-const envWebhookAllowPrivate = "SLUICE_WEBHOOK_ALLOW_PRIVATE" //nolint:gosec // env var name, not a credential
+const envWebhookAllowPrivate = "SLIPSPACE_WEBHOOK_ALLOW_PRIVATE" //nolint:gosec // env var name, not a credential
 
 // ErrConnectorValidation is the sentinel returned (via fmt.Errorf wrap) by
 // Connector.Validate / ConnectorBinding.Validate. Callers can use

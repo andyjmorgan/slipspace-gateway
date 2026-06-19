@@ -11,7 +11,7 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
-const headerCorrelationID = "X-Sluice-Correlation-Id"
+const headerCorrelationID = "X-Slipspace-Correlation-Id"
 
 // correlationMiddleware assigns a correlation ID (honouring the inbound
 // header when present), resolves the session/bundle id, the agent id, and the
@@ -91,26 +91,26 @@ func correlationMiddleware(baseLogger *slog.Logger, sessions *observability.Sess
 		ctx = observability.WithLogger(ctx, logger)
 
 		w.Header().Set(headerCorrelationID, id)
-		// Echo the resolved bundle root under the Sluice header so a client
-		// or proxy sees the id Sluice settled on, even when it arrived via
+		// Echo the resolved bundle root under the SlipSpace header so a client
+		// or proxy sees the id SlipSpace settled on, even when it arrived via
 		// a client-specific header (Codex's Session-Id, etc.).
 		if sessionID != "" {
-			w.Header().Set(observability.SluiceSessionHeader, sessionID)
+			w.Header().Set(observability.SlipSpaceSessionHeader, sessionID)
 		}
-		// Echo the resolved conversation/thread under the Sluice header, even
+		// Echo the resolved conversation/thread under the SlipSpace header, even
 		// when it arrived via a client-specific header (Thread-Id,
 		// X-Claude-Code-Agent-Id).
 		if conversationID != "" {
-			w.Header().Set(observability.SluiceThreadHeader, conversationID)
+			w.Header().Set(observability.SlipSpaceThreadHeader, conversationID)
 		}
-		// Likewise echo the resolved agent id under the Sluice header.
+		// Likewise echo the resolved agent id under the SlipSpace header.
 		if agentID != "" {
-			w.Header().Set(observability.SluiceAgentHeader, agentID)
+			w.Header().Set(observability.SlipSpaceAgentHeader, agentID)
 		}
 		// And the resolved user id, even when it arrived via an operator-configured
-		// fallback header rather than the authoritative X-Sluice-User-Id.
+		// fallback header rather than the authoritative X-Slipspace-User-Id.
 		if userID != "" {
-			w.Header().Set(observability.SluiceUserHeader, userID)
+			w.Header().Set(observability.SlipSpaceUserHeader, userID)
 		}
 
 		logger.InfoContext(ctx, "request received",

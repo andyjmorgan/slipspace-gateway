@@ -305,11 +305,11 @@ func TestForward_HeaderRewrite(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://gateway.local/v1/messages", strings.NewReader("{}"))
 	req.Header.Set("Authorization", "Bearer client-token")
-	req.Header.Set("X-Sluice-Configuration", "openai-default")
+	req.Header.Set("X-Slipspace-Configuration", "openai-default")
 	req.Header.Set("X-Custom-Drop", "yes")
 	req.Header.Set("X-Keep", "yes")
-	req.Header.Set("Origin", "https://sluice.example.com")
-	req.Header.Set("Referer", "https://sluice.example.com/chat")
+	req.Header.Set("Origin", "https://slipspace.example.com")
+	req.Header.Set("Referer", "https://slipspace.example.com/chat")
 	req.Header.Set("Cookie", "session=abc; other=def")
 	req.Header.Set("Accept-Encoding", "gzip, br")
 
@@ -327,8 +327,8 @@ func TestForward_HeaderRewrite(t *testing.T) {
 	if got := captured.Get("Authorization"); got != "Bearer upstream-token" {
 		t.Fatalf("Authorization should be swapped, got %q", got)
 	}
-	if got := captured.Get("X-Sluice-Configuration"); got != "" {
-		t.Fatalf("X-Sluice-Configuration should be dropped, got %q", got)
+	if got := captured.Get("X-Slipspace-Configuration"); got != "" {
+		t.Fatalf("X-Slipspace-Configuration should be dropped, got %q", got)
 	}
 	if got := captured.Get("X-Custom-Drop"); got != "" {
 		t.Fatalf("X-Custom-Drop should be dropped, got %q", got)
@@ -854,7 +854,7 @@ func TestForward_DebugLoggingEmitsHeaderTrace(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "http://gateway.local/v1/messages", strings.NewReader("{}"))
 	req = req.WithContext(ctx)
 	req.Header.Set("Authorization", "Bearer client-token")
-	req.Header.Set("Origin", "https://sluice.example.com")
+	req.Header.Set("Origin", "https://slipspace.example.com")
 	req.Header.Set("X-Keep", "yes")
 
 	dest := newDestination(t, upstream.URL+"/v1/messages")

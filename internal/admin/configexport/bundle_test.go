@@ -116,7 +116,7 @@ func TestWriteZip_ContainsManifestAndAllFiles(t *testing.T) {
 	info := configexport.ManifestInfo{
 		Version:   "v9.9.9-test",
 		Hostname:  "test-host",
-		ConfigDir: "/etc/sluice/",
+		ConfigDir: "/etc/slipspace/",
 		Timestamp: time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC),
 	}
 	var buf bytes.Buffer
@@ -154,10 +154,10 @@ func TestWriteZip_ContainsManifestAndAllFiles(t *testing.T) {
 
 	manifest := got["MANIFEST.txt"]
 	for _, want := range []string{
-		"Sluice Gateway Configuration Export",
+		"SlipSpace Gateway Configuration Export",
 		"v9.9.9-test",
 		"test-host",
-		"/etc/sluice/",
+		"/etc/slipspace/",
 		"Secrets:     redacted (***)",
 		"policy.yaml",
 		"providers.yaml",

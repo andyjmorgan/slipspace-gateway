@@ -108,7 +108,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  key new [--label <name>] [--configuration <name>] [--prefix <prefix>]")
 	_, _ = fmt.Fprintln(w, "      generate a random API key and print a YAML snippet")
 	_, _ = fmt.Fprintln(w, "  config validate [--dir <path>]")
-	_, _ = fmt.Fprintln(w, "      validate a sluice configuration directory")
+	_, _ = fmt.Fprintln(w, "      validate a slipspace configuration directory")
 	_, _ = fmt.Fprintln(w, "  --version")
 	_, _ = fmt.Fprintln(w, "      print version and exit")
 }

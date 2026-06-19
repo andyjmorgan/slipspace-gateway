@@ -73,7 +73,7 @@ flowchart LR
 **HTTP listener — default `0.0.0.0:8686`** (`config.DefaultHTTPBind`, `internal/arbiter/config/config.go:24`). It multiplexes three kinds of route (`internal/arbiter/server/server.go::Handler`):
 
 - **Open probes** — `GET /healthz` (liveness) and `GET /readyz` (readiness; 503 until Postgres is reachable, so a load balancer drains the instance while the store recovers).
-- **Open HMAC Record webhook** — `POST /api/v1/ingest/record`. "Open" in the routing sense only: it carries no Basic auth, because the push **authenticates itself** via its `X-Sluice-Signature` HMAC. See [arbiter-webhook.md](arbiter-webhook.md).
+- **Open HMAC Record webhook** — `POST /api/v1/ingest/record`. "Open" in the routing sense only: it carries no Basic auth, because the push **authenticates itself** via its `X-Slipspace-Signature` HMAC. See [arbiter-webhook.md](arbiter-webhook.md).
 - **Basic-auth console + query API** — `GET /api/v1/dashboard/*`, `/api/v1/messages*`, `/api/v1/events*`, `/api/v1/sessions/{id}`, `/api/v1/facets`, plus the SPA bundle at `GET /` (`internal/arbiter/server/query.go::registerQueryRoutes`). Every API route is wrapped in `Server.basicAuth` (`server.go:109`). See [arbiter-api.md](arbiter-api.md).
 
 **OTLP gRPC listener — default `0.0.0.0:8687`** (`config.DefaultOTLPBind`, `config.go:25`). One gRPC server registers **both** OTLP receivers (`internal/arbiter/ingest/grpc.go::NewOTLPServer`):
@@ -107,7 +107,7 @@ How this complies with invariant #4:
 - **The Record never replaces a meter.** The HMAC webhook feeds only the `record` table — the heavy, audit-grade verbatim copy. The message **inspector** decodes that blob lazily; the **dashboard** reads the CAGGs. The two are joined only for a human looking at one request, never to compose a metric.
 - **The entity has exactly one writer.** The gen_ai OTLP span owns `request_events` outright via `UpsertRequestEvent` — there is no second feed writing the entity, and therefore no cross-feed COALESCE merge to keep correct. The gateway facts the console needs (configuration, protocol, method, status, tags, rule chain) ride the span as `slipspace.*` attributes and are projected into the entity from the span, not merged in from the Record. The Record exists only as the lazily-joined raw audit copy.
 
-The Record feed is the **gateway → service trust boundary**. `RecordHandler.ServeHTTP` (`ingest/record.go`) reads `X-Sluice-Gateway-Id` + `X-Sluice-Signature`, then calls `Registry.Verify` (`internal/arbiter/registry/registry.go`), which recomputes the hex HMAC-SHA256 of the raw body under the registered secret and compares constant-time (`hmac.Equal`). A record is stored **iff** its signature verifies; unknown-gateway and bad-signature both collapse to `401` so the caller learns nothing beyond "rejected". The handler decodes the body only far enough to read `correlation_id`, then stores the raw bytes verbatim — no fan-out into columns or payload rows. The body is capped at **16 MiB** (`maxRecordBytes`, `ingest/record.go`) — the gateway bounds captured bodies at 10 MiB inbound, leaving headroom for the JSON envelope.
+The Record feed is the **gateway → service trust boundary**. `RecordHandler.ServeHTTP` (`ingest/record.go`) reads `X-Slipspace-Gateway-Id` + `X-Slipspace-Signature`, then calls `Registry.Verify` (`internal/arbiter/registry/registry.go`), which recomputes the hex HMAC-SHA256 of the raw body under the registered secret and compares constant-time (`hmac.Equal`). A record is stored **iff** its signature verifies; unknown-gateway and bad-signature both collapse to `401` so the caller learns nothing beyond "rejected". The handler decodes the body only far enough to read `correlation_id`, then stores the raw bytes verbatim — no fan-out into columns or payload rows. The body is capped at **16 MiB** (`maxRecordBytes`, `ingest/record.go`) — the gateway bounds captured bodies at 10 MiB inbound, leaving headroom for the JSON envelope.
 
 ---
 
@@ -121,7 +121,7 @@ Unlike the gateway — which scans a whole config **directory** — the Arbiter 
 # Console + HMAC-webhook ingest listener. Default 0.0.0.0:8686.
 http_bind: "0.0.0.0:8686"
 
-# OTLP gRPC listener for the gen_ai spans + sluice meters. Default 0.0.0.0:8687.
+# OTLP gRPC listener for the gen_ai spans + slipspace meters. Default 0.0.0.0:8687.
 otlp_bind: "0.0.0.0:8687"
 
 # Per-request cap (bytes) on the gen_ai content the console keeps from OTLP
@@ -148,7 +148,7 @@ console:
   password_hash: "$2a$10$Yd...replace.with.a.real.bcrypt.hash...."
 
 # Registered gateways permitted to push Records. A webhook is trusted iff its
-# X-Sluice-Signature verifies against the matching gateway's hmac_secret.
+# X-Slipspace-Signature verifies against the matching gateway's hmac_secret.
 gateways:
   - id: "gw-1"
     hmac_secret: "a-long-random-shared-secret"
@@ -229,10 +229,10 @@ The binary reads only two environment variables; everything else lives in the YA
 
 | Variable | Purpose | Source |
 |---|---|---|
-| `SLUICE_ARBITER_CONFIG` | Default path to the config YAML when `-config` is not passed | `main.go:46` |
+| `SLIPSPACE_ARBITER_CONFIG` | Default path to the config YAML when `-config` is not passed | `main.go:46` |
 | `LOG_LEVEL` | `debug` / `info` (default) / `warn` / `error` for the `slog` JSON handler | `main.go:55,149` |
 
-Flags: `-config <path>` (overrides `SLUICE_ARBITER_CONFIG`) and `-version` (print version and exit). The service logs JSON to **stderr** with a fixed `service=arbiter` + `version` header (`main.go:164`).
+Flags: `-config <path>` (overrides `SLIPSPACE_ARBITER_CONFIG`) and `-version` (print version and exit). The service logs JSON to **stderr** with a fixed `service=arbiter` + `version` header (`main.go:164`).
 
 ---
 
@@ -260,7 +260,7 @@ If either listener returns a non-`ErrServerClosed` error before a signal arrives
 The Arbiter is a **separate deployable** from the gateway, with its **own Postgres**. It shares no process, no config file, and no database with the gateway; the only coupling is the OTLP + HMAC-webhook wire contract (`deploy/docker/Dockerfile.arbiter` header).
 
 - **Image** — `arbiter`, built from `deploy/docker/Dockerfile.arbiter`. A multi-stage build compiles the second Vite target (`npm run build:telemetry`) into `internal/arbiter/server/webdist`, embeds it via `go:embed`, builds a static `CGO_ENABLED=0` binary, and ships it on `scratch` as non-root (`USER 65532:65532`). `EXPOSE 8686 8687`.
-- **Local stack** — `docker-compose.arbiter.yaml` brings up Postgres 16 + the arbiter binary, mounting `deploy/compose/arbiter.yaml` at `/etc/sluice/arbiter.yaml`. Run it independently of the gateway compose file:
+- **Local stack** — `docker-compose.arbiter.yaml` brings up Postgres 16 + the arbiter binary, mounting `deploy/compose/arbiter.yaml` at `/etc/slipspace/arbiter.yaml`. Run it independently of the gateway compose file:
 
   ```sh
   docker compose -f docker-compose.arbiter.yaml up --build

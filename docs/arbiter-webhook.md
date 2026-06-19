@@ -75,8 +75,8 @@ an ndjson batch, not a sealed `.ndjson.zst` segment.
 
 | Header | Required | Meaning |
 |---|---|---|
-| `X-Sluice-Gateway-Id` | yes | The registered gateway the push claims to be from. The service looks the HMAC secret up by this id. |
-| `X-Sluice-Signature` | yes | Hex-encoded HMAC-SHA256 of the **raw request body** (see below). |
+| `X-Slipspace-Gateway-Id` | yes | The registered gateway the push claims to be from. The service looks the HMAC secret up by this id. |
+| `X-Slipspace-Signature` | yes | Hex-encoded HMAC-SHA256 of the **raw request body** (see below). |
 | `Content-Type` | no | The pusher sends `application/json`; the handler does not enforce it. |
 
 Constants live in [internal/arbiter/ingest/record.go](../internal/arbiter/ingest/record.go)
@@ -85,12 +85,12 @@ Constants live in [internal/arbiter/ingest/record.go](../internal/arbiter/ingest
 
 ### Signature scheme
 
-`X-Sluice-Signature` is the **plain hex HMAC-SHA256 of the raw POST body** under the
+`X-Slipspace-Signature` is the **plain hex HMAC-SHA256 of the raw POST body** under the
 gateway's shared secret. There is **no timestamp**, no `t=…,v1=…` envelope, no replay
 window, and no signed-header canonicalization — just:
 
 ```
-X-Sluice-Signature = hex( HMAC_SHA256(secret, raw_body) )
+X-Slipspace-Signature = hex( HMAC_SHA256(secret, raw_body) )
 ```
 
 Sender ([pusher.go](../internal/arbiter/pusher/pusher.go), `Pusher.sign`):
@@ -166,8 +166,8 @@ SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac 's3cr3t' -hex | sed 's/^.
 
 curl -sS -X POST http://localhost:8686/api/v1/ingest/record \
   -H 'Content-Type: application/json' \
-  -H 'X-Sluice-Gateway-Id: edge-1' \
-  -H "X-Sluice-Signature: $SIG" \
+  -H 'X-Slipspace-Gateway-Id: edge-1' \
+  -H "X-Slipspace-Signature: $SIG" \
   --data-raw "$BODY"
 # => {"stored":1}
 ```
@@ -188,7 +188,7 @@ boot loudly rather than silently dropping every record.
 | Option | Source | Default |
 |---|---|---|
 | `Endpoint` | connector `url` | — (required) |
-| `GatewayID` | connector `gateway_id` | — (sent as `X-Sluice-Gateway-Id`) |
+| `GatewayID` | connector `gateway_id` | — (sent as `X-Slipspace-Gateway-Id`) |
 | `Secret` | resolved connector `secret_ref` | — (required) |
 | `Workers` | not config-exposed | `2` |
 | `Buffer` | not config-exposed | `1024` |
@@ -265,7 +265,7 @@ connectors:
   - name: central-telemetry
     type: webhook
     url: https://telemetry.example.com/api/v1/ingest/record
-    secret_ref: env:SLUICE_TELEMETRY_HMAC_SECRET
+    secret_ref: env:SLIPSPACE_TELEMETRY_HMAC_SECRET
     gateway_id: edge-1
     timeout_ms: 5000
 ```
@@ -274,7 +274,7 @@ connectors:
 |---|---|---|
 | `url` | yes | Receiver endpoint each record is POSTed to. For the Arbiter this is `…/api/v1/ingest/record`. |
 | `secret_ref` | yes | `env:NAME` or `file:/path` indirection to the HMAC signing key (no inline secrets — invariant on YAML trust). Resolved at boot by `resolveSecretRef` in [cmd/gateway/main.go](../cmd/gateway/main.go). |
-| `gateway_id` | conditional | Sent as `X-Sluice-Gateway-Id`. **Required** when pushing to the Arbiter (it keys secrets by gateway). Optional for a generic receiver that verifies the signature alone. |
+| `gateway_id` | conditional | Sent as `X-Slipspace-Gateway-Id`. **Required** when pushing to the Arbiter (it keys secrets by gateway). Optional for a generic receiver that verifies the signature alone. |
 | `timeout_ms` | yes | Per-call HTTP timeout, `0 < timeout_ms <= 60000`. Becomes the pusher's `Timeout`. |
 
 The `auth`, `rotation`, `bucket`, `region`, `account`, `container`, … fields on `Connector`
@@ -288,7 +288,7 @@ binding for a tighter per-binding cap. See [connector-bindings.md](connector-bin
 for the per-binding sampling / filter / body-cap overrides.
 
 The webhook connector also passes through the SSRF guard at config-validation time:
-private-network `url` targets are rejected unless `SLUICE_WEBHOOK_ALLOW_PRIVATE` is set
+private-network `url` targets are rejected unless `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE` is set
 (see [connectors.md](connectors.md) and [environment-variables.md](environment-variables.md)).
 
 ## Cross-references

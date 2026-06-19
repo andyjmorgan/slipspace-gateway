@@ -52,10 +52,10 @@ flowchart LR
 
 ## Disk layout
 
-Every connector gets its own subtree under `SLUICE_SPOOL_ROOT` (default `/var/lib/sluice/spool/`). The directory structure is:
+Every connector gets its own subtree under `SLIPSPACE_SPOOL_ROOT` (default `/var/lib/slipspace/spool/`). The directory structure is:
 
 ```
-<SLUICE_SPOOL_ROOT>/
+<SLIPSPACE_SPOOL_ROOT>/
   records/
     <connector-name>/
       active/          currently-appended segments
@@ -69,7 +69,7 @@ The connector name comes from the `name:` field on the top-level `connectors:` e
 
 State transitions between subdirectories are `os.Rename` calls within the same filesystem — atomic on Linux. No DB, no manifest file, no torn state. An operator can `ls -la` any subdirectory and reason about lifecycle from filenames alone. See [`internal/spool/manager.go`](../internal/spool/manager.go) for the transition validator that pins each rename to its expected source and destination state.
 
-> **The spool root must be on persistent storage.** In Kubernetes, mount a PVC at `SLUICE_SPOOL_ROOT`. Ephemeral storage (emptyDir) means segments waiting to upload at SIGTERM are gone after the pod restarts.
+> **The spool root must be on persistent storage.** In Kubernetes, mount a PVC at `SLIPSPACE_SPOOL_ROOT`. Ephemeral storage (emptyDir) means segments waiting to upload at SIGTERM are gone after the pod restarts.
 
 ---
 
@@ -84,9 +84,9 @@ The Record shape is the wire format every connector sees. Key fields:
 - `id` — a UUID minted per-request when the record is built (`cmd/gateway/reporter.go` `buildRecord`, `uuid.NewString()`); the consumer dedupe key on retried deliveries.
 - `ts_ns`, `instance_id`, `seq` — sort key tuple. `ts_ns` is the request start in nanoseconds; `instance_id` is the pod's hostname (`os.Hostname()`); `seq` is the per-instance monotonic counter.
 - `correlation_id` — joins together a request and its retries/tool follow-ups under one logical request.
-- `session_id`, `session_id_source` — the resolved session/bundle id (one level above `correlation_id`, grouping every request of one agent conversation) and the header name it was resolved from (e.g. `X-Sluice-Session-Id`, `Thread_id`). Both are omitted when no session header was present. Consumers bundle on the `(configuration, session_id)` tuple, never the bare id — client-controlled ids can collide across configurations. See [observability.md → Session bundling](observability.md#session-bundling) for the resolution chain.
-- `agent_id`, `agent_id_source` — the resolved agent id (the agent or sub-agent that issued the request, one axis below `session_id`) and the header it was resolved from (e.g. `X-Sluice-Agent-Id`, `X-Claude-Code-Agent-Id`). Both are omitted when no agent header was present. See [observability.md → Agent id](observability.md#agent-id) for the resolution chain.
-- `user_id`, `user_id_source` — the resolved end-user id (orthogonal to `session_id` / `agent_id`) and the header it was resolved from (e.g. `X-Sluice-User-Id`). Both are omitted when no user header was present. See [observability.md → User id](observability.md#user-id) for the resolution chain.
+- `session_id`, `session_id_source` — the resolved session/bundle id (one level above `correlation_id`, grouping every request of one agent conversation) and the header name it was resolved from (e.g. `X-Slipspace-Session-Id`, `Thread_id`). Both are omitted when no session header was present. Consumers bundle on the `(configuration, session_id)` tuple, never the bare id — client-controlled ids can collide across configurations. See [observability.md → Session bundling](observability.md#session-bundling) for the resolution chain.
+- `agent_id`, `agent_id_source` — the resolved agent id (the agent or sub-agent that issued the request, one axis below `session_id`) and the header it was resolved from (e.g. `X-Slipspace-Agent-Id`, `X-Claude-Code-Agent-Id`). Both are omitted when no agent header was present. See [observability.md → Agent id](observability.md#agent-id) for the resolution chain.
+- `user_id`, `user_id_source` — the resolved end-user id (orthogonal to `session_id` / `agent_id`) and the header it was resolved from (e.g. `X-Slipspace-User-Id`). Both are omitted when no user header was present. See [observability.md → User id](observability.md#user-id) for the resolution chain.
 - `configuration`, `api_key_name`, `provider`, `protocol`, `model`, `tags` — the post-rule resolved labels.
 - `request` — the captured request half: `method`, `headers` (flat single-value-per-key snapshot, minus the minted upstream-credential header), `body_sha256`, `body_bytes` (uncompressed length), and either inline `body` or `body_omitted: true` (set when oversize behaviour stripped the body — see [connector-bindings.md](connector-bindings.md#oversize-behaviour)). `request.path` is **reserved but not emitted** today — the reporter populates only `method`, so the field is always empty. `request.body_ref` (the out-of-line blob URL) is likewise reserved and not yet emitted; the spool ships bodies inline.
 - `response` — the captured response half: `status`, `headers`, `body_sha256`, `body_bytes`, and inline `body` / `body_omitted` on the same terms as the request, plus the timing and streaming fields:
@@ -257,9 +257,9 @@ The spool reads one env var directly:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SLUICE_SPOOL_ROOT` | `/var/lib/sluice/spool` | On-disk root. The `Manager` constructs `records/<connector>/{active,sealed,uploading,deadletter,quarantine}/` beneath this. Must be writable by the gateway process (UID 65532 in the published container). |
+| `SLIPSPACE_SPOOL_ROOT` | `/var/lib/slipspace/spool` | On-disk root. The `Manager` constructs `records/<connector>/{active,sealed,uploading,deadletter,quarantine}/` beneath this. Must be writable by the gateway process (UID 65532 in the published container). |
 
-`Validate` rejects an empty `SLUICE_SPOOL_ROOT` at startup. Pointing it at a tmpfs is supported for ephemeral-by-design deployments but accepts the loss-on-restart semantics that come with it.
+`Validate` rejects an empty `SLIPSPACE_SPOOL_ROOT` at startup. Pointing it at a tmpfs is supported for ephemeral-by-design deployments but accepts the loss-on-restart semantics that come with it.
 
 Per-track tuning (ring depth, rotation, retry, breaker) is **not** env-driven. Connector-level overrides land on the YAML entry in `connectors:`; everything else uses the constants from [`internal/spool/options.go`](../internal/spool/options.go). The decision is intentional — these are knobs an operator tunes per destination, not globally per process.
 
@@ -288,7 +288,7 @@ Resilience does not complicate this. The captured payload mirrors the **client-v
 - [connectors.md](connectors.md) — the destination types the spool ships to (s3, azure_blob, webhook).
 - [connector-bindings.md](connector-bindings.md) — the per-configuration sampling / filter / size-cap knobs that decide which records reach each connector.
 - [observability.md](observability.md) — `/metrics` exposes Go runtime and process collectors; per-track spool counters are surfaced via `Spool.Stats()`.
-- [environment-variables.md](environment-variables.md) — the full SLUICE_* reference.
+- [environment-variables.md](environment-variables.md) — the full SLIPSPACE_* reference.
 - [deployment.md](deployment.md) — PVC mount for the spool root, K8s topology with destinations.
 - [`internal/spool/`](../internal/spool/) — implementation. `spool.go` is the entry point; `track.go` is the per-connector runtime; `manager.go` is the directory abstraction.
 - [`contracts/connector/`](../contracts/connector/) — the public Record + SealedSegment + error types every connector implementation depends on.

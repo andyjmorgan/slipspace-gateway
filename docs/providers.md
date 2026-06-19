@@ -1,6 +1,6 @@
 # Providers
 
-A provider in Sluice is an upstream **connection** — OpenAI, Anthropic, Gemini, an in-cluster ollama, a self-hosted vLLM, anything that speaks one of the wire shapes the gateway knows. The `providers:` block declares its base URL, the per-protocol upstream paths and credential conventions, the headers and query parameters every request to it carries, and any opaque passthrough families it exposes.
+A provider in SlipSpace is an upstream **connection** — OpenAI, Anthropic, Gemini, an in-cluster ollama, a self-hosted vLLM, anything that speaks one of the wire shapes the gateway knows. The `providers:` block declares its base URL, the per-protocol upstream paths and credential conventions, the headers and query parameters every request to it carries, and any opaque passthrough families it exposes.
 
 A provider is a *connection definition, not a credential holder*. The upstream key lives on a Configuration (`credentials.<provider>`), and is substituted into the protocol's auth `format` at request time. Routing — which provider serves a given request — is **not** declared here either: it lives in a Configuration's `bindings`, which map `(protocol, model)` to a provider or a resilience group.
 
@@ -32,7 +32,7 @@ This page is the operator's reference for the provider half of the v2 config mod
 
 > **A provider is a base URL plus a per-protocol auth convention plus any passthrough families. It declares *how to reach and authenticate* an upstream — never *when* it is chosen. Choosing a provider is the Configuration's job, via bindings on `(protocol, model)`.**
 
-Sluice does not auto-discover what an upstream supports, and a provider no longer carries a path catalogue. Instead:
+SlipSpace does not auto-discover what an upstream supports, and a provider no longer carries a path catalogue. Instead:
 
 - The **inbound path is the protocol.** `/v1/chat/completions` is the `chat` protocol, `/v1/messages` is `messages`, `/v1beta/models/{model}:generateContent` is `generate_content`, and so on. The mapping is fixed in code — [`internal/selection/protocol.go::ProtocolForPath`](../internal/selection/protocol.go).
 - A **provider declares which protocols it serves** under `protocols:`, each with the upstream `path` to forward to and an optional per-protocol auth override.

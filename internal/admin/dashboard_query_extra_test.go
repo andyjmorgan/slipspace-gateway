@@ -97,17 +97,17 @@ func TestComputeByProtocol_PartitionsByProviderProtocolPair(t *testing.T) {
 	}{
 		{[]attribute.KeyValue{
 			attribute.String(observability.AttrGenAIProviderName, "openai"),
-			attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
+			attribute.String(observability.AttrSlipSpaceProtocol, "chat_completions"),
 			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 		}, 30},
 		{[]attribute.KeyValue{
 			attribute.String(observability.AttrGenAIProviderName, "openai"),
-			attribute.String(observability.AttrSluiceProtocol, "chat_completions"),
+			attribute.String(observability.AttrSlipSpaceProtocol, "chat_completions"),
 			attribute.String(observability.AttrHTTPResponseStatusCode, "500"),
 		}, 2},
 		{[]attribute.KeyValue{
 			attribute.String(observability.AttrGenAIProviderName, "anthropic"),
-			attribute.String(observability.AttrSluiceProtocol, "messages"),
+			attribute.String(observability.AttrSlipSpaceProtocol, "messages"),
 			attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 		}, 10},
 		// missing protocol label — must be skipped.
@@ -147,7 +147,7 @@ func TestComputeByConfiguration_SkipsMissingConfigurationLabel(t *testing.T) {
 
 	withConfig := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, "openai"),
-		attribute.String(observability.AttrSluiceConfiguration, "production"),
+		attribute.String(observability.AttrSlipSpaceConfiguration, "production"),
 		attribute.String(observability.AttrHTTPResponseStatusCode, "200"),
 	}
 	withoutConfig := []attribute.KeyValue{
@@ -210,7 +210,7 @@ func TestComputeByConfiguration_ErrorBranch(t *testing.T) {
 
 	cfg := func(status string) []attribute.KeyValue {
 		return []attribute.KeyValue{
-			attribute.String(observability.AttrSluiceConfiguration, "prod"),
+			attribute.String(observability.AttrSlipSpaceConfiguration, "prod"),
 			attribute.String(observability.AttrHTTPResponseStatusCode, status),
 		}
 	}

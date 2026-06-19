@@ -4,7 +4,7 @@
 # the SPA's static assets are public.
 #
 # Username is always "admin" (not configurable).
-# Password resolution: SLUICE_ADMIN_PASSWORD env var wins if set; otherwise
+# Password resolution: SLIPSPACE_ADMIN_PASSWORD env var wins if set; otherwise
 # the `password` field below is used. Either source is fine for dev; in
 # production prefer the env var so the secret stays out of yaml.
 #
@@ -13,4 +13,4 @@
 admin:
   enabled: true
   bind_addr: "127.0.0.1:8081"
-  password: "sluice-gateway"
+  password: "slipspace-gateway"

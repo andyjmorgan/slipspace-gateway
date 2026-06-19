@@ -1,4 +1,4 @@
-"""Wire-compat tests for the official `anthropic` Python SDK against sluice-gateway."""
+"""Wire-compat tests for the official `anthropic` Python SDK against slipspace-gateway."""
 
 from __future__ import annotations
 
@@ -24,9 +24,9 @@ def _client(
     api_key: str = API_KEY,
     headers: dict[str, str] | None = None,
 ) -> anthropic.Anthropic:
-    """Build an Anthropic client pointed at sluice.
+    """Build an Anthropic client pointed at slipspace.
 
-    v1.0.7: Sluice discovers the managed-mode key from `x-api-key` (the
+    v1.0.7: SlipSpace discovers the managed-mode key from `x-api-key` (the
     Anthropic SDK's native default), so no Authorization injection is
     required. Tests that need an explicit Authorization header can pass it
     via `headers`.
@@ -47,7 +47,7 @@ def _client_bare(
     """Anthropic SDK pointed at the gateway root (no /anthropic prefix).
 
     Exercises v1.0.6's prefix_optional on anthropic.messages and v1.0.7's
-    x-api-key discovery — a vanilla SDK with base_url=https://sluice...
+    x-api-key discovery — a vanilla SDK with base_url=https://slipspace...
     and api_key=sk_live_... must reach /v1/messages with no extra config.
     """
     return anthropic.Anthropic(
@@ -333,7 +333,7 @@ def test_passthrough_mode(gateway_url: str, mockllm_url: str) -> None:
     client = _client(
         gateway_url,
         api_key="byok-token-xyz",
-        headers={"X-Sluice-Configuration": "dev"},
+        headers={"X-Slipspace-Configuration": "dev"},
     )
     resp = client.messages.create(
         model="claude-3-5-sonnet-latest",

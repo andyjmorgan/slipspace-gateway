@@ -101,8 +101,8 @@ func TestCorrelationMiddleware_ResolvesClientHeaderAndEchoes(t *testing.T) {
 	if got.sessionID != "sess-42" || got.sessionSource != "Session-Id" {
 		t.Errorf("context session = (%q, %q), want (sess-42, Session-Id)", got.sessionID, got.sessionSource)
 	}
-	// The resolved bundle id is echoed under the Sluice header.
-	if h := rec.Header().Get(observability.SluiceSessionHeader); h != "sess-42" {
+	// The resolved bundle id is echoed under the SlipSpace header.
+	if h := rec.Header().Get(observability.SlipSpaceSessionHeader); h != "sess-42" {
 		t.Errorf("echoed session = %q, want sess-42", h)
 	}
 	if rec.Header().Get(headerCorrelationID) == "" {
@@ -110,14 +110,14 @@ func TestCorrelationMiddleware_ResolvesClientHeaderAndEchoes(t *testing.T) {
 	}
 }
 
-func TestCorrelationMiddleware_SluiceHeaderWins(t *testing.T) {
+func TestCorrelationMiddleware_SlipSpaceHeaderWins(t *testing.T) {
 	t.Parallel()
 	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, nil, headers.NewRedactor(nil), func(r *http.Request) {
-		r.Header.Set(observability.SluiceSessionHeader, "sess-authoritative")
+		r.Header.Set(observability.SlipSpaceSessionHeader, "sess-authoritative")
 		r.Header.Set("Session-Id", "sess-42")
 	})
-	if got.sessionID != "sess-authoritative" || got.sessionSource != observability.SluiceSessionHeader {
-		t.Errorf("session = (%q, %q), want (sess-authoritative, %s)", got.sessionID, got.sessionSource, observability.SluiceSessionHeader)
+	if got.sessionID != "sess-authoritative" || got.sessionSource != observability.SlipSpaceSessionHeader {
+		t.Errorf("session = (%q, %q), want (sess-authoritative, %s)", got.sessionID, got.sessionSource, observability.SlipSpaceSessionHeader)
 	}
 }
 
@@ -127,22 +127,22 @@ func TestCorrelationMiddleware_NoSessionNoEcho(t *testing.T) {
 	if got.sessionID != "" {
 		t.Errorf("session id = %q, want empty", got.sessionID)
 	}
-	if h := rec.Header().Get(observability.SluiceSessionHeader); h != "" {
+	if h := rec.Header().Get(observability.SlipSpaceSessionHeader); h != "" {
 		t.Errorf("no session resolved, but echoed %q", h)
 	}
 }
 
 func TestCorrelationMiddleware_RedactedSessionHeaderFallsThrough(t *testing.T) {
 	t.Parallel()
-	// Operator redacts the Sluice session header; resolution must skip it
+	// Operator redacts the SlipSpace session header; resolution must skip it
 	// and fall through rather than promote a redacted value.
-	redactor := headers.NewRedactor([]string{"x-sluice-session-id"})
+	redactor := headers.NewRedactor([]string{"x-slipspace-session-id"})
 	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, nil, redactor, func(r *http.Request) {
-		r.Header.Set(observability.SluiceSessionHeader, "sess-secret")
+		r.Header.Set(observability.SlipSpaceSessionHeader, "sess-secret")
 		r.Header.Set("Session-Id", "sess-42")
 	})
 	if got.sessionID != "sess-42" || got.sessionSource != "Session-Id" {
-		t.Errorf("session = (%q, %q), want (sess-42, Session-Id) — redacted Sluice header must fall through", got.sessionID, got.sessionSource)
+		t.Errorf("session = (%q, %q), want (sess-42, Session-Id) — redacted SlipSpace header must fall through", got.sessionID, got.sessionSource)
 	}
 }
 
@@ -185,8 +185,8 @@ func TestCorrelationMiddleware_CodexSubagentExplicitParent(t *testing.T) {
 	if got.parentID != "sess-1" {
 		t.Errorf("parent = %q, want sess-1 (explicit X-Codex-Parent-Thread-Id)", got.parentID)
 	}
-	// The resolved conversation is echoed under the Sluice thread header.
-	if h := rec.Header().Get(observability.SluiceThreadHeader); h != "thread-2" {
+	// The resolved conversation is echoed under the SlipSpace thread header.
+	if h := rec.Header().Get(observability.SlipSpaceThreadHeader); h != "thread-2" {
 		t.Errorf("echoed conversation = %q, want thread-2", h)
 	}
 }
@@ -213,19 +213,19 @@ func TestCorrelationMiddleware_ClaudeSubagentInferredParent(t *testing.T) {
 	}
 }
 
-// --- named agent (X-Sluice-Agent-Id only) ---
+// --- named agent (X-Slipspace-Agent-Id only) ---
 
 func TestCorrelationMiddleware_ResolvesNamedAgentAndEchoes(t *testing.T) {
 	t.Parallel()
 	// gen_ai.agent.id is reserved for a genuinely named agent: only the
-	// authoritative X-Sluice-Agent-Id (or an operator extra) feeds it.
+	// authoritative X-Slipspace-Agent-Id (or an operator extra) feeds it.
 	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver(nil), nil, headers.NewRedactor(nil), func(r *http.Request) {
-		r.Header.Set(observability.SluiceAgentHeader, "reviewer")
+		r.Header.Set(observability.SlipSpaceAgentHeader, "reviewer")
 	})
-	if got.agentID != "reviewer" || got.agentSource != observability.SluiceAgentHeader {
-		t.Errorf("context agent = (%q, %q), want (reviewer, %s)", got.agentID, got.agentSource, observability.SluiceAgentHeader)
+	if got.agentID != "reviewer" || got.agentSource != observability.SlipSpaceAgentHeader {
+		t.Errorf("context agent = (%q, %q), want (reviewer, %s)", got.agentID, got.agentSource, observability.SlipSpaceAgentHeader)
 	}
-	if h := rec.Header().Get(observability.SluiceAgentHeader); h != "reviewer" {
+	if h := rec.Header().Get(observability.SlipSpaceAgentHeader); h != "reviewer" {
 		t.Errorf("echoed agent = %q, want reviewer", h)
 	}
 }
@@ -233,7 +233,7 @@ func TestCorrelationMiddleware_ResolvesNamedAgentAndEchoes(t *testing.T) {
 func TestCorrelationMiddleware_NamedAgentViaOperatorHeader(t *testing.T) {
 	t.Parallel()
 	// There is no shipped agent default, so an operator extra is the only
-	// non-Sluice path to a named agent.
+	// non-SlipSpace path to a named agent.
 	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), observability.NewAgentResolver([]string{"X-Acme-Agent"}), nil, headers.NewRedactor(nil), func(r *http.Request) {
 		r.Header.Set("X-Acme-Agent", "acme-agent")
 	})
@@ -248,7 +248,7 @@ func TestCorrelationMiddleware_NoAgentNoEcho(t *testing.T) {
 	if got.agentID != "" {
 		t.Errorf("agent id = %q, want empty", got.agentID)
 	}
-	if h := rec.Header().Get(observability.SluiceAgentHeader); h != "" {
+	if h := rec.Header().Get(observability.SlipSpaceAgentHeader); h != "" {
 		t.Errorf("no agent resolved, but echoed %q", h)
 	}
 }
@@ -256,13 +256,13 @@ func TestCorrelationMiddleware_NoAgentNoEcho(t *testing.T) {
 func TestCorrelationMiddleware_ResolvesUserHeaderAndEchoes(t *testing.T) {
 	t.Parallel()
 	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, observability.NewUserResolver(nil), headers.NewRedactor(nil), func(r *http.Request) {
-		r.Header.Set(observability.SluiceUserHeader, "usr-42")
+		r.Header.Set(observability.SlipSpaceUserHeader, "usr-42")
 	})
-	if got.userID != "usr-42" || got.userSource != observability.SluiceUserHeader {
-		t.Errorf("context user = (%q, %q), want (usr-42, %s)", got.userID, got.userSource, observability.SluiceUserHeader)
+	if got.userID != "usr-42" || got.userSource != observability.SlipSpaceUserHeader {
+		t.Errorf("context user = (%q, %q), want (usr-42, %s)", got.userID, got.userSource, observability.SlipSpaceUserHeader)
 	}
-	// The resolved user id is echoed under the Sluice user header.
-	if h := rec.Header().Get(observability.SluiceUserHeader); h != "usr-42" {
+	// The resolved user id is echoed under the SlipSpace user header.
+	if h := rec.Header().Get(observability.SlipSpaceUserHeader); h != "usr-42" {
 		t.Errorf("echoed user = %q, want usr-42", h)
 	}
 }
@@ -270,14 +270,14 @@ func TestCorrelationMiddleware_ResolvesUserHeaderAndEchoes(t *testing.T) {
 func TestCorrelationMiddleware_ResolvesUserViaOperatorHeader(t *testing.T) {
 	t.Parallel()
 	// No client ships a default user header, so an operator extra is the only
-	// non-Sluice path. The resolved value is still echoed under the Sluice header.
+	// non-SlipSpace path. The resolved value is still echoed under the SlipSpace header.
 	rec, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, observability.NewUserResolver([]string{"X-Acme-User-Id"}), headers.NewRedactor(nil), func(r *http.Request) {
 		r.Header.Set("X-Acme-User-Id", "acme-9")
 	})
 	if got.userID != "acme-9" || got.userSource != "X-Acme-User-Id" {
 		t.Errorf("user = (%q, %q), want (acme-9, X-Acme-User-Id)", got.userID, got.userSource)
 	}
-	if h := rec.Header().Get(observability.SluiceUserHeader); h != "acme-9" {
+	if h := rec.Header().Get(observability.SlipSpaceUserHeader); h != "acme-9" {
 		t.Errorf("echoed user = %q, want acme-9", h)
 	}
 }
@@ -288,21 +288,21 @@ func TestCorrelationMiddleware_NoUserNoEcho(t *testing.T) {
 	if got.userID != "" {
 		t.Errorf("user id = %q, want empty", got.userID)
 	}
-	if h := rec.Header().Get(observability.SluiceUserHeader); h != "" {
+	if h := rec.Header().Get(observability.SlipSpaceUserHeader); h != "" {
 		t.Errorf("no user resolved, but echoed %q", h)
 	}
 }
 
 func TestCorrelationMiddleware_RedactedUserHeaderFallsThrough(t *testing.T) {
 	t.Parallel()
-	// Operator redacts the Sluice user header; resolution must skip it and fall
+	// Operator redacts the SlipSpace user header; resolution must skip it and fall
 	// through to the operator extra rather than promote a redacted value.
-	redactor := headers.NewRedactor([]string{"x-sluice-user-id"})
+	redactor := headers.NewRedactor([]string{"x-slipspace-user-id"})
 	_, got := serveCorrelation(t, observability.NewSessionResolver(nil), nil, observability.NewUserResolver([]string{"X-Acme-User-Id"}), redactor, func(r *http.Request) {
-		r.Header.Set(observability.SluiceUserHeader, "usr-secret")
+		r.Header.Set(observability.SlipSpaceUserHeader, "usr-secret")
 		r.Header.Set("X-Acme-User-Id", "acme-9")
 	})
 	if got.userID != "acme-9" || got.userSource != "X-Acme-User-Id" {
-		t.Errorf("user = (%q, %q), want (acme-9, X-Acme-User-Id) — redacted Sluice header must fall through", got.userID, got.userSource)
+		t.Errorf("user = (%q, %q), want (acme-9, X-Acme-User-Id) — redacted SlipSpace header must fall through", got.userID, got.userSource)
 	}
 }

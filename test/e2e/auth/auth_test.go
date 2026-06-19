@@ -54,8 +54,8 @@ func TestAuth_Matrix(t *testing.T) {
 			wantCode: http.StatusUnauthorized,
 		},
 		{
-			// v1.0.7: native Anthropic-style header carries the Sluice
-			// secret. Vanilla anthropic SDK pointed at sluice just works.
+			// v1.0.7: native Anthropic-style header carries the SlipSpace
+			// secret. Vanilla anthropic SDK pointed at slipspace just works.
 			// Empty Authorization overrides the harness's auto-injection
 			// of a Bearer fallback so we exercise the x-api-key path
 			// alone.
@@ -67,8 +67,8 @@ func TestAuth_Matrix(t *testing.T) {
 			wantCode: http.StatusOK,
 		},
 		{
-			// v1.0.7: native Gemini-style header carries the Sluice secret.
-			// Vanilla google-genai client pointed at sluice just works.
+			// v1.0.7: native Gemini-style header carries the SlipSpace secret.
+			// Vanilla google-genai client pointed at slipspace just works.
 			name: "managed_via_x_goog_api_key",
 			headers: http.Header{
 				"Authorization":  []string{""},
@@ -99,16 +99,16 @@ func TestAuth_Matrix(t *testing.T) {
 		{
 			name: "passthrough_valid",
 			headers: http.Header{
-				"Authorization":          []string{"Bearer customer-supplied-token"},
-				"X-Sluice-Configuration": []string{"dev"},
+				"Authorization":             []string{"Bearer customer-supplied-token"},
+				"X-Slipspace-Configuration": []string{"dev"},
 			},
 			wantCode: http.StatusOK,
 		},
 		{
 			name: "passthrough_unknown_config",
 			headers: http.Header{
-				"Authorization":          []string{"Bearer customer-supplied-token"},
-				"X-Sluice-Configuration": []string{"does-not-exist"},
+				"Authorization":             []string{"Bearer customer-supplied-token"},
+				"X-Slipspace-Configuration": []string{"does-not-exist"},
 			},
 			wantCode: http.StatusForbidden,
 		},
@@ -126,10 +126,10 @@ func TestAuth_Matrix(t *testing.T) {
 }
 
 // TestAuth_Passthrough_PreservesXAPIKey covers the v1.0.7 load-bearing
-// invariant: when X-Sluice-Configuration selects passthrough mode, the
+// invariant: when X-Slipspace-Configuration selects passthrough mode, the
 // client's native API-key header (x-api-key carrying a real upstream
 // Anthropic key, for example) MUST be forwarded verbatim and NOT consumed
-// by sluice's managed-mode discovery. We assert by reading back the
+// by slipspace's managed-mode discovery. We assert by reading back the
 // header the mockllm received.
 func TestAuth_Passthrough_PreservesXAPIKey(t *testing.T) {
 	t.Parallel()
@@ -144,8 +144,8 @@ func TestAuth_Passthrough_PreservesXAPIKey(t *testing.T) {
 	const customerKey = "sk-ant-customer-upstream-byok"
 	body := map[string]any{"model": "claude-3", "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "."}}}
 	resp := h.PostJSON("/v1/messages", body, http.Header{
-		"X-Api-Key":              []string{customerKey},
-		"X-Sluice-Configuration": []string{"dev"},
+		"X-Api-Key":                 []string{customerKey},
+		"X-Slipspace-Configuration": []string{"dev"},
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("passthrough w/ x-api-key: status=%d body=%s", resp.StatusCode, resp.Body)
@@ -158,8 +158,8 @@ func TestAuth_Passthrough_PreservesXAPIKey(t *testing.T) {
 	if got := cap.Headers["X-Api-Key"]; got != customerKey {
 		t.Fatalf("upstream x-api-key = %q, want passthrough verbatim %q", got, customerKey)
 	}
-	if cap.Headers["X-Sluice-Configuration"] != "" {
-		t.Errorf("X-Sluice-Configuration must not leak upstream")
+	if cap.Headers["X-Slipspace-Configuration"] != "" {
+		t.Errorf("X-Slipspace-Configuration must not leak upstream")
 	}
 }
 
@@ -172,8 +172,8 @@ func TestAuth_UnknownConfig(t *testing.T) {
 	}
 	resp := h.PostJSON("/v1beta/models/gemini-1.5-flash:generateContent", body,
 		http.Header{
-			"Authorization":          []string{"Bearer customer-token"},
-			"X-Sluice-Configuration": []string{"does-not-exist"},
+			"Authorization":             []string{"Bearer customer-token"},
+			"X-Slipspace-Configuration": []string{"does-not-exist"},
 		})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status=%d want 403", resp.StatusCode)

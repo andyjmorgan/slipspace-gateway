@@ -57,7 +57,7 @@ func TestUnmarshalAction_ChangeUrl(t *testing.T) {
 }
 
 func TestUnmarshalAction_ChangeApiKey(t *testing.T) {
-	raw := `{"type":"changeApiKey","api_key":"sk-xxx","use_sluice_key":true}`
+	raw := `{"type":"changeApiKey","api_key":"sk-xxx","use_slipspace_key":true}`
 	act, err := rules.UnmarshalAction([]byte(raw))
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -66,7 +66,7 @@ func TestUnmarshalAction_ChangeApiKey(t *testing.T) {
 	if !ok {
 		t.Fatalf("type = %T", act)
 	}
-	if ck.APIKey != "sk-xxx" || !ck.UseSluiceKey {
+	if ck.APIKey != "sk-xxx" || !ck.UseSlipSpaceKey {
 		t.Errorf("bad: %+v", ck)
 	}
 }

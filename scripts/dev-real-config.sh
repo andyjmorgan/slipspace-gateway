@@ -210,14 +210,14 @@ YAML
 
 # admin.yaml — enabled, bound to all interfaces so the host port
 # mapping reaches the listener. The yaml password is a placeholder so
-# `cli config validate` passes without SLUICE_ADMIN_PASSWORD in env;
-# at runtime, SLUICE_ADMIN_PASSWORD (set by docker-compose.real.yaml
+# `cli config validate` passes without SLIPSPACE_ADMIN_PASSWORD in env;
+# at runtime, SLIPSPACE_ADMIN_PASSWORD (set by docker-compose.real.yaml
 # from .env) wins over this field.
 cat >"$out/admin.yaml" <<'YAML'
 admin:
   enabled: true
   bind_addr: "0.0.0.0:8081"
-  password: "placeholder-overridden-by-SLUICE_ADMIN_PASSWORD"
+  password: "placeholder-overridden-by-SLIPSPACE_ADMIN_PASSWORD"
 YAML
 
 echo "wrote: $out/{providers,policy,admin}.yaml"

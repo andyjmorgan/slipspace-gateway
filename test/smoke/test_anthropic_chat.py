@@ -1,4 +1,4 @@
-"""Smoke test: Anthropic OpenAI-compat chat completions via sluice-gateway.
+"""Smoke test: Anthropic OpenAI-compat chat completions via slipspace-gateway.
 
 v1.0.2 wires `/anthropic/v1/chat/completions` to Anthropic's OpenAI-shaped
 surface. Drive it with the OpenAI SDK pointed at `{base_url}/v1`.

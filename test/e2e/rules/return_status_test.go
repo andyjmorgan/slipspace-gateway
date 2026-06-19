@@ -73,11 +73,11 @@ func TestReturnStatusCode_E2E(t *testing.T) {
 	if got := resp.Header.Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", got)
 	}
-	if got := resp.Header.Get("X-Sluice-Synthetic"); got != "rule:rate-limit-openai" {
-		t.Errorf("X-Sluice-Synthetic = %q, want rule:rate-limit-openai", got)
+	if got := resp.Header.Get("X-Slipspace-Synthetic"); got != "rule:rate-limit-openai" {
+		t.Errorf("X-Slipspace-Synthetic = %q, want rule:rate-limit-openai", got)
 	}
-	if resp.Header.Get("X-Sluice-Correlation-Id") == "" {
-		t.Error("X-Sluice-Correlation-Id should be set on synthetic response")
+	if resp.Header.Get("X-Slipspace-Correlation-Id") == "" {
+		t.Error("X-Slipspace-Correlation-Id should be set on synthetic response")
 	}
 	if string(resp.Body) != `{"error":"rate_limited","retry_after":60}` {
 		t.Errorf("body = %q", resp.Body)

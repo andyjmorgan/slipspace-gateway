@@ -10,7 +10,7 @@ func TestConnector_Validate_S3HappyPath(t *testing.T) {
 	c := &Connector{
 		Name:   "refinement-s3",
 		Type:   ConnectorTypeS3,
-		Bucket: "sluice-refinement",
+		Bucket: "slipspace-refinement",
 		Region: "eu-west-2",
 	}
 	if err := c.Validate(); err != nil {
@@ -22,7 +22,7 @@ func TestConnector_Validate_S3OnPremCompatible(t *testing.T) {
 	c := &Connector{
 		Name:         "minio",
 		Type:         ConnectorTypeS3,
-		Bucket:       "sluice",
+		Bucket:       "slipspace",
 		Region:       "us-east-1",
 		EndpointURL:  "https://minio.internal:9000",
 		UsePathStyle: true,
@@ -59,7 +59,7 @@ func TestConnector_Validate_AzureBlobHappy(t *testing.T) {
 		Name:      "azure",
 		Type:      ConnectorTypeAzureBlob,
 		Account:   "myaccount",
-		Container: "sluice",
+		Container: "slipspace",
 		Auth: &ConnectorAuth{ //nolint:gosec // G101: fixture credentials in test
 			Mode:        AuthModeSASToken,
 			SASTokenRef: "env:AZURE_SAS",
@@ -74,7 +74,7 @@ func TestConnector_Validate_WebhookHappy(t *testing.T) {
 	c := &Connector{ //nolint:gosec // G101: SecretRef is an env: indirection, not a literal credential
 		Name:      "hook",
 		Type:      ConnectorTypeWebhook,
-		URL:       "https://hooks.example/sluice",
+		URL:       "https://hooks.example/slipspace",
 		SecretRef: "env:HOOK_SECRET",
 		TimeoutMS: 3000,
 	}

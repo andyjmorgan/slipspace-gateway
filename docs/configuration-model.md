@@ -1,6 +1,6 @@
 # Configuration Model
 
-Everything the gateway needs to serve traffic lives in YAML files under `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The loader reads **every** `*.yaml` file in that directory, merges the top-level blocks by key into a single `ResolvedConfig`, validates cross-block references, then builds the runtime indexes the data plane reads on every request.
+Everything the gateway needs to serve traffic lives in YAML files under `SLIPSPACE_CONFIG_DIR` (default `/etc/slipspace/`). The loader reads **every** `*.yaml` file in that directory, merges the top-level blocks by key into a single `ResolvedConfig`, validates cross-block references, then builds the runtime indexes the data plane reads on every request.
 
 This is the **v2** configuration model. Routing defaults to config data: the inbound request path fixes a *protocol*, the request body carries a *model*, and a configuration's **bindings** map `(protocol, model)` to a provider or a resilience group. The routing rule actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`, see [actions.md](actions.md)) remain available as per-request overrides layered on top of that binding data. There is no path-based route table, no provider `endpoints`/`accepted_paths`/`prefix*` schema, and no top-level `resilience_policies` block — those were v1 concepts retired into bindings, groups, and provider `protocols`. See `internal/config/config_model.go` (the loader) and `contracts/config/model.go` (the schema) for the source of truth.
 
@@ -42,7 +42,7 @@ This page is the operator's reference for that on-disk schema — what files exi
 - `api_keys` is the **bearer reference** — a flat list of gateway-issued secrets, each naming the `configuration` it resolves to. Many keys may share one configuration.
 - `admin` / `telemetry` are the **management-console gate** and **telemetry knobs** — both optional.
 
-Server-level configuration (bind address, drain timeout, spool root, OTel exporter, Prometheus scrape, log format/level) is **not** in YAML — it lives on the `SLUICE_*` env vars consumed by `LoadEnv`. See [environment-variables.md](environment-variables.md).
+Server-level configuration (bind address, drain timeout, spool root, OTel exporter, Prometheus scrape, log format/level) is **not** in YAML — it lives on the `SLIPSPACE_*` env vars consumed by `LoadEnv`. See [environment-variables.md](environment-variables.md).
 
 The blocks compose by reference, not by nesting: providers and groups are defined once at the top level and referenced by name from a configuration's bindings.
 
@@ -52,7 +52,7 @@ The blocks compose by reference, not by nesting: providers and groups are define
 
 ```mermaid
 flowchart TB
-    A[SLUICE_CONFIG_DIR] --> B[os.ReadDir]
+    A[SLIPSPACE_CONFIG_DIR] --> B[os.ReadDir]
     B --> C{regular file<br/>with .yaml ext?}
     C -- no --> S[skip silently]
     C -- yes --> D[yaml.Unmarshal<br/>into configDoc]
@@ -80,7 +80,7 @@ flowchart TB
 
 ### Loader override
 
-`SLUICE_CONFIG_DIR` selects the directory. The CLI's `--dir` flag overrides this for one-shot validation runs but does not affect the data-plane process.
+`SLIPSPACE_CONFIG_DIR` selects the directory. The CLI's `--dir` flag overrides this for one-shot validation runs but does not affect the data-plane process.
 
 ---
 
@@ -112,7 +112,7 @@ providers:
   openai:
     base_url: "https://api.openai.com"
     required_headers:
-      x-sluice-source: "gateway"
+      x-slipspace-source: "gateway"
     query:
       api-version: "preview"
     protocols:
@@ -432,15 +432,15 @@ admin:
 |---|---|---|---|
 | `enabled` | bool | yes | Gates the admin listener. `false` = no second `http.Server`, no admin routes exist anywhere. |
 | `bind_addr` | string | no | Listener address (host:port). Empty resolves to a default; must not collide with the data-plane listener. Validated as host:port with numeric port. |
-| `password` | string | no | Operator credential for HTTP Basic auth. Username is hardcoded `admin`. May be empty in YAML — at runtime `SLUICE_ADMIN_PASSWORD` wins when set; otherwise this field is used. With `enabled: true`, **either** the env var or this field must be set. Never serialised to JSON. |
+| `password` | string | no | Operator credential for HTTP Basic auth. Username is hardcoded `admin`. May be empty in YAML — at runtime `SLIPSPACE_ADMIN_PASSWORD` wins when set; otherwise this field is used. With `enabled: true`, **either** the env var or this field must be set. Never serialised to JSON. |
 
-The console's runtime behaviour (live-feed capacity, body-capture budget, snapshot interval) is configured via `SLUICE_ADMIN_*` env vars, not this block — see [environment-variables.md](environment-variables.md).
+The console's runtime behaviour (live-feed capacity, body-capture budget, snapshot interval) is configured via `SLIPSPACE_ADMIN_*` env vars, not this block — see [environment-variables.md](environment-variables.md).
 
 ---
 
 ## `telemetry` block
 
-`telemetry:` is optional and carries operator-tunable knobs that shape what the gateway emits to its telemetry signals (`contracts/config/telemetry.go::Telemetry`). Today the only nested block is `content_capture`, which caps the bytes the gateway includes on the GenAI span and `gen_ai.client.inference.operation.details` event when `SLUICE_OTEL_CAPTURE_CONTENT=true`. Absent fields fall back to the built-in defaults, so existing deployments need no change.
+`telemetry:` is optional and carries operator-tunable knobs that shape what the gateway emits to its telemetry signals (`contracts/config/telemetry.go::Telemetry`). Today the only nested block is `content_capture`, which caps the bytes the gateway includes on the GenAI span and `gen_ai.client.inference.operation.details` event when `SLIPSPACE_OTEL_CAPTURE_CONTENT=true`. Absent fields fall back to the built-in defaults, so existing deployments need no change.
 
 ```yaml
 telemetry:
@@ -464,7 +464,7 @@ telemetry:
 | `system_instructions_max_bytes` | 32 KiB | Per-part `content` under `gen_ai.system_instructions`. |
 | `tool_definitions_max_bytes` | 64 KiB | Combined `parameters` JSON-schema size across every tool definition. Once exceeded, parameters are dropped wholesale from every definition (type/name/description still emitted). |
 
-The caps shape only what reaches the span and the operation-details event — they do not affect the connector spool, which carries the full unredacted body to operator-configured destinations (invariant #4). `SLUICE_OTEL_CAPTURE_CONTENT` is the master switch; the caps only apply when capture is on. See [observability.md](observability.md#genai-spans-and-events).
+The caps shape only what reaches the span and the operation-details event — they do not affect the connector spool, which carries the full unredacted body to operator-configured destinations (invariant #4). `SLIPSPACE_OTEL_CAPTURE_CONTENT` is the master switch; the caps only apply when capture is on. See [observability.md](observability.md#genai-spans-and-events).
 
 ---
 
@@ -513,7 +513,7 @@ flowchart TB
     G -- targets[*].provider --> P
 
     Req["request: (protocol-from-path, model-from-body)"] -- Authorization: sk_live_... --> K
-    Req -- X-Sluice-Configuration (passthrough auth) --> C
+    Req -- X-Slipspace-Configuration (passthrough auth) --> C
     Req -. first matching binding .-> C
 ```
 
@@ -693,11 +693,11 @@ What this gives you: a `chat` request with a `claude-*` model lands on Anthropic
 
 The loader does not expand `${VAR}` or any `env:` syntax inside the YAML tree. Decoded values pass through verbatim. This is deliberate.
 
-- **File contents are trusted by construction.** In production the config directory is mounted from a Kubernetes Secret (or a filesystem-permissioned dir on bare metal); the operator picks the substrate and Sluice trusts what's on disk.
+- **File contents are trusted by construction.** In production the config directory is mounted from a Kubernetes Secret (or a filesystem-permissioned dir on bare metal); the operator picks the substrate and SlipSpace trusts what's on disk.
 - **One source of truth per secret.** A `${OPENAI_KEY}` literal would make the file meaningless without the env, and the env var becomes the de-facto source of truth — not what the admin console shows, what the bundler exports, or what the validator sees. Literal strings keep the YAML the canonical artefact.
-- **Only file paths are env-overridable.** `SLUICE_CONFIG_DIR` selects the dir; everything inside is read as-is.
+- **Only file paths are env-overridable.** `SLIPSPACE_CONFIG_DIR` selects the dir; everything inside is read as-is.
 
-The two intentional exceptions are `SLUICE_ADMIN_PASSWORD` (kept out of YAML for production hygiene) and the server-level `SLUICE_*` env vars (not in YAML at all). See [environment-variables.md](environment-variables.md).
+The two intentional exceptions are `SLIPSPACE_ADMIN_PASSWORD` (kept out of YAML for production hygiene) and the server-level `SLIPSPACE_*` env vars (not in YAML at all). See [environment-variables.md](environment-variables.md).
 
 ---
 
@@ -739,7 +739,7 @@ These are documented intentionally — don't fix them without checking the miles
 
    `internal/config/store.go::Store` owns the live `ResolvedConfig` behind an `atomic.Pointer`. Every consumer (router, auth resolver, rules evaluator, forwarder, reporter, admin handlers) holds the `*Store`, never the `*ResolvedConfig` itself. Reads call `store.Snapshot()` at request top and operate on that pointer for the rest of the request — a `Replace` landing mid-handler is invisible to the in-flight call. Writers (admin mutations only) follow `Clone → mutate → RevalidateAndIndex → WritePolicyYAML → Store.Replace`; failure at any step leaves the live snapshot untouched. This is load-bearing invariant #9 in [`CLAUDE.md`](../CLAUDE.md).
 
-2. **No `${VAR}` substitution.** See [Why no `${VAR}` substitution](#why-no-var-substitution). The one operator escape hatch is `SLUICE_ADMIN_PASSWORD`.
+2. **No `${VAR}` substitution.** See [Why no `${VAR}` substitution](#why-no-var-substitution). The one operator escape hatch is `SLIPSPACE_ADMIN_PASSWORD`.
 
 3. **Each block has a single authoring home.** A given top-level block must live in exactly one file; spreading `providers:` across two files is rejected with `ErrDuplicateKey`. Filenames themselves are unconstrained — any `*.yaml` is merged.
 
@@ -761,4 +761,4 @@ These are documented intentionally — don't fix them without checking the miles
 - [connectors.md](connectors.md) — destination types (s3, azure_blob, webhook) and per-type auth modes.
 - [connector-bindings.md](connector-bindings.md) — per-configuration sampling / filter / size-cap knobs.
 - [spool.md](spool.md) — disk layout, lifecycle, and loss policy for buffered connector deliveries.
-- [environment-variables.md](environment-variables.md) — every `SLUICE_*` env var (server bind, spool root, OTel, admin runtime knobs).
+- [environment-variables.md](environment-variables.md) — every `SLIPSPACE_*` env var (server bind, spool root, OTel, admin runtime knobs).

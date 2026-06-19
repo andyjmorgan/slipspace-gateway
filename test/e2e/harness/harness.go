@@ -43,7 +43,7 @@ const (
 // a webhook connector pointing at this harness's in-process
 // httptest.Server. Every sealed-segment POST is decompressed,
 // each cc.Record is translated into the legacy Envelope shape, and
-// pushed to eventBuf — ExpectEvent reads from there. SLUICE_WEBHOOK_
+// pushed to eventBuf — ExpectEvent reads from there. SLIPSPACE_WEBHOOK_
 // ALLOW_PRIVATE is set on the gateway process so the loopback target
 // passes the runtime SSRF guard.
 type Harness struct {
@@ -268,7 +268,7 @@ func (h *Harness) startGateway(t *testing.T, repoRoot string) {
 
 	// Spool root + config dir are port-independent, so materialize them
 	// once outside the retry loop.
-	spoolRoot, err := os.MkdirTemp("", "sluice-e2e-spool-*")
+	spoolRoot, err := os.MkdirTemp("", "slipspace-e2e-spool-*")
 	if err != nil {
 		t.Fatalf("harness: tmp spool: %v", err)
 	}
@@ -472,11 +472,11 @@ func (w *portCollisionWatcher) Write(p []byte) (int, error) {
 // materializeConfig clones the policy + providers YAML from config-dev/ into
 // a tmp dir and rewrites the in-tree mockllm placeholder to point at the
 // harness's dynamically-assigned upstream. Server-level configuration is
-// supplied to the gateway via SLUICE_* env vars (see gatewayEnv); the
+// supplied to the gateway via SLIPSPACE_* env vars (see gatewayEnv); the
 // directory contains only policy.yaml + providers.yaml.
 func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 	src := filepath.Join(repoRoot, "config-dev")
-	dst, err := os.MkdirTemp("", "sluice-e2e-config-*")
+	dst, err := os.MkdirTemp("", "slipspace-e2e-config-*")
 	if err != nil {
 		return "", fmt.Errorf("mkdir tmp config: %w", err)
 	}
@@ -576,7 +576,7 @@ func (h *Harness) injectWebhookConnector(dst string) error {
 
 	// The webhook connector is a real-time, non-spooled pusher: it POSTs one
 	// cc.Record JSON per request to the capture server (no rotation — that's a
-	// spool concept). gateway_id rides the X-Sluice-Gateway-Id header.
+	// spool concept). gateway_id rides the X-Slipspace-Gateway-Id header.
 	content += fmt.Sprintf(`
 connectors:
   - name: harness-webhook
@@ -606,40 +606,40 @@ func (h *Harness) writeAdminYAML(dst string) error {
 	return os.WriteFile(filepath.Join(dst, "admin.yaml"), []byte(body), 0o600) //nolint:gosec // dst is os.MkdirTemp output
 }
 
-// gatewayEnv builds the SLUICE_* env block for the spawned gateway process.
+// gatewayEnv builds the SLIPSPACE_* env block for the spawned gateway process.
 // Options overrides (ReportingEnabled, StashThresholdBytes, DrainTimeoutSeconds)
 // land here instead of in YAML mutation because the gateway sources these
 // inputs from env vars after the three-plane refactor.
 func (h *Harness) gatewayEnv(configDir string) []string {
 	env := []string{
-		"SLUICE_CONFIG_DIR=" + configDir,
-		fmt.Sprintf("SLUICE_HTTP_BIND=127.0.0.1:%d", h.gatewayBindPort),
-		fmt.Sprintf("SLUICE_PROMETHEUS_BIND=127.0.0.1:%d", h.promBindPort),
-		"SLUICE_LOG_LEVEL=debug",
-		"SLUICE_SPOOL_ROOT=" + h.spoolRoot,
+		"SLIPSPACE_CONFIG_DIR=" + configDir,
+		fmt.Sprintf("SLIPSPACE_HTTP_BIND=127.0.0.1:%d", h.gatewayBindPort),
+		fmt.Sprintf("SLIPSPACE_PROMETHEUS_BIND=127.0.0.1:%d", h.promBindPort),
+		"SLIPSPACE_LOG_LEVEL=debug",
+		"SLIPSPACE_SPOOL_ROOT=" + h.spoolRoot,
 		// The harness's capture httptest.Server binds to loopback;
 		// flip the webhook connector's runtime SSRF guard so the
 		// connector accepts a 127.0.0.1 destination.
-		"SLUICE_WEBHOOK_ALLOW_PRIVATE=1",
+		"SLIPSPACE_WEBHOOK_ALLOW_PRIVATE=1",
 		// HMAC key the gateway signs payloads with. Generated per
 		// harness so concurrent test packages don't share state.
 		"HARNESS_WEBHOOK_SECRET=" + h.captureSecret,
 	}
 
 	if h.opts.DrainTimeoutSeconds > 0 {
-		env = append(env, fmt.Sprintf("SLUICE_SHUTDOWN_DRAIN_SECONDS=%d", h.opts.DrainTimeoutSeconds))
+		env = append(env, fmt.Sprintf("SLIPSPACE_SHUTDOWN_DRAIN_SECONDS=%d", h.opts.DrainTimeoutSeconds))
 	}
 	if h.opts.UpstreamResponseHeaderTimeoutSeconds > 0 {
-		env = append(env, fmt.Sprintf("SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS=%d", h.opts.UpstreamResponseHeaderTimeoutSeconds))
+		env = append(env, fmt.Sprintf("SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS=%d", h.opts.UpstreamResponseHeaderTimeoutSeconds))
 	}
 	// Tight snapshot interval so the admin dashboard reflects real
 	// traffic within an e2e test's wall-clock budget. Production
 	// default is 5 minutes (configured at the env var's default).
 	if h.opts.AdminEnabled {
-		env = append(env, "SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS=200")
+		env = append(env, "SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS=200")
 	}
 	if h.opts.ExternalURL != "" {
-		env = append(env, "SLUICE_EXTERNAL_URL="+h.opts.ExternalURL)
+		env = append(env, "SLIPSPACE_EXTERNAL_URL="+h.opts.ExternalURL)
 	}
 	return env
 }
@@ -723,7 +723,7 @@ func mockllmBinary(repoRoot string) (string, error) {
 // was never race-instrumented) and returns the binary path. The temp dir is
 // unique per build so concurrent packages don't clobber a shared output.
 func buildBinary(repoRoot, pkg string) (string, error) {
-	dir, err := os.MkdirTemp("", "sluice-e2e-bin-*")
+	dir, err := os.MkdirTemp("", "slipspace-e2e-bin-*")
 	if err != nil {
 		return "", fmt.Errorf("mkdir tmp bin: %w", err)
 	}

@@ -49,8 +49,8 @@ The three channels are intentionally disjoint. Every signal the gateway emits be
 
 `internal/observability/setup.go` constructs the SDK MeterProvider with three potential readers:
 
-- **Prometheus exporter** — enabled when the `SLUICE_PROMETHEUS_BIND` environment variable is non-empty (it is env-configured, not a `gateway.yaml` key). Registers an `otelprom` exporter against a fresh `prometheus.Registry` and exposes a `promhttp.Handler` the data plane mounts at `/metrics` on the Prometheus listener.
-- **OTLP exporter** — enabled when the `SLUICE_OTLP_ENDPOINT` environment variable is non-empty. `SLUICE_OTLP_PROTOCOL` selects between gRPC (`grpc`, default) and HTTP-protobuf (`http/protobuf`, also `http`). These are environment variables, not `gateway.yaml` keys. Wrapped in a `sdkmetric.PeriodicReader` so the SDK batches pushes on its own cadence. Metrics export with **delta** temporality (`internal/observability/setup.go::deltaTemporality`) — sums and histograms go delta so the ingest side can SUM a window of points to an exact count, while up-down counters and the cb.state gauge stay cumulative (delta is undefined for them); the Prometheus reader is unaffected and stays cumulative. The endpoint is typically the central **Arbiter**, which ingests these meters plus the GenAI spans and events below — see [docs/arbiter.md](arbiter.md) for its OTLP ingest and the [Second cap](#genai-spans-and-events) it applies to assembled content.
+- **Prometheus exporter** — enabled when the `SLIPSPACE_PROMETHEUS_BIND` environment variable is non-empty (it is env-configured, not a `gateway.yaml` key). Registers an `otelprom` exporter against a fresh `prometheus.Registry` and exposes a `promhttp.Handler` the data plane mounts at `/metrics` on the Prometheus listener.
+- **OTLP exporter** — enabled when the `SLIPSPACE_OTLP_ENDPOINT` environment variable is non-empty. `SLIPSPACE_OTLP_PROTOCOL` selects between gRPC (`grpc`, default) and HTTP-protobuf (`http/protobuf`, also `http`). These are environment variables, not `gateway.yaml` keys. Wrapped in a `sdkmetric.PeriodicReader` so the SDK batches pushes on its own cadence. Metrics export with **delta** temporality (`internal/observability/setup.go::deltaTemporality`) — sums and histograms go delta so the ingest side can SUM a window of points to an exact count, while up-down counters and the cb.state gauge stay cumulative (delta is undefined for them); the Prometheus reader is unaffected and stays cumulative. The endpoint is typically the central **Arbiter**, which ingests these meters plus the GenAI spans and events below — see [docs/arbiter.md](arbiter.md) for its OTLP ingest and the [Second cap](#genai-spans-and-events) it applies to assembled content.
 - **ManualReader** — **always attached**, regardless of the other two. The [snapshotter](#snapshotter) pulls from this reader on a configurable interval; nothing external consumes it. The cost when both Prom scrape and OTLP push are disabled is essentially zero — the reader only runs work when the snapshotter calls `Collect`.
 
 The same `MeterProvider` is also registered globally via `otel.SetMeterProvider`, so stray code reaching for the global meter still lands on the same instrument set.
@@ -61,8 +61,8 @@ flowchart LR
     MP --> R1[Prom exporter<br/>scrape via /metrics]
     MP --> R2[OTLP PeriodicReader<br/>gRPC or HTTP-protobuf]
     MP --> R3[ManualReader<br/>always attached]
-    R1 -. enabled by<br/>SLUICE_PROMETHEUS_BIND .-> R1
-    R2 -. enabled by<br/>SLUICE_OTLP_ENDPOINT .-> R2
+    R1 -. enabled by<br/>SLIPSPACE_PROMETHEUS_BIND .-> R1
+    R2 -. enabled by<br/>SLIPSPACE_OTLP_ENDPOINT .-> R2
     R3 --> Snap[Snapshotter<br/>5-min ring]
     Snap --> Admin[Admin dashboard handlers<br/>/api/v1/dashboard, /api/v1/timeseries]
 ```
@@ -75,13 +75,13 @@ Resource attributes stamped on every metric series:
 |---|---|
 | `service.name` | `BuildInfo.Service` (always `gateway` for `cmd/gateway`) |
 | `service.version` | `BuildInfo.Version`, sourced from `internal/version.Version` |
-| `deployment.environment` | `SLUICE_ENV` env var, omitted when empty |
+| `deployment.environment` | `SLIPSPACE_ENV` env var, omitted when empty |
 
 ---
 
 ## Meters
 
-Gateway instruments span three namespaces under the OTel meter scope `sluice-gateway`: `gen_ai.*` for the spec inference signals (`gen_ai.client.token.usage`, `gen_ai.client.operation.duration` / `.time_to_first_chunk` / `.time_per_output_chunk`), `slipspace.*` for SlipSpace convenience aggregates (`slipspace.requests.total`, `slipspace.config.hit`, `slipspace.rule.fired`, `slipspace.tokens.input.total`, `slipspace.tokens.output.total`, `slipspace.tokens.cached.total`, `slipspace.tokens.cache_creation.total`), and `gateway.*` for instruments the GenAI spec has no concept for (rule engine, resilience orchestrator, circuit breaker, admin console). All names live as exported constants in [`internal/observability/meters.go`](../internal/observability/meters.go) (`Metric*`); call sites reference the constants rather than string literals.
+Gateway instruments span three namespaces under the OTel meter scope `slipspace-gateway`: `gen_ai.*` for the spec inference signals (`gen_ai.client.token.usage`, `gen_ai.client.operation.duration` / `.time_to_first_chunk` / `.time_per_output_chunk`), `slipspace.*` for SlipSpace convenience aggregates (`slipspace.requests.total`, `slipspace.config.hit`, `slipspace.rule.fired`, `slipspace.tokens.input.total`, `slipspace.tokens.output.total`, `slipspace.tokens.cached.total`, `slipspace.tokens.cache_creation.total`), and `gateway.*` for instruments the GenAI spec has no concept for (rule engine, resilience orchestrator, circuit breaker, admin console). All names live as exported constants in [`internal/observability/meters.go`](../internal/observability/meters.go) (`Metric*`); call sites reference the constants rather than string literals.
 
 ### Requests
 
@@ -115,7 +115,7 @@ The histogram and the input/output counters carry the **same totals** by deliber
 | `slipspace.tokens.cached.total` | counter | the shared request labelset (no status code) | 1 | Share of the input tokens the provider served from its prompt cache and billed at the cached-read price. Informational; already counted in input, not a deduction. |
 | `slipspace.tokens.cache_creation.total` | counter | the shared request labelset (no status code) | 1 | Share of the input tokens billed at the cache-write premium. Anthropic-only today — OpenAI and Gemini cache writes are implicit and not separately billed, so this stays zero for them. |
 
-Token capture is gated on the live-feed response buffer being attached to context. When body capture is disabled (`SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0`, the knob `ServerEnv.LiveFeedBodiesEnabled()` keys off — see [`internal/config/env.go`](../internal/config/env.go); the gate is `LiveFeedEnabled() && AdminLiveFeedBodyBytes > 0`) tokens stay zero and the counters don't fire.
+Token capture is gated on the live-feed response buffer being attached to context. When body capture is disabled (`SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`, the knob `ServerEnv.LiveFeedBodiesEnabled()` keys off — see [`internal/config/env.go`](../internal/config/env.go); the gate is `LiveFeedEnabled() && AdminLiveFeedBodyBytes > 0`) tokens stay zero and the counters don't fire.
 
 ### Rules
 
@@ -182,7 +182,7 @@ Both crash-safety counters surface a panic that the gateway's `recover()` wrappe
 | Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|
 | `gateway.unmapped_fields.total` | counter | `gen_ai.provider.name, slipspace.protocol, slipspace.unmapped_direction (request\|response), slipspace.unmapped_field` | 1 | Provider fields this build does not model, detected on the typed request body and the reconstructed typed response. One increment per `(direction, field path)` at OnComplete (`cmd/gateway/reporter.go::recordUnmappedFields` → `emitUnmappedFields`); the same field set is logged once via a `unmapped provider fields detected` warning. The DynamicProperties safety net round-trips these intact (invariant #1), so a non-zero count is silent today — it is the provider-drift early-warning signal that a `protocols/` contract update is due. `slipspace.unmapped_field` is the dotted JSON path; cardinality is bounded by the provider API surface, not by client input. Reporting stays separate from telemetry: the field paths ride the meter and the log, never the connector record ([invariant #4](../CLAUDE.md)). |
-| `gateway.translation.field_drops.total` | counter | `slipspace.translate_source, slipspace.translate_target, slipspace.translate_field` | 1 | Source features dropped during cross-provider translation (the `translate` rule action) because the target protocol has no equivalent — e.g. `top_k`, `thinking`. One increment per dropped feature, finalised in the forwarder's `ModifyResponse` transform, labelled by source/target protocol and dropped field path. A field's count climbing is the early-warning that a provider shipped a feature the translator does not yet carry — the same drift-detection role as `gateway.unmapped_fields.total`. The flag-gated `X-Sluice-Translation-Lossy` response header (`SLUICE_TRANSLATE_LOSSY_HEADER`) carries the same per-request list for developers; the counter is always on. Cardinality bounded by the modelled field set. |
+| `gateway.translation.field_drops.total` | counter | `slipspace.translate_source, slipspace.translate_target, slipspace.translate_field` | 1 | Source features dropped during cross-provider translation (the `translate` rule action) because the target protocol has no equivalent — e.g. `top_k`, `thinking`. One increment per dropped feature, finalised in the forwarder's `ModifyResponse` transform, labelled by source/target protocol and dropped field path. A field's count climbing is the early-warning that a provider shipped a feature the translator does not yet carry — the same drift-detection role as `gateway.unmapped_fields.total`. The flag-gated `X-Slipspace-Translation-Lossy` response header (`SLIPSPACE_TRANSLATE_LOSSY_HEADER`) carries the same per-request list for developers; the counter is always on. Cardinality bounded by the modelled field set. |
 
 ### Reserved
 
@@ -222,7 +222,7 @@ reg.MustRegister(
 
 These are the **legacy default collector set** — `NewGoCollector()` and `NewProcessCollector(...)` are constructed with default options; there is no `WithGoCollectorRuntimeMetrics`, so the newer `go_*` runtime/metrics histogram families are not exposed.
 
-The collectors are registered **only when** `SLUICE_PROMETHEUS_BIND` is non-empty — same gate as the rest of the `/metrics` surface. OTLP push does not carry these collectors (OTel's SDK has its own runtime instrumentation; we don't bridge the Prometheus ones across).
+The collectors are registered **only when** `SLIPSPACE_PROMETHEUS_BIND` is non-empty — same gate as the rest of the `/metrics` surface. OTLP push does not carry these collectors (OTel's SDK has its own runtime instrumentation; we don't bridge the Prometheus ones across).
 
 ---
 
@@ -239,7 +239,7 @@ Bucket boundaries are package-level vars in [`internal/observability/meters.go`]
 
 ## GenAI spans and events
 
-When an OTLP endpoint is configured, the data plane also emits OpenTelemetry **spans** and **events** (log records) conforming to the GenAI semantic conventions v1.41.0. The gateway is a *client* of the upstream provider, so it emits the `gen_ai.client.*` surface. Spans are recorded under the tracer (instrumentation-scope) name `sluice-gateway` — the same scope identity as the meters, so spans and metrics share one scope.
+When an OTLP endpoint is configured, the data plane also emits OpenTelemetry **spans** and **events** (log records) conforming to the GenAI semantic conventions v1.41.0. The gateway is a *client* of the upstream provider, so it emits the `gen_ai.client.*` surface. Spans are recorded under the tracer (instrumentation-scope) name `slipspace-gateway` — the same scope identity as the meters, so spans and metrics share one scope.
 
 **Span** — one `gen_ai` client span per request (name `{operation} {model}`, kind CLIENT), synthesised at completion with a backdated start so nothing on the request path waits on the tracer (the batch processor exports out of band). It carries the full GenAI attribute set: operation/provider/request model, response id/model/finish_reasons, request sampling params (temperature, top_p, …, seed, choice.count, output.type, stream), usage (input/output/cache_creation/cache_read/reasoning) tokens plus per-tool server-side usage counters (`gen_ai.usage.server_tool_use.<counter>` — Anthropic's `usage.server_tool_use` block, e.g. `web_search_requests`, one attribute per non-zero counter, generic over future tool families; the operation-details event carries the same attributes), `http.response.status_code` (set on every request span), `server.address`/`server.port`, `error.type`, and the `openai.*` deltas. When a session resolves it also carries `gen_ai.conversation.id` (the resolved bundle id); streaming spans add `gen_ai.response.time_to_first_chunk`. When the request carries the identity headers the span also carries `gen_ai.agent.id` and `enduser.id` (spec-namespaced, not `slipspace.*` — see [Agent id](#agent-id) and [User id](#user-id)). The sole SlipSpace-specific attribute permitted is `slipspace.correlation_id` (the stitch join key) — every other gateway fact (endpoint, configuration, rules, attempts, api-key) rides the connector `Record`, not the span. Inbound W3C `traceparent` is extracted in the correlation middleware so the span nests under a caller's distributed trace.
 
@@ -249,7 +249,7 @@ When an OTLP endpoint is configured, the data plane also emits OpenTelemetry **s
 - `gen_ai.client.operation.exception` — fires on any failure (4xx/5xx or transport error), carrying `exception.type` / `exception.message`.
 - `gen_ai.client.inference.operation.details` — carries the operation-detail attribute set plus the **bounded prompt/response content**. It is *not* identical to the span: it **adds** `slipspace.protocol` and `slipspace.configuration` (which the span deliberately omits), so a log-only consumer can pivot on protocol and configuration without joining back to the Record.
 
-**Content capture** (`gen_ai.input.messages`, `output.messages`, `system_instructions`, `tool.definitions`) is **opt-in and off by default**, gated by `SLUICE_OTEL_CAPTURE_CONTENT`. When enabled it is:
+**Content capture** (`gen_ai.input.messages`, `output.messages`, `system_instructions`, `tool.definitions`) is **opt-in and off by default**, gated by `SLIPSPACE_OTEL_CAPTURE_CONTENT`. When enabled it is:
 - **multi-part, per the message JSON schema** — messages are `[{role, parts:[…]}]` and system instructions are a bare parts array `[{type, …}]`. Parts carry the well-known types: `text` (`{type,content}`), `tool_call` (`{type,id,name,arguments}`), `tool_call_response` (`{type,id,result}`), `reasoning` (a model's thinking trace — Anthropic `thinking` + `redacted_thinking` blocks; `redacted_thinking` carries no recoverable text, so its part is emitted with empty content and the type alone signals its presence); media blocks pass through by `type` with no inline bytes. Server-executed tool rounds map to the same shapes: Anthropic `server_tool_use` / `mcp_tool_use` blocks and OpenAI Responses built-in `*_call` items (`web_search_call`, `file_search_call`, `code_interpreter_call`, `computer_call`, `mcp_call`, …) become `tool_call` parts (named by the item type minus `_call` on Responses), and any Anthropic `*_tool_result` block — or a Responses item carrying inline results — becomes the paired `tool_call_response`, with bulky payload carriers (`encrypted_content`, document `data`) stripped so the part stays bounded. Unknown future block types degrade to a bare typed part, never a silent drop. A tool-only model turn keeps its `tool_call` parts rather than vanishing;
 - **multi-source** — every system/developer message contributes to `system_instructions` (OpenAI chat + Responses `input[]`), each Anthropic `system` block is its own part, not just the first;
 - **spec-shaped tool definitions** — `tool.definitions` is normalised to `{type:"function",name,description,parameters}` regardless of the provider's native encoding (OpenAI's nested `function`, Anthropic's `input_schema`, Gemini's `functionDeclarations`);
@@ -287,7 +287,7 @@ telemetry:
 
 Tool-call `arguments` overflow drops the whole document rather than truncating in place — a half-truncated JSON object would not parse. All other text fields are credential-redacted before the cap is applied (so a secret never hides across the boundary) and the marker `…[truncated]` makes the truncation visible to downstream consumers.
 
-The caps shape only what reaches the span and the operation-details event; they do not affect the connector spool, which carries the full unredacted body to operator-configured destinations (invariant #4). `SLUICE_OTEL_CAPTURE_CONTENT` still gates emission entirely — the caps only apply when capture is on.
+The caps shape only what reaches the span and the operation-details event; they do not affect the connector spool, which carries the full unredacted body to operator-configured destinations (invariant #4). `SLIPSPACE_OTEL_CAPTURE_CONTENT` still gates emission entirely — the caps only apply when capture is on.
 
 On the **span**, content rides as JSON strings (span attributes can't hold structured values — the spec permits a JSON string there); on the **event**, it is recorded in structured form, as the spec requires. The operation-detail events are emitted within the request span's context, so the log records carry the span's `trace_id`/`span_id` for native trace↔logs correlation.
 
@@ -312,7 +312,7 @@ The dashboard handlers subtract two `Sample`s to derive windowed totals, rates, 
 
 | Knob | Default | Override | Notes |
 |---|---|---|---|
-| `Interval` | 5 minutes | `SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS` (production) | Matches the SPA's 288-point 24h chart cadence (288 × 5 min = 24 h). The Setup-level `Config.SnapshotInterval` is plumbed from `ServerEnv.AdminSnapshotIntervalMs`. E2E harnesses drop this to 200 ms so the dashboard reflects real traffic in test wall-clock. |
+| `Interval` | 5 minutes | `SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS` (production) | Matches the SPA's 288-point 24h chart cadence (288 × 5 min = 24 h). The Setup-level `Config.SnapshotInterval` is plumbed from `ServerEnv.AdminSnapshotIntervalMs`. E2E harnesses drop this to 200 ms so the dashboard reflects real traffic in test wall-clock. |
 | `Capacity` | 290 samples | not exposed | One 5-min window per chart point in a 24h view (288), plus a small margin so a slow consumer doesn't lose the most recent point to a snapshot writer mid-collect. |
 | `Now` | `time.Now` | test seam | Production should always leave nil. |
 
@@ -346,7 +346,7 @@ The 200→503 flip is the contract the kubelet's eviction loop reads. The shutdo
 1. Root `ctx` cancels (signal received).
 2. `healthz.MarkDraining()` flips the response mode atomically — every subsequent probe sees 503.
 3. The kube proxy culls the pod from the Service's endpoint set within milliseconds; new traffic stops arriving.
-4. `http.Server.Shutdown` begins draining in-flight requests with a detached context bounded by `SLUICE_SHUTDOWN_DRAIN_SECONDS` (default 300s).
+4. `http.Server.Shutdown` begins draining in-flight requests with a detached context bounded by `SLIPSPACE_SHUTDOWN_DRAIN_SECONDS` (default 300s).
 5. If drain exceeds the budget, `Server.Close` hard-closes remaining connections.
 
 The transition is one-way per process — there is no "undrain" path. A pod that has begun draining stays draining until it exits.
@@ -374,7 +374,7 @@ Per-request enrichment, in the order it gets layered on:
 
 | Field | Set by | When |
 |---|---|---|
-| `correlation_id` | correlation middleware | Set in the correlation middleware (`cmd/gateway/correlation.go`), which runs ahead of auth and routing. Sourced from the inbound `X-Sluice-Correlation-Id` if present, otherwise a fresh UUIDv4 via `NewCorrelationID`. Also echoed back on the response as `X-Sluice-Correlation-Id`. |
+| `correlation_id` | correlation middleware | Set in the correlation middleware (`cmd/gateway/correlation.go`), which runs ahead of auth and routing. Sourced from the inbound `X-Slipspace-Correlation-Id` if present, otherwise a fresh UUIDv4 via `NewCorrelationID`. Also echoed back on the response as `X-Slipspace-Correlation-Id`. |
 | `session_id` | correlation middleware | When a session header resolves (see [Session bundling](#session-bundling)). Empty when none is present. One level above `correlation_id` — groups every request of one conversation. |
 | `agent_id` | correlation middleware | When an agent header resolves (see [Agent id](#agent-id)). Empty when none is present. Identifies the agent/sub-agent that issued the request — one axis below `session_id`. |
 | `user_id` | correlation middleware | When a user header resolves (see [User id](#user-id)). Empty when none is present. Identifies the end user on whose behalf the request was made — orthogonal to `session_id` / `agent_id`. |
@@ -428,18 +428,18 @@ One agent conversation is many HTTP requests — Claude Code or Codex fires a re
 
 **Resolution order.** The correlation middleware resolves the session id from the inbound headers, SlipSpace-first then a fallback chain walked top-down:
 
-1. `X-Sluice-Session-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
+1. `X-Slipspace-Session-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
 2. `Session-Id` — Codex's root session id (hyphenated, verified live; **not** the underscore `Session_id` we previously and wrongly chased), shared across all subagent threads.
 3. `X-Claude-Code-Session-Id` — Claude Code.
-4. Operator extras from [`SLUICE_SESSION_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's header (e.g. `X-Acme-Conversation-Id`) bundles with no code change.
+4. Operator extras from [`SLIPSPACE_SESSION_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's header (e.g. `X-Acme-Conversation-Id`) bundles with no code change.
 
 The per-turn thread/subagent id is a **separate axis** resolved by `ConversationResolver` (`DefaultThreadIDHeaders`: `Thread-Id`, `X-Claude-Code-Agent-Id`), not a session fallback.
 
 The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `session_id_source` (the bundle's provenance, which the console uses to label "Codex thread" vs "Claude Code session" vs a custom source).
 
-**Redaction is honoured.** A candidate header that matches the redactor (built-ins plus `SLUICE_REDACT_EXTRA_HEADERS`) counts as *absent*, and resolution falls through to the next candidate. A promoted `session_id` can therefore never resurface a value an operator deliberately redacted.
+**Redaction is honoured.** A candidate header that matches the redactor (built-ins plus `SLIPSPACE_REDACT_EXTRA_HEADERS`) counts as *absent*, and resolution falls through to the next candidate. A promoted `session_id` can therefore never resurface a value an operator deliberately redacted.
 
-**Where it surfaces.** The resolved id is echoed back on the response under `X-Sluice-Session-Id`, enriches the per-request logger (`session_id`), and is stamped onto the connector `Record` (`session_id` + `session_id_source`), the OTel span as **`gen_ai.conversation.id`** (the GenAI-semconv home for a conversation id), and the admin live-messages entry.
+**Where it surfaces.** The resolved id is echoed back on the response under `X-Slipspace-Session-Id`, enriches the per-request logger (`session_id`), and is stamped onto the connector `Record` (`session_id` + `session_id_source`), the OTel span as **`gen_ai.conversation.id`** (the GenAI-semconv home for a conversation id), and the admin live-messages entry.
 
 **Not a metric label.** Session id has unbounded cardinality, so it is deliberately kept off OTel meters — bundling is a records / live-feed concern, not a telemetry one (see [the reporting-vs-telemetry separation](#three-channels)). Consumers bundle on the **`(configuration, session_id)` tuple**, never the bare id: client-controlled ids can collide across unrelated configurations, and the tuple keeps two configurations' identically-named sessions distinct.
 
@@ -453,14 +453,14 @@ Alongside the session, the correlation middleware resolves an **agent id** — t
 
 **Resolution order.** SlipSpace-first, then a fallback chain walked top-down:
 
-1. `X-Sluice-Agent-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
-2. Operator extras from [`SLUICE_AGENT_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's agent header is promoted with no code change.
+1. `X-Slipspace-Agent-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
+2. Operator extras from [`SLIPSPACE_AGENT_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's agent header is promoted with no code change.
 
 There is no shipped default fallback: `DefaultAgentIDHeaders` is intentionally empty because `gen_ai.agent.id` is reserved for a genuinely named agent. `X-Claude-Code-Agent-Id` was deliberately moved **off** this axis to the conversation/thread axis (`DefaultThreadIDHeaders`) because its values are opaque per-invocation instance ids, not named agents.
 
-The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `agent_id_source` (the provenance the console labels the agent with). A candidate matching the redactor (built-ins plus `SLUICE_REDACT_EXTRA_HEADERS`) counts as *absent* and resolution falls through, so a promoted `agent_id` can never resurface a redacted value.
+The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `agent_id_source` (the provenance the console labels the agent with). A candidate matching the redactor (built-ins plus `SLIPSPACE_REDACT_EXTRA_HEADERS`) counts as *absent* and resolution falls through, so a promoted `agent_id` can never resurface a redacted value.
 
-**Where it surfaces.** The resolved id is echoed back on the response under `X-Sluice-Agent-Id`, enriches the per-request logger (`agent_id`), and is stamped onto the connector `Record` (`agent_id` + `agent_id_source`), the OTel span and operation-details event as **`gen_ai.agent.id`** (the GenAI-semconv home for an agent identifier), the admin live-messages entry, and the Arbiter's `request_events` row (where it is an indexed drill-down/filter dimension).
+**Where it surfaces.** The resolved id is echoed back on the response under `X-Slipspace-Agent-Id`, enriches the per-request logger (`agent_id`), and is stamped onto the connector `Record` (`agent_id` + `agent_id_source`), the OTel span and operation-details event as **`gen_ai.agent.id`** (the GenAI-semconv home for an agent identifier), the admin live-messages entry, and the Arbiter's `request_events` row (where it is an indexed drill-down/filter dimension).
 
 **Not a metric label.** Like `session_id`, agent id has unbounded cardinality and is deliberately kept off OTel meters — it rides records / spans / events / the live feed / the telemetry DB, never a meter dimension (see [the reporting-vs-telemetry separation](#three-channels)).
 
@@ -472,12 +472,12 @@ Alongside the session and agent, the correlation middleware resolves a **user id
 
 **Resolution order.** SlipSpace-first, then a fallback chain walked top-down:
 
-1. `X-Sluice-User-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
-2. Operator extras from [`SLUICE_USER_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's user header is promoted with no code change. Unlike session/agent id there is **no shipped client default** — no client emits a standard end-user header — so without operator extras only the authoritative header resolves.
+1. `X-Slipspace-User-Id` — authoritative. When a client or proxy sets it, it wins over any ambient client header.
+2. Operator extras from [`SLIPSPACE_USER_ID_HEADERS`](environment-variables.md) — appended in the order given, so a custom client's user header is promoted with no code change. Unlike session/agent id there is **no shipped client default** — no client emits a standard end-user header — so without operator extras only the authoritative header resolves.
 
-The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `user_id_source` (the provenance the console labels the user with). A candidate matching the redactor (built-ins plus `SLUICE_REDACT_EXTRA_HEADERS`) counts as *absent* and resolution falls through, so a promoted `user_id` can never resurface a redacted value.
+The first header that is **present, non-empty, and not redacted** wins; the header it came from is recorded as `user_id_source` (the provenance the console labels the user with). A candidate matching the redactor (built-ins plus `SLIPSPACE_REDACT_EXTRA_HEADERS`) counts as *absent* and resolution falls through, so a promoted `user_id` can never resurface a redacted value.
 
-**Where it surfaces.** The resolved id is echoed back on the response under `X-Sluice-User-Id`, enriches the per-request logger (`user_id`), and is stamped onto the connector `Record` (`user_id` + `user_id_source`), the OTel span and operation-details event as **`enduser.id`** (the GenAI semconv defines no user attribute, so the end user rides the general `enduser` namespace), the admin live-messages entry, and the Arbiter's `request_events` row (where it is an indexed drill-down/filter dimension).
+**Where it surfaces.** The resolved id is echoed back on the response under `X-Slipspace-User-Id`, enriches the per-request logger (`user_id`), and is stamped onto the connector `Record` (`user_id` + `user_id_source`), the OTel span and operation-details event as **`enduser.id`** (the GenAI semconv defines no user attribute, so the end user rides the general `enduser` namespace), the admin live-messages entry, and the Arbiter's `request_events` row (where it is an indexed drill-down/filter dimension).
 
 **Not a metric label.** Like `session_id` and `agent_id`, user id has unbounded cardinality and is deliberately kept off OTel meters — it rides records / spans / events / the live feed / the telemetry DB, never a meter dimension (see [the reporting-vs-telemetry separation](#three-channels)).
 
@@ -491,5 +491,5 @@ The first header that is **present, non-empty, and not redacted** wins; the head
 - [docs/connector-bindings.md](connector-bindings.md) — per-configuration sampling, filter, oversize behaviour.
 - [docs/spool.md](spool.md) — disk-backed runtime between OnComplete and the destinations.
 - [docs/admin-console.md](admin-console.md) — admin listener, dashboard handlers backed by the snapshotter, live-messages pane backed by the in-process ring.
-- [docs/environment-variables.md](environment-variables.md) — full env reference, including `SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS`, `SLUICE_ENV`, Prometheus / OTLP / log knobs.
+- [docs/environment-variables.md](environment-variables.md) — full env reference, including `SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS`, `SLIPSPACE_ENV`, Prometheus / OTLP / log knobs.
 - [docs/deployment.md](deployment.md) — K8s topology including the spool PVC mount and destination wiring.

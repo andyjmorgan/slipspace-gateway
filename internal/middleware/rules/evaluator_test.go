@@ -60,7 +60,7 @@ func TestEvaluator_SingleRule_AppliesAction(t *testing.T) {
 	r1 := &contractsrules.RuleContract{
 		Name:      "tag-openai",
 		Condition: providerCondition("openai"),
-		Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-Tagged", "yes")},
+		Actions:   []contractsrules.Action{setHeaderAction("X-Slipspace-Tagged", "yes")},
 	}
 	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{
 		"dev": {r1},
@@ -76,7 +76,7 @@ func TestEvaluator_SingleRule_AppliesAction(t *testing.T) {
 	if out.Outcome.Terminate {
 		t.Errorf("unexpected Terminate")
 	}
-	if got := state.OutgoingHeaders.Get("X-Sluice-Tagged"); got != "yes" {
+	if got := state.OutgoingHeaders.Get("X-Slipspace-Tagged"); got != "yes" {
 		t.Errorf("header = %q, want yes", got)
 	}
 	records := buf.Drain()
@@ -296,7 +296,7 @@ func TestEvaluator_PicksUpStoreReplace(t *testing.T) {
 		return &contractsrules.RuleContract{
 			Name:      name,
 			Condition: providerCondition("openai"),
-			Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-Tagged", value)},
+			Actions:   []contractsrules.Action{setHeaderAction("X-Slipspace-Tagged", value)},
 		}
 	}
 	initialRule := tag("initial", "first")

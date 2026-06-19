@@ -32,7 +32,7 @@ services:
       - "8686:8686" # console + webhook ingest
       - "8687:8687" # OTLP gRPC
     volumes:
-      - ./deploy/compose/arbiter.yaml:/etc/sluice/arbiter.yaml:ro
+      - ./deploy/compose/arbiter.yaml:/etc/slipspace/arbiter.yaml:ro
     depends_on:
       arbiter-db:
         condition: service_healthy

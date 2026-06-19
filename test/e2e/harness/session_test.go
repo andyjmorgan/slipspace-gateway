@@ -10,7 +10,7 @@ import (
 )
 
 // TestSession_PopSequenceThroughGateway proves the end-to-end session
-// flow: client → gateway → mockllm — including X-Sluice-Session-Id
+// flow: client → gateway → mockllm — including X-Slipspace-Session-Id
 // being forwarded to the upstream and MaxResponses popping the staged
 // response so subsequent calls hit the next entry. This is the
 // foundation v1.2's resilience E2E tests will build on.

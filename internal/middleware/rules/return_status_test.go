@@ -173,8 +173,8 @@ func TestHTTPHandler_SyntheticPath_WritesResponseAndDrivesLifecycle(t *testing.T
 	if got := w.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
 		t.Errorf("Content-Type = %q", got)
 	}
-	if got := w.Header().Get("X-Sluice-Synthetic"); got != "rule:block-pii" {
-		t.Errorf("X-Sluice-Synthetic = %q, want rule:block-pii", got)
+	if got := w.Header().Get("X-Slipspace-Synthetic"); got != "rule:block-pii" {
+		t.Errorf("X-Slipspace-Synthetic = %q, want rule:block-pii", got)
 	}
 	if !obs.gotStart || !obs.gotHeaders || !obs.gotComplete {
 		t.Errorf("lifecycle incomplete: start=%v headers=%v complete=%v", obs.gotStart, obs.gotHeaders, obs.gotComplete)

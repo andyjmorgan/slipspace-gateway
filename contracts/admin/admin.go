@@ -24,7 +24,7 @@ const Username = "admin"
 // yaml file in production while leaving yaml workable for dev.
 //
 //nolint:gosec // G101: this is the env-var NAME, not a credential value
-const EnvPassword = "SLUICE_ADMIN_PASSWORD"
+const EnvPassword = "SLIPSPACE_ADMIN_PASSWORD"
 
 // DefaultBindAddr is the listener address used when Config.BindAddr is
 // unset. Binds all interfaces on port 8081 — point a k8s NetworkPolicy

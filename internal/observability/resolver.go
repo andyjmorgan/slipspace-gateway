@@ -6,14 +6,14 @@ import (
 )
 
 // idResolver resolves an identifier from inbound request headers: an
-// authoritative Sluice header is always tried first, then an ordered fallback
+// authoritative SlipSpace header is always tried first, then an ordered fallback
 // chain (shipped defaults plus operator extras) walked top-down. It is the
 // shared engine behind the session, conversation/thread, and parent resolvers —
 // each a thin constructor over this with its own authoritative header and
 // default chain. See the design note "Correlating Requests Across Turns
 // (Session Bundling)".
 type idResolver struct {
-	// authoritative is the Sluice-owned header tried before any fallback. A
+	// authoritative is the SlipSpace-owned header tried before any fallback. A
 	// client or proxy that deliberately sets it wins over any ambient client
 	// header. Empty means the resolver has no authoritative header.
 	authoritative string
@@ -24,7 +24,7 @@ type idResolver struct {
 
 // newIDResolver builds a resolver whose fallback chain is defaults followed by
 // extra (operator-supplied custom headers, kept in order). Blank extras are
-// dropped. authoritative may be empty for axes with no Sluice-owned header.
+// dropped. authoritative may be empty for axes with no SlipSpace-owned header.
 func newIDResolver(authoritative string, defaults, extra []string) *idResolver {
 	fb := make([]string, 0, len(defaults)+len(extra))
 	fb = append(fb, defaults...)

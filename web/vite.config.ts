@@ -12,9 +12,9 @@ import tailwindcss from "@tailwindcss/vite"
 // gateway's admin listener (see internal/admin.Prefix). `base` makes
 // Vite emit asset URLs under /admin/ so they survive a path-routing
 // ingress unmodified; the dev proxy forwards /admin/api/v1/* to the
-// gateway. Override the upstream with SLUICE_ADMIN_URL when the
+// gateway. Override the upstream with SLIPSPACE_ADMIN_URL when the
 // gateway runs elsewhere.
-const adminURL = process.env.SLUICE_ADMIN_URL ?? "http://localhost:8081"
+const adminURL = process.env.SLIPSPACE_ADMIN_URL ?? "http://localhost:8081"
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

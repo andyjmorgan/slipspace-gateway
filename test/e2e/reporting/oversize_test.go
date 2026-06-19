@@ -35,7 +35,7 @@ func TestReporting_WebhookExplicitBodyCapStripsOversize(t *testing.T) {
 	huge := strings.Repeat("a", oversizeBody)
 	resp := h.PostJSON("/v1/chat/completions",
 		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": huge}}},
-		http.Header{"X-Sluice-Correlation-Id": []string{"oversize-capped"}})
+		http.Header{"X-Slipspace-Correlation-Id": []string{"oversize-capped"}})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
 	}
@@ -72,7 +72,7 @@ func TestReporting_WebhookNoDefaultCapShipsOversize(t *testing.T) {
 	huge := strings.Repeat("a", oversizeBody)
 	resp := h.PostJSON("/v1/chat/completions",
 		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": huge}}},
-		http.Header{"X-Sluice-Correlation-Id": []string{"oversize-uncapped"}})
+		http.Header{"X-Slipspace-Correlation-Id": []string{"oversize-uncapped"}})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
 	}

@@ -57,7 +57,7 @@ type Record struct {
 	SessionID string `json:"session_id,omitempty"`
 
 	// SessionIDSource is the header name SessionID was resolved from
-	// (e.g. "X-Sluice-Session-Id", "Session-Id") — the provenance the
+	// (e.g. "X-Slipspace-Session-Id", "Session-Id") — the provenance the
 	// console uses to label a bundle. Empty when SessionID is empty.
 	SessionIDSource string `json:"session_id_source,omitempty"`
 
@@ -83,12 +83,12 @@ type Record struct {
 
 	// AgentID is the resolved id of a genuinely NAMED agent (the gen_ai.agent.id
 	// semconv home, paired with agent.name/description), resolved only from the
-	// authoritative X-Sluice-Agent-Id. NOT a subagent thread — those ride
+	// authoritative X-Slipspace-Agent-Id. NOT a subagent thread — those ride
 	// ConversationID. Empty when no named-agent header was present.
 	AgentID string `json:"agent_id,omitempty"`
 
 	// AgentIDSource is the header name AgentID was resolved from (e.g.
-	// "X-Sluice-Agent-Id") — the provenance the console uses to label the
+	// "X-Slipspace-Agent-Id") — the provenance the console uses to label the
 	// agent. Empty when AgentID is empty.
 	AgentIDSource string `json:"agent_id_source,omitempty"`
 
@@ -98,7 +98,7 @@ type Record struct {
 	UserID string `json:"user_id,omitempty"`
 
 	// UserIDSource is the header name UserID was resolved from (e.g.
-	// "X-Sluice-User-Id") — the provenance the console uses to label the user.
+	// "X-Slipspace-User-Id") — the provenance the console uses to label the user.
 	// Empty when UserID is empty.
 	UserIDSource string `json:"user_id_source,omitempty"`
 

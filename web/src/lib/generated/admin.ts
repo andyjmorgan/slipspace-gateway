@@ -21,7 +21,7 @@ export const Username = "admin";
  * yaml Password field. Use this to keep the admin secret out of the
  * yaml file in production while leaving yaml workable for dev.
  */
-export const EnvPassword = "SLUICE_ADMIN_PASSWORD";
+export const EnvPassword = "SLIPSPACE_ADMIN_PASSWORD";
 /**
  * DefaultBindAddr is the listener address used when Config.BindAddr is
  * unset. Binds all interfaces on port 8081 — point a k8s NetworkPolicy
@@ -428,7 +428,7 @@ export interface MessageEntry {
   at: string;
   /**
    * CorrelationID is the gateway request UUID. Joinable to logs and
-   * to the X-Sluice-Correlation-Id response header.
+   * to the X-Slipspace-Correlation-Id response header.
    */
   correlation_id?: string;
   /**
@@ -941,7 +941,7 @@ export interface SessionSpansPage {
  * GET /api/v1/sessions/{id}/spans — one gen_ai span (one upstream request) of
  * a session, projected from the request_events span_event blob alone (never
  * from Records; invariant #4). The shape is frozen by the span-dto JSON schema
- * (sluice:session-spans-dto/v1) the session lifecycle page renders from.
+ * (slipspace:session-spans-dto/v1) the session lifecycle page renders from.
  * Truncation policy: served content fields (text, tool args, input_text,
  * output_text) are capped per field by the server (span_field_max_bytes,
  * default 64 KiB; 0 disables). Every *Chars field carries the TRUE uncapped

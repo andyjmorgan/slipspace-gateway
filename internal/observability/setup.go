@@ -44,7 +44,7 @@ const (
 // populate the OTel deployment.environment resource attribute. We read
 // it once at startup; production deployments set it via downward API or
 // Helm values.
-const EnvDeploymentEnvironment = "SLUICE_ENV"
+const EnvDeploymentEnvironment = "SLIPSPACE_ENV"
 
 // BuildInfo identifies the running binary in resource attributes and
 // log enrichment.

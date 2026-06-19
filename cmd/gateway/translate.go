@@ -27,7 +27,7 @@ var errNoTranslator = errors.New("translate: no translator for protocol pair")
 
 // lossyHeaderName is the response header listing source features dropped during
 // cross-provider translation. Emitted only when the lossy-header flag is on.
-const lossyHeaderName = "X-Sluice-Translation-Lossy"
+const lossyHeaderName = "X-Slipspace-Translation-Lossy"
 
 // dropSink accumulates translation Drops across the request and response legs
 // of one request so they can be counted and (optionally) reported in a single
@@ -211,7 +211,7 @@ func newResponseBodyTransform(meters *observability.Meters, externalURL string, 
 
 // finalizeTranslationDrops emits the always-on drop counter (one increment per
 // dropped feature, labelled by source/target protocol and field) and, when the
-// flag is on, the X-Sluice-Translation-Lossy response header. No-op when
+// flag is on, the X-Slipspace-Translation-Lossy response header. No-op when
 // translation was inactive or nothing was dropped.
 func finalizeTranslationDrops(ctx context.Context, meters *observability.Meters, resp *http.Response, lossyHeader bool) {
 	state := rules.MutableStateFromContext(ctx)
@@ -225,9 +225,9 @@ func finalizeTranslationDrops(ctx context.Context, meters *observability.Meters,
 	if meters != nil && meters.TranslationFieldDropsTotal != nil {
 		for _, d := range sink.drops {
 			meters.TranslationFieldDropsTotal.Add(ctx, 1, metric.WithAttributes(
-				attribute.String(observability.AttrSluiceTranslateSource, state.SourceProtocol),
-				attribute.String(observability.AttrSluiceTranslateTarget, state.Protocol),
-				attribute.String(observability.AttrSluiceTranslateField, d.Field),
+				attribute.String(observability.AttrSlipSpaceTranslateSource, state.SourceProtocol),
+				attribute.String(observability.AttrSlipSpaceTranslateTarget, state.Protocol),
+				attribute.String(observability.AttrSlipSpaceTranslateField, d.Field),
 			))
 		}
 	}

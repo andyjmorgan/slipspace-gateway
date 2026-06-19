@@ -8,7 +8,7 @@ import "time"
 // decode against this shape.
 type Request struct {
 	// CorrelationID is the gateway-assigned request UUID, also surfaced
-	// on the response as X-Sluice-Correlation-Id.
+	// on the response as X-Slipspace-Correlation-Id.
 	CorrelationID string `json:"correlation_id,omitempty"`
 
 	// Method is the HTTP verb of the inbound client request (GET, POST,

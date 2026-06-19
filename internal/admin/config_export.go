@@ -110,7 +110,7 @@ func ConfigExportDownloadHandler(configDir, hostname string, meters *observabili
 			http.Error(w, "failed to build export: "+err.Error(), status)
 			return
 		}
-		filename := "sluice-config-" + now.Format("20060102T150405Z") + ".zip"
+		filename := "slipspace-config-" + now.Format("20060102T150405Z") + ".zip"
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))

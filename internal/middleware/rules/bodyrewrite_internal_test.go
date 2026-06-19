@@ -337,7 +337,7 @@ func TestApplyResponseRewrites(t *testing.T) {
 		}}
 		ctx := WithMutableState(context.Background(), state)
 		resp := respWith(`data: chunk`)
-		if err := ApplyResponseRewrites(ctx, testMeters(t), "https://sluice.example.com", resp, true); err != nil {
+		if err := ApplyResponseRewrites(ctx, testMeters(t), "https://slipspace.example.com", resp, true); err != nil {
 			t.Fatal(err)
 		}
 		b, _ := io.ReadAll(resp.Body)
@@ -352,11 +352,11 @@ func TestApplyResponseRewrites(t *testing.T) {
 		}}
 		ctx := WithMutableState(context.Background(), state)
 		resp := respWith(`{"id":"b1","results_url":"https://api.anthropic.com/v1/messages/batches/b1/results"}`)
-		if err := ApplyResponseRewrites(ctx, testMeters(t), "https://sluice.example.com", resp, false); err != nil {
+		if err := ApplyResponseRewrites(ctx, testMeters(t), "https://slipspace.example.com", resp, false); err != nil {
 			t.Fatal(err)
 		}
 		b, _ := io.ReadAll(resp.Body)
-		const want = `https://sluice.example.com/anthropic/v1/messages/batches/b1/results`
+		const want = `https://slipspace.example.com/anthropic/v1/messages/batches/b1/results`
 		if got := gjson.GetBytes(b, "results_url").String(); got != want {
 			t.Errorf("results_url = %s, want %s", got, want)
 		}

@@ -1,4 +1,4 @@
-// Package models holds the public, shared types used by the Sluice gateway's
+// Package models holds the public, shared types used by the SlipSpace gateway's
 // provider model packages. DynamicProperties is the load-bearing helper that
 // guarantees unknown JSON fields round-trip back to upstream providers intact.
 package models

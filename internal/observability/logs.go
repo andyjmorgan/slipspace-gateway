@@ -13,7 +13,7 @@ import (
 // LoggerName is the OpenTelemetry logger scope under which the gateway's
 // GenAI events (operation details, exceptions) are emitted. Mirrors
 // MeterName / TracerName so all three signals share one scope identity.
-const LoggerName = "sluice-gateway"
+const LoggerName = "slipspace-gateway"
 
 // newOTLPLogExporter builds an OTLP log exporter for the given endpoint,
 // selecting the transport from protocol. Mirrors newOTLPSpanExporter:

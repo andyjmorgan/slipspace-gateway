@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" aria-label="sluice">
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" aria-label="slipspace">
   <defs>
-    <radialGradient id="sluice-bg" cx="0.5" cy="0.45" r="0.75">
+    <radialGradient id="slipspace-bg" cx="0.5" cy="0.45" r="0.75">
       <stop offset="0" stop-color="oklch(0.55 0.16 235)" />
       <stop offset="1" stop-color="oklch(0.22 0.08 250)" />
     </radialGradient>
   </defs>
-  <rect width="100" height="100" rx="22" fill="url(#sluice-bg)" />
+  <rect width="100" height="100" rx="22" fill="url(#slipspace-bg)" />
   <rect width="100" height="100" rx="22" fill="none" stroke="oklch(1 0 0 / 0.10)" stroke-width="1" />
   <g stroke="oklch(0.95 0.04 220)" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round">
     <polyline points="30,28 54,50 30,72" opacity="1" />

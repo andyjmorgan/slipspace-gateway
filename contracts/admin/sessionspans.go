@@ -20,7 +20,7 @@ type SessionSpansPage struct {
 // GET /api/v1/sessions/{id}/spans — one gen_ai span (one upstream request) of
 // a session, projected from the request_events span_event blob alone (never
 // from Records; invariant #4). The shape is frozen by the span-dto JSON schema
-// (sluice:session-spans-dto/v1) the session lifecycle page renders from.
+// (slipspace:session-spans-dto/v1) the session lifecycle page renders from.
 //
 // Truncation policy: served content fields (text, tool args, input_text,
 // output_text) are capped per field by the server (span_field_max_bytes,

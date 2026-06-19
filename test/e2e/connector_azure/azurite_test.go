@@ -100,7 +100,7 @@ func TestAzurite_UploadRoundTrip(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	admin := azuriteAdminClient(t, serviceURL)
-	const container = "sluice-test"
+	const container = "slipspace-test"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -109,7 +109,7 @@ func TestAzurite_UploadRoundTrip(t *testing.T) {
 		t.Fatalf("CreateContainer: %v", err)
 	}
 
-	t.Setenv("SLUICE_TEST_AZ_KEY", azuriteAccKey)
+	t.Setenv("SLIPSPACE_TEST_AZ_KEY", azuriteAccKey)
 	c, err := azureblob.New(ctx, azureblob.Options{
 		Config: contractsconfig.Connector{
 			Type:      "azure_blob",
@@ -119,7 +119,7 @@ func TestAzurite_UploadRoundTrip(t *testing.T) {
 			Prefix:    "refinement",
 			Auth: &contractsconfig.ConnectorAuth{
 				Mode:          contractsconfig.AuthModeAccountKey,
-				AccountKeyRef: "env:SLUICE_TEST_AZ_KEY",
+				AccountKeyRef: "env:SLIPSPACE_TEST_AZ_KEY",
 			},
 		},
 		InstanceID:         "test-instance",

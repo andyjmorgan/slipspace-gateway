@@ -56,7 +56,7 @@ func TestAllActions_MarshalRoundTrip(t *testing.T) {
 		&rules.TranslateAction{Type: "translate", TargetProtocol: "chat"},
 		&rules.ChangeModelNameAction{Type: "changeModelName", NewModelName: "gpt-4o-mini"},
 		&rules.ChangeUrlAction{Type: "changeUrl", NewURL: "https://api.example.com"},
-		&rules.ChangeApiKeyAction{Type: "changeApiKey", APIKey: "k", UseSluiceKey: true},
+		&rules.ChangeApiKeyAction{Type: "changeApiKey", APIKey: "k", UseSlipSpaceKey: true},
 		&rules.SetHeaderAction{Type: "setHeader", HeaderName: "X-Foo", HeaderAction: rules.HeaderSet, HeaderValue: "v"},
 		&rules.AppendQueryStringAction{Type: "appendQueryString", Key: "tenant", Value: "acme"},
 		&rules.ReturnStatusCodeAction{Type: "returnStatusCode", StatusCode: 200, Body: "ok", BodyType: rules.StatusBodyText},

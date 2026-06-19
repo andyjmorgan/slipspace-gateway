@@ -1,11 +1,11 @@
 # Quickstart Arbiter service config (used by compose.arbiter.yaml).
-# Mounted at /etc/sluice/arbiter.yaml. File contents are trusted — there is no
+# Mounted at /etc/slipspace/arbiter.yaml. File contents are trusted — there is no
 # ${VAR} interpolation here (unlike the gateway's policy template), so the
 # console password hash and DSN are literal.
 
 # Console + HMAC Record-webhook ingest listener.
 http_bind: "0.0.0.0:8686"
-# OTLP gRPC listener — the gateway pushes gen_ai spans + sluice meters here.
+# OTLP gRPC listener — the gateway pushes gen_ai spans + slipspace meters here.
 otlp_bind: "0.0.0.0:8687"
 
 # Per-request cap (bytes) on the gen_ai content the OTLP ingest keeps for the
@@ -35,5 +35,5 @@ console:
 # Empty by default: the quickstart wires the gateway -> telemetry link over OTLP
 # only, which needs no registration. To enable the full Record/audit feed, add
 # an entry here whose id + hmac_secret match the gateway's connector config and
-# SLUICE_TELEMETRY_HMAC_SECRET — see the bundle README ("Full Record feed").
+# SLIPSPACE_TELEMETRY_HMAC_SECRET — see the bundle README ("Full Record feed").
 gateways: []

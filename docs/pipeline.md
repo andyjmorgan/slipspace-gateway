@@ -1,6 +1,6 @@
 # Pipeline & Middleware
 
-Sluice has **two** layered processing stacks, and they are easy to confuse:
+SlipSpace has **two** layered processing stacks, and they are easy to confuse:
 
 1. **The HTTP middleware chain** — the live request path. A linear stack of
    `http.Handler` wrappers composed in
@@ -349,7 +349,7 @@ Two distinct redactors guard different channels; do not conflate them:
 - **[`internal/headers.Redactor`](../internal/headers/redact.go)** masks
   credential-bearing **header names** for operator-facing display (debug logs, the
   live-feed body envelope). A built-in lowercase-substring list (`auth`,
-  `api-key`, `apikey`, `token`, `cookie`, `secret`, `sluice-identity`) is always
+  `api-key`, `apikey`, `token`, `cookie`, `secret`, `slipspace-identity`) is always
   active; operators can add extras via `NewRedactor`. `Redactor.Extras()` returns
   *only* the operator-supplied substrings (built-ins excluded) so observability
   code can report what the operator added rather than the full match set.
@@ -357,7 +357,7 @@ Two distinct redactors guard different channels; do not conflate them:
 - **[`internal/contentredact`](../internal/contentredact/contentredact.go)** masks
   credential-shaped tokens in **free-text GenAI content** (prompts/responses)
   before that content lands on a telemetry span or log. It is deliberately
-  conservative — only well-known provider key/token shapes (Sluice `sk_live_*`,
+  conservative — only well-known provider key/token shapes (SlipSpace `sk_live_*`,
   OpenAI/Anthropic `sk-*`, Google `AIza*`, Slack `xox*`, JWTs, `Bearer` tokens),
   each anchored with a minimum length so ordinary prose is not mangled. It is
   defence-in-depth for the opt-in content-capture case, not a general PII engine;

@@ -67,7 +67,7 @@ func TestCascade_ProviderMutationVisibleToLaterRule(t *testing.T) {
 	tag := &contractsrules.RuleContract{
 		Name:      "tag-anthropic",
 		Condition: providerCondition("anthropic"),
-		Actions:   []contractsrules.Action{setHeaderAction("X-Sluice-PostFlip", "yes")},
+		Actions:   []contractsrules.Action{setHeaderAction("X-Slipspace-PostFlip", "yes")},
 	}
 	e := rules.NewEvaluator(testStore(map[string][]*contractsrules.RuleContract{"dev": {flip, tag}}), 8, nil)
 	state := rules.NewMutableState("openai", "chat_completions", "", nil, http.Header{})
@@ -80,8 +80,8 @@ func TestCascade_ProviderMutationVisibleToLaterRule(t *testing.T) {
 	if state.Provider != "anthropic" {
 		t.Fatalf("state.Provider = %q, want anthropic", state.Provider)
 	}
-	if got := state.OutgoingHeaders.Get("X-Sluice-PostFlip"); got != "yes" {
-		t.Errorf("X-Sluice-PostFlip = %q, want yes — tag rule did NOT see the cascaded provider", got)
+	if got := state.OutgoingHeaders.Get("X-Slipspace-PostFlip"); got != "yes" {
+		t.Errorf("X-Slipspace-PostFlip = %q, want yes — tag rule did NOT see the cascaded provider", got)
 	}
 	records := buf.Drain()
 	if len(records) != 2 {

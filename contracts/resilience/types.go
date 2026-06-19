@@ -81,7 +81,7 @@ type ResilienceConfig struct {
 	// so post-commit streaming responses are not capped by this value.
 	//
 	// When set (> 0) it replaces the gateway-wide default
-	// (SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS, 120s) for every
+	// (SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS, 120s) for every
 	// attempt under this policy. It is deliberately not floored: a
 	// failover / load-balance policy typically wants a *shorter* budget
 	// than the single-shot default so it can abandon a slow target and

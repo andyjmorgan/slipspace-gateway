@@ -1,7 +1,7 @@
 # Provider model types
 
 The `protocols/` packages model the on-the-wire shapes of the three providers
-Sluice fronts. Each package mirrors one wire surface of one provider and exists
+SlipSpace fronts. Each package mirrors one wire surface of one provider and exists
 so the gateway can parse a request, apply rules, and re-marshal it without
 dropping fields. Every exported struct embeds `models.DynamicProperties` and
 every polymorphic union has an `UnknownX` fallback — the round-tripping

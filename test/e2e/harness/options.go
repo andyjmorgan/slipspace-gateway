@@ -6,7 +6,7 @@ package harness
 // production-shaped config-dev/ fixture; flip individual fields to exercise
 // alternate code paths (e.g. reporting disabled).
 //
-// Each override is applied as a SLUICE_* env var at gateway spawn time
+// Each override is applied as a SLIPSPACE_* env var at gateway spawn time
 // rather than as a YAML mutation, since server-level configuration moved
 // out of gateway.yaml in the three-plane refactor.
 type Options struct {
@@ -18,12 +18,12 @@ type Options struct {
 	// the no-capture path.
 	ReportingEnabled *bool
 
-	// DrainTimeoutSeconds sets SLUICE_SHUTDOWN_DRAIN_SECONDS. 0 = leave
+	// DrainTimeoutSeconds sets SLIPSPACE_SHUTDOWN_DRAIN_SECONDS. 0 = leave
 	// default. Short values exercise drain-timeout escalation.
 	DrainTimeoutSeconds int
 
 	// UpstreamResponseHeaderTimeoutSeconds sets
-	// SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS. 0 = leave default
+	// SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS. 0 = leave default
 	// (120). Values below the 120 floor are rejected by the gateway at
 	// startup, so this is only useful for asserting a valid override
 	// threads through the binary without breaking forwarding.
@@ -48,7 +48,7 @@ type Options struct {
 	// AdminEnabled. Ignored when AdminEnabled is false.
 	AdminPassword string
 
-	// ExternalURL sets SLUICE_EXTERNAL_URL on the spawned gateway,
+	// ExternalURL sets SLIPSPACE_EXTERNAL_URL on the spawned gateway,
 	// resolving the {external_url} template reference used by
 	// response-side body rewrites. Empty leaves it unset.
 	ExternalURL string
