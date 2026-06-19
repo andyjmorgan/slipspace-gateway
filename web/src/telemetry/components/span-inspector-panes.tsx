@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Check, Copy } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { fmt } from "@/lib/fmt"
+import { JsonViewer } from "@/components/atoms/json-viewer"
 import { loadVerdict } from "@/lib/verdict"
 import {
   parseGenAIContent,
@@ -146,13 +147,25 @@ export function ToolChip({ name }: { name?: string }) {
   )
 }
 
-// PreBlock is the modal's raw-text well.
+// PreBlock is the modal's raw-text well — used for content that is NOT
+// structured JSON (assistant/human text, system prompts, tool-response free
+// text, raw SSE bytes). JSON bodies go through JsonWell instead so they get
+// the collapsible tree; PreBlock stays the honest dump for everything else.
 export function PreBlock({ text }: { text: string }) {
   return (
     <pre className="whitespace-pre-wrap break-words rounded-[var(--radius)] border border-[color:var(--border)] bg-[color:var(--bg)] px-3 py-2.5 mono text-[12px] leading-[1.55] text-[color:var(--text-2)] max-h-[46vh] overflow-y-auto m-0">
       {text}
     </pre>
   )
+}
+
+// JsonWell is the JSON sibling of PreBlock: the shared collapsible JsonViewer
+// (same one the admin console's live-messages modal uses) sized to PreBlock's
+// 46vh well so a large wire body scrolls instead of pushing the modal taller.
+// JsonViewer falls back to a plain <pre> when the text doesn't parse as JSON,
+// so callers can pass any captured body without sniffing the content-type.
+export function JsonWell({ text }: { text: string }) {
+  return <JsonViewer text={text} maxHeightClassName="max-h-[46vh]" />
 }
 
 // IOTab is one tab of the inspector's tab strip. The meta sub-label is hidden
@@ -293,7 +306,9 @@ function ArgValue({ v }: { v: unknown }) {
       </span>
     )
   }
-  return <PreBlock text={JSON.stringify(v, null, 2)} />
+  // Nested object/array argument value: render as a collapsible tree rather
+  // than a flat pretty-print, same as the wire-body wells.
+  return <JsonViewer text={JSON.stringify(v)} />
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -705,7 +720,7 @@ export function TelemetryPane({ cid, wanted }: { cid: string; wanted: boolean })
               the complete OTel gen_ai span, every attribute verbatim ·{" "}
               <b className="text-[color:var(--text-2)]">{fmt.compact(rawSpan.length)}</b> chars
             </WellHead>
-            <PreBlock text={rawSpan} />
+            <JsonWell text={rawSpan} />
           </>
         ) : (
           <PaneNote>no raw span stored for this request (record-only event)</PaneNote>
@@ -776,7 +791,7 @@ function ToolDefCard({ def }: { def: GenAIToolDefinition }) {
       {def.description && (
         <div className="mb-2 whitespace-pre-wrap break-words text-[12px] text-[color:var(--text-3)]">{def.description}</div>
       )}
-      {params ? <PreBlock text={params} /> : <div className="text-[12px] text-[color:var(--text-4)]">(no parameter schema)</div>}
+      {params ? <JsonWell text={params} /> : <div className="text-[12px] text-[color:var(--text-4)]">(no parameter schema)</div>}
     </DetailsCard>
   )
 }
@@ -830,7 +845,7 @@ export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
               <b className="text-[color:var(--text-2)]">{fmt.compact(body.request_total_bytes)}</b> bytes
               {body.request_truncated ? <b style={{ color: "var(--warn)" }}> · truncated</b> : null}
             </WellHead>
-            <PreBlock text={req} />
+            <JsonWell text={req} />
           </>
         ) : (
           <PaneNote>no request body captured</PaneNote>
@@ -845,7 +860,7 @@ export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
               {body.assembly_partial ? <b style={{ color: "var(--warn)" }}> · partial</b> : null}
               {body.response_truncated ? <b style={{ color: "var(--warn)" }}> · truncated</b> : null}
             </WellHead>
-            <PreBlock text={assembled} />
+            <JsonWell text={assembled} />
           </>
         ) : resp ? (
           <>
@@ -854,7 +869,7 @@ export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
               <b className="text-[color:var(--text-2)]">{fmt.compact(body.response_total_bytes)}</b> bytes
               {body.response_truncated ? <b style={{ color: "var(--warn)" }}> · truncated</b> : null}
             </WellHead>
-            <PreBlock text={resp} />
+            <JsonWell text={resp} />
           </>
         ) : (
           <PaneNote>no response body captured</PaneNote>
@@ -891,7 +906,7 @@ export function ReportPane({ cid, wanted }: { cid: string; wanted: boolean }) {
             the complete report payload, every field verbatim ·{" "}
             <b className="text-[color:var(--text-2)]">{fmt.compact(fullJSON.length)}</b> chars
           </WellHead>
-          <PreBlock text={fullJSON} />
+          <JsonWell text={fullJSON} />
         </>
       )}
     </div>
