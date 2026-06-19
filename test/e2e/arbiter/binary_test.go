@@ -1031,6 +1031,128 @@ func TestE2E_SessionSpansDTO(t *testing.T) {
 	}
 }
 
+// toolCallEntryE2E mirrors the GET /api/v1/tool-calls wire entry (the server's
+// unexported toolCallEntry) for decoding in the e2e.
+type toolCallEntryE2E struct {
+	ToolCallID            string          `json:"tool_call_id"`
+	ToolName              string          `json:"tool_name"`
+	SessionID             string          `json:"session_id"`
+	Status                string          `json:"status"`
+	Arguments             json.RawMessage `json:"arguments"`
+	ArgumentsChars        int             `json:"arguments_chars"`
+	Result                string          `json:"result"`
+	ResultChars           int             `json:"result_chars"`
+	CallCorrelationID     string          `json:"call_correlation_id"`
+	ResponseCorrelationID string          `json:"response_correlation_id"`
+}
+
+// TestE2E_ToolCallIndex proves the Tool-Call Index audit surface through the
+// real binary: a tool call proposed in one span's response and resolved by the
+// result in the NEXT span's request are joined into ONE searchable tool_call
+// row (keyed by id, joined across correlation ids), filterable by tool name,
+// fetchable by id, and surfaced in the tool-name facet. Mirrors the
+// Skill-style client tool lifecycle the design note targets.
+func TestE2E_ToolCallIndex(t *testing.T) {
+	svc := startService(t)
+
+	// Unique tool name + ids so assertions are robust against rows other tests
+	// leave in the shared Postgres (the tool_call table spans the package).
+	const (
+		toolName = "tci-Audit"
+		callID   = "tci-toolu-1"
+		sessID   = "tci-session-1"
+	)
+
+	// Span 1 (assistant response): proposes the client tool call.
+	svc.sendSpan(t,
+		strKV("slipspace.correlation_id", "tci-call"),
+		strKV("slipspace.session_id", sessID),
+		strKV("gen_ai.provider.name", "anthropic"),
+		strKV("gen_ai.request.model", "claude-x"),
+		strKV("slipspace.configuration", "tci-dev"),
+		strKV("slipspace.protocol", "messages"),
+		intKV("http.response.status_code", 200),
+		strKV("gen_ai.output.messages", `[{"role":"assistant","parts":[{"type":"tool_call","id":"`+callID+`","name":"`+toolName+`","arguments":{"path":"/etc"},"executor":"client"}]}]`),
+	)
+	// Pending until the result arrives: one row, no result yet.
+	var pending struct {
+		ToolCalls []toolCallEntryE2E `json:"tool_calls"`
+	}
+	if code := svc.getJSON(t, "/api/v1/tool-calls?name="+toolName, &pending); code != http.StatusOK {
+		t.Fatalf("list status = %d", code)
+	}
+	if len(pending.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d, want 1: %+v", len(pending.ToolCalls), pending.ToolCalls)
+	}
+	if p := pending.ToolCalls[0]; p.Status != "pending" || p.Result != "" || p.CallCorrelationID != "tci-call" {
+		t.Errorf("pending row = %+v", p)
+	}
+
+	// Span 2 (next request): returns the tool result, joined by id.
+	svc.sendSpan(t,
+		strKV("slipspace.correlation_id", "tci-result"),
+		strKV("slipspace.session_id", sessID),
+		strKV("gen_ai.provider.name", "anthropic"),
+		strKV("gen_ai.request.model", "claude-x"),
+		intKV("http.response.status_code", 200),
+		strKV("gen_ai.input.messages", `[{"role":"user","parts":[{"type":"tool_call_response","id":"`+callID+`","result":"3 files"}]}]`),
+	)
+
+	// The same row is now resolved: name + arguments from the call, result from
+	// the response, both correlation ids recorded.
+	var resolved struct {
+		ToolCalls []toolCallEntryE2E `json:"tool_calls"`
+	}
+	if code := svc.getJSON(t, "/api/v1/tool-calls?name="+toolName+"&status=resolved", &resolved); code != http.StatusOK {
+		t.Fatalf("resolved list status = %d", code)
+	}
+	if len(resolved.ToolCalls) != 1 {
+		t.Fatalf("resolved tool calls = %d, want 1: %+v", len(resolved.ToolCalls), resolved.ToolCalls)
+	}
+	got := resolved.ToolCalls[0]
+	if got.ToolCallID != callID || got.ToolName != toolName || got.SessionID != sessID {
+		t.Errorf("row identity = %+v", got)
+	}
+	if got.Status != "resolved" || got.Result != "3 files" {
+		t.Errorf("row result = %+v", got)
+	}
+	if string(got.Arguments) != `{"path":"/etc"}` {
+		t.Errorf("row arguments = %s", got.Arguments)
+	}
+	if got.CallCorrelationID != "tci-call" || got.ResponseCorrelationID != "tci-result" {
+		t.Errorf("join across spans = call %q / response %q", got.CallCorrelationID, got.ResponseCorrelationID)
+	}
+
+	// Fetch by id returns the same row.
+	var one toolCallEntryE2E
+	if code := svc.getJSON(t, "/api/v1/tool-calls/"+callID, &one); code != http.StatusOK {
+		t.Fatalf("get by id status = %d", code)
+	}
+	if one.ToolName != toolName || one.Result != "3 files" {
+		t.Errorf("get by id = %+v", one)
+	}
+	if code := svc.getJSON(t, "/api/v1/tool-calls/no-such-id", nil); code != http.StatusNotFound {
+		t.Errorf("unknown id status = %d, want 404", code)
+	}
+
+	// The tool-name facet includes the call's name.
+	var facets struct {
+		ToolNames []string `json:"tool_names"`
+	}
+	if code := svc.getJSON(t, "/api/v1/tool-calls/facets", &facets); code != http.StatusOK {
+		t.Fatalf("facets status = %d", code)
+	}
+	found := false
+	for _, n := range facets.ToolNames {
+		if n == toolName {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("tool name %q not in facet %v", toolName, facets.ToolNames)
+	}
+}
+
 // sendSpanBatch exports a batch of pre-built spans over one OTLP connection
 // (the bulk path the large-session test uses; per-span dials would dominate
 // the runtime at 300 spans).

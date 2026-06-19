@@ -595,4 +595,58 @@ CREATE INDEX IF NOT EXISTS scan_audit_occurred_at ON scan_audit (occurred_at DES
 ALTER TABLE finding ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT '';
 ALTER TABLE verdict ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 18,
+		name:    "tool_call_index",
+		// Tool-Call Index design note: individual tool calls become first-class and
+		// searchable (e.g. audit every "Skill" invocation) rather than buried in the
+		// span_event.gen_ai_content blob (rendered only on per-span drill-down). The
+		// gateway already normalises tool calls across all three providers into a
+		// uniform part shape, so ingest reads them out of the blob with no
+		// per-protocol parsing.
+		//
+		// One row per tool_call_id (the provider-assigned id: toolu_… / call_… /
+		// Gemini id). The two halves of a single invocation land on DIFFERENT spans —
+		// the call (name + arguments) in an assistant RESPONSE span, its result in the
+		// NEXT REQUEST span of the same session — so the row is filled by two
+		// independent upserts joined on the id; a row with no result yet is a real
+		// "pending" state (e.g. a client-side call the user abandoned), not an error.
+		// Decoupled from request_events by design (like the scanner tables, ADR-003):
+		// references correlation_id but carries NO foreign key, so a half that lands
+		// before its span never blocks ingest.
+		//
+		// observed_at is the first-seen time (set on insert from whichever half
+		// arrived first, never updated) — the stable, non-null keyset axis; called_at
+		// / responded_at are the true semantic timestamps and may be null. arguments
+		// is the raw JSON the model emitted (JSONB; null when the call had none);
+		// result is the tool output text (capped at ingest, true size in
+		// result_chars). Additive, forward-only; regular tx (no hypertable).
+		sql: `
+CREATE TABLE IF NOT EXISTS tool_call (
+    tool_call_id            TEXT PRIMARY KEY,
+    tool_name               TEXT        NOT NULL DEFAULT '',
+    session_id              TEXT        NOT NULL DEFAULT '',
+    executor                TEXT        NOT NULL DEFAULT '',
+    provider                TEXT        NOT NULL DEFAULT '',
+    configuration           TEXT        NOT NULL DEFAULT '',
+    protocol                TEXT        NOT NULL DEFAULT '',
+    model                   TEXT        NOT NULL DEFAULT '',
+    arguments               JSONB,
+    arguments_chars         INTEGER     NOT NULL DEFAULT 0,
+    result                  TEXT        NOT NULL DEFAULT '',
+    result_chars            INTEGER     NOT NULL DEFAULT 0,
+    call_correlation_id     TEXT        NOT NULL DEFAULT '',
+    response_correlation_id TEXT        NOT NULL DEFAULT '',
+    called_at               TIMESTAMPTZ,
+    responded_at            TIMESTAMPTZ,
+    observed_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- The audit query orders by (observed_at DESC, tool_call_id DESC); the name-led
+-- composite serves "every call to tool X, newest first" index-only, and the
+-- bare composite serves the unfiltered list + its keyset seek.
+CREATE INDEX IF NOT EXISTS tool_call_name_observed ON tool_call (tool_name, observed_at DESC, tool_call_id DESC);
+CREATE INDEX IF NOT EXISTS tool_call_observed      ON tool_call (observed_at DESC, tool_call_id DESC);
+CREATE INDEX IF NOT EXISTS tool_call_session       ON tool_call (session_id);`,
+	},
 }

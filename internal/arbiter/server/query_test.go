@@ -54,6 +54,16 @@ type fakeQueries struct {
 	findingsErr      error
 	findingRows      []store.FindingRow
 	findingRowsErr   error
+	toolCalls        []store.ToolCall
+	toolCallsNext    string
+	toolCallsErr     error
+	toolCall         store.ToolCall
+	toolCallErr      error
+	toolNames        []string
+	toolNamesErr     error
+	// lastToolParams records the ToolCallListParams of the most recent
+	// ListToolCalls call so the tool-call filter-plumbing test can assert on it.
+	lastToolParams store.ToolCallListParams
 	// lastFindingsLimit / lastFindingsSession record the args of the most recent
 	// ListRecentFindings / ListFindingsBySession call so the Security-view
 	// plumbing tests can assert which path fired and with what args.
@@ -122,6 +132,16 @@ func (f *fakeQueries) ListRecentFindings(_ context.Context, from, to time.Time, 
 func (f *fakeQueries) ListFindingsBySession(_ context.Context, sessionID string) ([]store.FindingRow, error) {
 	f.lastFindingsSession = sessionID
 	return f.findingRows, f.findingRowsErr
+}
+func (f *fakeQueries) ListToolCalls(_ context.Context, p store.ToolCallListParams) ([]store.ToolCall, string, error) {
+	f.lastToolParams = p
+	return f.toolCalls, f.toolCallsNext, f.toolCallsErr
+}
+func (f *fakeQueries) GetToolCall(context.Context, string) (store.ToolCall, error) {
+	return f.toolCall, f.toolCallErr
+}
+func (f *fakeQueries) ToolNames(context.Context) ([]string, error) {
+	return f.toolNames, f.toolNamesErr
 }
 func (f *fakeQueries) EventsBySessionRollup(context.Context, string) ([]store.RequestEvent, error) {
 	return f.session, f.sessionErr

@@ -20,6 +20,10 @@ import (
 type eventWriter interface {
 	UpsertRequestEvent(ctx context.Context, e store.RequestEvent) error
 	UpsertRequestEventWithChecks(ctx context.Context, e store.RequestEvent, checks []store.CheckTask) error
+	// UpsertToolCalls indexes the span's tool-call observations (Tool-Call Index
+	// design note). Written after the span, best-effort: a failure is logged and
+	// does not fail the span ingest.
+	UpsertToolCalls(ctx context.Context, obs []store.ToolCallObservation) error
 }
 
 // Exploder builds the Arbiter check tasks for a span (ADR-004). nil when the
@@ -81,11 +85,30 @@ func (r *TraceReceiver) Export(ctx context.Context, req *collectortrace.ExportTr
 	return &collectortrace.ExportTraceServiceResponse{}, nil
 }
 
-// ingest writes one span. With no exploder (scanner off) it is a plain upsert.
-// With an exploder, the span's check tasks are built and — when there are any —
-// written atomically with the span (ADR-004); a span that explodes to nothing
-// (no scannable content / no configured check) still takes the plain path.
+// ingest writes one span, then indexes its tool calls. The span write (with no
+// exploder it is a plain upsert; with an exploder the span's check tasks are
+// written atomically with it, ADR-004) is authoritative — its error fails the
+// ingest. The tool-call index is a derived, best-effort projection of the same
+// blob: it is written separately and a failure is logged but never fails the
+// span (an audit row missing on a transient DB error is acceptable; the upserts
+// are idempotent and half-merging — invariant of the Tool-Call Index note).
 func (r *TraceReceiver) ingest(ctx context.Context, e store.RequestEvent) error {
+	if err := r.writeEvent(ctx, e); err != nil {
+		return err
+	}
+	if obs := ToolCallsFromEvent(e); len(obs) > 0 {
+		if err := r.store.UpsertToolCalls(ctx, obs); err != nil {
+			r.logger.Warn("otlp ingest: upsert tool calls", "correlation_id", e.CorrelationID, "error", err)
+		}
+	}
+	return nil
+}
+
+// writeEvent persists the span entity: the plain single-writer upsert, or — when
+// the scanner is on and the span explodes to check tasks — the span+checks
+// atomic write (ADR-004). A span that explodes to nothing still takes the plain
+// path.
+func (r *TraceReceiver) writeEvent(ctx context.Context, e store.RequestEvent) error {
 	if r.exploder == nil {
 		return r.store.UpsertRequestEvent(ctx, e)
 	}

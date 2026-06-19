@@ -205,6 +205,37 @@ The dashboard ([`store/dashboard.go`](../internal/arbiter/store/dashboard.go)) r
 
 ---
 
+## `tool_call`
+
+The searchable per-call audit index (migration 18). One row per `tool_call_id`,
+filled from the normalized tool-call parts of `span_event.gen_ai_content` at
+ingest — never the connector spool or a meter (so it stays within
+[invariant #4](../CLAUDE.md): the dashboard aggregates still read CAGGs over
+`metric_points`; this is a per-call read view). A single invocation is filled by
+**two** independent upserts on different spans of the same session — the call
+half (an assistant *response*) and the result half (the *next request*) — joined
+on `tool_call_id`. Decoupled from `request_events` by design (no foreign key,
+ADR-003): a half that lands before its span never blocks ingest.
+
+| Column | Type | Default | Notes |
+|---|---|---|---|
+| `tool_call_id` | `TEXT` | — | **Primary key**; the provider-assigned id (`toolu_…` / `call_…`) the two halves join on. Gemini calls carry no wire id and are not indexed. |
+| `tool_name` | `TEXT` | `''` | The function name (the audit search target). Empty until the call half lands. |
+| `session_id` | `TEXT` | `''` | The session bundle root both halves share. |
+| `executor` | `TEXT` | `''` | `server` (provider-executed) vs `client`; empty when unknown. |
+| `provider` / `configuration` / `protocol` / `model` | `TEXT` | `''` | The call span's routing facts, copied so the audit list filters without joining `request_events`. |
+| `arguments` | `JSONB` | — | The model's argument object verbatim (whole, not capped); `NULL` when the call had none. |
+| `arguments_chars` | `INTEGER` | `0` | True (uncapped) size of the arguments. |
+| `result` | `TEXT` | `''` | The tool output text, capped at ingest (64 KiB). |
+| `result_chars` | `INTEGER` | `0` | True (uncapped) size of the result. |
+| `call_correlation_id` / `response_correlation_id` | `TEXT` | `''` | The two source spans. |
+| `called_at` / `responded_at` | `TIMESTAMPTZ` | — (nullable) | The two halves' span times; a `NULL` `responded_at` is the `pending` status. |
+| `observed_at` | `TIMESTAMPTZ` | `now()` | First-seen time (set on first insert from whichever half arrived first, never updated) — the stable, non-null keyset axis. |
+
+Indexes: `tool_call_name_observed (tool_name, observed_at DESC, tool_call_id DESC)` serves "every call to tool X, newest first" index-only; `tool_call_observed (observed_at DESC, tool_call_id DESC)` serves the unfiltered list + its keyset seek; `tool_call_session (session_id)` the per-session drill-down. The audit query surface is in [arbiter-api.md](arbiter-api.md) (`GET /api/v1/tool-calls`).
+
+---
+
 ## Migration history
 
 Migrations are a forward-only, append-only ordered set in [`migrations.go`](../internal/arbiter/store/migrations.go). The runner ([`store.go::Migrate`](../internal/arbiter/store/store.go)) applies every entry whose `version` is newer than the highest recorded in `schema_migrations`, each in its own transaction (except `noTx` steps, below), and is idempotent on a fully-migrated database. **Never edit or renumber a shipped entry.**
@@ -228,6 +259,7 @@ Migrations are a forward-only, append-only ordered set in [`migrations.go`](../i
 | 15 | `security_dashboard_time_indexes` | Adds `finding_created_at` (`finding.created_at DESC`) and `verdict_decided_at` (`verdict.decided_at DESC`) indexes. | The security dashboard time-buckets the `finding` / `verdict` tables by their timestamps; `finding` had only a correlation index and `verdict`'s only time index leads with `state`, so a bare window count seq-scanned. Additive, forward-only; regular tx. |
 | 16 | `scan_audit_log` | Creates `scan_audit` (append-only log of scans that did not complete cleanly) + its `occurred_at DESC` index. | Distinct from the mutating `check_tasks` outbox, which loses a task's failure history once it ends terminal; this immutable log lets the dashboard surface **when** scans fail (timeout/unreachable/detector_error/no_detector/unit_missing), not just the aggregate inconclusive count. Append-only, forward-only; regular tx. |
 | 17 | `finding_verdict_severity` | Adds `severity` to `finding` and `verdict` (`ADD COLUMN ... DEFAULT ''`, metadata-only, instant). | Operator-assigned severity for the scanner's tag/finding controls (Scanner Tag Selection + Finding Filtering + Severity design note): the scanner maps each finding's category to `info`/`warning`/`error` via `scanner.severity` and stamps it on the finding; the reduce step rolls the max up onto the verdict so the Security dashboard triages by level. Additive, forward-only; existing rows read `''` until re-scanned. |
+| 18 | `tool_call_index` | Creates `tool_call` (one row per `tool_call_id`) + the `tool_call_name_observed` / `tool_call_observed` / `tool_call_session` indexes. | Tool-Call Index design note: makes individual tool calls first-class and searchable (audit every `Skill` call). Filled from `span_event.gen_ai_content` at ingest — the gateway already normalised tool calls across providers, so no per-protocol parsing. The call + result halves land on different spans of the same session and are joined on `tool_call_id` by two half-merging upserts; references `correlation_id` with **no foreign key** (like the scanner tables, ADR-003). Additive, forward-only; regular tx. |
 
 > Migrations 1–5 describe the **pre-rearchitecture** schema. On a fresh database the runner still applies them in order before migration 6 rebuilds the entity — the early steps lay down structures that 6 then drops and recreates. Read migrations 1–5 as history; the **live** shape of `request_events` is migration 6's plus the additive columns from 9, 10, and the promoted `tags` column from 12, and the live metrics plane is migration 7's. In particular, migration 1's `streaming` / `detail` / `gen_ai_content` / measurement columns are **gone** — do not query them.
 
