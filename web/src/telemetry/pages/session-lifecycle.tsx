@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { KPI } from "@/components/atoms/kpi"
 import { StatusPill } from "@/components/atoms/status-pill"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { PageHeader } from "@/components/atoms/page-header"
 import { SkeletonTiles, SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
@@ -640,44 +641,36 @@ function LifecycleHeader({
   const errs = vm.spans.filter((s) => s.status != null && s.status !== 200).length
   const day = new Date(vm.t0ms).toLocaleDateString("en-CA")
   return (
-    <div className="flex items-start gap-3 flex-wrap">
-      <div className="flex-1 min-w-0">
-        <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Session lifecycle</h1>
-        <div className="text-[13px] text-[color:var(--text-3)] mt-1">
-          Reconstructed from this session's request telemetry
-        </div>
-      </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        {source === "fixture" && (
-          <HeaderChip>
-            <span style={{ color: "var(--warn)" }}>sample data</span> — live telemetry unavailable
-          </HeaderChip>
+    <PageHeader title="Session lifecycle" sub="Reconstructed from this session's request telemetry">
+      {source === "fixture" && (
+        <HeaderChip>
+          <span style={{ color: "var(--warn)" }}>sample data</span> — live telemetry unavailable
+        </HeaderChip>
+      )}
+      {partial && (
+        <HeaderChip>
+          <span style={{ color: "var(--accent)" }}>loading…</span> {vm.spans.length} spans so far
+        </HeaderChip>
+      )}
+      <HeaderChip>
+        <b className="mono">{models[0]?.[0]}</b>
+        {models.length > 1 ? <span className="text-[color:var(--text-4)]"> +{models.length - 1}</span> : null}
+      </HeaderChip>
+      <HeaderChip>
+        {day} · <b className="mono">{clockAt(vm.t0ms, 0)} → {clockAt(vm.t0ms, vm.dur)}</b>
+      </HeaderChip>
+      <HeaderChip>
+        {errs > 0 ? (
+          <>
+            <b style={{ color: "var(--err)" }}>{errs}</b> non-200
+          </>
+        ) : (
+          <>
+            all responses <b>HTTP 200</b>
+          </>
         )}
-        {partial && (
-          <HeaderChip>
-            <span style={{ color: "var(--accent)" }}>loading…</span> {vm.spans.length} spans so far
-          </HeaderChip>
-        )}
-        <HeaderChip>
-          <b className="mono">{models[0]?.[0]}</b>
-          {models.length > 1 ? <span className="text-[color:var(--text-4)]"> +{models.length - 1}</span> : null}
-        </HeaderChip>
-        <HeaderChip>
-          {day} · <b className="mono">{clockAt(vm.t0ms, 0)} → {clockAt(vm.t0ms, vm.dur)}</b>
-        </HeaderChip>
-        <HeaderChip>
-          {errs > 0 ? (
-            <>
-              <b style={{ color: "var(--err)" }}>{errs}</b> non-200
-            </>
-          ) : (
-            <>
-              all responses <b>HTTP 200</b>
-            </>
-          )}
-        </HeaderChip>
-      </div>
-    </div>
+      </HeaderChip>
+    </PageHeader>
   )
 }
 

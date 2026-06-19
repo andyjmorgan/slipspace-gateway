@@ -3,6 +3,7 @@ import { useNavigate } from "react-router"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
+import { PageHeader } from "@/components/atoms/page-header"
 import { Segmented } from "@/components/atoms/segmented"
 import { SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
@@ -35,29 +36,21 @@ export function SecurityAuditPage() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex items-start gap-3 flex-wrap">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Scan audit</h1>
-          <div className="text-[13px] text-[color:var(--text-3)] mt-1">
-            Operational scan failures — when a detector timed out, was unreachable, or errored
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Segmented
-            value={window}
-            onChange={setWindow}
-            options={[
-              { value: "1h", label: "1h" },
-              { value: "24h", label: "24h" },
-              { value: "7d", label: "7d" },
-              { value: "30d", label: "30d" },
-            ]}
-          />
-          <Button variant="ghost" size="sm" onClick={refetch} disabled={refreshing} aria-label="Refresh">
-            <RefreshCw className={refreshing ? "animate-spin" : undefined} /> <span className="hidden sm:inline">Refresh</span>
-          </Button>
-        </div>
-      </div>
+      <PageHeader title="Scan audit" sub="Operational scan failures — when a detector timed out, was unreachable, or errored">
+        <Segmented
+          value={window}
+          onChange={setWindow}
+          options={[
+            { value: "1h", label: "1h" },
+            { value: "24h", label: "24h" },
+            { value: "7d", label: "7d" },
+            { value: "30d", label: "30d" },
+          ]}
+        />
+        <Button variant="ghost" size="sm" onClick={refetch} disabled={refreshing} aria-label="Refresh">
+          <RefreshCw className={refreshing ? "animate-spin" : undefined} /> <span className="hidden sm:inline">Refresh</span>
+        </Button>
+      </PageHeader>
 
       {state.status === "error" && (
         <div
