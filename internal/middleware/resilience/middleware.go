@@ -435,13 +435,9 @@ func runLoadBalance(
 
 	for len(pool) > 0 {
 		attempt++
+		// weightedSelect only returns -1 for an empty pool, which the
+		// loop guard already excludes, so idx is always a valid index.
 		idx := weightedSelect(pool)
-		if idx < 0 {
-			logger.ErrorContext(ctx, "resilience: load_balance no positive-weight targets",
-				slog.String("policy", pol.Name),
-			)
-			break
-		}
 		target := pool[idx]
 		cb := effectiveCircuitBreaker(pol, target)
 
@@ -641,39 +637,51 @@ func effectiveCircuitBreaker(pol *contractsres.ResilienceConfig, target contract
 
 // weightedSelect returns the index of a target chosen by weighted-
 // random selection from pool. Each target's Weight contributes to a
-// cumulative-sum distribution; rand(0, total) picks the slot.
+// cumulative-sum distribution; rand(0, total) picks the slot. A
+// Weight <= 0 floors to 1 (even weighting) — the contract documented
+// in docs/resilience.md — so a weight-0 target still shares selection
+// with the rest of the pool rather than being excluded, and an
+// all-zero-weight pool degrades to uniform random.
 //
-// Returns -1 when every target's Weight is non-positive (no positive
-// weights to roll against). The validator rejects all-zero weight
-// sets at config load, so this only fires when the orchestrator is
-// invoked via a programmatic path that bypasses validation.
+// Returns -1 only when pool is empty (nothing to select). Every
+// non-empty pool yields a valid index because the floor guarantees a
+// positive total.
 //
 // Five lines of selection plus the safety check — see the v1.2
 // design note for why this is the algorithm we want over
 // round-robin (no shared counter across pods, same long-run
 // distribution).
 func weightedSelect(pool []contractsres.ResilienceTarget) int {
+	if len(pool) == 0 {
+		return -1
+	}
 	total := 0
 	for _, t := range pool {
-		if t.Weight > 0 {
-			total += t.Weight
-		}
-	}
-	if total == 0 {
-		return -1
+		total += effectiveWeight(t.Weight)
 	}
 	roll := randomIntN(total)
 	cumulative := 0
-	for i, t := range pool {
-		if t.Weight <= 0 {
-			continue
-		}
-		cumulative += t.Weight
+	last := len(pool) - 1
+	for i := 0; i < last; i++ {
+		cumulative += effectiveWeight(pool[i].Weight)
 		if cumulative > roll {
 			return i
 		}
 	}
-	return -1
+	// The final slot absorbs the remaining roll: total is the sum of all
+	// effective weights and roll < total, so any roll the earlier slots
+	// don't claim belongs to the last one. No unreachable return needed.
+	return last
+}
+
+// effectiveWeight floors a target weight to 1, so weight-0 (or unset/
+// negative) targets contribute even weighting rather than being
+// excluded from the roll. See docs/resilience.md and issue #361.
+func effectiveWeight(w int) int {
+	if w < 1 {
+		return 1
+	}
+	return w
 }
 
 // buildAttemptState clones the baseline state and applies the
