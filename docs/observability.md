@@ -160,7 +160,7 @@ The admin console runs on a separate listener (default `:8081`); its traffic is 
 | Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|
 | `gateway.admin.requests.total` | counter | `route, status` | 1 | Requests handled by the management-console listener. `route` is a fixed-cardinality matched-route string (`/api/v1/auth/me`, `/api/v1/messages/stream`, `static` for SPA assets, `fallback` for the index.html SPA fallback) rather than a raw URL — keeps cardinality bounded even when the SPA serves arbitrary asset paths. `status` is the response HTTP status code. |
-| `gateway.admin.config_exports.total` | counter | `status` | 1 | Redacted-config bundle downloads served by `/api/v1/config/export`. Separated from the broader admin counter so a spike on non-200 surfaces export failures (malformed YAML on disk, missing config dir) without scanning logs. |
+| `gateway.admin.config_exports.total` | counter | `status` | 1 | Redacted-config bundle downloads served by `/api/v1/config/export/download` (the download endpoint; `/api/v1/config/export/files` is the sibling listing route). Separated from the broader admin counter so a spike on non-200 surfaces export failures (malformed YAML on disk, missing config dir) without scanning logs. |
 
 ### Errors
 

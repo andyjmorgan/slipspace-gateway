@@ -224,14 +224,14 @@ carry several beta / accounting structures:
 - **`ContextManagement`** (`response.go:61-69`) reports the context-editing
   operations the server applied under the context-management beta. `AppliedEdits`
   is kept raw so an empty array round-trips intact rather than collapsing.
-- **`Container`** (`response.go:306-315`) describes the code-execution sandbox
+- **`Container`** (`response.go:358-378`) describes the code-execution sandbox
   (`ID` + `ExpiresAt`) when the request used the code-execution tool; the `ID`
   can be reused across requests to preserve workspace state.
 - **`Usage.ServerToolUse`** (`ServerToolUseUsage`, `response.go:200-206`) counts
   server-side tool calls (e.g. web search).
 - **Cache accounting** is tiered: `Usage.CacheCreationInputTokens` /
   `CacheReadInputTokens` (`response.go:198-202`) plus `CacheCreation`
-  (`response.go:263-273`) which splits writes into the 5-minute and 1-hour
+  (`response.go:316-336`) which splits writes into the 5-minute and 1-hour
   ephemeral tiers (`Ephemeral5mInputTokens` / `Ephemeral1hInputTokens`). The
   request marks cacheable spans with `CacheControl` (`type: "ephemeral"`,
   `messages.go:396-401`) on system blocks, tools, and content blocks.

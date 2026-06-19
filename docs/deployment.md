@@ -125,14 +125,14 @@ The version string baked into `/gateway` via `-ldflags "-X .../version.Version=$
 
 | Trigger | What gets published |
 |---|---|
-| Push to `main` | `ghcr.io/andyjmorgan/slipspace-gateway:main`, `:sha-<short>`, and `:latest` (floats on every default-branch build since #248, mirroring `:main`). Same tags for `slipspace-mockllm` and `arbiter`. No GitHub Release. |
+| Push to `main` | `ghcr.io/andyjmorgan/slipspace-gateway:main`, `:sha-<short>`, and `:latest` (floats on every default-branch build since #248, mirroring `:main`). Same tags for `slipspace-mockllm` and `slipspace-arbiter`. No GitHub Release. |
 | Tag push `v*.*.*` | All of the above **plus** `:<version>` and `:<major>.<minor>` (`:latest` moves on both events). The release job then creates (or edits, on tag re-push) a GitHub Release with rendered notes pointing at the freshly-pushed image tags. |
 
-All three images in the matrix (`slipspace-gateway`, `slipspace-mockllm`, `arbiter` — the latter from `deploy/docker/Dockerfile.arbiter`, added in #234) build for `linux/amd64` only (arm64 was dropped in #224); the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
+All three images in the matrix (`slipspace-gateway`, `slipspace-mockllm`, `slipspace-arbiter` — the latter from `deploy/docker/Dockerfile.arbiter`, added in #234) build for `linux/amd64` only (arm64 was dropped in #224); the buildkit config at `/home/runner/.config/buildkit/buildkitd.toml` routes `docker.io` pulls through the cluster's pull-through mirror to avoid rate limits.
 
 ### Image visibility
 
-Tagged releases run a best-effort `Mark package public` step (`continue-on-error: true`) on GHCR per image. As of the v1.3.0 rebrand the renamed packages — `slipspace-gateway`, `slipspace-mockllm`, `arbiter` — are **private** on GHCR, so a deployment must pull them with an `imagePullSecret` (the `ghcr-secret` referenced in the pod spec below). Untagged `main` builds inherit the package's current visibility.
+Tagged releases run a best-effort `Mark package public` step (`continue-on-error: true`) on GHCR per image. As of the v1.3.0 rebrand the renamed packages — `slipspace-gateway`, `slipspace-mockllm`, `slipspace-arbiter` — are **private** on GHCR, so a deployment must pull them with an `imagePullSecret` (the `ghcr-secret` referenced in the pod spec below). Untagged `main` builds inherit the package's current visibility.
 
 ### Idempotence on tag re-push
 
