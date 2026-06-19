@@ -15,10 +15,12 @@ type RecoveryReport struct {
 	// segment from the next process's POV.
 	RecoveredFromUploading int
 
-	// ValidatedActive is the count of active/ segments that decoded
-	// cleanly (a full crash-time fsync wasn't necessary; the previous
-	// process flushed before exit).
-	ValidatedActive int
+	// SealedFromActive is the count of active/ segments that decoded
+	// cleanly and were sealed so the uploader ships them. The drain
+	// goroutine never resumes a pre-crash active segment (writeRecord
+	// always opens a fresh one), so a validated leftover only reaches a
+	// destination if recovery seals it here.
+	SealedFromActive int
 
 	// QuarantinedFromActive is the count of active/ segments that
 	// failed frame validation — these were partial writes from a
@@ -34,10 +36,12 @@ type RecoveryReport struct {
 //     which the caller persists in a sidecar — out of scope for this PR.
 //
 //  2. Anything in active/ is validated by attempting to decode the
-//     zstd stream end-to-end. Good frames stay (the next process will
-//     either resume appending or seal+rotate them on first write).
-//     Bad frames move to quarantine/ — they're not retryable as-is and
-//     replaying them would corrupt the spool consumer's input.
+//     zstd stream end-to-end. Cleanly-decoding segments are sealed so
+//     the uploader ships them — the drain goroutine opens a fresh
+//     segment on its first write and never resumes a pre-crash active
+//     file, so an unsealed leftover would otherwise be stranded
+//     forever. Bad frames move to quarantine/ — they're not retryable
+//     as-is and replaying them would corrupt the spool consumer's input.
 //
 // Recover is safe to call on a fresh spool — empty directories are
 // silently zero work.
@@ -65,10 +69,13 @@ func Recover(m *Manager) (RecoveryReport, error) {
 			return rep, fmt.Errorf("spool: validate %q: %w", p, vErr)
 		}
 		if valid {
-			rep.ValidatedActive++
+			if _, err := m.Seal(p); err != nil {
+				return rep, fmt.Errorf("spool: seal %q: %w", p, err)
+			}
+			rep.SealedFromActive++
 			continue
 		}
-		if _, err := m.transition(p, stateActive, stateQuarantine); err != nil {
+		if _, err := m.Quarantine(p); err != nil {
 			return rep, fmt.Errorf("spool: quarantine %q: %w", p, err)
 		}
 		rep.QuarantinedFromActive++

@@ -51,7 +51,7 @@ func TestRecover_MovesUploadingBackToSealed(t *testing.T) {
 	}
 }
 
-func TestRecover_ValidatesCleanActiveSegment(t *testing.T) {
+func TestRecover_SealsCleanActiveSegment(t *testing.T) {
 	m := mustManager(t)
 
 	// Write + cleanly close a segment in active/.
@@ -71,17 +71,22 @@ func TestRecover_ValidatesCleanActiveSegment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	if rep.ValidatedActive != 1 {
-		t.Errorf("ValidatedActive = %d, want 1", rep.ValidatedActive)
+	if rep.SealedFromActive != 1 {
+		t.Errorf("SealedFromActive = %d, want 1", rep.SealedFromActive)
 	}
 	if rep.QuarantinedFromActive != 0 {
 		t.Errorf("QuarantinedFromActive = %d, want 0", rep.QuarantinedFromActive)
 	}
 
-	// File should still be in active/.
+	// File must move to sealed/ (so the uploader ships it) and leave
+	// active/ empty — the drain never resumes a pre-crash active segment.
 	active, _ := m.ListActive()
-	if len(active) != 1 {
-		t.Errorf("active = %d, want 1", len(active))
+	if len(active) != 0 {
+		t.Errorf("active = %d, want 0 (segment sealed)", len(active))
+	}
+	sealed, _ := m.ListSealed()
+	if len(sealed) != 1 {
+		t.Errorf("sealed = %d, want 1", len(sealed))
 	}
 }
 
@@ -118,8 +123,8 @@ func TestRecover_QuarantinesTornActiveSegment(t *testing.T) {
 	if rep.QuarantinedFromActive != 1 {
 		t.Errorf("QuarantinedFromActive = %d, want 1", rep.QuarantinedFromActive)
 	}
-	if rep.ValidatedActive != 0 {
-		t.Errorf("ValidatedActive = %d, want 0", rep.ValidatedActive)
+	if rep.SealedFromActive != 0 {
+		t.Errorf("SealedFromActive = %d, want 0", rep.SealedFromActive)
 	}
 
 	// File should now live in quarantine/.
@@ -223,8 +228,9 @@ func TestValidateZstdFrames_OpenFailureReturnsError(t *testing.T) {
 	}
 }
 
-// Smoke test: validate the encoded record matches what we wrote.
-func TestRecover_PreservesRecordContentsOnValidatedActive(t *testing.T) {
+// Smoke test: validate the encoded record survives the seal-on-recovery
+// move and matches what we wrote, read from its new sealed/ location.
+func TestRecover_PreservesRecordContentsOnSealedActive(t *testing.T) {
 	m := mustManager(t)
 	openedAt := time.Date(2026, 5, 22, 14, 0, 0, 0, time.UTC)
 	s, err := OpenSegment(m.ActiveDir(), 1, openedAt)
@@ -248,18 +254,25 @@ func TestRecover_PreservesRecordContentsOnValidatedActive(t *testing.T) {
 	if err := s.Write(want); err != nil {
 		t.Fatal(err)
 	}
-	path := s.Path()
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := Recover(m); err != nil {
+	rep, err := Recover(m)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if rep.SealedFromActive != 1 {
+		t.Fatalf("SealedFromActive = %d, want 1", rep.SealedFromActive)
+	}
 
-	// We read the file directly here (not via the test helper) so the
-	// recovery + downstream-consumer story is integrated.
-	got := readSegment(t, path)
+	// The segment now lives in sealed/ under the same filename; read it
+	// there so the recovery + downstream-consumer story is integrated.
+	sealed, err := m.ListSealed()
+	if err != nil || len(sealed) != 1 {
+		t.Fatalf("ListSealed = %v, %v; want 1 file", sealed, err)
+	}
+	got := readSegment(t, sealed[0])
 	if len(got) != 1 || got[0].ID != "verify" {
 		t.Errorf("got %+v", got)
 	}

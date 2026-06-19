@@ -337,11 +337,12 @@ func resolveSecretRef(ref string) (string, error) {
 // pushers (or nowhere) and the spool pays nothing.
 //
 // Per design note "Connector + Spool Architecture": startup recovery
-// (uploading/ → sealed/, torn active/ → quarantine/) runs at New /
-// RegisterTrack time inside each track's manager. A failed startup
-// recovery aborts gateway boot; an operator-visible error is the
-// right escalation since silently dropping records on a misconfigured
-// spool root is worse than refusing to start.
+// (uploading/ → sealed/, clean active/ → sealed/, torn active/ →
+// quarantine/) runs synchronously inside Spool.Start, per track, before
+// the drain/uploader goroutines launch. A failed recovery makes Start
+// return an error which aborts gateway boot; an operator-visible error
+// is the right escalation since silently stranding records on a
+// misconfigured spool root is worse than refusing to start.
 func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.ResolvedConfig, logger *slog.Logger) (*spool.Spool, func(), error) {
 	noop := func() {}
 	spoolCfgs := make([]contractsconfig.Connector, 0, len(resolved.Connectors))

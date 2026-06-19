@@ -174,6 +174,26 @@ func (s *Spool) Start(ctx context.Context) error {
 	if len(s.tracks) == 0 {
 		return errors.New("spool: no tracks registered")
 	}
+	// Reconcile each track's on-disk state before any goroutine runs:
+	// fish uploading/ orphans back to sealed/, seal cleanly-decoding
+	// active/ leftovers so they upload, quarantine torn ones. Synchronous
+	// and fail-closed — a spool that can't reconcile its directories must
+	// not start, because silently stranding audit/billing records is worse
+	// than refusing to boot. See docs/spool.md "Recovery on startup".
+	for name, t := range s.tracks {
+		rep, err := Recover(t.manager)
+		if err != nil {
+			return fmt.Errorf("spool: recover track %q: %w", name, err)
+		}
+		if rep != (RecoveryReport{}) {
+			s.logger.LogAttrs(ctx, slog.LevelInfo, "spool: track recovered after restart",
+				slog.String("track", name),
+				slog.Int("uploading_to_sealed", rep.RecoveredFromUploading),
+				slog.Int("active_sealed", rep.SealedFromActive),
+				slog.Int("active_quarantined", rep.QuarantinedFromActive),
+			)
+		}
+	}
 	s.started = true
 	s.ctx = ctx
 	for _, t := range s.tracks {
