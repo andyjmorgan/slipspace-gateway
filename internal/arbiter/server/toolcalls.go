@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
@@ -13,39 +13,16 @@ import (
 // list (GET /api/v1/tool-calls), a single call (…/{id}), and the distinct
 // tool-name facet (…/facets) that drives the audit page's tool dropdown. Each
 // row is a tool invocation joined across its call + response spans; see the
-// Tool-Call Index design note and internal/arbiter/store/toolcalls.go.
-
-// toolCallEntry is the wire shape of one tool call. Arguments is embedded as raw
-// JSON (the model's argument object verbatim, or null), not a re-encoded string.
-// Status is derived: "resolved" once the response half is in, else "pending".
-type toolCallEntry struct {
-	ToolCallID            string          `json:"tool_call_id"`
-	ToolName              string          `json:"tool_name"`
-	SessionID             string          `json:"session_id"`
-	Status                string          `json:"status"`
-	Executor              string          `json:"executor,omitempty"`
-	Provider              string          `json:"provider,omitempty"`
-	Configuration         string          `json:"configuration,omitempty"`
-	Protocol              string          `json:"protocol,omitempty"`
-	Model                 string          `json:"model,omitempty"`
-	Arguments             json.RawMessage `json:"arguments,omitempty"`
-	ArgumentsChars        int             `json:"arguments_chars"`
-	Result                string          `json:"result,omitempty"`
-	ResultChars           int             `json:"result_chars"`
-	CallCorrelationID     string          `json:"call_correlation_id,omitempty"`
-	ResponseCorrelationID string          `json:"response_correlation_id,omitempty"`
-	CalledAt              *time.Time      `json:"called_at"`
-	RespondedAt           *time.Time      `json:"responded_at"`
-	ObservedAt            time.Time       `json:"observed_at"`
-}
+// Tool-Call Index design note and internal/arbiter/store/toolcalls.go. The wire
+// shape is contracts/admin.ToolCallEntry (generated to TS for the SPA).
 
 // toolCallEntryFrom maps a store row to its wire entry, deriving status.
-func toolCallEntryFrom(t store.ToolCall) toolCallEntry {
+func toolCallEntryFrom(t store.ToolCall) adminc.ToolCallEntry {
 	status := "pending"
 	if t.Resolved() {
 		status = "resolved"
 	}
-	return toolCallEntry{
+	return adminc.ToolCallEntry{
 		ToolCallID:            t.ToolCallID,
 		ToolName:              t.ToolName,
 		SessionID:             t.SessionID,
@@ -99,7 +76,7 @@ func (s *Server) handleToolCalls(w http.ResponseWriter, r *http.Request) {
 		s.queryError(w, "list tool calls", err)
 		return
 	}
-	entries := make([]toolCallEntry, len(calls))
+	entries := make([]adminc.ToolCallEntry, len(calls))
 	for i, c := range calls {
 		entries[i] = toolCallEntryFrom(c)
 	}

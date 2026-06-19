@@ -1158,6 +1158,87 @@ export interface SettingsResponse {
 }
 
 //////////
+// source: toolcalls.go
+
+/**
+ * ToolCallEntry is the wire shape of one indexed tool call — the Tool-Call
+ * Index audit surface served at GET /api/v1/tool-calls (in a
+ * {tool_calls, next_cursor} envelope), GET /api/v1/tool-calls/{id}, and rendered
+ * in the console's Tool Calls page. A single invocation is joined across its
+ * call span (name + arguments, an assistant response) and its result span
+ * (result, the next request) by ToolCallID; Status is "resolved" once the result
+ * half is in, else "pending".
+ */
+export interface ToolCallEntry {
+  /**
+   * ToolCallID is the provider-assigned id (toolu_… / call_…) the two halves
+   * join on.
+   */
+  tool_call_id: string;
+  /**
+   * ToolName is the function name the model called — the audit search target.
+   */
+  tool_name: string;
+  /**
+   * SessionID is the session bundle root both halves share.
+   */
+  session_id: string;
+  /**
+   * Status is "pending" (no result yet) or "resolved".
+   */
+  status: string;
+  /**
+   * Executor marks who runs the tool ("server" for a provider-hosted tool,
+   * "client" for a caller-executed one); empty when unknown.
+   */
+  executor?: string;
+  /**
+   * Provider / Configuration / Protocol / Model are the call span's routing
+   * facts, carried so the audit list filters without a join.
+   */
+  provider?: string;
+  configuration?: string;
+  protocol?: string;
+  model?: string;
+  /**
+   * Arguments is the model's argument object as raw JSON (omitted when the call
+   * had none). Bounded only by the whole-content ingest cap, never partially
+   * truncated.
+   */
+  arguments?: unknown;
+  /**
+   * ArgumentsChars is the true (uncapped) size of the arguments, in code points.
+   */
+  arguments_chars: number /* int */;
+  /**
+   * Result is the tool output text, capped at ingest; ResultChars carries the
+   * true size so the renderer can flag truncation.
+   */
+  result?: string;
+  /**
+   * ResultChars is the true (uncapped) size of the result, in code points.
+   */
+  result_chars: number /* int */;
+  /**
+   * CallCorrelationID / ResponseCorrelationID are the two source spans the call
+   * and result halves came from.
+   */
+  call_correlation_id?: string;
+  response_correlation_id?: string;
+  /**
+   * CalledAt / RespondedAt are the two halves' span times; nil until each half
+   * has been ingested (a nil RespondedAt is the "pending" status).
+   */
+  called_at?: string;
+  responded_at?: string;
+  /**
+   * ObservedAt is the first-seen time (set on first insert, never updated) — the
+   * row's stable ordering/keyset axis.
+   */
+  observed_at: string;
+}
+
+//////////
 // source: verdict.go
 
 /**
