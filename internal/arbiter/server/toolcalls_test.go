@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
 
@@ -26,8 +27,8 @@ func TestToolCalls_List(t *testing.T) {
 		t.Fatalf("status = %d", resp.Code)
 	}
 	var body struct {
-		ToolCalls  []toolCallEntry `json:"tool_calls"`
-		NextCursor string          `json:"next_cursor"`
+		ToolCalls  []adminc.ToolCallEntry `json:"tool_calls"`
+		NextCursor string                 `json:"next_cursor"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -50,7 +51,7 @@ func TestToolCalls_PendingStatusDerived(t *testing.T) {
 	h := newQueryServer(t, q)
 	resp := get(t, h, "/api/v1/tool-calls", true)
 	var body struct {
-		ToolCalls []toolCallEntry `json:"tool_calls"`
+		ToolCalls []adminc.ToolCallEntry `json:"tool_calls"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	if body.ToolCalls[0].Status != "pending" {
@@ -82,7 +83,7 @@ func TestToolCall_GetByID(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d", resp.Code)
 	}
-	var e toolCallEntry
+	var e adminc.ToolCallEntry
 	_ = json.NewDecoder(resp.Body).Decode(&e)
 	if e.ToolCallID != "toolu_9" || e.ToolName != "Bash" {
 		t.Errorf("entry = %+v", e)

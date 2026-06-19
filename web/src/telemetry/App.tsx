@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router"
-import { Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Settings2, ShieldAlert, Sun } from "lucide-react"
+import { Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Settings2, ShieldAlert, Sun, Wrench } from "lucide-react"
 import { auth } from "@/lib/auth"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -13,6 +13,7 @@ import { SessionsPage } from "./pages/sessions"
 import { SessionLifecyclePage } from "./pages/session-lifecycle"
 import { SecurityPage } from "./pages/security"
 import { SecurityAuditPage } from "./pages/security-audit"
+import { ToolCallsPage } from "./pages/tool-calls"
 import { SettingsPage } from "./pages/settings"
 
 // App is the telemetry console root: a Basic-auth login gate wrapping the
@@ -27,6 +28,7 @@ export default function App() {
         <Route element={<TelemetryLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="messages" element={<MessagesPage />} />
+          <Route path="tool-calls" element={<ToolCallsPage />} />
           {/* Security is a section: Findings (flagged traffic) + Audit (scan
               failures). /security redirects to Findings for old links. */}
           <Route path="security" element={<Navigate to="/security/findings" replace />} />
@@ -88,6 +90,7 @@ const NAV: NavEntry[] = [
     ],
   },
   { to: "/messages", label: "Messages", icon: ListTree, end: false },
+  { to: "/tool-calls", label: "Tool Calls", icon: Wrench, end: false },
   { divider: true },
   { to: "/settings", label: "Settings", icon: Settings2, end: false },
 ]
