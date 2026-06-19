@@ -82,7 +82,7 @@ func TestHandleFindings_Recent(t *testing.T) {
 		{Category: "injection.jailbreak", CheckType: "injection", Score: 0.9, RawLabel: "INJECTION", UnitKind: "text", UnitRole: "user", CorrelationID: "c1", SessionID: "s1", ObservedAt: observed, Model: "gpt-4o", Configuration: "default"},
 		{Category: "pii.email", CheckType: "pii", Score: 0.6, CorrelationID: "c2"},
 	}}
-	resp := get(t, newQueryServer(t, q), "/api/v1/findings?limit=25", true)
+	resp := get(t, newQueryServer(t, q), "/api/v1/findings?limit=25&from=2026-06-13T00:00:00Z&to=2026-06-14T00:00:00Z", true)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d", resp.Code)
 	}
@@ -103,9 +103,13 @@ func TestHandleFindings_Recent(t *testing.T) {
 	if body.Items[1].ObservedAt != "" {
 		t.Errorf("aged-out observed_at = %q, want empty", body.Items[1].ObservedAt)
 	}
-	// no ?session -> the recent path fired, with ?limit plumbed through.
+	// no ?session -> the recent path fired, with ?limit + ?from/?to plumbed through.
 	if q.lastFindingsLimit != 25 || q.lastFindingsSession != "" {
 		t.Errorf("recent path args: limit=%d session=%q", q.lastFindingsLimit, q.lastFindingsSession)
+	}
+	if !q.lastFindingsFrom.Equal(time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)) ||
+		!q.lastFindingsTo.Equal(time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("recent path window: from=%v to=%v", q.lastFindingsFrom, q.lastFindingsTo)
 	}
 }
 
@@ -144,6 +148,10 @@ func TestHandleFindings_Errors(t *testing.T) {
 	// session-path error
 	if rec := get(t, newQueryServer(t, &fakeQueries{findingRowsErr: errors.New("db")}), "/api/v1/findings?session=s", true); rec.Code != http.StatusInternalServerError {
 		t.Errorf("session error status = %d", rec.Code)
+	}
+	// bad ?from window bound -> 400 (recent path; session path skips the parse).
+	if rec := get(t, newQueryServer(t, &fakeQueries{}), "/api/v1/findings?from=not-a-time", true); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad from status = %d, want 400", rec.Code)
 	}
 	// unauthenticated
 	if rec := get(t, newQueryServer(t, &fakeQueries{}), "/api/v1/findings", false); rec.Code != http.StatusUnauthorized {

@@ -11,16 +11,26 @@ import { FindingsTable } from "../components/findings-table"
 import { Inspector } from "./messages"
 
 // FetchState is the result of one findings fetch, tagged with the request key it
-// answers (limit:nonce). Keying it lets the view derive "loading" during render
+// answers (range:nonce). Keying it lets the view derive "loading" during render
 // — status is "loading" until a result for the CURRENT key lands — so the effect
 // only ever setStates inside its async callbacks, never synchronously.
 type FetchState = { key: string; rows: FindingRow[] | null; err: string | null }
 
-// PAGE_SIZES caps how many recent findings the page pulls — the security view is
-// a "what's flagged right now" triage surface, not an exhaustive browse, so it
-// loads a bounded recent window rather than paging.
-const PAGE_SIZES = [50, 100, 200] as const
-const DEFAULT_LIMIT = 100
+// TIME_RANGES are the relative-window presets for the Security findings list,
+// mirroring the messages/sessions browsers: the page selects flagged traffic by
+// window, not row count. "all" omits the lower bound (the server's safety cap
+// still bounds the scan). Default 24h matches the sessions list.
+const TIME_RANGES = [
+  { value: "1h", label: "1h", ms: 3_600_000 },
+  { value: "24h", label: "24h", ms: 86_400_000 },
+  { value: "7d", label: "7d", ms: 604_800_000 },
+  { value: "all", label: "All", ms: 0 },
+] as const
+type TimeRange = (typeof TIME_RANGES)[number]["value"]
+const DEFAULT_RANGE: TimeRange = "24h"
+// SKELETON_ROWS sizes the loading placeholder — a fixed guess now that the page
+// loads by window rather than a chosen row count.
+const SKELETON_ROWS = 12
 
 // SecurityPage is the top-level operator view of flagged traffic: a list of
 // recent detector findings (injection / toxicity / pii) across all sessions,
@@ -29,10 +39,10 @@ const DEFAULT_LIMIT = 100
 // source request in that same shared inspector, landing on the Security tab.
 export function SecurityPage() {
   const nav = useNavigate()
-  const [limit, setLimit] = useState<number>(DEFAULT_LIMIT)
+  const [timeRange, setTimeRange] = useState<TimeRange>(DEFAULT_RANGE)
   const [reloadNonce, setReloadNonce] = useState(0)
 
-  const key = `${limit}:${reloadNonce}`
+  const key = `${timeRange}:${reloadNonce}`
   const [fetched, setFetched] = useState<FetchState | null>(null)
   // Derived during render — no setState-in-effect. Until a result for the
   // current key arrives, the view is loading.
@@ -43,7 +53,11 @@ export function SecurityPage() {
 
   useEffect(() => {
     let cancelled = false
-    fetchFindings({ limit })
+    // Resolve the window at fetch time (mirrors the sessions browser): "all"
+    // omits the lower bound, every other preset is now-minus-span.
+    const range = TIME_RANGES.find((r) => r.value === timeRange)
+    const from = range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined
+    fetchFindings({ from })
       .then((rows) => {
         if (!cancelled) setFetched({ key, rows, err: null })
       })
@@ -58,7 +72,7 @@ export function SecurityPage() {
     return () => {
       cancelled = true
     }
-  }, [limit, key, nav])
+  }, [timeRange, key, nav])
 
   // The inspector opens on a fetched MessageEntry (the shared modal needs the
   // full request facts, which a finding row doesn't carry). entry undefined =
@@ -86,13 +100,13 @@ export function SecurityPage() {
         <div className="flex-1 min-w-0">
           <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Security</h1>
           <div className="text-[13px] text-[color:var(--text-3)] mt-1">
-            Recent flagged traffic — detector findings across all sessions, newest first
+            Flagged traffic — detector findings across all sessions in the selected window, newest first
           </div>
         </div>
         <Segmented
-          value={String(limit)}
-          onChange={(v) => setLimit(Number(v))}
-          options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+          value={timeRange}
+          onChange={(v) => setTimeRange(v as TimeRange)}
+          options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))}
         />
         <Button variant="ghost" size="sm" onClick={() => setReloadNonce((n) => n + 1)} aria-label="Refresh">
           <RefreshCw /> <span className="hidden sm:inline">Refresh</span>
@@ -111,7 +125,7 @@ export function SecurityPage() {
         <FindingsTable
           findings={findings}
           status={status}
-          limit={limit}
+          limit={SKELETON_ROWS}
           emptyText="No findings — nothing flagged in this window, or the scanner is disabled."
           onOpenMessage={openFinding}
           onOpenSession={(sessionID) => nav(`/sessions/${encodeURIComponent(sessionID)}`)}
