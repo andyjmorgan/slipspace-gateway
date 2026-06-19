@@ -11,6 +11,7 @@ import { ActiveFilterChips, FilterField, FiltersButton, type Chip } from "@/comp
 import { Segmented } from "@/components/atoms/segmented"
 import { Select } from "@/components/atoms/select"
 import { MultiSelect } from "@/components/atoms/multi-select"
+import { PageHeader } from "@/components/atoms/page-header"
 import {
   fetchFacets,
   type Facets,
@@ -168,17 +169,13 @@ export function MessagesPage() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Messages</h1>
-          <div className="text-[13px] text-[color:var(--text-3)] mt-1">Search, filter, and page through captured requests</div>
-        </div>
+      <PageHeader title="Messages" sub="Search, filter, and page through captured requests">
         <Segmented value={timeRange} onChange={setTimeRange} options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))} />
         <FiltersButton count={chips.length} onClick={() => setFiltersOpen(true)} />
         <Button variant="ghost" size="sm" onClick={() => setReloadNonce((n) => n + 1)} aria-label="Refresh">
           <RefreshCw /> <span className="hidden sm:inline">Refresh</span>
         </Button>
-      </div>
+      </PageHeader>
 
       <ActiveFilterChips chips={chips} onClearAll={clearFilters} />
 

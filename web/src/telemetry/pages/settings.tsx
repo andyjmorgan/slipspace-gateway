@@ -3,6 +3,7 @@ import { useNavigate } from "react-router"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard } from "@/components/atoms/card"
+import { PageHeader } from "@/components/atoms/page-header"
 import { Segmented } from "@/components/atoms/segmented"
 import { CardCopy } from "../components/span-inspector-panes"
 import { apiFetch, UnauthorizedError } from "@/lib/api"
@@ -57,13 +58,7 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Settings</h1>
-          <div className="text-[13px] text-[color:var(--text-3)] mt-1">
-            Applied configuration of the running telemetry service (read-only, secrets redacted)
-          </div>
-        </div>
+      <PageHeader title="Settings" sub="Applied configuration of the running telemetry service (read-only, secrets redacted)">
         <Segmented
           value={format}
           onChange={(v) => setFormat(v as ViewFormat)}
@@ -75,7 +70,7 @@ export function SettingsPage() {
         <Button variant="ghost" size="sm" onClick={() => setReloadNonce((n) => n + 1)} aria-label="Refresh">
           <RefreshCw /> <span className="hidden sm:inline">Refresh</span>
         </Button>
-      </div>
+      </PageHeader>
 
       <PanelCard>
         {status === "error" ? (

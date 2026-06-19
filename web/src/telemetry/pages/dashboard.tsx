@@ -7,6 +7,7 @@ import { ProviderChip } from "@/components/atoms/provider-chip"
 import { Segmented } from "@/components/atoms/segmented"
 import { LineChart } from "@/components/atoms/line-chart"
 import { PanelCard, PanelHead, TableScroll } from "@/components/atoms/card"
+import { PageHeader } from "@/components/atoms/page-header"
 import { Skeleton, SkeletonTiles, SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
 import {
@@ -37,31 +38,24 @@ export function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-[24px] font-semibold tracking-[-0.02em]">
-            Last {state.status === "ok" ? state.data.window : range}
-          </h1>
-          <div className="text-[13px] text-[color:var(--text-3)] mt-1">
-            Across all gateways · refreshed every 30s
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Segmented
-            value={range}
-            onChange={setRange}
-            options={[
-              { value: "1h", label: "1h" },
-              { value: "24h", label: "24h" },
-              { value: "7d", label: "7d" },
-              { value: "30d", label: "30d" },
-            ]}
-          />
-          <Button variant="ghost" size="sm" onClick={refetch} disabled={refreshing} aria-label="Refresh dashboard">
-            <RefreshCw className={refreshing ? "animate-spin" : undefined} /> <span className="hidden sm:inline">Refresh</span>
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={`Last ${state.status === "ok" ? state.data.window : range}`}
+        sub="Across all gateways · refreshed every 30s"
+      >
+        <Segmented
+          value={range}
+          onChange={setRange}
+          options={[
+            { value: "1h", label: "1h" },
+            { value: "24h", label: "24h" },
+            { value: "7d", label: "7d" },
+            { value: "30d", label: "30d" },
+          ]}
+        />
+        <Button variant="ghost" size="sm" onClick={refetch} disabled={refreshing} aria-label="Refresh dashboard">
+          <RefreshCw className={refreshing ? "animate-spin" : undefined} /> <span className="hidden sm:inline">Refresh</span>
+        </Button>
+      </PageHeader>
 
       {state.status === "loading" && <DashboardSkeleton />}
       {state.status === "error" && <Notice text={`Failed to load dashboard: ${state.message}`} tone="err" />}
