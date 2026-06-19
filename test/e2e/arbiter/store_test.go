@@ -167,6 +167,110 @@ func TestRequestEvent_NotFound(t *testing.T) {
 	}
 }
 
+// TestToolCall_OutOfOrderAndKeyset exercises the tool_call table against real
+// Postgres: the response half arriving BEFORE the call half still converges to
+// one resolved row (the half-merging CASE-WHEN upserts), observed_at stays the
+// first-seen time, and the keyset list pages newest-first. Unique ids/names keep
+// it robust against rows sibling tests leave in the shared schema.
+func TestToolCall_OutOfOrderAndKeyset(t *testing.T) {
+	st := migratedStore(t)
+	ctx := context.Background()
+	const sess = "tcoo-session"
+
+	// Result half lands FIRST (its span ingested before the call's), creating a
+	// stub with the response time as observed_at.
+	respAt := time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC)
+	if err := st.UpsertToolCalls(ctx, []store.ToolCallObservation{{
+		Kind: store.ToolResultHalf, ToolCallID: "tcoo-1", SessionID: sess,
+		CorrelationID: "tcoo-resp", Result: "late", ResultChars: 4, ObservedAt: respAt,
+	}}); err != nil {
+		t.Fatalf("result-first upsert: %v", err)
+	}
+	// Then the call half arrives, filling name + arguments without disturbing the
+	// already-present result.
+	callAt := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := st.UpsertToolCalls(ctx, []store.ToolCallObservation{{
+		Kind: store.ToolCallHalf, ToolCallID: "tcoo-1", ToolName: "tcoo-Audit",
+		Arguments: []byte(`{"k":"v"}`), ArgumentsChars: 9, SessionID: sess,
+		CorrelationID: "tcoo-call", Provider: "anthropic", ObservedAt: callAt,
+	}}); err != nil {
+		t.Fatalf("call upsert: %v", err)
+	}
+
+	got, err := st.GetToolCall(ctx, "tcoo-1")
+	if err != nil {
+		t.Fatalf("GetToolCall: %v", err)
+	}
+	if got.ToolName != "tcoo-Audit" || got.Result != "late" || !got.Resolved() {
+		t.Errorf("converged row = %+v", got)
+	}
+	// arguments is JSONB, so Postgres reserializes it (whitespace not preserved);
+	// compare semantically rather than byte-for-byte.
+	var args map[string]string
+	if err := json.Unmarshal(got.Arguments, &args); err != nil || args["k"] != "v" {
+		t.Errorf("arguments = %s (%v)", got.Arguments, err)
+	}
+	if got.CallCorrelationID != "tcoo-call" || got.ResponseCorrelationID != "tcoo-resp" {
+		t.Errorf("merged fields = %+v", got)
+	}
+	// observed_at stays the FIRST-seen time (the result, which landed first).
+	if !got.ObservedAt.Equal(respAt) {
+		t.Errorf("observed_at = %v, want first-seen %v", got.ObservedAt, respAt)
+	}
+	if got.CalledAt == nil || !got.CalledAt.Equal(callAt) || got.RespondedAt == nil || !got.RespondedAt.Equal(respAt) {
+		t.Errorf("timestamps = called %v responded %v", got.CalledAt, got.RespondedAt)
+	}
+
+	// Seed a second call in the same session so the keyset list returns >1 row and
+	// pages. Both observed_at are historical (2023) so no "now"-stamped sibling row
+	// falls in the window.
+	if err := st.UpsertToolCalls(ctx, []store.ToolCallObservation{{
+		Kind: store.ToolCallHalf, ToolCallID: "tcoo-2", ToolName: "tcoo-Audit",
+		SessionID: sess, CorrelationID: "tcoo-call-2", ObservedAt: time.Date(2023, 1, 3, 0, 0, 0, 0, time.UTC),
+	}}); err != nil {
+		t.Fatalf("second call upsert: %v", err)
+	}
+	page1, next, err := st.ListToolCalls(ctx, store.ToolCallListParams{SessionID: sess, Limit: 1})
+	if err != nil {
+		t.Fatalf("ListToolCalls page 1: %v", err)
+	}
+	if len(page1) != 1 || next == "" {
+		t.Fatalf("page 1 = %d rows, next %q (want 1 row + cursor)", len(page1), next)
+	}
+	// Newest-first: tcoo-2 (Jan 3) leads tcoo-1 (Jan 2, first-seen).
+	if page1[0].ToolCallID != "tcoo-2" {
+		t.Errorf("page 1 head = %q, want tcoo-2 (newest)", page1[0].ToolCallID)
+	}
+	page2, _, err := st.ListToolCalls(ctx, store.ToolCallListParams{SessionID: sess, Limit: 1, Cursor: next})
+	if err != nil {
+		t.Fatalf("ListToolCalls page 2: %v", err)
+	}
+	if len(page2) != 1 || page2[0].ToolCallID != "tcoo-1" {
+		t.Fatalf("page 2 = %+v, want tcoo-1", page2)
+	}
+
+	// The pending-status filter excludes the resolved tcoo-1 but keeps tcoo-2.
+	pending, _, err := st.ListToolCalls(ctx, store.ToolCallListParams{SessionID: sess, Status: "pending"})
+	if err != nil {
+		t.Fatalf("pending list: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ToolCallID != "tcoo-2" {
+		t.Errorf("pending = %+v, want only tcoo-2", pending)
+	}
+
+	// ToolNames includes the unique name; GetToolCall 404s on an unknown id.
+	names, err := st.ToolNames(ctx)
+	if err != nil {
+		t.Fatalf("ToolNames: %v", err)
+	}
+	if !containsStr(names, "tcoo-Audit") {
+		t.Errorf("tool names %v missing tcoo-Audit", names)
+	}
+	if _, err := st.GetToolCall(ctx, "tcoo-missing"); !errors.Is(err, store.ErrToolCallNotFound) {
+		t.Errorf("missing id err = %v, want ErrToolCallNotFound", err)
+	}
+}
+
 func TestRequestEvent_ListRecent(t *testing.T) {
 	st := migratedStore(t)
 	ctx := context.Background()

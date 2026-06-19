@@ -37,6 +37,7 @@ flowchart TD
     facets["GET /api/v1/facets"]
     events["GET /api/v1/events*"]
     sessions["GET /api/v1/sessions, /sessions/{id}, /sessions/{id}/spans, /sessions/{id}/spans/{cid}"]
+    toolcalls["GET /api/v1/tool-calls, /tool-calls/{id}, /tool-calls/facets"]
     security["GET /api/v1/verdict/{id}, /api/v1/findings"]
   end
   client --> open
@@ -575,6 +576,85 @@ empty (same as the sibling `/sessions/{id}`); an empty continuation page (a
 > views from the `request_events` entity (and, for `events/{id}`, the lazily-joined
 > `record` blob) the ingest listeners populate — never from the connector spool or
 > S3. The console is a read view over the telemetry store, not a record-scan reader.
+
+### Tool calls (audit index)
+
+Individual tool calls extracted into a first-class, searchable `tool_call` table
+(migration 18) so an operator can audit every invocation of a named tool — e.g.
+every `Skill` call — and inspect its input arguments and eventual result. The
+gateway already normalises tool calls across all three providers into a uniform
+part shape inside `span_event.gen_ai_content`; ingest reads those parts out of
+the blob (no per-protocol parsing) and upserts one row per `tool_call_id`. See
+the Tool-Call Index design note (DonkeyWork) and
+`internal/arbiter/store/toolcalls.go`.
+
+A single invocation spans **two** spans of the same session: the **call**
+(name + arguments) rides an assistant *response*, and its **result** rides the
+*next request*. The two halves are joined on the provider-assigned
+`tool_call_id` (`toolu_…` / `call_…`); a row whose result has not arrived yet is
+`status: "pending"` (e.g. a client tool the caller abandoned) — a real state,
+not an error. Extraction requires content capture (`SLIPSPACE_OTEL_CAPTURE_CONTENT`);
+arguments are stored whole as JSONB, the result text is capped at ingest (64 KiB,
+true size in `result_chars`). Gemini function calls carry no wire id and so are
+not indexed.
+
+#### `GET /api/v1/tool-calls`
+
+Handler `handleToolCalls` (`toolcalls.go`). Filtered, keyset-paged list, newest
+first by `observed_at` (the first-seen time), in a `{tool_calls, next_cursor}`
+envelope. Filters (all AND, all optional): `name` (exact tool name),
+`session_id`, `provider`, `configuration`, `protocol`, `model`, `status`
+(`pending` | `resolved`), and a `from`/`to` window on `observed_at`. `limit`
+defaults to 100, capped at 500.
+
+```json
+{
+ "next_cursor": "",
+ "tool_calls": [
+  {
+    "tool_call_id": "toolu_01",
+    "tool_name": "Skill",
+    "session_id": "sess-123",
+    "status": "resolved",
+    "executor": "client",
+    "provider": "anthropic",
+    "configuration": "dev",
+    "protocol": "messages",
+    "model": "claude-opus-4-8",
+    "arguments": { "skill": "ship" },
+    "arguments_chars": 16,
+    "result": "done",
+    "result_chars": 4,
+    "call_correlation_id": "corr-a",
+    "response_correlation_id": "corr-b",
+    "called_at": "2026-06-19T12:00:00Z",
+    "responded_at": "2026-06-19T12:00:05Z",
+    "observed_at": "2026-06-19T12:00:00Z"
+  }
+ ]
+}
+```
+
+`arguments` embeds the model's argument object as raw JSON (omitted when the call
+had none); `arguments`/`result` are bounded as above with `*_chars` carrying the
+true sizes. A bad `from`/`to` or `cursor` is `400`.
+
+#### `GET /api/v1/tool-calls/{id}`
+
+Handler `handleToolCall`. One tool call by `tool_call_id` (the same entry shape,
+full bounded arguments + result). `404 {"error":"tool call not found"}` when the
+id is unknown.
+
+#### `GET /api/v1/tool-calls/facets`
+
+Handler `handleToolNames`. The distinct tool names seen, sorted, for the audit
+page's tool dropdown: `{ "tool_names": ["Bash", "Read", "Skill"] }` (always an
+array, never null). The literal `/facets` route is matched ahead of `/{id}`.
+
+> **Invariant #4 compliance.** The `tool_call` table is a per-call index derived
+> from the same gen_ai span feed as `request_events` — never the connector spool
+> or S3, and not a meter. Aggregate dashboard panels still read CAGGs over
+> `metric_points`; this surface is a per-call audit read, not an aggregate.
 
 ### Security — findings + verdict (Arbiter)
 

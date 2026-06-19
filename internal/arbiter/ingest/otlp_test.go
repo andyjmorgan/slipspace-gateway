@@ -39,9 +39,13 @@ func strSliceKV(k string, vs ...string) *commonpb.KeyValue {
 // --- stub stores ---
 
 type eventSink struct {
-	events []store.RequestEvent
-	checks [][]store.CheckTask
-	err    error
+	events    []store.RequestEvent
+	checks    [][]store.CheckTask
+	toolCalls [][]store.ToolCallObservation
+	err       error
+	// toolErr, when set, is returned by UpsertToolCalls (the span write still
+	// succeeds) — to exercise the best-effort tool-call path.
+	toolErr error
 }
 
 func (s *eventSink) UpsertRequestEvent(_ context.Context, e store.RequestEvent) error {
@@ -58,6 +62,14 @@ func (s *eventSink) UpsertRequestEventWithChecks(_ context.Context, e store.Requ
 	}
 	s.events = append(s.events, e)
 	s.checks = append(s.checks, checks)
+	return nil
+}
+
+func (s *eventSink) UpsertToolCalls(_ context.Context, obs []store.ToolCallObservation) error {
+	if s.toolErr != nil {
+		return s.toolErr
+	}
+	s.toolCalls = append(s.toolCalls, obs)
 	return nil
 }
 

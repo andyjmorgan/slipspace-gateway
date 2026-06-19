@@ -44,6 +44,11 @@ type Queries interface {
 	// joined to its source request facts.
 	ListRecentFindings(ctx context.Context, from, to time.Time, limit int) ([]store.FindingRow, error)
 	ListFindingsBySession(ctx context.Context, sessionID string) ([]store.FindingRow, error)
+	// Tool-Call Index audit surface — the searchable per-call list, a single
+	// call by id, and the distinct tool-name facet.
+	ListToolCalls(ctx context.Context, p store.ToolCallListParams) ([]store.ToolCall, string, error)
+	GetToolCall(ctx context.Context, id string) (store.ToolCall, error)
+	ToolNames(ctx context.Context) ([]string, error)
 }
 
 // registerQueryRoutes mounts the Basic-auth-gated, DB-backed console API.
@@ -96,6 +101,12 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	// inspector modal lazy-fetches.
 	mux.Handle("GET /api/v1/sessions/{id}/spans", gated(s.handleSessionSpans))
 	mux.Handle("GET /api/v1/sessions/{id}/spans/{cid}", gated(s.handleSessionSpan))
+	// Tool-Call Index audit surface — searchable per-call list, single call by
+	// id, and the distinct tool-name facet. The literal /facets route is more
+	// specific than /{id}, so ServeMux routes it first regardless of order.
+	mux.Handle("GET /api/v1/tool-calls", gated(s.handleToolCalls))
+	mux.Handle("GET /api/v1/tool-calls/facets", gated(s.handleToolNames))
+	mux.Handle("GET /api/v1/tool-calls/{id}", gated(s.handleToolCall))
 }
 
 // filterFromQuery reads the shared equality/status filters from the query
