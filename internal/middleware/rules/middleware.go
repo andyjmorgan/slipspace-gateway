@@ -139,10 +139,10 @@ func driveSyntheticLifecycle(ctx context.Context, w http.ResponseWriter, result 
 	headers := http.Header{}
 	headers.Set("Content-Type", contentTypeFor(resp.BodyType))
 	if result.SourceRule != nil {
-		headers.Set("X-Sluice-Synthetic", "rule:"+result.SourceRule.Name)
+		headers.Set("X-Slipspace-Synthetic", "rule:"+result.SourceRule.Name)
 	}
 	if id := observability.CorrelationIDFromContext(ctx); id != "" {
-		headers.Set("X-Sluice-Correlation-Id", id)
+		headers.Set("X-Slipspace-Correlation-Id", id)
 	}
 
 	if observer != nil {

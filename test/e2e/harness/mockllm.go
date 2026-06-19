@@ -17,7 +17,7 @@ import (
 // request to a specific session pool. Tests that want to multiplex
 // independent scenarios through one mockllm instance set this header
 // per scenario; harness.Session.Post does it automatically.
-const SessionHeader = "X-Sluice-Session-Id"
+const SessionHeader = "X-Slipspace-Session-Id"
 
 // BehaviorClose and BehaviorHang mirror the mockllm transport-level
 // failure modes. Tests reference these constants instead of the raw
@@ -239,7 +239,7 @@ type Session struct {
 // t.Cleanup to drop the session's pool on test teardown. The session
 // ID is set on every outbound request the returned helper builds, so
 // tests can string together multi-turn scenarios without juggling
-// the X-Sluice-Session-Id header manually.
+// the X-Slipspace-Session-Id header manually.
 func (h *Harness) NewSession(t *testing.T) *Session {
 	t.Helper()
 	s := &Session{h: h, id: uuid.NewString()}
@@ -248,7 +248,7 @@ func (h *Harness) NewSession(t *testing.T) *Session {
 }
 
 // ID returns the session's UUID. Useful for tests that need to set
-// X-Sluice-Session-Id directly (e.g. PostStream or custom request
+// X-Slipspace-Session-Id directly (e.g. PostStream or custom request
 // builders).
 func (s *Session) ID() string { return s.id }
 
@@ -274,8 +274,8 @@ func (s *Session) Reset() {
 }
 
 // Post fires a JSON POST against the gateway with this session's
-// X-Sluice-Session-Id header attached. Wraps Harness.PostJSON; caller
-// gets the same buffered Response. Extra headers (e.g. X-Sluice-
+// X-Slipspace-Session-Id header attached. Wraps Harness.PostJSON; caller
+// gets the same buffered Response. Extra headers (e.g. X-Slipspace-
 // Configuration) can be passed via header; nil is fine.
 func (s *Session) Post(path string, body any, header http.Header) *Response {
 	s.h.T.Helper()

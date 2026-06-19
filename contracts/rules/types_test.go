@@ -37,7 +37,7 @@ actions:
   - type: setHeader
     headerName: X-Routed-By
     headerAction: Set
-    headerValue: sluice
+    headerValue: slipspace
   - type: returnStatusCode
     statusCode: 200
     body: "{}"

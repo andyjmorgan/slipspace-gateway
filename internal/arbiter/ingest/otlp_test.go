@@ -96,8 +96,8 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 			strKV(attrCorrelationID, "corr-1"),
 			strKV(attrGenAIProvider, "anthropic"),
 			strKV(attrModel, "claude-x"),
-			strKV(attrSluiceConfiguration, "dev"),
-			strKV(attrSluiceProtocol, "messages"),
+			strKV(attrSlipSpaceConfiguration, "dev"),
+			strKV(attrSlipSpaceProtocol, "messages"),
 			strKV("slipspace.method", "POST"),
 			intKV(attrStatusCode, 200),
 			intKV(attrInputTokens, 10),
@@ -151,8 +151,8 @@ func TestEventFromSpan_TagsAndRulesToBlob(t *testing.T) {
 	// blob so the GIN @> filter + the facet unnest see real arrays.
 	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
 		strKV(attrCorrelationID, "corr-tags"),
-		strSliceKV(attrSluiceTags, "eu", "pii"),
-		strSliceKV(attrSluiceRulesFired, "redirect"),
+		strSliceKV(attrSlipSpaceTags, "eu", "pii"),
+		strSliceKV(attrSlipSpaceRulesFired, "redirect"),
 	}}
 	e, ok := EventFromSpan(nil, span, testContentCap)
 	if !ok {
@@ -178,11 +178,11 @@ func TestEventFromSpan_TagsAndRulesToBlob(t *testing.T) {
 	if _, ok := blob["rules_fired"]; !ok {
 		t.Error("span_event missing canonical key rules_fired")
 	}
-	if _, ok := blob[attrSluiceTags]; ok {
-		t.Errorf("span_event still carries redundant raw key %q", attrSluiceTags)
+	if _, ok := blob[attrSlipSpaceTags]; ok {
+		t.Errorf("span_event still carries redundant raw key %q", attrSlipSpaceTags)
 	}
-	if _, ok := blob[attrSluiceRulesFired]; ok {
-		t.Errorf("span_event still carries redundant raw key %q", attrSluiceRulesFired)
+	if _, ok := blob[attrSlipSpaceRulesFired]; ok {
+		t.Errorf("span_event still carries redundant raw key %q", attrSlipSpaceRulesFired)
 	}
 }
 
@@ -412,8 +412,8 @@ func TestEventFromSpan_ConversationParent(t *testing.T) {
 		Attributes: []*commonpb.KeyValue{
 			strKV(attrCorrelationID, "corr-sub"),
 			strKV(attrConversationID, "thread-2"),
-			strKV(attrSluiceSessionID, "sess-1"),
-			strKV(attrSluiceParentConversationID, "sess-1"),
+			strKV(attrSlipSpaceSessionID, "sess-1"),
+			strKV(attrSlipSpaceParentConversationID, "sess-1"),
 			intKV(attrStatusCode, 200),
 		},
 	}

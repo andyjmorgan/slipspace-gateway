@@ -1,7 +1,7 @@
 """Native-SDK wire-compat for cross-provider translation.
 
 The official `anthropic` Python SDK is the client. Each test points it at the
-gateway with the `x-sluice-translate: chat` probe header, which fires the
+gateway with the `x-slipspace-translate: chat` probe header, which fires the
 config-dev `translate-messages-to-chat` rule: the inbound Anthropic Messages
 request is translated to OpenAI Chat and routed to anthropic's chat endpoint,
 the mock returns a NATURAL OpenAI Chat response, and the gateway translates it
@@ -35,7 +35,7 @@ def _xlate_client(gateway_url: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(
         base_url=gateway_url,
         api_key=API_KEY,
-        default_headers={"x-sluice-translate": "chat"},
+        default_headers={"x-slipspace-translate": "chat"},
         max_retries=0,
     )
 

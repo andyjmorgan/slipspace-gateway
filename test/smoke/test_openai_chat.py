@@ -1,4 +1,4 @@
-"""Smoke test: OpenAI chat completions via sluice-gateway managed mode."""
+"""Smoke test: OpenAI chat completions via slipspace-gateway managed mode."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 // Command arbiter is the SlipSpace Arbiter service: it ingests gen_ai +
-// sluice OTLP and HMAC-trusted large-payload webhooks from registered gateway
+// slipspace OTLP and HMAC-trusted large-payload webhooks from registered gateway
 // appliances, stores them in Postgres, stitches them by correlation_id /
 // session_id, and serves an operator console identical to the gateway's own
 // dashboard + ring inspector.
@@ -7,7 +7,7 @@
 // It binds two listeners: an HTTP surface (default :8686) carrying the
 // liveness/readiness probes, the open HMAC-trusted Record webhook, and the
 // Basic-auth operator console + query API; and an OTLP gRPC surface (default
-// :8687) ingesting gen_ai spans + sluice meters. Boot loads the config,
+// :8687) ingesting gen_ai spans + slipspace meters. Boot loads the config,
 // connects to Postgres and runs the forward-only migrations, then serves both
 // surfaces until SIGINT/SIGTERM triggers a bounded graceful shutdown. See
 // docs/arbiter.md for the operator overview.
@@ -48,7 +48,7 @@ func main() {
 }
 
 func mainErr() int {
-	configPath := flag.String("config", os.Getenv("SLUICE_ARBITER_CONFIG"), "path to the Arbiter config YAML")
+	configPath := flag.String("config", os.Getenv("SLIPSPACE_ARBITER_CONFIG"), "path to the Arbiter config YAML")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -143,7 +143,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	}
 
 	// Ingest surfaces: HMAC Record webhook (HTTP) for the full per-request
-	// digital record, OTLP gRPC for the gen_ai telemetry feed + sluice meters.
+	// digital record, OTLP gRPC for the gen_ai telemetry feed + slipspace meters.
 	reg := registry.New(cfg.Gateways)
 	recordIngest := ingest.NewRecordHandler(reg, st, log)
 	otlp := ingest.NewOTLPServer(

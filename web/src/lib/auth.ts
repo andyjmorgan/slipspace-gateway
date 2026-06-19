@@ -7,7 +7,7 @@
 // to drop into an `Authorization: Basic ...` header. Decoding it is not
 // supported — the SPA never needs the plaintext password back.
 
-const KEY = "sluice.basic"
+const KEY = "slipspace.basic"
 
 function b64(s: string): string {
   // btoa expects a binary string. Passwords are ASCII in practice for

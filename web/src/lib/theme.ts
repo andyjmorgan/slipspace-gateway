@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 
 export type Theme = "dark" | "light"
-const KEY = "sluice.theme"
+const KEY = "slipspace.theme"
 
 function read(): Theme {
   const stored = localStorage.getItem(KEY)

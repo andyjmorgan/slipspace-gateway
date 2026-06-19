@@ -9,28 +9,28 @@ services:
       - "8081:8081"  # admin console (SPA + /api/v1)
       - "9090:9090"  # prometheus scrape
     environment:
-      SLUICE_CONFIG_DIR: /etc/sluice
-      SLUICE_HTTP_BIND: 0.0.0.0:8585
-      SLUICE_SHUTDOWN_DRAIN_SECONDS: "300"
-      SLUICE_LOG_FORMAT: json
-      SLUICE_LOG_LEVEL: debug
-      SLUICE_PROMETHEUS_BIND: 0.0.0.0:9090
-      SLUICE_SPOOL_ROOT: /var/lib/sluice/spool
+      SLIPSPACE_CONFIG_DIR: /etc/slipspace
+      SLIPSPACE_HTTP_BIND: 0.0.0.0:8585
+      SLIPSPACE_SHUTDOWN_DRAIN_SECONDS: "300"
+      SLIPSPACE_LOG_FORMAT: json
+      SLIPSPACE_LOG_LEVEL: debug
+      SLIPSPACE_PROMETHEUS_BIND: 0.0.0.0:9090
+      SLIPSPACE_SPOOL_ROOT: /var/lib/slipspace/spool
       # Operator credential for the admin console. Wins over any
       # `password:` field in admin.yaml. Override per developer.
-      SLUICE_ADMIN_PASSWORD: ${SLUICE_ADMIN_PASSWORD:-sluice-gateway}
+      SLIPSPACE_ADMIN_PASSWORD: ${SLIPSPACE_ADMIN_PASSWORD:-slipspace-gateway}
       # Tight snapshot cadence so the dashboard reflects local traffic
       # within seconds; production defaults to 300000 (5 minutes).
-      SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS: ${SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS:-2000}
+      SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS: ${SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS:-2000}
     volumes:
-      - ./config-dev:/etc/sluice:ro
+      - ./config-dev:/etc/slipspace:ro
       # Overlay the host config-dev/admin.yaml (binds loopback for native
       # go-run) with one that binds 0.0.0.0 so the host port mapping
       # reaches the listener.
-      - ./deploy/compose/admin.yaml:/etc/sluice/admin.yaml:ro
+      - ./deploy/compose/admin.yaml:/etc/slipspace/admin.yaml:ro
       # Spool root. Survives container restarts; for production deploy
       # this maps to a PVC.
-      - sluice-spool:/var/lib/sluice/spool
+      - slipspace-spool:/var/lib/slipspace/spool
     depends_on:
       - mockllm
 
@@ -46,4 +46,4 @@ services:
     #   - "5555:5555"
 
 volumes:
-  sluice-spool:
+  slipspace-spool:

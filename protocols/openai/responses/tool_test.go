@@ -6,7 +6,7 @@ import (
 )
 
 // The golden tool shapes below are taken from a real Codex (ChatGPT-backend
-// Responses) turn captured in sluice telemetry on 2026-06-08, correlation
+// Responses) turn captured in slipspace telemetry on 2026-06-08, correlation
 // 888a1a80-30cd-4042-9d42-8a2220f2c2f0 (17 tools across all five variants).
 // Values are trimmed for readability; the field shapes are verbatim.
 

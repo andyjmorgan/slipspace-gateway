@@ -16,9 +16,9 @@ import (
 // Webhook headers a gateway sets on each Record push.
 const (
 	// HeaderGatewayID names the registered gateway the push claims to be from.
-	HeaderGatewayID = "X-Sluice-Gateway-Id"
+	HeaderGatewayID = "X-Slipspace-Gateway-Id"
 	// HeaderSignature carries the hex HMAC-SHA256 of the raw request body.
-	HeaderSignature = "X-Sluice-Signature"
+	HeaderSignature = "X-Slipspace-Signature"
 )
 
 // maxRecordBytes caps a single Record POST. The gateway bounds captured bodies

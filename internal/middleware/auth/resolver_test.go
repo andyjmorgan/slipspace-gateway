@@ -85,7 +85,7 @@ func TestResolver_Managed_OpenAI(t *testing.T) {
 		t.Fatalf("Configuration.Credentials[openai] = %q want sk-openai-upstream", cred)
 	}
 	if !sliceContains(ar.DropHeaders, HeaderConfiguration) {
-		t.Fatalf("X-Sluice-Configuration should be dropped, got %v", ar.DropHeaders)
+		t.Fatalf("X-Slipspace-Configuration should be dropped, got %v", ar.DropHeaders)
 	}
 	if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
 		t.Fatalf("APIKey not set correctly")
@@ -108,7 +108,7 @@ func TestResolver_Managed_Anthropic(t *testing.T) {
 		t.Fatalf("anthropic credential = %q want ak-anthropic-upstream", cred)
 	}
 	if !sliceContains(ar.DropHeaders, HeaderConfiguration) {
-		t.Fatalf("X-Sluice-Configuration must be dropped, got %v", ar.DropHeaders)
+		t.Fatalf("X-Slipspace-Configuration must be dropped, got %v", ar.DropHeaders)
 	}
 }
 
@@ -231,8 +231,64 @@ func TestResolver_Passthrough_Happy(t *testing.T) {
 		t.Fatalf("ConfigurationName = %q want prod", ar.ConfigurationName)
 	}
 	if !ar.LegacyConfigurationHeader {
-		t.Fatalf("legacy X-Sluice-Configuration path must set LegacyConfigurationHeader=true")
+		t.Fatalf("legacy X-Slipspace-Configuration path must set LegacyConfigurationHeader=true")
 	}
+}
+
+// TestResolver_LegacyHeaders_Compat proves the pre-rename selector header
+// names still resolve as a silent fallback across the cutover, and that the
+// current X-Slipspace-* name wins when both are present.
+func TestResolver_LegacyHeaders_Compat(t *testing.T) {
+	t.Run("legacy identity header resolves", func(t *testing.T) {
+		r := NewResolver(config.NewStore(fixtureConfig()))
+		headers := http.Header{}
+		headers.Set(legacyHeaderIdentity, "sk_live_enabled")
+		headers.Set(HeaderAuthorization, "Bearer client-byok-anthropic-token")
+
+		ar, err := r.Resolve(headers)
+		if err != nil {
+			t.Fatalf("legacy identity header must still resolve, got %v", err)
+		}
+		if ar.Mode != ModePassthrough || ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
+			t.Fatalf("legacy identity did not route to the key, got mode=%q key=%+v", ar.Mode, ar.APIKey)
+		}
+		if !sliceContains(ar.DropHeaders, legacyHeaderIdentity) {
+			t.Fatalf("legacy identity header must be stripped before forwarding, got %v", ar.DropHeaders)
+		}
+	})
+
+	t.Run("legacy configuration header resolves", func(t *testing.T) {
+		r := NewResolver(config.NewStore(fixtureConfig()))
+		headers := http.Header{}
+		headers.Set(legacyHeaderConfiguration, "prod")
+
+		ar, err := r.Resolve(headers)
+		if err != nil {
+			t.Fatalf("legacy configuration header must still resolve, got %v", err)
+		}
+		if ar.Mode != ModePassthrough || ar.ConfigurationName != "prod" {
+			t.Fatalf("legacy configuration did not route, got mode=%q name=%q", ar.Mode, ar.ConfigurationName)
+		}
+		if !sliceContains(ar.DropHeaders, legacyHeaderConfiguration) {
+			t.Fatalf("legacy configuration header must be stripped before forwarding, got %v", ar.DropHeaders)
+		}
+	})
+
+	t.Run("current name wins over legacy", func(t *testing.T) {
+		r := NewResolver(config.NewStore(fixtureConfig()))
+		headers := http.Header{}
+		headers.Set(HeaderIdentity, "sk_live_enabled")
+		headers.Set(legacyHeaderIdentity, "sk_live_does_not_exist")
+		headers.Set(HeaderAuthorization, "Bearer client-byok-anthropic-token")
+
+		ar, err := r.Resolve(headers)
+		if err != nil {
+			t.Fatalf("current identity header must win, got %v", err)
+		}
+		if ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
+			t.Fatalf("current X-Slipspace-Identity must win over legacy, got %+v", ar.APIKey)
+		}
+	})
 }
 
 func TestResolver_Passthrough_UnknownConfiguration(t *testing.T) {
@@ -297,7 +353,7 @@ func TestResolver_PassthroughEmptyHeaderFallsThroughToManaged(t *testing.T) {
 		t.Fatalf("want success, got %v", err)
 	}
 	if ar.Mode != ModeManaged {
-		t.Fatalf("blank X-Sluice-Configuration must not trigger passthrough; got %q", ar.Mode)
+		t.Fatalf("blank X-Slipspace-Configuration must not trigger passthrough; got %q", ar.Mode)
 	}
 }
 
@@ -341,7 +397,7 @@ func TestUpstreamCredentialHeader_ByProvider(t *testing.T) {
 
 // v1.0.7: vanilla provider SDKs ship their native API key header by default
 // (anthropic.Anthropic → x-api-key, google-genai → x-goog-api-key). The
-// resolver discovers the Sluice secret from any of three inbound headers so
+// resolver discovers the SlipSpace secret from any of three inbound headers so
 // callers don't need to inject Authorization manually.
 
 func TestResolver_Managed_DiscoversViaXAPIKey(t *testing.T) {
@@ -382,7 +438,7 @@ func TestResolver_Managed_DiscoversViaXGoogAPIKey(t *testing.T) {
 }
 
 // TestResolver_Managed_AuthorizationWinsOverNativeHeaders fixes the
-// discovery order: when Authorization Bearer carries a valid Sluice secret,
+// discovery order: when Authorization Bearer carries a valid SlipSpace secret,
 // any concurrent x-api-key / x-goog-api-key is ignored even if it would also
 // resolve. Bearer is the explicit, historical signal — making it primary
 // minimises behaviour change for existing clients.
@@ -450,7 +506,7 @@ func TestResolver_Managed_MalformedAuthorizationFallsThroughToNative(t *testing.
 func TestResolver_Managed_NativeHeaderUnknownSecret(t *testing.T) {
 	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
-	headers.Set(headerAnthropicAPIKey, "sk-anthropic-customer-byok") // not a Sluice secret
+	headers.Set(headerAnthropicAPIKey, "sk-anthropic-customer-byok") // not a SlipSpace secret
 	headers.Set(headerGeminiAPIKey, "sk_live_enabled")               // ignored, x-api-key short-circuits
 
 	_, err := r.Resolve(headers)
@@ -460,11 +516,11 @@ func TestResolver_Managed_NativeHeaderUnknownSecret(t *testing.T) {
 }
 
 // TestResolver_Passthrough_NativeHeaderIgnored guards the load-bearing
-// invariant: when X-Sluice-Configuration is present, the resolver never
+// invariant: when X-Slipspace-Configuration is present, the resolver never
 // looks at x-api-key / x-goog-api-key. The client's upstream credential
 // stays in its native header and is forwarded verbatim. Critical for the
 // Claude Code passthrough flow where x-api-key carries an Anthropic key
-// that must not be confused with a Sluice secret.
+// that must not be confused with a SlipSpace secret.
 func TestResolver_Passthrough_NativeHeaderIgnored(t *testing.T) {
 	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}
@@ -488,8 +544,8 @@ func TestResolver_Passthrough_NativeHeaderIgnored(t *testing.T) {
 	}
 }
 
-// X-Sluice-Identity tests. The identity header is the unguessable
-// replacement for X-Sluice-Configuration: api-key lookup picks the
+// X-Slipspace-Identity tests. The identity header is the unguessable
+// replacement for X-Slipspace-Configuration: api-key lookup picks the
 // configuration, the client's Authorization is forwarded verbatim.
 
 func TestResolver_IdentityPassthrough_Success(t *testing.T) {
@@ -512,7 +568,7 @@ func TestResolver_IdentityPassthrough_Success(t *testing.T) {
 		t.Fatalf("Configuration not resolved, got name=%q ptr=%v", ar.ConfigurationName, ar.Configuration)
 	}
 	if ar.LegacyConfigurationHeader {
-		t.Fatalf("identity path must not flag legacy header when X-Sluice-Configuration absent")
+		t.Fatalf("identity path must not flag legacy header when X-Slipspace-Configuration absent")
 	}
 	if !sliceContains(ar.DropHeaders, HeaderIdentity) || !sliceContains(ar.DropHeaders, HeaderConfiguration) {
 		t.Fatalf("both selector headers must be dropped, got %v", ar.DropHeaders)
@@ -594,12 +650,12 @@ func TestResolver_IdentityPassthrough_EmptyHeaderFallsThroughToManaged(t *testin
 		t.Fatalf("blank identity must fall through to managed, got %v", err)
 	}
 	if ar.Mode != ModeManaged {
-		t.Fatalf("blank X-Sluice-Identity must not trigger passthrough; got mode=%q", ar.Mode)
+		t.Fatalf("blank X-Slipspace-Identity must not trigger passthrough; got mode=%q", ar.Mode)
 	}
 }
 
 // TestResolver_IdentityWinsOverLegacyConfiguration locks the migration
-// priority: when both selector headers are present X-Sluice-Identity
+// priority: when both selector headers are present X-Slipspace-Identity
 // drives resolution, the legacy flag is still set so the handler can
 // emit a deprecation warning, and the configuration the identity key
 // belongs to is used (not the legacy header's named configuration).
@@ -626,9 +682,9 @@ func TestResolver_IdentityWinsOverLegacyConfiguration(t *testing.T) {
 
 // TestResolver_IdentityPassthrough_NativeHeaderIgnored is the analogue
 // of TestResolver_Passthrough_NativeHeaderIgnored for the identity path:
-// when X-Sluice-Identity carries the Sluice secret, x-api-key /
+// when X-Slipspace-Identity carries the SlipSpace secret, x-api-key /
 // x-goog-api-key are treated as upstream credentials and forwarded
-// verbatim — never re-interpreted as Sluice secrets.
+// verbatim — never re-interpreted as SlipSpace secrets.
 func TestResolver_IdentityPassthrough_NativeHeaderIgnored(t *testing.T) {
 	r := NewResolver(config.NewStore(fixtureConfig()))
 	headers := http.Header{}

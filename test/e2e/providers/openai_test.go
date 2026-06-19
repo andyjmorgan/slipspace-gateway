@@ -33,8 +33,8 @@ func TestOpenAI_ChatCompletions_NonStreaming(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
 	}
-	if resp.Header.Get("X-Sluice-Correlation-Id") == "" {
-		t.Errorf("missing X-Sluice-Correlation-Id")
+	if resp.Header.Get("X-Slipspace-Correlation-Id") == "" {
+		t.Errorf("missing X-Slipspace-Correlation-Id")
 	}
 	var decoded map[string]any
 	if err := resp.JSONUnmarshal(&decoded); err != nil {

@@ -60,7 +60,7 @@ func TestRewrite_ResponseSide(t *testing.T) {
 	t.Parallel()
 	h := harness.NewWithOptions(t, harness.Options{
 		PolicyYAML:  responseRewritePolicy,
-		ExternalURL: "https://sluice.example.com",
+		ExternalURL: "https://slipspace.example.com",
 	})
 
 	h.StageMockResponse(harness.CannedResponse{
@@ -83,7 +83,7 @@ func TestRewrite_ResponseSide(t *testing.T) {
 	// The client-visible body must carry the rebased URL — proving the
 	// response-phase rewrite ran in ModifyResponse before the client
 	// saw the bytes.
-	const want = "https://sluice.example.com/replay/resp_abc"
+	const want = "https://slipspace.example.com/replay/resp_abc"
 	if got := gjson.GetBytes(resp.Body, "result_url").String(); got != want {
 		t.Errorf("result_url = %s, want %s; body=%s", got, want, resp.Body)
 	}

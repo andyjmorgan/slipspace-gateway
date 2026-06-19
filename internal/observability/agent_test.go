@@ -11,9 +11,9 @@ import (
 func TestAgentResolver_Resolve(t *testing.T) {
 	t.Parallel()
 
-	// sensitiveSluice reports the Sluice agent header as redacted, to exercise
+	// sensitiveSlipSpace reports the SlipSpace agent header as redacted, to exercise
 	// the redaction-bypass fall-through.
-	sensitiveSluice := func(name string) bool { return name == observability.SluiceAgentHeader }
+	sensitiveSlipSpace := func(name string) bool { return name == observability.SlipSpaceAgentHeader }
 
 	cases := []struct {
 		name       string
@@ -24,11 +24,11 @@ func TestAgentResolver_Resolve(t *testing.T) {
 		wantSource string
 	}{
 		{
-			name:       "sluice header wins over operator extras",
+			name:       "slipspace header wins over operator extras",
 			extra:      []string{"X-Acme-Agent-Id"},
-			headers:    map[string]string{observability.SluiceAgentHeader: "agt-1", "X-Acme-Agent-Id": "acme-3"},
+			headers:    map[string]string{observability.SlipSpaceAgentHeader: "agt-1", "X-Acme-Agent-Id": "acme-3"},
 			wantID:     "agt-1",
-			wantSource: observability.SluiceAgentHeader,
+			wantSource: observability.SlipSpaceAgentHeader,
 		},
 		{
 			name:    "claude code agent header does NOT resolve as a named agent",
@@ -45,16 +45,16 @@ func TestAgentResolver_Resolve(t *testing.T) {
 			wantSource: "X-Acme-Agent-Id",
 		},
 		{
-			name:       "redacted sluice header falls through to operator extra",
+			name:       "redacted slipspace header falls through to operator extra",
 			extra:      []string{"X-Acme-Agent-Id"},
-			headers:    map[string]string{observability.SluiceAgentHeader: "agt-1", "X-Acme-Agent-Id": "acme-3"},
-			sensitive:  sensitiveSluice,
+			headers:    map[string]string{observability.SlipSpaceAgentHeader: "agt-1", "X-Acme-Agent-Id": "acme-3"},
+			sensitive:  sensitiveSlipSpace,
 			wantID:     "acme-3",
 			wantSource: "X-Acme-Agent-Id",
 		},
 		{
 			name:    "whitespace-only value is treated as absent",
-			headers: map[string]string{observability.SluiceAgentHeader: "   "},
+			headers: map[string]string{observability.SlipSpaceAgentHeader: "   "},
 			wantID:  "",
 		},
 		{
@@ -96,20 +96,20 @@ func TestAgentResolver_BlankExtraDropped(t *testing.T) {
 	t.Parallel()
 	r := observability.NewAgentResolver([]string{"  ", ""})
 	// The agent chain has no shipped default; a blank extra never matches, so
-	// only the authoritative Sluice header resolves.
-	if id, _ := r.Resolve(hdr(observability.SluiceAgentHeader, "agt"), nil); id != "agt" {
+	// only the authoritative SlipSpace header resolves.
+	if id, _ := r.Resolve(hdr(observability.SlipSpaceAgentHeader, "agt"), nil); id != "agt" {
 		t.Errorf("id = %q, want agt", id)
 	}
 }
 
 func TestAgentContext_RoundTrip(t *testing.T) {
 	t.Parallel()
-	ctx := observability.WithAgentID(context.Background(), "agt-1", observability.SluiceAgentHeader)
+	ctx := observability.WithAgentID(context.Background(), "agt-1", observability.SlipSpaceAgentHeader)
 	if got := observability.AgentIDFromContext(ctx); got != "agt-1" {
 		t.Errorf("id = %q, want agt-1", got)
 	}
-	if got := observability.AgentIDSourceFromContext(ctx); got != observability.SluiceAgentHeader {
-		t.Errorf("source = %q, want %q", got, observability.SluiceAgentHeader)
+	if got := observability.AgentIDSourceFromContext(ctx); got != observability.SlipSpaceAgentHeader {
+		t.Errorf("source = %q, want %q", got, observability.SlipSpaceAgentHeader)
 	}
 }
 

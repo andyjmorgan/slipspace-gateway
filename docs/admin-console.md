@@ -1,8 +1,8 @@
 # Admin Console
 
-Sluice's admin console is a management surface bolted onto the gateway binary. It runs as a **second `http.Server` on its own port** (default `:8081`), separate from the data plane (`:8585`), so admin traffic and proxy traffic never share a listener — no shared connection pool, no shared middleware stack, no risk of a stuck admin handler back-pressuring the request path.
+SlipSpace's admin console is a management surface bolted onto the gateway binary. It runs as a **second `http.Server` on its own port** (default `:8081`), separate from the data plane (`:8585`), so admin traffic and proxy traffic never share a listener — no shared connection pool, no shared middleware stack, no risk of a stuck admin handler back-pressuring the request path.
 
-The console exposes both read-only inspection surfaces (dashboard, live messages, policies, bindings, export) and a write API spanning most of the policy YAML: full CRUD for **Configurations, Providers, Groups, Connectors, Rules, and API Keys**. Bindings are exposed read-only (they are edited as part of a Configuration). Every write clones the live config snapshot, validates the clone, persists the YAML atomically, and publishes via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLUICE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
+The console exposes both read-only inspection surfaces (dashboard, live messages, policies, bindings, export) and a write API spanning most of the policy YAML: full CRUD for **Configurations, Providers, Groups, Connectors, Rules, and API Keys**. Bindings are exposed read-only (they are edited as part of a Configuration). Every write clones the live config snapshot, validates the clone, persists the YAML atomically, and publishes via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLIPSPACE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
 
 The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `admin.enabled: true` *and* a password is configured. With either condition false, the listener never opens.
 
@@ -57,7 +57,7 @@ flowchart LR
 
 Both listeners share the observability provider (meters, snapshotter), the live-feed ring, the body store, and the breaker store — those are constructed once at startup and passed into both wirings. Nothing else crosses the boundary. The admin handler never calls into the proxy chain; the proxy chain never writes to admin state apart from the four side-channels above.
 
-Mount `/admin/` behind the same ingress as the data plane if you like — the SPA owns the `/admin/` URL prefix so the routing rule on the ingress side stays dumb (`Host: sluice.example.com; PathPrefix: /admin → :8081`). Or expose the admin port through a sidecar / `kubectl port-forward` for loopback-only access. Both work; the gateway doesn't care.
+Mount `/admin/` behind the same ingress as the data plane if you like — the SPA owns the `/admin/` URL prefix so the routing rule on the ingress side stays dumb (`Host: slipspace.example.com; PathPrefix: /admin → :8081`). Or expose the admin port through a sidecar / `kubectl port-forward` for loopback-only access. Both work; the gateway doesn't care.
 
 ---
 
@@ -78,7 +78,7 @@ admin:
   password: operator-secret
 ```
 
-The literal value here is what the YAML loader sees; substitute via your secret manager before mount. In production you almost always leave the yaml `password` field blank and set `SLUICE_ADMIN_PASSWORD` instead (see [Setting the password](#setting-the-password)).
+The literal value here is what the YAML loader sees; substitute via your secret manager before mount. In production you almost always leave the yaml `password` field blank and set `SLIPSPACE_ADMIN_PASSWORD` instead (see [Setting the password](#setting-the-password)).
 
 `admin.Config.Validate` enforces the invariants:
 
@@ -98,7 +98,7 @@ Two configuration paths feed `admin.Config.ResolvePassword()`:
 
 | Path | YAML key / env var | Used when |
 |---|---|---|
-| Environment variable | `SLUICE_ADMIN_PASSWORD` | Production. Mounted from a k8s `Secret` keyed as an env var. Wins when set. |
+| Environment variable | `SLIPSPACE_ADMIN_PASSWORD` | Production. Mounted from a k8s `Secret` keyed as an env var. Wins when set. |
 | Literal yaml field | `admin.password` | Dev / local. Convenient for `docker-compose` flows; never used in production. |
 
 `ResolvePassword` consults the env var first; if it's set (non-empty after trim), that wins over the yaml field. If the env var is unset or empty, the yaml `password` field is used as-is. Both empty returns `""` — `Validate` then flags `ErrPasswordRequired`.
@@ -108,7 +108,7 @@ Two configuration paths feed `admin.Config.ResolvePassword()`:
 admin:
   enabled: true
   bind_addr: "0.0.0.0:8081"
-  password: ""              # left blank; SLUICE_ADMIN_PASSWORD wins anyway
+  password: ""              # left blank; SLIPSPACE_ADMIN_PASSWORD wins anyway
 ```
 
 ```yaml
@@ -122,7 +122,7 @@ admin:
 
 The admin console exposes a redacted-config export at [`GET /admin/api/v1/config/export/files`](#api-routes) and [`/download`](#api-routes). The `admin.password` field is replaced by `***` before either endpoint emits a single byte — operators inspecting the bundle never see the literal value, and a snapshot accidentally committed to a ticket reveals nothing.
 
-`SLUICE_ADMIN_PASSWORD` is an env var, not a file artifact, so it is not in the export bundle at all. The MANIFEST.txt header lists gateway version, hostname, configDir, and timestamp — never credential material.
+`SLIPSPACE_ADMIN_PASSWORD` is an env var, not a file artifact, so it is not in the export bundle at all. The MANIFEST.txt header lists gateway version, hostname, configDir, and timestamp — never credential material.
 
 ---
 
@@ -139,33 +139,33 @@ The admin console exposes a redacted-config export at [`GET /admin/api/v1/config
 
 The validator runs `net.SplitHostPort` + numeric-port check at load time, so `bind_addr: "garbage"` or `bind_addr: "host:notaport"` fails boot with `ErrInvalidBindAddr` rather than panicking at `net.Listen`.
 
-`bind_addr` must not collide with the data-plane `SLUICE_HTTP_BIND`. The OS will surface that as `EADDRINUSE` at `srv.ListenAndServe` time — the admin watcher logs it and the goroutine exits, but the gateway keeps serving traffic.
+`bind_addr` must not collide with the data-plane `SLIPSPACE_HTTP_BIND`. The OS will surface that as `EADDRINUSE` at `srv.ListenAndServe` time — the admin watcher logs it and the goroutine exits, but the gateway keeps serving traffic.
 
 ---
 
 ## Environment variables
 
-Every `SLUICE_ADMIN_*` env var feeding the console. Defaults live in `internal/config/env.go`; validators in the same file reject negative or malformed values at boot.
+Every `SLIPSPACE_ADMIN_*` env var feeding the console. Defaults live in `internal/config/env.go`; validators in the same file reject negative or malformed values at boot.
 
 ### Core
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SLUICE_ADMIN_PASSWORD` | (unset) | Operator password for HTTP Basic auth. Wins over `admin.password` yaml field when both are populated. Required when `admin.enabled: true`. |
-| `SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS` | `300000` (5m) | How often the dashboard's metric snapshotter reads the in-process registry. 5m gives 288 sample points across a 24h window — matches the chart resolution the SPA renders at. E2E tests drop this to ~200ms so dashboards reflect traffic within test wall-clock. Must be positive. |
+| `SLIPSPACE_ADMIN_PASSWORD` | (unset) | Operator password for HTTP Basic auth. Wins over `admin.password` yaml field when both are populated. Required when `admin.enabled: true`. |
+| `SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS` | `300000` (5m) | How often the dashboard's metric snapshotter reads the in-process registry. 5m gives 288 sample points across a 24h window — matches the chart resolution the SPA renders at. E2E tests drop this to ~200ms so dashboards reflect traffic within test wall-clock. Must be positive. |
 
 ### Live feed
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SLUICE_ADMIN_LIVE_FEED_CAPACITY` | `100` | Size of the in-process ring of completed-request entries that backs `/api/v1/messages/recent` and `/api/v1/messages/stream`. Set to `0` to disable the pane entirely — the ring is not constructed and the messages endpoints return 503. Negative values fail boot. |
+| `SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY` | `100` | Size of the in-process ring of completed-request entries that backs `/api/v1/messages/recent` and `/api/v1/messages/stream`. Set to `0` to disable the pane entirely — the ring is not constructed and the messages endpoints return 503. Negative values fail boot. |
 
 ### Body capture
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SLUICE_ADMIN_LIVE_FEED_BODY_BYTES` | `209715200` (200 MiB) | Total byte budget of the body LRU that backs `/api/v1/messages/{event_id}/body`. The store evicts oldest-first on overflow. Set to `0` to disable body capture; the live-tail pane still renders metadata. Stored bytes are zstd-compressed, so a 200 MiB budget commonly holds several GiB of logical content. |
-| `SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES` | `8388608` (8 MiB) | Per-body capture cap. Bodies above this size are stored head-only with a `*_truncated: true` flag. Must be `> 0` when `_BODY_BYTES` is non-zero; the loader rejects the combination otherwise. |
+| `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES` | `209715200` (200 MiB) | Total byte budget of the body LRU that backs `/api/v1/messages/{event_id}/body`. The store evicts oldest-first on overflow. Set to `0` to disable body capture; the live-tail pane still renders metadata. Stored bytes are zstd-compressed, so a 200 MiB budget commonly holds several GiB of logical content. |
+| `SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES` | `8388608` (8 MiB) | Per-body capture cap. Bodies above this size are stored head-only with a `*_truncated: true` flag. Must be `> 0` when `_BODY_BYTES` is non-zero; the loader rejects the combination otherwise. |
 
 Body capture also requires the live feed itself to be enabled — without a ring there's no `event_id` to key bodies against. `ServerEnv.LiveFeedBodiesEnabled()` returns true iff both `_CAPACITY > 0` and `_BODY_BYTES > 0`.
 
@@ -254,7 +254,7 @@ The console writes most of the policy YAML. Each mutating handler runs the same 
 
 Common behaviour across every write resource:
 
-- **503** when `SLUICE_CONFIG_DIR` is empty (the `writableGuard` in `rules_write.go`) — the data plane runs fine, but admin writes are disabled. The on-disk write also requires the config dir to be writable; see [deployment.md → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api).
+- **503** when `SLIPSPACE_CONFIG_DIR` is empty (the `writableGuard` in `rules_write.go`) — the data plane runs fine, but admin writes are disabled. The on-disk write also requires the config dir to be writable; see [deployment.md → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api).
 - **400** on a malformed / empty body or a missing name; the body cap is 256 KiB (`maxConfigBodyBytes` in `config_write.go`, the shared cap for all config-write resources).
 - **409** (shape `{error, name}`, with `used_by:[...]` added on referential-integrity refusals) on a duplicate name (POST), a rename attempt (PUT), or a delete blocked by referrers.
 - **422** (shape `{error, detail}`) when `RevalidateAndIndex` rejects the clone (unknown provider/group reference, invalid binding, empty group targets, …).
@@ -290,7 +290,7 @@ Reads (`GET /config/api-keys` and `/{id}`) return the redacted `APIKeyListItem` 
 | Method · Path | Response shape | Notes |
 |---|---|---|
 | `GET /admin/api/v1/config/export/files` | `ConfigExportFilesResponse` | Per-file redacted YAML payloads — backs the Settings page's tabbed inspector. 503 when `ConfigDir` is empty (export disabled). |
-| `GET /admin/api/v1/config/export/download` | ZIP bundle | Streams a ZIP of every accepted YAML file under `SLUICE_CONFIG_DIR`, secrets redacted, with a `MANIFEST.txt` header carrying gateway version, hostname, configDir, generation timestamp. Filename is timestamped: `sluice-config-20260522T134712Z.zip`. Bumps `gateway.admin.config_exports.total{status="..."}`. |
+| `GET /admin/api/v1/config/export/download` | ZIP bundle | Streams a ZIP of every accepted YAML file under `SLIPSPACE_CONFIG_DIR`, secrets redacted, with a `MANIFEST.txt` header carrying gateway version, hostname, configDir, generation timestamp. Filename is timestamped: `slipspace-config-20260522T134712Z.zip`. Bumps `gateway.admin.config_exports.total{status="..."}`. |
 
 The redactor (`internal/admin/configexport/redact.go`) replaces every API-key secret, upstream credential, and `admin.password` scalar with `***` (the `RedactedPlaceholder` constant) before either endpoint emits a single byte.
 
@@ -338,7 +338,7 @@ The `spa` label covers every `/admin/` URL that doesn't match a `/api/v1/*` patt
 
 | Method · Path | Response shape | Notes |
 |---|---|---|
-| `GET /admin/api/v1/messages/recent?limit=N` | `MessagesRecentResponse` | Up-to-`limit` most recent entries, oldest first. `limit` clamps to `[1, ring capacity]`; defaults to capacity. 503 when the ring is disabled (`SLUICE_ADMIN_LIVE_FEED_CAPACITY=0`). |
+| `GET /admin/api/v1/messages/recent?limit=N` | `MessagesRecentResponse` | Up-to-`limit` most recent entries, oldest first. `limit` clamps to `[1, ring capacity]`; defaults to capacity. 503 when the ring is disabled (`SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0`). |
 | `GET /admin/api/v1/messages/stream` | SSE | Server-Sent Events stream of appended entries. See [Live messages ring](#live-messages-ring) for frame shapes. 503 when the ring is disabled. |
 | `GET /admin/api/v1/messages/{event_id}/body` | `MessageBodyDetail` | Request + response bodies + per-provider reassembled stream for one event. 503 when body capture is disabled; 404 when the `event_id` has rolled out of the body LRU; 400 on empty `event_id`. |
 
@@ -418,13 +418,13 @@ Per-subscriber delivery channels default to a 32-slot buffer (configurable via `
 
 ## Body capture
 
-`internal/observability/livefeed.BodyStore` is a byte-bounded LRU of per-event `BodyEnvelope`s keyed by `EventID`. Eviction is oldest-first when a new `Put` would exceed the total byte budget (`SLUICE_ADMIN_LIVE_FEED_BODY_BYTES`).
+`internal/observability/livefeed.BodyStore` is a byte-bounded LRU of per-event `BodyEnvelope`s keyed by `EventID`. Eviction is oldest-first when a new `Put` would exceed the total byte budget (`SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES`).
 
 Each envelope holds:
 
 | Field | Content |
 |---|---|
-| `Request` | Inbound request body bytes, head-capped at `SLUICE_ADMIN_LIVE_FEED_BODY_MAX_BYTES`. |
+| `Request` | Inbound request body bytes, head-capped at `SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES`. |
 | `RequestTotalBytes` | Original size as the client sent it; equal to `len(Request)` when not truncated. |
 | `RequestTruncated` | `true` when the request exceeded the per-body cap. |
 | `Response` | Outbound response bytes — for streamed responses, the raw SSE event bytes pre-accumulator. |
@@ -437,7 +437,7 @@ The byte-heavy fields are **zstd-compressed** before storage; the `Bytes()` acco
 
 ### What's never captured
 
-- Body capture is **off** when `SLUICE_ADMIN_LIVE_FEED_BODY_BYTES=0`. The live-tail pane still renders metadata; `/messages/{event_id}/body` returns 503.
+- Body capture is **off** when `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`. The live-tail pane still renders metadata; `/messages/{event_id}/body` returns 503.
 - Bodies whose request never reached the bodycapture middleware (transport failure before headers, request cancelled mid-read) leave a zero-byte `Request` field.
 - Header capture is per-(policy, target) opt-in via the middleware wiring — older entries in the LRU may have `nil` header maps.
 
@@ -451,7 +451,7 @@ The redactor on headers runs **server-side at capture time**, not on read. A cap
 
 ## Graceful shutdown
 
-`startAdmin` registers a watcher goroutine that waits for the gateway's root context to cancel (SIGTERM/SIGINT), then calls `srv.Shutdown` on the admin server with a **detached context** bounded by the same drain budget as the data plane (`SLUICE_SHUTDOWN_DRAIN_SECONDS`, default 300 s).
+`startAdmin` registers a watcher goroutine that waits for the gateway's root context to cancel (SIGTERM/SIGINT), then calls `srv.Shutdown` on the admin server with a **detached context** bounded by the same drain budget as the data plane (`SLIPSPACE_SHUTDOWN_DRAIN_SECONDS`, default 300 s).
 
 ```mermaid
 sequenceDiagram
@@ -499,7 +499,7 @@ The `PoliciesResponse.Pod` field carries `os.Hostname()` so an operator hitting 
 ## Cross-references
 
 - [`docs/resilience.md`](resilience.md) — resilience policy schema, what `/admin/api/v1/policies` projects, and how per-target circuit-breaker state is computed.
-- [`docs/environment-variables.md`](environment-variables.md) — the canonical `SLUICE_*` env-var reference (incl. data-plane vars not covered here).
+- [`docs/environment-variables.md`](environment-variables.md) — the canonical `SLIPSPACE_*` env-var reference (incl. data-plane vars not covered here).
 - [`docs/observability.md`](observability.md) — OTel meters, Prometheus scrape, runtime collectors, connector-captured records; the data-plane signals the admin dashboard reads.
 - [`docs/deployment.md`](deployment.md) — Helm chart shape, ingress wiring, secret mounting; how `admin.password` reaches the pod in production.
 - [`CLAUDE.md`](../CLAUDE.md) — project-level invariants, including the "no unbacked UI" rule the admin pages follow.

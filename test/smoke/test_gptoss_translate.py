@@ -14,7 +14,7 @@ and rewritten by model-keyed rules (see config-dev/policy.yaml):
 - `gpt-oss-from-chat`     → changeModelName(gpt-oss:20b) + translate:messages — OpenAI Chat translated to messages and back (reverse arm)
 
 These rules live on the cluster, so the test skips unless pointed at a deploy
-known to carry them. Set SLUICE_SMOKE_GPTOSS=true to enable.
+known to carry them. Set SLIPSPACE_SMOKE_GPTOSS=true to enable.
 """
 
 from __future__ import annotations
@@ -31,13 +31,13 @@ REAL_MODEL = "gpt-oss:20b"
 
 @pytest.fixture(scope="session")
 def gptoss_enabled() -> bool:
-    return os.environ.get("SLUICE_SMOKE_GPTOSS", "").lower() in {"true", "1", "yes"}
+    return os.environ.get("SLIPSPACE_SMOKE_GPTOSS", "").lower() in {"true", "1", "yes"}
 
 
 def test_gptoss_chat_direct(base_url: str, api_key: str, gptoss_enabled: bool) -> None:
     """Oracle baseline: OpenAI Chat client → gpt-oss chat surface, no translation."""
     if not gptoss_enabled:
-        pytest.skip("SLUICE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
+        pytest.skip("SLIPSPACE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
 
     client = openai.OpenAI(base_url=f"{base_url}/v1", api_key=api_key, max_retries=0, timeout=60)
     resp = client.chat.completions.create(
@@ -57,7 +57,7 @@ def test_gptoss_translate_messages_text(base_url: str, api_key: str, gptoss_enab
     translation would raise instead of returning a Message.
     """
     if not gptoss_enabled:
-        pytest.skip("SLUICE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
+        pytest.skip("SLIPSPACE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
 
     client = anthropic.Anthropic(base_url=base_url, api_key=api_key, max_retries=0, timeout=60)
     resp = client.messages.create(
@@ -75,7 +75,7 @@ def test_gptoss_translate_messages_text(base_url: str, api_key: str, gptoss_enab
 def test_gptoss_translate_messages_tools(base_url: str, api_key: str, gptoss_enabled: bool) -> None:
     """Tool calls survive the messages↔chat translation against the real model."""
     if not gptoss_enabled:
-        pytest.skip("SLUICE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
+        pytest.skip("SLIPSPACE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
 
     client = anthropic.Anthropic(base_url=base_url, api_key=api_key, max_retries=0, timeout=60)
     resp = client.messages.create(
@@ -108,7 +108,7 @@ def test_gptoss_translate_chat_text(base_url: str, api_key: str, gptoss_enabled:
     translation would raise instead of returning a ChatCompletion.
     """
     if not gptoss_enabled:
-        pytest.skip("SLUICE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
+        pytest.skip("SLIPSPACE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
 
     client = openai.OpenAI(base_url=f"{base_url}/v1", api_key=api_key, max_retries=0, timeout=60)
     resp = client.chat.completions.create(
@@ -126,7 +126,7 @@ def test_gptoss_translate_chat_text(base_url: str, api_key: str, gptoss_enabled:
 def test_gptoss_translate_chat_tools(base_url: str, api_key: str, gptoss_enabled: bool) -> None:
     """Tool calls survive the chat↔messages translation against the real model."""
     if not gptoss_enabled:
-        pytest.skip("SLUICE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
+        pytest.skip("SLIPSPACE_SMOKE_GPTOSS not set — cluster gpt-oss rules disabled")
 
     client = openai.OpenAI(base_url=f"{base_url}/v1", api_key=api_key, max_retries=0, timeout=60)
     resp = client.chat.completions.create(

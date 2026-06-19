@@ -144,7 +144,7 @@ func run(ctx context.Context) error {
 	observerFactory := reporter.Factory()
 	// One Redactor for the whole process — the built-in substring
 	// list plus any operator-supplied extras from
-	// SLUICE_REDACT_EXTRA_HEADERS. Threaded into the proxy (for
+	// SLIPSPACE_REDACT_EXTRA_HEADERS. Threaded into the proxy (for
 	// debug header traces), bodycapture (for the Captured.Headers
 	// surface), and livefeed (for the tee-writer response headers).
 	redactor := headers.NewRedactor(env.RedactExtraHeaders)
@@ -153,27 +153,27 @@ func run(ctx context.Context) error {
 	}
 
 	// sessionResolver promotes a client-supplied session bundle root to a
-	// first-class field. X-Sluice-Session-Id is authoritative; the shipped
+	// first-class field. X-Slipspace-Session-Id is authoritative; the shipped
 	// client defaults (Session-Id / X-Claude-Code-Session-Id) plus
-	// SLUICE_SESSION_ID_HEADERS follow.
+	// SLIPSPACE_SESSION_ID_HEADERS follow.
 	sessionResolver := observability.NewSessionResolver(env.SessionIDHeaders)
 	// conversationResolver resolves the conversation/thread id (the subagent
-	// thread when active, else the session). X-Sluice-Thread-Id is
+	// thread when active, else the session). X-Slipspace-Thread-Id is
 	// authoritative; the shipped defaults (Thread-Id / X-Claude-Code-Agent-Id)
-	// plus SLUICE_THREAD_ID_HEADERS follow.
+	// plus SLIPSPACE_THREAD_ID_HEADERS follow.
 	conversationResolver := observability.NewConversationResolver(env.ThreadIDHeaders)
 	// parentResolver resolves the parent conversation of a subagent thread.
-	// X-Sluice-Parent-Conversation-Id is authoritative; the shipped default
-	// (X-Codex-Parent-Thread-Id) plus SLUICE_PARENT_ID_HEADERS follow.
+	// X-Slipspace-Parent-Conversation-Id is authoritative; the shipped default
+	// (X-Codex-Parent-Thread-Id) plus SLIPSPACE_PARENT_ID_HEADERS follow.
 	parentResolver := observability.NewParentResolver(env.ParentIDHeaders)
 	// agentResolver promotes a client-supplied NAMED agent id the same way.
-	// X-Sluice-Agent-Id is authoritative; there is no shipped default (the
+	// X-Slipspace-Agent-Id is authoritative; there is no shipped default (the
 	// gen_ai.agent.id key is reserved for named agents), so only
-	// SLUICE_AGENT_ID_HEADERS extends the chain.
+	// SLIPSPACE_AGENT_ID_HEADERS extends the chain.
 	agentResolver := observability.NewAgentResolver(env.AgentIDHeaders)
 	// userResolver promotes a client-supplied end-user id the same way.
-	// X-Sluice-User-Id is authoritative; there is no shipped default, so
-	// only SLUICE_USER_ID_HEADERS extends the chain.
+	// X-Slipspace-User-Id is authoritative; there is no shipped default, so
+	// only SLIPSPACE_USER_ID_HEADERS extends the chain.
 	userResolver := observability.NewUserResolver(env.UserIDHeaders)
 	forwarder := proxy.New(proxy.Options{
 		Logger:                logger,
@@ -407,7 +407,7 @@ func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.Res
 
 // buildLiveFeed constructs the in-process ring that backs the admin
 // console's live-messages pane. Returns (nil, nil) when the feature is
-// disabled via SLUICE_ADMIN_LIVE_FEED_CAPACITY=0 — the reporter and
+// disabled via SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0 — the reporter and
 // admin mux both no-op against a nil ring, so the rest of the wiring
 // stays uniform either way.
 func buildLiveFeed(env *config.ServerEnv, logger *slog.Logger) (*livefeed.Ring, error) {

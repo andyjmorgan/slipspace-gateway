@@ -1,6 +1,6 @@
 # Deployment
 
-Sluice ships as a single-arch (linux/amd64) container image with the SPA baked in. The image runs as a data-plane process plus an optional admin listener inside the same pod; configuration is mounted as a directory of YAML files; the connector spool persists on a PVC; telemetry is wired through env vars. This page is the operator's reference for the production deployment shape — container image, Kubernetes topology, mount conventions, multi-pod considerations, rolling updates — and the local-dev shortcut that mirrors it.
+SlipSpace ships as a single-arch (linux/amd64) container image with the SPA baked in. The image runs as a data-plane process plus an optional admin listener inside the same pod; configuration is mounted as a directory of YAML files; the connector spool persists on a PVC; telemetry is wired through env vars. This page is the operator's reference for the production deployment shape — container image, Kubernetes topology, mount conventions, multi-pod considerations, rolling updates — and the local-dev shortcut that mirrors it.
 
 ---
 
@@ -24,21 +24,21 @@ Sluice ships as a single-arch (linux/amd64) container image with the SPA baked i
 
 ## Deployment topology
 
-A Sluice pod runs one container that opens up to three listeners and reads one config directory. Only the data-plane listener is on by default; the admin and Prometheus listeners are opt-in management surfaces (admin via `admin.enabled: true`, Prometheus by setting `SLUICE_PROMETHEUS_BIND` — the binary default is empty/disabled, and `:9090` below is the conventional value the dev compose sets explicitly). The data-plane listener is the only port that proxies provider traffic; the admin and Prometheus listeners must not be exposed to clients.
+A SlipSpace pod runs one container that opens up to three listeners and reads one config directory. Only the data-plane listener is on by default; the admin and Prometheus listeners are opt-in management surfaces (admin via `admin.enabled: true`, Prometheus by setting `SLIPSPACE_PROMETHEUS_BIND` — the binary default is empty/disabled, and `:9090` below is the conventional value the dev compose sets explicitly). The data-plane listener is the only port that proxies provider traffic; the admin and Prometheus listeners must not be exposed to clients.
 
 ### Single-pod
 
 ```mermaid
 flowchart LR
-    subgraph Pod[sluice-gateway pod]
+    subgraph Pod[slipspace-gateway pod]
         DP[":8585<br/>data plane"]
         AD[":8081<br/>admin SPA + /api/v1"]
         PR[":9090<br/>prometheus scrape<br/>(opt-in)"]
-        SP[("spool PVC<br/>/var/lib/sluice/spool")]
+        SP[("spool PVC<br/>/var/lib/slipspace/spool")]
     end
 
-    CFG[("ConfigMap<br/>providers.yaml,<br/>policy.yaml,<br/>admin.yaml")] -. mount as<br/>/etc/sluice .-> Pod
-    SEC[("Secret<br/>SLUICE_ADMIN_PASSWORD,<br/>upstream provider keys,<br/>connector secrets")] -. mount as env .-> Pod
+    CFG[("ConfigMap<br/>providers.yaml,<br/>policy.yaml,<br/>admin.yaml")] -. mount as<br/>/etc/slipspace .-> Pod
+    SEC[("Secret<br/>SLIPSPACE_ADMIN_PASSWORD,<br/>upstream provider keys,<br/>connector secrets")] -. mount as env .-> Pod
 
     Client[Provider SDK<br/>OpenAI / Anthropic / Gemini] --> DP
     Operator[Operator browser] --> AD
@@ -74,7 +74,7 @@ flowchart LR
     P2 -- upload --> Dest
     P3 -- upload --> Dest
 
-    CFG[("ConfigMap")] -. mount /etc/sluice .-> P1
+    CFG[("ConfigMap")] -. mount /etc/slipspace .-> P1
     CFG -. .-> P2
     CFG -. .-> P3
     SEC[("Secret")] -. env .-> P1
@@ -111,7 +111,7 @@ The version string baked into `/gateway` via `-ldflags "-X .../version.Version=$
 ### What's NOT in the image
 
 - A shell. There is no `/bin/sh` — `kubectl exec` against the pod will fail unless you also override the entrypoint or run an ephemeral debug container.
-- The config directory. The image does not ship `providers.yaml` or `policy.yaml`; the operator mounts those at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`).
+- The config directory. The image does not ship `providers.yaml` or `policy.yaml`; the operator mounts those at `SLIPSPACE_CONFIG_DIR` (default `/etc/slipspace/`).
 - A writable root filesystem. The image runs as UID `65532:65532` (nonroot); pair it with `readOnlyRootFilesystem: true` in the pod's `securityContext`.
 - The mock LLM. `slipspace-mockllm` is a separate image (`ghcr.io/andyjmorgan/slipspace-mockllm`) used in local-dev and CI only; never deploy it.
 
@@ -142,7 +142,7 @@ Tagged releases run a best-effort `Mark package public` step (`continue-on-error
 
 ## Kubernetes deployment shape
 
-Sluice has no opinion on whether you ship it via Helm, kustomize, raw manifests, or a higher-level platform abstraction — the image is a vanilla container with file + env-var configuration. What follows is the minimum shape any deployment must produce; treat it as a checklist regardless of the tool that emits the YAML.
+SlipSpace has no opinion on whether you ship it via Helm, kustomize, raw manifests, or a higher-level platform abstraction — the image is a vanilla container with file + env-var configuration. What follows is the minimum shape any deployment must produce; treat it as a checklist regardless of the tool that emits the YAML.
 
 ### Required objects
 
@@ -152,10 +152,10 @@ Sluice has no opinion on whether you ship it via Helm, kustomize, raw manifests,
 | `Service` (data plane) | ClusterIP on `:8585` → pod `:8585`. The one externally-reachable surface. |
 | `Service` (admin) | Optional. ClusterIP on `:8081` → pod `:8081`. Front with an ingress + auth proxy or expose loopback-only inside the cluster. |
 | `Service` (prometheus) | Optional. ClusterIP on `:9090` → pod `:9090`. Or use a `Service`-less `ServiceMonitor` pointing at pod IPs. |
-| `ConfigMap` | Mounts `providers.yaml` + `policy.yaml` (+ `admin.yaml`) at `/etc/sluice/`. Read-only as a direct mount; for admin write API support see [Read-write config dir](#read-write-config-dir-admin-write-api). |
-| `Secret` | Provides `SLUICE_ADMIN_PASSWORD`, upstream provider keys referenced by `policy.yaml`, and connector secrets referenced by `connectors:` (s3 keys, azure SAS / account keys, webhook signing secrets). |
-| `PersistentVolumeClaim` (spool) | Optional — required when `policy.yaml` declares any `connectors:` entries. Mounted at `SLUICE_SPOOL_ROOT` (default `/var/lib/sluice/spool`) so sealed segments survive process restarts. |
-| `PersistentVolumeClaim` (config, optional) | Mount at `SLUICE_CONFIG_DIR` instead of an `emptyDir` when admin-API rule edits need to persist across pod restarts. See [Read-write config dir](#read-write-config-dir-admin-write-api). |
+| `ConfigMap` | Mounts `providers.yaml` + `policy.yaml` (+ `admin.yaml`) at `/etc/slipspace/`. Read-only as a direct mount; for admin write API support see [Read-write config dir](#read-write-config-dir-admin-write-api). |
+| `Secret` | Provides `SLIPSPACE_ADMIN_PASSWORD`, upstream provider keys referenced by `policy.yaml`, and connector secrets referenced by `connectors:` (s3 keys, azure SAS / account keys, webhook signing secrets). |
+| `PersistentVolumeClaim` (spool) | Optional — required when `policy.yaml` declares any `connectors:` entries. Mounted at `SLIPSPACE_SPOOL_ROOT` (default `/var/lib/slipspace/spool`) so sealed segments survive process restarts. |
+| `PersistentVolumeClaim` (config, optional) | Mount at `SLIPSPACE_CONFIG_DIR` instead of an `emptyDir` when admin-API rule edits need to persist across pod restarts. See [Read-write config dir](#read-write-config-dir-admin-write-api). |
 
 The data plane and admin listeners run in the **same pod**, in the same container. There is no separate admin sidecar — they share the binary, the in-process metric registry, and the live-feed ring.
 
@@ -180,28 +180,28 @@ spec:
         - { name: admin,   containerPort: 8081 }
         - { name: metrics, containerPort: 9090 }
       env:
-        - { name: SLUICE_CONFIG_DIR,    value: /etc/sluice }
-        - { name: SLUICE_HTTP_BIND,     value: 0.0.0.0:8585 }
-        - { name: SLUICE_PROMETHEUS_BIND, value: 0.0.0.0:9090 }
-        - { name: SLUICE_SPOOL_ROOT,    value: /var/lib/sluice/spool }
-        - name: SLUICE_ADMIN_PASSWORD
+        - { name: SLIPSPACE_CONFIG_DIR,    value: /etc/slipspace }
+        - { name: SLIPSPACE_HTTP_BIND,     value: 0.0.0.0:8585 }
+        - { name: SLIPSPACE_PROMETHEUS_BIND, value: 0.0.0.0:9090 }
+        - { name: SLIPSPACE_SPOOL_ROOT,    value: /var/lib/slipspace/spool }
+        - name: SLIPSPACE_ADMIN_PASSWORD
           valueFrom:
-            secretKeyRef: { name: sluice-admin, key: password }
+            secretKeyRef: { name: slipspace-admin, key: password }
       volumeMounts:
-        - { name: config, mountPath: /etc/sluice, readOnly: true }
-        - { name: spool,  mountPath: /var/lib/sluice/spool }
+        - { name: config, mountPath: /etc/slipspace, readOnly: true }
+        - { name: spool,  mountPath: /var/lib/slipspace/spool }
       readinessProbe:
         httpGet: { path: /healthz, port: data }
       livenessProbe:
         httpGet: { path: /healthz, port: data }
   volumes:
     - name: config
-      configMap: { name: sluice-config }
+      configMap: { name: slipspace-config }
     - name: spool
-      persistentVolumeClaim: { claimName: sluice-spool }
+      persistentVolumeClaim: { claimName: slipspace-spool }
 ```
 
-Every field above is load-bearing. `runAsNonRoot` + `readOnlyRootFilesystem` are compatible with the scratch image (UID `65532:65532`, no writes outside `/tmp` and the spool mount); the listeners must bind `0.0.0.0` inside the container so the kube proxy reaches them. Of the env vars shown, only `SLUICE_ADMIN_PASSWORD` is strictly required, and only when `admin.enabled: true` — `SLUICE_HTTP_BIND` and `SLUICE_PROMETHEUS_BIND` are optional (the data-plane listener defaults to `:8585` and the Prometheus listener defaults to disabled/empty). The spec sets the binds explicitly for legibility, not because the binary requires them. The `spool` PVC mount is read-write and must be writable by UID `65532` (set `fsGroup: 65532` on the pod's `securityContext`, or rely on the storage class's default ownership rules). Drop the volume + mount + `SLUICE_SPOOL_ROOT` when `policy.yaml` has no `connectors:` block — the spool is constructed lazily and idle deployments do not need storage.
+Every field above is load-bearing. `runAsNonRoot` + `readOnlyRootFilesystem` are compatible with the scratch image (UID `65532:65532`, no writes outside `/tmp` and the spool mount); the listeners must bind `0.0.0.0` inside the container so the kube proxy reaches them. Of the env vars shown, only `SLIPSPACE_ADMIN_PASSWORD` is strictly required, and only when `admin.enabled: true` — `SLIPSPACE_HTTP_BIND` and `SLIPSPACE_PROMETHEUS_BIND` are optional (the data-plane listener defaults to `:8585` and the Prometheus listener defaults to disabled/empty). The spec sets the binds explicitly for legibility, not because the binary requires them. The `spool` PVC mount is read-write and must be writable by UID `65532` (set `fsGroup: 65532` on the pod's `securityContext`, or rely on the storage class's default ownership rules). Drop the volume + mount + `SLIPSPACE_SPOOL_ROOT` when `policy.yaml` has no `connectors:` block — the spool is constructed lazily and idle deployments do not need storage.
 
 ---
 
@@ -219,8 +219,8 @@ When the chart lands, it will be a standalone (no parent) chart producing the ob
 - `service.prometheus.enabled` — Prometheus scrape listener.
 - `ingress.dataPlane.*` — optional ingress overlay for the data plane.
 - `config.providers` / `config.policy` / `config.admin` — inline YAML written into a ConfigMap, or `config.existingConfigMap` to bring your own.
-- `adminPassword.existingSecret` / `adminPassword.secretKey` — `SLUICE_ADMIN_PASSWORD` source.
-- `env` — pass-through additional `SLUICE_*` env vars (see [`docs/environment-variables.md`](environment-variables.md)).
+- `adminPassword.existingSecret` / `adminPassword.secretKey` — `SLIPSPACE_ADMIN_PASSWORD` source.
+- `env` — pass-through additional `SLIPSPACE_*` env vars (see [`docs/environment-variables.md`](environment-variables.md)).
 - `nodeSelector`, `tolerations`, `affinity` — standard scheduling controls.
 - `podAnnotations`, `serviceAccount.*` — telemetry/IAM hooks.
 
@@ -230,7 +230,7 @@ This page will grow a comprehensive values table the moment the chart ships. Unt
 
 ## Configuration mount
 
-Sluice reads a directory at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The loader scans every `*.yaml`, merges by top-level key, and errors on duplicate keys across files. See [`docs/configuration-model.md`](configuration-model.md) for the schema.
+SlipSpace reads a directory at `SLIPSPACE_CONFIG_DIR` (default `/etc/slipspace/`). The loader scans every `*.yaml`, merges by top-level key, and errors on duplicate keys across files. See [`docs/configuration-model.md`](configuration-model.md) for the schema.
 
 ### ConfigMap vs Secret
 
@@ -239,7 +239,7 @@ Sluice reads a directory at `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The lo
 | `providers.yaml` route table | yes | acceptable, no benefit |
 | `policy.yaml` configurations + rules + resilience | acceptable when no `upstream_credentials` are inlined | **yes** when any provider credential is inlined into the YAML |
 | `admin.yaml` enable flag + bind | yes | n/a |
-| `admin.password` field | no — use `SLUICE_ADMIN_PASSWORD` env from Secret instead | yes (rarely needed; env path is simpler) |
+| `admin.password` field | no — use `SLIPSPACE_ADMIN_PASSWORD` env from Secret instead | yes (rarely needed; env path is simpler) |
 
 **File contents are trusted.** The loader does not perform `${VAR}` substitution; what's on disk is what reaches the resolver. This is deliberate — file mounts from k8s Secrets are already access-controlled and SOPS-encrypted at rest, and one less templating layer means fewer ways for a `$` in a real credential to break things. The full rationale is in [`docs/configuration-model.md`](configuration-model.md#why-no-var-substitution).
 
@@ -249,11 +249,11 @@ The container runs as UID `65532:65532`. ConfigMap and Secret projected files de
 
 ### Read-write config dir (admin write API)
 
-The rules write API (`POST/PUT/DELETE /admin/api/v1/config/rules`) re-marshals `policy.yaml` on every successful write via a temp-file rename inside `SLUICE_CONFIG_DIR`. **Direct ConfigMap or Secret mounts are read-only at the kubelet projection layer** — even if the volumeMount drops `readOnly: true`, kubelet still refuses writes through the projected files. Without a writable mount, write API calls return `500` with `permission denied`.
+The rules write API (`POST/PUT/DELETE /admin/api/v1/config/rules`) re-marshals `policy.yaml` on every successful write via a temp-file rename inside `SLIPSPACE_CONFIG_DIR`. **Direct ConfigMap or Secret mounts are read-only at the kubelet projection layer** — even if the volumeMount drops `readOnly: true`, kubelet still refuses writes through the projected files. Without a writable mount, write API calls return `500` with `permission denied`.
 
 Two patterns work in production:
 
-**1. initContainer + emptyDir (ephemeral writes).** The init container copies the immutable ConfigMap/Secret into an `emptyDir`; the main container points `SLUICE_CONFIG_DIR` at the `emptyDir`. Edits made via the admin API survive within the pod's lifetime but are lost on restart — on the next pod boot the init container re-seeds from the source ConfigMap, so committing changes back to the source is the operator's responsibility (typically by re-rendering the ConfigMap from the latest `policy.yaml`).
+**1. initContainer + emptyDir (ephemeral writes).** The init container copies the immutable ConfigMap/Secret into an `emptyDir`; the main container points `SLIPSPACE_CONFIG_DIR` at the `emptyDir`. Edits made via the admin API survive within the pod's lifetime but are lost on restart — on the next pod boot the init container re-seeds from the source ConfigMap, so committing changes back to the source is the operator's responsibility (typically by re-rendering the ConfigMap from the latest `policy.yaml`).
 
 ```yaml
 spec:
@@ -262,30 +262,30 @@ spec:
       initContainers:
         - name: copy-config
           image: busybox:1.36
-          command: ["sh","-c","cp /secret/providers.yaml /secret/policy.yaml /secret/admin.yaml /etc/sluice/ && chmod 0644 /etc/sluice/*.yaml"]
+          command: ["sh","-c","cp /secret/providers.yaml /secret/policy.yaml /secret/admin.yaml /etc/slipspace/ && chmod 0644 /etc/slipspace/*.yaml"]
           volumeMounts:
-            - { name: sluice-config-secret, mountPath: /secret, readOnly: true }
-            - { name: sluice-config-rw,     mountPath: /etc/sluice }
+            - { name: slipspace-config-secret, mountPath: /secret, readOnly: true }
+            - { name: slipspace-config-rw,     mountPath: /etc/slipspace }
       containers:
         - name: gateway
           env:
-            - { name: SLUICE_CONFIG_DIR, value: /etc/sluice }
+            - { name: SLIPSPACE_CONFIG_DIR, value: /etc/slipspace }
           volumeMounts:
-            - { name: sluice-config-rw, mountPath: /etc/sluice }
+            - { name: slipspace-config-rw, mountPath: /etc/slipspace }
       volumes:
-        - name: sluice-config-secret
-          secret: { secretName: sluice-gateway-config }
-        - name: sluice-config-rw
+        - name: slipspace-config-secret
+          secret: { secretName: slipspace-gateway-config }
+        - name: slipspace-config-rw
           emptyDir: {}
 ```
 
 `readOnlyRootFilesystem: true` does **not** block writes to explicitly-mounted volumes, so the security posture is unchanged from the read-only mount.
 
-**2. PVC (durable writes).** Mount a `PersistentVolumeClaim` at `/etc/sluice` instead of an `emptyDir`. Admin edits persist across pod restarts and rollouts. Trade-off: the operator has to seed `providers.yaml` + `admin.yaml` + the initial `policy.yaml` onto the PVC out-of-band (init job, manual `kubectl cp`, or a one-off init container that copies-if-absent). Use this when the admin console is the source of truth for rules and the operator does not want a parallel ConfigMap-to-API sync loop.
+**2. PVC (durable writes).** Mount a `PersistentVolumeClaim` at `/etc/slipspace` instead of an `emptyDir`. Admin edits persist across pod restarts and rollouts. Trade-off: the operator has to seed `providers.yaml` + `admin.yaml` + the initial `policy.yaml` onto the PVC out-of-band (init job, manual `kubectl cp`, or a one-off init container that copies-if-absent). Use this when the admin console is the source of truth for rules and the operator does not want a parallel ConfigMap-to-API sync loop.
 
 ### Restart-to-apply (non-admin paths only)
 
-Config edits via the admin write API apply live — `config.Store.Replace` swaps the snapshot atomically and the next request evaluates against the new config. Live write APIs cover rules, providers, groups, configurations, api_keys, and connectors (each clones the snapshot, validates, persists back to the block's source file, then publishes through `config.Store.Replace` — no restart). **Direct YAML edits on disk** (e.g. updating the source ConfigMap, editing the PVC contents from a sidecar, manual `kubectl cp`) still require a process restart — the in-binary `fsnotify` watcher is a v1.2+ task. To apply a direct edit, roll the Deployment (`kubectl rollout restart deployment/sluice-gateway`). The `admin` and `telemetry` blocks have no write API; changes to those also require a restart.
+Config edits via the admin write API apply live — `config.Store.Replace` swaps the snapshot atomically and the next request evaluates against the new config. Live write APIs cover rules, providers, groups, configurations, api_keys, and connectors (each clones the snapshot, validates, persists back to the block's source file, then publishes through `config.Store.Replace` — no restart). **Direct YAML edits on disk** (e.g. updating the source ConfigMap, editing the PVC contents from a sidecar, manual `kubectl cp`) still require a process restart — the in-binary `fsnotify` watcher is a v1.2+ task. To apply a direct edit, roll the Deployment (`kubectl rollout restart deployment/slipspace-gateway`). The `admin` and `telemetry` blocks have no write API; changes to those also require a restart.
 
 ---
 
@@ -295,11 +295,11 @@ Three paths, same precedence as documented in [`docs/admin-console.md`](admin-co
 
 | Path | How | When to use |
 |---|---|---|
-| **Env var from Secret** | `SLUICE_ADMIN_PASSWORD` via `secretKeyRef` in the pod spec | Default. Keeps the secret out of `admin.yaml`. |
-| **File-backed env via projected Secret** | `SLUICE_ADMIN_PASSWORD` set from a sidecar that reads a projected file (e.g. CSI-mounted from an external vault) | Vault / SOPS / cloud-secret-manager integrations that publish files. |
-| **Literal in `admin.yaml`** | `admin.password: "..."` in a YAML file inside `SLUICE_CONFIG_DIR` | Dev only. The CLAUDE.md placeholder is `sluice-gateway`; never use this shape in production. |
+| **Env var from Secret** | `SLIPSPACE_ADMIN_PASSWORD` via `secretKeyRef` in the pod spec | Default. Keeps the secret out of `admin.yaml`. |
+| **File-backed env via projected Secret** | `SLIPSPACE_ADMIN_PASSWORD` set from a sidecar that reads a projected file (e.g. CSI-mounted from an external vault) | Vault / SOPS / cloud-secret-manager integrations that publish files. |
+| **Literal in `admin.yaml`** | `admin.password: "..."` in a YAML file inside `SLIPSPACE_CONFIG_DIR` | Dev only. The CLAUDE.md placeholder is `slipspace-gateway`; never use this shape in production. |
 
-`SLUICE_ADMIN_PASSWORD` wins over `admin.password` when both are set — the env var is checked first by `Config.ResolvePassword()` ([`contracts/admin/admin.go`](../contracts/admin/admin.go)). If the admin block is `enabled: true` and neither source resolves to a non-empty password, the gateway fails validation at startup with `ErrPasswordRequired`.
+`SLIPSPACE_ADMIN_PASSWORD` wins over `admin.password` when both are set — the env var is checked first by `Config.ResolvePassword()` ([`contracts/admin/admin.go`](../contracts/admin/admin.go)). If the admin block is `enabled: true` and neither source resolves to a non-empty password, the gateway fails validation at startup with `ErrPasswordRequired`.
 
 The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts/admin/admin.go`](../contracts/admin/admin.go)); multi-operator identity is a v1.2+ task. See [`docs/admin-console.md`](admin-console.md) for the full auth surface.
 
@@ -307,7 +307,7 @@ The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts
 
 ## docker-compose local dev
 
-> **Just want to run Sluice from the published images?** Use the turnkey
+> **Just want to run SlipSpace from the published images?** Use the turnkey
 > quickstart bundle at [`deploy/quickstart/`](../deploy/quickstart/) instead of
 > the dev composes below. It ships three copy-paste stacks (gateway + console,
 > gateway only, gateway + Arbiter) that pull `ghcr.io/andyjmorgan/slipspace-*`,
@@ -331,7 +331,7 @@ Host ports exposed by the committed compose:
 | `8081` | `8081` | Admin console (SPA + `/api/v1`) |
 | `9090` | `9090` | Prometheus scrape |
 
-The compose mounts `./config-dev` at `/etc/sluice` read-only, overlays `./deploy/compose/admin.yaml` on top so the admin listener binds `0.0.0.0` (the host-side `config-dev/admin.yaml` binds loopback because the pure-Go `make dev` loop runs natively and doesn't need port forwarding), and provisions a named volume `sluice-spool` at `/var/lib/sluice/spool` for the connector spool. `SLUICE_ADMIN_PASSWORD` defaults to `sluice-gateway` if unset — override via `.env` or `export` before invoking compose.
+The compose mounts `./config-dev` at `/etc/slipspace` read-only, overlays `./deploy/compose/admin.yaml` on top so the admin listener binds `0.0.0.0` (the host-side `config-dev/admin.yaml` binds loopback because the pure-Go `make dev` loop runs natively and doesn't need port forwarding), and provisions a named volume `slipspace-spool` at `/var/lib/slipspace/spool` for the connector spool. `SLIPSPACE_ADMIN_PASSWORD` defaults to `slipspace-gateway` if unset — override via `.env` or `export` before invoking compose.
 
 ### Overlay conventions
 
@@ -344,7 +344,7 @@ Two overlays sit alongside the committed compose. Both are stacked with `-f dock
 
 ### Pure-Go dev loop
 
-For Go iteration without an image rebuild, `make dev` brings up only `mockllm` via compose and runs `go run ./cmd/gateway` natively on the host. The native gateway reads `./config-dev/admin.yaml` (binds `127.0.0.1:8081`) rather than the compose overlay, and writes the spool to its default `/var/lib/sluice/spool/` — the `DEV_ENV` block does **not** set `SLUICE_SPOOL_ROOT`, so export `SLUICE_SPOOL_ROOT=./tmp/spool` yourself to keep segments under the working tree (see [local-development.md](./local-development.md)). Faster than `make dev-compose` because the SPA isn't rebuilt; useful when you're iterating on the data-plane Go code and the SPA bundle is already built into `internal/admin/webdist/`.
+For Go iteration without an image rebuild, `make dev` brings up only `mockllm` via compose and runs `go run ./cmd/gateway` natively on the host. The native gateway reads `./config-dev/admin.yaml` (binds `127.0.0.1:8081`) rather than the compose overlay, and writes the spool to its default `/var/lib/slipspace/spool/` — the `DEV_ENV` block does **not** set `SLIPSPACE_SPOOL_ROOT`, so export `SLIPSPACE_SPOOL_ROOT=./tmp/spool` yourself to keep segments under the working tree (see [local-development.md](./local-development.md)). Faster than `make dev-compose` because the SPA isn't rebuilt; useful when you're iterating on the data-plane Go code and the SPA bundle is already built into `internal/admin/webdist/`.
 
 For SPA-only iteration, leave `make dev-compose` running and start `make web-dev` in a second terminal — Vite serves on `:5180/admin` and proxies `/admin/api/v1` to the running gateway on `:8081`.
 
@@ -354,9 +354,9 @@ For SPA-only iteration, leave `make dev-compose` running and start `make web-dev
 
 | Listener | Default bind | Env var (server) / yaml | Trusted? | Notes |
 |---|---|---|---|---|
-| Data plane | `:8585` | `SLUICE_HTTP_BIND` | yes — the public surface | Only port that proxies provider traffic. |
+| Data plane | `:8585` | `SLIPSPACE_HTTP_BIND` | yes — the public surface | Only port that proxies provider traffic. |
 | Admin (SPA + `/api/v1`) | `0.0.0.0:8081` | `admin.bind_addr` in `admin.yaml` | no — front with ingress + auth or restrict to loopback | Off by default; opt-in via `admin.enabled: true`. |
-| Prometheus scrape | unset (disabled) | `SLUICE_PROMETHEUS_BIND` | no — restrict to scrape source | Empty value disables the listener; OTLP push is a separate path. |
+| Prometheus scrape | unset (disabled) | `SLIPSPACE_PROMETHEUS_BIND` | no — restrict to scrape source | Empty value disables the listener; OTLP push is a separate path. |
 
 Full env-var inventory in [`docs/environment-variables.md`](environment-variables.md). The data-plane listener is the **only** port that should ever appear in an external `Service` of type `LoadBalancer` or behind a public ingress.
 
@@ -364,7 +364,7 @@ Full env-var inventory in [`docs/environment-variables.md`](environment-variable
 
 ## Multi-pod considerations
 
-Several pieces of Sluice state are per-pod, in-memory, and not synchronised across replicas. None of them break correctness, but each shows up in observability and a few shape capacity planning.
+Several pieces of SlipSpace state are per-pod, in-memory, and not synchronised across replicas. None of them break correctness, but each shows up in observability and a few shape capacity planning.
 
 ### Circuit-breaker state is per-pod
 
@@ -374,13 +374,13 @@ This is documented intentionally in [`docs/resilience.md`](resilience.md#known-l
 
 ### The snapshotter is per-pod
 
-The admin console's dashboard reads from an in-process snapshotter that polls the OTel registry every `SLUICE_ADMIN_SNAPSHOT_INTERVAL_MS` (default 5 minutes — production-tuned to give the 24h dashboard 288 sample points). Each pod has its own snapshotter, so the admin console's dashboard reflects **only the replica that handled the request hitting `/admin/api/v1/*`** — not the cluster aggregate.
+The admin console's dashboard reads from an in-process snapshotter that polls the OTel registry every `SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS` (default 5 minutes — production-tuned to give the 24h dashboard 288 sample points). Each pod has its own snapshotter, so the admin console's dashboard reflects **only the replica that handled the request hitting `/admin/api/v1/*`** — not the cluster aggregate.
 
 For cluster-aggregate views, scrape `:9090` with Prometheus and build the dashboard in Grafana against the registry's labelled counters and histograms. The snapshotter is a single-pod operator's-eyes pane, not a fleet dashboard. See [`docs/observability.md`](observability.md).
 
 ### Connector spool is per-pod
 
-Each pod has its own spool tree under `SLUICE_SPOOL_ROOT`. Sealed segments on Pod A are not visible to Pod B; the upload workers ship from each pod's own disk independently. Three operational consequences:
+Each pod has its own spool tree under `SLIPSPACE_SPOOL_ROOT`. Sealed segments on Pod A are not visible to Pod B; the upload workers ship from each pod's own disk independently. Three operational consequences:
 
 1. **PVC per pod.** When using `StatefulSet` or per-pod PVC templating, every replica gets its own volume — segments stay co-located with the pod that wrote them.
 2. **Records interleave at the destination.** S3, Azure Blob, and webhook receivers see records from every replica in arrival order. Consumers must sort by `(ts_ns, instance_id, seq)` to recover global ordering; receive order from the destination is not stable. See [observability.md → Connector-captured records](observability.md#connector-captured-records).
@@ -390,15 +390,15 @@ If `Spool.Stats()` shows a non-zero `DroppedRing` rate per track, the right resp
 
 ### Live-feed ring is per-pod
 
-The admin console's live-messages pane reads an in-process ring (default capacity 100, sized via `SLUICE_ADMIN_LIVE_FEED_CAPACITY`). It is **a few-minute live tail of the pod that served the request**, not an audit log or a fleet view. The pane is honest about this — see the design rationale in [`internal/config/env.go`](../internal/config/env.go) on `DefaultAdminLiveFeedCapacity`.
+The admin console's live-messages pane reads an in-process ring (default capacity 100, sized via `SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY`). It is **a few-minute live tail of the pod that served the request**, not an audit log or a fleet view. The pane is honest about this — see the design rationale in [`internal/config/env.go`](../internal/config/env.go) on `DefaultAdminLiveFeedCapacity`.
 
-For durable audit, configure a `connectors:` entry on the relevant configuration; for cross-pod correlation, use `X-Sluice-Correlation-Id` to join captured records to gateway logs.
+For durable audit, configure a `connectors:` entry on the relevant configuration; for cross-pod correlation, use `X-Slipspace-Correlation-Id` to join captured records to gateway logs.
 
 ---
 
 ## Rolling updates and graceful drain
 
-Sluice handles SIGTERM by entering a drain phase: `http.Server.Shutdown` stops accepting new connections, waits for in-flight requests to complete, then exits. The drain budget is `SLUICE_SHUTDOWN_DRAIN_SECONDS` (default `300`, parsed in [`internal/config/env.go`](../internal/config/env.go)). The admin listener drains on the same budget via a separate detached context so its shutdown outlives the SIGTERM that triggered it.
+SlipSpace handles SIGTERM by entering a drain phase: `http.Server.Shutdown` stops accepting new connections, waits for in-flight requests to complete, then exits. The drain budget is `SLIPSPACE_SHUTDOWN_DRAIN_SECONDS` (default `300`, parsed in [`internal/config/env.go`](../internal/config/env.go)). The admin listener drains on the same budget via a separate detached context so its shutdown outlives the SIGTERM that triggered it.
 
 ```mermaid
 sequenceDiagram
@@ -416,11 +416,11 @@ sequenceDiagram
     K->>K: TerminationGracePeriodSeconds elapses<br/>(only on overrun)
 ```
 
-In a Deployment with `strategy: RollingUpdate` and `maxUnavailable: 0`, this gives you a clean rollover — Kubernetes waits for the old pod's readiness probe to fail before culling, the old pod drains in-flight, the new pod becomes ready before the next eviction. Set `terminationGracePeriodSeconds` on the pod spec to **at least `SLUICE_SHUTDOWN_DRAIN_SECONDS + 30`** so the kubelet doesn't SIGKILL mid-stream. For streaming chat completions on the 1M-token context tier, leave the default `300` (five minutes); the longest legitimate stream comfortably fits.
+In a Deployment with `strategy: RollingUpdate` and `maxUnavailable: 0`, this gives you a clean rollover — Kubernetes waits for the old pod's readiness probe to fail before culling, the old pod drains in-flight, the new pod becomes ready before the next eviction. Set `terminationGracePeriodSeconds` on the pod spec to **at least `SLIPSPACE_SHUTDOWN_DRAIN_SECONDS + 30`** so the kubelet doesn't SIGKILL mid-stream. For streaming chat completions on the 1M-token context tier, leave the default `300` (five minutes); the longest legitimate stream comfortably fits.
 
 In-flight requests **complete normally** during the drain — clients see no error. New requests arriving after SIGTERM see a connection refused at the kube-proxy layer once the readiness probe fails; the Service's iptables rules cull the draining pod from the endpoint set within milliseconds.
 
-See [`docs/environment-variables.md`](environment-variables.md) for `SLUICE_SHUTDOWN_DRAIN_SECONDS` and the related shutdown-timer env vars.
+See [`docs/environment-variables.md`](environment-variables.md) for `SLIPSPACE_SHUTDOWN_DRAIN_SECONDS` and the related shutdown-timer env vars.
 
 ---
 
@@ -429,17 +429,17 @@ See [`docs/environment-variables.md`](environment-variables.md) for `SLUICE_SHUT
 `make smoke` runs the post-deploy smoke harness in `test/smoke/` — pytest with the official OpenAI / Anthropic / Gemini SDKs pointed at a live gateway. Use it after every cluster roll.
 
 ```sh
-SLUICE_API_KEY=$SLUICE_API_KEY make smoke
+SLIPSPACE_API_KEY=$SLIPSPACE_API_KEY make smoke
 ```
 
 Optional env:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `SLUICE_BASE_URL` | `https://sluice.donkeywork.dev` | Override to point at a non-default deploy. |
-| `SLUICE_SMOKE_QWEN` | unset | Set to `true` to enable the cluster-side qwen redirect tests. |
+| `SLIPSPACE_BASE_URL` | `https://slipspace.donkeywork.dev` | Override to point at a non-default deploy. |
+| `SLIPSPACE_SMOKE_QWEN` | unset | Set to `true` to enable the cluster-side qwen redirect tests. |
 
-The harness uses real provider SDKs to confirm wire compatibility through whatever you deployed; failures are tagged as wire-compat regressions, the same release-blocker class as `make py-compat`. Never echo the `SLUICE_API_KEY` value in scripts, PR text, or chat — reference it as `$SLUICE_API_KEY` per the project standing rules.
+The harness uses real provider SDKs to confirm wire compatibility through whatever you deployed; failures are tagged as wire-compat regressions, the same release-blocker class as `make py-compat`. Never echo the `SLIPSPACE_API_KEY` value in scripts, PR text, or chat — reference it as `$SLIPSPACE_API_KEY` per the project standing rules.
 
 ---
 
@@ -449,7 +449,7 @@ The harness uses real provider SDKs to confirm wire compatibility through whatev
 |---|---|
 | YAML schema, file-trusting model, no-`${VAR}` rationale | [`docs/configuration-model.md`](configuration-model.md) |
 | Admin listener, password resolution, auth shape | [`docs/admin-console.md`](admin-console.md) |
-| Every `SLUICE_*` env var, parsing rules, validation | [`docs/environment-variables.md`](environment-variables.md) |
+| Every `SLIPSPACE_*` env var, parsing rules, validation | [`docs/environment-variables.md`](environment-variables.md) |
 | OTel metrics, runtime/process collectors, scrape vs push | [`docs/observability.md`](observability.md) |
 | Resilience policies, per-pod CB state, known limitations | [`docs/resilience.md`](resilience.md) |
 | Connector types, per-type auth, key layout | [`docs/connectors.md`](connectors.md) |

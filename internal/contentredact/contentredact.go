@@ -18,7 +18,7 @@ const mask = "[REDACTED]"
 // patterns are credential token shapes. Each requires a substantial
 // alphanumeric run to avoid matching ordinary hyphenated words.
 var patterns = []*regexp.Regexp{
-	// Sluice issued keys (sk_live_… / sk_test_…) — never echo these.
+	// SlipSpace issued keys (sk_live_… / sk_test_…) — never echo these.
 	regexp.MustCompile(`sk_(?:live|test)_[A-Za-z0-9]{8,}`),
 	// OpenAI / Anthropic style keys (sk-…, sk-proj-…, sk-ant-…).
 	regexp.MustCompile(`sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}`),

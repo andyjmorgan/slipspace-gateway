@@ -10,7 +10,7 @@ import (
 )
 
 // TestUpstream_ResponseHeaderTimeout_OverrideThreadsThrough spawns the
-// gateway with an explicit SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS
+// gateway with an explicit SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS
 // override and confirms a normal forward still succeeds. The timeout's
 // enforced 120s floor makes the failure mode (a slow upstream tripping the
 // header timeout) impractical to exercise in CI wall-clock, so this asserts

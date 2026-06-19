@@ -1,6 +1,6 @@
 # Local Development
 
-This page is the developer's reference for running sluice-gateway against a local mock LLM, navigating the `make` target surface, and understanding how the five test layers (unit, integration, e2e, wire-compat, smoke) compose. Anything you need to know to take a freshly cloned checkout and either iterate on Go code, drive the SPA in dev mode, or reproduce a CI failure locally is on this page.
+This page is the developer's reference for running slipspace-gateway against a local mock LLM, navigating the `make` target surface, and understanding how the five test layers (unit, integration, e2e, wire-compat, smoke) compose. Anything you need to know to take a freshly cloned checkout and either iterate on Go code, drive the SPA in dev mode, or reproduce a CI failure locally is on this page.
 
 The shape of production is documented in [`deployment.md`](./deployment.md); this page is its peer for the inner loop.
 
@@ -26,9 +26,9 @@ The shape of production is documented in [`deployment.md`](./deployment.md); thi
 
 Three concerns:
 
-1. **How to run sluice-gateway locally** — a native `go run` against a containerised mock LLM, or the full production-shaped image via docker-compose.
+1. **How to run slipspace-gateway locally** — a native `go run` against a containerised mock LLM, or the full production-shaped image via docker-compose.
 2. **What the test layers are and when to invoke each** — unit, integration, e2e, wire-compat, smoke. They are not interchangeable; each catches a different class of regression.
-3. **The `make` target surface** — one canonical command per workflow, all the env wiring baked into the Makefile so nobody has to remember which `SLUICE_*` vars need to be set.
+3. **The `make` target surface** — one canonical command per workflow, all the env wiring baked into the Makefile so nobody has to remember which `SLIPSPACE_*` vars need to be set.
 
 The committed `docker-compose.yaml`, `config-dev/`, and the in-repo `cmd/mockllm` binary together make a one-command bootstrap. No external services, no real provider credentials, no host-mounted secrets — every credential in `config-dev/policy.yaml` is a literal placeholder marked `*-mock` or `sk_dev_*`.
 
@@ -42,17 +42,17 @@ From a fresh clone:
 make dev
 ```
 
-That single target brings up the mock LLM as a container, then runs the gateway natively via `go run ./cmd/gateway` so edits hot-reload on the next request through ctrl-C / re-run. The data plane binds on `:8585`, Prometheus scrape on `:9090`, admin console (off by default in native mode, enabled in compose mode) on `:8081`. The connector spool root defaults to `/var/lib/sluice/spool/` (`config.DefaultSpoolRoot`, `internal/config/env.go`) in **both** modes — the Makefile's `DEV_ENV` block does not override `SLUICE_SPOOL_ROOT`, so native `make dev` writes there too. To land segments under the working tree for easy inspection, set `SLUICE_SPOOL_ROOT=./tmp/spool` yourself when you run the gateway.
+That single target brings up the mock LLM as a container, then runs the gateway natively via `go run ./cmd/gateway` so edits hot-reload on the next request through ctrl-C / re-run. The data plane binds on `:8585`, Prometheus scrape on `:9090`, admin console (off by default in native mode, enabled in compose mode) on `:8081`. The connector spool root defaults to `/var/lib/slipspace/spool/` (`config.DefaultSpoolRoot`, `internal/config/env.go`) in **both** modes — the Makefile's `DEV_ENV` block does not override `SLIPSPACE_SPOOL_ROOT`, so native `make dev` writes there too. To land segments under the working tree for easy inspection, set `SLIPSPACE_SPOOL_ROOT=./tmp/spool` yourself when you run the gateway.
 
 ```mermaid
 flowchart LR
     Dev[make dev] --> Compose[docker compose up -d<br/>mockllm]
-    Dev --> GoRun[go run ./cmd/gateway<br/>SLUICE_CONFIG_DIR=./config-dev]
+    Dev --> GoRun[go run ./cmd/gateway<br/>SLIPSPACE_CONFIG_DIR=./config-dev]
     Compose --> Mock[mockllm:5555<br/>compose network]
     GoRun --> Data[":8585<br/>data plane"]
     GoRun --> Prom[":9090<br/>prometheus"]
     GoRun --> Mock
-    GoRun --> Spool["/var/lib/sluice/spool/<br/>connector segments<br/>(override via SLUICE_SPOOL_ROOT)"]
+    GoRun --> Spool["/var/lib/slipspace/spool/<br/>connector segments<br/>(override via SLIPSPACE_SPOOL_ROOT)"]
 ```
 
 Send your first request:
@@ -82,11 +82,11 @@ flowchart TB
     subgraph compose[docker compose network]
         GW[gateway<br/>image: slipspace-gateway:dev<br/>:8585 :8081 :9090]
         Mock[mockllm<br/>image: slipspace-mockllm:dev<br/>:5555 - internal]
-        Spool[(sluice-spool<br/>named volume)]
+        Spool[(slipspace-spool<br/>named volume)]
     end
     Curl -- "8585 / 8081 / 9090" --> GW
     GW -- "http://mockllm:5555" --> Mock
-    GW -- "/var/lib/sluice/spool" --> Spool
+    GW -- "/var/lib/slipspace/spool" --> Spool
 ```
 
 Two overlay files extend the baseline:
@@ -96,13 +96,13 @@ Two overlay files extend the baseline:
 | `docker-compose.dev.yaml` | gitignored | Per-developer mock-LLM override. Build a local `cmd/mockllm` from this repo, or substitute the legacy C# mock from a sibling workspace. Apply via `make dev-with-overlay`. The sample is checked in at `docker-compose.dev.yaml.example` — copy and edit. |
 | `docker-compose.real.yaml` | committed | Real-provider overlay. Swaps the `config-dev` mount for the generated `config-dev.real/` tree (produced by `scripts/dev-real-config.sh` from `.env`), drops the mock LLM from `depends_on`, and adds the `host.docker.internal` alias so the gateway can reach a host-side kubectl port-forward for qwen-ollama. Apply via `make dev-real`. |
 
-The base compose's gateway service mounts `./config-dev` read-only into `/etc/sluice` and overlays a compose-specific `admin.yaml` on top that binds the admin listener to `0.0.0.0` (the native-mode default is loopback). Override the admin password per developer with `SLUICE_ADMIN_PASSWORD` in your shell env.
+The base compose's gateway service mounts `./config-dev` read-only into `/etc/slipspace` and overlays a compose-specific `admin.yaml` on top that binds the admin listener to `0.0.0.0` (the native-mode default is loopback). Override the admin password per developer with `SLIPSPACE_ADMIN_PASSWORD` in your shell env.
 
 ---
 
 ## The `config-dev/` bundle
 
-`config-dev/` is the local-dev configuration tree the gateway picks up via `SLUICE_CONFIG_DIR`. Three files, all loaded as a single merged tree:
+`config-dev/` is the local-dev configuration tree the gateway picks up via `SLIPSPACE_CONFIG_DIR`. Three files, all loaded as a single merged tree:
 
 | File | Purpose |
 |---|---|
@@ -118,10 +118,10 @@ The provider base URLs in `config-dev/providers.yaml` all point at `http://mockl
 admin:
   enabled: true
   bind_addr: "127.0.0.1:8081"
-  password: "sluice-gateway"
+  password: "slipspace-gateway"
 ```
 
-`SLUICE_ADMIN_PASSWORD` wins over `password:` when both are set; the env var is the production pattern. Username is always `admin` (not configurable). See [`admin-console.md`](./admin-console.md) for the rest.
+`SLIPSPACE_ADMIN_PASSWORD` wins over `password:` when both are set; the env var is the production pattern. Username is always `admin` (not configurable). See [`admin-console.md`](./admin-console.md) for the rest.
 
 ### `policy.yaml`
 
@@ -177,7 +177,7 @@ rules:
   - name: redact-emails
     condition: { type: provider, operator: Equals, expectedProvider: openai }
     actions:
-      - { type: setHeader, headerName: X-Sluice-Redacted, headerAction: Set, headerValue: emails }
+      - { type: setHeader, headerName: X-Slipspace-Redacted, headerAction: Set, headerValue: emails }
     behavior: continue
 ```
 
@@ -189,7 +189,7 @@ Six providers in dev: `openai`, `anthropic`, `gemini`, `gpt-oss`, `qwen36`, `qwe
 
 ### What's *not* in `config-dev/`
 
-No `gateway.yaml`. Server-level configuration (HTTP bind, spool root, log level, drain timeout) flows in through `SLUICE_*` env vars — the Makefile's `DEV_ENV` block is the canonical set for native runs. The compose service inlines the same set in its `environment:` block. See [`environment-variables.md`](./environment-variables.md) for the full list.
+No `gateway.yaml`. Server-level configuration (HTTP bind, spool root, log level, drain timeout) flows in through `SLIPSPACE_*` env vars — the Makefile's `DEV_ENV` block is the canonical set for native runs. The compose service inlines the same set in its `environment:` block. See [`environment-variables.md`](./environment-variables.md) for the full list.
 
 ---
 
@@ -253,7 +253,7 @@ The mock LLM exposes `/control/responses` (POST to stage, DELETE to clear), `/co
 
 The mock LLM listens on the compose network alias `mockllm:5555` and is **not** published to the host by default — the `ports` mapping in `docker-compose.yaml` is commented out, so the gateway reaches it over the compose network but the host can't. Uncomment that mapping to curl this control surface (or any mock endpoint) on host `:5555`.
 
-Sessions are scoped via the `X-Sluice-Session-Id` header: stage a response with `?session=<id>`, send a gateway request that echoes the same session header, and the mock matches per-session first then falls back to the global pool. Lets one mockllm process serve multiple independent scenarios concurrently — important for parallel tests in the same run.
+Sessions are scoped via the `X-Slipspace-Session-Id` header: stage a response with `?session=<id>`, send a gateway request that echoes the same session header, and the mock matches per-session first then falls back to the global pool. Lets one mockllm process serve multiple independent scenarios concurrently — important for parallel tests in the same run.
 
 ---
 
@@ -274,15 +274,15 @@ Every target in the `Makefile`, in the order they appear there:
 | `lint` | `golangci-lint run ./...` | — | unit | Non-negotiable before commit. Install with `brew install golangci-lint` if missing. |
 | `test` | `go test -race -coverprofile=coverage.out -covermode=atomic` | — | unit | Skips `web/node_modules`. Race detector on. |
 | `coverage` | `test` + `scripts/coverage-gate.sh coverage.out 95` | — | unit + gate | Same as `test`, then fails if total coverage is under 95%. |
-| `dev` | `docker compose up -d mockllm` + `go run ./cmd/gateway` | `SLUICE_CONFIG_DIR=./config-dev`, `SLUICE_HTTP_BIND=0.0.0.0:8585`, `SLUICE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLUICE_LOG_LEVEL=debug` (the Makefile `DEV_ENV` block — note it does **not** set `SLUICE_SPOOL_ROOT`, so the spool falls back to `/var/lib/sluice/spool`) | — | The fast inner loop. Container infra + native gateway. |
+| `dev` | `docker compose up -d mockllm` + `go run ./cmd/gateway` | `SLIPSPACE_CONFIG_DIR=./config-dev`, `SLIPSPACE_HTTP_BIND=0.0.0.0:8585`, `SLIPSPACE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLIPSPACE_LOG_LEVEL=debug` (the Makefile `DEV_ENV` block — note it does **not** set `SLIPSPACE_SPOOL_ROOT`, so the spool falls back to `/var/lib/slipspace/spool`) | — | The fast inner loop. Container infra + native gateway. |
 | `dev-with-overlay` | `docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d` + `go run ./cmd/gateway` | same as `dev` | — | Requires `docker-compose.dev.yaml` (copy from `.example`). |
 | `dev-compose` | `docker compose up -d --build` | — | — | Builds the gateway image with the SPA embedded and brings up both services (gateway + mockllm). Slow iteration; matches production shape. Pair with `make web-dev` for SPA-only hot reload. |
 | `dev-compose-down` | `docker compose down` | — | — | Tears down the compose stack. |
 | `dev-real` | `scripts/dev-real-config.sh` + `docker compose -f docker-compose.yaml -f docker-compose.real.yaml --env-file .env up -d --no-deps --build gateway` | `.env` with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | — | Real-upstream stack. Generates `config-dev.real/` from `.env` and reaches OpenAI / Anthropic / Gemini directly. For the qwen path you also need a `kubectl port-forward` on host port `11434`. |
 | `dev-real-down` | `docker compose -f docker-compose.yaml -f docker-compose.real.yaml down` | — | — | Tears down the real-upstream stack. |
 | `e2e` | `go test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...` | `TESTCONTAINERS_RYUK_DISABLED=true` | e2e | Spawns the gateway + mockllm binaries per test, plus a tmp spool dir per test. Webhook subsuites use a local `httptest.Server` as the receiver. Requires Docker. |
-| `py-compat` | builds `/tmp/sluice-gateway` + `/tmp/sluice-mockllm`, then `uv run pytest -v` in `test/python/` | — | wire-compat | Runs the official OpenAI / Anthropic / Gemini SDKs against a spawned stack. Release-blocking. |
-| `smoke` | `uv run pytest -v` in `test/smoke/` | `SLUICE_API_KEY=$KEY` (required), `SLUICE_BASE_URL` (optional, defaults to `https://sluice.donkeywork.dev`), `SLUICE_SMOKE_QWEN=true` (optional) | smoke | Post-deploy harness against a live gateway. Without `SLUICE_API_KEY` everything skips. |
+| `py-compat` | builds `/tmp/slipspace-gateway` + `/tmp/slipspace-mockllm`, then `uv run pytest -v` in `test/python/` | — | wire-compat | Runs the official OpenAI / Anthropic / Gemini SDKs against a spawned stack. Release-blocking. |
+| `smoke` | `uv run pytest -v` in `test/smoke/` | `SLIPSPACE_API_KEY=$KEY` (required), `SLIPSPACE_BASE_URL` (optional, defaults to `https://slipspace.donkeywork.dev`), `SLIPSPACE_SMOKE_QWEN=true` (optional) | smoke | Post-deploy harness against a live gateway. Without `SLIPSPACE_API_KEY` everything skips. |
 | `clean` | `rm -f coverage.out coverage.html` | — | — | Drops coverage artefacts. |
 | `tools` | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` | — | — | One-shot installer for the lint toolchain. |
 
@@ -304,7 +304,7 @@ flowchart TB
         PyCompat[Wire-compat<br/>official OpenAI/Anthropic/Gemini SDKs<br/>make py-compat]
     end
     subgraph post[Post-deploy]
-        Smoke[Smoke<br/>live gateway + real provider creds<br/>SLUICE_API_KEY=... make smoke]
+        Smoke[Smoke<br/>live gateway + real provider creds<br/>SLIPSPACE_API_KEY=... make smoke]
     end
     Unit --> E2E
     E2E --> PyCompat
@@ -334,7 +334,7 @@ Race detector is always on (`-race`). Goroutine leak detection via `goleak` runs
 4. Spawns `cmd/gateway` as a subprocess pointing at the tmp config and the per-test spool root
 5. Drives real HTTP against the gateway, asserts on the response, captured spool records, and Prometheus scrape
 
-The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), the S3 and Azure connectors (`connector_s3/`, `connector_azure/`), record reporting (`reporting/`), telemetry (`telemetry/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`); `types/` holds shared fixtures. Webhook receivers spin up a local `httptest.Server` per test; the `SLUICE_WEBHOOK_ALLOW_PRIVATE=true` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
+The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), the S3 and Azure connectors (`connector_s3/`, `connector_azure/`), record reporting (`reporting/`), telemetry (`telemetry/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`); `types/` holds shared fixtures. Webhook receivers spin up a local `httptest.Server` per test; the `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE=true` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
 
 Integration-style tests that need real dependencies live in this layer too, not behind a separate build tag — they bring up the dependency via testcontainers (SeaweedFS for S3, Azurite for Azure Blob, Postgres for telemetry), run the code against it, and assert on the dependency's state. `test/e2e/connector_s3/seaweedfs_test.go` is the canonical container-backed example.
 
@@ -348,23 +348,23 @@ Integration-style tests that need real dependencies live in this layer too, not 
 
 This is the wire-compatibility regression early-warning. Any failure here is a release blocker.
 
-Build artefacts at `/tmp/sluice-gateway` and `/tmp/sluice-mockllm`. `conftest.py` in `test/python/` starts a session-scoped subprocess stack and stages canned responses via the mock LLM's control plane per-test. The stack reuses across tests in a single pytest invocation — `make py-compat` is a clean session each time.
+Build artefacts at `/tmp/slipspace-gateway` and `/tmp/slipspace-mockllm`. `conftest.py` in `test/python/` starts a session-scoped subprocess stack and stages canned responses via the mock LLM's control plane per-test. The stack reuses across tests in a single pytest invocation — `make py-compat` is a clean session each time.
 
-`SLUICE_GATEWAY_BIN` and `SLUICE_MOCKLLM_BIN` override the built-binary paths if you want to point at a custom build.
+`SLIPSPACE_GATEWAY_BIN` and `SLIPSPACE_MOCKLLM_BIN` override the built-binary paths if you want to point at a custom build.
 
 ### Smoke — verify a live deploy is healthy
 
 `test/smoke/`, driven by `make smoke`. Distinct from wire-compat: this suite talks to a *live* gateway and a *real* provider. The gateway resolves the managed-mode key to a configuration and swaps in real OpenAI / Anthropic / Gemini credentials before forwarding.
 
 ```sh
-SLUICE_API_KEY=$SLUICE_API_KEY make smoke
-SLUICE_API_KEY=$SLUICE_API_KEY SLUICE_BASE_URL=http://127.0.0.1:8585 make smoke
-SLUICE_API_KEY=$SLUICE_API_KEY SLUICE_SMOKE_QWEN=true make smoke
+SLIPSPACE_API_KEY=$SLIPSPACE_API_KEY make smoke
+SLIPSPACE_API_KEY=$SLIPSPACE_API_KEY SLIPSPACE_BASE_URL=http://127.0.0.1:8585 make smoke
+SLIPSPACE_API_KEY=$SLIPSPACE_API_KEY SLIPSPACE_SMOKE_QWEN=true make smoke
 ```
 
-`SLUICE_BASE_URL` defaults to `https://sluice.donkeywork.dev`. Without `SLUICE_API_KEY`, every test skips cleanly — safe to wire into CI before secrets are configured. **Never echo the real key in chat, PR text, or commit messages — reference as `$SLUICE_API_KEY`.**
+`SLIPSPACE_BASE_URL` defaults to `https://slipspace.donkeywork.dev`. Without `SLIPSPACE_API_KEY`, every test skips cleanly — safe to wire into CI before secrets are configured. **Never echo the real key in chat, PR text, or commit messages — reference as `$SLIPSPACE_API_KEY`.**
 
-Coverage spans: OpenAI chat + responses, Anthropic messages + chat-compat, Gemini generate + chat-compat, model-keyed routing (the v2 binding selection that lands `claude-*` / `gemini-*` on their providers), and (opt-in via `SLUICE_SMOKE_QWEN=true`) the cluster-side qwen redirect tests.
+Coverage spans: OpenAI chat + responses, Anthropic messages + chat-compat, Gemini generate + chat-compat, model-keyed routing (the v2 binding selection that lands `claude-*` / `gemini-*` on their providers), and (opt-in via `SLIPSPACE_SMOKE_QWEN=true`) the cluster-side qwen redirect tests.
 
 ---
 
@@ -386,17 +386,17 @@ If `golangci-lint` isn't installed (`command -v golangci-lint` returns nothing),
 
 ## Inspecting captured connector segments
 
-Connector segments are ndjson.zst files under `<spool-root>/records/<connector>/sealed/` (`internal/spool/spool.go::Spool` builds the per-connector tree under `Options.Root`). The spool root defaults to `/var/lib/sluice/spool/` in both modes; for `make dev-compose` it lives on the `sluice-spool` named volume. To inspect segments from a native `make dev` run, point the spool at the working tree first (`SLUICE_SPOOL_ROOT=./tmp/spool`), then zstd-decompress and pipe through `jq`. Each line is one [`Record`](../contracts/connector/record.go):
+Connector segments are ndjson.zst files under `<spool-root>/records/<connector>/sealed/` (`internal/spool/spool.go::Spool` builds the per-connector tree under `Options.Root`). The spool root defaults to `/var/lib/slipspace/spool/` in both modes; for `make dev-compose` it lives on the `slipspace-spool` named volume. To inspect segments from a native `make dev` run, point the spool at the working tree first (`SLIPSPACE_SPOOL_ROOT=./tmp/spool`), then zstd-decompress and pipe through `jq`. Each line is one [`Record`](../contracts/connector/record.go):
 
 ```sh
-# native make dev, with SLUICE_SPOOL_ROOT=./tmp/spool exported for the gateway
+# native make dev, with SLIPSPACE_SPOOL_ROOT=./tmp/spool exported for the gateway
 zstd -dc ./tmp/spool/records/<connector>/sealed/*.ndjson.zst | jq .
 
 # default spool root (native make dev without an override) — may need sudo to read
-zstd -dc /var/lib/sluice/spool/records/<connector>/sealed/*.ndjson.zst | jq .
+zstd -dc /var/lib/slipspace/spool/records/<connector>/sealed/*.ndjson.zst | jq .
 
 # from inside the compose container's volume
-docker compose exec gateway sh -c 'zstd -dc /var/lib/sluice/spool/records/*/sealed/*.ndjson.zst' | jq .
+docker compose exec gateway sh -c 'zstd -dc /var/lib/slipspace/spool/records/*/sealed/*.ndjson.zst' | jq .
 ```
 
 If sealed segments aren't accumulating, the uploader is shipping them faster than rotation creates them — look at `deadletter/` instead. If `active/` has a file but `sealed/` is empty, the rotation thresholds haven't fired yet (default 64 MiB / 60 s; lower the connector's `rotation` block for tighter feedback). See [spool.md](spool.md) for the full lifecycle reference.
@@ -433,5 +433,5 @@ golangci-lint cache clean
 
 - [`deployment.md`](./deployment.md) — production deployment topology, image, Helm chart, multi-pod considerations
 - [`admin-console.md`](./admin-console.md) — admin listener, SPA, control-plane API, auth shape
-- [`environment-variables.md`](./environment-variables.md) — every `SLUICE_*` env var the gateway reads
+- [`environment-variables.md`](./environment-variables.md) — every `SLIPSPACE_*` env var the gateway reads
 - [`configuration-model.md`](./configuration-model.md) — full YAML schema for providers, configurations, api keys, rules, resilience

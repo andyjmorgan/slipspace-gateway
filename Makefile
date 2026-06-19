@@ -6,10 +6,10 @@ COVER_MIN  := 95
 GATE       := scripts/coverage-gate.sh
 
 DEV_ENV := \
-	SLUICE_CONFIG_DIR=./config-dev \
-	SLUICE_HTTP_BIND=0.0.0.0:8585 \
-	SLUICE_PROMETHEUS_BIND=0.0.0.0:9090 \
-	SLUICE_LOG_LEVEL=debug
+	SLIPSPACE_CONFIG_DIR=./config-dev \
+	SLIPSPACE_HTTP_BIND=0.0.0.0:8585 \
+	SLIPSPACE_PROMETHEUS_BIND=0.0.0.0:9090 \
+	SLIPSPACE_LOG_LEVEL=debug
 
 # When the SPA is built, Vite emits to internal/admin/webdist/. The
 # committed placeholder.html stands in for index.html on a fresh
@@ -36,8 +36,8 @@ web: web-install
 	rm -rf internal/admin/webdist/index.html \
 		internal/admin/webdist/assets \
 		internal/admin/webdist/favicon.ico \
-		internal/admin/webdist/sluice.png \
-		internal/admin/webdist/sluice.svg
+		internal/admin/webdist/slipspace.png \
+		internal/admin/webdist/slipspace.svg
 	cd web && $(NPM) run build
 
 web-telemetry: web-install
@@ -46,8 +46,8 @@ web-telemetry: web-install
 	rm -rf internal/arbiter/server/webdist/index.telemetry.html \
 		internal/arbiter/server/webdist/assets \
 		internal/arbiter/server/webdist/favicon.ico \
-		internal/arbiter/server/webdist/sluice.png \
-		internal/arbiter/server/webdist/sluice.svg
+		internal/arbiter/server/webdist/slipspace.png \
+		internal/arbiter/server/webdist/slipspace.svg
 	cd web && $(NPM) run build:telemetry
 
 web-install:
@@ -110,15 +110,15 @@ e2e:
 	TESTCONTAINERS_RYUK_DISABLED=true $(GO) test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...
 
 py-compat:
-	$(GO) build -o /tmp/sluice-gateway ./cmd/gateway
-	$(GO) build -o /tmp/sluice-mockllm ./cmd/mockllm
+	$(GO) build -o /tmp/slipspace-gateway ./cmd/gateway
+	$(GO) build -o /tmp/slipspace-mockllm ./cmd/mockllm
 	cd test/python && uv run --project . pytest -v
 
 # Run the post-deploy smoke suite against a live gateway.
 #
-# Required:  SLUICE_API_KEY=sk_live_...           (managed-mode key)
-# Optional:  SLUICE_BASE_URL=https://...          (default: https://sluice.donkeywork.dev)
-#            SLUICE_SMOKE_QWEN=true               (enable cluster-side qwen redirect tests)
+# Required:  SLIPSPACE_API_KEY=sk_live_...           (managed-mode key)
+# Optional:  SLIPSPACE_BASE_URL=https://...          (default: https://slipspace.donkeywork.dev)
+#            SLIPSPACE_SMOKE_QWEN=true               (enable cluster-side qwen redirect tests)
 smoke:
 	cd test/smoke && uv run --project . pytest -v
 

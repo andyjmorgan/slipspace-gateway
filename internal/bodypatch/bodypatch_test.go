@@ -279,7 +279,7 @@ func TestResolveValue_UnknownKindDrops(t *testing.T) {
 func TestResolveTemplate_ResponsePhase(t *testing.T) {
 	respBody := `{"id":"msg_batch_123","type":"message_batch"}`
 	reqBody := []byte(`{"model":"claude-3-5-sonnet","max_tokens":100}`)
-	refs := Refs{Phase: PhaseResponse, ExternalURL: "https://sluice.example.com", RequestBody: reqBody}
+	refs := Refs{Phase: PhaseResponse, ExternalURL: "https://slipspace.example.com", RequestBody: reqBody}
 	tests := []struct {
 		name string
 		tmpl string
@@ -287,13 +287,13 @@ func TestResolveTemplate_ResponsePhase(t *testing.T) {
 		drop bool
 	}{
 		{name: "response.body single-ref passthrough", tmpl: "{response.body.id}", want: `"msg_batch_123"`},
-		{name: "external_url single-ref", tmpl: "{external_url}", want: `"https://sluice.example.com"`},
+		{name: "external_url single-ref", tmpl: "{external_url}", want: `"https://slipspace.example.com"`},
 		{name: "request.body reads request snapshot", tmpl: "{request.body.model}", want: `"claude-3-5-sonnet"`},
 		{name: "request.body number from snapshot", tmpl: "{request.body.max_tokens}", want: "100"},
 		{
 			name: "batches rebase mixed template",
 			tmpl: "{external_url}/anthropic/v1/messages/batches/{response.body.id}/results",
-			want: `"https://sluice.example.com/anthropic/v1/messages/batches/msg_batch_123/results"`,
+			want: `"https://slipspace.example.com/anthropic/v1/messages/batches/msg_batch_123/results"`,
 		},
 		{name: "response.body miss drops", tmpl: "{response.body.absent}", drop: true},
 	}
@@ -331,11 +331,11 @@ func TestApply_ResponsePhase_RebaseField(t *testing.T) {
 		Value:      tmplValue("{external_url}/anthropic/v1/messages/batches/{response.body.id}/results"),
 		ActionType: "rewriteField",
 	}
-	got, results := Apply(resp, []Op{op}, Refs{Phase: PhaseResponse, ExternalURL: "https://sluice.example.com"})
+	got, results := Apply(resp, []Op{op}, Refs{Phase: PhaseResponse, ExternalURL: "https://slipspace.example.com"})
 	if !results[0].Applied {
 		t.Fatalf("not applied: %+v", results[0])
 	}
-	want := "https://sluice.example.com/anthropic/v1/messages/batches/b1/results"
+	want := "https://slipspace.example.com/anthropic/v1/messages/batches/b1/results"
 	if got := gjson.GetBytes(got, "results_url").String(); got != want {
 		t.Errorf("results_url = %s, want %s", got, want)
 	}

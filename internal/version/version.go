@@ -1,4 +1,4 @@
-// Package version exposes the build-time version string embedded in Sluice
+// Package version exposes the build-time version string embedded in SlipSpace
 // binaries. Override at link time:
 //
 //	go build -ldflags "-X github.com/andyjmorgan/slipspace-gateway/internal/version.Version=v0.1.0"

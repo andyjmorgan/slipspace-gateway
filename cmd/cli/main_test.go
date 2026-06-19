@@ -295,7 +295,7 @@ func TestConfigValidate_BadFlag_ReturnsUsage(t *testing.T) {
 }
 
 func TestConfigValidate_InvalidEnvBlocksFileLoad(t *testing.T) {
-	t.Setenv("SLUICE_LOG_LEVEL", "shouty")
+	t.Setenv("SLIPSPACE_LOG_LEVEL", "shouty")
 	stdout, _, code := runCLI(t, "config", "validate", "--dir", "/nonexistent")
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)

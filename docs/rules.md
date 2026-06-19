@@ -1,6 +1,6 @@
 # Rules
 
-Sluice's rules engine is the request-shaping layer. It inspects a small read-only view of each in-flight request — provider, protocol, model, headers, tags — and runs an ordered chain of operator-authored rules. Each matched rule fires one or more actions that mutate the destination, set a header, attach a tag, bind a resilience policy, or short-circuit the request with a synthetic response. Rules are defined in `policy.yaml` (or any merged file under `SLUICE_CONFIG_DIR`); configurations opt in by listing them in `rule_names`.
+SlipSpace's rules engine is the request-shaping layer. It inspects a small read-only view of each in-flight request — provider, protocol, model, headers, tags — and runs an ordered chain of operator-authored rules. Each matched rule fires one or more actions that mutate the destination, set a header, attach a tag, bind a resilience policy, or short-circuit the request with a synthetic response. Rules are defined in `policy.yaml` (or any merged file under `SLIPSPACE_CONFIG_DIR`); configurations opt in by listing them in `rule_names`.
 
 **Two authoring paths, same schema.** Rules can be hand-edited in YAML (the source of truth on disk) **or** created and modified live via the admin write API (`POST/PUT/DELETE /admin/api/v1/config/rules[/{name}]` — see [`docs/admin-console.md → Config write API`](admin-console.md#config-write-api)). The admin console's visual editor drives that API; every mutation persists atomically to the file the rules block was loaded from (its `SourceFiles` origin, defaulting to `policy.yaml` for blocks first introduced through the API) and applies to the next request through `config.Store.Replace` — no pod restart. Both paths produce the same on-disk wire format, so YAML hand-edits and API-driven edits compose cleanly: an operator can mass-author rules in YAML, then tweak individual rules through the SPA.
 
@@ -25,7 +25,7 @@ This page is the operator's reference for **conditions** — every type, every o
    - [`group`](#group)
    - [Unknown conditions](#unknown-conditions)
 7. [The `not` flag](#the-not-flag)
-8. [`SLUICE_RULES_MAX_GROUP_DEPTH`](#sluice_rules_max_group_depth)
+8. [`SLIPSPACE_RULES_MAX_GROUP_DEPTH`](#slipspace_rules_max_group_depth)
 9. [Worked examples](#worked-examples)
 10. [Cross-references](#cross-references)
 
@@ -342,7 +342,7 @@ Short-circuit semantics match what you'd expect:
 - `Or` stops on the first true child and returns true.
 - An **empty** `children` list evaluates to **false**. A vacuously-true `And` could fire every rule and is more likely an authoring mistake than an intent — the engine refuses to commit to it.
 
-Recursive descent is capped at `SLUICE_RULES_MAX_GROUP_DEPTH` — see [below](#sluice_rules_max_group_depth).
+Recursive descent is capped at `SLIPSPACE_RULES_MAX_GROUP_DEPTH` — see [below](#slipspace_rules_max_group_depth).
 
 ### Unknown conditions
 
@@ -362,20 +362,20 @@ The flag is optional and defaults to false.
 
 ---
 
-## `SLUICE_RULES_MAX_GROUP_DEPTH`
+## `SLIPSPACE_RULES_MAX_GROUP_DEPTH`
 
 Caps recursive descent through nested `group` children during evaluation. Operator-authored policies rarely need more than 3-4 levels; the cap is a guardrail against pathological YAML triggering stack overflow in the evaluator.
 
 | | |
 |---|---|
-| Env var | `SLUICE_RULES_MAX_GROUP_DEPTH` |
+| Env var | `SLIPSPACE_RULES_MAX_GROUP_DEPTH` |
 | Default | `8` |
 | Valid range | `[1, 64]` (`MaxRulesMaxGroupDepth`) |
 | On overflow | The offending group evaluates to **false** and `gateway.rule.errors.total{error_kind="group_depth"}` is incremented. The rest of the rule chain continues. |
 
 Exceeding the cap is a silent-but-metered failure mode — the request continues, the dashboard surfaces the error counter. If you see `group_depth` errors fire, your YAML has either a genuine deep tree (rare, refactor it flatter) or a circular reference (the YAML loader catches structural cycles, but you can still hand-write a deeply-nested literal that hits the cap).
 
-See [`docs/environment-variables.md`](environment-variables.md) for the full list of `SLUICE_*` vars and their defaults.
+See [`docs/environment-variables.md`](environment-variables.md) for the full list of `SLIPSPACE_*` vars and their defaults.
 
 ---
 
@@ -409,7 +409,7 @@ Why this works: the rule's condition reads the live `Model` from the request bod
 
 ### Short-circuit on a header using `behavior: exit`
 
-Goal: requests carrying `X-Sluice-Shed: true` should be rejected with a 503, and **no other rules should run** for that request.
+Goal: requests carrying `X-Slipspace-Shed: true` should be rejected with a 503, and **no other rules should run** for that request.
 
 ```yaml
 rules:
@@ -417,7 +417,7 @@ rules:
     condition:
       type: header
       keyOperator: Equals
-      keyPattern: X-Sluice-Shed
+      keyPattern: X-Slipspace-Shed
       valueOperator: Equals
       valuePattern: "true"
     actions:
@@ -465,4 +465,4 @@ The `And` short-circuits: if the request isn't on `openai`, the header lookup is
 - [`docs/actions.md`](actions.md) — every action type (`changeProvider`, `changeModelName`, `changeUrl`, `changeApiKey`, `setHeader`, `appendQueryString`, `addTag`, `useResiliencePolicy`, `returnStatusCode`, `llmImpersonation`) with semantics and worked examples.
 - [`docs/resilience.md`](resilience.md) — the `useResiliencePolicy` action's destination, including the pipeline diagram showing where rules sit relative to the orchestrator.
 - [`docs/observability.md`](observability.md) — the rule-engine meters (`gateway.rule.matches.total`, `gateway.rule.errors.total`, `gateway.rule.evaluation.duration`) and the per-request `RulesFired` shape captured on connector `Record`s and the admin console live-feed.
-- [`docs/environment-variables.md`](environment-variables.md) — `SLUICE_RULES_MAX_GROUP_DEPTH` and all other server-tunable env vars.
+- [`docs/environment-variables.md`](environment-variables.md) — `SLIPSPACE_RULES_MAX_GROUP_DEPTH` and all other server-tunable env vars.

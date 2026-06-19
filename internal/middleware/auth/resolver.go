@@ -22,29 +22,50 @@ const (
 // Inbound header names. Passthrough mode is selected by either of two headers,
 // checked in this order:
 //
-//  1. X-Sluice-Identity carries a Sluice api-key secret; the matching key's
+//  1. X-Slipspace-Identity carries a SlipSpace api-key secret; the matching key's
 //     Configuration is used. The api-key is unguessable, which is the whole
 //     reason this header exists. Preferred form for all new integrations.
 //
-//  2. X-Sluice-Configuration carries the configuration name directly. The
+//  2. X-Slipspace-Configuration carries the configuration name directly. The
 //     name is human-readable and guessable — kept only as a deprecated
 //     compatibility path. The resolver flags every use via
 //     AuthResult.LegacyConfigurationHeader so the HTTP handler can emit a
 //     deprecation warning. Slated for removal once callers migrate.
 //
-// When both passthrough headers are present X-Sluice-Identity wins and the
+// When both passthrough headers are present X-Slipspace-Identity wins and the
 // legacy header is flagged. With neither present, resolution falls through to
-// managed mode and the Sluice secret is discovered from Authorization,
+// managed mode and the SlipSpace secret is discovered from Authorization,
 // x-api-key, or x-goog-api-key in that order — the latter two let vanilla
 // provider SDKs work zero-config without forcing callers to inject an
 // Authorization header.
 const (
-	HeaderIdentity      = "X-Sluice-Identity"      //nolint:gosec // header name, not a credential
-	HeaderConfiguration = "X-Sluice-Configuration" // deprecated; see HeaderIdentity
+	HeaderIdentity      = "X-Slipspace-Identity"      //nolint:gosec // header name, not a credential
+	HeaderConfiguration = "X-Slipspace-Configuration" // deprecated; see HeaderIdentity
 	HeaderAuthorization = "Authorization"
 
 	bearerPrefix = "Bearer "
 )
+
+// Pre-rename header names, still accepted as a silent fallback for the two
+// passthrough selectors so in-flight clients keep working across the cutover.
+// The current X-Slipspace-* names always win when both are present. Deliberately
+// kept out of user-facing docs — remove once all callers have migrated.
+const (
+	legacyHeaderIdentity      = "X-Sluice-Identity" //nolint:gosec // header name, not a credential
+	legacyHeaderConfiguration = "X-Sluice-Configuration"
+)
+
+// firstHeader returns the trimmed value of the first present header in names,
+// in the order given. Used to prefer the current selector header while still
+// honoring its legacy name.
+func firstHeader(h http.Header, names ...string) string {
+	for _, n := range names {
+		if v := strings.TrimSpace(h.Get(n)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 // Provider names that the auth swap recognizes. Anything else is treated as a
 // generic Bearer swap.
@@ -65,15 +86,15 @@ const (
 // on the request context by HTTPHandler and read by downstream middleware
 // (bodycapture, forwarder).
 type AuthResult struct {
-	// Mode is which auth scheme matched: ModeManaged when a Sluice-issued
+	// Mode is which auth scheme matched: ModeManaged when a SlipSpace-issued
 	// bearer was presented in a credential header, ModePassthrough when
-	// either passthrough selector header (X-Sluice-Identity or
-	// X-Sluice-Configuration) routed the request.
+	// either passthrough selector header (X-Slipspace-Identity or
+	// X-Slipspace-Configuration) routed the request.
 	Mode Mode
 
-	// APIKey is the matched Sluice api-key. Populated in managed mode and
-	// in X-Sluice-Identity passthrough — both rely on a key in
-	// SecretIndex. Nil only on the legacy X-Sluice-Configuration
+	// APIKey is the matched SlipSpace api-key. Populated in managed mode and
+	// in X-Slipspace-Identity passthrough — both rely on a key in
+	// SecretIndex. Nil only on the legacy X-Slipspace-Configuration
 	// passthrough path (which selects policy by configuration name and
 	// has no key to attribute). Downstream code must nil-check.
 	APIKey *contractsconfig.APIKey
@@ -84,7 +105,7 @@ type AuthResult struct {
 	Configuration *contractsconfig.Configuration
 
 	// ConfigurationName is the name the policy was looked up by — the
-	// X-Sluice-Configuration value (legacy passthrough) or
+	// X-Slipspace-Configuration value (legacy passthrough) or
 	// APIKey.Configuration (managed and identity-passthrough). Retained
 	// for structured logging even when Configuration is nil.
 	ConfigurationName string
@@ -98,10 +119,10 @@ type AuthResult struct {
 	// uses a non-Bearer credential header).
 	DropHeaders []string
 
-	// LegacyConfigurationHeader is true when X-Sluice-Configuration drove
+	// LegacyConfigurationHeader is true when X-Slipspace-Configuration drove
 	// resolution. The HTTP handler emits a structured deprecation warning
 	// every time this fires so operators can spot un-migrated callers.
-	// Cleared on managed and on X-Sluice-Identity paths.
+	// Cleared on managed and on X-Slipspace-Identity paths.
 	LegacyConfigurationHeader bool
 }
 
@@ -133,7 +154,7 @@ func NewResolver(store *config.Store) *Resolver {
 // the header swap to apply when forwarding upstream. Either passthrough
 // selector header takes precedence over any bearer token on the same
 // request — when present, resolution is always passthrough. Between the
-// two, X-Sluice-Identity wins over the deprecated X-Sluice-Configuration.
+// two, X-Slipspace-Identity wins over the deprecated X-Slipspace-Configuration.
 func (r *Resolver) Resolve(headers http.Header) (AuthResult, error) {
 	if r == nil || r.store == nil {
 		return AuthResult{}, ErrUnknownConfiguration
@@ -143,8 +164,8 @@ func (r *Resolver) Resolve(headers http.Header) (AuthResult, error) {
 		return AuthResult{}, ErrUnknownConfiguration
 	}
 
-	identityToken := strings.TrimSpace(headers.Get(HeaderIdentity))
-	legacyConfigName := strings.TrimSpace(headers.Get(HeaderConfiguration))
+	identityToken := firstHeader(headers, HeaderIdentity, legacyHeaderIdentity)
+	legacyConfigName := firstHeader(headers, HeaderConfiguration, legacyHeaderConfiguration)
 	legacyPresent := legacyConfigName != ""
 
 	if identityToken != "" {
@@ -194,9 +215,9 @@ func (r *Resolver) resolveIdentityPassthrough(snap *config.ResolvedConfig, token
 	}, nil
 }
 
-// resolveLegacyPassthrough is the original X-Sluice-Configuration path.
+// resolveLegacyPassthrough is the original X-Slipspace-Configuration path.
 // Marked legacy because the configuration name is human-readable and
-// guessable; X-Sluice-Identity supersedes it.
+// guessable; X-Slipspace-Identity supersedes it.
 func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfig, configName string) (AuthResult, error) {
 	cfg, ok := snap.ConfigurationIndex[configName]
 	if !ok {
@@ -217,12 +238,12 @@ func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfig, configN
 // regardless of which one was actually present — they are gateway
 // metadata, never anything the provider should see.
 func passthroughDropHeaders() []string {
-	return []string{HeaderIdentity, HeaderConfiguration}
+	return []string{HeaderIdentity, HeaderConfiguration, legacyHeaderIdentity, legacyHeaderConfiguration}
 }
 
-// managedKeySource names the inbound header a Sluice key was discovered on.
+// managedKeySource names the inbound header a SlipSpace key was discovered on.
 // The forwarder uses this to add the source header to DropHeaders so the
-// raw Sluice secret never leaks upstream — the destination builder will
+// raw SlipSpace secret never leaks upstream — the destination builder will
 // inject the resolved upstream credential under the per-provider /
 // per-endpoint header anyway.
 type managedKeySource struct {
@@ -233,7 +254,7 @@ type managedKeySource struct {
 // discoverManagedKey walks the inbound headers in the order Airia's
 // gateway does — Authorization Bearer first (the explicit signal), then
 // the provider-native shapes (x-api-key for Anthropic SDKs, x-goog-api-key
-// for Gemini SDKs). The first header whose value is a known Sluice secret
+// for Gemini SDKs). The first header whose value is a known SlipSpace secret
 // wins. A header may be present with a value that is not in SecretIndex
 // (e.g. an OpenAI sk- key supplied by a misconfigured client) — that case
 // short-circuits at the first present header and returns ErrUnauthorized,
@@ -282,10 +303,10 @@ func (r *Resolver) resolveManaged(snap *config.ResolvedConfig, headers http.Head
 	}
 
 	drops := passthroughDropHeaders()
-	// Always drop whichever native header carried the Sluice secret. The
+	// Always drop whichever native header carried the SlipSpace secret. The
 	// destination builder will mint the correct upstream credential header
 	// for the resolved (provider, endpoint) pair — leaving the inbound
-	// header in place would either leak the Sluice secret upstream
+	// header in place would either leak the SlipSpace secret upstream
 	// (Authorization to OpenAI) or collide with the freshly-injected
 	// upstream credential header (x-api-key to Anthropic).
 	if src.header != HeaderConfiguration && src.header != HeaderIdentity {

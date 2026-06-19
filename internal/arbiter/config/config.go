@@ -21,7 +21,7 @@ import (
 )
 
 // Default listener binds. HTTP serves the console + webhook ingest; OTLP
-// takes the gen_ai + sluice telemetry feeds.
+// takes the gen_ai + slipspace telemetry feeds.
 const (
 	DefaultHTTPBind = "0.0.0.0:8686"
 	DefaultOTLPBind = "0.0.0.0:8687"
@@ -46,7 +46,7 @@ const DefaultSpanFieldMaxBytes = 64 * 1024
 type Config struct {
 	// HTTPBind is the listen address for the console + HMAC webhook ingest.
 	HTTPBind string `yaml:"http_bind"`
-	// OTLPBind is the listen address for the gen_ai + sluice OTLP feeds.
+	// OTLPBind is the listen address for the gen_ai + slipspace OTLP feeds.
 	OTLPBind string `yaml:"otlp_bind"`
 	// ContentMaxBytes caps the per-request gen_ai content the OTLP ingest keeps
 	// for the console, in bytes. nil applies DefaultContentMaxBytes; a value of
@@ -209,7 +209,7 @@ type Gateway struct {
 	// carried on request events for stitching.
 	ID string `yaml:"id"`
 	// HMACSecret is the shared secret the gateway signs payloads with. Incoming
-	// webhooks are trusted iff X-Sluice-Signature verifies against this.
+	// webhooks are trusted iff X-Slipspace-Signature verifies against this.
 	HMACSecret string `yaml:"hmac_secret"`
 }
 

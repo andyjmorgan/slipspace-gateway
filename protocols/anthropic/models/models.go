@@ -7,7 +7,7 @@
 package models
 
 import (
-	sluicemodels "github.com/andyjmorgan/slipspace-gateway/models"
+	slipspacemodels "github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ListModelsResponse is the response body returned by Anthropic's GET
@@ -28,18 +28,18 @@ type ListModelsResponse struct {
 	// before_id/after_id on a subsequent request to paginate.
 	LastID *string `json:"last_id,omitempty"`
 
-	sluicemodels.DynamicProperties
+	slipspacemodels.DynamicProperties
 }
 
 // UnmarshalJSON decodes data into r, routing any field not declared on the
 // struct into DynamicProperties.Extra.
 func (r *ListModelsResponse) UnmarshalJSON(data []byte) error {
-	return sluicemodels.UnmarshalDynamic(data, r)
+	return slipspacemodels.UnmarshalDynamic(data, r)
 }
 
 // MarshalJSON encodes r and merges DynamicProperties.Extra back into the
 // resulting object.
-func (r ListModelsResponse) MarshalJSON() ([]byte, error) { return sluicemodels.MarshalDynamic(r) }
+func (r ListModelsResponse) MarshalJSON() ([]byte, error) { return slipspacemodels.MarshalDynamic(r) }
 
 // Model describes one entry in ListModelsResponse.Data. Unknown fields
 // round-trip via the embedded DynamicProperties.
@@ -57,13 +57,13 @@ type Model struct {
 	// CreatedAt is the model creation time as an RFC 3339 string.
 	CreatedAt string `json:"created_at,omitempty"`
 
-	sluicemodels.DynamicProperties
+	slipspacemodels.DynamicProperties
 }
 
 // UnmarshalJSON decodes data into m, routing any field not declared on the
 // struct into DynamicProperties.Extra.
-func (m *Model) UnmarshalJSON(data []byte) error { return sluicemodels.UnmarshalDynamic(data, m) }
+func (m *Model) UnmarshalJSON(data []byte) error { return slipspacemodels.UnmarshalDynamic(data, m) }
 
 // MarshalJSON encodes m and merges DynamicProperties.Extra back into the
 // resulting object.
-func (m Model) MarshalJSON() ([]byte, error) { return sluicemodels.MarshalDynamic(m) }
+func (m Model) MarshalJSON() ([]byte, error) { return slipspacemodels.MarshalDynamic(m) }

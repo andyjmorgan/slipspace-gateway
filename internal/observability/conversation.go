@@ -25,20 +25,20 @@ import (
 // explicit parent header when present, else the session when the thread differs
 // from it. When thread == session (main agent) the request has no parent.
 
-// SluiceThreadHeader is the authoritative conversation/thread header. When a
+// SlipSpaceThreadHeader is the authoritative conversation/thread header. When a
 // client or proxy deliberately sets it, it wins over any ambient client header.
-const SluiceThreadHeader = "X-Sluice-Thread-Id"
+const SlipSpaceThreadHeader = "X-Slipspace-Thread-Id"
 
 // DefaultThreadIDHeaders is the shipped fallback chain for the conversation/
-// thread id, walked after the authoritative Sluice header. Codex uses
+// thread id, walked after the authoritative SlipSpace header. Codex uses
 // Thread-Id; Claude Code uses X-Claude-Code-Agent-Id (its subagent instance).
 var DefaultThreadIDHeaders = []string{
 	"Thread-Id",
 	"X-Claude-Code-Agent-Id",
 }
 
-// SluiceParentHeader is the authoritative parent-conversation header.
-const SluiceParentHeader = "X-Sluice-Parent-Conversation-Id"
+// SlipSpaceParentHeader is the authoritative parent-conversation header.
+const SlipSpaceParentHeader = "X-Slipspace-Parent-Conversation-Id"
 
 // DefaultParentIDHeaders is the shipped fallback chain for the parent
 // conversation id. Codex emits X-Codex-Parent-Thread-Id on subagent requests.
@@ -47,14 +47,14 @@ var DefaultParentIDHeaders = []string{
 }
 
 // ConversationResolver resolves the conversation/thread id from inbound
-// headers. The Sluice header is attempted first; operator-configured fallbacks
+// headers. The SlipSpace header is attempted first; operator-configured fallbacks
 // follow the shipped defaults, in the order supplied.
 type ConversationResolver struct{ *idResolver }
 
 // NewConversationResolver builds a resolver whose fallback chain is the shipped
 // DefaultThreadIDHeaders followed by extra. Blank entries are dropped.
 func NewConversationResolver(extra []string) *ConversationResolver {
-	return &ConversationResolver{newIDResolver(SluiceThreadHeader, DefaultThreadIDHeaders, extra)}
+	return &ConversationResolver{newIDResolver(SlipSpaceThreadHeader, DefaultThreadIDHeaders, extra)}
 }
 
 // Resolve returns the conversation/thread id and the header it came from.
@@ -69,7 +69,7 @@ type ParentResolver struct{ *idResolver }
 // NewParentResolver builds a resolver whose fallback chain is the shipped
 // DefaultParentIDHeaders followed by extra. Blank entries are dropped.
 func NewParentResolver(extra []string) *ParentResolver {
-	return &ParentResolver{newIDResolver(SluiceParentHeader, DefaultParentIDHeaders, extra)}
+	return &ParentResolver{newIDResolver(SlipSpaceParentHeader, DefaultParentIDHeaders, extra)}
 }
 
 // Resolve returns the parent-conversation id and the header it came from.

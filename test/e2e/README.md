@@ -48,8 +48,8 @@ Assert:
 - Response body shape correct — round-trip via the typed `providers` package.
 - Captured connector record on configured `connectors:` matches the **post-rule** labels and the captured body envelope.
 - **No** record when the configuration has no `connector_bindings`, or when sampling/filter excludes the request.
-- `X-Sluice-Correlation-Id` set on response.
-- `X-Sluice-Session-Id` echoed when sent.
+- `X-Slipspace-Correlation-Id` set on response.
+- `X-Slipspace-Session-Id` echoed when sent.
 
 ## Wire-compat (Python SDK)
 

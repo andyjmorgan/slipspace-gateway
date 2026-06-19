@@ -42,23 +42,23 @@ func TestChangeApiKey_LiteralOverride(t *testing.T) {
 	}
 }
 
-// TestChangeApiKey_UseSluiceKey proves the UseSluiceKey branch forwards the
-// inbound Sluice bearer verbatim instead of substituting the managed upstream
+// TestChangeApiKey_UseSlipSpaceKey proves the UseSlipSpaceKey branch forwards the
+// inbound SlipSpace bearer verbatim instead of substituting the managed upstream
 // credential. The harness sends Authorization: Bearer <h.APIKey>; the rule sets
-// changeApiKey:{useSluiceKey: true}, so the mock LLM must see that exact bearer
+// changeApiKey:{useSlipSpaceKey: true}, so the mock LLM must see that exact bearer
 // rather than the dev configuration's openai credential.
-func TestChangeApiKey_UseSluiceKey(t *testing.T) {
+func TestChangeApiKey_UseSlipSpaceKey(t *testing.T) {
 	t.Parallel()
 	policy := matrixPolicy(`
-  - name: use-sluice-key
+  - name: use-slipspace-key
     condition:
       type: provider
       operator: Equals
       expectedProvider: openai
     actions:
       - type: changeApiKey
-        useSluiceKey: true
-`, "use-sluice-key")
+        useSlipSpaceKey: true
+`, "use-slipspace-key")
 	h := harness.NewWithOptions(t, harness.Options{PolicyYAML: policy})
 	stageChatOK(h)
 	fireChat(t, h, nil)
@@ -69,9 +69,9 @@ func TestChangeApiKey_UseSluiceKey(t *testing.T) {
 	}
 	want := "Bearer " + h.APIKey
 	if got := cap.Headers["Authorization"]; got != want {
-		t.Fatalf("upstream Authorization = %q, want %q (UseSluiceKey forwards inbound bearer)", got, want)
+		t.Fatalf("upstream Authorization = %q, want %q (UseSlipSpaceKey forwards inbound bearer)", got, want)
 	}
 	if cap.Headers["Authorization"] == "Bearer sk-dev-mock" {
-		t.Fatal("managed credential substituted despite UseSluiceKey")
+		t.Fatal("managed credential substituted despite UseSlipSpaceKey")
 	}
 }

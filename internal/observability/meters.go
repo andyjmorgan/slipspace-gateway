@@ -28,10 +28,10 @@ func circuitBreakerStateCallback(source CircuitBreakerStateSource, podID string)
 
 // MeterName is the OpenTelemetry meter scope under which all gateway
 // instruments are registered.
-const MeterName = "sluice-gateway"
+const MeterName = "slipspace-gateway"
 
 // Instrument names. The per-request inference signals follow the
-// OpenTelemetry GenAI semantic conventions (gen_ai.*); Sluice-specific
+// OpenTelemetry GenAI semantic conventions (gen_ai.*); SlipSpace-specific
 // dimensions and convenience aggregates live under slipspace.*; gateway.*
 // is reserved for instruments the GenAI spec has no concept for (the
 // rule engine, resilience orchestrator, circuit breaker, admin console).
@@ -101,7 +101,7 @@ const (
 	MetricErrorResponsesTotal = "gateway.error_responses.total"
 
 	// The inference latency signals use the GenAI spec's *client* vantage,
-	// not the server one. Sluice is a client of the upstream provider — it
+	// not the server one. SlipSpace is a client of the upstream provider — it
 	// calls the model and observes wire timing; it does not generate tokens,
 	// so it cannot produce the server metrics' defining quantity (model-
 	// internal time-to-generate-first-token). What it measures is the

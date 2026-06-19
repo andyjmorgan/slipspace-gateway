@@ -1,13 +1,13 @@
 package observability
 
 // OpenTelemetry GenAI semantic-convention attribute keys, operation
-// names, and token types, plus the Sluice-namespaced extras that ride
+// names, and token types, plus the SlipSpace-namespaced extras that ride
 // alongside them.
 //
 // Naming discipline (load-bearing — see the design note "OTel GenAI
 // Conformance"): the gen_ai.* namespace is owned by the OTel spec. We
 // only ever emit keys and enum values the spec defines; we never mint a
-// new key or value inside gen_ai.*. Everything Sluice-specific lives
+// new key or value inside gen_ai.*. Everything SlipSpace-specific lives
 // under slipspace.*; where another stable OTel convention already models a
 // dimension (http.*, server.*) we reuse it rather than inventing.
 //
@@ -24,7 +24,7 @@ const (
 	AttrGenAIOperationName = "gen_ai.operation.name"
 
 	// AttrGenAIProviderName is the upstream provider (openai, anthropic,
-	// gcp.gemini). Required; replaces Sluice's former "provider" label.
+	// gcp.gemini). Required; replaces SlipSpace's former "provider" label.
 	AttrGenAIProviderName = "gen_ai.provider.name"
 
 	// AttrGenAIRequestModel is the model named on the inbound request.
@@ -50,23 +50,23 @@ const (
 	// thread when one is active.
 	AttrGenAIConversationID = "gen_ai.conversation.id"
 
-	// AttrSluiceSessionID carries the session bundle root — the stable id that
+	// AttrSlipSpaceSessionID carries the session bundle root — the stable id that
 	// groups every request of a conversation, including all of its subagent
 	// threads. The semconv has no session-vs-thread distinction (conversation.id
 	// covers both) and no parent/child concept, so the root rides this slipspace.*
 	// attribute; the Arbiter projects it to request_events.session_id
 	// for top-down bundling. For a main agent it equals gen_ai.conversation.id.
-	AttrSluiceSessionID = "slipspace.session_id"
+	AttrSlipSpaceSessionID = "slipspace.session_id"
 
-	// AttrSluiceParentConversationID carries the parent of a subagent thread —
+	// AttrSlipSpaceParentConversationID carries the parent of a subagent thread —
 	// the hierarchy edge the semconv has no home for. Set only when the resolved
 	// conversation is a subagent thread (distinct from the session); empty for a
 	// main agent. Codex supplies it explicitly via X-Codex-Parent-Thread-Id.
-	AttrSluiceParentConversationID = "slipspace.parent_conversation_id"
+	AttrSlipSpaceParentConversationID = "slipspace.parent_conversation_id"
 
 	// AttrGenAIAgentID is the spec home for the GenAI agent identifier (see
-	// the GenAI agent-spans convention). Sluice resolves it from
-	// X-Sluice-Agent-Id (or a configured fallback such as
+	// the GenAI agent-spans convention). SlipSpace resolves it from
+	// X-Slipspace-Agent-Id (or a configured fallback such as
 	// X-Claude-Code-Agent-Id) and stamps it on the request span and the
 	// operation-details event — never on a metric label (unbounded
 	// cardinality), mirroring gen_ai.conversation.id.
@@ -75,7 +75,7 @@ const (
 	// AttrEnduserID is the end-user identifier. The GenAI semconv defines no
 	// user attribute (only gen_ai.conversation.id and gen_ai.agent.id), so the
 	// end user rides the general-purpose `enduser` namespace (enduser.id,
-	// recently un-deprecated). Sluice resolves it from X-Sluice-User-Id (or a
+	// recently un-deprecated). SlipSpace resolves it from X-Slipspace-User-Id (or a
 	// configured fallback) and stamps it on the request span and the
 	// operation-details event — never on a metric label (unbounded
 	// cardinality), mirroring gen_ai.conversation.id / gen_ai.agent.id.
@@ -191,7 +191,7 @@ const (
 // Opt-In content attributes carried on the operation-details event. The
 // gateway emits a bounded subset (latest user turn, model response, system
 // instructions, tool definitions); the full content lives in the connector
-// spool. Gated by SLUICE_OTEL_CAPTURE_CONTENT.
+// spool. Gated by SLIPSPACE_OTEL_CAPTURE_CONTENT.
 const (
 	AttrGenAIInputMessages      = "gen_ai.input.messages"
 	AttrGenAIOutputMessages     = "gen_ai.output.messages"
@@ -224,18 +224,18 @@ const (
 	ExecutorClient = "client"
 )
 
-// Sluice-namespaced extras — dimensions the GenAI spec has no concept for.
+// SlipSpace-namespaced extras — dimensions the GenAI spec has no concept for.
 const (
-	// AttrSluiceProtocol is the precise resolved protocol (chat, messages,
+	// AttrSlipSpaceProtocol is the precise resolved protocol (chat, messages,
 	// generate_content) or passthrough family, retained beside the coarse
 	// gen_ai.operation.name so the console keeps its per-protocol breakdown.
-	AttrSluiceProtocol = "slipspace.protocol"
+	AttrSlipSpaceProtocol = "slipspace.protocol"
 
-	// AttrSluiceConfiguration is the resolved Sluice configuration name.
-	AttrSluiceConfiguration = "slipspace.configuration"
+	// AttrSlipSpaceConfiguration is the resolved SlipSpace configuration name.
+	AttrSlipSpaceConfiguration = "slipspace.configuration"
 
-	// AttrSluiceMethod, AttrSluiceAPIKeyName, AttrSluiceUpstreamStatus,
-	// AttrSluiceTags, and AttrSluiceRulesFired are the gateway facts the
+	// AttrSlipSpaceMethod, AttrSlipSpaceAPIKeyName, AttrSlipSpaceUpstreamStatus,
+	// AttrSlipSpaceTags, and AttrSlipSpaceRulesFired are the gateway facts the
 	// Arbiter ingest reads off the gen_ai span to populate the
 	// request_events gateway-owned columns. The span is the SINGLE writer of
 	// that entity — the Record feed lands only a lazy verbatim blob, joined by
@@ -245,48 +245,48 @@ const (
 	// — method/api-key/rule names are unbounded cardinality. The ingest reads
 	// these keys as string literals; do not rename without rolling the telemetry
 	// service in lockstep.
-	AttrSluiceMethod         = "slipspace.method"
-	AttrSluiceAPIKeyName     = "slipspace.api_key_name" //nolint:gosec // G101 false positive: attribute key naming the API key, not its secret value
-	AttrSluiceUpstreamStatus = "slipspace.upstream_status"
+	AttrSlipSpaceMethod         = "slipspace.method"
+	AttrSlipSpaceAPIKeyName     = "slipspace.api_key_name" //nolint:gosec // G101 false positive: attribute key naming the API key, not its secret value
+	AttrSlipSpaceUpstreamStatus = "slipspace.upstream_status"
 
-	// AttrSluiceTags is the post-rule tag set attached to the request, as a
-	// string slice. AttrSluiceRulesFired is the set of fired rule names (names
+	// AttrSlipSpaceTags is the post-rule tag set attached to the request, as a
+	// string slice. AttrSlipSpaceRulesFired is the set of fired rule names (names
 	// only — actions/termination ride the Record's rule chain, not the span).
-	AttrSluiceTags       = "slipspace.tags"
-	AttrSluiceRulesFired = "slipspace.rules_fired"
+	AttrSlipSpaceTags       = "slipspace.tags"
+	AttrSlipSpaceRulesFired = "slipspace.rules_fired"
 
-	// AttrSluiceCorrelationID carries the request correlation id on the
+	// AttrSlipSpaceCorrelationID carries the request correlation id on the
 	// span so a trace can be cross-referenced to logs and captured
 	// records (which key on the same id).
-	AttrSluiceCorrelationID = "slipspace.correlation_id"
+	AttrSlipSpaceCorrelationID = "slipspace.correlation_id"
 
-	// AttrSluiceResilienceTarget and AttrSluiceResilienceOutcome label a
+	// AttrSlipSpaceResilienceTarget and AttrSlipSpaceResilienceOutcome label a
 	// per-attempt child span with the resilience target name and the
 	// attempt outcome (success, failure_status, transport_error,
 	// cb_blocked).
-	AttrSluiceResilienceTarget  = "slipspace.resilience.target"
-	AttrSluiceResilienceOutcome = "slipspace.resilience.outcome"
+	AttrSlipSpaceResilienceTarget  = "slipspace.resilience.target"
+	AttrSlipSpaceResilienceOutcome = "slipspace.resilience.outcome"
 
-	// AttrSluiceUnmappedField is the dotted JSON path of a provider field
+	// AttrSlipSpaceUnmappedField is the dotted JSON path of a provider field
 	// this build does not model — the per-field dimension on
 	// gateway.unmapped_fields.total. Cardinality is bounded by the provider
 	// API surface (tens of field names), not by request volume.
-	AttrSluiceUnmappedField = "slipspace.unmapped_field"
+	AttrSlipSpaceUnmappedField = "slipspace.unmapped_field"
 
-	// AttrSluiceUnmappedDirection is "request" or "response", marking which
+	// AttrSlipSpaceUnmappedDirection is "request" or "response", marking which
 	// side of the exchange carried the unmapped field.
-	AttrSluiceUnmappedDirection = "slipspace.unmapped_direction"
+	AttrSlipSpaceUnmappedDirection = "slipspace.unmapped_direction"
 
-	// AttrSluiceTranslateSource and AttrSluiceTranslateTarget are the source
+	// AttrSlipSpaceTranslateSource and AttrSlipSpaceTranslateTarget are the source
 	// and target wire protocols of a cross-provider translation — the
 	// pair dimensions on gateway.translation.field_drops.total.
-	AttrSluiceTranslateSource = "slipspace.translate_source"
-	AttrSluiceTranslateTarget = "slipspace.translate_target"
+	AttrSlipSpaceTranslateSource = "slipspace.translate_source"
+	AttrSlipSpaceTranslateTarget = "slipspace.translate_target"
 
-	// AttrSluiceTranslateField is the dotted source-side path of a feature
+	// AttrSlipSpaceTranslateField is the dotted source-side path of a feature
 	// dropped in translation — the per-field dimension on
 	// gateway.translation.field_drops.total. Bounded by the modelled field set.
-	AttrSluiceTranslateField = "slipspace.translate_field"
+	AttrSlipSpaceTranslateField = "slipspace.translate_field"
 )
 
 // gen_ai.operation.name values (spec-defined).
@@ -302,7 +302,7 @@ const (
 	TokenTypeOutput = "output"
 )
 
-// OperationNameForProtocol maps a Sluice protocol key to the
+// OperationNameForProtocol maps a SlipSpace protocol key to the
 // gen_ai.operation.name spec value: OpenAI/Anthropic chat surfaces and the
 // OpenAI responses API to "chat", Gemini's generate_content to the dedicated
 // "generate_content" value, embeddings to "embeddings". Protocols the spec
@@ -322,7 +322,7 @@ func OperationNameForProtocol(protocol string) string {
 	}
 }
 
-// GenAIProviderName maps a Sluice internal provider key to the OTel
+// GenAIProviderName maps a SlipSpace internal provider key to the OTel
 // gen_ai.provider.name enum value. "openai" and "anthropic" already match the
 // enum; "gemini" maps to the spec value "gcp.gemini". Unknown providers pass
 // through verbatim so a newly added provider surfaces rather than being

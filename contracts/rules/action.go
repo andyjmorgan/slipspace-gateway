@@ -172,20 +172,20 @@ func (a *ChangeUrlAction) UnmarshalJSON(data []byte) error {
 func (a ChangeUrlAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
 // ChangeApiKeyAction overrides the upstream API key for this request. When
-// UseSluiceKey is true the inbound Sluice key is forwarded instead, for
+// UseSlipSpaceKey is true the inbound SlipSpace key is forwarded instead, for
 // passthrough scenarios.
 type ChangeApiKeyAction struct {
 	// Type is the polymorphic discriminator; always "changeApiKey".
 	Type string `yaml:"type" json:"type"`
 
 	// APIKey is the literal upstream key substituted on the way out. Ignored
-	// when UseSluiceKey is true.
+	// when UseSlipSpaceKey is true.
 	APIKey string `yaml:"apiKey,omitempty" json:"api_key,omitempty"`
 
-	// UseSluiceKey, when true, forwards the inbound Sluice-issued bearer
+	// UseSlipSpaceKey, when true, forwards the inbound SlipSpace-issued bearer
 	// verbatim instead of substituting an upstream credential — used for
 	// passthrough auth scenarios.
-	UseSluiceKey bool `yaml:"useSluiceKey,omitempty" json:"use_sluice_key,omitempty"`
+	UseSlipSpaceKey bool `yaml:"useSlipSpaceKey,omitempty" json:"use_slipspace_key,omitempty"`
 
 	models.DynamicProperties `yaml:",inline"`
 }

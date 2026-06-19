@@ -141,7 +141,7 @@ jobs:
           version="${{ github.ref_name }}"
           stripped="${version#v}"
           cat > /tmp/release-notes.md <<EOF
-          sluice-gateway ${version} — observable AI provider gateway.
+          slipspace-gateway ${version} — observable AI provider gateway.
 
           ## Images
 
@@ -157,15 +157,15 @@ jobs:
 
           \`\`\`
           docker run --rm \\
-            -e SLUICE_CONFIG_DIR=/etc/sluice \\
-            -e SLUICE_SPOOL_ROOT=/var/lib/sluice/spool \\
-            -v ./config-dev:/etc/sluice:ro \\
-            -v sluice-spool:/var/lib/sluice/spool \\
+            -e SLIPSPACE_CONFIG_DIR=/etc/slipspace \\
+            -e SLIPSPACE_SPOOL_ROOT=/var/lib/slipspace/spool \\
+            -v ./config-dev:/etc/slipspace:ro \\
+            -v slipspace-spool:/var/lib/slipspace/spool \\
             -p 8585:8585 \\
             ghcr.io/${{ github.repository_owner }}/slipspace-gateway:${stripped}
           \`\`\`
 
-          Minimal production env: \`SLUICE_CONFIG_DIR\` plus optionally \`SLUICE_SPOOL_ROOT\` (where the connector spool lives — defaults to \`/var/lib/sluice/spool\`) and \`SLUICE_OTLP_ENDPOINT\` (enables OTLP push). See \`CLAUDE.md\` for the full deployment shape.
+          Minimal production env: \`SLIPSPACE_CONFIG_DIR\` plus optionally \`SLIPSPACE_SPOOL_ROOT\` (where the connector spool lives — defaults to \`/var/lib/slipspace/spool\`) and \`SLIPSPACE_OTLP_ENDPOINT\` (enables OTLP push). See \`CLAUDE.md\` for the full deployment shape.
 
           See \`CLAUDE.md\` and the project's DonkeyWork design notes for load-bearing invariants, the per-release task ledger, and the v1.1 roadmap.
           EOF
@@ -173,10 +173,10 @@ jobs:
           if gh release view "${version}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             echo "Release ${version} already exists; updating notes in place"
             gh release edit "${version}" \
-              --title "sluice-gateway ${version}" \
+              --title "slipspace-gateway ${version}" \
               --notes-file /tmp/release-notes.md
           else
             gh release create "${version}" \
-              --title "sluice-gateway ${version}" \
+              --title "slipspace-gateway ${version}" \
               --notes-file /tmp/release-notes.md
           fi

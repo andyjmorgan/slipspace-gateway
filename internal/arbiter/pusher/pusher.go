@@ -2,7 +2,7 @@
 // cc.Record to the Arbiter in real time — NOT through the
 // connector spool. It is channel 3 of the telemetry design (the authoritative
 // request log: headers, bodies, rule chain, resilience attempts), the
-// counterpart to the gen_ai/sluice OTLP feeds.
+// counterpart to the gen_ai/slipspace OTLP feeds.
 //
 // It exists to honour the non-blocking invariant (invariant #2): Enqueue is
 // non-blocking and fires from a bounded in-memory worker pool *after* the
@@ -23,7 +23,7 @@
 //
 // The wire shape is the bare cc.Record JSON POSTed to /api/v1/ingest/record,
 // signed with the gateway's HMAC secret (hex HMAC-SHA256 of the raw body) under
-// X-Sluice-Signature, identified by X-Sluice-Gateway-Id. Kept dependency-light
+// X-Slipspace-Signature, identified by X-Slipspace-Gateway-Id. Kept dependency-light
 // on purpose so the data plane pulls no Postgres/gRPC/OTLP weight.
 package pusher
 
@@ -47,8 +47,8 @@ import (
 
 // Webhook headers, mirroring the Arbiter's ingest contract.
 const (
-	headerGatewayID = "X-Sluice-Gateway-Id"
-	headerSignature = "X-Sluice-Signature"
+	headerGatewayID = "X-Slipspace-Gateway-Id"
+	headerSignature = "X-Slipspace-Signature"
 )
 
 // Drop reasons reported through Options.OnDropped. Every value is a record

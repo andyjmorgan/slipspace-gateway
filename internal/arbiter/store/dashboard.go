@@ -8,7 +8,7 @@ import (
 )
 
 // Dashboard rollups read the TimescaleDB continuous aggregates (migration 0007),
-// never the request_events entity. Each CAGG buckets the sluice meter feed at one
+// never the request_events entity. Each CAGG buckets the slipspace meter feed at one
 // minute (count/sum only — no percentiles; MVP runs plain timescaledb without the
 // percentile toolkit, so latency quantiles are dropped entirely). The dashboard
 // re-buckets those 1-minute rows up to the requested width. This stays inside

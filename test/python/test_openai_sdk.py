@@ -1,4 +1,4 @@
-"""Wire-compat tests for the official `openai` Python SDK against sluice-gateway."""
+"""Wire-compat tests for the official `openai` Python SDK against slipspace-gateway."""
 
 from __future__ import annotations
 
@@ -246,7 +246,7 @@ def test_list_models(gateway_url: str, mockllm_url: str) -> None:
 
 
 def test_passthrough_mode(gateway_url: str, mockllm_url: str) -> None:
-    """Send a non-Sluice bearer + X-Sluice-Configuration → upstream sees the raw bearer."""
+    """Send a non-SlipSpace bearer + X-Slipspace-Configuration → upstream sees the raw bearer."""
     stage_response(
         mockllm_url,
         method="POST",
@@ -270,7 +270,7 @@ def test_passthrough_mode(gateway_url: str, mockllm_url: str) -> None:
     client = _client(
         gateway_url,
         api_key="customer-supplied-token",
-        headers={"X-Sluice-Configuration": "dev"},
+        headers={"X-Slipspace-Configuration": "dev"},
     )
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -292,7 +292,7 @@ def test_unknown_passthrough_configuration(gateway_url: str) -> None:
     client = _client(
         gateway_url,
         api_key="customer-supplied-token",
-        headers={"X-Sluice-Configuration": "does-not-exist"},
+        headers={"X-Slipspace-Configuration": "does-not-exist"},
     )
     with pytest.raises(openai.PermissionDeniedError):
         client.chat.completions.create(

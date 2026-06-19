@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="web/public/sluice.svg" alt="SlipSpace logo" width="104" height="104" />
+<img src="web/public/slipspace.svg" alt="SlipSpace logo" width="104" height="104" />
 
 # slipspace-gateway
 
@@ -29,7 +29,7 @@ It speaks the providers' **native wire protocols** (plus their OpenAI-compatible
 | **Cross-provider translation** | Bidirectional **Anthropic Messages ↔ OpenAI Chat** — request, streaming + non-streaming response, tool calls, and errors — triggered by an explicit `translate` rule. Fail-closed on unsupported pairs, with a lossy-translation header and drop counter. |
 | **Resilience built in** | Per-policy **failover** and **weighted load-balancing** across providers, with a **circuit breaker** that sheds load from a flapping upstream and a recorded attempt log on every request. |
 | **Horizontally scalable** | Stateless data plane — run as many replicas as you like behind one Service. Per-pod spool PVCs, graceful drain (`/healthz` flips to 503 before shutdown so load balancers bleed off in flight), and clean multi-pod record semantics. |
-| **DevOps-friendly** | A single multi-arch image (amd64 + arm64) with the admin SPA baked in. Config is a directory of trusted YAML; servers tune via `SLUICE_*` env vars. Turnkey Docker Compose stacks, a CLI for key-gen and config validation, and a `/metrics` endpoint out of the box. |
+| **DevOps-friendly** | A single multi-arch image (amd64 + arm64) with the admin SPA baked in. Config is a directory of trusted YAML; servers tune via `SLIPSPACE_*` env vars. Turnkey Docker Compose stacks, a CLI for key-gen and config validation, and a `/metrics` endpoint out of the box. |
 | **Admin console** | An embedded React SPA: live dashboard, config inspector, real-time message feed, and a visual rule editor — served from the binary, no separate deploy. |
 
 ---
@@ -53,7 +53,7 @@ Anything that isn't a generative protocol (provider model-lists, Anthropic messa
 ## Two auth models, one policy bundle
 
 - **Managed** — the client uses a SlipSpace-issued key (`Authorization: Bearer sk_live_…`, or the provider-native `x-api-key` / `x-goog-api-key`); the gateway swaps in the real upstream credentials before forwarding. Your provider keys never leave the gateway.
-- **Passthrough (BYOK)** — the client brings its own upstream token (e.g. Claude Code OAuth); the gateway selects policy via an `X-Sluice-Identity` header and forwards the client's `Authorization` verbatim.
+- **Passthrough (BYOK)** — the client brings its own upstream token (e.g. Claude Code OAuth); the gateway selects policy via an `X-Slipspace-Identity` header and forwards the client's `Authorization` verbatim.
 
 Both resolve to a named **Configuration** — a reusable policy bundle of upstream credentials, bindings, rules, and resilience. Many keys can share one configuration. See [docs/auth.md](docs/auth.md).
 
@@ -74,7 +74,7 @@ Rules can be created, updated, and deleted **live** through the admin write API 
 
 ## Cross-provider translation
 
-Send an Anthropic Messages request and have it served by OpenAI — or the reverse — without your client knowing. SlipSpace ships **bidirectional Anthropic Messages ↔ OpenAI Chat** translation covering the request, the non-streaming **and** streaming response, tool calls, and error responses, triggered by an explicit `translate` rule action. It's **fail-closed** on undeclared or unsupported pairs, surfaces a flag-gated `X-Sluice-Translation-Lossy` header, and counts any dropped fields. Proven by a Go differential matrix plus the official OpenAI **and** Anthropic Python SDK wire-compat suites. See [docs/actions.md → `translate`](docs/actions.md#translate).
+Send an Anthropic Messages request and have it served by OpenAI — or the reverse — without your client knowing. SlipSpace ships **bidirectional Anthropic Messages ↔ OpenAI Chat** translation covering the request, the non-streaming **and** streaming response, tool calls, and error responses, triggered by an explicit `translate` rule action. It's **fail-closed** on undeclared or unsupported pairs, surfaces a flag-gated `X-Slipspace-Translation-Lossy` header, and counts any dropped fields. Proven by a Go differential matrix plus the official OpenAI **and** Anthropic Python SDK wire-compat suites. See [docs/actions.md → `translate`](docs/actions.md#translate).
 
 ## Resilience
 
@@ -121,7 +121,7 @@ Today this ships as **per-model FastAPI detectors** — one container per model,
 
 ## Session, agent & user attribution
 
-Every request is correlated on three orthogonal identity axes on top of its `correlation_id`: **session** (the conversation), **agent** (the agent or sub-agent that issued it), and **user** (the end user it was made for). Each resolves from an authoritative `X-Sluice-Session-Id` / `X-Sluice-Agent-Id` / `X-Sluice-User-Id` header, falling back through a built-in chain (including Claude Code's `x-claude-code-session-id` / `X-Claude-Code-Agent-Id`) that operators extend with `SLUICE_*_ID_HEADERS` — no client code change. The resolved ids are echoed on the response, attached to every span, record, and log line, and let the console group a whole multi-turn **session into one timeline** and filter the fleet by agent or user. See [docs/observability.md → Session bundling](docs/observability.md#session-bundling).
+Every request is correlated on three orthogonal identity axes on top of its `correlation_id`: **session** (the conversation), **agent** (the agent or sub-agent that issued it), and **user** (the end user it was made for). Each resolves from an authoritative `X-Slipspace-Session-Id` / `X-Slipspace-Agent-Id` / `X-Slipspace-User-Id` header, falling back through a built-in chain (including Claude Code's `x-claude-code-session-id` / `X-Claude-Code-Agent-Id`) that operators extend with `SLIPSPACE_*_ID_HEADERS` — no client code change. The resolved ids are echoed on the response, attached to every span, record, and log line, and let the console group a whole multi-turn **session into one timeline** and filter the fleet by agent or user. See [docs/observability.md → Session bundling](docs/observability.md#session-bundling).
 
 ## Durable, non-blocking spool
 
@@ -174,17 +174,17 @@ make e2e          # end-to-end against the real binary (Docker required)
 
 ## Configuration
 
-Config lives in `SLUICE_CONFIG_DIR` (default `/etc/sluice/`). The loader merges **every** `*.yaml` in the directory by top-level block key — filenames are convention, not constraint. File contents are trusted (mounted from Secrets/filesystem); there is no `${VAR}` expansion inside YAML. The conventional split:
+Config lives in `SLIPSPACE_CONFIG_DIR` (default `/etc/slipspace/`). The loader merges **every** `*.yaml` in the directory by top-level block key — filenames are convention, not constraint. File contents are trusted (mounted from Secrets/filesystem); there is no `${VAR}` expansion inside YAML. The conventional split:
 
 - **`providers.yaml`** — upstream connections: base URL, the protocols each speaks, per-protocol auth, and optional passthrough families. Providers hold no credentials.
 - **`policy.yaml`** — `configurations` (with their `bindings`), `api_keys`, `rules`, resilience `groups`, and `connectors`.
 - **`admin.yaml`** *(optional)* — gates the management console. Off by default.
 
-See [config-dev/](config-dev/) for working examples, [docs/](docs/) for the full operator + developer reference, and [docs/environment-variables.md](docs/environment-variables.md) for every `SLUICE_*` knob.
+See [config-dev/](config-dev/) for working examples, [docs/](docs/) for the full operator + developer reference, and [docs/environment-variables.md](docs/environment-variables.md) for every `SLIPSPACE_*` knob.
 
 ## Management console
 
-A Vite + React + shadcn SPA embedded into the gateway binary via `//go:embed` — dashboard, config inspector, live message feed, and a visual rule editor. Enable it in `admin.yaml`, then open `http://localhost:8081/admin` (username `admin`, password from `SLUICE_ADMIN_PASSWORD`). Build with `make web` (SPA into the embed FS) or `make build` (SPA + binary). Full local-dev loops — compose, SPA hot-reload, pure-Go — are in [docs/local-development.md](docs/local-development.md) and [docs/admin-console.md](docs/admin-console.md).
+A Vite + React + shadcn SPA embedded into the gateway binary via `//go:embed` — dashboard, config inspector, live message feed, and a visual rule editor. Enable it in `admin.yaml`, then open `http://localhost:8081/admin` (username `admin`, password from `SLIPSPACE_ADMIN_PASSWORD`). Build with `make web` (SPA into the embed FS) or `make build` (SPA + binary). Full local-dev loops — compose, SPA hot-reload, pure-Go — are in [docs/local-development.md](docs/local-development.md) and [docs/admin-console.md](docs/admin-console.md).
 
 ## Repo layout
 

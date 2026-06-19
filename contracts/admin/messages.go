@@ -18,7 +18,7 @@ type MessageEntry struct {
 	At time.Time `json:"at"`
 
 	// CorrelationID is the gateway request UUID. Joinable to logs and
-	// to the X-Sluice-Correlation-Id response header.
+	// to the X-Slipspace-Correlation-Id response header.
 	CorrelationID string `json:"correlation_id,omitempty"`
 
 	// SessionID is the resolved session bundle root grouping this request

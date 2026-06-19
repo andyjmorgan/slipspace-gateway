@@ -1,6 +1,6 @@
 # Resilience Groups
 
-Sluice's resilience engine turns a single inbound request into one or more upstream attempts according to a named **group**: failover walk-down, weighted load-balance, optional circuit breaker. Groups live under the top-level `groups:` key in any merged YAML under `SLUICE_CONFIG_DIR`. A request opts into a group when a Configuration's **binding** points its `(protocol, model)` slot at a group instead of a single provider.
+SlipSpace's resilience engine turns a single inbound request into one or more upstream attempts according to a named **group**: failover walk-down, weighted load-balance, optional circuit breaker. Groups live under the top-level `groups:` key in any merged YAML under `SLIPSPACE_CONFIG_DIR`. A request opts into a group when a Configuration's **binding** points its `(protocol, model)` slot at a group instead of a single provider.
 
 This page is the operator's reference. It covers the full v2 YAML schema, every mode, how requests flow through the orchestrator, what observability fires, and worked examples taken straight from production wiring.
 
@@ -158,7 +158,7 @@ groups:
 | `mode` | yes | See [Modes](#modes). |
 | `strict_weights` | no | Default `false`. Only meaningful in `load_balance` modes — see [strict_weights](#canary-mirroring-with-strict_weights). |
 | `failure_status_codes` | no | Group-wide list of HTTP status codes that count as retryable. Empty falls back to default `[500, 502, 503, 504]`. There is no per-target override in the v2 group schema. |
-| `response_header_timeout_seconds` | no | Per-group override of the gateway-wide time-to-first-byte cap (`SLUICE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this group; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance groups usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
+| `response_header_timeout_seconds` | no | Per-group override of the gateway-wide time-to-first-byte cap (`SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this group; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance groups usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
 | `circuit_breaker` | no | Group-wide breaker config; one breaker instance per `(group, target-provider)`. Omit for no breaker. The v2 group schema has no per-target breaker override. |
 | `targets` | yes | At least one target. Validation rejects an empty target list. |
 

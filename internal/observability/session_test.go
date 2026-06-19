@@ -19,9 +19,9 @@ func hdr(pairs ...string) http.Header {
 func TestSessionResolver_Resolve(t *testing.T) {
 	t.Parallel()
 
-	// sensitiveSluice reports the Sluice header as redacted, to exercise
+	// sensitiveSlipSpace reports the SlipSpace header as redacted, to exercise
 	// the redaction-bypass fall-through.
-	sensitiveSluice := func(name string) bool { return name == observability.SluiceSessionHeader }
+	sensitiveSlipSpace := func(name string) bool { return name == observability.SlipSpaceSessionHeader }
 
 	cases := []struct {
 		name       string
@@ -32,10 +32,10 @@ func TestSessionResolver_Resolve(t *testing.T) {
 		wantSource string
 	}{
 		{
-			name:       "sluice header wins over client fallbacks",
-			headers:    hdr(observability.SluiceSessionHeader, "sess-1", "Session-Id", "codex-9"),
+			name:       "slipspace header wins over client fallbacks",
+			headers:    hdr(observability.SlipSpaceSessionHeader, "sess-1", "Session-Id", "codex-9"),
 			wantID:     "sess-1",
-			wantSource: observability.SluiceSessionHeader,
+			wantSource: observability.SlipSpaceSessionHeader,
 		},
 		{
 			name:       "codex Session-Id beats claude header by order",
@@ -57,9 +57,9 @@ func TestSessionResolver_Resolve(t *testing.T) {
 			wantSource: "X-Acme-Conversation-Id",
 		},
 		{
-			name:       "redacted sluice header falls through to Session-Id",
-			headers:    hdr(observability.SluiceSessionHeader, "sess-1", "Session-Id", "codex-9"),
-			sensitive:  sensitiveSluice,
+			name:       "redacted slipspace header falls through to Session-Id",
+			headers:    hdr(observability.SlipSpaceSessionHeader, "sess-1", "Session-Id", "codex-9"),
+			sensitive:  sensitiveSlipSpace,
 			wantID:     "codex-9",
 			wantSource: "Session-Id",
 		},
@@ -106,12 +106,12 @@ func TestSessionResolver_BlankExtraDropped(t *testing.T) {
 
 func TestSessionContext_RoundTrip(t *testing.T) {
 	t.Parallel()
-	ctx := observability.WithSessionID(context.Background(), "sess-1", observability.SluiceSessionHeader)
+	ctx := observability.WithSessionID(context.Background(), "sess-1", observability.SlipSpaceSessionHeader)
 	if got := observability.SessionIDFromContext(ctx); got != "sess-1" {
 		t.Errorf("id = %q, want sess-1", got)
 	}
-	if got := observability.SessionIDSourceFromContext(ctx); got != observability.SluiceSessionHeader {
-		t.Errorf("source = %q, want %q", got, observability.SluiceSessionHeader)
+	if got := observability.SessionIDSourceFromContext(ctx); got != observability.SlipSpaceSessionHeader {
+		t.Errorf("source = %q, want %q", got, observability.SlipSpaceSessionHeader)
 	}
 }
 

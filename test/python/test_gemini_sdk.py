@@ -1,4 +1,4 @@
-"""Wire-compat tests for the official `google-genai` Python SDK against sluice-gateway.
+"""Wire-compat tests for the official `google-genai` Python SDK against slipspace-gateway.
 
 The Gemini streaming endpoint (`streamGenerateContent`) is not yet listed in
 the dev config's `accepted_paths`, so this file omits a streaming test. When
@@ -30,9 +30,9 @@ def _client(
     api_key: str = API_KEY,
     extra_headers: dict[str, str] | None = None,
 ) -> genai.Client:
-    """Build a Gemini client pointed at sluice.
+    """Build a Gemini client pointed at slipspace.
 
-    v1.0.7: Sluice discovers the managed-mode key from `x-goog-api-key` (the
+    v1.0.7: SlipSpace discovers the managed-mode key from `x-goog-api-key` (the
     google-genai SDK's native default), so no Authorization injection is
     required. Tests that need extra inbound headers can pass them via
     `extra_headers`.
@@ -52,7 +52,7 @@ def _client_bare(gateway_url: str, *, api_key: str = API_KEY) -> genai.Client:
 
     Exercises v1.0.6's prefix_optional on gemini.generate_content and
     v1.0.7's x-goog-api-key discovery — a vanilla SDK with
-    base_url=https://sluice... and api_key=sk_live_... must reach
+    base_url=https://slipspace... and api_key=sk_live_... must reach
     /v1beta/... with no extra config.
     """
     return genai.Client(
@@ -267,7 +267,7 @@ def test_passthrough_mode(gateway_url: str, mockllm_url: str) -> None:
             base_url=gateway_url,
             headers={
                 "Authorization": "Bearer byok-token-xyz",
-                "X-Sluice-Configuration": "dev",
+                "X-Slipspace-Configuration": "dev",
             },
         ),
     )

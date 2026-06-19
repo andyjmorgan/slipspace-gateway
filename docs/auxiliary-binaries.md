@@ -29,7 +29,7 @@ This page is the reference. It documents every flag, every subcommand, every exi
 ```mermaid
 flowchart LR
     Op[operator workstation] -->|"cli key new<br/>cli config validate"| YAML[YAML bundle]
-    YAML -->|"mounted at $SLUICE_CONFIG_DIR"| GW[gateway]
+    YAML -->|"mounted at $SLIPSPACE_CONFIG_DIR"| GW[gateway]
     GW -->|provider traffic| Up[real upstreams]
     Dev[developer / e2e harness] -->|"go run ./cmd/mockllm"| MOCK[mockllm]
     GW -. dev / e2e .-> MOCK
@@ -117,9 +117,9 @@ cli config validate [--dir <path>]
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--dir` | `$SLUICE_CONFIG_DIR`, or the documented default | The directory to load. If unset, falls back to the env var; if that's empty, uses the config package's `DefaultConfigDir`. |
+| `--dir` | `$SLIPSPACE_CONFIG_DIR`, or the documented default | The directory to load. If unset, falls back to the env var; if that's empty, uses the config package's `DefaultConfigDir`. |
 
-The env vars themselves (`SLUICE_LOG_LEVEL`, `SLUICE_HTTP_BIND`, etc.) are also validated — a bad `SLUICE_LOG_LEVEL=shouty` will block the file load with `FAIL: invalid_env:` before the directory is ever read.
+The env vars themselves (`SLIPSPACE_LOG_LEVEL`, `SLIPSPACE_HTTP_BIND`, etc.) are also validated — a bad `SLIPSPACE_LOG_LEVEL=shouty` will block the file load with `FAIL: invalid_env:` before the directory is ever read.
 
 On success: `OK: env N vars resolved, K configuration(s), J api_keys, P providers, B bindings` — where `B` is the total of every configuration's `bindings` plus `passthrough_bindings` (`cmd/cli/validate.go::runConfigValidate`).
 
@@ -127,7 +127,7 @@ On failure: `FAIL: <category>: <error message>`. Exit code is `1`. The category 
 
 | Category | Trigger |
 |---|---|
-| `invalid_env` | One of the `SLUICE_*` env vars failed validation (bad log level, bad bind address, unknown OTLP protocol, etc.). |
+| `invalid_env` | One of the `SLIPSPACE_*` env vars failed validation (bad log level, bad bind address, unknown OTLP protocol, etc.). |
 | `empty_directory` | The directory exists but contains no YAML files. |
 | `unexpected_config_file` | A `.yaml`/`.yml` file in the directory uses a filename the loader doesn't recognise. |
 | `wrong_file_for_key` | A top-level key (`gateway`, `providers`, `configurations`, `api_keys`, ...) appears in a file the convention puts a different key in. |
@@ -158,7 +158,7 @@ Paste the YAML block into the `api_keys:` block of `policy.yaml` (or any YAML fi
 ### Worked example — validate before deploy
 
 ```sh
-$ SLUICE_CONFIG_DIR=./config-prod cli config validate
+$ SLIPSPACE_CONFIG_DIR=./config-prod cli config validate
 OK: env 12 vars resolved, 3 configuration(s), 47 api_keys, 5 providers, 18 bindings
 ```
 
@@ -238,7 +238,7 @@ Matcher resolution: `method`, `path`, and `request_body_contains` all act as AND
 
 ### Session scenarios
 
-Mockllm partitions canned responses by session ID, sourced from the inbound request's `X-Sluice-Session-Id` header. The gateway echoes this header end-to-end, so a test sets it once on the client and every upstream call carries it.
+Mockllm partitions canned responses by session ID, sourced from the inbound request's `X-Slipspace-Session-Id` header. The gateway echoes this header end-to-end, so a test sets it once on the client and every upstream call carries it.
 
 Match resolution: the session pool is consulted first; on miss the global pool is consulted as a fall-back. `max_responses` pop is scoped to the pool the entry was found in — a session-staged entry never decrements the global one. This is what lets one mockllm serve multiple independent scenarios in parallel (e.g. "session A's primary returns 503 twice then 200" running alongside "session B's primary always returns 200" without either test contaminating the other).
 
@@ -305,7 +305,7 @@ curl -sS -X POST "http://localhost:5555/control/responses?session=$SESSION" \
   -H 'Content-Type: application/json' \
   -d '{"path":"/v1/messages","status":200,"body":"{\"ok\":true,\"backend\":\"backup\"}"}'
 
-# Run the test — every request carries X-Sluice-Session-Id: failover-1
+# Run the test — every request carries X-Slipspace-Session-Id: failover-1
 ```
 
 The mockllm-side ordering is deterministic: the first two matching primary calls hit the 503 entries (each `max_responses: 1`, so each pops after one match), and the third onwards hits the unlimited 200. Tests assert on `/control/captured?session=failover-1` to confirm the gateway issued the expected calls in the expected order.

@@ -60,7 +60,7 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	t.Setenv(config.EnvOTLPEndpoint, "http://otel:4317")
 	t.Setenv(config.EnvOTLPProtocol, "http/protobuf")
 	t.Setenv(config.EnvConfigDir, "/somewhere/else")
-	t.Setenv(config.EnvSpoolRoot, "/var/spool/sluice-test")
+	t.Setenv(config.EnvSpoolRoot, "/var/spool/slipspace-test")
 	t.Setenv(config.EnvRulesMaxGroupDepth, "16")
 	t.Setenv(config.EnvUpstreamResponseHeaderTimeoutSeconds, "300")
 
@@ -85,7 +85,7 @@ func TestLoadEnv_OverridesApplied(t *testing.T) {
 	if env.LogFormat != "text" {
 		t.Errorf("LogFormat = %q", env.LogFormat)
 	}
-	if env.SpoolRoot != "/var/spool/sluice-test" {
+	if env.SpoolRoot != "/var/spool/slipspace-test" {
 		t.Errorf("SpoolRoot = %q", env.SpoolRoot)
 	}
 	if env.RulesMaxGroupDepth != 16 {

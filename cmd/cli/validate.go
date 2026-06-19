@@ -22,7 +22,7 @@ const (
 func runConfigValidate(ctx context.Context, args []string, stdout, _ io.Writer) error {
 	fs := flag.NewFlagSet("config validate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	dir := fs.String("dir", "", "configuration directory (overrides $SLUICE_CONFIG_DIR for the file load)")
+	dir := fs.String("dir", "", "configuration directory (overrides $SLIPSPACE_CONFIG_DIR for the file load)")
 
 	if err := fs.Parse(args); err != nil {
 		return errUsage
@@ -68,7 +68,7 @@ func runConfigValidate(ctx context.Context, args []string, stdout, _ io.Writer) 
 }
 
 // resolveConfigDir picks the file-load directory in precedence order: the
-// explicit --dir flag, then $SLUICE_CONFIG_DIR, then the documented default.
+// explicit --dir flag, then $SLIPSPACE_CONFIG_DIR, then the documented default.
 // Retained so the existing CLI unit tests still cover the resolution rules
 // independently of the env-parse path.
 func resolveConfigDir(flagValue string) string {

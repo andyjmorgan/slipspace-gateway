@@ -1,7 +1,7 @@
 [project]
-name = "sluice-gateway-pycompat"
+name = "slipspace-gateway-pycompat"
 version = "0.0.1"
-description = "Wire-compatibility suite that drives the official OpenAI / Anthropic / Google Gemini Python SDKs against sluice-gateway."
+description = "Wire-compatibility suite that drives the official OpenAI / Anthropic / Google Gemini Python SDKs against slipspace-gateway."
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.50.0",

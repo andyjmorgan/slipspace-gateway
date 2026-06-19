@@ -13,7 +13,7 @@ import (
 // TracerName is the OpenTelemetry tracer scope under which all gateway
 // spans are recorded. Mirrors MeterName so spans and metrics emitted by
 // the gateway share a single instrumentation-scope identity.
-const TracerName = "sluice-gateway"
+const TracerName = "slipspace-gateway"
 
 // newOTLPSpanExporter builds an OTLP trace exporter for the given
 // endpoint, selecting the transport from protocol. It mirrors

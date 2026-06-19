@@ -8,7 +8,7 @@ to a local Ollama-backed resilience group:
 
 This binding lives ONLY on the cluster (it doesn't ship in `config-dev/`),
 so the test skips cleanly when the harness isn't pointed at a deploy known
-to carry it. Set `SLUICE_SMOKE_QWEN=true` to enable.
+to carry it. Set `SLIPSPACE_SMOKE_QWEN=true` to enable.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import pytest
 
 @pytest.fixture(scope="session")
 def qwen_enabled() -> bool:
-    return os.environ.get("SLUICE_SMOKE_QWEN", "").lower() in {"true", "1", "yes"}
+    return os.environ.get("SLIPSPACE_SMOKE_QWEN", "").lower() in {"true", "1", "yes"}
 
 
 QWEN_MODELS = [
@@ -43,7 +43,7 @@ def test_qwen_changeprovider_redirect(
     group and the gateway hit the private qwen backend rather than OpenAI.
     """
     if not qwen_enabled:
-        pytest.skip("SLUICE_SMOKE_QWEN not set — cluster-specific rule check disabled")
+        pytest.skip("SLIPSPACE_SMOKE_QWEN not set — cluster-specific rule check disabled")
 
     client = openai.OpenAI(
         base_url=f"{base_url}/v1",

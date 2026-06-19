@@ -295,7 +295,7 @@ export function usePolicies(): ConfigFetchHandle<PoliciesResponse> {
 // Every write goes through the same Snapshot.Clone → mutate → Validate →
 // WritePolicyYAML → Store.Replace flow, so a 200/201/204 here means the
 // next GET reflects the new state and the change is persisted to
-// SLUICE_CONFIG_DIR/policy.yaml.
+// SLIPSPACE_CONFIG_DIR/policy.yaml.
 
 /**
  * RuleWriteBody is the JSON wire shape the create/replace handlers

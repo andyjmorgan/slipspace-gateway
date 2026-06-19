@@ -265,7 +265,7 @@ function EditorBody({
           <PanelHead title="S3 destination" sub="bucket + region; endpoint_url for S3-compatible providers" />
           <div className="px-4 py-4 flex flex-col gap-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <TextField label="Bucket" value={form.bucket ?? ""} onChange={(v) => setForm({ ...form, bucket: v })} placeholder="sluice-artifacts" mono />
+              <TextField label="Bucket" value={form.bucket ?? ""} onChange={(v) => setForm({ ...form, bucket: v })} placeholder="slipspace-artifacts" mono />
               <TextField label="Region" value={form.region ?? ""} onChange={(v) => setForm({ ...form, region: v })} placeholder="us-east-1" mono />
               <TextField label="Prefix" value={form.prefix ?? ""} onChange={(v) => setForm({ ...form, prefix: v })} placeholder="records/" mono />
               <TextField label="Endpoint URL" value={form.endpoint_url ?? ""} onChange={(v) => setForm({ ...form, endpoint_url: v })} placeholder="https://s3.donkeywork.dev" mono hint="Blank = real AWS S3." />
@@ -298,7 +298,7 @@ function EditorBody({
           <PanelHead title="Azure Blob destination" sub="storage account + container" />
           <div className="px-4 py-4 flex flex-col gap-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <TextField label="Account" value={form.account ?? ""} onChange={(v) => setForm({ ...form, account: v })} placeholder="sluicestore" mono />
+              <TextField label="Account" value={form.account ?? ""} onChange={(v) => setForm({ ...form, account: v })} placeholder="slipspacestore" mono />
               <TextField label="Container" value={form.container ?? ""} onChange={(v) => setForm({ ...form, container: v })} placeholder="records" mono />
             </div>
             <SelectField label="Auth mode" value={form.auth.mode} options={AZURE_AUTH_MODES} onChange={(m) => setAuth({ mode: m })} />
@@ -316,7 +316,7 @@ function EditorBody({
         <PanelCard>
           <PanelHead title="Webhook destination" sub="HTTPS endpoint + HMAC signing key ref" />
           <div className="px-4 py-4 flex flex-col gap-3">
-            <TextField label="URL" value={form.url ?? ""} onChange={(v) => setForm({ ...form, url: v })} placeholder="https://receiver.example/sluice" mono />
+            <TextField label="URL" value={form.url ?? ""} onChange={(v) => setForm({ ...form, url: v })} placeholder="https://receiver.example/slipspace" mono />
             <TextField label="Secret ref (HMAC key)" value={form.secret_ref ?? ""} onChange={(v) => setForm({ ...form, secret_ref: v })} placeholder="env:WEBHOOK_HMAC_KEY" mono />
             <NumberField label="Timeout (ms)" value={form.timeout_ms ?? null} onChange={(n) => setForm({ ...form, timeout_ms: n ?? undefined })} placeholder="5000" hint="Per-call HTTP timeout. 0 < timeout <= 60000." />
           </div>

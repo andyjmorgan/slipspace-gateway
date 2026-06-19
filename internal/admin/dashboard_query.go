@@ -258,7 +258,7 @@ func computeByProtocol(requestDeltas map[observability.LabelKey]int64) []adminc.
 	}
 	perProtocol := map[groupKey]*acc{}
 	for key, v := range requestDeltas {
-		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), protocol: key.Get(observability.AttrSluiceProtocol)}
+		gk := groupKey{provider: key.Get(observability.AttrGenAIProviderName), protocol: key.Get(observability.AttrSlipSpaceProtocol)}
 		if gk.provider == "" || gk.protocol == "" {
 			continue
 		}
@@ -297,7 +297,7 @@ func computeByConfiguration(requestDeltas map[observability.LabelKey]int64) []ad
 	}
 	perConfig := map[string]*acc{}
 	for key, v := range requestDeltas {
-		c := key.Get(observability.AttrSluiceConfiguration)
+		c := key.Get(observability.AttrSlipSpaceConfiguration)
 		if c == "" {
 			continue
 		}

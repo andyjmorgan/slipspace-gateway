@@ -25,7 +25,7 @@ func TestReporting_RequestEvent_Inline(t *testing.T) {
 	const correlationID = "report-test-correlation"
 	resp := h.PostJSON("/v1/chat/completions",
 		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}},
-		http.Header{"X-Sluice-Correlation-Id": []string{correlationID}})
+		http.Header{"X-Slipspace-Correlation-Id": []string{correlationID}})
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
@@ -159,7 +159,7 @@ func TestReporting_RequestEvent_CodexSubagent(t *testing.T) {
 // TestReporting_RequestEvent_UserID proves a client-supplied end-user id is
 // resolved by the gateway and lands on the emitted connector Record, with its
 // provenance header. There is no shipped client default for user id, so it is
-// sent under the authoritative X-Sluice-User-Id. Mirrors the agent-id path.
+// sent under the authoritative X-Slipspace-User-Id. Mirrors the agent-id path.
 func TestReporting_RequestEvent_UserID(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
@@ -173,7 +173,7 @@ func TestReporting_RequestEvent_UserID(t *testing.T) {
 	const userID = "user-report-7c3"
 	resp := h.PostJSON("/v1/chat/completions",
 		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}},
-		http.Header{"X-Sluice-User-Id": []string{userID}})
+		http.Header{"X-Slipspace-User-Id": []string{userID}})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("gateway status=%d", resp.StatusCode)
 	}
@@ -185,8 +185,8 @@ func TestReporting_RequestEvent_UserID(t *testing.T) {
 	if env.Record.UserID != userID {
 		t.Errorf("Record.UserID=%q want %q", env.Record.UserID, userID)
 	}
-	if env.Record.UserIDSource != "X-Sluice-User-Id" {
-		t.Errorf("Record.UserIDSource=%q want X-Sluice-User-Id", env.Record.UserIDSource)
+	if env.Record.UserIDSource != "X-Slipspace-User-Id" {
+		t.Errorf("Record.UserIDSource=%q want X-Slipspace-User-Id", env.Record.UserIDSource)
 	}
 }
 

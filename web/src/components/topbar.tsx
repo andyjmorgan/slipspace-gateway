@@ -7,7 +7,7 @@ import { useTheme } from "@/lib/theme"
 const TITLES: Record<string, { t: string; s: string }> = {
   "/dashboard": { t: "Dashboard", s: "metrics over the selected window" },
   "/configurations": { t: "Configurations", s: "policy bundles · rule chains" },
-  "/apikeys": { t: "API Keys", s: "internal services holding sluice secrets" },
+  "/apikeys": { t: "API Keys", s: "internal services holding slipspace secrets" },
   "/rules": { t: "Rules", s: "shared library — referenced by configurations" },
   "/providers": { t: "Providers", s: "providers.yaml — read-only" },
   "/bindings": { t: "Bindings", s: "model → provider mapping — read-only" },

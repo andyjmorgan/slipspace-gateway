@@ -172,10 +172,10 @@ func TestApplyChangeApiKey(t *testing.T) {
 		}
 	})
 
-	t.Run("use sluice key sentinels with empty override", func(t *testing.T) {
+	t.Run("use slipspace key sentinels with empty override", func(t *testing.T) {
 		t.Parallel()
 		s := freshState(t)
-		_, err := applyAction(&contractsrules.ChangeApiKeyAction{UseSluiceKey: true}, s, nil)
+		_, err := applyAction(&contractsrules.ChangeApiKeyAction{UseSlipSpaceKey: true}, s, nil)
 		if err != nil {
 			t.Fatalf("apply: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestApplyChangeApiKey(t *testing.T) {
 		}
 	})
 
-	t.Run("empty key errors when not useSluiceKey", func(t *testing.T) {
+	t.Run("empty key errors when not useSlipSpaceKey", func(t *testing.T) {
 		t.Parallel()
 		s := freshState(t)
 		_, err := applyAction(&contractsrules.ChangeApiKeyAction{}, s, nil)

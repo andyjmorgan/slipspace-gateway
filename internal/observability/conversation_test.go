@@ -23,7 +23,7 @@ func hdrMap(m map[string]string) http.Header {
 func TestConversationResolver_Resolve(t *testing.T) {
 	t.Parallel()
 
-	sensitiveSluice := func(name string) bool { return name == observability.SluiceThreadHeader }
+	sensitiveSlipSpace := func(name string) bool { return name == observability.SlipSpaceThreadHeader }
 
 	cases := []struct {
 		name       string
@@ -34,10 +34,10 @@ func TestConversationResolver_Resolve(t *testing.T) {
 		wantSource string
 	}{
 		{
-			name:       "sluice thread header wins",
-			headers:    map[string]string{observability.SluiceThreadHeader: "t-1", "Thread-Id": "codex-9"},
+			name:       "slipspace thread header wins",
+			headers:    map[string]string{observability.SlipSpaceThreadHeader: "t-1", "Thread-Id": "codex-9"},
 			wantID:     "t-1",
-			wantSource: observability.SluiceThreadHeader,
+			wantSource: observability.SlipSpaceThreadHeader,
 		},
 		{
 			name:       "codex Thread-Id beats claude agent header by order",
@@ -59,9 +59,9 @@ func TestConversationResolver_Resolve(t *testing.T) {
 			wantSource: "X-Acme-Thread-Id",
 		},
 		{
-			name:       "redacted sluice header falls through to Thread-Id",
-			headers:    map[string]string{observability.SluiceThreadHeader: "t-1", "Thread-Id": "codex-9"},
-			sensitive:  sensitiveSluice,
+			name:       "redacted slipspace header falls through to Thread-Id",
+			headers:    map[string]string{observability.SlipSpaceThreadHeader: "t-1", "Thread-Id": "codex-9"},
+			sensitive:  sensitiveSlipSpace,
 			wantID:     "codex-9",
 			wantSource: "Thread-Id",
 		},
@@ -98,10 +98,10 @@ func TestParentResolver_Resolve(t *testing.T) {
 		wantSource string
 	}{
 		{
-			name:       "sluice parent header wins",
-			headers:    map[string]string{observability.SluiceParentHeader: "p-1", "X-Codex-Parent-Thread-Id": "codex-p"},
+			name:       "slipspace parent header wins",
+			headers:    map[string]string{observability.SlipSpaceParentHeader: "p-1", "X-Codex-Parent-Thread-Id": "codex-p"},
 			wantID:     "p-1",
-			wantSource: observability.SluiceParentHeader,
+			wantSource: observability.SlipSpaceParentHeader,
 		},
 		{
 			name:       "codex parent header",

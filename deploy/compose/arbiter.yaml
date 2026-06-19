@@ -1,10 +1,10 @@
 # Arbiter service config used by docker-compose.arbiter.yaml. Mounted at
-# /etc/sluice/arbiter.yaml. File contents are trusted (no ${VAR} interpolation
+# /etc/slipspace/arbiter.yaml. File contents are trusted (no ${VAR} interpolation
 # inside the YAML — only the file path is configurable).
 
 # Console + HMAC-webhook ingest listener.
 http_bind: "0.0.0.0:8686"
-# OTLP gRPC listener for the gen_ai + sluice telemetry feeds.
+# OTLP gRPC listener for the gen_ai + slipspace telemetry feeds.
 otlp_bind: "0.0.0.0:8687"
 
 # Per-request cap (bytes) on the gen_ai content the console keeps. Content is a
@@ -32,7 +32,7 @@ console:
   password_hash: "REPLACE_WITH_BCRYPT_HASH"
 
 # Registered gateways permitted to push large payloads. A webhook is trusted iff
-# its X-Sluice-Signature verifies against the matching gateway's hmac_secret.
+# its X-Slipspace-Signature verifies against the matching gateway's hmac_secret.
 gateways:
   - id: "gw-1"
     hmac_secret: "REPLACE_WITH_SHARED_SECRET"

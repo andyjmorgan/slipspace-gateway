@@ -381,7 +381,7 @@ func mintAPIKeyID() (uuid.UUID, error) {
 	return id, nil
 }
 
-// mintAPIKeySecret generates a fresh Sluice-issued production key:
+// mintAPIKeySecret generates a fresh SlipSpace-issued production key:
 // "sk_live_" + 32 random bytes hex-encoded.
 func mintAPIKeySecret() (string, error) {
 	var b [32]byte

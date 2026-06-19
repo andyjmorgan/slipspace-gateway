@@ -7,7 +7,7 @@
 package models
 
 import (
-	sluicemodels "github.com/andyjmorgan/slipspace-gateway/models"
+	slipspacemodels "github.com/andyjmorgan/slipspace-gateway/models"
 )
 
 // ListModelsResponse is the response body returned by Gemini's GET
@@ -21,19 +21,19 @@ type ListModelsResponse struct {
 	// as pageToken on a subsequent request. Empty on the last page.
 	NextPageToken string `json:"nextPageToken,omitempty"`
 
-	sluicemodels.DynamicProperties
+	slipspacemodels.DynamicProperties
 }
 
 // UnmarshalJSON decodes data into r, routing any field not declared on the
 // struct into DynamicProperties.Extra.
 func (r *ListModelsResponse) UnmarshalJSON(data []byte) error {
-	return sluicemodels.UnmarshalDynamic(data, r)
+	return slipspacemodels.UnmarshalDynamic(data, r)
 }
 
 // MarshalJSON encodes r and merges DynamicProperties.Extra back into the
 // resulting object.
 func (r ListModelsResponse) MarshalJSON() ([]byte, error) {
-	return sluicemodels.MarshalDynamic(r)
+	return slipspacemodels.MarshalDynamic(r)
 }
 
 // Model is one entry in ListModelsResponse.Models. Unknown fields
@@ -78,17 +78,17 @@ type Model struct {
 	// TopK is the model's default top-K sampling cutoff.
 	TopK *int `json:"topK,omitempty"`
 
-	sluicemodels.DynamicProperties
+	slipspacemodels.DynamicProperties
 }
 
 // UnmarshalJSON decodes data into m, routing any field not declared on the
 // struct into DynamicProperties.Extra.
 func (m *Model) UnmarshalJSON(data []byte) error {
-	return sluicemodels.UnmarshalDynamic(data, m)
+	return slipspacemodels.UnmarshalDynamic(data, m)
 }
 
 // MarshalJSON encodes m and merges DynamicProperties.Extra back into the
 // resulting object.
 func (m Model) MarshalJSON() ([]byte, error) {
-	return sluicemodels.MarshalDynamic(m)
+	return slipspacemodels.MarshalDynamic(m)
 }

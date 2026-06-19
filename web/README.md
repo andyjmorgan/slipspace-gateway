@@ -1,4 +1,4 @@
-# sluice-gateway / web
+# slipspace-gateway / web
 
 Vite + React + shadcn-ui SPA for the management console. Embedded into the gateway binary at build time via `//go:embed` — see `internal/admin/static.go`.
 
@@ -16,7 +16,7 @@ The dev server runs on `:5180` (pinned, `strictPort: true`) under `/admin` (matc
 
 ```sh
 # Terminal 1: gateway with admin enabled
-SLUICE_ADMIN_PASSWORD=dev SLUICE_CONFIG_DIR=./config-dev \
+SLIPSPACE_ADMIN_PASSWORD=dev SLIPSPACE_CONFIG_DIR=./config-dev \
   go run ./cmd/gateway
 # (admin.yaml in config-dev/ already has enabled: true bind_addr: 127.0.0.1:8081)
 
@@ -27,7 +27,7 @@ make web-dev
 
 Open <http://localhost:5180/admin>. Sign in with username `admin` and the password you exported above.
 
-Override the proxy target with `SLUICE_ADMIN_URL=http://other-host:8081 npm run dev` if the gateway runs elsewhere.
+Override the proxy target with `SLIPSPACE_ADMIN_URL=http://other-host:8081 npm run dev` if the gateway runs elsewhere.
 
 ## Production build
 

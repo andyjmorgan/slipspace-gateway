@@ -1,6 +1,6 @@
 // Package registry is the Arbiter's trust boundary for incoming
 // large-payload webhooks. Gateways are registered in YAML with an HMAC secret;
-// a webhook is accepted iff its X-Sluice-Signature verifies against the secret
+// a webhook is accepted iff its X-Slipspace-Signature verifies against the secret
 // of the gateway it claims to be. This is the only inbound trust check — no
 // gateway can read anything back from the service.
 package registry

@@ -169,12 +169,12 @@ func TestWrapResponseWriter_SnapshotsHeadersOnImplicitWriteHeader(t *testing.T) 
 	rec := httptest.NewRecorder()
 	buf := NewResponseBuffer(64)
 	w := WrapResponseWriter(rec, buf, nil)
-	w.Header().Set("X-Sluice-Correlation-Id", "abc-123")
+	w.Header().Set("X-Slipspace-Correlation-Id", "abc-123")
 	if _, err := w.Write([]byte(`{"ok":true}`)); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	snap := buf.Headers()
-	if got := snap["X-Sluice-Correlation-Id"]; len(got) != 1 || got[0] != "abc-123" {
+	if got := snap["X-Slipspace-Correlation-Id"]; len(got) != 1 || got[0] != "abc-123" {
 		t.Errorf("correlation header missing from snapshot: %v", snap)
 	}
 }

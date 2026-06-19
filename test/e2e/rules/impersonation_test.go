@@ -19,7 +19,7 @@ import (
 // Full per-provider response-shape synthesisers (chat.completion /
 // response / message / candidates × streaming) are deferred to
 // v1.0.3+; this test confirms the stub is wired honestly — text
-// body, X-Sluice-Synthetic header, terminated=true on the rule
+// body, X-Slipspace-Synthetic header, terminated=true on the rule
 // event, gateway.request carrying the synthetic status.
 func TestLlmImpersonation_E2E(t *testing.T) {
 	t.Parallel()
@@ -46,8 +46,8 @@ func TestLlmImpersonation_E2E(t *testing.T) {
 	if got := resp.Header.Get("Content-Type"); got != "text/plain; charset=utf-8" {
 		t.Errorf("Content-Type = %q, want text/plain", got)
 	}
-	if got := resp.Header.Get("X-Sluice-Synthetic"); got != "rule:pii-impersonator" {
-		t.Errorf("X-Sluice-Synthetic = %q", got)
+	if got := resp.Header.Get("X-Slipspace-Synthetic"); got != "rule:pii-impersonator" {
+		t.Errorf("X-Slipspace-Synthetic = %q", got)
 	}
 	if string(resp.Body) != message {
 		t.Errorf("body = %q\nwant   %q", string(resp.Body), message)

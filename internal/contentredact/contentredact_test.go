@@ -14,7 +14,7 @@ func TestRedact_MasksCredentials(t *testing.T) {
 		in     string
 		secret string // a substring that must NOT survive
 	}{
-		{"sluice live key", "my key is sk_live_abcdef0123456789 ok", "sk_live_abcdef0123456789"},
+		{"slipspace live key", "my key is sk_live_abcdef0123456789 ok", "sk_live_abcdef0123456789"},
 		{"openai key", "use sk-abcdefABCDEF0123456789XYZ now", "sk-abcdefABCDEF0123456789XYZ"},
 		{"anthropic key", "key sk-ant-api03-aaaaaaaaaaaaaaaaaaaa end", "sk-ant-api03-aaaaaaaaaaaaaaaaaaaa"},
 		{"google key", "AIzaSyA1234567890abcdefghijklmnop here", "AIzaSyA1234567890abcdefghijklmnop"},

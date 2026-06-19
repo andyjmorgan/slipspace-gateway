@@ -8,7 +8,7 @@ import tailwindcss from "@tailwindcss/vite"
 // (internal/arbiter/webdist). Unlike the gateway admin SPA (served under
 // /admin), the telemetry service serves its console + API at the listener
 // root, so base is "/". `npm run build:telemetry` invokes this config.
-const telemetryURL = process.env.SLUICE_TELEMETRY_URL ?? "http://localhost:8686"
+const telemetryURL = process.env.SLIPSPACE_TELEMETRY_URL ?? "http://localhost:8686"
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

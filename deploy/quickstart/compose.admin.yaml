@@ -4,11 +4,11 @@
 #   docker compose -f compose.admin.yaml up -d --wait
 #
 # Data plane:    http://localhost:8585   (point your SDK base URL here)
-# Admin console: http://localhost:8081   (login: admin / $SLUICE_ADMIN_PASSWORD)
+# Admin console: http://localhost:8081   (login: admin / $SLIPSPACE_ADMIN_PASSWORD)
 #
 # Pulls published images from GHCR — no source checkout or build toolchain
 # needed. See README.md for the full guide.
-name: sluice-quickstart
+name: slipspace-quickstart
 
 services:
   # Renders policy.yaml from the template (substituting the .env credentials)
@@ -19,7 +19,7 @@ services:
     env_file: .env
     volumes:
       - ./config:/in:ro
-      - sluice-config:/out
+      - slipspace-config:/out
     command:
       - sh
       - -c
@@ -29,32 +29,32 @@ services:
         rm -f /out/*.yaml
         cp "/in/$${PROVIDERS_FILE:-providers.yaml}" /out/providers.yaml
         cp /in/admin.yaml /out/admin.yaml
-        envsubst '$$OPENAI_API_KEY $$ANTHROPIC_API_KEY $$GEMINI_API_KEY $$SLUICE_CLIENT_API_KEY' \
+        envsubst '$$OPENAI_API_KEY $$ANTHROPIC_API_KEY $$GEMINI_API_KEY $$SLIPSPACE_CLIENT_API_KEY' \
           < /in/policy.template.yaml > /out/policy.yaml
-        echo "rendered /etc/sluice: $$(ls /out)"
+        echo "rendered /etc/slipspace: $$(ls /out)"
 
   gateway:
-    image: ghcr.io/andyjmorgan/slipspace-gateway:${SLUICE_IMAGE_TAG:-latest}
+    image: ghcr.io/andyjmorgan/slipspace-gateway:${SLIPSPACE_IMAGE_TAG:-latest}
     env_file: .env
     environment:
-      SLUICE_CONFIG_DIR: /etc/sluice
-      SLUICE_HTTP_BIND: 0.0.0.0:8585
-      SLUICE_SPOOL_ROOT: /var/lib/sluice/spool
-      SLUICE_LOG_FORMAT: json
-      SLUICE_LOG_LEVEL: ${SLUICE_LOG_LEVEL:-info}
+      SLIPSPACE_CONFIG_DIR: /etc/slipspace
+      SLIPSPACE_HTTP_BIND: 0.0.0.0:8585
+      SLIPSPACE_SPOOL_ROOT: /var/lib/slipspace/spool
+      SLIPSPACE_LOG_FORMAT: json
+      SLIPSPACE_LOG_LEVEL: ${SLIPSPACE_LOG_LEVEL:-info}
       # Wins over the placeholder in admin.yaml.
-      SLUICE_ADMIN_PASSWORD: ${SLUICE_ADMIN_PASSWORD:-sluice-gateway}
+      SLIPSPACE_ADMIN_PASSWORD: ${SLIPSPACE_ADMIN_PASSWORD:-slipspace-gateway}
     ports:
       - "8585:8585" # data plane
       - "8081:8081" # admin console (SPA + /api/v1)
     volumes:
-      - sluice-config:/etc/sluice:ro
-      - sluice-spool:/var/lib/sluice/spool
+      - slipspace-config:/etc/slipspace:ro
+      - slipspace-spool:/var/lib/slipspace/spool
     depends_on:
       init:
         condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
-  sluice-config:
-  sluice-spool:
+  slipspace-config:
+  slipspace-spool:

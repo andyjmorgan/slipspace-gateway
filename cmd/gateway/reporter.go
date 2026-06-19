@@ -104,7 +104,7 @@ type reporterFactory struct {
 	eventLogger otellog.Logger
 
 	// captureContent gates emission of the bounded prompt/response content
-	// on the operation-details event (SLUICE_OTEL_CAPTURE_CONTENT). Off by
+	// on the operation-details event (SLIPSPACE_OTEL_CAPTURE_CONTENT). Off by
 	// default — content stays in the connector spool (invariant #4).
 	captureContent bool
 
@@ -463,7 +463,7 @@ func (r *reporterRun) recordPerRequestMetrics(ctx context.Context, ev events.Req
 	}
 	if r.factory.meters.ConfigHitsTotal != nil && r.configuration != "" {
 		r.factory.meters.ConfigHitsTotal.Add(ctx, 1, metric.WithAttributes(
-			attribute.String(observability.AttrSluiceConfiguration, r.configuration),
+			attribute.String(observability.AttrSlipSpaceConfiguration, r.configuration),
 		))
 	}
 	r.recordUnmappedFields(ctx, ev)
@@ -523,11 +523,11 @@ func (r *reporterRun) emitUnmappedFields(ctx context.Context, counter metric.Int
 	}
 	base := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
-		attribute.String(observability.AttrSluiceProtocol, r.protocol),
-		attribute.String(observability.AttrSluiceUnmappedDirection, direction),
+		attribute.String(observability.AttrSlipSpaceProtocol, r.protocol),
+		attribute.String(observability.AttrSlipSpaceUnmappedDirection, direction),
 	}
 	for _, f := range fields {
-		counter.Add(ctx, 1, metric.WithAttributes(append(base[:len(base):len(base)], attribute.String(observability.AttrSluiceUnmappedField, f))...))
+		counter.Add(ctx, 1, metric.WithAttributes(append(base[:len(base):len(base)], attribute.String(observability.AttrSlipSpaceUnmappedField, f))...))
 	}
 	observability.FromContext(ctx).Warn("unmapped provider fields detected",
 		"direction", direction,
@@ -800,7 +800,7 @@ func (r *reporterRun) recordRuleFired(ctx context.Context, matches []events.Rule
 	for _, m := range matches {
 		r.factory.meters.RuleFiredTotal.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("rule_name", m.RuleName),
-			attribute.String(observability.AttrSluiceConfiguration, r.configuration),
+			attribute.String(observability.AttrSlipSpaceConfiguration, r.configuration),
 		))
 	}
 }
@@ -983,7 +983,7 @@ func (r *reporterRun) populateTags(ctx context.Context, ev *events.Request) {
 	for _, tag := range state.Tags {
 		r.factory.meters.TagsAppliedTotal.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("tag", tag),
-			attribute.String(observability.AttrSluiceConfiguration, r.configuration),
+			attribute.String(observability.AttrSlipSpaceConfiguration, r.configuration),
 		))
 	}
 }
@@ -1071,7 +1071,7 @@ func (r *reporterRun) providerEndpointModelAttrs() metric.MeasurementOption {
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
 		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(r.model)),
 		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForProtocol(r.protocol)),
-		attribute.String(observability.AttrSluiceProtocol, r.protocol),
+		attribute.String(observability.AttrSlipSpaceProtocol, r.protocol),
 	}
 	return metric.WithAttributes(append(attrs, r.serverAttrs()...)...)
 }
@@ -1085,7 +1085,7 @@ func (r *reporterRun) streamingMetricAttrs() metric.MeasurementOption {
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
 		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(r.model)),
 		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForProtocol(r.protocol)),
-		attribute.String(observability.AttrSluiceProtocol, r.protocol),
+		attribute.String(observability.AttrSlipSpaceProtocol, r.protocol),
 	}
 	if r.respModel != "" {
 		attrs = append(attrs, attribute.String(observability.AttrGenAIResponseModel, sanitiseModelLabel(r.respModel)))
@@ -1165,7 +1165,7 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 		attribute.Int(observability.AttrHTTPResponseStatusCode, ev.StatusCode),
 	}
 	attrs = append(attrs, r.serverAttrs()...)
-	attrs = r.appendSluiceFactAttrs(attrs, ev, matches)
+	attrs = r.appendSlipSpaceFactAttrs(attrs, ev, matches)
 	// gen_ai.request.stream is conditionally required iff the request is
 	// streaming; gen_ai.response.time_to_first_chunk is the streaming-only
 	// span companion to the TTFC metric.
@@ -1176,16 +1176,16 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 		}
 	}
 	if ev.CorrelationID != "" {
-		attrs = append(attrs, attribute.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceCorrelationID, ev.CorrelationID))
 	}
 	if r.conversationID != "" {
 		attrs = append(attrs, attribute.String(observability.AttrGenAIConversationID, r.conversationID))
 	}
 	if r.sessionID != "" {
-		attrs = append(attrs, attribute.String(observability.AttrSluiceSessionID, r.sessionID))
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceSessionID, r.sessionID))
 	}
 	if r.parentConversationID != "" {
-		attrs = append(attrs, attribute.String(observability.AttrSluiceParentConversationID, r.parentConversationID))
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceParentConversationID, r.parentConversationID))
 	}
 	if r.agentID != "" {
 		attrs = append(attrs, attribute.String(observability.AttrGenAIAgentID, r.agentID))
@@ -1249,7 +1249,7 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 	return parentCtx
 }
 
-// appendSluiceFactAttrs adds the bounded set of gateway facts the central
+// appendSlipSpaceFactAttrs adds the bounded set of gateway facts the central
 // telemetry ingest reads off the span to fill its request_events
 // gen_ai-owned columns: the resolved configuration, the precise protocol, the
 // inbound method, the api-key name, the upstream status, the post-rule tag
@@ -1258,27 +1258,27 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 // span stays sparse for requests that bypassed rules / carried no key name.
 // Names/scalars only — the full rule chain (actions, termination) stays on the
 // Record (invariant #4).
-func (r *reporterRun) appendSluiceFactAttrs(attrs []attribute.KeyValue, ev events.Request, matches []events.RuleMatched) []attribute.KeyValue {
+func (r *reporterRun) appendSlipSpaceFactAttrs(attrs []attribute.KeyValue, ev events.Request, matches []events.RuleMatched) []attribute.KeyValue {
 	if r.configuration != "" {
-		attrs = append(attrs, attribute.String(observability.AttrSluiceConfiguration, r.configuration))
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceConfiguration, r.configuration))
 	}
 	if ev.Protocol != "" {
-		attrs = append(attrs, attribute.String(observability.AttrSluiceProtocol, ev.Protocol))
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceProtocol, ev.Protocol))
 	}
 	if ev.Method != "" {
-		attrs = append(attrs, attribute.String(observability.AttrSluiceMethod, ev.Method))
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceMethod, ev.Method))
 	}
 	if r.apiKeyName != "" {
-		attrs = append(attrs, attribute.String(observability.AttrSluiceAPIKeyName, r.apiKeyName))
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceAPIKeyName, r.apiKeyName))
 	}
 	if ev.StatusCode != 0 {
-		attrs = append(attrs, attribute.Int(observability.AttrSluiceUpstreamStatus, ev.StatusCode))
+		attrs = append(attrs, attribute.Int(observability.AttrSlipSpaceUpstreamStatus, ev.StatusCode))
 	}
 	if len(ev.Tags) > 0 {
-		attrs = append(attrs, attribute.StringSlice(observability.AttrSluiceTags, ev.Tags))
+		attrs = append(attrs, attribute.StringSlice(observability.AttrSlipSpaceTags, ev.Tags))
 	}
 	if names := ruleNames(matches); len(names) > 0 {
-		attrs = append(attrs, attribute.StringSlice(observability.AttrSluiceRulesFired, names))
+		attrs = append(attrs, attribute.StringSlice(observability.AttrSlipSpaceRulesFired, names))
 	}
 	return attrs
 }
@@ -1310,8 +1310,8 @@ func (r *reporterRun) emitAttemptSpan(ctx context.Context, op, model string, a e
 		attribute.String(observability.AttrGenAIOperationName, op),
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(r.provider)),
 		attribute.String(observability.AttrGenAIRequestModel, model),
-		attribute.String(observability.AttrSluiceResilienceTarget, a.Target),
-		attribute.String(observability.AttrSluiceResilienceOutcome, a.Outcome),
+		attribute.String(observability.AttrSlipSpaceResilienceTarget, a.Target),
+		attribute.String(observability.AttrSlipSpaceResilienceOutcome, a.Outcome),
 	}
 	if a.StatusCode != 0 {
 		attrs = append(attrs, attribute.Int(observability.AttrHTTPResponseStatusCode, a.StatusCode))
@@ -1371,7 +1371,7 @@ func (r *reporterRun) emitEvents(ctx context.Context, ev events.Request) {
 			otellog.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),
 		)
 		if ev.CorrelationID != "" {
-			exc.AddAttributes(otellog.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
+			exc.AddAttributes(otellog.String(observability.AttrSlipSpaceCorrelationID, ev.CorrelationID))
 		}
 		r.factory.eventLogger.Emit(ctx, exc)
 	}
@@ -1392,24 +1392,24 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 		otellog.String(observability.AttrGenAIOperationName, op),
 		otellog.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),
 		otellog.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(ev.Model)),
-		otellog.String(observability.AttrSluiceProtocol, ev.Protocol),
-		otellog.String(observability.AttrSluiceConfiguration, r.configuration),
+		otellog.String(observability.AttrSlipSpaceProtocol, ev.Protocol),
+		otellog.String(observability.AttrSlipSpaceConfiguration, r.configuration),
 		otellog.Int(observability.AttrHTTPResponseStatusCode, ev.StatusCode),
 	}
 	if r.respModel != "" {
 		attrs = append(attrs, otellog.String(observability.AttrGenAIResponseModel, sanitiseModelLabel(r.respModel)))
 	}
 	if ev.CorrelationID != "" {
-		attrs = append(attrs, otellog.String(observability.AttrSluiceCorrelationID, ev.CorrelationID))
+		attrs = append(attrs, otellog.String(observability.AttrSlipSpaceCorrelationID, ev.CorrelationID))
 	}
 	if r.conversationID != "" {
 		attrs = append(attrs, otellog.String(observability.AttrGenAIConversationID, r.conversationID))
 	}
 	if r.sessionID != "" {
-		attrs = append(attrs, otellog.String(observability.AttrSluiceSessionID, r.sessionID))
+		attrs = append(attrs, otellog.String(observability.AttrSlipSpaceSessionID, r.sessionID))
 	}
 	if r.parentConversationID != "" {
-		attrs = append(attrs, otellog.String(observability.AttrSluiceParentConversationID, r.parentConversationID))
+		attrs = append(attrs, otellog.String(observability.AttrSlipSpaceParentConversationID, r.parentConversationID))
 	}
 	if r.agentID != "" {
 		attrs = append(attrs, otellog.String(observability.AttrGenAIAgentID, r.agentID))
@@ -1998,7 +1998,7 @@ func jsonBodyOrEscaped(b []byte) json.RawMessage {
 	return json.RawMessage(encoded)
 }
 
-// requestDimensionAttrs builds the gen_ai + sluice dimension attributes
+// requestDimensionAttrs builds the gen_ai + slipspace dimension attributes
 // shared by every per-request instrument: gen_ai.provider.name (mapped to
 // the spec enum value), request model, the coarse gen_ai.operation.name,
 // the precise slipspace.protocol route, the resolved configuration, and the
@@ -2009,8 +2009,8 @@ func (r *reporterRun) requestDimensionAttrs(provider, protocol, model, configura
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(provider)),
 		attribute.String(observability.AttrGenAIRequestModel, sanitiseModelLabel(model)),
 		attribute.String(observability.AttrGenAIOperationName, observability.OperationNameForProtocol(protocol)),
-		attribute.String(observability.AttrSluiceProtocol, protocol),
-		attribute.String(observability.AttrSluiceConfiguration, configuration),
+		attribute.String(observability.AttrSlipSpaceProtocol, protocol),
+		attribute.String(observability.AttrSlipSpaceConfiguration, configuration),
 	}
 	// gen_ai.response.model is Recommended on the client metrics; emitted
 	// when the response carried a model (captured in OnComplete before the

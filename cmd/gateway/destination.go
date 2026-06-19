@@ -87,7 +87,7 @@ func providerSwitchActions(provider, alias string) []contractsrules.Action {
 //
 //	changeApiKey literal override → mint the override key with the post-rule
 //	    provider's header format; drop every other credential header.
-//	changeApiKey UseSluiceKey override → forward the inbound Authorization
+//	changeApiKey UseSlipSpaceKey override → forward the inbound Authorization
 //	    verbatim, stripping nothing (passthrough-style on a managed config).
 //	passthrough mode → forward the inbound Authorization verbatim.
 //	managed mode, credential non-empty → set target.Auth header (or the
@@ -159,7 +159,7 @@ func buildDestination(
 //
 //	override != nil && non-empty → mint the literal key with the post-rule
 //	    provider's header format and drop every other credential header.
-//	override != nil && empty (UseSluiceKey sentinel) → forward the inbound
+//	override != nil && empty (UseSlipSpaceKey sentinel) → forward the inbound
 //	    Authorization verbatim; strip nothing.
 //	override nil, passthrough mode → forward the inbound Authorization verbatim.
 //	override nil, managed mode, credential non-empty → mint target.Credential,
@@ -186,7 +186,7 @@ func resolveCredentialHeaders(
 			}
 		}
 	case override != nil:
-		// changeApiKey UseSluiceKey sentinel (empty string): forward the
+		// changeApiKey UseSlipSpaceKey sentinel (empty string): forward the
 		// inbound bearer verbatim, stripping nothing.
 		if inboundAuthorization != "" {
 			outgoing.Set(auth.HeaderAuthorization, inboundAuthorization)

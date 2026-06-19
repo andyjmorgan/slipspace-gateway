@@ -46,15 +46,15 @@ const (
 	attrEnduserID           = "enduser.id"
 	attrRequestStream       = "gen_ai.request.stream"
 
-	// attrSluiceSessionID is the session bundle root (the gateway's own
+	// attrSlipSpaceSessionID is the session bundle root (the gateway's own
 	// attribute, since the semconv has no session-vs-thread split). It projects
 	// to session_id; gen_ai.conversation.id is the fallback for spans predating
 	// it (where conversation == session for the main agent).
-	attrSluiceSessionID = "slipspace.session_id"
+	attrSlipSpaceSessionID = "slipspace.session_id"
 
-	// attrSluiceParentConversationID is the parent of a subagent thread — the
+	// attrSlipSpaceParentConversationID is the parent of a subagent thread — the
 	// hierarchy edge with no semconv home. Projects to parent_conversation_id.
-	attrSluiceParentConversationID = "slipspace.parent_conversation_id"
+	attrSlipSpaceParentConversationID = "slipspace.parent_conversation_id"
 
 	// Gateway facts the gateway now emits on the span (relaxed channel boundary).
 	// These are the EXACT string keys the destination/reporter writes — the
@@ -63,10 +63,10 @@ const (
 	// the blob under their own keys (read back via store.SpanFields), so they
 	// need no dedicated const here; tags / rules_fired are normalised to JSON
 	// arrays for the GIN filters.
-	attrSluiceConfiguration = "slipspace.configuration"
-	attrSluiceProtocol      = "slipspace.protocol"
-	attrSluiceTags          = "slipspace.tags"
-	attrSluiceRulesFired    = "slipspace.rules_fired"
+	attrSlipSpaceConfiguration = "slipspace.configuration"
+	attrSlipSpaceProtocol      = "slipspace.protocol"
+	attrSlipSpaceTags          = "slipspace.tags"
+	attrSlipSpaceRulesFired    = "slipspace.rules_fired"
 
 	// attrResourceGatewayID is the resource attribute the gateway id is lifted
 	// from; folded into span_event (no promoted column unless a filter needs it).
@@ -109,19 +109,19 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 	return store.RequestEvent{
 		CorrelationID:        corr,
 		ObservedAt:           spanStart(span),
-		SessionID:            firstNonEmpty(strAttr(attrs, attrSluiceSessionID), strAttr(attrs, attrConversationID)),
+		SessionID:            firstNonEmpty(strAttr(attrs, attrSlipSpaceSessionID), strAttr(attrs, attrConversationID)),
 		ConversationID:       strAttr(attrs, attrConversationID),
-		ParentConversationID: strAttr(attrs, attrSluiceParentConversationID),
+		ParentConversationID: strAttr(attrs, attrSlipSpaceParentConversationID),
 		AgentID:              strAttr(attrs, attrAgentID),
 		UserID:               strAttr(attrs, attrEnduserID),
 		Provider:             strAttr(attrs, attrGenAIProvider),
 		Model:                strAttr(attrs, attrModel),
-		Configuration:        strAttr(attrs, attrSluiceConfiguration),
-		Protocol:             strAttr(attrs, attrSluiceProtocol),
+		Configuration:        strAttr(attrs, attrSlipSpaceConfiguration),
+		Protocol:             strAttr(attrs, attrSlipSpaceProtocol),
 		StatusCode:           int(intAttr(attrs, attrStatusCode)),
 		TokensIn:             intAttr(attrs, attrInputTokens),
 		TokensOut:            intAttr(attrs, attrOutputTokens),
-		Tags:                 strSliceAttr(attrs, attrSluiceTags),
+		Tags:                 strSliceAttr(attrs, attrSlipSpaceTags),
 		SpanEvent:            buildSpanEvent(attrs, span, contentMaxBytes),
 	}, true
 }
@@ -140,7 +140,7 @@ func buildSpanEvent(attrs map[string]*commonpb.AnyValue, span *tracepb.Span, con
 		// reader (GIN indexes, facets, EventFilter, store.SpanFields) consumes.
 		// Skip the verbatim raw attrs here so the blob carries each value once
 		// under its canonical bare key, not a byte-identical duplicate.
-		if k == attrSluiceTags || k == attrSluiceRulesFired {
+		if k == attrSlipSpaceTags || k == attrSlipSpaceRulesFired {
 			continue
 		}
 		out[k] = anyValueNative(v)
@@ -153,10 +153,10 @@ func buildSpanEvent(attrs map[string]*commonpb.AnyValue, span *tracepb.Span, con
 	}
 	// tags / rules_fired are emitted as string arrays; normalise to []string so
 	// the GIN @> filter and jsonb_array_elements_text facet see a JSON array.
-	if tags := strSliceAttr(attrs, attrSluiceTags); tags != nil {
+	if tags := strSliceAttr(attrs, attrSlipSpaceTags); tags != nil {
 		out[keyTags] = tags
 	}
-	if rules := strSliceAttr(attrs, attrSluiceRulesFired); rules != nil {
+	if rules := strSliceAttr(attrs, attrSlipSpaceRulesFired); rules != nil {
 		out[keyRules] = rules
 	}
 	if c := captureContent(span, contentMaxBytes); c != nil {

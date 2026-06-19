@@ -74,7 +74,7 @@ type MuxOptions struct {
 	// LiveFeed is the in-process ring of completed requests that backs
 	// the /api/v1/messages/* endpoints. Nil disables the endpoints
 	// (they return 503), letting the gateway boot cleanly when
-	// SLUICE_ADMIN_LIVE_FEED_CAPACITY=0.
+	// SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0.
 	LiveFeed *livefeed.Ring
 
 	// BodyStore is the byte-bounded LRU of per-event captured bodies
@@ -89,7 +89,7 @@ type MuxOptions struct {
 	// renders that as an inert badge.
 	BreakerStates CircuitBreakerStateSource
 
-	// ConfigDir is the SLUICE_CONFIG_DIR path the gateway loaded its
+	// ConfigDir is the SLIPSPACE_CONFIG_DIR path the gateway loaded its
 	// YAML from. Used by the redacted-config-export endpoints to
 	// enumerate and read the same files via config.ListConfigFiles.
 	// Empty disables the export endpoints (503).
@@ -105,7 +105,7 @@ type MuxOptions struct {
 // Prefix is the URL path prefix the console mounts under. Both the
 // SPA and the control-plane API live below this prefix so the gateway
 // can sit behind a shared ingress on the same host as the data plane
-// (e.g. sluice.donkeywork.dev/admin/) without any path stripping
+// (e.g. slipspace.donkeywork.dev/admin/) without any path stripping
 // on the ingress side — keeping the routing rules dumb.
 const Prefix = "/admin"
 

@@ -68,8 +68,8 @@ func TestHTTPHandler_HappyPathPassthrough(t *testing.T) {
 		if ar.Mode != ModePassthrough {
 			t.Fatalf("mode = %q want passthrough", ar.Mode)
 		}
-		// Passthrough drops both selector headers (X-Sluice-Identity +
-		// X-Sluice-Configuration); it must NOT inject any
+		// Passthrough drops both selector headers (X-Slipspace-Identity +
+		// X-Slipspace-Configuration); it must NOT inject any
 		// credential-bearing header.
 		if !containsAll(ar.DropHeaders, HeaderIdentity, HeaderConfiguration) {
 			t.Fatalf("passthrough DropHeaders must include both selectors, got %v", ar.DropHeaders)
@@ -267,7 +267,7 @@ func TestHTTPHandler_LegacyConfigurationHeaderLogsDeprecation(t *testing.T) {
 	if !strings.Contains(out, "deprecated header in use") {
 		t.Fatalf("legacy passthrough must emit deprecation warning, logs:\n%s", out)
 	}
-	if !strings.Contains(out, `"replacement":"X-Sluice-Identity"`) {
+	if !strings.Contains(out, `"replacement":"X-Slipspace-Identity"`) {
 		t.Fatalf("deprecation log must name the replacement header, logs:\n%s", out)
 	}
 }

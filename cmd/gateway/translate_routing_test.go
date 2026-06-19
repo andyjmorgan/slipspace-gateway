@@ -209,8 +209,8 @@ func TestGateway_TranslateRoundTrip(t *testing.T) {
 	}
 
 	// The dropped feature is reported on the lossy header (enabled in tests).
-	if lossy := resp.Header.Get("X-Sluice-Translation-Lossy"); !strings.Contains(lossy, "top_k") {
-		t.Errorf("X-Sluice-Translation-Lossy = %q, want it to list top_k", lossy)
+	if lossy := resp.Header.Get("X-Slipspace-Translation-Lossy"); !strings.Contains(lossy, "top_k") {
+		t.Errorf("X-Slipspace-Translation-Lossy = %q, want it to list top_k", lossy)
 	}
 
 	// The upstream must have received an OpenAI Chat request (translated from

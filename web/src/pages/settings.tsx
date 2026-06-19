@@ -164,13 +164,13 @@ function FilesTabs({ files }: { files: ConfigExportFile[] }) {
 }
 
 // parseFilename extracts the filename from a Content-Disposition header.
-// Falls back to "sluice-config.zip" when the header is absent or malformed —
+// Falls back to "slipspace-config.zip" when the header is absent or malformed —
 // the server always sets it on the happy path, but defending against a
 // reverse-proxy stripping headers costs little.
 function parseFilename(disposition: string | null): string {
-  if (!disposition) return "sluice-config.zip"
+  if (!disposition) return "slipspace-config.zip"
   const match = /filename="?([^";]+)"?/.exec(disposition)
-  return match ? match[1] : "sluice-config.zip"
+  return match ? match[1] : "slipspace-config.zip"
 }
 
 function triggerDownload(blob: Blob, filename: string) {

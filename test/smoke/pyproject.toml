@@ -1,7 +1,7 @@
 [project]
-name = "sluice-gateway-smoke"
+name = "slipspace-gateway-smoke"
 version = "0.0.1"
-description = "Post-deploy smoke suite that drives the real OpenAI / Anthropic / Gemini SDKs against a live sluice-gateway."
+description = "Post-deploy smoke suite that drives the real OpenAI / Anthropic / Gemini SDKs against a live slipspace-gateway."
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.50.0",

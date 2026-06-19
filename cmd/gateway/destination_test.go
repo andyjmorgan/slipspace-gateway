@@ -99,7 +99,7 @@ func TestBuildDestination_PathAndQuery(t *testing.T) {
 // TestBuildDestination_ChangeApiKeyOverride covers the wired changeApiKey
 // action: a literal APIKey override is minted with the post-rule provider's
 // header format (openai → Bearer Authorization, anthropic → x-api-key, gemini →
-// x-goog-api-key), and the UseSluiceKey sentinel (empty-string override)
+// x-goog-api-key), and the UseSlipSpaceKey sentinel (empty-string override)
 // forwards the inbound Authorization verbatim without stripping it.
 func TestBuildDestination_ChangeApiKeyOverride(t *testing.T) {
 	override := "sk-override" //nolint:gosec // synthetic test fixture, not a real credential
@@ -168,7 +168,7 @@ func TestBuildDestination_ChangeApiKeyOverride(t *testing.T) {
 		}
 	})
 
-	t.Run("UseSluiceKey sentinel forwards inbound authorization", func(t *testing.T) {
+	t.Run("UseSlipSpaceKey sentinel forwards inbound authorization", func(t *testing.T) {
 		empty := ""
 		target := selection.Target{ //nolint:gosec // synthetic test fixture
 			Provider:   "anthropic",
@@ -186,7 +186,7 @@ func TestBuildDestination_ChangeApiKeyOverride(t *testing.T) {
 		}
 		// The managed credential must NOT be minted, and nothing is stripped.
 		if got := dest.OutgoingHeaders.Get("x-api-key"); got != "" {
-			t.Errorf("x-api-key = %q, want unset under UseSluiceKey", got)
+			t.Errorf("x-api-key = %q, want unset under UseSlipSpaceKey", got)
 		}
 		if contains(dest.DropHeaders, "Authorization") {
 			t.Errorf("DropHeaders = %v, want Authorization NOT stripped", dest.DropHeaders)

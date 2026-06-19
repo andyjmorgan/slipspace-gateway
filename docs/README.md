@@ -19,7 +19,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | [Quickstart compose bundle](../deploy/quickstart/) | Turnkey `docker compose` stacks from the published images — gateway + console, gateway only, gateway + Arbiter — configured from `.env` |
 | [Configuration model](configuration-model.md) | YAML loader (every `*.yaml` merged by top-level key), top-level blocks, configurations + bindings + api_keys |
 | [Providers](providers.md) | `providers` block schema — base URL, per-protocol auth, passthrough families, the OpenAI-compat surface |
-| [Routing](routing.md) | How inbound paths map to a protocol and select a target via bindings, passthrough matching, X-Sluice headers |
+| [Routing](routing.md) | How inbound paths map to a protocol and select a target via bindings, passthrough matching, X-SlipSpace headers |
 | [Authentication](auth.md) | Managed vs passthrough modes, header discovery, upstream credential resolution |
 | [Rules](rules.md) | Rules engine + every condition type + behavior=continue/exit |
 | [Actions](actions.md) | Every rule action — `changeProvider`, `setHeader`, `useResiliencePolicy`, `returnStatusCode`, ... |
@@ -29,7 +29,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | [Connector bindings](connector-bindings.md) | Per-configuration sampling, filter, body cap, oversize behaviour |
 | [Spool](spool.md) | Disk-backed buffer between OnComplete and the connector destinations — layout, lifecycle, loss policy |
 | [Admin console](admin-console.md) | Enabling, password, every API route, every SPA page, live messages, body capture |
-| [Environment variables](environment-variables.md) | Every `SLUICE_*` env var with default, type, validation, effect |
+| [Environment variables](environment-variables.md) | Every `SLIPSPACE_*` env var with default, type, validation, effect |
 | [Deployment](deployment.md) | Topology, container image, K8s shape, multi-pod considerations, graceful drain |
 | [Arbiter](arbiter.md) | The optional central `cmd/arbiter` service — two-listener topology, YAML config, deploy, shutdown, HMAC trust, invariant #4 compliance |
 | [Arbiter API](arbiter-api.md) | Console query API — dashboard, messages, events, sessions, facets, keyset pagination |
@@ -41,7 +41,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | Doc | What it covers |
 |---|---|
 | [Local development](local-development.md) | Every `make` target, dev compose, `config-dev/` bundle, the five test layers |
-| [Auxiliary binaries](auxiliary-binaries.md) | `sluice-cli`, `sluice-mockllm` — flags, subcommands, when to use each |
+| [Auxiliary binaries](auxiliary-binaries.md) | `slipspace-cli`, `slipspace-mockllm` — flags, subcommands, when to use each |
 | [Models](models.md) | The shared `models/` package — `DynamicProperties`, `PolymorphicRegistry`, unknown-field round-trip (invariant #1) |
 | [Provider models](provider-models.md) | The `protocols/` wire types per provider — OpenAI audio/file/refusal/Responses, Anthropic thinking blocks + signatures, Gemini thinking + grounding |
 | [Pipeline](pipeline.md) | The typed-message middleware pipeline — `Message` sum type, `Middleware`/`Chain`, body-capture + re-marshal stages, selection internals |
@@ -67,8 +67,8 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | Load-balance across two providers | [Resilience → 30-second weighted load-balance](resilience.md#30-second-weighted-load-balance) |
 | Trip the circuit breaker on a noisy provider | [Resilience → Tripping the breaker](resilience.md#tripping-the-breaker) |
 | Enable the admin console | [Admin console → Enabling the console](admin-console.md#enabling-the-console), [Admin console → Setting the password](admin-console.md#setting-the-password) |
-| Generate an API key | [Auxiliary binaries → `sluice-cli` → `key new`](auxiliary-binaries.md#key-new) |
-| Validate a YAML bundle before deploy | [Auxiliary binaries → `sluice-cli` → `config validate`](auxiliary-binaries.md#config-validate) |
+| Generate an API key | [Auxiliary binaries → `slipspace-cli` → `key new`](auxiliary-binaries.md#key-new) |
+| Validate a YAML bundle before deploy | [Auxiliary binaries → `slipspace-cli` → `config validate`](auxiliary-binaries.md#config-validate) |
 | Run the smoke suite against a live deploy | [Local development → Testing layers → Smoke](local-development.md#testing-layers), [Deployment → Smoke tests](deployment.md#smoke-tests-against-a-live-deploy) |
 | Add a tag to every matching request | [Actions → `addTag`](actions.md#addtag), [Rules → `tag` condition](rules.md#tag) |
 | Use a client's own upstream token (passthrough) | [Authentication → Passthrough mode](auth.md#passthrough-mode) |

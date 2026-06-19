@@ -48,7 +48,7 @@ func TestExtract_GeminiContent_NonStreamWithCached(t *testing.T) {
 
 // TestExtract_GeminiContent_Stream covers a synthetic SSE stream
 // (matching the alt=sse wire shape) where usageMetadata appears only
-// on the final chunk. The Sluice gateway does not currently route
+// on the final chunk. The SlipSpace gateway does not currently route
 // :streamGenerateContent — this case exists so the extractor is
 // ready the moment that route is added (separate, in-flight gap).
 func TestExtract_GeminiContent_Stream(t *testing.T) {

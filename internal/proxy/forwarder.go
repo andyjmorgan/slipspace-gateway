@@ -1,5 +1,5 @@
 // Package proxy is the thin wrapper around net/http/httputil.ReverseProxy
-// that gives Sluice gateway-shaped ergonomics: per-destination transport
+// that gives SlipSpace gateway-shaped ergonomics: per-destination transport
 // caches, an Observer seam for telemetry and pipeline integration, and
 // structured handling of upstream/transport errors.
 package proxy
@@ -88,7 +88,7 @@ type Options struct {
 	// Redactor masks credential-bearing headers in the proxy's
 	// debug-level header-trace logs. Nil falls back to a default
 	// Redactor with the built-in substring list (auth / api-key /
-	// token / cookie / secret / sluice-identity). Operator-supplied
+	// token / cookie / secret / slipspace-identity). Operator-supplied
 	// extras flow through here from cmd/gateway at startup.
 	Redactor *headers.Redactor
 
@@ -164,7 +164,7 @@ func New(opts Options) *Forwarder {
 
 // alwaysDropHeaders are headers the gateway never forwards upstream.
 //
-// Authorization and X-Sluice-Configuration carry the gateway's own auth
+// Authorization and X-Slipspace-Configuration carry the gateway's own auth
 // state and must not propagate; the auth middleware re-injects the
 // upstream credential via Destination.OutgoingHeaders for managed mode,
 // and the cmd/gateway destination builder re-adds the inbound
@@ -185,8 +185,8 @@ func New(opts Options) *Forwarder {
 // without per-hop decompression logic. The .NET predecessor stripped
 // Accept-Encoding for the same reason.
 var alwaysDropHeaders = []string{
-	"X-Sluice-Configuration",
-	"X-Sluice-Identity",
+	"X-Slipspace-Configuration",
+	"X-Slipspace-Identity",
 	"Authorization",
 	"Origin",
 	"Referer",

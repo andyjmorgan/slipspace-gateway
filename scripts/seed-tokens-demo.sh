@@ -24,7 +24,7 @@ set -euo pipefail
 
 GATEWAY="${GATEWAY:-http://127.0.0.1:8585}"
 MOCKLLM="${MOCKLLM:-http://127.0.0.1:5555}"
-API_KEY="${SLUICE_DEV_API_KEY:-sk_dev_local_development_only_not_for_production}"
+API_KEY="${SLIPSPACE_DEV_API_KEY:-sk_dev_local_development_only_not_for_production}"
 ITERATIONS="${ITERATIONS:-1}"
 
 if ! command -v jq >/dev/null 2>&1; then
