@@ -3,6 +3,7 @@ package genaiattr
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/sseframe"
@@ -802,8 +803,11 @@ func (l *anthropicBlockList) parts() []Part {
 
 func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 	var a ResponseAttrs
-	var out strings.Builder
-	var toolParts []Part
+	b := &geminiPartBuilder{}
+	// Grounding metadata rides on the candidate (not on a part) and Gemini
+	// repeats it on later chunks; keep the last non-empty one and synthesise
+	// its server-tool parts after the content parts.
+	var grounding *geminiGrounding
 	for _, f := range frames {
 		var ch struct {
 			ResponseID   string `json:"responseId"`
@@ -811,14 +815,9 @@ func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 			Candidates   []struct {
 				FinishReason string `json:"finishReason"`
 				Content      struct {
-					Parts []struct {
-						Text         string `json:"text"`
-						FunctionCall *struct {
-							Name string          `json:"name"`
-							Args json.RawMessage `json:"args"`
-						} `json:"functionCall"`
-					} `json:"parts"`
+					Parts []json.RawMessage `json:"parts"`
 				} `json:"content"`
+				GroundingMetadata *geminiGrounding `json:"groundingMetadata"`
 			} `json:"candidates"`
 			UsageMetadata *struct {
 				ThoughtsTokenCount int `json:"thoughtsTokenCount"`
@@ -834,18 +833,10 @@ func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 				a.FinishReasons = appendUnique(a.FinishReasons, cand.FinishReason)
 			}
 			for _, p := range cand.Content.Parts {
-				if p.FunctionCall != nil {
-					// Gemini function calls are always client-executed (no
-					// provider-hosted tools in this path).
-					toolParts = append(toolParts, Part{
-						Type:      "tool_call",
-						Name:      p.FunctionCall.Name,
-						Arguments: nonEmptyRaw(p.FunctionCall.Args),
-						Executor:  "client",
-					})
-					continue
-				}
-				out.WriteString(p.Text)
+				b.add(p)
+			}
+			if cand.GroundingMetadata != nil {
+				grounding = cand.GroundingMetadata
 			}
 		}
 		if ch.UsageMetadata != nil && ch.UsageMetadata.ThoughtsTokenCount > 0 {
@@ -853,9 +844,212 @@ func extractGeminiResponse(frames [][]byte) ResponseAttrs {
 			a.ReasoningTokens = &n
 		}
 	}
-	a.OutputText = out.String()
-	a.OutputParts = outputParts(a.OutputText, toolParts)
+	b.flushText()
+	if grounding != nil {
+		b.parts = append(b.parts, grounding.parts()...)
+	}
+	a.OutputText = b.visible.String()
+	a.OutputParts = b.parts
 	return a
+}
+
+// geminiPartBuilder turns a stream of Gemini content parts into bounded span
+// parts, mirroring the Anthropic projection: function calls become
+// client-executed tool_call/tool_call_response, the built-in code-execution
+// tool becomes server-executed tool_call (executableCode) +
+// tool_call_response (codeExecutionResult), thought fragments become
+// reasoning, and any other part kind degrades to a bare typed part so a new
+// Gemini part type stays visible in telemetry rather than vanishing. Adjacent
+// text fragments concatenate into a single text part, and parts keep arrival
+// order (a Gemini stream delivers text as deltas across chunks while non-text
+// parts arrive whole, so processing frames in order preserves the sequence).
+type geminiPartBuilder struct {
+	// parts is the ordered output accumulated so far.
+	parts []Part
+	// pending buffers the current run of plain text until a non-text part (or
+	// the end) flushes it into one text part.
+	pending strings.Builder
+	// visible accumulates every non-thought text fragment for OutputText.
+	visible strings.Builder
+	// codeSeq numbers code-execution calls so each executableCode and its
+	// following codeExecutionResult share a correlating id.
+	codeSeq int
+	// pendingCodeID is the id of the most recent executableCode awaiting its
+	// codeExecutionResult.
+	pendingCodeID string
+}
+
+// flushText emits any buffered plain text as a single text part.
+func (b *geminiPartBuilder) flushText() {
+	if b.pending.Len() > 0 {
+		b.parts = append(b.parts, Part{Type: "text", Content: b.pending.String()})
+		b.pending.Reset()
+	}
+}
+
+// add maps one raw Gemini part to its span part(s).
+func (b *geminiPartBuilder) add(raw json.RawMessage) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil || len(m) == 0 {
+		return
+	}
+	switch {
+	case hasKey(m, "functionCall"):
+		b.flushText()
+		var fc struct {
+			Name string          `json:"name"`
+			Args json.RawMessage `json:"args"`
+		}
+		_ = json.Unmarshal(m["functionCall"], &fc)
+		b.parts = append(b.parts, Part{Type: "tool_call", Name: fc.Name, Arguments: nonEmptyRaw(fc.Args), Executor: "client"})
+	case hasKey(m, "functionResponse"):
+		b.flushText()
+		var fr struct {
+			Name     string          `json:"name"`
+			Response json.RawMessage `json:"response"`
+		}
+		_ = json.Unmarshal(m["functionResponse"], &fr)
+		b.parts = append(b.parts, Part{Type: "tool_call_response", Name: fr.Name, Result: string(nonEmptyRaw(fr.Response)), Executor: "client"})
+	case hasKey(m, "executableCode"):
+		// The code-execution tool runs inside Gemini — model it as a
+		// server-executed tool call carrying the {language,code} object.
+		b.flushText()
+		b.codeSeq++
+		b.pendingCodeID = "code_execution_" + strconv.Itoa(b.codeSeq)
+		b.parts = append(b.parts, Part{Type: "tool_call", ID: b.pendingCodeID, Name: "code_execution", Arguments: nonEmptyRaw(m["executableCode"]), Executor: "server"})
+	case hasKey(m, "codeExecutionResult"):
+		b.flushText()
+		id := b.pendingCodeID
+		if id == "" {
+			b.codeSeq++
+			id = "code_execution_" + strconv.Itoa(b.codeSeq)
+		}
+		b.pendingCodeID = ""
+		var cr struct {
+			Outcome string `json:"outcome"`
+			Output  string `json:"output"`
+		}
+		_ = json.Unmarshal(m["codeExecutionResult"], &cr)
+		b.parts = append(b.parts, Part{Type: "tool_call_response", ID: id, Name: "code_execution", Result: codeExecutionResultText(cr.Outcome, cr.Output), Executor: "server"})
+	case hasKey(m, "text"):
+		var t string
+		_ = json.Unmarshal(m["text"], &t)
+		if isThoughtPart(m) {
+			// A thinking-trace fragment (IncludeThoughts) — surface it as a
+			// reasoning part, never as visible output text.
+			b.flushText()
+			if t != "" {
+				b.parts = append(b.parts, Part{Type: "reasoning", Content: t})
+			}
+			return
+		}
+		b.pending.WriteString(t)
+		b.visible.WriteString(t)
+	default:
+		if kind := geminiUnknownKind(m); kind != "" {
+			b.flushText()
+			b.parts = append(b.parts, Part{Type: kind})
+		}
+	}
+}
+
+// hasKey reports whether m carries a present, non-null value for key k.
+func hasKey(m map[string]json.RawMessage, k string) bool {
+	v, ok := m[k]
+	return ok && len(v) > 0 && string(v) != "null"
+}
+
+// isThoughtPart reports whether a text part is flagged as a thinking trace.
+func isThoughtPart(m map[string]json.RawMessage) bool {
+	v, ok := m["thought"]
+	if !ok {
+		return false
+	}
+	var t bool
+	return json.Unmarshal(v, &t) == nil && t
+}
+
+// geminiUnknownKind returns the discriminator key of an unrecognised part
+// (the sole content key, ignoring the thought/thoughtSignature modifiers that
+// decorate other parts). Empty when the part carries only modifiers.
+func geminiUnknownKind(m map[string]json.RawMessage) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		if k == "thought" || k == "thoughtSignature" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+	return keys[0]
+}
+
+// codeExecutionResultText renders a code-execution outcome into a bounded
+// tool-result string. A non-OK outcome is prefixed so failures stay visible;
+// the full payload rides the connector record.
+func codeExecutionResultText(outcome, output string) string {
+	if outcome != "" && outcome != "OUTCOME_OK" {
+		if output == "" {
+			return outcome
+		}
+		return outcome + ": " + output
+	}
+	return output
+}
+
+// geminiGrounding is the subset of a candidate's Google Search grounding
+// metadata projected into the span. The remainder (searchEntryPoint widget,
+// per-span groundingSupports) has no OTel content-model home and rides the
+// connector record instead.
+type geminiGrounding struct {
+	// WebSearchQueries are the queries the model issued to ground the answer.
+	WebSearchQueries []string `json:"webSearchQueries"`
+	// GroundingChunks are the retrieved web sources the answer drew on.
+	GroundingChunks []struct {
+		Web *struct {
+			URI   string `json:"uri"`
+			Title string `json:"title"`
+		} `json:"web"`
+	} `json:"groundingChunks"`
+}
+
+// parts projects grounding metadata as a server-executed google_search
+// tool_call (the issued queries) paired with a tool_call_response (the
+// retrieved sources), mirroring how the Anthropic path surfaces a
+// provider-hosted web search. Returns nil when neither queries nor chunks
+// are present.
+func (g geminiGrounding) parts() []Part {
+	if len(g.WebSearchQueries) == 0 && len(g.GroundingChunks) == 0 {
+		return nil
+	}
+	args := json.RawMessage(`{}`)
+	if len(g.WebSearchQueries) > 0 {
+		if encoded, err := json.Marshal(map[string][]string{"queries": g.WebSearchQueries}); err == nil {
+			args = encoded
+		}
+	}
+	parts := []Part{{Type: "tool_call", ID: "google_search", Name: "google_search", Arguments: args, Executor: "server"}}
+	if len(g.GroundingChunks) > 0 {
+		var sb strings.Builder
+		for _, c := range g.GroundingChunks {
+			if c.Web == nil {
+				continue
+			}
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(c.Web.Title)
+			if c.Web.URI != "" {
+				sb.WriteString(" — ")
+				sb.WriteString(c.Web.URI)
+			}
+		}
+		parts = append(parts, Part{Type: "tool_call_response", ID: "google_search", Name: "google_search", Result: sb.String(), Executor: "server"})
+	}
+	return parts
 }
 
 func firstNonEmpty(have, candidate string) string {

@@ -149,6 +149,173 @@ func TestExtractResponse_Gemini(t *testing.T) {
 	}
 }
 
+// wantPart asserts a Part's salient fields; empty wants are not checked.
+func wantPart(t *testing.T, got genaiattr.Part, typ, name, executor string) {
+	t.Helper()
+	if got.Type != typ {
+		t.Errorf("part type = %q, want %q", got.Type, typ)
+	}
+	if name != "" && got.Name != name {
+		t.Errorf("part name = %q, want %q", got.Name, name)
+	}
+	if executor != "" && got.Executor != executor {
+		t.Errorf("part executor = %q, want %q", got.Executor, executor)
+	}
+}
+
+func TestExtractResponse_Gemini_CodeExecution(t *testing.T) {
+	t.Parallel()
+	// Non-streaming and streaming must project the built-in code-execution
+	// tool identically: server tool_call (executableCode) paired with a
+	// server tool_call_response (codeExecutionResult), interleaved with text
+	// in arrival order. The visible OutputText excludes the code itself.
+	nonStream := []byte(`{"responseId":"r","candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[` +
+		`{"text":"Let me compute:"},` +
+		`{"executableCode":{"language":"PYTHON","code":"print(1+1)"}},` +
+		`{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"2\n"}},` +
+		`{"text":"The answer is 2."}]}}]}`)
+	stream := []byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Let me compute:\"}]}}]}\n\n" +
+		"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"executableCode\":{\"language\":\"PYTHON\",\"code\":\"print(1+1)\"}}]}}]}\n\n" +
+		"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"codeExecutionResult\":{\"outcome\":\"OUTCOME_OK\",\"output\":\"2\\n\"}}]}}]}\n\n" +
+		"data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"The answer is 2.\"}]}}]}\n\n")
+
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+	}{{"nonstream", nonStream}, {"stream", stream}} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := genaiattr.ExtractResponse("generate_content", tc.raw)
+			if len(got.OutputParts) != 4 {
+				t.Fatalf("output parts = %d (%+v), want 4", len(got.OutputParts), got.OutputParts)
+			}
+			wantPart(t, got.OutputParts[0], "text", "", "")
+			wantPart(t, got.OutputParts[1], "tool_call", "code_execution", "server")
+			wantPart(t, got.OutputParts[2], "tool_call_response", "code_execution", "server")
+			wantPart(t, got.OutputParts[3], "text", "", "")
+			// The call and its result correlate by id.
+			if id := got.OutputParts[1].ID; id == "" || id != got.OutputParts[2].ID {
+				t.Errorf("code-exec call/result ids = %q/%q, want equal non-empty", got.OutputParts[1].ID, got.OutputParts[2].ID)
+			}
+			if !strings.Contains(string(got.OutputParts[1].Arguments), "print(1+1)") {
+				t.Errorf("executableCode args = %s, want the code", got.OutputParts[1].Arguments)
+			}
+			if !strings.Contains(got.OutputParts[2].Result, "2") {
+				t.Errorf("codeExecutionResult result = %q, want output", got.OutputParts[2].Result)
+			}
+			if got.OutputText != "Let me compute:The answer is 2." {
+				t.Errorf("output text = %q, want visible text only (no code)", got.OutputText)
+			}
+		})
+	}
+}
+
+func TestExtractResponse_Gemini_Grounding(t *testing.T) {
+	t.Parallel()
+	// Google Search grounding rides on the candidate; it projects as a
+	// server google_search tool_call (issued queries) + tool_call_response
+	// (retrieved sources). The searchEntryPoint widget has no span home.
+	raw := []byte(`{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"Lando Norris won in 2025."}]},` +
+		`"groundingMetadata":{"webSearchQueries":["F1 2025 champion"],` +
+		`"groundingChunks":[{"web":{"uri":"https://ex.com/a","title":"F1 2025"}}],` +
+		`"searchEntryPoint":{"renderedContent":"<div>widget</div>"}}}]}`)
+	got := genaiattr.ExtractResponse("generate_content", raw)
+	if len(got.OutputParts) != 3 {
+		t.Fatalf("output parts = %d (%+v), want 3", len(got.OutputParts), got.OutputParts)
+	}
+	wantPart(t, got.OutputParts[0], "text", "", "")
+	wantPart(t, got.OutputParts[1], "tool_call", "google_search", "server")
+	wantPart(t, got.OutputParts[2], "tool_call_response", "google_search", "server")
+	if got.OutputParts[1].ID != got.OutputParts[2].ID || got.OutputParts[1].ID == "" {
+		t.Errorf("google_search call/result ids = %q/%q, want equal non-empty", got.OutputParts[1].ID, got.OutputParts[2].ID)
+	}
+	if !strings.Contains(string(got.OutputParts[1].Arguments), "F1 2025 champion") {
+		t.Errorf("google_search args = %s, want the query", got.OutputParts[1].Arguments)
+	}
+	if r := got.OutputParts[2].Result; !strings.Contains(r, "F1 2025") || !strings.Contains(r, "https://ex.com/a") {
+		t.Errorf("google_search result = %q, want title + uri", r)
+	}
+	// The searchEntryPoint widget must not leak into any projected part.
+	for _, p := range got.OutputParts {
+		if strings.Contains(p.Content, "widget") || strings.Contains(p.Result, "widget") || strings.Contains(string(p.Arguments), "widget") {
+			t.Errorf("searchEntryPoint widget leaked into part: %+v", p)
+		}
+	}
+}
+
+func TestExtractResponse_Gemini_ThoughtAndUnknownPart(t *testing.T) {
+	t.Parallel()
+	// A thought-flagged text part becomes a reasoning part (never visible
+	// output); an unrecognised part degrades to a bare typed part so it stays
+	// visible rather than vanishing.
+	raw := []byte(`{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[` +
+		`{"text":"deliberating","thought":true},` +
+		`{"inlineData":{"mimeType":"image/png","data":"AAAA"}},` +
+		`{"text":"Final answer."}]}}]}`)
+	got := genaiattr.ExtractResponse("generate_content", raw)
+	if len(got.OutputParts) != 3 {
+		t.Fatalf("output parts = %d (%+v), want 3", len(got.OutputParts), got.OutputParts)
+	}
+	wantPart(t, got.OutputParts[0], "reasoning", "", "")
+	if got.OutputParts[0].Content != "deliberating" {
+		t.Errorf("reasoning content = %q", got.OutputParts[0].Content)
+	}
+	wantPart(t, got.OutputParts[1], "inlineData", "", "")
+	if got.OutputParts[1].Content != "" {
+		t.Errorf("degraded part leaked inline bytes: %q", got.OutputParts[1].Content)
+	}
+	wantPart(t, got.OutputParts[2], "text", "", "")
+	if got.OutputText != "Final answer." {
+		t.Errorf("output text = %q, want visible text only (no thought)", got.OutputText)
+	}
+}
+
+func TestExtractResponse_Gemini_CodeExecFailureAndEdges(t *testing.T) {
+	t.Parallel()
+	// A failed code execution prefixes the outcome; a functionResponse part in
+	// the model turn projects as a client tool_call_response; a part carrying
+	// only a thoughtSignature modifier (no content key) is dropped silently.
+	raw := []byte(`{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[` +
+		`{"codeExecutionResult":{"outcome":"OUTCOME_FAILED","output":"boom"}},` +
+		`{"functionResponse":{"name":"get_weather","response":{"tempC":17}}},` +
+		`{"thoughtSignature":"sig-only"}]}}]}`)
+	got := genaiattr.ExtractResponse("generate_content", raw)
+	if len(got.OutputParts) != 2 {
+		t.Fatalf("output parts = %d (%+v), want 2 (modifier-only part dropped)", len(got.OutputParts), got.OutputParts)
+	}
+	wantPart(t, got.OutputParts[0], "tool_call_response", "code_execution", "server")
+	if got.OutputParts[0].Result != "OUTCOME_FAILED: boom" {
+		t.Errorf("failed code result = %q, want outcome-prefixed", got.OutputParts[0].Result)
+	}
+	wantPart(t, got.OutputParts[1], "tool_call_response", "get_weather", "client")
+	if !strings.Contains(got.OutputParts[1].Result, "17") {
+		t.Errorf("functionResponse result = %q", got.OutputParts[1].Result)
+	}
+}
+
+func TestExtractResponse_Gemini_GroundingEdges(t *testing.T) {
+	t.Parallel()
+	// Queries-only grounding yields just the call; chunks-only yields a call
+	// with empty args plus the response.
+	queriesOnly := genaiattr.ExtractResponse("generate_content", []byte(
+		`{"candidates":[{"content":{"parts":[{"text":"a"}]},"groundingMetadata":{"webSearchQueries":["q"]}}]}`))
+	if n := len(queriesOnly.OutputParts); n != 2 {
+		t.Fatalf("queries-only parts = %d (%+v), want 2", n, queriesOnly.OutputParts)
+	}
+	wantPart(t, queriesOnly.OutputParts[1], "tool_call", "google_search", "server")
+
+	chunksOnly := genaiattr.ExtractResponse("generate_content", []byte(
+		`{"candidates":[{"content":{"parts":[{"text":"a"}]},"groundingMetadata":{"groundingChunks":[{"web":{"title":"T"}}]}}]}`))
+	if n := len(chunksOnly.OutputParts); n != 3 {
+		t.Fatalf("chunks-only parts = %d (%+v), want 3", n, chunksOnly.OutputParts)
+	}
+	if string(chunksOnly.OutputParts[1].Arguments) != "{}" {
+		t.Errorf("chunks-only call args = %s, want {}", chunksOnly.OutputParts[1].Arguments)
+	}
+	wantPart(t, chunksOnly.OutputParts[2], "tool_call_response", "google_search", "server")
+}
+
 func TestExtractResponse_OpenAIResponses_Wrapped(t *testing.T) {
 	t.Parallel()
 	// Responses SSE wraps the object under "response" on some events.

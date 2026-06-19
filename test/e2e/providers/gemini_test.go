@@ -163,6 +163,54 @@ func TestGemini_StreamGenerateContent_FoldedEndpoint(t *testing.T) {
 	}
 }
 
+// TestGemini_StreamRollup_CodeExecAndGrounding proves the streaming rollup
+// preserves the built-in-tool shapes end to end: the code-execution parts
+// (executableCode / codeExecutionResult) and the candidate's groundingMetadata
+// (which Gemini delivers on the terminal chunk) must survive into the connector
+// record's assembled response. groundingMetadata in particular used to be
+// dropped by the accumulator, so the assembled body lost all trace of the web
+// search.
+func TestGemini_StreamRollup_CodeExecAndGrounding(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	upstreamPath := "/v1beta/models/gemini-1.5-flash:streamGenerateContent"
+	h.StageMockResponse(harness.CannedResponse{
+		Method:    http.MethodPost,
+		Path:      upstreamPath,
+		Streaming: true,
+		Headers:   map[string]string{"Content-Type": "text/event-stream"},
+		StreamChunks: []harness.CannedStreamChunk{
+			{Data: `{"candidates":[{"content":{"parts":[{"text":"Computing."}],"role":"model"}}]}`},
+			{Data: `{"candidates":[{"content":{"parts":[{"executableCode":{"language":"PYTHON","code":"print(1+1)"}}],"role":"model"}}]}`},
+			{Data: `{"candidates":[{"content":{"parts":[{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"2\n"}}],"role":"model"}}]}`},
+			{Data: `{"candidates":[{"content":{"parts":[{"text":"Done."}],"role":"model"},"finishReason":"STOP","groundingMetadata":{"webSearchQueries":["sum of 1 and 1"],"groundingChunks":[{"web":{"uri":"https://ex.com","title":"Math"}}]}}]}`},
+		},
+	})
+
+	body := map[string]any{
+		"contents": []map[string]any{
+			{"role": "user", "parts": []map[string]string{{"text": "compute 1+1 and ground it"}}},
+		},
+		"tools": []map[string]any{{"codeExecution": map[string]any{}}, {"googleSearch": map[string]any{}}},
+	}
+	stream := h.PostStream("/v1beta/models/gemini-1.5-flash:streamGenerateContent", body, nil)
+	if got := len(stream.CollectAll(5 * time.Second)); got != 4 {
+		t.Fatalf("client chunks=%d want 4", got)
+	}
+
+	env := h.ExpectEvent("gateway.request", 5*time.Second)
+	asm := string(env.Record.Response.Assembled)
+	if asm == "" {
+		t.Fatalf("record carries no assembled rollup: %+v", env.Record.Response)
+	}
+	for _, want := range []string{"executableCode", "codeExecutionResult", "groundingMetadata", "webSearchQueries"} {
+		if !strings.Contains(asm, want) {
+			t.Errorf("assembled rollup missing %q:\n%s", want, asm)
+		}
+	}
+}
+
 func TestGemini_Models_PrefixRouting(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
