@@ -114,6 +114,78 @@ func TestStart_RejectsDoubleStart(t *testing.T) {
 	}
 }
 
+// TestStart_RunsRecovery_ShipsOrphans proves Spool.Start runs recovery
+// before launching the drain/uploader goroutines: a uploading/ orphan and
+// a clean active/ leftover from a prior process both reach the destination
+// after restart (issue #336). Without the wiring the orphan would strand in
+// uploading/ forever and the active leftover would never be sealed.
+func TestStart_RunsRecovery_ShipsOrphans(t *testing.T) {
+	root := t.TempDir()
+	destDir := t.TempDir()
+	s := mustSpool(t, Options{Root: root, Logger: discardLogger()})
+	mustRegister(t, s, RegisterTrackOptions{
+		Connector:          newTestfs(t, "recov", destDir),
+		UploadPollInterval: 50 * time.Millisecond,
+	})
+
+	// RegisterTrack created the track's state dirs; simulate a prior crash
+	// by seeding one orphan in uploading/ and one clean segment in active/.
+	trackRoot := filepath.Join(root, "records", "recov")
+	seedSegment(t, filepath.Join(trackRoot, "uploading"), 1, makeTestRecord("orphan", 1))
+	seedSegment(t, filepath.Join(trackRoot, "active"), 2, makeTestRecord("leftover", 2))
+
+	startStop(t, s)
+
+	if !waitFor(3*time.Second, func() bool {
+		matches, _ := filepath.Glob(filepath.Join(destDir, "records", "instance=*", "date=*", "hour=*", "*.ndjson.zst"))
+		return len(matches) >= 2
+	}) {
+		t.Fatal("recovered orphan + active leftover did not reach destination")
+	}
+}
+
+// TestStart_FailsClosedOnRecoveryError proves a recovery failure aborts
+// Start (and thus gateway boot) rather than starting a spool that would
+// silently strand records.
+func TestStart_FailsClosedOnRecoveryError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root; chmod won't restrict")
+	}
+	root := t.TempDir()
+	s := mustSpool(t, Options{Root: root, Logger: discardLogger()})
+	mustRegister(t, s, RegisterTrackOptions{Connector: newTestfs(t, "boom", t.TempDir())})
+
+	// Seed a uploading/ orphan, then make uploading/ unwritable so the
+	// recovery rename out of it fails with permission denied.
+	upDir := filepath.Join(root, "records", "boom", "uploading")
+	seedSegment(t, upDir, 1, makeTestRecord("x", 1))
+	if err := os.Chmod(upDir, 0o400); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(upDir, 0o700) }) //nolint:gosec // G302: restore for TempDir cleanup
+
+	if err := s.Start(context.Background()); err == nil {
+		s.Stop(time.Second)
+		t.Fatal("Start should fail closed when recovery errors")
+	}
+}
+
+// seedSegment writes one valid, closed segment containing rec into dir,
+// simulating a segment left behind by a prior process.
+func seedSegment(t *testing.T, dir string, seq uint64, rec cc.Record) {
+	t.Helper()
+	seg, err := OpenSegment(dir, seq, time.Now())
+	if err != nil {
+		t.Fatalf("OpenSegment(%s): %v", dir, err)
+	}
+	if err := seg.Write(rec); err != nil {
+		t.Fatalf("seg.Write: %v", err)
+	}
+	if err := seg.Close(); err != nil {
+		t.Fatalf("seg.Close: %v", err)
+	}
+}
+
 // ---------- End-to-end: testfs ----------
 
 func TestSpool_RecordsLandInTestfsDestination(t *testing.T) {
