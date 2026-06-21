@@ -435,6 +435,111 @@ func TestPipeline_FindingExcludeAndSeverity(t *testing.T) {
 	}
 }
 
+// personEmailSpanServer flags pii.person over the `person` substring and
+// pii.email over the `email` substring of the unit text, with UTF-8 byte spans
+// computed from the request — so each finding's offending_text is exactly its
+// substring. The fixture for the finding_suppress value-scoping test. A needle
+// absent from the text yields a nil span (offending_text = whole unit).
+func personEmailSpanServer(t *testing.T, person, email string) string {
+	t.Helper()
+	srv := detectorServer(t, func(req *detectv1.DetectRequest) (*detectv1.DetectResponse, int) {
+		text := req.GetUnit().GetText()
+		span := func(needle string) *detectv1.Span {
+			i := strings.Index(text, needle)
+			if i < 0 {
+				return nil
+			}
+			//nolint:gosec // test fixture: span offsets into a short literal text are small non-negative ints
+			return &detectv1.Span{Start: uint32(i), End: uint32(i + len(needle)), Basis: detectv1.OffsetBasis_OFFSET_BASIS_UTF8_BYTE}
+		}
+		return &detectv1.DetectResponse{
+			CorrelationId: req.GetCorrelationId(),
+			Status:        detectv1.Status_STATUS_OK,
+			Findings: []*detectv1.Finding{
+				{Category: "pii.person", Score: 0.9, Span: span(person)},
+				{Category: "pii.email", Score: 0.8, Span: span(email)},
+			},
+			Detector: &detectv1.Detector{Id: "mock-pii", Version: "t1"},
+		}, http.StatusOK
+	})
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestPipeline_FindingSuppress(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeStore()
+	s := testScanner(fake, personEmailSpanServer(t, "claude code", "a@b.com"))
+	// Suppress the person finding whose offending text is exactly "claude code"
+	// (case-insensitive); the email finding in the same unit must survive — the
+	// rule is value-scoped, not category-wide.
+	sup, err := newFindingSuppressor([]config.FindingSuppressionRule{
+		{Category: "pii.person", OffendingText: "(?i)^claude code$", Reason: "first-party Claude Code traffic"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.suppressor = sup
+
+	e := spanWith("c1", map[string]any{"input_messages": []map[string]any{
+		msg("user", textPart("hi claude code, mail a@b.com")),
+	}})
+	if err := fake.UpsertRequestEventWithChecks(ctx, e, s.Explode(e)); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, ctx, s, fake)
+	s.reduce(ctx, "c1")
+
+	if len(fake.findings) != 1 {
+		t.Fatalf("findings = %d, want 1 (pii.person suppressed)", len(fake.findings))
+	}
+	if f := fake.findings[0]; f.Category != "pii.email" || f.OffendingText != "a@b.com" {
+		t.Errorf("surviving finding = %q/%q, want pii.email/a@b.com", f.Category, f.OffendingText)
+	}
+	// A finding survived, so the unit's evidence row is written and it flags.
+	if len(fake.evidence) != 1 {
+		t.Errorf("evidence = %d, want 1", len(fake.evidence))
+	}
+	if v := fake.verdicts["c1"]; v.State != StateFlagged {
+		t.Errorf("verdict state = %v, want flagged", v.State)
+	}
+}
+
+func TestPipeline_FindingSuppressAllClearsToClean(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeStore()
+	// Both findings (pii.url + pii.email, whole-unit offending text) match a
+	// catch-all value pattern under pii.*: nothing survives, so no finding, no
+	// evidence, and the span reduces to clean — same end state as all-excluded.
+	s := testScanner(fake, twoFindingPIIServer(t))
+	sup, err := newFindingSuppressor([]config.FindingSuppressionRule{
+		{Category: "pii.*", OffendingText: ".", Reason: "suppress all pii (test)"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.suppressor = sup
+
+	e := spanWith("c1", map[string]any{"input_messages": []map[string]any{
+		msg("user", textPart("mail me at a@b.com")),
+	}})
+	if err := fake.UpsertRequestEventWithChecks(ctx, e, s.Explode(e)); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, ctx, s, fake)
+	s.reduce(ctx, "c1")
+
+	if len(fake.findings) != 0 {
+		t.Errorf("findings = %d, want 0 (all suppressed)", len(fake.findings))
+	}
+	if len(fake.evidence) != 0 {
+		t.Errorf("evidence = %d, want 0 (no surviving finding to evidence)", len(fake.evidence))
+	}
+	if v := fake.verdicts["c1"]; v.State != StateClean || v.Severity != "" {
+		t.Errorf("verdict = %+v, want clean/no-severity", v)
+	}
+}
+
 func TestPipeline_AllFindingsExcludedSuppressesEvidence(t *testing.T) {
 	ctx := context.Background()
 	fake := newFakeStore()

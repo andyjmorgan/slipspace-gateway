@@ -71,6 +71,7 @@ type Scanner struct {
 	// scan-scoping + result filtering (compiled from config; zero values inert).
 	tagSelector    tagSelector        // span-level scan_tags gate, applied in Explode
 	findingExclude []string           // categories dropped before persist (globs)
+	suppressor     findingSuppressor  // (category, offending-text) drop rules
 	severity       severityClassifier // category→level for surviving findings
 
 	// tunables (defaulted in New; tests may shrink them in white-box).
@@ -98,6 +99,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Scanner,
 		return nil, err
 	}
 	emitter, err := newEmitter(ctx, cfg.Scanner.EnrichedExport)
+	if err != nil {
+		return nil, err
+	}
+	suppressor, err := newFindingSuppressor(cfg.Scanner.FindingSuppress)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +135,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Scanner,
 		reduceInterval:   defaultReduceInterval,
 		tagSelector:      tagSelector{include: cfg.Scanner.ScanTags.Include, exclude: cfg.Scanner.ScanTags.Exclude},
 		findingExclude:   cfg.Scanner.FindingExclude,
+		suppressor:       suppressor,
 		severity:         newSeverityClassifier(cfg.Scanner.Severity),
 	}, nil
 }

@@ -183,7 +183,7 @@ An empty `gateways` list is **valid** — the service then accepts no Record pus
 
 ### Scanner scan-scoping, filtering, and severity
 
-When the optional Arbiter scanner is enabled (`scanner.enabled: true`), three additive controls on the `scanner` block scope which traffic is scanned, suppress noisy findings, and classify what survives. All are off by default — an unset block scans every span and keeps every finding, unchanged from before.
+When the optional Arbiter scanner is enabled (`scanner.enabled: true`), four additive controls on the `scanner` block scope which traffic is scanned, suppress noisy findings, and classify what survives. All are off by default — an unset block scans every span and keeps every finding, unchanged from before.
 
 ```yaml
 scanner:
@@ -194,6 +194,9 @@ scanner:
     exclude: ["env:internal"]  # wins over include
   # Drop matching finding categories before they are persisted (exclude-only).
   finding_exclude: ["pii.url"]
+  # Drop individual findings by category + offending-text value (value-scoped).
+  finding_suppress:
+    - { category: "pii.person", offending_text: "(?i)^claude code$", reason: "first-party Claude Code traffic" }
   # Classify surviving findings into info/warning/error. Ordered: FIRST match wins.
   severity:
     unmapped: warning          # level for categories no rule matches (default warning)
@@ -207,9 +210,10 @@ scanner:
 - **Patterns are full globs** (`path.Match`, `internal/arbiter/arbiter/match.go`). Tags and finding categories contain no `/`, so `*` spans the whole value: `pii.*`, `*:internal`, and `*.url` all match. A malformed glob is rejected at config load.
 - **`scan_tags`** gates `Scanner.Explode`: a span is scanned iff *(include is empty **or** a tag matches an include glob)* **and** *no tag matches an exclude glob* — exclude wins. A span the policy excludes produces no check tasks and falls back to a plain upsert, exactly as if the scanner were disabled for it. Note a span with **no tags** is not scanned when `include` is non-empty (it matches nothing).
 - **`finding_exclude`** drops findings whose `category` matches any glob before they are persisted, so an excluded category never reaches the `finding` table, never gets an evidence row, and never flags the verdict. If *all* of a unit's findings are excluded, its encrypted evidence row is not written either.
+- **`finding_suppress`** is the finer-grained companion: it drops an individual finding only when *both* its `category` matches the rule's glob **and** its `offending_text` matches the rule's regex — value-scoped suppression of a known-benign hit (e.g. the product name "Claude Code" a PII detector reads as a person), without disabling the whole category. The `offending_text` pattern is a **Go RE2 regex** (`internal/arbiter/arbiter/match.go`), matched **unanchored**: a bare substring matches partially, `^claude code$` exactly, and a `(?i)` prefix case-insensitively. `category` and `reason` are required; an empty/malformed glob or regex is rejected at config load. Suppressed findings take the same path as excluded ones (no `finding` row, no evidence, no verdict flag); each is logged at **Debug** with its category + `reason` + correlation id (never the offending text — that is PII), so a too-broad rule is auditable via `count_over_time` on the logs. Suppression is value-scoped, so an attacker cannot self-suppress by embedding the benign string elsewhere — only the finding whose own offending span matches is dropped; sibling findings survive.
 - **`severity`** maps each surviving finding's category to `info`/`warning`/`error`, evaluated top-to-bottom with first-match-wins (order specific globs before general ones). A category matching no rule takes `unmapped` (default `warning`). The level is stamped on the finding (migration 17) and the worst level across a span's findings (`info < warning < error`) is rolled up onto the verdict — surfaced as a chip in the console Security view and as the `slipspace.security.severity` attribute on the enriched verdict span.
 
-Validation (`config.Validate`) rejects, when the scanner is enabled, a malformed glob in any list and a `severity.rules[].level` / `severity.unmapped` outside `{info, warning, error}`.
+Validation (`config.Validate`) rejects, when the scanner is enabled, a malformed glob in any list, a `finding_suppress[]` rule missing its `category`/`offending_text`/`reason` or carrying an invalid `offending_text` regex, and a `severity.rules[].level` / `severity.unmapped` outside `{info, warning, error}`.
 
 ### Generating the console password hash
 
