@@ -94,7 +94,7 @@ The loader recognises **eight** top-level keys (`internal/config/loader.go`, `ke
 | `groups` | Resilience-group catalogue. Each group is an ordered/weighted set of provider targets with a mode, failure policy, and circuit breaker. Bindings reference a group by name. Replaces v1 `resilience_policies`. |
 | `configurations` | Named policy bundles. Each holds `credentials`, `bindings`, optional `passthrough_bindings`, `rule_names`, `tags`, and `connector_bindings`. |
 | `api_keys` | Flat list of gateway-issued bearers; each points at a configuration by name. |
-| `rules` | Top-level rule library (body/header/query rewrites, tags, short-circuits, routing overrides). Bindings carry the default routing; `changeProvider` / `changeUrl` / `useResiliencePolicy` remain available as rule-level overrides. Configurations reference rules through `rule_names`. |
+| `rules` | Top-level rule library (body/header/query rewrites, tags, short-circuits, routing overrides). Bindings carry the default routing as config data; routing actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`) remain available as per-request rule-level overrides layered on top of the binding default, while pure body/header/query transforms are the common case. Configurations reference rules through `rule_names`. |
 | `connectors` | Top-level connector destinations (s3, azure_blob, webhook). Configurations attach them through `connector_bindings`. |
 | `admin` | Management-console gate. Optional; absent means the console never starts. |
 | `telemetry` | Operator-tunable telemetry knobs (today: GenAI content-capture byte caps). Optional; absent resolves to built-in defaults. |
@@ -190,7 +190,7 @@ groups:
 |---|---|---|---|
 | `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:19`). |
 | `failure_status_codes` | []int | no | Upstream HTTP status set treated as a failure for retry / circuit-breaker accounting. Empty falls back to "5xx is a failure". |
-| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked **per provider** (the failure unit), so a dead provider is skipped by every group that includes it. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:150`). |
+| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:150`). |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
 | `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:99`). |
@@ -417,7 +417,7 @@ Each connector entry must:
 
 ## `admin` block
 
-`admin:` is the management-console gate (`contracts/admin/admin.go::Config`). The block is **optional**; absent means the console never starts. When present and `enabled: true`, the gateway brings up a second `http.Server` bound to `bind_addr` serving the embedded SPA at `/admin/` and the control-plane API under `/admin/api/v1/*` (the `Prefix` const in `internal/admin/mux.go`).
+`admin:` is the management-console gate (`contracts/admin/admin.go::Config`). The block is **optional**; absent means the console never starts. When present and `enabled: true`, the gateway mounts the admin console under the `/admin/` prefix on the existing data-plane listener (`SLIPSPACE_HTTP_BIND`) — serving the embedded SPA at `/admin/` and the control-plane API under `/admin/api/v1/*` (the `Prefix` const in `internal/admin/mux.go`), not a second `http.Server` on a separate `bind_addr`.
 
 ```yaml
 admin:
@@ -430,8 +430,8 @@ admin:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `enabled` | bool | yes | Gates the admin listener. `false` = no second `http.Server`, no admin routes exist anywhere. |
-| `bind_addr` | string | no | Listener address (host:port). Empty resolves to a default; must not collide with the data-plane listener. Validated as host:port with numeric port. |
+| `enabled` | bool | yes | Gates the admin console. `false` = the `/admin/` prefix is never mounted, no admin routes exist anywhere. |
+| `bind_addr` | string | no | Listener address (host:port). Empty resolves to a default. Validated as host:port with numeric port. The admin console is mounted under `/admin/` on the data-plane listener (`SLIPSPACE_HTTP_BIND`), not a separate listener on this address. |
 | `password` | string | no | Operator credential for HTTP Basic auth. Username is hardcoded `admin`. May be empty in YAML — at runtime `SLIPSPACE_ADMIN_PASSWORD` wins when set; otherwise this field is used. With `enabled: true`, **either** the env var or this field must be set. Never serialised to JSON. |
 
 The console's runtime behaviour (live-feed capacity, body-capture budget, snapshot interval) is configured via `SLIPSPACE_ADMIN_*` env vars, not this block — see [environment-variables.md](environment-variables.md).
