@@ -281,5 +281,5 @@ On the gateway side, point its OTLP exporter at `telemetry-host:8687` and config
 - [arbiter-webhook.md](arbiter-webhook.md) — the HMAC Record webhook contract (headers, signature, body shape, error codes).
 - [arbiter-database-schema.md](arbiter-database-schema.md) — `request_events` (the single-writer entity + `span_event` projection), the lazy `record` blob, `metric_points` + continuous aggregates, and migrations.
 - [observability.md](observability.md) — what the gateway emits: every meter and the OTLP export pipeline.
-- [spool.md](spool.md) / [connectors.md](connectors.md) — the connector spool and the Record envelope the webhook pushes.
+- [spool.md](spool.md) / [connectors.md](connectors.md) — durable connector spool semantics and the real-time Record webhook pusher.
 - `CLAUDE.md` → load-bearing invariant #4 — reporting and telemetry are separate channels.

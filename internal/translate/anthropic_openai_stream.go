@@ -3,6 +3,7 @@ package translate
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 
 	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
 	"github.com/andyjmorgan/slipspace-gateway/protocols/openai/chat"
@@ -34,11 +35,13 @@ type chatToMessagesStream struct {
 	stopRaw  *string
 	err      error // first marshal error, surfaced by Translate/Close
 
-	// Open-block tracking. Exactly one block is open at a time.
+	// Open-block tracking. Text is singular; OpenAI tool calls may be
+	// interleaved by tool_calls[].index, so tool blocks stay open by index until
+	// the next text block or stream close.
 	curKind   blockKind // none | text | tool
 	curIndex  int       // Anthropic index of the open block
 	nextIndex int       // next Anthropic block index to assign
-	curToolOA int       // OpenAI tool-call index the open tool block maps to
+	openTools map[int]int
 }
 
 type blockKind int
@@ -172,13 +175,21 @@ func (s *chatToMessagesStream) handleContent(out *bytes.Buffer, raw json.RawMess
 func (s *chatToMessagesStream) handleToolCalls(out *bytes.Buffer, calls []chat.ToolCallDelta) {
 	for _, tc := range calls {
 		if tc.ID != "" || tc.Function.Name != "" {
-			s.closeCurrent(out)
-			s.openTool(out, tc.Index, tc.ID, tc.Function.Name)
+			if s.curKind == blockText {
+				s.closeCurrent(out)
+			}
+			if _, ok := s.openTools[tc.Index]; !ok {
+				s.openTool(out, tc.Index, tc.ID, tc.Function.Name)
+			}
 		}
-		if tc.Function.Arguments != "" && s.curKind == blockTool {
+		if tc.Function.Arguments != "" {
+			idx, ok := s.openTools[tc.Index]
+			if !ok {
+				continue
+			}
 			s.emit(out, messages.ContentBlockDeltaEvent{
 				Type:  "content_block_delta",
-				Index: s.curIndex,
+				Index: idx,
 				Delta: messages.InputJSONDelta{Type: "input_json_delta", PartialJSON: tc.Function.Arguments},
 			})
 		}
@@ -199,8 +210,11 @@ func (s *chatToMessagesStream) openText(out *bytes.Buffer) {
 func (s *chatToMessagesStream) openTool(out *bytes.Buffer, oaIndex int, id, name string) {
 	s.curKind = blockTool
 	s.curIndex = s.nextIndex
-	s.curToolOA = oaIndex
 	s.nextIndex++
+	if s.openTools == nil {
+		s.openTools = make(map[int]int)
+	}
+	s.openTools[oaIndex] = s.curIndex
 	s.emit(out, messages.ContentBlockStartEvent{
 		Type:         "content_block_start",
 		Index:        s.curIndex,
@@ -213,8 +227,28 @@ func (s *chatToMessagesStream) closeCurrent(out *bytes.Buffer) {
 	if s.curKind == blockNone {
 		return
 	}
+	if s.curKind == blockTool {
+		s.closeTools(out)
+		s.curKind = blockNone
+		return
+	}
 	s.emit(out, messages.ContentBlockStopEvent{Type: "content_block_stop", Index: s.curIndex})
 	s.curKind = blockNone
+}
+
+func (s *chatToMessagesStream) closeTools(out *bytes.Buffer) {
+	if len(s.openTools) == 0 {
+		return
+	}
+	indices := make([]int, 0, len(s.openTools))
+	for _, idx := range s.openTools {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+	for _, idx := range indices {
+		s.emit(out, messages.ContentBlockStopEvent{Type: "content_block_stop", Index: idx})
+	}
+	clear(s.openTools)
 }
 
 // emit marshals an Anthropic stream event and writes it as an SSE frame

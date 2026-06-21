@@ -8,7 +8,7 @@
 
 </div>
 
-SlipSpace is a slim, fast AI provider gateway in Go. Point your SDKs at a single base URL and it routes to OpenAI, Anthropic, and Google Gemini — swapping in upstream credentials, applying per-tenant policy (auth, rules, resilience), translating between provider dialects, emitting GenAI-grade telemetry, and spooling an auditable record of every request to durable storage. All without ever blocking the request path or mangling a payload it doesn't understand.
+SlipSpace is a slim, fast AI provider gateway in Go. Point your SDKs at a single base URL and it routes to OpenAI, Anthropic, and Google Gemini — swapping in upstream credentials, applying per-tenant policy (auth, rules, resilience), translating between provider dialects, emitting GenAI-grade telemetry, and capturing auditable request records to durable storage or real-time webhooks. All without ever blocking the request path or mangling a payload it doesn't understand.
 
 It speaks the providers' **native wire protocols** (plus their OpenAI-compatible surfaces), streams token-for-token, and forwards unknown fields **byte-for-byte** so it never falls behind a provider's API.
 
@@ -24,7 +24,7 @@ It speaks the providers' **native wire protocols** (plus their OpenAI-compatible
 | **Token & cost accounting** | Per-request prompt, completion, cache-**read**, and cache-**write** token counts on every span — the exact dimensions a spend dashboard needs — aggregated into per-provider / per-model / per-configuration panels. |
 | **Session · agent · user attribution** | Resolve conversation, agent/sub-agent, and end-user identity from a configurable header chain (SlipSpace-native + Claude Code defaults), stamp it on every span, record, and log line, and drill into a full session timeline in the console. |
 | **Tag and slice** | `addTag` rules label any request; the post-rule tag set rides on records and powers tag-fire panels and tag-filtered queries across the fleet. |
-| **Durable, non-blocking audit spool** | End-of-request records buffer to a disk-backed `ndjson.zst` spool and ship out-of-band to S3, Azure Blob, or webhooks. The client **never** waits on backpressure — full ring or full disk drops on the floor and bumps a counter. |
+| **Durable, non-blocking audit spool** | End-of-request records buffer to a disk-backed `ndjson.zst` spool and ship out-of-band to S3 or Azure Blob. Webhooks use a separate bounded real-time pusher. The client **never** waits on backpressure — full ring, full disk, or full webhook queue drops on the floor and bumps a counter. |
 | **Rich rules engine** | Match on provider, protocol, model, header, tag, or body field (with AND/OR groups); act with `changeProvider`, `changeModelName`, `setHeader`, `addTag`, `rewriteField`, `translate`, `returnStatusCode`, `useResiliencePolicy`, and more. Edit rules **live** through the admin API — no restart. |
 | **Cross-provider translation** | Bidirectional **Anthropic Messages ↔ OpenAI Chat** — request, streaming + non-streaming response, tool calls, and errors — triggered by an explicit `translate` rule. Fail-closed on unsupported pairs, with a lossy-translation header and drop counter. |
 | **Resilience built in** | Per-policy **failover** and **weighted load-balancing** across providers, with a **circuit breaker** that sheds load from a flapping upstream and a recorded attempt log on every request. |
@@ -91,7 +91,7 @@ Every request carries a recorded attempt log. See [docs/resilience.md](docs/resi
 Telemetry and reporting are kept as **separate channels** by design (a Grafana panel never reads audit records from S3):
 
 - **Metrics & traces** — OpenTelemetry meters exposed on a Prometheus `/metrics` scrape endpoint *and/or* pushed over OTLP, plus `gen_ai.*` spans following the OTel GenAI semantic conventions. Every request carries its **token usage broken out four ways** — prompt, completion, cache-read, and cache-write — alongside latency (incl. time-to-first-chunk) and `rules_fired` / `tags_fired` counts, so cost and policy dashboards build straight off the meters. Prompt/response content capture is optional, redacted, and size-capped.
-- **Audit records** — the full end-of-request envelope (bodies, headers, post-rule tags, fired-rule chain, resilience attempts) flows through the spool to your destinations.
+- **Audit records** — the full end-of-request envelope (bodies, headers, post-rule tags, fired-rule chain, resilience attempts) flows through the durable spool for S3/Azure Blob or through the real-time webhook pusher for Arbiter/HTTP receivers.
 
 An optional **Arbiter** (`cmd/arbiter`) ingests gen_ai OTLP spans/meters and HMAC-trusted Record webhooks from a whole fleet of gateways into Postgres and serves a unified operator console — keeping the two channels physically separate even as it converges them per request. See [docs/observability.md](docs/observability.md) and the dedicated section below.
 
@@ -125,7 +125,7 @@ Every request is correlated on three orthogonal identity axes on top of its `cor
 
 ## Durable, non-blocking spool
 
-End-of-request records buffer to a disk-backed, zstd-compressed `ndjson.zst` spool and ship out of band to **S3**, **Azure Blob**, or **webhook** destinations, with per-binding sampling, filtering, and body-size caps. The hot path is sacred: `Enqueue` is non-blocking, and a full ring buffer or a full disk drops the record and increments a counter rather than ever making a client wait. See [docs/connectors.md](docs/connectors.md), [docs/connector-bindings.md](docs/connector-bindings.md), and [docs/spool.md](docs/spool.md).
+End-of-request records buffer to a disk-backed, zstd-compressed `ndjson.zst` spool and ship out of band to **S3** or **Azure Blob** destinations, with per-binding sampling, filtering, and body-size caps. **Webhook** destinations are not disk-backed; they use a bounded real-time pusher with in-memory retry and drop on full queue. The hot path is sacred: neither path blocks a client. See [docs/connectors.md](docs/connectors.md), [docs/connector-bindings.md](docs/connector-bindings.md), and [docs/spool.md](docs/spool.md).
 
 ## Built to a high bar
 

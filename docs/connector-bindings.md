@@ -2,7 +2,7 @@
 
 A **connector binding** attaches one connector to one configuration with per-binding overrides — sampling fraction, predicate filter, per-record body cap, oversize behaviour. Bindings are how an operator says "configuration `production` ships these records to connector `prod-audit`, this fraction with these filters."
 
-The connector itself ([connectors.md](connectors.md)) owns the destination shape and the spool track. The binding decides *what* survives the journey from request-completion to enqueue. Multiple configurations may bind the same connector with different bindings; each configuration's bindings evaluate independently.
+The connector itself ([connectors.md](connectors.md)) owns the destination shape and dispatch runtime: `s3` / `azure_blob` use a durable spool track, while `webhook` uses the real-time pusher. The binding decides *what* survives the journey from request-completion to dispatch. Multiple configurations may bind the same connector with different bindings; each configuration's bindings evaluate independently.
 
 Source of truth: [`contracts/config/connectors.go`](../contracts/config/connectors.go) (struct), [`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) (validation), [`cmd/gateway/binding.go`](../cmd/gateway/binding.go) (runtime evaluation).
 
@@ -35,7 +35,7 @@ flowchart TD
     Sample -- yes --> Filter{filter<br/>matches?}
     Filter -- no --> Drop2[skip]
     Filter -- yes --> Size{within<br/>max_body_bytes?}
-    Size -- yes --> Ship[Enqueue rec to<br/>spool track]
+    Size -- yes --> Ship[dispatch record to<br/>spool or pusher]
     Size -- no, drop_record --> Drop3[skip]
     Size -- no, metadata_only --> Strip[strip bodies,<br/>set BodyOmitted=true] --> Ship
     Loop -. next binding .-> Loop
@@ -51,7 +51,7 @@ The record passed to each binding is a fresh **value copy** — `applyOversize` 
 # policy.yaml
 configurations:
   production:
-    upstream_credentials:
+    credentials:
       openai: sk-prod-openai
     rule_names:
       - route-claude-models-to-anthropic
@@ -99,7 +99,7 @@ For each binding in the configuration's `connector_bindings` list, in order:
 2. **Filter.** Mismatch → skip.
 3. **Body cap.** Within → ship as-is. Over + `drop_record` → skip. Over + `metadata_only` → strip bodies, set `BodyOmitted=true`, ship.
 
-A record that survives all three lands on the connector's spool track via `Spool.Enqueue`. Bindings on a single configuration are independent — each evaluates its own predicates against a fresh value-copy of the record.
+A record that survives all three is dispatched according to the connector type: `s3` / `azure_blob` land on the connector's spool track via `Spool.Enqueue`, and `webhook` lands on the connector's real-time pusher. Bindings on a single configuration are independent — each evaluates its own predicates against a fresh value-copy of the record.
 
 ---
 

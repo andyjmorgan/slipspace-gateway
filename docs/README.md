@@ -27,7 +27,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | [Observability](observability.md) | Every OTel meter, runtime + process collectors, structured logs, snapshotter |
 | [Connectors](connectors.md) | The `connectors:` top-level block — s3 / azure_blob / webhook reference, per-type auth modes, key layout |
 | [Connector bindings](connector-bindings.md) | Per-configuration sampling, filter, body cap, oversize behaviour |
-| [Spool](spool.md) | Disk-backed buffer between OnComplete and the connector destinations — layout, lifecycle, loss policy |
+| [Spool](spool.md) | Disk-backed buffer for S3 / Azure Blob connectors — layout, lifecycle, loss policy |
 | [Admin console](admin-console.md) | Enabling, password, every API route, every SPA page, live messages, body capture |
 | [Environment variables](environment-variables.md) | Every `SLIPSPACE_*` env var with default, type, validation, effect |
 | [Deployment](deployment.md) | Topology, container image, K8s shape, multi-pod considerations, graceful drain |
@@ -76,7 +76,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | Capture request and response bodies for one event | [Admin console → Body capture](admin-console.md#body-capture), [Environment variables → Live feed + body capture](environment-variables.md#live-feed-and-body-capture) |
 | Ship every request to an S3 bucket | [Connectors → s3 connector](connectors.md#s3-connector), [Connector bindings → Worked examples](connector-bindings.md#worked-examples) |
 | Pipe a 5% sample of errors to a webhook | [Connectors → webhook connector](connectors.md#webhook-connector), [Connector bindings → Sampling](connector-bindings.md#sampling) |
-| Understand where records sit when a destination is down | [Spool → Lifecycle](spool.md#lifecycle), [Spool → Loss policy](spool.md#loss-policy) |
+| Understand where durable records sit when S3/Azure is down | [Spool → Lifecycle](spool.md#lifecycle), [Spool → Loss policy](spool.md#loss-policy) |
 | Ship every request record to an Arbiter | [Arbiter](arbiter.md), [Arbiter webhook → Record ingest](arbiter-webhook.md), [Connectors → webhook connector](connectors.md#webhook-connector) |
 | Query captured requests across gateways in one console | [Arbiter API](arbiter-api.md), [Arbiter database schema](arbiter-database-schema.md) |
 

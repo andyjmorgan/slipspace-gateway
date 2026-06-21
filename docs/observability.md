@@ -41,7 +41,7 @@ The three channels are intentionally disjoint. Every signal the gateway emits be
 
 **Structured logs** are JSON records emitted via `log/slog` to stdout. They carry a service header (`service`, `version`), a per-request envelope (`correlation_id`, `provider`, `protocol`, `model`, …) and the human-readable narrative the operator needs to debug a failing request. They are **not** billable: log shipping is best-effort, the storage tier is operator-chosen, and provider response bodies are deliberately excluded — bodies go to the connector spool.
 
-**Connector-captured records** are end-of-pipeline payloads encoded as ndjson.zst segments written to a per-connector spool and shipped to operator-configured destinations (S3, Azure Blob, webhook). They are the wire-of-record for billing, audit, and downstream replay. The spool is non-blocking — see [load-bearing invariant 2](../CLAUDE.md) — drops occur at the hot path (ring full) or on the disk path (filesystem full) rather than blocking the request. They are **not** operational telemetry: a Grafana panel must never read records from S3; the equivalent OTel meter exists for every dimension a dashboard cares about.
+**Connector-captured records** are end-of-pipeline payloads shipped to operator-configured destinations. S3 and Azure Blob use ndjson.zst segments written to a per-connector spool; webhooks use a bounded real-time pusher. Both paths are non-blocking — see [load-bearing invariant 2](../CLAUDE.md) — drops occur under backpressure rather than blocking the request. They are **not** operational telemetry: a Grafana panel must never read records from S3; the equivalent OTel meter exists for every dimension a dashboard cares about.
 
 ---
 
@@ -217,7 +217,7 @@ reg.MustRegister(
 | `process_resident_memory_bytes` | OS-reported RSS. | The dispositive answer to "how much memory is this pod using". `go_memstats_alloc_bytes` is heap-only; RSS includes goroutine stacks, runtime metadata, mmap'd files. |
 | `process_virtual_memory_bytes` / `process_virtual_memory_max_bytes` | OS-reported virtual address space, current and max. | RSS is the live answer; VMS surfaces address-space exhaustion on a constrained cgroup. |
 | `process_cpu_seconds_total` | OS-reported user + system CPU. | Pair with `slipspace.requests.total` to compute CPU-per-request. The natural diagnostic for "the gateway feels slower today". |
-| `process_open_fds` / `process_max_fds` | Currently-open file descriptors against the OS limit. | The spool keeps one fd open per active segment; webhook connectors open a transient fd per upload. `open_fds` climbing toward `max_fds` means an fd leak — usually a missed `Close()` on an error path. |
+| `process_open_fds` / `process_max_fds` | Currently-open file descriptors against the OS limit. | The spool keeps one fd open per active segment; HTTP webhook pushes may briefly hold sockets while in flight. `open_fds` climbing toward `max_fds` means an fd leak — usually a missed `Close()` on an error path. |
 | `process_start_time_seconds` | Process start time (unix epoch). | Anchors uptime and makes a silent restart obvious (the value jumps without a deploy). |
 
 These are the **legacy default collector set** — `NewGoCollector()` and `NewProcessCollector(...)` are constructed with default options; there is no `WithGoCollectorRuntimeMetrics`, so the newer `go_*` runtime/metrics histogram families are not exposed.
@@ -400,7 +400,7 @@ Notable rules of the road:
 
 ## Connector-captured records
 
-When a configuration declares `connector_bindings`, the reporter at OnComplete builds one [`Record`](../contracts/connector/record.go) per inbound request and enqueues a value-copy onto every binding's spool track that the binding's sampling / filter / size-cap allows. See [connector-bindings.md](connector-bindings.md) for the evaluation order and [spool.md](spool.md) for the on-disk runtime.
+When a configuration declares `connector_bindings`, the reporter at OnComplete builds one [`Record`](../contracts/connector/record.go) per inbound request and dispatches a value-copy for every binding that the sampling / filter / size-cap allows. `s3` and `azure_blob` bindings enqueue onto the durable spool; `webhook` bindings enqueue onto the real-time pusher. See [connector-bindings.md](connector-bindings.md) for the evaluation order, [spool.md](spool.md) for the on-disk runtime, and [connectors.md](connectors.md#webhook-connector) for webhook pusher semantics.
 
 The `Record` shape is the wire format every connector destination sees. Key fields:
 
