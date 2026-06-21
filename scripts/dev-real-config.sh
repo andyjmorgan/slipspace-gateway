@@ -43,126 +43,126 @@ QWEN_OLLAMA_URL="${QWEN_OLLAMA_URL:-http://host.docker.internal:11434}"
 out="config-dev.real"
 mkdir -p "$out"
 
-# providers.yaml — same shapes as config-dev/providers.yaml but pointed
-# at real upstreams. The auth conventions (header + format overrides)
-# are unchanged; the gateway's destination builder applies them per
-# (provider, endpoint).
+yaml_quote() {
+  local value=${1//\'/\'\'}
+  printf "'%s'" "$value"
+}
+
+openai_key=$(yaml_quote "$OPENAI_API_KEY")
+anthropic_key=$(yaml_quote "$ANTHROPIC_API_KEY")
+gemini_key=$(yaml_quote "$GEMINI_API_KEY")
+qwen_url=$(yaml_quote "$QWEN_OLLAMA_URL")
+
+# providers.yaml — v2 shape, same protocol/auth conventions as
+# config-dev/providers.yaml but pointed at real upstreams.
 cat >"$out/providers.yaml" <<'YAML'
 providers:
   openai:
-    prefix: openai
-    prefix_required: false
     base_url: https://api.openai.com
-    endpoints:
-      chat_completions:
+    protocols:
+      chat:
         path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions, /chat/completions]
-        accepts_streaming: true
-        request_kind: chat
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
       responses:
         path: /v1/responses
-        method: [POST]
-        accepted_paths: [/v1/responses]
-        accepts_streaming: true
-        request_kind: responses
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
       models:
-        path: /v1/models
-        method: [GET]
-        accepted_paths: [/v1/models, /models]
-        request_kind: passthrough
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+        paths:
+          - match: /v1/models
+            methods: [GET]
 
   anthropic:
-    prefix: anthropic
-    prefix_required: true
     base_url: https://api.anthropic.com
     required_headers:
       anthropic-version: "2023-06-01"
-    endpoints:
+    protocols:
       messages:
         path: /v1/messages
-        method: [POST]
-        accepted_paths: [/v1/messages, /messages]
-        accepts_streaming: true
-        request_kind: messages
-        prefix_optional: true
-      models:
-        path: /v1/models
-        method: [GET]
-        accepted_paths: [/v1/models]
-        request_kind: passthrough
-      chat_completions:
+        auth:
+          header: x-api-key
+          format: "{key}"
+      chat:
         path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-        auth_header: Authorization
-        auth_format: "Bearer {key}"
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
+      messages_batches:
+        auth:
+          header: x-api-key
+          format: "{key}"
+        paths:
+          - match: /v1/messages/batches
+            methods: [POST, GET]
+          - match: "/v1/messages/batches/{id}"
+            methods: [GET, DELETE]
+          - match: "/v1/messages/batches/{id}/results"
+            methods: [GET]
 
   gemini:
-    prefix: gemini
-    prefix_required: true
     base_url: https://generativelanguage.googleapis.com
-    endpoints:
+    protocols:
       generate_content:
-        path: /v1beta/models/{model}:generateContent
-        method: [POST]
-        accepted_paths: ["/v1beta/models/{model}:generateContent"]
-        accepts_streaming: true
-        request_kind: generate_content
-        prefix_optional: true
-      models:
-        path: /v1beta/models
-        method: [GET]
-        accepted_paths: [/v1beta/models]
-        request_kind: passthrough
-      chat_completions:
+        path: "/v1beta/models/{model}:{op}"
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
+      chat:
         path: /v1beta/openai/chat/completions
-        method: [POST]
-        accepted_paths: [/v1beta/openai/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-        auth_header: Authorization
-        auth_format: "Bearer {key}"
+        auth:
+          header: Authorization
+          format: "Bearer {key}"
+    passthrough:
+      models:
+        auth:
+          header: x-goog-api-key
+          format: "{key}"
+        paths:
+          - match: /v1beta/models
+            methods: [GET]
 
   qwen-ollama:
-    prefix: qwen-ollama
-    prefix_required: true
 YAML
-# Append qwen-ollama base_url (interpolated) + endpoints.
+# Append qwen-ollama base_url (interpolated) + protocols.
 cat >>"$out/providers.yaml" <<YAML
-    base_url: ${QWEN_OLLAMA_URL}
-    endpoints:
-      chat_completions:
+    base_url: ${qwen_url}
+    protocols:
+      chat:
         path: /v1/chat/completions
-        method: [POST]
-        accepted_paths: [/v1/chat/completions]
-        accepts_streaming: true
-        request_kind: chat
-      models:
-        path: /v1/models
-        method: [GET]
-        accepted_paths: [/v1/models]
-        request_kind: passthrough
 YAML
 
-# policy.yaml — single configuration "real" with real upstream
-# credentials interpolated from env. Routing rules mirror config-dev:
-# claude-* → anthropic, gemini-* → gemini, qwen-* → qwen-ollama.
+# policy.yaml — single configuration "real" with real upstream credentials
+# interpolated from env. Routing is v2 bindings, not v1 changeProvider rules.
 cat >"$out/policy.yaml" <<YAML
 configurations:
   real:
-    upstream_credentials:
-      openai: ${OPENAI_API_KEY}
-      anthropic: ${ANTHROPIC_API_KEY}
-      gemini: ${GEMINI_API_KEY}
-      qwen-ollama: ollama-no-auth-needed
+    credentials:
+      openai: ${openai_key}
+      anthropic: ${anthropic_key}
+      gemini: ${gemini_key}
+      qwen-ollama: ""
 
-    rule_names:
-      - route-claude-models-to-anthropic
-      - route-gemini-models-to-gemini
-      - route-qwen-models-to-ollama
+    bindings:
+      - { protocol: chat, models: ["claude-*"], provider: anthropic }
+      - { protocol: messages, models: ["claude-*"], provider: anthropic }
+      - { protocol: chat, models: ["gemini-*"], provider: gemini }
+      - { protocol: generate_content, models: ["gemini-*"], provider: gemini }
+      - { protocol: chat, models: ["qwen*"], provider: qwen-ollama }
+      - { protocol: chat, models: ["gpt-*", "o1*", "o3*"], provider: openai }
+      - { protocol: responses, models: ["gpt-*"], provider: openai }
+
+    passthrough_bindings:
+      - { family: messages_batches, provider: anthropic }
+      - { family: models, provider: openai }
+      - { family: models, provider: gemini }
 
     tags:
       tier: real
@@ -172,40 +172,6 @@ api_keys:
     name: "Local dev (real upstreams)"
     configuration: real
     enabled: true
-
-rules:
-  - name: route-claude-models-to-anthropic
-    priority: 50
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: claude-
-    actions:
-      - type: changeProvider
-        newProvider: anthropic
-    behavior: continue
-
-  - name: route-gemini-models-to-gemini
-    priority: 50
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: gemini-
-    actions:
-      - type: changeProvider
-        newProvider: gemini
-    behavior: continue
-
-  - name: route-qwen-models-to-ollama
-    priority: 50
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: qwen
-    actions:
-      - type: changeProvider
-        newProvider: qwen-ollama
-    behavior: continue
 YAML
 
 # admin.yaml — enabled, bound to all interfaces so the host port
@@ -220,4 +186,5 @@ admin:
   password: "placeholder-overridden-by-SLIPSPACE_ADMIN_PASSWORD"
 YAML
 
+go run ./cmd/cli config validate --dir "$out" >/dev/null
 echo "wrote: $out/{providers,policy,admin}.yaml"

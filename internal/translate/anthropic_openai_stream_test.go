@@ -295,12 +295,46 @@ data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
 	ev := runStream(t, in)
 	want := []string{
 		"message_start",
-		"content_block_start", "content_block_delta", "content_block_stop",
-		"content_block_start", "content_block_delta", "content_block_stop",
+		"content_block_start", "content_block_delta",
+		"content_block_start", "content_block_delta",
+		"content_block_stop", "content_block_stop",
 		"message_delta", "message_stop",
 	}
 	if !eqTypes(types(ev), want) {
 		t.Fatalf("event types = %v\nwant %v", types(ev), want)
+	}
+}
+
+func TestStream_InterleavedToolCallArgumentsUseTheirOwnIndices(t *testing.T) {
+	in := `data: {"id":"x","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":""}},{"index":1,"id":"t2","type":"function","function":{"name":"b","arguments":""}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"a\":"}},{"index":1,"function":{"arguments":"{\"b\":"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}},{"index":0,"function":{"arguments":"1}"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+`
+	ev := runStream(t, in)
+	byIndex := map[int]string{}
+	for _, e := range ev {
+		if e.typ != "content_block_delta" {
+			continue
+		}
+		var d struct {
+			Index int `json:"index"`
+			Delta struct {
+				PartialJSON string `json:"partial_json"`
+			} `json:"delta"`
+		}
+		mustJSON(t, e.data, &d)
+		byIndex[d.Index] += d.Delta.PartialJSON
+	}
+	if byIndex[0] != `{"a":1}` {
+		t.Errorf("tool block 0 args = %q, want {\"a\":1}", byIndex[0])
+	}
+	if byIndex[1] != `{"b":2}` {
+		t.Errorf("tool block 1 args = %q, want {\"b\":2}", byIndex[1])
 	}
 }
 

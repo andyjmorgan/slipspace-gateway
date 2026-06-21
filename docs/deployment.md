@@ -45,7 +45,8 @@ flowchart LR
     Scrape[Prometheus] --> PR
 
     DP -- captured records --> SP
-    SP -- upload --> Dest[S3 / Azure Blob /<br/>webhook receivers]
+    SP -- upload --> Dest[S3 / Azure Blob]
+    DP -- real-time push --> WH[webhook receivers]
 
     DP --> Upstream[OpenAI / Anthropic /<br/>Gemini / qwen-ollama]
 ```
@@ -70,9 +71,12 @@ flowchart LR
     PRSVC -. scrape each replica .-> P2
     PRSVC -. scrape each replica .-> P3
 
-    P1 -- upload --> Dest[(S3 / Azure Blob /<br/>webhook receivers)]
+    P1 -- upload --> Dest[(S3 / Azure Blob)]
     P2 -- upload --> Dest
     P3 -- upload --> Dest
+    P1 -- real-time push --> WH[(webhook receivers)]
+    P2 -- real-time push --> WH
+    P3 -- real-time push --> WH
 
     CFG[("ConfigMap")] -. mount /etc/slipspace .-> P1
     CFG -. .-> P2
@@ -82,7 +86,7 @@ flowchart LR
     SEC -. .-> P3
 ```
 
-Every pod in a replica set reads the same ConfigMap and Secret. Per-pod state (circuit-breaker counters, admin snapshotter buffer, in-process live-feed ring, **spool segments**) is **not** synchronised between replicas — each pod needs its own spool PVC, and consumers downstream of S3 / Azure Blob / webhook see records from every replica interleaved. See [Multi-pod considerations](#multi-pod-considerations).
+Every pod in a replica set reads the same ConfigMap and Secret. Per-pod state (circuit-breaker counters, admin snapshotter buffer, in-process live-feed ring, **spool segments**, webhook pusher queues) is **not** synchronised between replicas — each pod needs its own spool PVC, and consumers downstream of S3, Azure Blob, or webhook see records from every replica interleaved. See [Multi-pod considerations](#multi-pod-considerations).
 
 ---
 
@@ -383,7 +387,7 @@ For cluster-aggregate views, scrape `:9090` with Prometheus and build the dashbo
 Each pod has its own spool tree under `SLIPSPACE_SPOOL_ROOT`. Sealed segments on Pod A are not visible to Pod B; the upload workers ship from each pod's own disk independently. Three operational consequences:
 
 1. **PVC per pod.** When using `StatefulSet` or per-pod PVC templating, every replica gets its own volume — segments stay co-located with the pod that wrote them.
-2. **Records interleave at the destination.** S3, Azure Blob, and webhook receivers see records from every replica in arrival order. Consumers must sort by `(ts_ns, instance_id, seq)` to recover global ordering; receive order from the destination is not stable. See [observability.md → Connector-captured records](observability.md#connector-captured-records).
+2. **Records interleave at the destination.** S3, Azure Blob, and webhook receivers see records from every replica in arrival order. Consumers must sort by `(ts_ns, instance_id, seq)` to recover global ordering; receive order from the destination is not stable. Webhook delivery is real-time and not recovered from the spool after restart. See [observability.md → Connector-captured records](observability.md#connector-captured-records).
 3. **A pod that exits cleanly drains its spool.** During SIGTERM, the spool's `Stop` runs with a 30-second timeout. Sealed segments still in `uploading/` or `sealed/` are left on the PVC and the next pod replacing this one's storage (or the same pod after a restart) picks up where it left off via recovery.
 
 If `Spool.Stats()` shows a non-zero `DroppedRing` rate per track, the right response is to investigate the connector destination — drops at the hot path mean drain can't keep up with ingest, usually because the destination is slow or broken. See [spool.md → Loss policy](spool.md#loss-policy).

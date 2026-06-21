@@ -1,8 +1,8 @@
 # Spool
 
-The spool is the on-disk buffer that sits between the data plane's request path and the upload workers shipping records to connector destinations. Every completed request that survives a configuration's binding evaluation becomes one record on a per-connector ndjson.zst segment; segments seal on size or age and the upload workers ship them out of band.
+The spool is the on-disk buffer that sits between the data plane's request path and the upload workers shipping records to durable connector destinations. Every completed request that survives a configuration's binding evaluation for an `s3` or `azure_blob` connector becomes one record on a per-connector ndjson.zst segment; segments seal on size or age and the upload workers ship them out of band. `webhook` connectors bypass the spool and use the real-time pusher described in [connectors.md](connectors.md#webhook-connector).
 
-This page is the operator's reference for the disk layout, the segment lifecycle, the rotation/retry/breaker policy, and the loss semantics. For the destinations the spool ships to, see [connectors.md](connectors.md). For the per-configuration binding knobs that decide *what* lands on which destination, see [connector-bindings.md](connector-bindings.md).
+This page is the operator's reference for the disk layout, the segment lifecycle, the rotation/retry/breaker policy, and the loss semantics for spool-backed connectors. For the destinations the spool ships to, see [connectors.md](connectors.md). For the per-configuration binding knobs that decide *what* lands on which destination, see [connector-bindings.md](connector-bindings.md).
 
 The source of truth lives in [`internal/spool/`](../internal/spool/). If a value in this doc disagrees with that package, the code wins — open a PR.
 
@@ -30,7 +30,7 @@ The source of truth lives in [`internal/spool/`](../internal/spool/). If a value
 
 > **Best-effort, disk-buffered, restart-tolerant. Never blocks the request path.**
 
-When the reporter at end-of-request decides a configuration's bindings produce records for one or more connectors, it calls `Spool.Enqueue` once per binding. The call is non-blocking: each connector has a bounded per-track ring; if the ring is full the record is dropped on the floor and the per-track drop counter bumps. The request path returns to the client as if nothing happened.
+When the reporter at end-of-request decides a configuration's bindings produce records for one or more spool-backed connectors, it calls `Spool.Enqueue` once per binding. The call is non-blocking: each connector has a bounded per-track ring; if the ring is full the record is dropped on the floor and the per-track drop counter bumps. The request path returns to the client as if nothing happened.
 
 A background goroutine per connector drains the ring, appends each record to the connector's active segment (an ndjson.zst file under the spool root), and rotates that segment on size or age. A sibling uploader goroutine watches the sealed directory and ships each segment to the destination via `Connector.Upload`. Successful uploads delete the segment; permanent failures move it to deadletter; transient failures retry with backoff until the per-segment attempt cap is hit, at which point the segment also lands in deadletter.
 
@@ -137,13 +137,13 @@ A connector's active segment seals (rotates) when **either** trigger fires:
 | Trigger | Default | Override |
 |---|---|---|
 | Size | 64 MiB uncompressed | Per-connector via `rotation.max_bytes` in the connector YAML (see [connectors.md](connectors.md#rotation-knobs)). |
-| Age | 60 s since the segment opened | Per-connector via `rotation.max_age_seconds`. Webhook bindings can tune this lower (e.g. 5s) for near-real-time delivery. |
+| Age | 60 s since the segment opened | Per-connector via `rotation.max_age_seconds`. |
 
 Either trigger alone is enough; whichever fires first rotates. The drain goroutine checks the size predicate on every Write and arms a `time.Timer` for the age predicate.
 
 After rotation, an empty segment (zero records) is **discarded** rather than moved to sealed/ — there's nothing to ship. The drain goroutine then lazily opens a new active segment on the next inbound record.
 
-> **Tuning trade-off.** Small segments mean low end-to-end delivery latency but more `Connector.Upload` calls (more requests against your destination). Large segments amortise upload overhead but delay delivery. Webhook destinations want small + frequent (4 MiB / 5 s is a reasonable starting point); S3 / Azure want large + infrequent (the 64 MiB / 60 s default).
+> **Tuning trade-off.** Small segments mean low end-to-end delivery latency but more `Connector.Upload` calls (more requests against your destination). Large segments amortise upload overhead but delay delivery. S3 / Azure usually want large + infrequent segments, so the 64 MiB / 60 s default is a reasonable starting point.
 
 ---
 
@@ -241,13 +241,13 @@ A back-of-envelope for picking values:
 | Variable | What it depends on |
 |---|---|
 | Ring depth (per track, default 10 000) | Burst tolerance during a brief drain stall. 10 000 records ≈ 10–20 seconds of high-rate traffic on a single pod. Raise if you see hot-path drops during normal operation. |
-| Rotation size (default 64 MiB uncompressed) | Trade off delivery latency vs upload overhead. 64 MiB takes 5–15 s to fill at moderate rates; webhook destinations may want 4 MiB. |
+| Rotation size (default 64 MiB uncompressed) | Trade off delivery latency vs upload overhead. 64 MiB takes 5–15 s to fill at moderate rates. |
 | Rotation age (default 60 s) | Floor on delivery latency. 60 s is acceptable for billing/audit; ≤5 s for live monitoring downstream. |
 | `MaxAttempts` × `MaxBackoff` | Outage tolerance. 8 × 60 s ≈ 5 min before deadletter. |
 | Spool root PVC size | (segment size) × (segments parked under sustained outage) × (connectors) × 2 for headroom. See "Disk path: spool full" above. |
 | `FailuresToOpen` | Latency before the breaker stops claiming. Five consecutive failures opens; lower for more sensitive destinations. |
 
-For most deployments, the defaults are fine. Adjust webhook tracks (smaller, faster rotation) and the PVC size (provisioned generously) before anything else.
+For most deployments, the defaults are fine. Adjust the PVC size generously before changing retry or breaker behaviour.
 
 ---
 
@@ -285,7 +285,7 @@ Resilience does not complicate this. The captured payload mirrors the **client-v
 
 ## Cross-references
 
-- [connectors.md](connectors.md) — the destination types the spool ships to (s3, azure_blob, webhook).
+- [connectors.md](connectors.md) — the destination types, including the spool-backed `s3` / `azure_blob` split from real-time `webhook`.
 - [connector-bindings.md](connector-bindings.md) — the per-configuration sampling / filter / size-cap knobs that decide which records reach each connector.
 - [observability.md](observability.md) — `/metrics` exposes Go runtime and process collectors; per-track spool counters are surfaced via `Spool.Stats()`.
 - [environment-variables.md](environment-variables.md) — the full SLIPSPACE_* reference.

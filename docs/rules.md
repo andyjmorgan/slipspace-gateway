@@ -388,7 +388,7 @@ Goal: any request whose model starts with `claude-` should be routed to the `ant
 ```yaml
 configurations:
   production:
-    upstream_credentials:
+    credentials:
       openai: sk-openai-mock
       anthropic: sk-ant-mock
     rule_names:

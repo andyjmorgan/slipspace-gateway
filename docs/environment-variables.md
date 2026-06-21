@@ -88,7 +88,7 @@ The data plane (`SLIPSPACE_HTTP_BIND`) is the listener clients hit with `POST /o
 
 ## Connector spool
 
-The connector spool is the disk-backed buffer between OnComplete and the connector destinations (s3, azure_blob, webhook). It is independent of the OTel metric pipeline — see [load-bearing invariant #4](../CLAUDE.md). The spool is constructed lazily; deployments with no `connectors:` block leave the spool unwired.
+The connector spool is the disk-backed buffer between OnComplete and durable connector destinations (`s3`, `azure_blob`). Webhooks use a separate bounded real-time pusher and are not recovered from `SLIPSPACE_SPOOL_ROOT`. The record channel is independent of the OTel metric pipeline — see [load-bearing invariant #4](../CLAUDE.md). The spool is constructed lazily; deployments with no spool-backed connectors leave the spool unwired.
 
 | Variable | Default | Type | Effect |
 |---|---|---|---|
