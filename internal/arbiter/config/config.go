@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -104,9 +105,35 @@ type Scanner struct {
 	// before they are persisted — exclude-only result filtering (e.g. keep PII
 	// detection but suppress "pii.url"). Applied in storeFindings.
 	FindingExclude []string `yaml:"finding_exclude,omitempty"`
+	// FindingSuppress drops individual findings whose category AND offending
+	// text both match a rule — value-scoped suppression of known-benign hits,
+	// the finer companion to FindingExclude. Applied in survivingFindings before
+	// persistence.
+	FindingSuppress []FindingSuppressionRule `yaml:"finding_suppress,omitempty"`
 	// Severity classifies surviving findings into info/warning/error, stamped
 	// on the finding and rolled up (max) onto the span verdict.
 	Severity Severity `yaml:"severity,omitempty"`
+}
+
+// FindingSuppressionRule drops a single finding whose category matches Category
+// (glob) AND whose offending text matches OffendingText (RE2 regex) — value-
+// scoped suppression of a known-benign hit (e.g. a product name a PII detector
+// reads as a person). Unlike finding_exclude, which drops a whole category
+// regardless of value, this keeps the category live and removes only the
+// matching value. Applied before persistence, so a suppressed finding never
+// reaches the finding table, gets no evidence row, and never flags the verdict.
+type FindingSuppressionRule struct {
+	// Category is the finding category glob (path.Match), e.g. "pii.person".
+	// Required — an empty value is rejected as a malformed glob.
+	Category string `yaml:"category"`
+	// OffendingText is a Go RE2 regex matched (unanchored) against the finding's
+	// offending text: a bare substring matches partially, "^claude code$" exactly,
+	// and a "(?i)" prefix case-insensitively. Required.
+	OffendingText string `yaml:"offending_text"`
+	// Reason is the operator's justification, logged when the rule fires so a
+	// suppression is auditable (and a too-broad rule shows up in the logs).
+	// Required.
+	Reason string `yaml:"reason"`
 }
 
 // ScanTags scopes scanning by request tag. Patterns are full globs
@@ -366,9 +393,10 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// validateScanFilters checks the tag-selection, finding-exclude, and severity
-// globs/levels. A bad glob silently never matches, so it is rejected at startup
-// rather than degrading scan scoping unnoticed.
+// validateScanFilters checks the tag-selection, finding-exclude,
+// finding-suppress, and severity globs/levels/regexes. A bad glob or regex
+// silently never matches, so it is rejected at startup rather than degrading
+// scan scoping unnoticed.
 func validateScanFilters(s Scanner) error {
 	for _, p := range s.ScanTags.Include {
 		if err := validGlob(p); err != nil {
@@ -383,6 +411,20 @@ func validateScanFilters(s Scanner) error {
 	for _, p := range s.FindingExclude {
 		if err := validGlob(p); err != nil {
 			return fmt.Errorf("scanner.finding_exclude: %w", err)
+		}
+	}
+	for i, r := range s.FindingSuppress {
+		if err := validGlob(r.Category); err != nil {
+			return fmt.Errorf("scanner.finding_suppress[%d].category: %w", i, err)
+		}
+		if r.OffendingText == "" {
+			return fmt.Errorf("scanner.finding_suppress[%d]: offending_text is required", i)
+		}
+		if _, err := regexp.Compile(r.OffendingText); err != nil {
+			return fmt.Errorf("scanner.finding_suppress[%d]: invalid offending_text regex %q: %w", i, r.OffendingText, err)
+		}
+		if r.Reason == "" {
+			return fmt.Errorf("scanner.finding_suppress[%d]: reason is required", i)
 		}
 	}
 	if u := s.Severity.Unmapped; u != "" && !validSeverityLevel(u) {

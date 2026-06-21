@@ -119,8 +119,9 @@ func (s *Scanner) handleResponse(ctx context.Context, task store.CheckTask, det 
 }
 
 // survivingFindings maps a detector's OK response to the findings we persist:
-// each hit minus the categories in scanner.finding_exclude, with its severity
-// stamped from scanner.severity. Pure — no I/O.
+// each hit minus the categories in scanner.finding_exclude and the
+// (category, offending-text) pairs in scanner.finding_suppress, with its
+// severity stamped from scanner.severity. Pure — no I/O.
 func (s *Scanner) survivingFindings(task store.CheckTask, det detector, resp *detectv1.DetectResponse, text string) []store.Finding {
 	raw := resp.GetFindings()
 	if len(raw) == 0 {
@@ -141,6 +142,18 @@ func (s *Scanner) survivingFindings(task store.CheckTask, det detector, resp *de
 		if matchesAnyGlob(s.findingExclude, category) {
 			continue
 		}
+		ot := offendingText(text, f.GetSpan())
+		// Value-scoped suppression: a (category, offending-text) pair an operator
+		// declared known-benign (finding_suppress) is dropped before persistence —
+		// like finding_exclude, but matched on the value too, so it cannot flag the
+		// verdict. Logged at Debug with the reason + correlation (never the
+		// offending text — that is PII) so a too-broad rule is auditable in the logs.
+		if reason, ok := s.suppressor.suppress(category, ot); ok {
+			s.logger.Debug("arbiter: finding suppressed",
+				"category", category, "reason", reason,
+				"correlation_id", task.CorrelationID, "check", task.CheckType)
+			continue
+		}
 		fin := store.Finding{
 			CorrelationID:   task.CorrelationID,
 			UnitID:          task.UnitID,
@@ -151,7 +164,7 @@ func (s *Scanner) survivingFindings(task store.CheckTask, det detector, resp *de
 			Localization:    f.GetLocalization().String(),
 			DetectorID:      detID,
 			DetectorVersion: detVer,
-			OffendingText:   offendingText(text, f.GetSpan()),
+			OffendingText:   ot,
 			Severity:        s.severity.level(category),
 		}
 		if sp := f.GetSpan(); sp != nil {

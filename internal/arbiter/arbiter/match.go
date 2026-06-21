@@ -1,7 +1,9 @@
 package arbiter
 
 import (
+	"fmt"
 	"path"
+	"regexp"
 
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
 )
@@ -49,6 +51,52 @@ func (t tagSelector) admits(tags []string) bool {
 		}
 	}
 	return false
+}
+
+// findingSuppressRule is a compiled (category glob + offending-text regex) drop
+// rule.
+type findingSuppressRule struct {
+	category string         // glob (path.Match) against the finding category
+	value    *regexp.Regexp // matched (unanchored) against the offending text
+	reason   string         // operator's justification, logged when the rule fires
+}
+
+// findingSuppressor drops individual findings whose category AND offending text
+// both match a configured rule — value-scoped suppression of known-benign hits
+// (e.g. a product name a PII detector reads as a person). Distinct from
+// findingExclude, which drops a whole category regardless of value. The zero
+// value suppresses nothing.
+type findingSuppressor struct {
+	rules []findingSuppressRule
+}
+
+// newFindingSuppressor compiles the config rules. It returns an error if a
+// rule's value pattern is not a valid regexp; config.Validate already checks
+// this, so New surfaces it as a startup error rather than silently dropping the
+// rule (mirroring how a malformed glob is rejected at load).
+func newFindingSuppressor(rules []config.FindingSuppressionRule) (findingSuppressor, error) {
+	compiled := make([]findingSuppressRule, 0, len(rules))
+	for _, r := range rules {
+		re, err := regexp.Compile(r.OffendingText)
+		if err != nil {
+			return findingSuppressor{}, fmt.Errorf("finding_suppress %q: %w", r.OffendingText, err)
+		}
+		compiled = append(compiled, findingSuppressRule{category: r.Category, value: re, reason: r.Reason})
+	}
+	return findingSuppressor{rules: compiled}, nil
+}
+
+// suppress reports whether a finding (its category and offending text) matches
+// any rule, returning the first matching rule's reason for the audit log. A rule
+// matches when its category glob matches the category AND its value regex
+// matches the offending text. The zero suppressor (no rules) never matches.
+func (s findingSuppressor) suppress(category, offendingText string) (string, bool) {
+	for _, r := range s.rules {
+		if ok, err := path.Match(r.category, category); err == nil && ok && r.value.MatchString(offendingText) {
+			return r.reason, true
+		}
+	}
+	return "", false
 }
 
 // severityRule is a compiled category→level entry.

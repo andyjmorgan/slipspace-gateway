@@ -59,6 +59,63 @@ func TestTagSelectorAdmits(t *testing.T) {
 	}
 }
 
+func TestFindingSuppressor(t *testing.T) {
+	sup, err := newFindingSuppressor([]config.FindingSuppressionRule{
+		{Category: "pii.person", OffendingText: "(?i)^claude code$", Reason: "first-party CC"},
+		{Category: "pii.*", OffendingText: "internal-bot", Reason: "service account"},
+	})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	cases := []struct {
+		name       string
+		category   string
+		offending  string
+		wantReason string
+		wantOK     bool
+	}{
+		{"exact, case-insensitive", "pii.person", "Claude Code", "first-party CC", true},
+		{"exact, lower", "pii.person", "claude code", "first-party CC", true},
+		{"anchored rejects superstring", "pii.person", "claude code rocks", "", false},
+		{"category mismatch keeps it", "pii.email", "claude code", "", false},
+		{"value mismatch keeps it", "pii.person", "alice smith", "", false},
+		{"unanchored partial (2nd rule)", "pii.email", "see internal-bot here", "service account", true},
+		{"glob category match (2nd rule)", "pii.ssn", "internal-bot", "service account", true},
+		{"first matching rule's reason wins", "pii.person", "internal-bot", "service account", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			reason, ok := sup.suppress(c.category, c.offending)
+			if ok != c.wantOK || reason != c.wantReason {
+				t.Errorf("suppress(%q, %q) = (%q, %v), want (%q, %v)",
+					c.category, c.offending, reason, ok, c.wantReason, c.wantOK)
+			}
+		})
+	}
+}
+
+func TestFindingSuppressor_Empty(t *testing.T) {
+	var zero findingSuppressor // no rules
+	if _, ok := zero.suppress("pii.person", "claude code"); ok {
+		t.Error("zero suppressor should never match")
+	}
+	none, err := newFindingSuppressor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := none.suppress("pii.person", "anything"); ok {
+		t.Error("no rules should never match")
+	}
+}
+
+func TestNewFindingSuppressor_BadRegex(t *testing.T) {
+	if _, err := newFindingSuppressor([]config.FindingSuppressionRule{
+		{Category: "pii.person", OffendingText: "(", Reason: "x"},
+	}); err == nil {
+		t.Error("want error for invalid regex")
+	}
+}
+
 func TestSeverityClassifier(t *testing.T) {
 	cls := newSeverityClassifier(config.Severity{
 		Unmapped: config.SeverityWarning,
