@@ -942,3 +942,40 @@ func TestAssemble_DefensiveFallbacksWhenRawMissing(t *testing.T) {
 		}
 	}
 }
+
+// TestAccumulate_AnthropicMessages_ContextManagementOnDelta locks the
+// rollup-fidelity fix: Anthropic emits the response-side context_management
+// echo (which context edits the server applied) and, on the stop types that
+// carry one, stop_details on the TERMINAL message_delta — not message_start.
+// Neither is modeled on MessageDeltaEvent, so absorbMessageDelta must lift them
+// out of DynamicProperties onto the base or the assembled rollup drops the
+// server's context-edit provenance and reports a null stop_details, diverging
+// from the non-streaming response the inspector compares against.
+func TestAccumulate_AnthropicMessages_ContextManagementOnDelta(t *testing.T) {
+	raw := []byte(
+		`event: message_start` + "\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\n" +
+			`event: content_block_start` + "\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+			`event: content_block_delta` + "\n" +
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}` + "\n\n" +
+			`event: content_block_stop` + "\n" +
+			`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+			`event: message_delta` + "\n" +
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":{"type":"max_tokens_detail"}},"usage":{"output_tokens":3},"context_management":{"applied_edits":[{"type":"clear_tool_uses_20250919"}]}}` + "\n\n" +
+			`event: message_stop` + "\n" +
+			`data: {"type":"message_stop"}` + "\n\n",
+	)
+
+	resp := parseAnthropic(t, Accumulate("anthropic", "messages", raw).Assembled)
+
+	if resp.ContextManagement == nil {
+		t.Fatalf("context_management dropped from assembled rollup")
+	}
+	if !strings.Contains(string(resp.ContextManagement.AppliedEdits), "clear_tool_uses_20250919") {
+		t.Errorf("applied_edits = %s, want the server edit preserved", resp.ContextManagement.AppliedEdits)
+	}
+	if !strings.Contains(string(resp.StopDetails), "max_tokens_detail") {
+		t.Errorf("stop_details = %s, want the delta-carried detail preserved", resp.StopDetails)
+	}
+}

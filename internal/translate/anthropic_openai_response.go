@@ -157,8 +157,8 @@ func translateUsage(u *chat.Usage, serviceTier string) messages.Usage {
 	}
 	out.InputTokens = u.PromptTokens
 	out.OutputTokens = u.CompletionTokens
-	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
-		cached := u.PromptTokensDetails.CachedTokens
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens != nil && *u.PromptTokensDetails.CachedTokens > 0 {
+		cached := *u.PromptTokensDetails.CachedTokens
 		out.CacheReadInputTokens = &cached
 	}
 	return out

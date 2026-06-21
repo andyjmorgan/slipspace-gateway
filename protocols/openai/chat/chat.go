@@ -316,10 +316,14 @@ func (u Usage) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(u) }
 // Unknown fields round-trip via the embedded DynamicProperties.
 type PromptTokensDetails struct {
 	// CachedTokens is the share of PromptTokens served from the prompt cache.
-	CachedTokens int `json:"cached_tokens,omitempty"`
+	// Pointer so a provider-reported 0 round-trips as `0` rather than
+	// collapsing to absent under omitempty when the streaming rollup
+	// re-marshals this struct.
+	CachedTokens *int `json:"cached_tokens,omitempty"`
 
 	// AudioTokens is the share of PromptTokens that were audio input.
-	AudioTokens int `json:"audio_tokens,omitempty"`
+	// Pointer for the same reason as CachedTokens.
+	AudioTokens *int `json:"audio_tokens,omitempty"`
 
 	models.DynamicProperties
 }
@@ -338,19 +342,25 @@ func (d PromptTokensDetails) MarshalJSON() ([]byte, error) { return models.Marsh
 // sub-counters. Unknown fields round-trip via the embedded DynamicProperties.
 type CompletionTokensDetails struct {
 	// ReasoningTokens is the share of CompletionTokens consumed by the
-	// model's hidden reasoning trace (reasoning models only).
-	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+	// model's hidden reasoning trace (reasoning models only). Pointer so a
+	// provider-reported 0 round-trips as `0` rather than collapsing to
+	// absent under omitempty when the streaming rollup re-marshals this
+	// struct.
+	ReasoningTokens *int `json:"reasoning_tokens,omitempty"`
 
 	// AudioTokens is the share of CompletionTokens emitted as audio.
-	AudioTokens int `json:"audio_tokens,omitempty"`
+	// Pointer for the same reason as ReasoningTokens.
+	AudioTokens *int `json:"audio_tokens,omitempty"`
 
 	// AcceptedPredictionTokens counts predicted-output tokens the model
-	// accepted (predicted-output feature).
-	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
+	// accepted (predicted-output feature). Pointer for the same reason as
+	// ReasoningTokens.
+	AcceptedPredictionTokens *int `json:"accepted_prediction_tokens,omitempty"`
 
 	// RejectedPredictionTokens counts predicted-output tokens the model
-	// rejected and regenerated.
-	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
+	// rejected and regenerated. Pointer for the same reason as
+	// ReasoningTokens.
+	RejectedPredictionTokens *int `json:"rejected_prediction_tokens,omitempty"`
 
 	models.DynamicProperties
 }

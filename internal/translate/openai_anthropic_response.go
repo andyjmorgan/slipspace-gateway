@@ -140,7 +140,8 @@ func usageToChat(u messages.Usage) *chat.Usage {
 		TotalTokens:      u.InputTokens + u.OutputTokens,
 	}
 	if u.CacheReadInputTokens != nil {
-		out.PromptTokensDetails = &chat.PromptTokensDetails{CachedTokens: *u.CacheReadInputTokens}
+		cached := *u.CacheReadInputTokens
+		out.PromptTokensDetails = &chat.PromptTokensDetails{CachedTokens: &cached}
 	}
 	return out
 }

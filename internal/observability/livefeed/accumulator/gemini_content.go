@@ -3,7 +3,6 @@ package accumulator
 import (
 	"encoding/json"
 	"sort"
-	"strings"
 
 	"github.com/andyjmorgan/slipspace-gateway/models"
 	geminicontent "github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
@@ -57,10 +56,12 @@ type geminiState struct {
 }
 
 type geminiCandidateState struct {
-	index        int
-	role         string
-	textBuf      strings.Builder
-	textSeen     bool
+	index int
+	role  string
+	// parts holds the candidate's content parts in the exact order Gemini
+	// streamed them — text, executableCode, codeExecutionResult, ... must
+	// round-trip in place. Consecutive plain text deltas are merged in
+	// appendPart; everything else keeps its position.
 	parts        []geminicontent.Part
 	finishReason *string
 	tokenCount   *int
@@ -79,6 +80,41 @@ type geminiCandidateState struct {
 
 func newGeminiState() *geminiState {
 	return &geminiState{candidates: map[int]*geminiCandidateState{}}
+}
+
+// appendPart adds p to the candidate's ordered part list, preserving the
+// stream order Gemini emitted. The one merge is consecutive plain TextParts:
+// Gemini streams the model's prose as adjacent text deltas the non-streaming
+// response would have delivered as a single block. A text part bearing a
+// thought flag, thoughtSignature, or unknown fields is NOT plain and stays its
+// own part so those fields survive; non-text parts (functionCall,
+// executableCode, codeExecutionResult, ...) always keep their position so a
+// text/code/text transcript round-trips in order rather than collapsing all
+// text to the front.
+func (st *geminiCandidateState) appendPart(p geminicontent.Part) {
+	if tp, ok := p.(*geminicontent.TextPart); ok {
+		if tp == nil {
+			return
+		}
+		if tp.Text == "" && plainText(tp) {
+			// Empty padding fragment carrying no signature/thought — nothing to keep.
+			return
+		}
+		if plainText(tp) && len(st.parts) > 0 {
+			if last, ok := st.parts[len(st.parts)-1].(*geminicontent.TextPart); ok && plainText(last) {
+				last.Text += tp.Text
+				return
+			}
+		}
+	}
+	st.parts = append(st.parts, p)
+}
+
+// plainText reports whether tp is an ordinary text fragment carrying no thought
+// flag, signature, or unknown fields — i.e. safe to concatenate with an
+// adjacent plain text part without losing data.
+func plainText(tp *geminicontent.TextPart) bool {
+	return tp.Thought == nil && tp.ThoughtSignature == nil && len(tp.Extra) == 0
 }
 
 func (s *geminiState) absorb(chunk *geminicontent.GenerateContentResponse) {
@@ -111,18 +147,7 @@ func (s *geminiState) absorb(chunk *geminicontent.GenerateContentResponse) {
 				st.role = cand.Content.Role
 			}
 			for _, p := range cand.Content.Parts {
-				switch part := p.(type) {
-				case *geminicontent.TextPart:
-					if part != nil && part.Text != "" {
-						st.textBuf.WriteString(part.Text)
-						st.textSeen = true
-					}
-				default:
-					// Non-text parts (function calls, inline data, etc.)
-					// pass through verbatim — Gemini does not delta
-					// these, every chunk carries the whole part.
-					st.parts = append(st.parts, p)
-				}
+				st.appendPart(p)
 			}
 		}
 		if cand.FinishReason != nil {
@@ -168,15 +193,14 @@ func (s *geminiState) assemble() geminicontent.GenerateContentResponse {
 	for _, idx := range s.candOrder {
 		st := s.candidates[idx]
 		var content *geminicontent.Content
-		if st.textSeen || len(st.parts) > 0 || st.role != "" {
-			parts := make([]geminicontent.Part, 0, len(st.parts)+1)
-			if st.textSeen {
-				parts = append(parts, &geminicontent.TextPart{Text: st.textBuf.String()})
-			}
-			parts = append(parts, st.parts...)
+		if len(st.parts) > 0 || st.role != "" {
 			role := st.role
 			if role == "" {
 				role = "model"
+			}
+			parts := st.parts
+			if parts == nil {
+				parts = []geminicontent.Part{}
 			}
 			content = &geminicontent.Content{Role: role, Parts: parts}
 		}

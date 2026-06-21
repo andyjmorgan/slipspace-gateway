@@ -410,8 +410,10 @@ func (u Usage) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(u) }
 // Unknown fields round-trip via the embedded DynamicProperties.
 type InputTokensDetails struct {
 	// CachedTokens is the share of InputTokens served from the prompt
-	// cache.
-	CachedTokens int `json:"cached_tokens,omitempty"`
+	// cache. Pointer so a provider-reported 0 round-trips as `0` rather
+	// than collapsing to absent under omitempty (the streaming rollup
+	// re-marshals this struct, so a plain int would erase a real zero).
+	CachedTokens *int `json:"cached_tokens,omitempty"`
 
 	models.DynamicProperties
 }
@@ -430,8 +432,11 @@ func (d InputTokensDetails) MarshalJSON() ([]byte, error) { return models.Marsha
 // Unknown fields round-trip via the embedded DynamicProperties.
 type OutputTokensDetails struct {
 	// ReasoningTokens is the share of OutputTokens consumed by the model's
-	// hidden reasoning trace.
-	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+	// hidden reasoning trace. Pointer so a provider-reported 0 round-trips
+	// as `0` rather than collapsing to absent under omitempty (the
+	// streaming rollup re-marshals this struct, so a plain int would erase
+	// a real zero).
+	ReasoningTokens *int `json:"reasoning_tokens,omitempty"`
 
 	models.DynamicProperties
 }
