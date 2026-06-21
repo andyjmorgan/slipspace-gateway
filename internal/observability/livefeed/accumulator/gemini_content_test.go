@@ -117,3 +117,57 @@ func TestAccumulate_GeminiCodeExecutionAndGrounding(t *testing.T) {
 		}
 	}
 }
+
+// TestAccumulate_GeminiPreservesPartOrder locks the rollup-fidelity fix for
+// interleaved code-execution transcripts: text/code/text must round-trip in the
+// order Gemini streamed them, with consecutive text deltas merged but a text
+// run that straddles a code block kept on the correct side. Pre-fix the
+// accumulator concatenated ALL text into one part and emitted it first, sinking
+// the code parts to the end and destroying the transcript order an operator
+// reads.
+func TestAccumulate_GeminiPreservesPartOrder(t *testing.T) {
+	raw := []byte(strings.Join([]string{
+		`data: {"candidates":[{"content":{"parts":[{"text":"Let me compute "}],"role":"model"},"index":0}]}`,
+		"",
+		`data: {"candidates":[{"content":{"parts":[{"text":"1+1.\n"}],"role":"model"},"index":0}]}`,
+		"",
+		`data: {"candidates":[{"content":{"parts":[{"executableCode":{"language":"PYTHON","code":"print(1+1)"}}],"role":"model"},"index":0}]}`,
+		"",
+		`data: {"candidates":[{"content":{"parts":[{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"2\n"}}],"role":"model"},"index":0}]}`,
+		"",
+		`data: {"candidates":[{"content":{"parts":[{"text":"The answer is 2."}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"totalTokenCount":9}}`,
+		"",
+		"",
+	}, "\n"))
+
+	got := Accumulate("gemini", "generate_content", raw)
+	if got.Partial {
+		t.Fatalf("unexpected partial reassembly")
+	}
+	var resp geminicontent.GenerateContentResponse
+	if err := json.Unmarshal(got.Assembled, &resp); err != nil {
+		t.Fatalf("assembled not parseable: %v\n%s", err, got.Assembled)
+	}
+	if len(resp.Candidates) != 1 || resp.Candidates[0].Content == nil {
+		t.Fatalf("candidates = %+v", resp.Candidates)
+	}
+	parts := resp.Candidates[0].Content.Parts
+	// Expected order: merged leading text, code, result, trailing text.
+	if len(parts) != 4 {
+		t.Fatalf("part count = %d, want 4 (text, code, result, text):\n%s", len(parts), got.Assembled)
+	}
+	t0, ok := parts[0].(*geminicontent.TextPart)
+	if !ok || t0.Text != "Let me compute 1+1.\n" {
+		t.Errorf("part[0] = %+v, want merged leading text", parts[0])
+	}
+	if _, ok := parts[1].(*geminicontent.ExecutableCodePart); !ok {
+		t.Errorf("part[1] = %T, want executableCode", parts[1])
+	}
+	if _, ok := parts[2].(*geminicontent.CodeExecutionResultPart); !ok {
+		t.Errorf("part[2] = %T, want codeExecutionResult", parts[2])
+	}
+	t3, ok := parts[3].(*geminicontent.TextPart)
+	if !ok || t3.Text != "The answer is 2." {
+		t.Errorf("part[3] = %+v, want trailing text after code", parts[3])
+	}
+}

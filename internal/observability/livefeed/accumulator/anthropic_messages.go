@@ -231,6 +231,21 @@ func (s *anthropicState) absorbMessageDelta(e *messages.MessageDeltaEvent) {
 			s.base.Usage.Extra[k] = v
 		}
 	}
+	// context_management (event-level) and stop_details (delta-level) can
+	// arrive on the terminal message_delta rather than message_start. Neither
+	// is modeled on MessageDeltaEvent / MessageDelta, so they ride in
+	// DynamicProperties. A non-streaming decode keeps both on the response, so
+	// lift them onto the base — otherwise the assembled rollup silently drops
+	// the server's context-edit provenance and reports a null stop_details.
+	if raw, ok := e.Extra["context_management"]; ok && len(raw) > 0 && string(raw) != "null" {
+		var cm messages.ContextManagement
+		if err := json.Unmarshal(raw, &cm); err == nil {
+			s.base.ContextManagement = &cm
+		}
+	}
+	if raw, ok := e.Delta.Extra["stop_details"]; ok && len(raw) > 0 && string(raw) != "null" {
+		s.base.StopDetails = append(json.RawMessage(nil), raw...)
+	}
 }
 
 func (s *anthropicState) assemble() messages.MessagesResponse {

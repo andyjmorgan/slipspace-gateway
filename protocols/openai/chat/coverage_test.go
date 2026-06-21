@@ -82,10 +82,10 @@ func TestChat_UsageDetailsRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(in, &u); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if u.PromptTokensDetails == nil || u.PromptTokensDetails.CachedTokens != 3 {
+	if u.PromptTokensDetails == nil || u.PromptTokensDetails.CachedTokens == nil || *u.PromptTokensDetails.CachedTokens != 3 {
 		t.Fatalf("prompt details: %+v", u.PromptTokensDetails)
 	}
-	if u.CompletionTokensDetails == nil || u.CompletionTokensDetails.ReasoningTokens != 2 {
+	if u.CompletionTokensDetails == nil || u.CompletionTokensDetails.ReasoningTokens == nil || *u.CompletionTokensDetails.ReasoningTokens != 2 {
 		t.Fatalf("completion details: %+v", u.CompletionTokensDetails)
 	}
 	out, err := json.Marshal(u)
@@ -94,6 +94,37 @@ func TestChat_UsageDetailsRoundTrip(t *testing.T) {
 	}
 	if !jsonValueEqual(t, in, out) {
 		t.Fatalf("drift\n in: %s\nout: %s", in, out)
+	}
+}
+
+// TestChat_UsageZeroSubCounterRoundTrips guards the rollup-fidelity fix: a
+// provider-reported reasoning_tokens / cached_tokens of 0 must survive a
+// decode→encode cycle (the streaming accumulator re-marshals Usage). Pre-fix
+// the plain-int + omitempty fields collapsed a real 0 to absent.
+func TestChat_UsageZeroSubCounterRoundTrips(t *testing.T) {
+	in := []byte(`{` +
+		`"completion_tokens":4,` +
+		`"completion_tokens_details":{"reasoning_tokens":0},` +
+		`"prompt_tokens":7,` +
+		`"prompt_tokens_details":{"cached_tokens":0},` +
+		`"total_tokens":11` +
+		`}`)
+	var u Usage
+	if err := json.Unmarshal(in, &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if u.PromptTokensDetails == nil || u.PromptTokensDetails.CachedTokens == nil || *u.PromptTokensDetails.CachedTokens != 0 {
+		t.Fatalf("cached_tokens 0 not preserved: %+v", u.PromptTokensDetails)
+	}
+	if u.CompletionTokensDetails == nil || u.CompletionTokensDetails.ReasoningTokens == nil || *u.CompletionTokensDetails.ReasoningTokens != 0 {
+		t.Fatalf("reasoning_tokens 0 not preserved: %+v", u.CompletionTokensDetails)
+	}
+	out, err := json.Marshal(u)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("zero sub-counter dropped on re-marshal: got %s", out)
 	}
 }
 

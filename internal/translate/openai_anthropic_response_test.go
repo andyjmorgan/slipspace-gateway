@@ -126,7 +126,7 @@ func TestMessagesToChat_NilStopReason(t *testing.T) {
 
 func TestMessagesToChat_CachedTokens(t *testing.T) {
 	resp, _ := decodeChatResp(t, `{"id":"i","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"x"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":7}}`)
-	if resp.Usage.PromptTokensDetails == nil || resp.Usage.PromptTokensDetails.CachedTokens != 7 {
+	if resp.Usage.PromptTokensDetails == nil || resp.Usage.PromptTokensDetails.CachedTokens == nil || *resp.Usage.PromptTokensDetails.CachedTokens != 7 {
 		t.Errorf("cached tokens = %+v, want 7", resp.Usage.PromptTokensDetails)
 	}
 }
