@@ -1,6 +1,6 @@
 # Rules
 
-SlipSpace's rules engine is the request-shaping layer. It inspects a small read-only view of each in-flight request — provider, protocol, model, headers, tags — and runs an ordered chain of operator-authored rules. Each matched rule fires one or more actions that mutate the destination, set a header, attach a tag, bind a resilience policy, or short-circuit the request with a synthetic response. Rules are defined in `policy.yaml` (or any merged file under `SLIPSPACE_CONFIG_DIR`); configurations opt in by listing them in `rule_names`.
+SlipSpace's rules engine is the request-shaping layer. It inspects a small read-only view of each in-flight request — provider, protocol, model, headers, tags — and runs an ordered chain of operator-authored rules. Each matched rule fires one or more actions that rewrite the destination, set a header, attach a tag, or short-circuit the request with a synthetic response. Rules are defined in `policy.yaml` (or any merged file under `SLIPSPACE_CONFIG_DIR`); configurations opt in by listing them in `rule_names`.
 
 **Two authoring paths, same schema.** Rules can be hand-edited in YAML (the source of truth on disk) **or** created and modified live via the admin write API (`POST/PUT/DELETE /admin/api/v1/config/rules[/{name}]` — see [`docs/admin-console.md → Config write API`](admin-console.md#config-write-api)). The admin console's visual editor drives that API; every mutation persists atomically to the file the rules block was loaded from (its `SourceFiles` origin, defaulting to `policy.yaml` for blocks first introduced through the API) and applies to the next request through `config.Store.Replace` — no pod restart. Both paths produce the same on-disk wire format, so YAML hand-edits and API-driven edits compose cleanly: an operator can mass-author rules in YAML, then tweak individual rules through the SPA.
 
@@ -35,11 +35,11 @@ This page is the operator's reference for **conditions** — every type, every o
 
 > **Rules transform the request before the forwarder runs.**
 
-The rule engine sits between auth/body-capture and the forwarder. Its only job is to look at what came in, decide what (if anything) should change, and let the downstream pipeline take it from there. A rule never speaks to the upstream provider; it edits the request's intended destination, headers, model, body, tags, or resilience binding, and steps aside.
+The rule engine sits between auth/body-capture and the forwarder. Its only job is to look at what came in, decide what (if anything) should change, and let the downstream pipeline take it from there. A rule never speaks to the upstream provider; it edits the request's intended destination (provider, model, credential), headers, body, and tags, and steps aside.
 
 Three flavours of mutation, in increasing reach:
 
-- **Steer.** `changeProvider`, `changeModelName`, `changeUrl`, `changeApiKey` rewrite where the request is going.
+- **Steer.** `changeProvider`, `changeModelName`, `changeApiKey` rewrite where the request is going. (`changeUrl` and `useResiliencePolicy` still parse and validate but are **inert** in v2 — the data plane never reads the state they write; route to a different URL or resilience group with a binding edit instead. See [actions.md → `changeUrl`](actions.md#changeurl).)
 - **Annotate.** `setHeader`, `appendQueryString`, `addTag` decorate the outbound request or the in-process state.
 - **Short-circuit.** `returnStatusCode`, `llmImpersonation` end the pipeline with a synthetic response — the forwarder never runs.
 
@@ -49,7 +49,7 @@ The engine itself is unaware of which is which. It walks a chain, asks each rule
 
 ## Where rules sit in the pipeline
 
-Rules run after auth and bodycapture but before resilience and the forwarder. See the pipeline diagram in [`docs/resilience.md`](resilience.md#where-it-sits-in-the-pipeline) for the full sequence; the rules box is the one feeding `useResiliencePolicy` into the orchestrator.
+Rules run after selection and bodycapture but **before** resilience and the forwarder. [`docs/pipeline.md`](pipeline.md#the-http-middleware-chain) is the canonical source of truth for the chain; [`docs/resilience.md`](resilience.md#where-it-sits-in-the-pipeline) shows the resilience-centric view. The rules stage queues request/response transforms onto `MutableState`; it does **not** feed a resilience policy into the orchestrator — the orchestrator reads the binding-derived config from context, and `useResiliencePolicy` is inert (see [actions.md → `useResiliencePolicy`](actions.md#useresiliencepolicy)).
 
 In short: by the time a rule sees a request, the provider + protocol are resolved from routing, the body has been typed-decoded (when applicable), and the inbound headers are available read-only. After rules finish, the post-rule `MutableState` (and any synthetic outcome) drives the rest of the pipeline.
 
@@ -463,6 +463,7 @@ The `And` short-circuits: if the request isn't on `openai`, the header lookup is
 ## Cross-references
 
 - [`docs/actions.md`](actions.md) — every action type (`changeProvider`, `changeModelName`, `changeUrl`, `changeApiKey`, `setHeader`, `appendQueryString`, `addTag`, `useResiliencePolicy`, `returnStatusCode`, `llmImpersonation`) with semantics and worked examples.
-- [`docs/resilience.md`](resilience.md) — the `useResiliencePolicy` action's destination, including the pipeline diagram showing where rules sit relative to the orchestrator.
+- [`docs/resilience.md`](resilience.md) — resilience groups and bindings (the v2 replacement for the now-inert `useResiliencePolicy` action), including the pipeline diagram showing rules run **before** the orchestrator.
+- [`docs/pipeline.md`](pipeline.md) — the canonical middleware chain (`selection → rules → resilience → forwarder`) and the body re-marshal contract.
 - [`docs/observability.md`](observability.md) — the rule-engine meters (`gateway.rule.matches.total`, `gateway.rule.errors.total`, `gateway.rule.evaluation.duration`) and the per-request `RulesFired` shape captured on connector `Record`s and the admin console live-feed.
 - [`docs/environment-variables.md`](environment-variables.md) — `SLIPSPACE_RULES_MAX_GROUP_DEPTH` and all other server-tunable env vars.

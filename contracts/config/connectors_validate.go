@@ -124,9 +124,10 @@ func (c *Connector) validateWebhook() error {
 }
 
 // webhookAllowPrivateNetworks reports whether the test-only env
-// var is set to flip both the config-load and runtime SSRF checks
-// off. Centralised here so validateWebhook and the runtime guard
-// agree on the spelling.
+// var is set to disable the config-load SSRF host check. The check is
+// static and config-load-only — there is no separate runtime/dial-time
+// guard — so this gates the single check in validateWebhook. Centralised
+// here so callers agree on the spelling.
 func webhookAllowPrivateNetworks() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv(envWebhookAllowPrivate)))
 	return v == "1" || v == "true"
@@ -135,9 +136,10 @@ func webhookAllowPrivateNetworks() bool {
 // rejectLocalOrPrivateHost catches the common SSRF footguns at
 // config-load: literal localhost / 127.x / RFC1918 / link-local / 0/8 /
 // multicast hosts that no production webhook receiver should use. This
-// is the static check the runtime SSRF guard's docstring claims; it
-// cannot defend against a DNS name that resolves to a private IP —
-// the runtime dial-time check covers that.
+// is the only SSRF check the webhook path performs — it runs once, at
+// config-load. It inspects literal IPs in the URL and therefore cannot
+// defend against a DNS name that resolves to a private IP at send time;
+// there is no dial-time guard on the pusher's HTTP client.
 func rejectLocalOrPrivateHost(host string) error {
 	if host == "" {
 		return errors.New("url has no host")
