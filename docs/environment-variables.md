@@ -130,7 +130,7 @@ Prometheus scrape and OTLP push are independent: enable one, the other, both, or
 
 ## Admin console
 
-The admin console is a separate listener (default `:8081`) with its own auth surface. Whether the listener starts is gated by `admin.enabled` in `admin.yaml`, not an env var — see CLAUDE.md's "Admin console architecture" note. The env vars in this section only tune the console's behaviour once it's enabled.
+The admin console is mounted under `/admin/` on the data-plane listener (`SLIPSPACE_HTTP_BIND`, default `:8585`) — it is not a separate `http.Server`. Whether the `/admin` surface is served is gated by `admin.enabled` in `admin.yaml`, not an env var — see CLAUDE.md's "Admin console architecture" note. The env vars in this section only tune the console's behaviour once it's enabled.
 
 | Variable | Default | Type | Effect |
 |---|---|---|---|

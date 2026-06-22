@@ -277,7 +277,7 @@ Passthrough-mode configuration selector: the client brings its own upstream cred
 | Direction | Behaviour |
 |---|---|
 | Inbound | When set, the resolver enters passthrough mode unconditionally — passthrough wins even if a managed-mode bearer is also present. The value names a configuration; an unknown name fails the request. |
-| Forwarded upstream | **Stripped.** Auth adds the identity/configuration header to the destination builder's `DropHeaders` set so the upstream provider never sees the SlipSpace-internal selector. |
+| Forwarded upstream | **Stripped.** The forwarder's unconditional [`alwaysDropHeaders`](../internal/proxy/forwarder.go) list strips the identity/configuration header so the upstream provider never sees the SlipSpace-internal selector. |
 
 The full resolution algorithm (managed vs passthrough, credential discovery order, drop-header set) is in [docs/auth.md](auth.md).
 

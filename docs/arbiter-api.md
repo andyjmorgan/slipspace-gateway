@@ -288,9 +288,11 @@ newest-first store order).
 #### `GET /api/v1/messages`
 
 Handler `handleObsMessages`. The full message browser: filter set + `?from`/`?to`
-(RFC3339) + `?cursor` + `?limit`. Returns `{"entries":[…], "next_cursor":"…"}`
+(RFC3339) + `?cursor` + `?limit`. Returns `{"entries":[…], "next_cursor":"…", "total":N}`
 where each entry is a `contracts/admin.MessageEntry` — **newest-first** (browser
-order, unlike the live feed). Entry fields include the projected filter columns
+order, unlike the live feed). `total` is the full filter + window match count
+(page-independent) for the pager. Entries are served in store order (newest-first)
+directly on the wire — the browser does **not** reverse client-side. Entry fields include the projected filter columns
 (provider/model/configuration/protocol/status), plus the rich extras decoded from
 the event's `span_event` blob (`store.SpanFields`): latency, token counts, the
 streaming flag, the post-rule `tags`, `rules_matched` (`RuleHit{rule_name,
