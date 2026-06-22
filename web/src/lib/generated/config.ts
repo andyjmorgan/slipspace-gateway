@@ -422,8 +422,12 @@ export interface Provider {
   /**
    * Passthrough is the opaque/stateful endpoint families this provider
    * exposes (e.g. Anthropic message batches), keyed by family name. These
-   * are proxied verbatim with rewrites only — never typed, never
-   * GenAI-telemetried, never payload-captured.
+   * are proxied verbatim with rewrites only — never typed and never
+   * GenAI-telemetried. Note: "verbatim" is about forwarding, not audit:
+   * the raw request/response bodies are still captured into connector
+   * Records when the resolved configuration has connector_bindings
+   * (body-capture buffers them under KindPassthrough; the reporter writes
+   * them). Only an unbound configuration skips capture.
    */
   passthrough?: { [key: string]: PassthroughFamily};
 }
@@ -467,8 +471,10 @@ export interface ProviderAuth {
 /**
  * PassthroughFamily is an opaque, stateful endpoint family proxied verbatim
  * (e.g. Anthropic's message-batches surface across create/get/results/cancel).
- * Not model-keyed; selected by path pattern. No typed parsing, no GenAI
- * telemetry, no payload capture — only rewrites and plain HTTP metrics.
+ * Not model-keyed; selected by path pattern. No typed parsing and no GenAI
+ * telemetry — only rewrites and plain HTTP metrics. Raw bodies are still
+ * captured into connector Records when the configuration is bound (see the
+ * Provider.Passthrough note above); "verbatim" governs forwarding, not audit.
  */
 export interface PassthroughFamily {
   /**
