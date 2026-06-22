@@ -134,7 +134,7 @@ message **inspector** has bodies to show, add the HMAC Record webhook:
    SLIPSPACE_TELEMETRY_HMAC_SECRET=change-me-shared-hmac-secret
    SLIPSPACE_WEBHOOK_ALLOW_PRIVATE=true
    ```
-   (`telemetry` is a compose service name → a private IP; the gateway's SSRF
+   (`arbiter` is a compose service name → a private IP; the gateway's SSRF
    guard blocks private webhook targets unless this is set.)
 
 2. In `config/policy.template.yaml`, add a connector + binding to the `default`
@@ -143,7 +143,7 @@ message **inspector** has bodies to show, add the HMAC Record webhook:
    connectors:
      - name: central-telemetry
        type: webhook
-       url: http://telemetry:8686/api/v1/ingest/record
+       url: http://arbiter:8686/api/v1/ingest/record
        secret_ref: env:SLIPSPACE_TELEMETRY_HMAC_SECRET
        gateway_id: quickstart-gw
        timeout_ms: 5000

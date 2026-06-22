@@ -2,7 +2,7 @@
 
 Everything the gateway needs to serve traffic lives in YAML files under `SLIPSPACE_CONFIG_DIR` (default `/etc/slipspace/`). The loader reads **every** `*.yaml` file in that directory, merges the top-level blocks by key into a single `ResolvedConfig`, validates cross-block references, then builds the runtime indexes the data plane reads on every request.
 
-This is the **v2** configuration model. Routing defaults to config data: the inbound request path fixes a *protocol*, the request body carries a *model*, and a configuration's **bindings** map `(protocol, model)` to a provider or a resilience group. The routing rule actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`, see [actions.md](actions.md)) remain available as per-request overrides layered on top of that binding data. There is no path-based route table, no provider `endpoints`/`accepted_paths`/`prefix*` schema, and no top-level `resilience_policies` block — those were v1 concepts retired into bindings, groups, and provider `protocols`. See `internal/config/config_model.go` (the loader) and `contracts/config/model.go` (the schema) for the source of truth.
+This is the **v2** configuration model. Routing defaults to config data: the inbound request path fixes a *protocol*, the request body carries a *model*, and a configuration's **bindings** map `(protocol, model)` to a provider or a resilience group. A rule can still steer a request per-request with `changeProvider` (and override the upstream credential with `changeApiKey`) layered on top of that binding data, but the other two legacy routing actions — `changeUrl` and `useResiliencePolicy` — are **inert** in v2: they parse and validate, but the data plane never reads the state they write (see [actions.md](actions.md#changeurl)). Route to a different URL or resilience group with a binding edit, not a rule. There is no path-based route table, no provider `endpoints`/`accepted_paths`/`prefix*` schema, and no top-level `resilience_policies` block — those were v1 concepts retired into bindings, groups, and provider `protocols`. See `internal/config/config_model.go` (the loader) and `contracts/config/model.go` (the schema) for the source of truth.
 
 This page is the operator's reference for that on-disk schema — what files exist, which top-level keys may appear, every field on every type, how the pieces bind together, and what's deliberately out of scope.
 
@@ -94,7 +94,7 @@ The loader recognises **eight** top-level keys (`internal/config/loader.go`, `ke
 | `groups` | Resilience-group catalogue. Each group is an ordered/weighted set of provider targets with a mode, failure policy, and circuit breaker. Bindings reference a group by name. Replaces v1 `resilience_policies`. |
 | `configurations` | Named policy bundles. Each holds `credentials`, `bindings`, optional `passthrough_bindings`, `rule_names`, `tags`, and `connector_bindings`. |
 | `api_keys` | Flat list of gateway-issued bearers; each points at a configuration by name. |
-| `rules` | Top-level rule library (body/header/query rewrites, tags, short-circuits, routing overrides). Bindings carry the default routing as config data; routing actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`) remain available as per-request rule-level overrides layered on top of the binding default, while pure body/header/query transforms are the common case. Configurations reference rules through `rule_names`. |
+| `rules` | Top-level rule library (body/header/query rewrites, tags, short-circuits, and the wired steering actions `changeProvider` / `changeApiKey`). Bindings carry the default routing as config data; `changeProvider` can still redirect per-request on top of that, but `changeUrl` and `useResiliencePolicy` are **inert** in v2 (they parse but the data plane ignores them). Pure body/header/query transforms are the common case. Configurations reference rules through `rule_names`. |
 | `connectors` | Top-level connector destinations (s3, azure_blob, webhook). Configurations attach them through `connector_bindings`. |
 | `admin` | Management-console gate. Optional; absent means the console never starts. |
 | `telemetry` | Operator-tunable telemetry knobs (today: GenAI content-capture byte caps). Optional; absent resolves to built-in defaults. |
@@ -390,14 +390,14 @@ Lookups use `SecretIndex` (built post-validate); the slice exists for enumeratio
 
 ## `rules` block
 
-`rules:` is the top-level rule library, a flat list of `RuleContract` entries (`contracts/rules`). In v2 bindings carry the default routing, but the routing actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`) remain available as rule-level per-request overrides layered on top (see [actions.md](actions.md)); a rule can also apply body / header / query rewrites, tags, short-circuits, and the upstream-credential override (`changeApiKey`, which is wired — it overrides the credential sent upstream at the single mint site). Definitions are unique by `name`; configurations reference them through `Configuration.RuleNames`. See [rules.md](rules.md) for the condition/action grammar.
+`rules:` is the top-level rule library, a flat list of `RuleContract` entries (`contracts/rules`). In v2 bindings carry the default routing; a rule can still redirect per-request with `changeProvider` and override the upstream credential with `changeApiKey` (both wired — the latter at the single mint site), but the legacy `changeUrl` and `useResiliencePolicy` actions are **inert** (they parse but the data plane ignores the state they write — see [actions.md](actions.md#changeurl)). A rule can also apply body / header / query rewrites, tags, and short-circuits. Definitions are unique by `name`; configurations reference them through `Configuration.RuleNames`. See [rules.md](rules.md) for the condition/action grammar.
 
 Each rule must:
 
 - Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:121`).
 - Pass `RuleContract.Validate()` — the per-rule semantic checks.
 
-> **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names against the `groups` block — the action itself remains live as a routing override (see [actions.md](actions.md)).
+> **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names against the `groups` block — the action is inert in v2, so an unknown name is simply a no-op at runtime rather than a load error (see [actions.md](actions.md#useresiliencepolicy)).
 
 ---
 

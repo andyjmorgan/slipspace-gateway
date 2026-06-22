@@ -44,26 +44,28 @@ Rules still run, but in v2 they are pure request/response transforms (tags, head
 
 ## Where it sits in the pipeline
 
+The runtime order is `selection → rules → resilience → forwarder` — **rules run before the orchestrator**, not after it. [`docs/pipeline.md`](pipeline.md#the-http-middleware-chain) is the canonical source of truth for the full middleware chain; this diagram is the resilience-centric view of it.
+
 ```mermaid
 flowchart LR
     A[Client request] --> B[protocol<br/>path → protocol]
     B --> C[auth<br/>resolve configuration]
     C --> D[bodycapture<br/>decode model]
     D --> E[selection<br/>binding → provider or group]
-    E -- binding → group<br/>synthesise group config --> F{resilience}
-    E -- binding → single provider<br/>ModeNone --> F
+    E -- binding → group<br/>synthesise group config --> R[rules<br/>transforms only]
+    E -- binding → single provider<br/>ModeNone --> R
+    R --> F{resilience}
     F -- failover --> F1[attempt 1<br/>target by declaration order]
     F -- load_balance --> F2[weighted-random<br/>target pick]
-    F --> R[rules<br/>transforms only]
-    F1 --> R
-    F2 --> R
-    R --> G[forwarder]
+    F -- ModeNone --> G[forwarder]
+    F1 --> G
+    F2 --> G
     G --> H[upstream provider]
     H --> I[reporter:<br/>OTel + spool + live feed]
     F -. retry on failure_status_codes<br/>or transport error .-> F
 ```
 
-Selection synthesises the orchestrator's input from the chosen binding and stashes it on the request context; the resilience middleware reads that synthesised config directly (it does not look a policy up by name). A single-provider binding is synthesised as a degenerate `ModeNone` group of one target, so single-shot and orchestrated requests flow through the same machinery.
+Selection synthesises the orchestrator's input from the chosen binding and stashes it on the request context; rules then run as pure request/response transforms over that selected state; the resilience middleware reads the synthesised config directly (it does not look a policy up by name). A single-provider binding is synthesised as a degenerate `ModeNone` group of one target, so single-shot and orchestrated requests flow through the same machinery. Because rules run **before** the orchestrator, rule conditions see the binding-selected provider/model — the orchestrator's per-attempt provider switch happens later, downstream of rules.
 
 For each attempt the orchestrator wraps the response writer in a `BufferingResponseWriter` so it can discard a failing attempt's bytes before the next one runs. The buffer flushes to the real `http.ResponseWriter` only on commit — the first non-retryable outcome.
 

@@ -166,7 +166,9 @@ Here `POST /v1/chat/completions` with `"model": "claude-sonnet-4"` matches the t
 
 ## Passthrough selection (`MatchPassthrough`)
 
-Opaque/stateful surfaces — model catalogues, Anthropic message batches, file APIs — are not model-keyed and have no typed wire model. They are exposed as **passthrough families** on the provider and bound on the configuration via `passthrough_bindings`. The request is proxied verbatim (path forwarded as-is under the provider base URL, inbound query preserved with provider defaults overlaid); no typed parsing, no GenAI telemetry, no payload capture.
+Opaque/stateful surfaces — model catalogues, Anthropic message batches, file APIs — are not model-keyed and have no typed wire model. They are exposed as **passthrough families** on the provider and bound on the configuration via `passthrough_bindings`. The request is proxied verbatim (path forwarded as-is under the provider base URL, inbound query preserved with provider defaults overlaid); no typed parsing and no GenAI telemetry.
+
+> **Passthrough is *not* exempt from audit capture.** "Verbatim" describes forwarding, not record suppression. Body-capture still buffers the raw request bytes under `KindPassthrough` ([`internal/middleware/bodycapture`](../internal/middleware/bodycapture/bodycapture.go)), and when the resolved configuration has `connector_bindings` the reporter writes the raw request and response bodies (plus headers and SHA-256) into the connector `Record` ([`cmd/gateway/reporter.go`](../cmd/gateway/reporter.go)) — exactly as it does for generative requests. Only a configuration with **no** connector bindings skips capture (body-capture short-circuits). If a passthrough surface is privacy-sensitive, leave it unbound, or scope/sample its connector binding accordingly.
 
 When `ProtocolForPath` returns `ok == false`, [`selectionMiddleware`](../cmd/gateway/pipeline.go) calls:
 
