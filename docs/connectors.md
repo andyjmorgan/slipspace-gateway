@@ -106,7 +106,7 @@ Every secret a connector reads is named indirectly via a `secret_ref` mini-langu
 
 | Form | Meaning |
 |---|---|
-| `env:NAME` | Read the named environment variable at connector-construction time. The variable must be set; an empty value is a load-time error. |
+| `env:NAME` | Read the named environment variable at startup (connector construction). The variable must be set; an unset variable fails boot loudly. Note: a variable set to an empty string is accepted (resolves to empty) — only an unset variable is an error. |
 | `file:/absolute/path` | Read the file at the absolute path. Trailing CR/LF is trimmed. |
 
 Anything else (literal credential, `kubernetes:`, etc.) is rejected at config-load with `secret_ref must start with env: or file:`.
