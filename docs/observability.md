@@ -386,7 +386,7 @@ The reporter emits one terminal log record at OnComplete:
 
 ```
 INFO request completed
-  status_code=200 duration_ms=1240 provider=openai endpoint=chat_completions
+  status_code=200 duration_ms=1240 provider=openai protocol=chat
   model=gpt-4o-mini streaming=true ttfb_ms=180 upstream_error= policy_ref= attempts=0
 ```
 

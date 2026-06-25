@@ -52,6 +52,7 @@ var actionRegistry = models.PolymorphicRegistry[Action]{
     DiscriminatorField: "type",
     Factories: map[string]func() Action{
         "changeProvider":      ...,
+        "translate":           ...,
         "changeModelName":     ...,
         "changeUrl":           ...,
         "changeApiKey":        ...,
@@ -61,6 +62,9 @@ var actionRegistry = models.PolymorphicRegistry[Action]{
         "llmImpersonation":    ...,
         "addTag":              ...,
         "useResiliencePolicy": ...,
+        "rewriteField":        ...,
+        "removeField":         ...,
+        "appendField":         ...,
     },
     Fallback: func(disc string) Action { return &UnknownAction{Type: disc} },
 }

@@ -195,7 +195,7 @@ Registry at `contentblock.go:473-491` (`blockRegistry`, discriminator field
 | `web_fetch_tool_result` | `WebFetchToolResultBlock` | Server web-fetch result |
 | `thinking` | `ThinkingBlock` (`contentblock.go:390`) | See signature echo below |
 | `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:423`) | Opaque encrypted `Data` |
-| *(any other)* | `UnknownBlock` (`contentblock.go:321`) | Fallback |
+| *(any other)* | `UnknownBlock` (`contentblock.go:453`) | Fallback |
 
 ### Thinking blocks and the signature-echo requirement
 
@@ -235,7 +235,7 @@ carry several beta / accounting structures:
   ephemeral tiers (`Ephemeral5mInputTokens` / `Ephemeral1hInputTokens`). The
   request marks cacheable spans with `CacheControl` (`type: "ephemeral"`,
   `messages.go:396-401`) on system blocks, tools, and content blocks.
-- **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:285-291`) reports
+- **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:340-343`) reports
   output tokens spent inside thinking blocks.
 - **`Usage.Iterations`** (`[]IterationUsage`) breaks usage down per server-side
   agent-loop iteration on the beta server tool-use loop (sampling `message`,

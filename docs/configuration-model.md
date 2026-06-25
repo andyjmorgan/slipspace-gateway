@@ -417,7 +417,7 @@ Each connector entry must:
 
 ## `admin` block
 
-`admin:` is the management-console gate (`contracts/admin/admin.go::Config`). The block is **optional**; absent means the console never starts. When present and `enabled: true`, the gateway mounts the admin console under the `/admin/` prefix on the existing data-plane listener (`SLIPSPACE_HTTP_BIND`) — serving the embedded SPA at `/admin/` and the control-plane API under `/admin/api/v1/*` (the `Prefix` const in `internal/admin/mux.go`), not a second `http.Server` on a separate `bind_addr`.
+`admin:` is the management-console gate (`contracts/admin/admin.go::Config`). The block is **optional**; absent means the console never starts. When present and `enabled: true`, the gateway starts a SECOND `http.Server` (`cmd/gateway/main.go::startAdmin`) bound to `admin.bind_addr` — or the default `0.0.0.0:8081` (`admin.Config.EffectiveBindAddr`, `DefaultBindAddr`) — separate from the data-plane listener (`SLIPSPACE_HTTP_BIND`). It serves the embedded SPA at `/admin/` and the control-plane API under `/admin/api/v1/*` (the `Prefix` const in `internal/admin/mux.go`), using the `/admin/` and `/admin/api/v1/*` prefixes on its own mux (no path stripping).
 
 ```yaml
 admin:
@@ -431,7 +431,7 @@ admin:
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `enabled` | bool | yes | Gates the admin console. `false` = the `/admin/` prefix is never mounted, no admin routes exist anywhere. |
-| `bind_addr` | string | no | Listener address (host:port). Empty resolves to a default. Validated as host:port with numeric port. The admin console is mounted under `/admin/` on the data-plane listener (`SLIPSPACE_HTTP_BIND`), not a separate listener on this address. |
+| `bind_addr` | string | no | The admin listener address (host:port). Empty resolves to the effective default `0.0.0.0:8081` (`EffectiveBindAddr`, `DefaultBindAddr`). Validated as host:port with numeric port. The admin console runs as a dedicated second `http.Server` on this address, distinct from the data-plane listener (`SLIPSPACE_HTTP_BIND`). |
 | `password` | string | no | Operator credential for HTTP Basic auth. Username is hardcoded `admin`. May be empty in YAML — at runtime `SLIPSPACE_ADMIN_PASSWORD` wins when set; otherwise this field is used. With `enabled: true`, **either** the env var or this field must be set. Never serialised to JSON. |
 
 The console's runtime behaviour (live-feed capacity, body-capture budget, snapshot interval) is configured via `SLIPSPACE_ADMIN_*` env vars, not this block — see [environment-variables.md](environment-variables.md).

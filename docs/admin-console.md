@@ -187,7 +187,7 @@ If the gateway emitted the challenge, browsers would intercept any 401 from `/ad
 
 1. SPA's `apiFetch` issues a request to any `/admin/api/v1/*` path with the cached credential.
 2. On 401, the SPA's `useUnauthorizedRedirect` hook bounces the user to `/login`.
-3. The login form calls `validateSession()` (which hits `/api/v1/auth/me`) and stores the credential in `sessionStorage` on success.
+3. The login form stores the base64 `admin:password` credential in `sessionStorage` via `auth.store()` (`web/src/lib/auth.ts`), then calls `validateSession()` (`web/src/lib/api.ts`), which hits `/api/v1/auth/me` to confirm the credentials. `validateSession()` only validates — it does not perform the storage.
 4. Subsequent SPA fetches reuse the cached credential via `apiFetch`'s `Authorization: Basic …` header.
 
 ### What's authenticated vs. public
@@ -292,7 +292,7 @@ Reads (`GET /config/api-keys` and `/{id}`) return the redacted `APIKeyListItem` 
 | `GET /admin/api/v1/config/export/files` | `ConfigExportFilesResponse` | Per-file redacted YAML payloads — backs the Settings page's tabbed inspector. 503 when `ConfigDir` is empty (export disabled). |
 | `GET /admin/api/v1/config/export/download` | ZIP bundle | Streams a ZIP of every accepted YAML file under `SLIPSPACE_CONFIG_DIR`, secrets redacted, with a `MANIFEST.txt` header carrying gateway version, hostname, configDir, generation timestamp. Filename is timestamped: `slipspace-config-20260522T134712Z.zip`. Bumps `gateway.admin.config_exports.total{status="..."}`. |
 
-The redactor (`internal/admin/configexport/redact.go`) replaces every API-key secret, upstream credential, and `admin.password` scalar with `***` (the `RedactedPlaceholder` constant) before either endpoint emits a single byte.
+The redactor (`internal/admin/configexport/redact.go::redactAdminBlock`) replaces the **value** of every API-key secret, upstream credential, and `admin.password` scalar with `***` (the `RedactedPlaceholder` constant) before either endpoint emits a single byte — the scalar keys themselves are preserved.
 
 ---
 

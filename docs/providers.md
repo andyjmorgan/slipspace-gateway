@@ -485,7 +485,7 @@ The loader runs `Validate()` ([`internal/config/config_validate.go`](../internal
 | A binding references an unknown provider/group, or the provider/group does not serve the binding's protocol. | `ErrValidation` — `bindings[%d]: ...` (see [`validateBindings`](../internal/config/config_validate.go)). |
 | A configuration's `credentials` or `passthrough_bindings` reference an unknown provider/family. | `ErrValidation` — `configuration %q ...`. |
 
-> The v1 sentinels `ErrPathCollision` and `ErrPrefixRequiredEmpty` still exist in [`internal/config/errors.go`](../internal/config/errors.go) but are **not** raised by v2 validation — there is no route table to collide and no prefix to require. `ErrAuthFormatWithoutHeader` and `ErrInvalidAuthFormat` carry over unchanged because the auth-format invariant is identical.
+> The v1 sentinels `ErrPathCollision` and `ErrPrefixRequiredEmpty` are never produced by v2 validation — there is no route table to collide and no prefix to require. (The symbols still exist in [`internal/config/errors.go`](../internal/config/errors.go) with vestigial `errors.Is` branches in [`cmd/cli/validate.go`](../cmd/cli/validate.go) that can never fire; treat them as deprecated/dead.) `ErrAuthFormatWithoutHeader` and `ErrInvalidAuthFormat` carry over unchanged because the auth-format invariant is identical.
 
 Validation runs once at load time. There is no hot reload in the current release, so a malformed `providers.yaml` produces a startup failure with the wrapped sentinel and no live request ever sees the bad config.
 

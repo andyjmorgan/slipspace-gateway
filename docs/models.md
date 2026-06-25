@@ -174,7 +174,7 @@ The `Fallback` is what makes unknown discriminators survive. By convention each
 union has an `UnknownX` member whose only typed field is the discriminator
 itself; everything else lands in `DynamicProperties.Extra`. The Anthropic
 content-block registry is the canonical example
-(`protocols/anthropic/messages/contentblock.go:341-352`):
+(`protocols/anthropic/messages/contentblock.go:473-491`):
 
 ```go
 var blockRegistry = models.PolymorphicRegistry[ContentBlock]{

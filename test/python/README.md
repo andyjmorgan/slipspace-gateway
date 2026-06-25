@@ -16,11 +16,15 @@ SDKs against a running slipspace-gateway. Failures here are tagged
 
 | Component | How |
 |---|---|
-| `mockllm` | `subprocess.Popen` of `/tmp/slipspace-mockllm` (built from `cmd/mockllm` if missing) on a random port |
-| `gateway` | `subprocess.Popen` of `/tmp/slipspace-gateway` (built from `cmd/gateway` if missing) with a materialized `config-dev/` snapshot |
+| `mockllm` | `subprocess.Popen` of `/tmp/slipspace-mockllm` (always rebuilt from `cmd/mockllm`) on a random port |
+| `gateway` | `subprocess.Popen` of `/tmp/slipspace-gateway` (always rebuilt from `cmd/gateway`) with a materialized `config-dev/` snapshot |
 
-The pre-built binary paths can be overridden via `SLIPSPACE_GATEWAY_BIN` and
-`SLIPSPACE_MOCKLLM_BIN` env vars.
+The `mockllm`/`gateway` binaries are ALWAYS rebuilt via `go build` (incremental,
+cache-backed) at fixture setup — not just "if missing". The previous "if exists,
+skip" short-circuit was removed (#287) because a stale `/tmp` binary silently
+passed forward wire-compat tests while 501'ing the reverse path. The output
+paths can be overridden via `SLIPSPACE_GATEWAY_BIN` and `SLIPSPACE_MOCKLLM_BIN`
+env vars.
 
 Each test stages canned responses via the mockllm control API
 (`POST/DELETE /control/responses`) and the suite clears them per-test via an
