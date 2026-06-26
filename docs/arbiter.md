@@ -70,13 +70,13 @@ flowchart LR
     OP(["Operator"]) -->|Basic auth| H
 ```
 
-**HTTP listener — default `0.0.0.0:8686`** (`config.DefaultHTTPBind`, `internal/arbiter/config/config.go:24`). It multiplexes three kinds of route (`internal/arbiter/server/server.go::Handler`):
+**HTTP listener — default `0.0.0.0:8686`** (`config.DefaultHTTPBind`, `internal/arbiter/config/config.go:27`). It multiplexes three kinds of route (`internal/arbiter/server/server.go::Handler`):
 
 - **Open probes** — `GET /healthz` (liveness) and `GET /readyz` (readiness; 503 until Postgres is reachable, so a load balancer drains the instance while the store recovers).
 - **Open HMAC Record webhook** — `POST /api/v1/ingest/record`. "Open" in the routing sense only: it carries no Basic auth, because the push **authenticates itself** via its `X-Slipspace-Signature` HMAC. See [arbiter-webhook.md](arbiter-webhook.md).
 - **Basic-auth console + query API** — `GET /api/v1/dashboard/*`, `/api/v1/messages*`, `/api/v1/events*`, `/api/v1/sessions/{id}`, `/api/v1/facets`, plus the SPA bundle at `GET /` (`internal/arbiter/server/query.go::registerQueryRoutes`). Every API route is wrapped in `Server.basicAuth` (`server.go:109`). See [arbiter-api.md](arbiter-api.md).
 
-**OTLP gRPC listener — default `0.0.0.0:8687`** (`config.DefaultOTLPBind`, `config.go:25`). One gRPC server registers **both** OTLP receivers (`internal/arbiter/ingest/grpc.go::NewOTLPServer`):
+**OTLP gRPC listener — default `0.0.0.0:8687`** (`config.DefaultOTLPBind`, `config.go:28`). One gRPC server registers **both** OTLP receivers (`internal/arbiter/ingest/grpc.go::NewOTLPServer`):
 
 - the **trace** service (`ingest.TraceReceiver`) — one `request_events` row per gen_ai span; the span is the **single writer** of the entity (the complete span lands in `span_event`, the filter columns are projected from it);
 - the **metrics** service (`ingest.MetricsReceiver`) — `metric_points` rows from the gateway's exported counters and gauges. `metric_points` is a TimescaleDB hypertable; the dashboard reads four 1-minute continuous aggregates over it (never the entity). Histogram and summary metrics are skipped on ingest — only number data points land.
@@ -156,8 +156,8 @@ gateways:
 
 | Key | Type | Default | Meaning | Source |
 |---|---|---|---|---|
-| `http_bind` | string | `0.0.0.0:8686` | Console + HMAC webhook listener | `config.go:24,38,114` |
-| `otlp_bind` | string | `0.0.0.0:8687` | OTLP gRPC listener (traces + metrics) | `config.go:25,40,117` |
+| `http_bind` | string | `0.0.0.0:8686` | Console + HMAC webhook listener | `config.go:27,38,114` |
+| `otlp_bind` | string | `0.0.0.0:8687` | OTLP gRPC listener (traces + metrics) | `config.go:28,40,117` |
 | `content_max_bytes` | int (pointer) | `16384` | Per-request gen_ai content cap from OTLP spans. Unset → default; `0`/negative → unlimited | `config.go` (`DefaultContentMaxBytes`, `ContentCap`) |
 | `span_field_max_bytes` | int (pointer) | `65536` | Per-field content cap the session-spans projection applies to served text/args. Unset → default; `0`/negative → unlimited | `config.go` (`DefaultSpanFieldMaxBytes`, `SpanFieldCap`) |
 | `postgres.dsn` | string | — (**required**) | pgx/libpq connection string | `config.go:59` |
