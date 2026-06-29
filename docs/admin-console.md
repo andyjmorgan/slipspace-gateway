@@ -218,7 +218,7 @@ All routes are mounted under `Prefix = "/admin"`. Every route is wrapped in `Ins
 
 | Method · Path | Response | Notes |
 |---|---|---|
-| `GET /admin/api/v1/auth/me` | `{"username":"admin"}` | Reaching this implies BasicAuth matched; the SPA polls it on load to validate cached credentials. |
+| `GET /admin/api/v1/auth/me` | `{"username":"admin"}` | Sits **inside** the BasicAuth tree — it is the authenticated probe the SPA uses to validate cached credentials, returning `200 {"username":"admin"}` only when the supplied Basic credentials are valid (401 otherwise). |
 
 ### Dashboard
 

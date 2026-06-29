@@ -135,9 +135,9 @@ Response highlights:
   registry union, because the item shape evolves frequently: `Type` is the
   discriminator and the variant-specific payloads `Content`, `Output`, and
   `Summary` are kept as `json.RawMessage` so callers dispatch on `Type` and
-  decode the shape they need; `Arguments` is a Go `string` because OpenAI ships
-  function arguments as a JSON-encoded string, matching the chat package's
-  `ToolCallFunction.Arguments` convention. `OutputText` (`responses.go:161-163`) is
+  decode the shape they need; `Arguments` (`responses.go:487`) is a Go `string`
+  because OpenAI ships function arguments as a JSON-encoded string, matching the
+  chat package's `ToolCallFunction.Arguments` convention. `OutputText` (`responses.go:161-163`) is
   the convenience concatenated-text projection.
 - **`Usage`** uses `input_tokens`/`output_tokens` naming (not chat's
   `prompt`/`completion`), so it is a **distinct local type** from the chat

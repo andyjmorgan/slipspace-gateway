@@ -198,7 +198,7 @@ One counter exists in the registry but has no production call site yet. It is de
 
 In addition to the OTel-bridged `gateway.*` meters, the Prometheus `/metrics` endpoint exposes the Go runtime and process collectors registered against the same `prometheus.Registry`. These cover the runtime telemetry that `gateway.*` deliberately doesn't model — memory pressure, goroutine counts, fd usage, CPU time. They never replace the gateway's own counters; they sit alongside them.
 
-The registration happens in [`internal/observability/setup.go`](../internal/observability/setup.go) (~line 194):
+The registration happens in [`internal/observability/setup.go`](../internal/observability/setup.go) (~line 201):
 
 ```go
 reg.MustRegister(
