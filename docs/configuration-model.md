@@ -301,7 +301,7 @@ bindings:
 
 ## Passthrough families and bindings
 
-Passthrough is the v2 mechanism for **opaque, stateful** endpoint families that are not model-keyed and not GenAI-shaped — e.g. Anthropic's message-batches surface across create / get / results / cancel. Passthrough requests are proxied **verbatim** with rewrites only: no typed parsing, no GenAI telemetry, no payload capture (`internal/selection/selection.go::MatchPassthrough`).
+Passthrough is the v2 mechanism for **opaque, stateful** endpoint families that are not model-keyed and not GenAI-shaped — e.g. Anthropic's message-batches surface across create / get / results / cancel. Passthrough requests are proxied **verbatim** with rewrites only: no typed parsing, no GenAI telemetry (`internal/selection/selection.go::MatchPassthrough`). Raw request/response bodies **are** still captured into connector Records when the resolved configuration has `connector_bindings` — body-capture buffers them under `KindPassthrough`; only an unbound configuration skips capture. "Verbatim" governs forwarding, not audit — see `contracts/config/model.go:72-80`.
 
 A family is declared on a **provider** and exposed on a **configuration**:
 
@@ -394,7 +394,7 @@ Lookups use `SecretIndex` (built post-validate); the slice exists for enumeratio
 
 Each rule must:
 
-- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:121`).
+- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:122`).
 - Pass `RuleContract.Validate()` — the per-rule semantic checks.
 
 > **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names against the `groups` block — the action is inert in v2, so an unknown name is simply a no-op at runtime rather than a load error (see [actions.md](actions.md#useresiliencepolicy)).
