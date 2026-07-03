@@ -46,7 +46,7 @@ def test_gemini_model_routes_to_gemini(base_url: str, api_key: str) -> None:
     client = _openai_client(base_url, api_key)
     try:
         resp = client.chat.completions.create(
-            model="gemini-2.0-flash-001",
+            model="gemini-2.5-flash",
             messages=[{"role": "user", "content": "Reply with exactly one word: pong"}],
             max_tokens=8,
             temperature=0,
