@@ -14,13 +14,24 @@ import "encoding/json"
 // here we want a forgiving, omitempty-tolerant subset that survives any
 // future field additions without code change.
 type openaiChatUsage struct {
-	PromptTokens        int                           `json:"prompt_tokens"`
-	CompletionTokens    int                           `json:"completion_tokens"`
-	PromptTokensDetails *openaiChatPromptTokensDetail `json:"prompt_tokens_details,omitempty"`
+	PromptTokens            int                               `json:"prompt_tokens"`
+	CompletionTokens        int                               `json:"completion_tokens"`
+	PromptTokensDetails     *openaiChatPromptTokensDetail     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *openaiChatCompletionTokensDetail `json:"completion_tokens_details,omitempty"`
 }
 
 type openaiChatPromptTokensDetail struct {
 	CachedTokens int `json:"cached_tokens"`
+	AudioTokens  int `json:"audio_tokens"`
+}
+
+// openaiChatCompletionTokensDetail carries the output-side sub-buckets.
+// Only audio_tokens is read here — reasoning_tokens rides the genaiattr
+// response descriptor (span attribute, not a Snapshot bucket), and the
+// prediction-token counters are informational (billed inside
+// completion_tokens at the plain output rate).
+type openaiChatCompletionTokensDetail struct {
+	AudioTokens int `json:"audio_tokens"`
 }
 
 // openaiChatChunk is the minimum we need to read off a streaming
@@ -62,6 +73,10 @@ func openaiChatUsageToObservation(u *openaiChatUsage) Usage {
 	}
 	if u.PromptTokensDetails != nil {
 		out.Cached = u.PromptTokensDetails.CachedTokens
+		out.InputAudio = u.PromptTokensDetails.AudioTokens
+	}
+	if u.CompletionTokensDetails != nil {
+		out.OutputAudio = u.CompletionTokensDetails.AudioTokens
 	}
 	return out
 }

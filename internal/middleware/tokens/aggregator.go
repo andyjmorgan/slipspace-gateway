@@ -21,27 +21,40 @@ func (a *Aggregator) Handle(s Strategy, u Usage) {
 		a.snap.Output = u.Output
 		a.snap.Cached = u.Cached
 		a.snap.CacheCreation = u.CacheCreation
+		a.snap.CacheCreation5m = u.CacheCreation5m
+		a.snap.CacheCreation1h = u.CacheCreation1h
+		a.snap.InputAudio = u.InputAudio
+		a.snap.OutputAudio = u.OutputAudio
 	case StrategyAddition:
 		a.snap.Input += u.Input
 		a.snap.Output += u.Output
 		a.snap.Cached += u.Cached
 		a.snap.CacheCreation += u.CacheCreation
+		a.snap.CacheCreation5m += u.CacheCreation5m
+		a.snap.CacheCreation1h += u.CacheCreation1h
+		a.snap.InputAudio += u.InputAudio
+		a.snap.OutputAudio += u.OutputAudio
 	case StrategyIncremental:
-		// First emission sets everything; subsequent emissions only
-		// move Output. Mirrors airia-platform's historical contract:
-		// vendors that quote input once at the start of a stream and
-		// emit growing output thereafter must not have a second input
-		// emission overwrite the first.
+		// First emission sets everything input-side; subsequent
+		// emissions only move the output buckets. Mirrors
+		// airia-platform's historical contract: vendors that quote
+		// input once at the start of a stream and emit growing output
+		// thereafter must not have a second input emission overwrite
+		// the first.
 		if a.snap.Input == 0 && a.snap.Cached == 0 && a.snap.CacheCreation == 0 {
 			a.snap.Input = u.Input
 			a.snap.Cached = u.Cached
 			a.snap.CacheCreation = u.CacheCreation
+			a.snap.CacheCreation5m = u.CacheCreation5m
+			a.snap.CacheCreation1h = u.CacheCreation1h
+			a.snap.InputAudio = u.InputAudio
 		}
 		a.snap.Output = u.Output
+		a.snap.OutputAudio = u.OutputAudio
 	}
 	a.snap.Recognised = true
 }
 
 // Snapshot returns the running aggregated view. Cheap — no copy beyond
-// the four-int struct.
+// the small value struct.
 func (a *Aggregator) Snapshot() Snapshot { return a.snap }

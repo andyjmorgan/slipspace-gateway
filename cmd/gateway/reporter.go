@@ -321,10 +321,14 @@ type reporterRun struct {
 	respFinishReasons []string
 	respReasoning     *int
 
-	// respServiceTier + respSystemFingerprint are the OpenAI-specific
-	// response descriptors, emitted on the span only (not metrics —
-	// system_fingerprint is high-cardinality). Empty for non-OpenAI.
+	// respServiceTier is the provider-reported billed tier (OpenAI
+	// response.service_tier, Anthropic usage.service_tier) — a pricing
+	// multiplier, emitted on the span/event only (not metrics).
+	// respInferenceGeo is Anthropic's usage.inference_geo region
+	// multiplier. respSystemFingerprint is the OpenAI-specific
+	// descriptor (high-cardinality — span only).
 	respServiceTier       string
+	respInferenceGeo      string
 	respSystemFingerprint string
 
 	// respOutputParts is the model's response as structured message parts
@@ -707,12 +711,25 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 
 	if ev.TokensIn > 0 || ev.TokensOut > 0 || ev.TokensCached > 0 || ev.TokensCacheCreation > 0 {
 		rec.Tokens = &cc.Tokens{
-			Input:         ev.TokensIn,
-			Output:        ev.TokensOut,
-			Cached:        ev.TokensCached,
-			CacheCreation: ev.TokensCacheCreation,
+			Input:           ev.TokensIn,
+			Output:          ev.TokensOut,
+			Cached:          ev.TokensCached,
+			CacheCreation:   ev.TokensCacheCreation,
+			CacheCreation5m: ev.TokensCacheCreation5m,
+			CacheCreation1h: ev.TokensCacheCreation1h,
+			InputAudio:      ev.TokensInputAudio,
+			OutputAudio:     ev.TokensOutputAudio,
+			Reasoning:       ev.TokensReasoning,
 		}
 	}
+	if len(ev.ServerToolUse) > 0 {
+		rec.ServerToolUse = make(map[string]int, len(ev.ServerToolUse))
+		for k, v := range ev.ServerToolUse {
+			rec.ServerToolUse[k] = v
+		}
+	}
+	rec.ServiceTier = ev.ServiceTier
+	rec.InferenceGeo = ev.InferenceGeo
 
 	if len(matches) > 0 {
 		rec.RulesFired = make([]cc.RuleFired, 0, len(matches))
@@ -998,11 +1015,18 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 		return
 	}
 	snap := tokens.ExtractFrames(ev.Provider, ev.Protocol, r.responseFrames)
-	// Server-side tool counters ride beside the snapshot (span/event
-	// attributes only — no meter, no event field), captured before the
-	// Recognised gate so a usage block that somehow carried only
-	// server_tool_use still projects.
+	// Server-side tool counters and the pricing descriptors ride beside
+	// the snapshot, captured before the Recognised gate so a response
+	// that somehow carried only server_tool_use (or only a tier) still
+	// projects. The descriptors come from captureResponseAttrs, which
+	// ran just before this on the same frames.
 	r.serverToolUse = tokens.ServerToolUseFrames(ev.Provider, ev.Protocol, r.responseFrames)
+	ev.ServerToolUse = r.serverToolUse
+	ev.ServiceTier = r.respServiceTier
+	ev.InferenceGeo = r.respInferenceGeo
+	if r.respReasoning != nil {
+		ev.TokensReasoning = *r.respReasoning
+	}
 	if !snap.Recognised {
 		return
 	}
@@ -1010,6 +1034,10 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	ev.TokensOut = snap.Output
 	ev.TokensCached = snap.Cached
 	ev.TokensCacheCreation = snap.CacheCreation
+	ev.TokensCacheCreation5m = snap.CacheCreation5m
+	ev.TokensCacheCreation1h = snap.CacheCreation1h
+	ev.TokensInputAudio = snap.InputAudio
+	ev.TokensOutputAudio = snap.OutputAudio
 
 	if r.factory.meters == nil {
 		return
@@ -1202,8 +1230,20 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 	if ev.TokensCacheCreation > 0 {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageCacheCreationInputTokens, ev.TokensCacheCreation))
 	}
+	if ev.TokensCacheCreation5m > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrSlipSpaceUsageCacheCreation5m, ev.TokensCacheCreation5m))
+	}
+	if ev.TokensCacheCreation1h > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrSlipSpaceUsageCacheCreation1h, ev.TokensCacheCreation1h))
+	}
 	if ev.TokensCached > 0 {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageCacheReadInputTokens, ev.TokensCached))
+	}
+	if ev.TokensInputAudio > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrSlipSpaceUsageInputAudioTokens, ev.TokensInputAudio))
+	}
+	if ev.TokensOutputAudio > 0 {
+		attrs = append(attrs, attribute.Int(observability.AttrSlipSpaceUsageOutputAudioTokens, ev.TokensOutputAudio))
 	}
 	for _, k := range serverToolUseKeys(r.serverToolUse) {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageServerToolUsePrefix+k, r.serverToolUse[k]))
@@ -1429,8 +1469,20 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	if ev.TokensCacheCreation > 0 {
 		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageCacheCreationInputTokens, ev.TokensCacheCreation))
 	}
+	if ev.TokensCacheCreation5m > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrSlipSpaceUsageCacheCreation5m, ev.TokensCacheCreation5m))
+	}
+	if ev.TokensCacheCreation1h > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrSlipSpaceUsageCacheCreation1h, ev.TokensCacheCreation1h))
+	}
 	if ev.TokensCached > 0 {
 		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageCacheReadInputTokens, ev.TokensCached))
+	}
+	if ev.TokensInputAudio > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrSlipSpaceUsageInputAudioTokens, ev.TokensInputAudio))
+	}
+	if ev.TokensOutputAudio > 0 {
+		attrs = append(attrs, otellog.Int(observability.AttrSlipSpaceUsageOutputAudioTokens, ev.TokensOutputAudio))
 	}
 	for _, k := range serverToolUseKeys(r.serverToolUse) {
 		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageServerToolUsePrefix+k, r.serverToolUse[k]))
@@ -1496,7 +1548,13 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 		attrs = append(attrs, otellog.String(observability.AttrOpenAIRequestServiceTier, p.ServiceTier))
 	}
 	if r.respServiceTier != "" {
-		attrs = append(attrs, otellog.String(observability.AttrOpenAIResponseServiceTier, r.respServiceTier))
+		attrs = append(attrs, otellog.String(observability.AttrSlipSpaceServiceTier, r.respServiceTier))
+		if isOpenAIDialect(r.protocol) {
+			attrs = append(attrs, otellog.String(observability.AttrOpenAIResponseServiceTier, r.respServiceTier))
+		}
+	}
+	if r.respInferenceGeo != "" {
+		attrs = append(attrs, otellog.String(observability.AttrSlipSpaceInferenceGeo, r.respInferenceGeo))
 	}
 	if r.respSystemFingerprint != "" {
 		attrs = append(attrs, otellog.String(observability.AttrOpenAIResponseSystemFingerprint, r.respSystemFingerprint))
@@ -1948,6 +2006,7 @@ func (r *reporterRun) captureResponseAttrs(ctx context.Context) {
 	r.respFinishReasons = resp.FinishReasons
 	r.respReasoning = resp.ReasoningTokens
 	r.respServiceTier = resp.ServiceTier
+	r.respInferenceGeo = resp.InferenceGeo
 	r.respSystemFingerprint = resp.SystemFingerprint
 	r.respOutputParts = resp.OutputParts
 }
@@ -1969,12 +2028,35 @@ func (r *reporterRun) appendResponseAttrs(attrs []attribute.KeyValue) []attribut
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageReasoningOutputTokens, *r.respReasoning))
 	}
 	if r.respServiceTier != "" {
-		attrs = append(attrs, attribute.String(observability.AttrOpenAIResponseServiceTier, r.respServiceTier))
+		// The generic key serves every provider (the pricing layer's
+		// input); the provider-scoped spec key is emitted alongside it
+		// on OpenAI-dialect protocols only, where it is defined.
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceServiceTier, r.respServiceTier))
+		if isOpenAIDialect(r.protocol) {
+			attrs = append(attrs, attribute.String(observability.AttrOpenAIResponseServiceTier, r.respServiceTier))
+		}
+	}
+	if r.respInferenceGeo != "" {
+		attrs = append(attrs, attribute.String(observability.AttrSlipSpaceInferenceGeo, r.respInferenceGeo))
 	}
 	if r.respSystemFingerprint != "" {
 		attrs = append(attrs, attribute.String(observability.AttrOpenAIResponseSystemFingerprint, r.respSystemFingerprint))
 	}
 	return attrs
+}
+
+// isOpenAIDialect reports whether the protocol speaks the OpenAI wire
+// dialect — the native chat/responses surfaces plus the chat_completions
+// compat surface other providers expose. Gates the provider-scoped
+// openai.response.* span attributes, which are only defined for that
+// dialect (the generic slipspace.* descriptors carry the same facts for
+// everyone else).
+func isOpenAIDialect(protocol string) bool {
+	switch protocol {
+	case "chat", "chat_completions", "responses":
+		return true
+	}
+	return false
 }
 
 // jsonBodyOrEscaped marshals body bytes onto a Record's inline

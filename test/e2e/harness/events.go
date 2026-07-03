@@ -156,7 +156,15 @@ func (h *Harness) emitRecord(rec cc.Record) {
 		req.TokensOut = rec.Tokens.Output
 		req.TokensCached = rec.Tokens.Cached
 		req.TokensCacheCreation = rec.Tokens.CacheCreation
+		req.TokensCacheCreation5m = rec.Tokens.CacheCreation5m
+		req.TokensCacheCreation1h = rec.Tokens.CacheCreation1h
+		req.TokensInputAudio = rec.Tokens.InputAudio
+		req.TokensOutputAudio = rec.Tokens.OutputAudio
+		req.TokensReasoning = rec.Tokens.Reasoning
 	}
+	req.ServerToolUse = rec.ServerToolUse
+	req.ServiceTier = rec.ServiceTier
+	req.InferenceGeo = rec.InferenceGeo
 
 	req.PolicyRef = rec.PolicyRef
 	if len(rec.Attempts) > 0 {
