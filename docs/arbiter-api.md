@@ -219,7 +219,9 @@ plus the full filter set. Returns `contracts/admin.DashboardSummary`
 
 > **Invariant #4.** Every dashboard panel aggregates a continuous aggregate over
 > the meter feed: the request/outcome/`by_*` panels over `cagg_requests_1m`, token
-> totals over `cagg_tokens_1m`, and `rules_fired` / `tags_fired` over
+> totals over `cagg_tokens_1m`, cost totals (`totals.cost_usd` +
+> `totals.cost_by_category`, plus the `by_model` `cost_usd` column) over
+> `cagg_cost_1m`, and `rules_fired` / `tags_fired` over
 > `cagg_rules_1m` / `cagg_tags_1m` (`slipspace.rule.fired`,
 > `gateway.tags.applied.total`) — `store/dashboard.go::queryDashFired`. Dashboards
 > read meters, never a scan of the `request_events` entity or the captured record.
@@ -227,15 +229,17 @@ plus the full filter set. Returns `contracts/admin.DashboardSummary`
 #### `GET /api/v1/dashboard/timeseries`
 
 Handler `handleObsTimeseries`. Accepts `?window`, the filter set, and `?series`
-— one of `requests` (default), `rps`, `error_rate`, `tokens_in`, `tokens_out`
-(`seriesValue`). The latency series (`p50`/`p95`/`p99`) are **gone** with the
-MVP percentile drop — each `DashboardSeriesBucket` carries volume, errored count,
-and the two token curves only. The bucket width auto-scales across the window.
-Returns `contracts/admin.DashboardTimeseries`: one named `series` with `points`
-of `{timestamp, value}`, zero-filled across empty buckets so the axis stays
-continuous. The series re-buckets the 1-minute `cagg_requests_1m` /
-`cagg_tokens_1m` continuous aggregates up to the requested width
-(`store/dashboard.go::QueryDashboardSeries`).
+— one of `requests` (default), `rps`, `error_rate`, `tokens_in`, `tokens_out`,
+`cost` (`seriesValue`). The latency series (`p50`/`p95`/`p99`) are **gone** with
+the MVP percentile drop — each `DashboardSeriesBucket` carries volume, errored
+count, the two token curves, and the USD cost curve. The bucket width
+auto-scales across the window. Returns `contracts/admin.DashboardTimeseries`:
+one named `series` with `points` of `{timestamp, value}`, zero-filled across
+empty buckets so the axis stays continuous. The series re-buckets the 1-minute
+`cagg_requests_1m` / `cagg_tokens_1m` / `cagg_cost_1m` continuous aggregates up
+to the requested width (`store/dashboard.go::QueryDashboardSeries`). `cost` is
+the pricing engine's estimate (unit `USD`); buckets with no costing-enabled
+gateway reporting read 0.
 
 #### `GET /api/v1/dashboard/security`
 

@@ -168,6 +168,16 @@ export interface DashboardTotals {
    * cache-write premium. Anthropic-only on today's surface.
    */
   tokens_cache_creation: number /* int64 */;
+  /**
+   * CostUSD is the summed per-request USD cost estimates over
+   * Window, and CostByCategory its charge-category split (input /
+   * output / cache_read / cache_write / tool_calls). Zero / absent
+   * when no costing-enabled gateway reported in the window. An
+   * estimate at observation time — the token totals above are the
+   * re-priceable ground truth.
+   */
+  cost_usd: number /* float64 */;
+  cost_by_category?: { [key: string]: number /* float64 */};
 }
 /**
  * DashboardRates carries the rate-style aggregates.
@@ -215,6 +225,11 @@ export interface DashboardModelRow {
   requests: number /* int64 */;
   tokens_in: number /* int64 */;
   tokens_out: number /* int64 */;
+  /**
+   * CostUSD is the model's summed cost estimate over Window. Zero
+   * for models the pricing rate card does not match.
+   */
+  cost_usd: number /* float64 */;
 }
 /**
  * DashboardRuleFiredRow counts matches for one rule across the window

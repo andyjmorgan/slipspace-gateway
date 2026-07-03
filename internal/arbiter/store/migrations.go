@@ -649,4 +649,38 @@ CREATE INDEX IF NOT EXISTS tool_call_name_observed ON tool_call (tool_name, obse
 CREATE INDEX IF NOT EXISTS tool_call_observed      ON tool_call (observed_at DESC, tool_call_id DESC);
 CREATE INDEX IF NOT EXISTS tool_call_session       ON tool_call (session_id);`,
 	},
+	{
+		version: 19,
+		name:    "cagg_cost_1m",
+		noTx:    true,
+		// Token Costing design note (P3): the gateway's pricing engine emits
+		// slipspace.cost.usd.total (a float counter labelled with the shared
+		// request dimensions + slipspace.cost.category), which lands in
+		// metric_points through the generic OTLP ingest with no ingest
+		// changes. This CAGG is the dashboard's cost rollup — same
+		// migration-7 template as the token CAGG, with the charge category
+		// as an extra dimension so spend can be split input / output /
+		// cache_read / cache_write / tool_calls. Buckets carrying no cost
+		// simply have no rows; the view is correct from creation and starts
+		// filling the moment a costing-enabled gateway reports. Follows
+		// invariant #4: the dashboard reads this meter rollup, never
+		// records. Same noTx constraints as migration 7 (statements split
+		// on ';', each individually idempotent).
+		sql: `
+CREATE MATERIALIZED VIEW IF NOT EXISTS cagg_cost_1m
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT time_bucket('1 minute', observed_at)        AS bucket,
+       labels->>'gen_ai.provider.name'             AS provider,
+       labels->>'gen_ai.request.model'             AS model,
+       labels->>'slipspace.configuration'          AS configuration,
+       labels->>'slipspace.protocol'               AS protocol,
+       labels->>'slipspace.cost.category'          AS category,
+       sum(value)                                  AS usd
+FROM metric_points
+WHERE metric_name = 'slipspace.cost.usd.total'
+GROUP BY bucket, provider, model, configuration, protocol, category
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy('cagg_cost_1m', start_offset => INTERVAL '3 hours', end_offset => INTERVAL '1 minute', schedule_interval => INTERVAL '1 minute', if_not_exists => TRUE);`,
+	},
 }

@@ -393,6 +393,8 @@ func mapSummary(s store.DashboardSummary, window string, now time.Time, dur time
 			TokensOut:           s.Totals.TokensOut,
 			TokensCached:        s.Totals.TokensCached,
 			TokensCacheCreation: s.Totals.TokensCacheCreation,
+			CostUSD:             s.Totals.CostUSD,
+			CostByCategory:      s.Totals.CostByCategory,
 		},
 		Rates: adminc.DashboardRates{
 			RequestsPerSecond: ratePerSecond(s.Totals.Requests, secs),
@@ -416,7 +418,7 @@ func mapSummary(s store.DashboardSummary, window string, now time.Time, dur time
 		out.ByConfiguration = append(out.ByConfiguration, adminc.DashboardConfigurationRow{Configuration: r.Key, Requests: r.Requests, ErrorRate: r.ErrorRate})
 	}
 	for _, r := range s.ByModel {
-		out.ByModel = append(out.ByModel, adminc.DashboardModelRow{Model: r.Model, Provider: r.Provider, Requests: r.Requests, TokensIn: r.TokensIn, TokensOut: r.TokensOut})
+		out.ByModel = append(out.ByModel, adminc.DashboardModelRow{Model: r.Model, Provider: r.Provider, Requests: r.Requests, TokensIn: r.TokensIn, TokensOut: r.TokensOut, CostUSD: r.CostUSD})
 	}
 	for _, r := range s.RulesFired {
 		out.RulesFired = append(out.RulesFired, adminc.DashboardRuleFiredRow{RuleName: r.Key, FireCount: r.Count, UsedByConfigurations: r.UsedByConfigurations})
@@ -447,6 +449,8 @@ func seriesValue(b store.DashboardSeriesBucket, name string, bucketSecs float64)
 		return float64(b.TokensIn)
 	case "tokens_out":
 		return float64(b.TokensOut)
+	case "cost":
+		return b.CostUSD
 	default: // "requests"
 		return float64(b.Requests)
 	}
@@ -458,6 +462,8 @@ func seriesUnit(name string) string {
 		return "req/s"
 	case "error_rate":
 		return "%"
+	case "cost":
+		return "USD"
 	default:
 		return ""
 	}

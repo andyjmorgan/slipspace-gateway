@@ -4,6 +4,7 @@ package arbiter_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,10 +71,28 @@ func TestDashboardRollupsReadCaggs(t *testing.T) {
 	// rule + tag meters.
 	insert("slipspace.rule.fired", `{"rule_name":"dash-rule","slipspace.configuration":"dash-e2e"}`, 4)
 	insert("gateway.tags.applied.total", `{"tag":"dash-tag","slipspace.configuration":"dash-e2e"}`, 4)
+	// cost meter: per-category rows for both models (the gateway emits one
+	// Add per non-zero charge category).
+	insert("slipspace.cost.usd.total", `{`+oaiBase+`,"slipspace.cost.category":"input"}`, 0.5)
+	insert("slipspace.cost.usd.total", `{`+oaiBase+`,"slipspace.cost.category":"output"}`, 1.25)
+	insert("slipspace.cost.usd.total", `{`+antBase+`,"slipspace.cost.category":"output"}`, 0.75)
 
-	for _, cagg := range []string{"cagg_requests_1m", "cagg_tokens_1m", "cagg_rules_1m", "cagg_tags_1m"} {
-		if _, err := conn.Exec(ctx, `CALL refresh_continuous_aggregate($1, NULL, NULL)`, cagg); err != nil {
-			t.Fatalf("refresh %s: %v", cagg, err)
+	for _, cagg := range []string{"cagg_requests_1m", "cagg_tokens_1m", "cagg_rules_1m", "cagg_tags_1m", "cagg_cost_1m"} {
+		// A freshly created CAGG's own refresh policy can hold the
+		// materialization lock (SQLSTATE 55P03, "concurrent refresh");
+		// retry briefly instead of failing the run.
+		var rerr error
+		for attempt := 0; attempt < 10; attempt++ {
+			if _, rerr = conn.Exec(ctx, `CALL refresh_continuous_aggregate($1, NULL, NULL)`, cagg); rerr == nil {
+				break
+			}
+			if !strings.Contains(rerr.Error(), "concurrent refresh") {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if rerr != nil {
+			t.Fatalf("refresh %s: %v", cagg, rerr)
 		}
 	}
 
@@ -102,6 +121,17 @@ func TestDashboardRollupsReadCaggs(t *testing.T) {
 		sum.Totals.TokensCached != 80 || sum.Totals.TokensCacheCreation != 40 {
 		t.Errorf("token totals = %+v, want in=1000 out=250 cached=80 cacheCreation=40", sum.Totals)
 	}
+	// Cost totals from cagg_cost_1m: summed across models with the
+	// per-category split.
+	if sum.Totals.CostUSD < 2.499 || sum.Totals.CostUSD > 2.501 {
+		t.Errorf("CostUSD = %v, want 2.50", sum.Totals.CostUSD)
+	}
+	if got := sum.Totals.CostByCategory["output"]; got < 1.999 || got > 2.001 {
+		t.Errorf("CostByCategory[output] = %v, want 2.00 (map=%v)", got, sum.Totals.CostByCategory)
+	}
+	if got := sum.Totals.CostByCategory["input"]; got < 0.499 || got > 0.501 {
+		t.Errorf("CostByCategory[input] = %v, want 0.50", got)
+	}
 
 	// ByProvider: error rate computed from status_code (openai 2/7).
 	byProv := map[string]store.DashboardDimensionRow{}
@@ -123,8 +153,14 @@ func TestDashboardRollupsReadCaggs(t *testing.T) {
 	if got := byModel["gpt-dash"]; got.Requests != 7 || got.Provider != "dash-openai" || got.TokensIn != 1000 || got.TokensOut != 250 {
 		t.Errorf("ByModel[gpt-dash] = %+v, want requests=7 provider=dash-openai in=1000 out=250", got)
 	}
+	if got := byModel["gpt-dash"]; got.CostUSD < 1.749 || got.CostUSD > 1.751 {
+		t.Errorf("ByModel[gpt-dash].CostUSD = %v, want 1.75", got.CostUSD)
+	}
 	if got := byModel["claude-dash"]; got.Requests != 3 || got.TokensIn != 0 {
 		t.Errorf("ByModel[claude-dash] = %+v, want requests=3 tokensIn=0", got)
+	}
+	if got := byModel["claude-dash"]; got.CostUSD < 0.749 || got.CostUSD > 0.751 {
+		t.Errorf("ByModel[claude-dash].CostUSD = %v, want 0.75", got.CostUSD)
 	}
 
 	// RulesFired / TagsFired from their CAGGs, with the configuration list.
@@ -160,6 +196,9 @@ func TestDashboardRollupsReadCaggs(t *testing.T) {
 	if provSum.Totals.Requests != 3 || provSum.Totals.RequestsErrored != 0 {
 		t.Errorf("provider-filtered totals = %+v, want requests=3 errored=0", provSum.Totals)
 	}
+	if provSum.Totals.CostUSD < 0.749 || provSum.Totals.CostUSD > 0.751 {
+		t.Errorf("provider-filtered CostUSD = %v, want 0.75", provSum.Totals.CostUSD)
+	}
 
 	// Filter scope: a tag filter is message-browser-only — the CAGGs carry no
 	// tag dimension, so it must be IGNORED for dashboard rollups (totals
@@ -193,6 +232,9 @@ func TestDashboardRollupsReadCaggs(t *testing.T) {
 		sawSeed = true
 		if b.Requests != 10 || b.Errored != 2 || b.TokensIn != 1000 || b.TokensOut != 250 {
 			t.Errorf("series seed bucket = %+v, want requests=10 errored=2 in=1000 out=250", b)
+		}
+		if b.CostUSD < 2.499 || b.CostUSD > 2.501 {
+			t.Errorf("series seed bucket CostUSD = %v, want 2.50", b.CostUSD)
 		}
 	}
 	if !sawSeed {
