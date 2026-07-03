@@ -18,7 +18,7 @@ def test_gemini_openai_compat_chat(base_url: str, api_key: str) -> None:
         timeout=30,
     )
     resp = client.chat.completions.create(
-        model="gemini-2.0-flash-001",
+        model="gemini-2.5-flash",
         messages=[{"role": "user", "content": "Reply with exactly one word: pong"}],
         max_tokens=8,
         temperature=0,
