@@ -104,20 +104,32 @@ function Body({ data: d, window }: { data: DashboardSummary; window: DashboardWi
   const errAccent: "ok" | "warn" | "err" =
     d.rates.error_rate > 0.05 ? "err" : d.rates.error_rate > 0.02 ? "warn" : "ok"
 
+  // Cost tiles/panels appear only when the window carries spend — a
+  // fleet with costing off keeps the pre-costing layout, and $0.00
+  // never masquerades as a real estimate.
+  const hasCost = d.totals.cost_usd > 0
+
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className={`grid grid-cols-2 md:grid-cols-3 gap-3 ${hasCost ? "lg:grid-cols-6" : "lg:grid-cols-5"}`}>
         <KPI label="Requests" value={fmt.compact(d.totals.requests)} sub={`${fmt.compact(d.totals.requests_success)} ok · ${fmt.compact(d.totals.requests_errored)} err`} />
         <KPI label="Error rate" value={fmt.pct(d.rates.error_rate)} sub={`${(successRate * 100).toFixed(2)}% success`} accent={errAccent} />
         <KPI label="Requests / sec" value={d.rates.requests_per_second.toFixed(2)} sub={`avg · ${d.window}`} accent="ok" />
         <KPI label="Tokens in" value={fmt.compact(d.totals.tokens_in)} sub={fmt.compact(d.totals.tokens_cached) + " cached"} />
         <KPI label="Tokens out" value={fmt.compact(d.totals.tokens_out)} sub="completion" />
+        {hasCost && <KPI label="Est. spend" value={fmt.usd(d.totals.cost_usd)} sub={costSub(d.totals.cost_by_category)} />}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
         <SeriesPanel title="Requests per second" sub={`${d.window} · per bucket`} series="rps" window={window} formatY={(v) => v.toFixed(2)} />
         <SeriesPanel title="Error rate" sub={`${d.window} · per bucket`} series="error_rate" window={window} formatY={(v) => fmt.pct(v, 1)} />
       </div>
+
+      {hasCost && (
+        <div className="grid grid-cols-1 gap-3.5">
+          <SeriesPanel title="Estimated spend" sub={`${d.window} · USD per bucket`} series="cost" window={window} formatY={(v) => fmt.usd(v)} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
         <Strip title="Traffic by provider" sub={`requests · ${d.window}`} rows={d.by_provider ?? []} label={(r) => <ProviderChip name={r.provider} />} rowKey={(r) => r.provider} />
@@ -150,6 +162,18 @@ function Body({ data: d, window }: { data: DashboardSummary; window: DashboardWi
       <Models rows={d.by_model ?? []} window={d.window} />
     </>
   )
+}
+
+// costSub renders the largest charge category as the spend tile's
+// subtitle (e.g. "62% output"), or a plain caption when the split is
+// absent.
+function costSub(byCategory?: Record<string, number> | null): string {
+  const entries = Object.entries(byCategory ?? {})
+  if (entries.length === 0) return "estimated"
+  const total = entries.reduce((s, [, v]) => s + v, 0)
+  if (total <= 0) return "estimated"
+  const [topKey, topVal] = entries.reduce((a, b) => (b[1] > a[1] ? b : a))
+  return `${((topVal / total) * 100).toFixed(0)}% ${topKey.replace(/_/g, " ")}`
 }
 
 function SeriesPanel({ title, sub, series, window, formatY }: { title: string; sub: string; series: string; window: DashboardWindow; formatY?: (v: number) => string }) {
@@ -327,6 +351,7 @@ function Models({ rows, window }: { rows: DashboardSummary["by_model"]; window: 
             <th className="text-right font-medium px-4 py-2">Share</th>
             <th className="text-right font-medium px-4 py-2">Tokens in</th>
             <th className="text-right font-medium px-4 py-2">Tokens out</th>
+            <th className="text-right font-medium px-4 py-2">Est. cost</th>
           </tr>
         </thead>
         <tbody>
@@ -338,6 +363,7 @@ function Models({ rows, window }: { rows: DashboardSummary["by_model"]; window: 
               <td className="mono tnum text-right px-4 py-2 text-[color:var(--text-4)]">{((m.requests / totalReq) * 100).toFixed(1)}%</td>
               <td className="mono tnum text-right px-4 py-2">{fmt.compact(m.tokens_in)}</td>
               <td className="mono tnum text-right px-4 py-2">{fmt.compact(m.tokens_out)}</td>
+              <td className="mono tnum text-right px-4 py-2">{fmt.usd(m.cost_usd)}</td>
             </tr>
           ))}
         </tbody>

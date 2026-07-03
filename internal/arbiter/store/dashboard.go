@@ -49,6 +49,13 @@ type DashboardTotals struct {
 	TokensOut           int64
 	TokensCached        int64
 	TokensCacheCreation int64
+
+	// CostUSD is the summed cost estimates over the window, and
+	// CostByCategory its charge-category split (input/output/cache_read/
+	// cache_write/tool_calls), both from cagg_cost_1m. Zero / empty when
+	// no costing-enabled gateway reported in the window.
+	CostUSD        float64
+	CostByCategory map[string]float64
 }
 
 // DashboardDimensionRow is one breakdown row keyed by a single dimension
@@ -74,6 +81,10 @@ type DashboardModelRow struct {
 	Requests  int64
 	TokensIn  int64
 	TokensOut int64
+
+	// CostUSD is the model's summed cost estimate over the window
+	// (cagg_cost_1m). Zero for unpriced models.
+	CostUSD float64
 }
 
 // DashboardFiredRow counts a single rule's matches (or a tag's applications)
@@ -227,6 +238,39 @@ WHERE ` + strings.Join(twhere, " AND ")
 	); err != nil {
 		return DashboardTotals{}, fmt.Errorf("store: dashboard token totals: %w", err)
 	}
+
+	// Cost totals mirror the token path: cagg_cost_1m carries the same
+	// equality dimensions and no status column, so the token window
+	// applies verbatim. Grouped by charge category for the split.
+	costQ := `
+SELECT COALESCE(category, ''), COALESCE(SUM(usd), 0)
+FROM cagg_cost_1m
+WHERE ` + strings.Join(twhere, " AND ") + `
+GROUP BY 1`
+	rows, err := s.db.Query(ctx, costQ, targs...)
+	if err != nil {
+		return DashboardTotals{}, fmt.Errorf("store: dashboard cost totals: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cat string
+			usd float64
+		)
+		if err := rows.Scan(&cat, &usd); err != nil {
+			return DashboardTotals{}, fmt.Errorf("store: scan dashboard cost totals: %w", err)
+		}
+		t.CostUSD += usd
+		if cat != "" {
+			if t.CostByCategory == nil {
+				t.CostByCategory = map[string]float64{}
+			}
+			t.CostByCategory[cat] += usd
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DashboardTotals{}, fmt.Errorf("store: dashboard cost totals: %w", err)
+	}
 	return t, nil
 }
 
@@ -345,13 +389,22 @@ tok AS (
   FROM cagg_tokens_1m
   WHERE ` + strings.Join(twhere, " AND ") + ` AND model <> ''
   GROUP BY model
+),
+cost AS (
+  SELECT model, COALESCE(SUM(usd), 0) AS usd
+  FROM cagg_cost_1m
+  WHERE ` + strings.Join(twhere, " AND ") + ` AND model <> ''
+  GROUP BY model
 )
 SELECT COALESCE(req.model, tok.model) AS model,
   COALESCE(NULLIF(req.provider, ''), tok.provider, '') AS provider,
   COALESCE(req.requests, 0) AS requests,
   COALESCE(tok.tokens_in, 0) AS tokens_in,
-  COALESCE(tok.tokens_out, 0) AS tokens_out
-FROM req FULL OUTER JOIN tok ON req.model = tok.model
+  COALESCE(tok.tokens_out, 0) AS tokens_out,
+  COALESCE(cost.usd, 0) AS cost_usd
+FROM req
+FULL OUTER JOIN tok ON req.model = tok.model
+LEFT JOIN cost ON cost.model = COALESCE(req.model, tok.model)
 ORDER BY requests DESC, model`
 
 	rows, err := s.db.Query(ctx, q, rargs...)
@@ -363,7 +416,7 @@ ORDER BY requests DESC, model`
 	var out []DashboardModelRow
 	for rows.Next() {
 		var r DashboardModelRow
-		if err := rows.Scan(&r.Model, &r.Provider, &r.Requests, &r.TokensIn, &r.TokensOut); err != nil {
+		if err := rows.Scan(&r.Model, &r.Provider, &r.Requests, &r.TokensIn, &r.TokensOut, &r.CostUSD); err != nil {
 			return nil, fmt.Errorf("store: scan dashboard model: %w", err)
 		}
 		out = append(out, r)
@@ -476,13 +529,17 @@ type DashboardSeriesParams struct {
 
 // DashboardSeriesBucket is one time bucket carrying every plottable series value.
 // Latency quantiles are gone (MVP drops percentiles); the series carries volume,
-// outcome, and the two token curves only.
+// outcome, the two token curves, and the cost curve.
 type DashboardSeriesBucket struct {
 	Ts        time.Time
 	Requests  int64
 	Errored   int64
 	TokensIn  int64
 	TokensOut int64
+
+	// CostUSD is the bucket's summed cost estimate (cagg_cost_1m,
+	// all categories). Zero when no costing-enabled gateway reported.
+	CostUSD float64
 }
 
 // QueryDashboardSeries computes a zero-filled per-bucket time series over
@@ -533,19 +590,29 @@ tok AS (
   FROM cagg_tokens_1m
   WHERE %s
   GROUP BY 1
+),
+cost AS (
+  SELECT time_bucket(make_interval(secs => $%d), bucket) AS ts,
+    COALESCE(SUM(usd), 0) AS usd
+  FROM cagg_cost_1m
+  WHERE %s
+  GROUP BY 1
 )
 SELECT spine.ts,
   COALESCE(req.requests, 0),
   COALESCE(req.errored, 0),
   COALESCE(tok.tokens_in, 0),
-  COALESCE(tok.tokens_out, 0)
+  COALESCE(tok.tokens_out, 0),
+  COALESCE(cost.usd, 0)
 FROM spine
 LEFT JOIN req ON req.ts = spine.ts
 LEFT JOIN tok ON tok.ts = spine.ts
+LEFT JOIN cost ON cost.ts = spine.ts
 ORDER BY spine.ts`,
 		w, w, w, w,
 		w, exprStatusInt, strings.Join(rwhere, " AND "),
-		w, metricTokensIn, metricTokensOut, strings.Join(twhere, " AND "))
+		w, metricTokensIn, metricTokensOut, strings.Join(twhere, " AND "),
+		w, strings.Join(twhere, " AND "))
 
 	rows, err := s.db.Query(ctx, q, rargs...)
 	if err != nil {
@@ -556,7 +623,7 @@ ORDER BY spine.ts`,
 	var out []DashboardSeriesBucket
 	for rows.Next() {
 		var b DashboardSeriesBucket
-		if err := rows.Scan(&b.Ts, &b.Requests, &b.Errored, &b.TokensIn, &b.TokensOut); err != nil {
+		if err := rows.Scan(&b.Ts, &b.Requests, &b.Errored, &b.TokensIn, &b.TokensOut, &b.CostUSD); err != nil {
 			return nil, fmt.Errorf("store: scan dashboard series: %w", err)
 		}
 		out = append(out, b)

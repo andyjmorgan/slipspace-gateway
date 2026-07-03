@@ -37,6 +37,17 @@ export const fmt = {
   pct: (n?: number | null, digits = 1) =>
     n == null ? "—" : (n * 100).toFixed(digits) + "%",
 
+  // USD cost estimates. Spend spans sub-cent (one cheap request) to
+  // hundreds of dollars (a day of frontier traffic), so precision
+  // scales down as magnitude grows; zero renders as an em dash — an
+  // unpriced model is "no estimate", not "free".
+  usd: (n?: number | null) => {
+    if (n == null || n === 0) return "—"
+    if (n < 0.01) return "$" + n.toFixed(4)
+    if (n < 100) return "$" + n.toFixed(2)
+    return "$" + n.toLocaleString("en-US", { maximumFractionDigits: 0 })
+  },
+
   pctRaw: (n?: number | null, digits = 1) =>
     n == null ? "—" : n.toFixed(digits) + "%",
 

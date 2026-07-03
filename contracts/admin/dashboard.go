@@ -95,6 +95,16 @@ type DashboardTotals struct {
 	// TokensCacheCreation is the share of TokensIn billed at the
 	// cache-write premium. Anthropic-only on today's surface.
 	TokensCacheCreation int64 `json:"tokens_cache_creation"`
+
+	// CostUSD is the summed per-request USD cost estimates over
+	// Window, and CostByCategory its charge-category split (input /
+	// output / cache_read / cache_write / tool_calls). Zero / absent
+	// when no costing-enabled gateway reported in the window. An
+	// estimate at observation time — the token totals above are the
+	// re-priceable ground truth.
+	CostUSD float64 `json:"cost_usd"`
+
+	CostByCategory map[string]float64 `json:"cost_by_category,omitempty"`
 }
 
 // DashboardRates carries the rate-style aggregates.
@@ -141,6 +151,10 @@ type DashboardModelRow struct {
 	TokensIn int64 `json:"tokens_in"`
 
 	TokensOut int64 `json:"tokens_out"`
+
+	// CostUSD is the model's summed cost estimate over Window. Zero
+	// for models the pricing rate card does not match.
+	CostUSD float64 `json:"cost_usd"`
 }
 
 // DashboardRuleFiredRow counts matches for one rule across the window
