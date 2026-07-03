@@ -53,11 +53,23 @@ type RequestEvent struct {
 
 	InferenceGeo string `json:"inference_geo,omitempty"`
 
+	Cost *CostRecord `json:"cost,omitempty"`
+
 	Tags []string `json:"tags,omitempty"`
 
 	PolicyRef string `json:"policy_ref,omitempty"`
 
 	Attempts []AttemptRecord `json:"attempts,omitempty"`
+}
+
+// CostRecord mirrors the cost block on both contracts/events.Request
+// and connector Records: the gateway-computed USD estimate.
+type CostRecord struct {
+	TotalUSD float64 `json:"total_usd"`
+
+	ByCategory map[string]float64 `json:"by_category,omitempty"`
+
+	TableVersion string `json:"table_version,omitempty"`
 }
 
 // AttemptRecord mirrors contracts/events.AttemptRecord — one per-attempt

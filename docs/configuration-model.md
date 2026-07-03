@@ -23,12 +23,13 @@ This page is the operator's reference for that on-disk schema — what files exi
 11. [`connectors` block](#connectors-block)
 12. [`admin` block](#admin-block)
 13. [`telemetry` block](#telemetry-block)
-14. [Protocol resolution](#protocol-resolution)
-15. [The binding triangle](#the-binding-triangle)
-16. [Worked examples](#worked-examples)
-17. [Why no `${VAR}` substitution](#why-no-var-substitution)
-18. [Validation errors](#validation-errors)
-19. [Known limitations](#known-limitations)
+14. [`pricing` block](#pricing-block)
+15. [Protocol resolution](#protocol-resolution)
+16. [The binding triangle](#the-binding-triangle)
+17. [Worked examples](#worked-examples)
+18. [Why no `${VAR}` substitution](#why-no-var-substitution)
+19. [Validation errors](#validation-errors)
+20. [Known limitations](#known-limitations)
 
 ---
 
@@ -73,7 +74,7 @@ flowchart TB
 2. **Subdirectories and non-`.yaml` entries are skipped silently.** Only regular files whose extension is `.yaml` are considered (`internal/config/config_model.go::Load`).
 3. **No fixed-filename allowlist.** Under v2 the loader merges **any** `*.yaml` filename — there is no pinned set of `providers.yaml` / `policy.yaml` / `admin.yaml`. Operators may split blocks across files however they like, or put everything in one file. The filenames in this doc's examples are a recommended convention, not a requirement.
 4. **Directory must contain at least one `.yaml` file.** Zero accepted files raises `ErrEmptyDirectory`.
-5. **Each top-level block has a single authoring home.** A block (`providers`, `groups`, `configurations`, `api_keys`, `connectors`, `rules`, `admin`, `telemetry`) set by **two** files aborts the load with `ErrDuplicateKey`, naming both files. This is enforced in `mergeDoc` by a `seen` map of block → filename. A given block may live in any file, but only one.
+5. **Each top-level block has a single authoring home.** A block (`providers`, `groups`, `configurations`, `api_keys`, `connectors`, `rules`, `admin`, `telemetry`, `pricing`) set by **two** files aborts the load with `ErrDuplicateKey`, naming both files. This is enforced in `mergeDoc` by a `seen` map of block → filename. A given block may live in any file, but only one.
 6. **Files are processed in alphabetical filename order.** Ordering is deterministic but irrelevant to the result — the single-authoring-home rule means no block is ever set twice, so there are no last-writer-wins merge semantics.
 7. **The legacy `backends:` key is rejected hard.** The block was renamed `providers:` in the Vocabulary Refactor with no back-compat alias; a file carrying `backends:` aborts with `ErrLegacyProvidersKey` rather than silently ignoring it (`internal/config/config_model.go::Load`).
 8. **Trusted contents.** Decoded values pass through verbatim. There is no `${VAR}` substitution, no `env:` syntax — see [Why no `${VAR}` substitution](#why-no-var-substitution).
@@ -86,7 +87,7 @@ flowchart TB
 
 ## Top-level keys
 
-The loader recognises **eight** top-level keys (`internal/config/loader.go`, `keyProviders`…`keyTelemetry`). Any of them may appear in any `*.yaml` file, subject to the single-authoring-home rule above.
+The loader recognises **nine** top-level keys (`internal/config/loader.go`, `keyProviders`…`keyPricing`). Any of them may appear in any `*.yaml` file, subject to the single-authoring-home rule above.
 
 | Key | Carries |
 |---|---|
@@ -98,6 +99,7 @@ The loader recognises **eight** top-level keys (`internal/config/loader.go`, `ke
 | `connectors` | Top-level connector destinations (s3, azure_blob, webhook). Configurations attach them through `connector_bindings`. |
 | `admin` | Management-console gate. Optional; absent means the console never starts. |
 | `telemetry` | Operator-tunable telemetry knobs (today: GenAI content-capture byte caps). Optional; absent resolves to built-in defaults. |
+| `pricing` | Per-request USD cost estimation: rate-card overrides over the embedded defaults. Optional; absent means costing off. |
 
 The pre-rename `backends:` key is rejected with `ErrLegacyProvidersKey`. Any other unrecognised top-level key is silently ignored by the YAML decoder (the `configDoc` struct only has fields for the eight blocks above plus the `backends` trap).
 
@@ -465,6 +467,48 @@ telemetry:
 | `tool_definitions_max_bytes` | 64 KiB | Combined `parameters` JSON-schema size across every tool definition. Once exceeded, parameters are dropped wholesale from every definition (type/name/description still emitted). |
 
 The caps shape only what reaches the span and the operation-details event — they do not affect the connector spool, which carries the full unredacted body to operator-configured destinations (invariant #4). `SLIPSPACE_OTEL_CAPTURE_CONTENT` is the master switch; the caps only apply when capture is on. See [observability.md](observability.md#genai-spans-and-events).
+
+---
+
+## `pricing` block
+
+`pricing:` is optional and turns on per-request USD cost estimation (`contracts/config/pricing.go::Pricing`). When present (and `enabled` not `false`), the gateway prices each request's extracted charge quantities — token buckets, server-tool call counts, service tier, inference geo — against a rate card and emits the estimate on the `slipspace.cost.usd.total` meter (labelled `slipspace.cost.category`), the gen_ai span/event (`slipspace.cost.usd` + per-category attrs), and the connector Record's `cost` block. Absent block = costing off entirely.
+
+```yaml
+pricing:
+  enabled: true          # optional; the block's presence is the opt-in
+  use_defaults: true     # optional; false hides the embedded rate card
+  models:                # operator overrides / additions
+    - match: "claude-sonnet-5*"      # exact id, or prefix + trailing *
+      provider: anthropic            # optional provider-name restriction
+      effective_from: "2026-09-01"   # optional dated entry (UTC midnight)
+      per_mtok:                      # USD per million tokens
+        input: 3.00
+        output: 15.00
+        cache_read: 0.30
+        cache_write_5m: 3.75
+        cache_write_1h: 6.00
+        audio_input: 0               # 0 = bills at the plain input rate
+        audio_output: 0
+      long_context:                  # optional >threshold repricing
+        threshold: 200000
+        per_mtok: { input: 6.00, output: 22.50 }
+      tiers: { batch: 0.5 }          # service_tier → token-cost multiplier
+      geos: { us: 1.1 }              # inference_geo → token-cost multiplier
+      tool_calls:                    # USD per 1k calls, keyed by the wire
+        web_search_requests: 10.00   # counter name in server_tool_use
+    - match: "qwen*"                 # self-hosted: zero-rate (matched, $0)
+      per_mtok: { input: 0, output: 0 }
+```
+
+Semantics:
+
+- **Matching**: longest pattern wins across the merged (operator + embedded) card; an operator entry beats an embedded one on a full tie. Multiple entries may share a `match` with different `effective_from` dates — the latest date not after the request start applies.
+- **Rates are explicit, never derived.** A category left zero is free. The embedded defaults (`internal/pricing/defaults.go`, versioned — e.g. `2026-07`) spell out every category for the current frontier models of the three vendors.
+- **Unmatched models are unpriced, never guessed**: the Record carries no `cost` block, the event carries `cost_unpriced`, and `slipspace.pricing.unmatched.total` climbs — the operator's cue to add an entry.
+- **Cost is an estimate at observation time.** The token counters and Record quantities remain the ground truth, so history is re-priceable; each estimate carries the rate-card version that produced it.
+- A response reporting only the flat cache-creation total (no TTL split) is priced entirely at the 5m rate. Tier/geo multipliers apply to token categories only, not tool calls.
+- Like `admin`/`telemetry`, the block is **not** editable through the admin write API — a YAML change requires a restart.
 
 ---
 

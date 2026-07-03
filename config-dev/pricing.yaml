@@ -1,0 +1,5 @@
+# Costing for local dev + e2e: embedded default rate card, no overrides.
+# Models outside the defaults (e.g. gpt-4o test stand-ins) report as
+# unpriced rather than $0 — that path is deliberately exercised too.
+pricing:
+  enabled: true

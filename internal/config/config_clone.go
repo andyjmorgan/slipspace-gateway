@@ -17,6 +17,7 @@ func (r *ResolvedConfig) Clone() *ResolvedConfig {
 	out := &ResolvedConfig{
 		Admin:       r.Admin,
 		Telemetry:   r.Telemetry,
+		Pricing:     r.Pricing,
 		SourceFiles: cloneStringMap(r.SourceFiles),
 	}
 
