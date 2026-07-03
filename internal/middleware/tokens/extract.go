@@ -58,20 +58,37 @@ func ExtractFrames(provider, endpoint string, frames [][]byte) Snapshot {
 	return fn(frames)
 }
 
-// ServerToolUseFrames returns the provider's server-side tool usage counters
-// for frames already collated by sseframe.Collate, keyed by the wire counter
-// name (web_search_requests, web_fetch_requests, ...). It is a sibling to
-// ExtractFrames rather than a Snapshot field so Snapshot stays a comparable
-// value type. Anthropic Messages is the only protocol that reports per-tool
-// counters today (usage.server_tool_use); the OpenAI Responses / Chat usage
-// objects carry no analogue (confirmed against the SDK ResponseUsage model —
-// built-in tool invocations are billed per *_call output item, outside
-// usage), and Gemini's usageMetadata has none. Every other endpoint returns
-// nil, as does an Anthropic response that invoked no server tools.
+// ServerToolUseFrames returns the provider's server-side tool invocation
+// counters for frames already collated by sseframe.Collate, keyed by the
+// provider's own wire vocabulary. It is a sibling to ExtractFrames rather
+// than a Snapshot field so Snapshot stays a comparable value type. Per
+// endpoint family:
+//
+//   - messages: Anthropic's usage.server_tool_use counters, verbatim keys
+//     (web_search_requests, web_fetch_requests, ...).
+//   - responses: OpenAI bills built-in tools per *_call output item,
+//     outside usage — counted from the output items, keyed by item type
+//     (web_search_call, code_interpreter_call, ...).
+//   - generate_content: Gemini bills Google Search grounding per search
+//     query — counted from groundingMetadata.webSearchQueries as
+//     web_search_queries.
+//   - chat_completions/chat: nil. The Chat Completions response carries
+//     no per-call evidence (web-search annotations don't expose a call
+//     count), so nothing is counted rather than something guessed.
+//
+// nil for any response that invoked no server tools.
 func ServerToolUseFrames(provider, endpoint string, frames [][]byte) map[string]int {
 	_ = provider
-	if endpoint != "messages" || len(frames) == 0 {
+	if len(frames) == 0 {
 		return nil
 	}
-	return extractAnthropicServerToolUse(frames)
+	switch endpoint {
+	case "messages":
+		return extractAnthropicServerToolUse(frames)
+	case "responses":
+		return extractResponsesServerToolCalls(frames)
+	case "generate_content":
+		return extractGeminiServerToolCalls(frames)
+	}
+	return nil
 }

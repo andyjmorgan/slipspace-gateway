@@ -32,10 +32,21 @@ type ResponseAttrs struct {
 	// tool_call parts remain — so tool-only responses are no longer dropped.
 	OutputParts []Part
 
-	// ServiceTier and SystemFingerprint are OpenAI-specific response
-	// descriptors (openai.response.service_tier / system_fingerprint).
-	// Empty for non-OpenAI responses.
-	ServiceTier       string
+	// ServiceTier is the provider-reported processing tier the request
+	// was actually billed under (OpenAI response.service_tier, Anthropic
+	// usage.service_tier). A whole-request pricing multiplier —
+	// batch/flex discount, priority premium. Empty when the provider
+	// reported none (Gemini's response carries no tier).
+	ServiceTier string
+
+	// InferenceGeo is Anthropic's usage.inference_geo — the region the
+	// inference ran in, which carries its own pricing multiplier (e.g.
+	// "us" bills 1.1×). Empty for other providers.
+	InferenceGeo string
+
+	// SystemFingerprint is the OpenAI-specific
+	// openai.response.system_fingerprint descriptor. Empty for
+	// non-OpenAI responses.
 	SystemFingerprint string
 }
 
@@ -503,19 +514,21 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 	}
 	for _, f := range frames {
 		var ch struct {
-			ID          string            `json:"id"`
-			Model       string            `json:"model"`
-			ServiceTier string            `json:"service_tier"`
-			Type        string            `json:"type"`
-			Delta       string            `json:"delta"`
-			ItemID      string            `json:"item_id"`
-			Output      []responsesOutput `json:"output"`
-			Item        *responsesOutput  `json:"item"`
+			ID          string                   `json:"id"`
+			Model       string                   `json:"model"`
+			ServiceTier string                   `json:"service_tier"`
+			Type        string                   `json:"type"`
+			Delta       string                   `json:"delta"`
+			ItemID      string                   `json:"item_id"`
+			Output      []responsesOutput        `json:"output"`
+			Item        *responsesOutput         `json:"item"`
+			Usage       *responsesReasoningUsage `json:"usage"`
 			Response    *struct {
-				ID          string            `json:"id"`
-				Model       string            `json:"model"`
-				ServiceTier string            `json:"service_tier"`
-				Output      []responsesOutput `json:"output"`
+				ID          string                   `json:"id"`
+				Model       string                   `json:"model"`
+				ServiceTier string                   `json:"service_tier"`
+				Output      []responsesOutput        `json:"output"`
+				Usage       *responsesReasoningUsage `json:"usage"`
 			} `json:"response"`
 		}
 		if json.Unmarshal(f, &ch) != nil {
@@ -524,6 +537,7 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 		a.ID = firstNonEmpty(a.ID, ch.ID)
 		a.Model = firstNonEmpty(a.Model, ch.Model)
 		a.ServiceTier = firstNonEmpty(a.ServiceTier, ch.ServiceTier)
+		mergeReasoning(&a, ch.Usage)
 		switch ch.Type {
 		case "response.output_text.delta":
 			out.WriteString(ch.Delta)
@@ -553,12 +567,35 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 			a.ID = firstNonEmpty(a.ID, ch.Response.ID)
 			a.Model = firstNonEmpty(a.Model, ch.Response.Model)
 			a.ServiceTier = firstNonEmpty(a.ServiceTier, ch.Response.ServiceTier)
+			mergeReasoning(&a, ch.Response.Usage)
 			writeOutputs(ch.Response.Output)
 		}
 	}
 	a.OutputText = out.String()
 	a.OutputParts = outputParts(a.OutputText, tools.parts())
 	return a
+}
+
+// responsesReasoningUsage is the reasoning-bearing corner of the
+// Responses usage block: output_tokens_details.reasoning_tokens. The
+// numeric token buckets ride the tokens package's extractor; this
+// descriptor exists so the Responses surface reports reasoning the same
+// way Chat Completions does (it was previously dropped here — the only
+// protocol asymmetry).
+type responsesReasoningUsage struct {
+	OutputTokensDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
+}
+
+// mergeReasoning folds a usage block's reasoning count into a,
+// last-non-zero wins — matching the terminal-emission-is-authoritative
+// convention of every usage reader.
+func mergeReasoning(a *ResponseAttrs, u *responsesReasoningUsage) {
+	if u != nil && u.OutputTokensDetails != nil && u.OutputTokensDetails.ReasoningTokens > 0 {
+		n := u.OutputTokensDetails.ReasoningTokens
+		a.ReasoningTokens = &n
+	}
 }
 
 func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
@@ -597,9 +634,15 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 				ToolUseID    string          `json:"tool_use_id"`
 				InnerContent json.RawMessage `json:"content"`
 			} `json:"content_block"`
+			// Usage covers the non-streaming body and the message_delta
+			// event; Message.Usage covers message_start. Only the
+			// pricing descriptors are read here (thinking tokens, tier,
+			// geo) — the numeric buckets ride the tokens package.
+			Usage   *anthropicUsageDescriptors `json:"usage"`
 			Message *struct {
-				ID    string `json:"id"`
-				Model string `json:"model"`
+				ID    string                     `json:"id"`
+				Model string                     `json:"model"`
+				Usage *anthropicUsageDescriptors `json:"usage"`
 			} `json:"message"`
 			// Delta carries stop_reason on message_delta, text on
 			// content_block_delta (text_delta), thinking on thinking_delta,
@@ -618,9 +661,11 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 		}
 		a.ID = firstNonEmpty(a.ID, ch.ID)
 		a.Model = firstNonEmpty(a.Model, ch.Model)
+		mergeAnthropicUsageDescriptors(&a, ch.Usage)
 		if ch.Message != nil {
 			a.ID = firstNonEmpty(a.ID, ch.Message.ID)
 			a.Model = firstNonEmpty(a.Model, ch.Message.Model)
+			mergeAnthropicUsageDescriptors(&a, ch.Message.Usage)
 		}
 		if ch.StopReason != nil && *ch.StopReason != "" {
 			a.FinishReasons = appendUnique(a.FinishReasons, *ch.StopReason)
@@ -695,6 +740,35 @@ func extractAnthropicResponse(frames [][]byte) ResponseAttrs {
 	a.OutputText = blocks.text()
 	a.OutputParts = blocks.parts()
 	return a
+}
+
+// anthropicUsageDescriptors is the pricing-descriptor corner of the
+// Anthropic usage block: extended-thinking token count
+// (output_tokens_details.thinking_tokens, informational — billed inside
+// output_tokens), the billed service tier, and the inference region
+// (both whole-request pricing multipliers).
+type anthropicUsageDescriptors struct {
+	OutputTokensDetails *struct {
+		ThinkingTokens int `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
+	ServiceTier  string `json:"service_tier"`
+	InferenceGeo string `json:"inference_geo"`
+}
+
+// mergeAnthropicUsageDescriptors folds one usage emission's descriptors
+// into a. Strings keep the first non-empty value (tier/geo don't change
+// mid-stream); the thinking count takes the last non-zero emission —
+// message_delta's cumulative total supersedes message_start's initial.
+func mergeAnthropicUsageDescriptors(a *ResponseAttrs, u *anthropicUsageDescriptors) {
+	if u == nil {
+		return
+	}
+	a.ServiceTier = firstNonEmpty(a.ServiceTier, u.ServiceTier)
+	a.InferenceGeo = firstNonEmpty(a.InferenceGeo, u.InferenceGeo)
+	if u.OutputTokensDetails != nil && u.OutputTokensDetails.ThinkingTokens > 0 {
+		n := u.OutputTokensDetails.ThinkingTokens
+		a.ReasoningTokens = &n
+	}
 }
 
 // anthropicBlock is the in-flight reconstruction of one Anthropic response

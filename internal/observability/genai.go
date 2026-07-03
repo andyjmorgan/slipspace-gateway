@@ -116,6 +116,40 @@ const (
 	// (non-zero), like every other usage attribute.
 	AttrGenAIUsageServerToolUsePrefix = "gen_ai.usage.server_tool_use." //nolint:gosec // G101 false positive: attribute key, not a credential
 
+	// AttrSlipSpaceUsageCacheCreation5m / 1h split
+	// gen_ai.usage.cache_creation.input_tokens by cache TTL (Anthropic
+	// usage.cache_creation.ephemeral_{5m,1h}_input_tokens). The tiers
+	// bill at different write premiums (1.25× vs 2× input), so costing
+	// needs the split. slipspace.* mints — the GenAI semconv has no TTL
+	// vocabulary (checked 2026-07-03); they rename in lockstep if one
+	// lands. When present they sum to the cache_creation total.
+	AttrSlipSpaceUsageCacheCreation5m = "slipspace.usage.cache_creation.ephemeral_5m_input_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
+	AttrSlipSpaceUsageCacheCreation1h = "slipspace.usage.cache_creation.ephemeral_1h_input_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
+
+	// AttrSlipSpaceUsageInputAudioTokens / OutputAudioTokens are the
+	// audio-modality shares of input/output tokens (OpenAI
+	// *_tokens_details.audio_tokens, Gemini per-modality
+	// *TokensDetails). Audio bills at its own (much higher) rate.
+	// slipspace.* mints shaped per-modality after the direction of
+	// semconv-genai issue #23 (gen_ai.token.modality), so a rename to
+	// spec keys stays mechanical.
+	AttrSlipSpaceUsageInputAudioTokens  = "slipspace.usage.audio.input_tokens"  //nolint:gosec // G101 false positive: attribute key, not a credential
+	AttrSlipSpaceUsageOutputAudioTokens = "slipspace.usage.audio.output_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
+
+	// AttrSlipSpaceServiceTier is the provider-reported processing tier
+	// the request was billed under (OpenAI/Anthropic service_tier) — a
+	// whole-request pricing multiplier. Generic slipspace.* key because
+	// the semconv only defines the provider-scoped
+	// openai.response.service_tier (still emitted for OpenAI) and
+	// nothing for other providers; one key beats a per-provider fan-out
+	// for the pricing layer that consumes it.
+	AttrSlipSpaceServiceTier = "slipspace.service_tier"
+
+	// AttrSlipSpaceInferenceGeo is Anthropic's usage.inference_geo —
+	// the inference region, which carries its own pricing multiplier
+	// (e.g. "us" bills 1.1×).
+	AttrSlipSpaceInferenceGeo = "slipspace.inference_geo"
+
 	// AttrGenAIRequestStream marks whether the request used streaming.
 	// Conditionally required by the spec when the request is streaming.
 	AttrGenAIRequestStream = "gen_ai.request.stream"

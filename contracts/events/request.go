@@ -79,6 +79,48 @@ type Request struct {
 	// stays zero for them.
 	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
 
+	// TokensCacheCreation5m / TokensCacheCreation1h split
+	// TokensCacheCreation by cache TTL (Anthropic's nested
+	// cache_creation breakdown). The tiers carry different write
+	// premiums (1.25× vs 2× input), so per-request costing needs them.
+	// Zero when the provider reported only the flat total — the flat
+	// TokensCacheCreation is then authoritative. When present they sum
+	// to TokensCacheCreation.
+	TokensCacheCreation5m int `json:"tokens_cache_creation_5m,omitempty"`
+	TokensCacheCreation1h int `json:"tokens_cache_creation_1h,omitempty"`
+
+	// TokensInputAudio / TokensOutputAudio are the audio-modality
+	// shares of TokensIn / TokensOut, billed at audio rates where the
+	// provider prices audio separately (OpenAI audio_tokens details,
+	// Gemini modality breakdowns). Sub-buckets — already counted in
+	// the gross totals.
+	TokensInputAudio  int `json:"tokens_input_audio,omitempty"`
+	TokensOutputAudio int `json:"tokens_output_audio,omitempty"`
+
+	// TokensReasoning is the reasoning/thinking share of TokensOut
+	// (OpenAI reasoning_tokens, Anthropic thinking_tokens, Gemini
+	// thoughtsTokenCount). Informational for attribution — billed
+	// inside TokensOut at the output rate on every current provider.
+	TokensReasoning int `json:"tokens_reasoning,omitempty"`
+
+	// ServerToolUse counts server-executed tool invocations, keyed by
+	// the provider's own wire vocabulary (Anthropic
+	// web_search_requests, OpenAI web_search_call, Gemini
+	// web_search_queries, ...). These bill per call/query outside the
+	// token buckets. Nil when the request invoked no server tools.
+	ServerToolUse map[string]int `json:"server_tool_use,omitempty"`
+
+	// ServiceTier is the provider-reported processing tier the request
+	// was billed under (OpenAI/Anthropic service_tier) — a
+	// whole-request pricing multiplier (batch/flex discount, priority
+	// premium). Empty when the provider reported none.
+	ServiceTier string `json:"service_tier,omitempty"`
+
+	// InferenceGeo is Anthropic's usage.inference_geo — the inference
+	// region, which carries its own pricing multiplier. Empty for
+	// other providers.
+	InferenceGeo string `json:"inference_geo,omitempty"`
+
 	// Tags is the set of tags rules attached to the request via
 	// AddTagAction. Order reflects first-attach order. Empty when no
 	// addTag rule fired. Set semantics — the rules engine

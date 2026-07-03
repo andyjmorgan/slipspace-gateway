@@ -8,9 +8,12 @@ import "encoding/json"
 // v2 added the additive SessionID + SessionIDSource fields (session
 // bundling). v3 added the additive AgentID + AgentIDSource fields (agent
 // identification). v4 added the additive UserID + UserIDSource fields (end-user
-// identification). Older consumers reading a newer record simply ignore the
-// new keys; the change requires no migration.
-const SchemaVersion = 4
+// identification). v5 added the additive charge-accounting fields: the
+// Tokens sub-buckets (Reasoning, CacheCreation5m/1h, InputAudio/
+// OutputAudio) plus ServerToolUse, ServiceTier, and InferenceGeo on the
+// record. Older consumers reading a newer record simply ignore the new
+// keys; the change requires no migration.
+const SchemaVersion = 5
 
 // Record is one captured request/response pair as it sits inside an
 // ndjson.zst batch. Consumers sort by (TsNs, InstanceID, Seq) and group by
@@ -134,6 +137,23 @@ type Record struct {
 	// usage info. Nil when usage is not parseable.
 	Tokens *Tokens `json:"tokens,omitempty"`
 
+	// ServerToolUse counts server-executed tool invocations, keyed by the
+	// provider's own wire vocabulary (Anthropic web_search_requests,
+	// OpenAI web_search_call, Gemini web_search_queries, ...). These bill
+	// per call/query outside the token buckets. Nil when the request
+	// invoked no server tools.
+	ServerToolUse map[string]int `json:"server_tool_use,omitempty"`
+
+	// ServiceTier is the provider-reported processing tier the request
+	// was billed under (OpenAI/Anthropic service_tier) — a whole-request
+	// pricing multiplier. Empty when the provider reported none.
+	ServiceTier string `json:"service_tier,omitempty"`
+
+	// InferenceGeo is Anthropic's usage.inference_geo — the inference
+	// region, which carries its own pricing multiplier. Empty for other
+	// providers.
+	InferenceGeo string `json:"inference_geo,omitempty"`
+
 	// RulesFired is the ordered list of rules whose conditions matched.
 	RulesFired []RuleFired `json:"rules_fired,omitempty"`
 
@@ -255,6 +275,27 @@ type Tokens struct {
 	// by this request. Anthropic-only field
 	// (cache_creation_input_tokens); zero otherwise.
 	CacheCreation int `json:"cache_creation,omitempty"`
+
+	// CacheCreation5m / CacheCreation1h split CacheCreation by cache
+	// TTL (Anthropic's nested cache_creation breakdown). The tiers
+	// bill at different write premiums, so costing needs the split.
+	// Zero when the provider reported only the flat total; when
+	// present they sum to CacheCreation.
+	CacheCreation5m int `json:"cache_creation_5m,omitempty"`
+	CacheCreation1h int `json:"cache_creation_1h,omitempty"`
+
+	// InputAudio / OutputAudio are the audio-modality shares of
+	// Input / Output, billed at audio rates where the provider prices
+	// audio separately. Sub-buckets — already counted in the gross
+	// totals.
+	InputAudio  int `json:"input_audio,omitempty"`
+	OutputAudio int `json:"output_audio,omitempty"`
+
+	// Reasoning is the reasoning/thinking share of Output (OpenAI
+	// reasoning_tokens, Anthropic thinking_tokens, Gemini
+	// thoughtsTokenCount). Informational — billed inside Output on
+	// every current provider.
+	Reasoning int `json:"reasoning,omitempty"`
 }
 
 // Attempt is one entry in [Record.Attempts] when the request ran

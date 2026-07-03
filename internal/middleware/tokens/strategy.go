@@ -30,9 +30,9 @@ const (
 )
 
 // Usage is one observation of upstream token accounting. Zero fields are
-// "not reported" and are ignored by every strategy. The four buckets
-// align with contracts/events/Request.Tokens{In,Out,Cached,CacheCreation}
-// so the reporter can copy straight through without a translation step.
+// "not reported" and are ignored by every strategy. The buckets align
+// with the contracts/events/Request.Tokens* fields so the reporter can
+// copy straight through without a translation step.
 type Usage struct {
 	// Input is the gross prompt-token total billed for the request.
 	// Always includes any tokens served from cache (Cached is a sub-
@@ -58,13 +58,32 @@ type Usage struct {
 	// caching with no separate write charge, so extractors there leave
 	// this zero.
 	CacheCreation int
+
+	// CacheCreation5m / CacheCreation1h split CacheCreation by cache
+	// TTL (Anthropic usage.cache_creation.ephemeral_5m_input_tokens /
+	// ephemeral_1h_input_tokens). The tiers carry different write
+	// premiums (1.25× vs 2× base input), so costing needs the split;
+	// older responses report only the flat total, in which case both
+	// stay zero and CacheCreation alone is authoritative. When
+	// present, the tiers sum to CacheCreation — they are a breakdown,
+	// not an addition.
+	CacheCreation5m int
+	CacheCreation1h int
+
+	// InputAudio / OutputAudio are the audio-modality shares of Input /
+	// Output, billed at audio rates where the provider prices audio
+	// separately (OpenAI prompt/completion_tokens_details.audio_tokens,
+	// Gemini per-modality *TokensDetails). Sub-buckets — already
+	// counted in Input/Output.
+	InputAudio  int
+	OutputAudio int
 }
 
 // IsZero reports whether u carries no observation. Strategies skip
 // zero-valued observations so an extractor can call Handle defensively
 // without first checking each field.
 func (u Usage) IsZero() bool {
-	return u.Input == 0 && u.Output == 0 && u.Cached == 0 && u.CacheCreation == 0
+	return u == Usage{}
 }
 
 // Snapshot is the aggregator's current accumulated view. Recognised is
@@ -73,9 +92,13 @@ func (u Usage) IsZero() bool {
 // zero tokens" (the latter is virtually impossible but the type system
 // shouldn't conflate them).
 type Snapshot struct {
-	Input         int
-	Output        int
-	Cached        int
-	CacheCreation int
-	Recognised    bool
+	Input           int
+	Output          int
+	Cached          int
+	CacheCreation   int
+	CacheCreation5m int
+	CacheCreation1h int
+	InputAudio      int
+	OutputAudio     int
+	Recognised      bool
 }

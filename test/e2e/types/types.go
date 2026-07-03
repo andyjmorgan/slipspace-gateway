@@ -37,6 +37,22 @@ type RequestEvent struct {
 
 	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
 
+	TokensCacheCreation5m int `json:"tokens_cache_creation_5m,omitempty"`
+
+	TokensCacheCreation1h int `json:"tokens_cache_creation_1h,omitempty"`
+
+	TokensInputAudio int `json:"tokens_input_audio,omitempty"`
+
+	TokensOutputAudio int `json:"tokens_output_audio,omitempty"`
+
+	TokensReasoning int `json:"tokens_reasoning,omitempty"`
+
+	ServerToolUse map[string]int `json:"server_tool_use,omitempty"`
+
+	ServiceTier string `json:"service_tier,omitempty"`
+
+	InferenceGeo string `json:"inference_geo,omitempty"`
+
 	Tags []string `json:"tags,omitempty"`
 
 	PolicyRef string `json:"policy_ref,omitempty"`

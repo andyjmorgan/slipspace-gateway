@@ -1,6 +1,9 @@
 package tokens
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // openaiResponsesUsage is the `usage` shape on a /v1/responses non-
 // stream body and on the terminal `response.completed` SSE event.
@@ -73,4 +76,88 @@ func openaiResponsesUsageToObservation(u *openaiResponsesUsage) Usage {
 		out.Cached = u.InputTokensDetails.CachedTokens
 	}
 	return out
+}
+
+// responsesToolItem is the minimal shape of a Responses output item (or
+// streamed output_item envelope) needed to count server-tool invocations.
+type responsesToolItem struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
+// responsesToolFrame covers every place output items appear across the
+// Responses surfaces: the non-streaming body's `output`, the streamed
+// `response.output_item.added/done` events' `item`, and the terminal
+// `response.completed` event's nested `response.output`.
+type responsesToolFrame struct {
+	Type     string              `json:"type"`
+	Output   []responsesToolItem `json:"output"`
+	Item     *responsesToolItem  `json:"item"`
+	Response *struct {
+		Output []responsesToolItem `json:"output"`
+	} `json:"response"`
+}
+
+// extractResponsesServerToolCalls counts server-executed tool invocations
+// by output-item type (web_search_call, file_search_call,
+// code_interpreter_call, image_generation_call, mcp_call, future
+// built-ins). OpenAI bills these per call / per session *outside* the
+// usage block, so the usage extractor can't see them — the output items
+// are the only wire evidence. Keys are the verbatim item types; the
+// pricing layer decides which carry a rate, so counting a non-billable
+// type is harmless.
+//
+// The same item appears up to three times on a stream (output_item.added,
+// output_item.done, response.completed's output array) — items are
+// deduplicated by id. function_call is client-executed and the *_output
+// echo types are inputs, never tool activity; both are excluded.
+func extractResponsesServerToolCalls(frames [][]byte) map[string]int {
+	seen := map[string]bool{}
+	counts := map[string]int{}
+	add := func(it responsesToolItem) {
+		if !isResponsesServerToolCall(it.Type) {
+			return
+		}
+		if it.ID != "" {
+			key := it.Type + "\x00" + it.ID
+			if seen[key] {
+				return
+			}
+			seen[key] = true
+		}
+		counts[it.Type]++
+	}
+	for _, f := range frames {
+		var fr responsesToolFrame
+		if err := json.Unmarshal(f, &fr); err != nil {
+			continue
+		}
+		for _, it := range fr.Output {
+			add(it)
+		}
+		if fr.Item != nil {
+			add(*fr.Item)
+		}
+		if fr.Response != nil {
+			for _, it := range fr.Response.Output {
+				add(it)
+			}
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+// isResponsesServerToolCall reports whether a Responses output-item type
+// represents a server-executed tool invocation: any "*_call" item except
+// the client-executed function_call. The *_output input-item echoes
+// (function_call_output, computer_call_output) don't match the suffix and
+// message/reasoning items are not calls at all.
+func isResponsesServerToolCall(itemType string) bool {
+	if itemType == "function_call" {
+		return false
+	}
+	return strings.HasSuffix(itemType, "_call")
 }

@@ -12,14 +12,16 @@ import "encoding/json"
 //
 // CacheCreation has both the legacy flat counter
 // (cache_creation_input_tokens) and a newer nested per-TTL breakdown
-// (cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens). We read
-// the flat field; the nested struct is informational and round-trips
-// untouched via the providers package's DynamicProperties.
+// (cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens). Both are
+// read: the flat field is the authoritative total, the nested tiers
+// carry the 5m/1h split that costing needs (the tiers bill at 1.25×
+// and 2× base input respectively).
 type anthropicUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	InputTokens              int                     `json:"input_tokens"`
+	OutputTokens             int                     `json:"output_tokens"`
+	CacheReadInputTokens     int                     `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int                     `json:"cache_creation_input_tokens"`
+	CacheCreation            *anthropicCacheCreation `json:"cache_creation,omitempty"`
 
 	// ServerToolUse is the per-tool request-counter block Anthropic adds
 	// when the model invoked server-executed tools (web_search_requests,
@@ -28,6 +30,16 @@ type anthropicUsage struct {
 	// values so a future non-integer member can never fail the whole usage
 	// unmarshal and cost us the token counts.
 	ServerToolUse map[string]json.RawMessage `json:"server_tool_use"`
+}
+
+// anthropicCacheCreation is the per-TTL breakdown of cache writes. When
+// present the members sum to the flat cache_creation_input_tokens; a new
+// TTL tier Anthropic ships would appear here as an unknown key (and
+// round-trip via the providers package's DynamicProperties) without
+// breaking the two we price today.
+type anthropicCacheCreation struct {
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
 }
 
 // counters filters u.ServerToolUse down to its integer members. nil when
@@ -138,10 +150,15 @@ func anthropicUsageToObservation(u *anthropicUsage) Usage {
 	// content the customer paid for, matching the OpenAI/Gemini
 	// convention where input_tokens already includes the cached
 	// portion.
-	return Usage{
+	out := Usage{
 		Input:         u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens,
 		Output:        u.OutputTokens,
 		Cached:        u.CacheReadInputTokens,
 		CacheCreation: u.CacheCreationInputTokens,
 	}
+	if u.CacheCreation != nil {
+		out.CacheCreation5m = u.CacheCreation.Ephemeral5mInputTokens
+		out.CacheCreation1h = u.CacheCreation.Ephemeral1hInputTokens
+	}
+	return out
 }
