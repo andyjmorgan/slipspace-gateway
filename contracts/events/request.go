@@ -121,6 +121,17 @@ type Request struct {
 	// other providers.
 	InferenceGeo string `json:"inference_geo,omitempty"`
 
+	// Cost is the gateway-computed USD estimate for the request, when
+	// costing is enabled and the model matched a rate-card entry. Nil
+	// otherwise. An estimate at observation time — the raw quantities
+	// above stay authoritative, so history is re-priceable.
+	Cost *Cost `json:"cost,omitempty"`
+
+	// CostUnpriced is true when costing is enabled but no rate-card
+	// entry matched the model — the request has token counts and no
+	// cost. Distinct from Cost == nil with costing off.
+	CostUnpriced bool `json:"cost_unpriced,omitempty"`
+
 	// Tags is the set of tags rules attached to the request via
 	// AddTagAction. Order reflects first-attach order. Empty when no
 	// addTag rule fired. Set semantics — the rules engine
@@ -145,6 +156,23 @@ type Request struct {
 	// Single-shot requests omit Attempts so the existing v1.1
 	// event shape is preserved byte-equivalent.
 	Attempts []AttemptRecord `json:"attempts,omitempty"`
+}
+
+// Cost is the per-request USD estimate the gateway's pricing engine
+// computed from the extracted charge quantities and its rate card.
+type Cost struct {
+	// TotalUSD is the sum of every category.
+	TotalUSD float64 `json:"total_usd"`
+
+	// ByCategory breaks the total down by charge category (input,
+	// output, cache_read, cache_write, tool_calls). Zero-cost
+	// categories are omitted.
+	ByCategory map[string]float64 `json:"by_category,omitempty"`
+
+	// TableVersion names the rate card that produced the estimate (the
+	// embedded defaults version, "+overrides" when the operator card
+	// contributed) so an auditor can tell which prices applied.
+	TableVersion string `json:"table_version,omitempty"`
 }
 
 // AttemptRecord captures one resilience-orchestrator attempt outcome.

@@ -11,9 +11,10 @@ import "encoding/json"
 // identification). v5 added the additive charge-accounting fields: the
 // Tokens sub-buckets (Reasoning, CacheCreation5m/1h, InputAudio/
 // OutputAudio) plus ServerToolUse, ServiceTier, and InferenceGeo on the
-// record. Older consumers reading a newer record simply ignore the new
-// keys; the change requires no migration.
-const SchemaVersion = 5
+// record. v6 added the additive Cost block (the gateway-computed USD
+// estimate + rate-card version). Older consumers reading a newer record
+// simply ignore the new keys; the change requires no migration.
+const SchemaVersion = 6
 
 // Record is one captured request/response pair as it sits inside an
 // ndjson.zst batch. Consumers sort by (TsNs, InstanceID, Seq) and group by
@@ -153,6 +154,12 @@ type Record struct {
 	// region, which carries its own pricing multiplier. Empty for other
 	// providers.
 	InferenceGeo string `json:"inference_geo,omitempty"`
+
+	// Cost is the gateway-computed USD estimate for the request — nil
+	// when costing is off or no rate-card entry matched the model. An
+	// estimate at observation time: Tokens/ServerToolUse stay the
+	// authoritative quantities, so a consumer can re-price history.
+	Cost *Cost `json:"cost,omitempty"`
 
 	// RulesFired is the ordered list of rules whose conditions matched.
 	RulesFired []RuleFired `json:"rules_fired,omitempty"`
@@ -296,6 +303,23 @@ type Tokens struct {
 	// thoughtsTokenCount). Informational — billed inside Output on
 	// every current provider.
 	Reasoning int `json:"reasoning,omitempty"`
+}
+
+// Cost is the gateway-computed per-request USD estimate: the extracted
+// charge quantities priced against the gateway's rate card (embedded
+// defaults merged with the operator's `pricing:` block).
+type Cost struct {
+	// TotalUSD is the sum of every category.
+	TotalUSD float64 `json:"total_usd"`
+
+	// ByCategory breaks the total down by charge category (input,
+	// output, cache_read, cache_write, tool_calls). Zero-cost
+	// categories are omitted.
+	ByCategory map[string]float64 `json:"by_category,omitempty"`
+
+	// TableVersion names the rate card that produced the estimate, so
+	// an auditor can tell which prices applied.
+	TableVersion string `json:"table_version,omitempty"`
 }
 
 // Attempt is one entry in [Record.Attempts] when the request ran

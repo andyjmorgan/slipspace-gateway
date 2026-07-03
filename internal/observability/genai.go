@@ -150,6 +150,26 @@ const (
 	// (e.g. "us" bills 1.1×).
 	AttrSlipSpaceInferenceGeo = "slipspace.inference_geo"
 
+	// AttrSlipSpaceCostUSD is the pricing engine's total USD estimate
+	// for the request, on the span/event only. Per-category companions
+	// are minted as AttrSlipSpaceCostPrefix + <category> + ".usd". The
+	// semconv defines no cost vocabulary (checked 2026-07-03).
+	AttrSlipSpaceCostUSD = "slipspace.cost.usd"
+
+	// AttrSlipSpaceCostPrefix prefixes the per-category cost attributes
+	// (slipspace.cost.input.usd, slipspace.cost.cache_write.usd, ...).
+	AttrSlipSpaceCostPrefix = "slipspace.cost."
+
+	// AttrSlipSpaceCostUnpriced marks a usage-bearing request no
+	// rate-card entry matched — it has token counts and no cost, as
+	// opposed to a request costing $0.
+	AttrSlipSpaceCostUnpriced = "slipspace.cost.unpriced"
+
+	// AttrSlipSpaceCostCategory is the charge-category label on the
+	// slipspace.cost.usd.total meter (input|output|cache_read|
+	// cache_write|tool_calls).
+	AttrSlipSpaceCostCategory = "slipspace.cost.category"
+
 	// AttrGenAIRequestStream marks whether the request used streaming.
 	// Conditionally required by the spec when the request is streaming.
 	AttrGenAIRequestStream = "gen_ai.request.stream"

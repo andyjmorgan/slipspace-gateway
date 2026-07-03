@@ -38,6 +38,7 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability/livefeed"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability/livefeed/accumulator"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability/unmapped"
+	"github.com/andyjmorgan/slipspace-gateway/internal/pricing"
 	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 	"github.com/andyjmorgan/slipspace-gateway/internal/spool"
 )
@@ -432,6 +433,7 @@ func (r *reporterRun) OnComplete(ctx context.Context, status int, durationMs int
 	r.populateTags(ctx, &ev)
 	r.captureResponseAttrs(ctx)
 	r.populateTokens(ctx, &ev)
+	r.populateCost(ctx, &ev)
 	r.recordStreamingMetrics(ctx)
 
 	// Multi-attempt orchestration suppresses the per-attempt terminal
@@ -730,6 +732,17 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 	}
 	rec.ServiceTier = ev.ServiceTier
 	rec.InferenceGeo = ev.InferenceGeo
+	if ev.Cost != nil {
+		by := make(map[string]float64, len(ev.Cost.ByCategory))
+		for k, v := range ev.Cost.ByCategory {
+			by[k] = v
+		}
+		rec.Cost = &cc.Cost{
+			TotalUSD:     ev.Cost.TotalUSD,
+			ByCategory:   by,
+			TableVersion: ev.Cost.TableVersion,
+		}
+	}
 
 	if len(matches) > 0 {
 		rec.RulesFired = make([]cc.RuleFired, 0, len(matches))
@@ -1072,6 +1085,80 @@ func (r *reporterRun) populateTokens(ctx context.Context, ev *events.Request) {
 	}
 }
 
+// populateCost prices the extracted charge quantities against the
+// snapshot's compiled rate card and writes the estimate onto ev, plus
+// one slipspace.cost.usd.total Add per non-zero category. No-op when
+// costing is off (nil table) or the request carried no usage. An
+// unmatched model marks ev.CostUnpriced and bumps the unmatched counter
+// — never a guessed $0. Runs after populateTokens/captureResponseAttrs,
+// which populate every input it reads.
+func (r *reporterRun) populateCost(ctx context.Context, ev *events.Request) {
+	if r.factory.store == nil {
+		return
+	}
+	snap := r.factory.store.Snapshot()
+	if snap == nil || snap.PricingTable == nil {
+		return
+	}
+	if ev.TokensIn == 0 && ev.TokensOut == 0 && len(ev.ServerToolUse) == 0 {
+		return
+	}
+
+	cost, ok := snap.PricingTable.Cost(pricing.Input{
+		Provider:        ev.Provider,
+		Model:           ev.Model,
+		ServiceTier:     ev.ServiceTier,
+		InferenceGeo:    ev.InferenceGeo,
+		At:              r.started,
+		In:              ev.TokensIn,
+		Out:             ev.TokensOut,
+		Cached:          ev.TokensCached,
+		CacheCreation:   ev.TokensCacheCreation,
+		CacheCreation5m: ev.TokensCacheCreation5m,
+		CacheCreation1h: ev.TokensCacheCreation1h,
+		InputAudio:      ev.TokensInputAudio,
+		OutputAudio:     ev.TokensOutputAudio,
+		ServerToolUse:   ev.ServerToolUse,
+	})
+
+	base := r.requestDimensionAttrs(ev.Provider, ev.Protocol, ev.Model, r.configuration)
+	base = base[:len(base):len(base)]
+	if !ok {
+		ev.CostUnpriced = true
+		if r.factory.meters != nil && r.factory.meters.PricingUnmatchedTotal != nil {
+			r.factory.meters.PricingUnmatchedTotal.Add(ctx, 1, metric.WithAttributes(base...))
+		}
+		return
+	}
+
+	ev.Cost = &events.Cost{
+		TotalUSD:     cost.Total,
+		ByCategory:   cost.ByCategory,
+		TableVersion: cost.Version,
+	}
+	if r.factory.meters == nil || r.factory.meters.CostUSDTotal == nil {
+		return
+	}
+	for _, k := range costCategoryKeys(cost.ByCategory) {
+		r.factory.meters.CostUSDTotal.Add(ctx, cost.ByCategory[k],
+			metric.WithAttributes(append(base, attribute.String(observability.AttrSlipSpaceCostCategory, k))...))
+	}
+}
+
+// costCategoryKeys returns the non-zero cost categories sorted, so
+// attribute and meter emission is deterministic.
+func costCategoryKeys(by map[string]float64) []string {
+	if len(by) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(by))
+	for k := range by {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // serverToolUseKeys returns the names of the reported (non-zero) server-tool
 // counters, sorted so attribute emission is deterministic. Zero-valued keys
 // are skipped — Anthropic zero-fills the counters of tools the request
@@ -1247,6 +1334,14 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 	}
 	for _, k := range serverToolUseKeys(r.serverToolUse) {
 		attrs = append(attrs, attribute.Int(observability.AttrGenAIUsageServerToolUsePrefix+k, r.serverToolUse[k]))
+	}
+	if ev.Cost != nil {
+		attrs = append(attrs, attribute.Float64(observability.AttrSlipSpaceCostUSD, ev.Cost.TotalUSD))
+		for _, k := range costCategoryKeys(ev.Cost.ByCategory) {
+			attrs = append(attrs, attribute.Float64(observability.AttrSlipSpaceCostPrefix+k+".usd", ev.Cost.ByCategory[k]))
+		}
+	} else if ev.CostUnpriced {
+		attrs = append(attrs, attribute.Bool(observability.AttrSlipSpaceCostUnpriced, true))
 	}
 	attrs = r.appendRequestParamAttrs(ctx, attrs)
 	attrs = r.appendResponseAttrs(attrs)
@@ -1486,6 +1581,14 @@ func (r *reporterRun) emitOperationDetails(ctx context.Context, ev events.Reques
 	}
 	for _, k := range serverToolUseKeys(r.serverToolUse) {
 		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageServerToolUsePrefix+k, r.serverToolUse[k]))
+	}
+	if ev.Cost != nil {
+		attrs = append(attrs, otellog.Float64(observability.AttrSlipSpaceCostUSD, ev.Cost.TotalUSD))
+		for _, k := range costCategoryKeys(ev.Cost.ByCategory) {
+			attrs = append(attrs, otellog.Float64(observability.AttrSlipSpaceCostPrefix+k+".usd", ev.Cost.ByCategory[k]))
+		}
+	} else if ev.CostUnpriced {
+		attrs = append(attrs, otellog.Bool(observability.AttrSlipSpaceCostUnpriced, true))
 	}
 	if r.respReasoning != nil && *r.respReasoning > 0 {
 		attrs = append(attrs, otellog.Int(observability.AttrGenAIUsageReasoningOutputTokens, *r.respReasoning))

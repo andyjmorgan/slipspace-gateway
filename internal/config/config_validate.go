@@ -38,6 +38,9 @@ func (r *ResolvedConfig) Validate() error {
 	if err := r.validateLibraries(); err != nil {
 		return err
 	}
+	if err := r.Pricing.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrValidation, err)
+	}
 	return r.validateConfigurations()
 }
 

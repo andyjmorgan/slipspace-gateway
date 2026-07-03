@@ -69,6 +69,21 @@ const (
 	MetricTokensCachedTotal        = "slipspace.tokens.cached.total"         //nolint:gosec // G101 false positive: metric name, not a credential
 	MetricTokensCacheCreationTotal = "slipspace.tokens.cache_creation.total" //nolint:gosec // G101 false positive: metric name, not a credential
 
+	// MetricCostUSDTotal is the per-request USD cost estimate computed
+	// by the pricing engine, labelled with the shared request dimensions
+	// plus slipspace.cost.category (input|output|cache_read|cache_write|
+	// tool_calls). A counter — the Arbiter's cagg_cost_1m continuous
+	// aggregate sums it per window, exactly like the token counters.
+	// Cost is an estimate at observation time; the token counters stay
+	// the re-priceable ground truth.
+	MetricCostUSDTotal = "slipspace.cost.usd.total"
+
+	// MetricPricingUnmatchedTotal counts requests that carried usage
+	// but matched no rate-card entry — unpriced, never guessed at $0.
+	// Labelled with the shared request dimensions; a climbing series is
+	// the operator's cue to add a pricing.models entry for that model.
+	MetricPricingUnmatchedTotal = "slipspace.pricing.unmatched.total"
+
 	MetricTagsAppliedTotal    = "gateway.tags.applied.total"
 	MetricUnmappedFieldsTotal = "gateway.unmapped_fields.total"
 
@@ -252,6 +267,15 @@ type Meters struct {
 	TokensCachedTotal        metric.Int64Counter
 	TokensCacheCreationTotal metric.Int64Counter
 
+	// CostUSDTotal accumulates the pricing engine's per-request USD
+	// estimates, one Add per non-zero charge category (labelled
+	// slipspace.cost.category on top of the shared request dimensions).
+	CostUSDTotal metric.Float64Counter
+
+	// PricingUnmatchedTotal counts usage-bearing requests no rate-card
+	// entry matched (reported unpriced, never guessed).
+	PricingUnmatchedTotal metric.Int64Counter
+
 	// TagsAppliedTotal counts AddTagAction applications. Labelled
 	// by tag name; cardinality bounded by the configured policy
 	// library (operator-defined, never client-derived). Side-channel
@@ -420,6 +444,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricTokensOutputTotal, "Sum of provider-reported output tokens (counter mirror of the token-usage histogram for the Arbiter's dashboard rollups).", "1", &m.TokensOutputTotal},
 		{MetricTokensCachedTotal, "Sum of provider-reported cached input tokens (cache reads, billed at the discounted rate).", "1", &m.TokensCachedTotal},
 		{MetricTokensCacheCreationTotal, "Sum of provider-reported cache-write tokens (Anthropic's chargeable cache-creation premium).", "1", &m.TokensCacheCreationTotal},
+		{MetricPricingUnmatchedTotal, "Usage-bearing requests that matched no pricing rate-card entry (reported unpriced, never guessed).", "1", &m.PricingUnmatchedTotal},
 		{MetricTagsAppliedTotal, "Count of AddTagAction applications labelled by tag name. Cardinality bounded by configured policy.", "1", &m.TagsAppliedTotal},
 		{MetricUnmappedFieldsTotal, "Provider fields this build does not model, detected on request and response payloads and labelled by field path and direction.", "1", &m.UnmappedFieldsTotal},
 		{MetricTranslationFieldDropsTotal, "Source features dropped during cross-provider translation, labelled by source/target protocol and dropped field.", "1", &m.TranslationFieldDropsTotal},
@@ -447,6 +472,15 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 			return nil, err
 		}
 	}
+
+	costTotal, err := meter.Float64Counter(MetricCostUSDTotal,
+		metric.WithDescription("Estimated USD cost of completed requests, per charge category (slipspace.cost.category label). Computed by the gateway pricing engine against its rate card; the token counters remain the re-priceable ground truth."),
+		metric.WithUnit("{USD}"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("observability: create counter %s: %w", MetricCostUSDTotal, err)
+	}
+	m.CostUSDTotal = costTotal
 
 	reqDuration, err := meter.Float64Histogram(MetricRequestDuration,
 		metric.WithDescription("End-to-end request duration."),

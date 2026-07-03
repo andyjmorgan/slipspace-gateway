@@ -165,6 +165,13 @@ func (h *Harness) emitRecord(rec cc.Record) {
 	req.ServerToolUse = rec.ServerToolUse
 	req.ServiceTier = rec.ServiceTier
 	req.InferenceGeo = rec.InferenceGeo
+	if rec.Cost != nil {
+		req.Cost = &events.Cost{
+			TotalUSD:     rec.Cost.TotalUSD,
+			ByCategory:   rec.Cost.ByCategory,
+			TableVersion: rec.Cost.TableVersion,
+		}
+	}
 
 	req.PolicyRef = rec.PolicyRef
 	if len(rec.Attempts) > 0 {

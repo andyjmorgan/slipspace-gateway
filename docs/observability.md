@@ -115,6 +115,17 @@ The histogram and the input/output counters carry the **same totals** by deliber
 | `slipspace.tokens.cached.total` | counter | the shared request labelset (no status code) | 1 | Share of the input tokens the provider served from its prompt cache and billed at the cached-read price. Informational; already counted in input, not a deduction. |
 | `slipspace.tokens.cache_creation.total` | counter | the shared request labelset (no status code) | 1 | Share of the input tokens billed at the cache-write premium. Anthropic-only today — OpenAI and Gemini cache writes are implicit and not separately billed, so this stays zero for them. |
 
+### Cost
+
+When the [`pricing:` block](configuration-model.md#pricing-block) is enabled, the reporter prices each request's extracted charge quantities against the compiled rate card and emits USD estimates. Same base request labelset as the token counters (no status); cost is an **estimate at observation time** — the token counters stay the re-priceable ground truth, and every estimate carries its rate-card version on the span/Record.
+
+| Metric | Type | Labels | Unit | What it counts |
+|---|---|---|---|---|
+| `slipspace.cost.usd.total` | counter (float) | the shared request labelset + `slipspace.cost.category` (`input`\|`output`\|`cache_read`\|`cache_write`\|`tool_calls`) | {USD} | Estimated USD spend per charge category. One Add per non-zero category per request. The Arbiter's cost continuous aggregate sums this, exactly like the token counters. |
+| `slipspace.pricing.unmatched.total` | counter | the shared request labelset | 1 | Usage-bearing requests that matched no rate-card entry — reported unpriced, never guessed at $0. A climbing series is the cue to add a `pricing.models` entry for that model. |
+
+The span/event carry the same estimate as attributes: `slipspace.cost.usd` (total), `slipspace.cost.<category>.usd` per non-zero category, or `slipspace.cost.unpriced=true` for an unmatched model.
+
 Token capture is gated on the live-feed response buffer being attached to context. When body capture is disabled (`SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`, the knob `ServerEnv.LiveFeedBodiesEnabled()` keys off — see [`internal/config/env.go`](../internal/config/env.go); the gate is `LiveFeedEnabled() && AdminLiveFeedBodyBytes > 0`) tokens stay zero and the counters don't fire.
 
 ### Rules

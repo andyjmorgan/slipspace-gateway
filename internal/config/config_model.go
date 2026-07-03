@@ -12,6 +12,7 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/pricing"
 )
 
 // ResolvedConfig is the merged, validated, indexed runtime view of a
@@ -48,6 +49,17 @@ type ResolvedConfig struct {
 
 	// Telemetry is the `telemetry` block; zero value yields built-in defaults.
 	Telemetry contractsconfig.Telemetry
+
+	// Pricing is the `pricing` block; nil when absent (costing off).
+	// Like Admin/Telemetry it is shared read-only across clones — the
+	// admin write API does not edit it, so a YAML change requires a
+	// restart (v1 scope; hot reload rides the future fsnotify path).
+	Pricing *contractsconfig.Pricing
+
+	// PricingTable is the compiled rate card (embedded defaults merged
+	// with the Pricing block), built once per load in buildIndexes. Nil
+	// when costing is off. Immutable — reporters read it concurrently.
+	PricingTable *pricing.Table
 
 	// SecretIndex maps an API-key secret to its owning APIKey entry.
 	SecretIndex map[string]*contractsconfig.APIKey
@@ -87,6 +99,7 @@ type configDoc struct {
 	Rules          []rulescontract.RuleContract             `yaml:"rules"`
 	Admin          *admin.Config                            `yaml:"admin"`
 	Telemetry      *contractsconfig.Telemetry               `yaml:"telemetry"`
+	Pricing        *contractsconfig.Pricing                 `yaml:"pricing"`
 
 	// LegacyBackends captures the pre-rename `backends:` key solely so Load can
 	// reject it with a clear message — the block is `providers:` now and the cut
@@ -184,6 +197,9 @@ func (r *ResolvedConfig) mergeDoc(file string, doc *configDoc, seen map[string]s
 	if err := claim("telemetry", doc.Telemetry != nil); err != nil {
 		return err
 	}
+	if err := claim("pricing", doc.Pricing != nil); err != nil {
+		return err
+	}
 
 	if len(doc.Providers) > 0 {
 		r.Providers = doc.Providers
@@ -209,12 +225,24 @@ func (r *ResolvedConfig) mergeDoc(file string, doc *configDoc, seen map[string]s
 	if doc.Telemetry != nil {
 		r.Telemetry = *doc.Telemetry
 	}
+	if doc.Pricing != nil {
+		r.Pricing = doc.Pricing
+	}
 	return nil
 }
 
 // buildIndexes constructs the lookup tables the data plane reads per request.
 // Mirrors ResolvedConfig.buildIndexes; called after Validate.
 func (r *ResolvedConfig) buildIndexes() {
+	// Compile the rate card once per load — never per request. Nil when
+	// the block is absent or explicitly disabled; the reporter treats a
+	// nil table as costing-off.
+	if r.Pricing.On() {
+		r.PricingTable = pricing.New(r.Pricing)
+	} else {
+		r.PricingTable = nil
+	}
+
 	r.SecretIndex = make(map[string]*contractsconfig.APIKey, len(r.APIKeys))
 	for i := range r.APIKeys {
 		key := &r.APIKeys[i]
