@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -31,9 +33,26 @@ type detectorClient struct {
 
 func newDetectorClient(doer httpDoer) *detectorClient {
 	if doer == nil {
-		doer = &http.Client{}
+		doer = &http.Client{Transport: detectorTransport()}
 	}
 	return &detectorClient{http: doer}
+}
+
+// detectorTransport is the transport for the default detector client. Detectors
+// serve /detect from uvicorn with its 5 s default keep-alive idle timeout — far
+// below the stdlib transport's 90 s IdleConnTimeout. With connection pooling on,
+// a scan landing after an idle gap reuses a connection uvicorn has already
+// closed, and the POST fails with EOF (surfaced as UNREACHABLE); Go will not
+// auto-retry a POST whose body may already be on the wire. Scans are sporadic
+// and intra-cluster, so a fresh connection per call costs nothing — disabling
+// keep-alives sidesteps the stale-reuse race entirely, independent of any
+// detector's keep-alive tuning.
+func detectorTransport() *http.Transport {
+	return &http.Transport{
+		DisableKeepAlives:   true,
+		DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
 }
 
 // Detect posts one DetectRequest to endpoint and decodes the DetectResponse.
