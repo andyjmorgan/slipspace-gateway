@@ -292,7 +292,7 @@ Reads (`GET /config/api-keys` and `/{id}`) return the redacted `APIKeyListItem` 
 | `GET /admin/api/v1/config/export/files` | `ConfigExportFilesResponse` | Per-file redacted YAML payloads — backs the Settings page's tabbed inspector. 503 when `ConfigDir` is empty (export disabled). |
 | `GET /admin/api/v1/config/export/download` | ZIP bundle | Streams a ZIP of every accepted YAML file under `SLIPSPACE_CONFIG_DIR`, secrets redacted, with a `MANIFEST.txt` header carrying gateway version, hostname, configDir, generation timestamp. Filename is timestamped: `slipspace-config-20260522T134712Z.zip`. Bumps `gateway.admin.config_exports.total{status="..."}`. |
 
-The redactor (`internal/admin/configexport/redact.go::redactAdminBlock`) replaces the **value** of every API-key secret, upstream credential, and `admin.password` scalar with `***` (the `RedactedPlaceholder` constant) before either endpoint emits a single byte — the scalar keys themselves are preserved.
+The redactor (`internal/admin/configexport/redact.go`) replaces the **value** of every API-key secret, upstream credential, and `admin.password` scalar with `***` (the `RedactedPlaceholder` constant) before either endpoint emits a single byte — the scalar keys themselves are preserved. The redaction is split across distinct helpers in that file: `redactAdminBlock` handles only the `admin.password` scalar, while API-key secrets and configuration upstream credentials are redacted by separate functions.
 
 ---
 

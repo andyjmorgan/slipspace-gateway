@@ -107,7 +107,7 @@ flowchart LR
 1. The auth middleware walks `Authorization` → `x-api-key` → `x-goog-api-key` looking for a SlipSpace secret. The first present header wins; if its value is unknown, resolution fails 401 without falling through.
 2. The matched `APIKey` is looked up in `SecretIndex`. If `Enabled` is false, resolution fails 401.
 3. `APIKey.Configuration` names a Configuration. If the name is missing from `ConfigurationIndex`, resolution fails 403 with `unknown configuration`.
-4. `AuthResult.DropHeaders` is seeded with **both** selector headers (`X-Slipspace-Identity`, `X-Slipspace-Configuration` — always, they are policy-routing metadata never forwarded) plus the source header the SlipSpace secret was discovered on. The SlipSpace secret never leaves the gateway.
+4. `AuthResult.DropHeaders` is seeded with **all four** selector headers (`X-Slipspace-Identity`, `X-Slipspace-Configuration`, plus the retained legacy compat selectors `X-Sluice-Identity` and `X-Sluice-Configuration` — always, they are policy-routing metadata never forwarded) plus the source header the SlipSpace secret was discovered on. The SlipSpace secret never leaves the gateway.
 5. Downstream of auth, the destination builder ([`cmd/gateway/destination.go::buildDestination`](../cmd/gateway/destination.go)) reads the credential the selection module already resolved onto `target.Credential` (sourced from `Configuration.Credentials[provider]`) and mints the outbound header via [`credentialHeaderFor`](../cmd/gateway/destination.go) — see [Outbound credential headers](#outbound-credential-headers).
 
 ### Failure modes
@@ -152,7 +152,7 @@ flowchart LR
 
 1. The auth middleware reads `X-Slipspace-Identity` first, trimming whitespace. A non-empty value is looked up in `SecretIndex`; the resolved key must be enabled, and its `configuration:` must name a known Configuration. Failures are 401 (unknown/disabled secret) or 403 (key references a missing configuration — a load-time validation skew). `AuthResult` is built with `Mode=passthrough` and `APIKey` set.
 2. Otherwise the middleware reads `X-Slipspace-Configuration` and trims whitespace. Any non-empty value forces legacy passthrough regardless of any bearer also on the request. The name is looked up in `ConfigurationIndex`; if absent, resolution fails 403 `unknown configuration`. `AuthResult` is built with `Mode=passthrough`, `APIKey=nil`, `LegacyConfigurationHeader=true`.
-3. Either path leaves no managed-mode api_key swap — the upstream owns credential validation. `DropHeaders` always includes **both** selector headers (`X-Slipspace-Identity`, `X-Slipspace-Configuration`) regardless of which one drove resolution.
+3. Either path leaves no managed-mode api_key swap — the upstream owns credential validation. `passthroughDropHeaders()` always includes **all four** selector headers (`X-Slipspace-Identity`, `X-Slipspace-Configuration`, plus the retained legacy compat selectors `X-Sluice-Identity` and `X-Sluice-Configuration` — kept from the sluice→slipspace rename, PR #395) regardless of which one drove resolution.
 4. Downstream, the destination builder takes the passthrough branch of `resolveCredentialHeaders` ([`destination.go:194`](../cmd/gateway/destination.go)): the forwarder's `alwaysDropHeaders` strips inbound `Authorization` unconditionally, and the destination builder re-injects the inbound value via `OutgoingHeaders` so the upstream still sees it. The branch is reached when no `changeApiKey` override is set; a `changeApiKey` override is checked first and wins (see the [`changeApiKey` note](#outbound-credential-headers) below — the action is wired in the v2 destination builder).
 
 ### Failure modes
@@ -180,7 +180,7 @@ Every header the data plane reads from the client.
 | `Authorization` | auth middleware (managed discovery, passthrough verbatim forward) | Managed: parsed as `Bearer <token>`, looked up in `SecretIndex`. Passthrough: forwarded verbatim to upstream. | **Never verbatim in managed mode** — stripped via `DropHeaders` and the destination builder mints a fresh credential. **Forwarded verbatim in passthrough mode** — re-injected through `OutgoingHeaders` because the forwarder's `alwaysDropHeaders` strips inbound `Authorization` unconditionally. |
 | `x-api-key` | auth middleware (managed discovery, second-fallback) | Managed: discovered as the SlipSpace secret if `Authorization` was absent. Used by vanilla Anthropic SDKs that don't speak Bearer. | Never in managed mode — stripped via `DropHeaders` and the destination builder mints the per-provider credential header. The destination builder also strips it on the cross-provider path so an inbound `x-api-key` cannot leak to OpenAI. |
 | `x-goog-api-key` | auth middleware (managed discovery, third-fallback) | Managed: discovered as the SlipSpace secret if `Authorization` and `x-api-key` were absent. Used by vanilla Gemini SDKs. | Never in managed mode — same stripping as `x-api-key`. |
-| `X-Slipspace-Identity` | auth middleware | **Preferred passthrough selector.** Carries a SlipSpace-issued api-key secret; the matching enabled key's `configuration:` picks the Configuration, with credentials still forwarded verbatim. Unknown/disabled secret → 401 (no name leak). Trimmed for whitespace. Its value is a credential, so the built-in log/record redactor masks it by default (matches the `slipspace-identity` substring — see [environment-variables.md](environment-variables.md)). | **Never.** Always stripped — `passthroughDropHeaders` blacklists it (and `X-Slipspace-Configuration`) in every passthrough resolution, and the managed path drops it too. |
+| `X-Slipspace-Identity` | auth middleware | **Preferred passthrough selector.** Carries a SlipSpace-issued api-key secret; the matching enabled key's `configuration:` picks the Configuration, with credentials still forwarded verbatim. Unknown/disabled secret → 401 (no name leak). Trimmed for whitespace. Its value is a credential, so the built-in log/record redactor masks it by default (matches the `slipspace-identity` substring — see [environment-variables.md](environment-variables.md)). | **Never.** Always stripped — `passthroughDropHeaders` blacklists it (alongside `X-Slipspace-Configuration` and the legacy compat selectors `X-Sluice-Identity` / `X-Sluice-Configuration`) in every passthrough resolution, and the managed path drops it too. |
 | `X-Slipspace-Configuration` | auth middleware | **Deprecated passthrough selector** (use `X-Slipspace-Identity`). When present and non-empty and no identity header is set, forces legacy passthrough and names the Configuration directly. Unknown name → 403, which leaks name validity. Trimmed for whitespace. When it co-exists with `X-Slipspace-Identity`, the identity header wins and a deprecation warning is logged. | **Never.** Always stripped from the outbound request — both modes append it to `DropHeaders` unconditionally. It is policy-routing metadata, not credential, and leaking it upstream confuses providers that reject unknown `X-*` headers. |
 | `X-Slipspace-Correlation-Id` | [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) | When present, becomes the request's correlation ID. When absent, the gateway generates one. Echoed on the **response** so the client can stitch logs end-to-end. | Forwarded upstream as part of the inbound request unless a rule strips it via `setHeader`. The upstream typically ignores it. |
 | `X-Slipspace-Session-Id` | correlation middleware (echoes only) + mock LLM (scenario keying) | Optional client-supplied session identifier. Echoed on the response when present so the client can correlate multi-turn flows. The mock LLM uses it to key session-scoped scenarios during E2E tests. | Forwarded upstream as part of the inbound request. |
@@ -262,7 +262,7 @@ Content-Type: application/json
    - `Mode = managed`
    - `APIKey.Name = "acme-prod"`
    - `Configuration` = the `production` bundle
-   - `DropHeaders = ["X-Slipspace-Identity", "X-Slipspace-Configuration", "Authorization"]`
+   - `DropHeaders = ["X-Slipspace-Identity", "X-Slipspace-Configuration", "X-Sluice-Identity", "X-Sluice-Configuration", "Authorization"]` (all four selector headers plus the source header)
 
 ### Destination build
 
@@ -289,7 +289,7 @@ The SlipSpace secret `sk_live_acme_prod_42` is dropped before forwarding. The Op
 
 Claude Code is configured to point its OAuth-issued upstream Anthropic token at the gateway, with `X-Slipspace-Configuration: code-assistants` so the gateway can still apply rules and observability.
 
-> This example uses the **legacy** `X-Slipspace-Configuration` selector to show the credential-forwarding mechanics. The modern equivalent sends `X-Slipspace-Identity: <slipspace-secret>` instead — the resolution is identical except the Configuration is reached via the key's `configuration:` (so `APIKey` is set, an unknown value 401s rather than 403s, and `DropHeaders` carries both selector headers).
+> This example uses the **legacy** `X-Slipspace-Configuration` selector to show the credential-forwarding mechanics. The modern equivalent sends `X-Slipspace-Identity: <slipspace-secret>` instead — the resolution is identical except the Configuration is reached via the key's `configuration:` (so `APIKey` is set, an unknown value 401s rather than 403s, and `DropHeaders` carries all four selector headers).
 
 ### Inbound
 
@@ -313,7 +313,7 @@ Content-Type: application/json
    - `Mode = passthrough`
    - `APIKey = nil`
    - `Configuration` = the `code-assistants` bundle
-   - `DropHeaders = ["X-Slipspace-Identity", "X-Slipspace-Configuration"]` (both selector headers, always)
+   - `DropHeaders = ["X-Slipspace-Identity", "X-Slipspace-Configuration", "X-Sluice-Identity", "X-Sluice-Configuration"]` (all four selector headers, always)
 
 ### Destination build
 
@@ -356,7 +356,7 @@ It is also the **fallback** when a request needs the gateway's pipeline applied 
 
 ### Credential redaction in logs
 
-The gateway never logs the literal `Authorization` value, nor any `x-api-key` or `x-goog-api-key`. The auth middleware logs `mode`, `api_key_id` (the key's `name` field, not its secret), `configuration`, `provider`, `endpoint`, `result`. The forwarder logs upstream URL and status but never request or response bodies — bodies flow to configured `connector_bindings` under each destination's own retention policy, and admin console body-capture is gated by `gateway.admin.enabled` and Basic auth.
+The gateway never logs the literal `Authorization` value, nor any `x-api-key` or `x-goog-api-key`. The auth middleware's own log line carries `mode`, `api_key_id` (the key's `name` field, not its secret), `configuration`, and `result` — it resolves before the selection stage that determines `provider`/`endpoint`, so those fields are enriched onto the per-request logger at later pipeline stages, not by the auth middleware. The forwarder logs upstream URL and status but never request or response bodies — bodies flow to configured `connector_bindings` under each destination's own retention policy, and admin console body-capture is gated by `gateway.admin.enabled` and Basic auth.
 
 Upstream credentials minted by the destination builder also never reach logs — they live on `Configuration.Credentials` in memory, are read once per request (resolved onto the selection target's `Credential`), and are injected into the outbound header without ever crossing the slog channel.
 

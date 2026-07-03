@@ -155,7 +155,7 @@ Covered alongside the orchestrator in [docs/resilience.md → Observability](res
 
 ### Admin
 
-The admin console runs on a separate listener (default `:8001`); its traffic is metered separately from the data plane so SLO panels for the gateway stay disjoint from operator UI traffic.
+The admin console runs on a separate listener (default `0.0.0.0:8081`); its traffic is metered separately from the data plane so SLO panels for the gateway stay disjoint from operator UI traffic.
 
 | Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|

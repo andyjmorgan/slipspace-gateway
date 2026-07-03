@@ -63,9 +63,12 @@ test/python/
 ├── conftest.py             stack lifecycle (mockllm + gateway subprocesses)
 ├── helpers.py              canned-response staging + API key constant
 ├── test_openai_sdk.py
+├── test_openai_compat_chat.py
 ├── test_anthropic_sdk.py
 ├── test_gemini_sdk.py
 ├── test_session_id_header.py
+├── test_translate_sdk.py
+├── test_translate_reverse_sdk.py
 └── README.md
 ```
 
