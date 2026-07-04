@@ -370,11 +370,10 @@ Upstream credentials (`Configuration.Credentials`) are intended to **never** be 
 
 ### Key rotation
 
-SlipSpace does not support hot reload in v1.0 / v1.1. Rotating a key is a three-step process:
+API-key changes apply live. The admin write API (`POST`/`PUT`/`PATCH`/`DELETE /admin/api/v1/config/api-keys`, plus `GET .../reveal`) clones the config snapshot, validates, persists back to the block's source YAML (`config.WriteConfig`), and publishes through `config.Store.Replace` — no restart. The auth resolver holds a `*config.Store` and calls `store.Snapshot()` at the top of every `Resolve`, so an in-flight rotation is picked up atomically (a request sees either the pre-swap or post-swap key set, never a mix). Only direct on-disk YAML edits, and the `admin`/`telemetry` blocks, still require a process restart; fsnotify-based auto-reload of on-disk edits remains deferred to v1.2+. Rotating a key is a two-step process:
 
 1. Edit `policy.yaml` to add the replacement key (and optionally mark the old key `enabled: false` to retire it gracefully).
-2. Restart the gateway pods — rolling restart honours the data plane's graceful shutdown drain, so in-flight requests complete before the old config is swapped out.
-3. Update the client to use the replacement secret.
+2. Update the client to use the replacement secret.
 
 Disabled keys remain in `SecretIndex` and authenticate structurally — the resolver detects `Enabled=false` and returns 401 with `result=disabled_key` so the audit log clearly distinguishes "client is still using the rotated-out secret" from "client is using an unknown secret".
 

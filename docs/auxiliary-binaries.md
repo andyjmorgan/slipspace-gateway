@@ -47,7 +47,7 @@ The published images are narrowly scoped — only the binaries that need to run 
 | `mockllm` | [`deploy/docker/Dockerfile.mockllm`](../deploy/docker/Dockerfile.mockllm) | `ghcr.io/andyjmorgan/slipspace-mockllm` | Scratch image. Exposes `:5555`. Dev/test only — **never** for production traffic. |
 | `cli` | none | none | Runs locally via `go run ./cmd/cli` or as a `go install`'d binary. No container shape — it's an operator tool. |
 
-The local `docker-compose.yaml` references `slipspace-mockllm:dev` (built from `Dockerfile.mockllm`) for the dev harness; the upstream `ghcr.io/andyjmorgan/slipspace-mockllm` tag is the same shape, pre-built.
+The GHCR image `ghcr.io/andyjmorgan/slipspace-mockllm` is produced by the release workflow ([`release.yaml`](../.github/workflows/release.yaml)); the local `docker-compose.yaml` does **not** pull it — it builds mockllm locally from [`deploy/docker/Dockerfile.mockllm`](../deploy/docker/Dockerfile.mockllm) as image `slipspace-mockllm:dev`, and the gateway reaches it via the compose network alias `mockllm:5555` with the host port mapping commented out by default.
 
 ---
 

@@ -201,13 +201,19 @@ A content block with a `type` Anthropic adds next quarter — say a hypothetical
 intact. **A new union member added without an `UnknownX` fallback is a
 regression** against invariant #1.
 
-Three unions use the shared registry:
+The shared registry backs these unions (among others):
 
 | Union | Discriminator | Registry | Fallback type |
 |---|---|---|---|
 | Anthropic `ContentBlock` | `type` | `contentblock.go:473-491` | `UnknownBlock` |
+| Anthropic `ContextEdit` | `type` | `context_management.go:280` | `UnknownContextEdit` |
+| Anthropic `StreamEvent` | `type` | `stream.go:394` | `UnknownStreamEvent` |
+| Anthropic `ContentBlockDelta` | `type` | `stream.go:600` | `UnknownContentBlockDelta` |
 | OpenAI chat `RequestMessage` | `role` | `messages.go:275` | `UnknownRequestMessage` |
 | OpenAI chat `ContentPart` | `type` | `content_parts.go:294` | `UnknownContentPart` |
+| OpenAI chat `Annotation` | `type` | `annotations.go:127` | `UnknownAnnotation` |
+| OpenAI Responses `ToolDefinition` | `type` | `tool.go:240` | `UnknownTool` |
+| OpenAI Responses `ResponsesStreamEvent` | `type` | `events.go:435` | `UnknownEvent` |
 
 Gemini `Part` is also a discriminated union but dispatches by **key-presence**
 (`{"text":…}` vs `{"functionCall":…}`) rather than a single discriminator field,

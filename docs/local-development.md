@@ -102,13 +102,14 @@ The base compose's gateway service mounts `./config-dev` read-only into `/etc/sl
 
 ## The `config-dev/` bundle
 
-`config-dev/` is the local-dev configuration tree the gateway picks up via `SLIPSPACE_CONFIG_DIR`. Three files, all loaded as a single merged tree:
+`config-dev/` is the local-dev configuration tree the gateway picks up via `SLIPSPACE_CONFIG_DIR`. Four files, all loaded as a single merged tree:
 
 | File | Purpose |
 |---|---|
 | `admin.yaml` | Admin-console listener config (`enabled`, `bind_addr`, dev-only `password`). |
 | `providers.yaml` | Upstream provider connections — base URLs (all point at `http://mockllm:5555` in dev), per-protocol paths + auth, and `passthrough` families. No credentials. |
 | `policy.yaml` | Configurations (`dev`, `production`) with their `credentials`, `bindings`, `passthrough_bindings`, `rule_names`, and `tags`; api keys; transform rules. |
+| `pricing.yaml` | Per-request USD rate card (rate table + pricing config block) consumed by the costing engine. |
 
 The provider base URLs in `config-dev/providers.yaml` all point at `http://mockllm:5555` so every provider lookup resolves to the mock LLM. The e2e harness rewrites this string at materialisation time to the dynamically-assigned port of its spawned mockllm instance.
 

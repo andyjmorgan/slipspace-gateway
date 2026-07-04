@@ -678,7 +678,7 @@ Each action appends a `bodypatch.Op` to one of two slots on `state`, partitioned
 ### Telemetry
 
 - `gateway.rewrite.applied.total{action_type}` — mutations that changed the body.
-- `gateway.rewrite.dropped.total{action_type, reason}` — skipped mutations; `reason` ∈ `path_traverses_primitive`, `append_non_array`, `template_ref_miss`, `apply_error`.
+- `gateway.rewrite.dropped.total{action_type, reason}` — skipped mutations; `reason` ∈ `path_traverses_primitive`, `append_non_array`, `template_ref_miss`, `apply_error`, `streaming_response` (the last emitted when a `response.body.*` op is dropped because the upstream reply was streamed).
 
 ### Worked examples
 

@@ -396,7 +396,7 @@ sequenceDiagram
 
 ### Entry fields
 
-Every `Entry` (`livefeed.Entry`) carries: `EventID` (UUID minted at append), `At` (UTC completion time), `CorrelationID`, `Provider` / `Protocol` / `Model` (post-rule mutation), `Configuration`, `StatusCode`, `DurationMs`, `Streaming`, `UpstreamError`, `TokensIn` / `TokensOut` / `TokensCached` / `TokensCacheCreation`, `Tags` (rule-attached, in first-attach order), `RulesMatched` (per-rule action history), `PolicyRef` (resilience binding, empty for single-shot), `Attempts` (per-attempt orchestrator record, empty for single-shot). The wire DTO (`contracts/admin.MessageEntry`) is a 1:1 projection.
+Every `Entry` (`livefeed.Entry`) carries: `EventID` (UUID minted at append), `At` (UTC completion time), `CorrelationID`, `Provider` / `Protocol` / `Model` (post-rule mutation), `Configuration`, `StatusCode`, `DurationMs`, `Streaming`, `UpstreamError`, `TokensIn` / `TokensOut` / `TokensCached` / `TokensCacheCreation`, `Tags` (rule-attached, in first-attach order), `RulesMatched` (per-rule action history), `PolicyRef` (resilience binding, empty for single-shot), `Attempts` (per-attempt orchestrator record, empty for single-shot), `SessionID` (+ `SessionIDSource`), `ConversationID` (+ `ConversationIDSource`), `ParentConversationID`, `AgentID` (+ `AgentIDSource`), `UserID` (+ `UserIDSource`), and `Method`. The wire DTO (`contracts/admin.MessageEntry`) is a 1:1 projection.
 
 ### SSE stream details
 

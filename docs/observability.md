@@ -370,7 +370,7 @@ The admin listener has no health endpoint of its own — its lifecycle is bound 
 
 ## Structured logs
 
-The gateway emits one logger handler per process: `log/slog` with a JSON handler bound to stdout. Format and level come from `gateway.log.format` / `gateway.log.level` (validated upstream in `ServerEnv`); the supported formats are `json` (default) and `text` (only useful for local dev tailing).
+The gateway emits one logger handler per process: `log/slog` with a JSON handler bound to stdout. Format and level come from the env vars `SLIPSPACE_LOG_FORMAT` / `SLIPSPACE_LOG_LEVEL` (validated upstream in `ServerEnv`); the supported formats are `json` (default) and `text` (only useful for local dev tailing).
 
 The root logger is enriched at startup with the service header. Every record carries:
 
