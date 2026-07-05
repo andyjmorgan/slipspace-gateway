@@ -524,6 +524,12 @@ export interface MessageEntry {
   tokens_cached?: number /* int */;
   tokens_cache_creation?: number /* int */;
   /**
+   * CostUSD is the gateway pricing engine's estimated USD spend for
+   * this request. Zero when costing was off, the model was unpriced,
+   * or the request predates costing.
+   */
+  cost_usd?: number /* float64 */;
+  /**
    * Tags is the set of rule-attached tags (AddTagAction) on this
    * request, in first-attach order. Empty when no tagging rule
    * fired.
@@ -648,6 +654,11 @@ export interface SessionTotals {
    */
   tokens_in: number /* int64 */;
   tokens_out: number /* int64 */;
+  /**
+   * CostUSD is the session's summed estimated USD spend. Zero when
+   * costing was off for every request in the session.
+   */
+  cost_usd: number /* float64 */;
 }
 /**
  * SessionView is the JSON shape returned by GET /api/v1/sessions/{id}: every
@@ -696,6 +707,11 @@ export interface SessionSummary {
    * TotalTokens is the summed tokens_in+tokens_out across those requests.
    */
   total_tokens: number /* int64 */;
+  /**
+   * TotalCost is the summed estimated USD spend across those requests.
+   * Zero for sessions predating costing or priced entirely at zero.
+   */
+  total_cost: number /* float64 */;
   /**
    * Models is the distinct requested model names (empty strings excluded).
    */
@@ -1073,6 +1089,12 @@ export interface SessionSpanUsage {
    * name; null when the span carried none.
    */
   server_tool_use: { [key: string]: number /* int64 */};
+  /**
+   * CostUSD is the gateway pricing engine's estimated USD spend for the
+   * span (slipspace.cost.usd). Null when costing was off or the model was
+   * unpriced — distinguishing "no estimate" from a genuine $0.
+   */
+  cost_usd?: number /* float64 */;
 }
 /**
  * SessionSpanOutputPart is one normalized assistant output part. Type is one

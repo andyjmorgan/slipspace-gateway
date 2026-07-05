@@ -96,6 +96,11 @@ type MessageEntry struct {
 
 	TokensCacheCreation int `json:"tokens_cache_creation,omitempty"`
 
+	// CostUSD is the gateway pricing engine's estimated USD spend for
+	// this request. Zero when costing was off, the model was unpriced,
+	// or the request predates costing.
+	CostUSD float64 `json:"cost_usd,omitempty"`
+
 	// Tags is the set of rule-attached tags (AddTagAction) on this
 	// request, in first-attach order. Empty when no tagging rule
 	// fired.
@@ -194,6 +199,10 @@ type SessionTotals struct {
 	TokensIn int64 `json:"tokens_in"`
 
 	TokensOut int64 `json:"tokens_out"`
+
+	// CostUSD is the session's summed estimated USD spend. Zero when
+	// costing was off for every request in the session.
+	CostUSD float64 `json:"cost_usd"`
 }
 
 // SessionView is the JSON shape returned by GET /api/v1/sessions/{id}: every
@@ -232,6 +241,10 @@ type SessionSummary struct {
 
 	// TotalTokens is the summed tokens_in+tokens_out across those requests.
 	TotalTokens int64 `json:"total_tokens"`
+
+	// TotalCost is the summed estimated USD spend across those requests.
+	// Zero for sessions predating costing or priced entirely at zero.
+	TotalCost float64 `json:"total_cost"`
 
 	// Models is the distinct requested model names (empty strings excluded).
 	Models []string `json:"models"`

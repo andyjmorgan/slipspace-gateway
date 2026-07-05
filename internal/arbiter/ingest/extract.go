@@ -37,8 +37,9 @@ const (
 	attrGenAIProvider = "gen_ai.provider.name"
 	attrStatusCode    = "http.response.status_code"
 
-	attrInputTokens         = "gen_ai.usage.input_tokens"                //nolint:gosec // OTLP attribute key, not a credential
-	attrOutputTokens        = "gen_ai.usage.output_tokens"               //nolint:gosec // OTLP attribute key, not a credential
+	attrInputTokens         = "gen_ai.usage.input_tokens"  //nolint:gosec // OTLP attribute key, not a credential
+	attrOutputTokens        = "gen_ai.usage.output_tokens" //nolint:gosec // OTLP attribute key, not a credential
+	attrCostUSD             = "slipspace.cost.usd"
 	attrCacheReadTokens     = "gen_ai.usage.cache_read.input_tokens"     //nolint:gosec // OTLP attribute key, not a credential
 	attrCacheCreationTokens = "gen_ai.usage.cache_creation.input_tokens" //nolint:gosec // OTLP attribute key, not a credential
 	attrConversationID      = "gen_ai.conversation.id"
@@ -121,6 +122,7 @@ func EventFromSpan(resourceAttrs []*commonpb.KeyValue, span *tracepb.Span, conte
 		StatusCode:           int(intAttr(attrs, attrStatusCode)),
 		TokensIn:             intAttr(attrs, attrInputTokens),
 		TokensOut:            intAttr(attrs, attrOutputTokens),
+		CostUSD:              floatAttr(attrs, attrCostUSD),
 		Tags:                 strSliceAttr(attrs, attrSlipSpaceTags),
 		SpanEvent:            buildSpanEvent(attrs, span, contentMaxBytes),
 	}, true
@@ -224,6 +226,27 @@ func intAttr(attrs map[string]*commonpb.AnyValue, key string) int64 {
 	case *commonpb.AnyValue_StringValue:
 		n, _ := strconv.ParseInt(x.StringValue, 10, 64)
 		return n
+	default:
+		return 0
+	}
+}
+
+// floatAttr reads a float-valued attribute (slipspace.cost.usd). intAttr is
+// deliberately not reused — it truncates DoubleValue to int64, which would
+// zero every sub-dollar cost.
+func floatAttr(attrs map[string]*commonpb.AnyValue, key string) float64 {
+	v := attrs[key]
+	if v == nil {
+		return 0
+	}
+	switch x := v.GetValue().(type) {
+	case *commonpb.AnyValue_DoubleValue:
+		return x.DoubleValue
+	case *commonpb.AnyValue_IntValue:
+		return float64(x.IntValue)
+	case *commonpb.AnyValue_StringValue:
+		f, _ := strconv.ParseFloat(x.StringValue, 64)
+		return f
 	default:
 		return 0
 	}

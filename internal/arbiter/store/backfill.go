@@ -18,6 +18,11 @@ const backfillTokenColumnsName = "v10_token_columns"
 // predated v12 has had its tags text[] column re-projected from span_event.
 const backfillTagsColumnName = "v12_tags_column"
 
+// backfillCostColumnName is the backfill_runs key for the migration-v20 cost
+// column backfill. One row with this name means every request_events row that
+// predated v20 has had cost_usd re-projected from span_event.
+const backfillCostColumnName = "v20_cost_column"
+
 // backfillPageSQL fetches the inclusive upper bound of the next keyset batch:
 // the batch-th correlation_id above the cursor ($2 binds batch-1 as the OFFSET).
 // No row means fewer than a full batch remain, so the final UPDATE runs
@@ -65,6 +70,18 @@ UPDATE request_events SET
     '{}')
 WHERE correlation_id > $1 AND ($2 = '' OR correlation_id <= $2)`
 
+// backfillCostUpdateSQL re-projects cost_usd from span_event for one (lo, hi]
+// keyset slice — the v20 backfill that migration 20 deferred out-of-band. The
+// gateway stamps slipspace.cost.usd as a JSON number; jsonb_typeof guards the
+// cast so a malformed value (or an unpriced/uncosted row with no key) lands as
+// 0 rather than aborting the batch. Same detoast rationale as the token
+// backfill: bounded batches after the pod is serving, never inside Migrate().
+const backfillCostUpdateSQL = `
+UPDATE request_events SET
+  cost_usd = CASE WHEN jsonb_typeof(span_event->'slipspace.cost.usd') = 'number'
+                  THEN (span_event->>'slipspace.cost.usd')::double precision ELSE 0 END
+WHERE correlation_id > $1 AND ($2 = '' OR correlation_id <= $2)`
+
 // backfillCompletedSQL / backfillRecordSQL read and write the bookkeeping row
 // that makes the backfill run-once. ON CONFLICT DO NOTHING keeps a concurrent
 // replica's duplicate completion harmless (the work itself is idempotent —
@@ -89,6 +106,14 @@ func (s *Store) BackfillTokenColumns(ctx context.Context, batch int) (int64, err
 // Returns the number of rows updated. See backfillColumn for the contract.
 func (s *Store) BackfillTags(ctx context.Context, batch int) (int64, error) {
 	return s.backfillColumn(ctx, batch, backfillTagsColumnName, backfillTagsUpdateSQL)
+}
+
+// BackfillCost re-projects the promoted cost_usd column from span_event for
+// every row that predates migration v20 — the out-of-band step migration 20
+// deferred so the metadata-only ADD COLUMN never detoasts inside Migrate().
+// Returns the number of rows updated. See backfillColumn for the contract.
+func (s *Store) BackfillCost(ctx context.Context, batch int) (int64, error) {
+	return s.backfillColumn(ctx, batch, backfillCostColumnName, backfillCostUpdateSQL)
 }
 
 // backfillColumn walks request_events in correlation_id keyset batches of batch

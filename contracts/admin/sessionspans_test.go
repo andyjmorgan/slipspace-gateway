@@ -29,7 +29,7 @@ func TestSessionSpan_NullableFieldsSerializeAsNull(t *testing.T) {
 		`"finish_reason":null`, `"parent_conversation_id":null`,
 		`"input_text":null`, `"input_text_chars":null`,
 		`"output_text":null`, `"output_text_chars":null`,
-		`"usage":{"input":null,"output":null,"cache_read":null,"cache_creation":null,"server_tool_use":null}`,
+		`"usage":{"input":null,"output":null,"cache_read":null,"cache_creation":null,"server_tool_use":null,"cost_usd":null}`,
 		`"output_parts":[]`, `"input_parts":[]`,
 	} {
 		if !strings.Contains(s, key) {

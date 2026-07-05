@@ -707,6 +707,13 @@ const StatCards = memo(function StatCards({ vm }: { vm: ViewModel }) {
       }
     }
     const nSrv = vm.ledger.filter((r) => r.server).length
+    // Estimated spend, split main-thread vs sub-agent threads so the card's
+    // subtitle answers "where did the money go" at a glance.
+    const totCost = vm.spans.reduce((a, s) => a + (s.usage.cost_usd ?? 0), 0)
+    const subCost = vm.spans.reduce(
+      (a, s) => a + (s.conversation_id !== vm.sid ? (s.usage.cost_usd ?? 0) : 0),
+      0,
+    )
     return {
       lats,
       outs,
@@ -719,6 +726,8 @@ const StatCards = memo(function StatCards({ vm }: { vm: ViewModel }) {
       peakT,
       nSrv,
       nCli: vm.ledger.length - nSrv,
+      totCost,
+      subCost,
     }
   }, [vm])
 
@@ -766,6 +775,18 @@ const StatCards = memo(function StatCards({ vm }: { vm: ViewModel }) {
         sub={`p90 ${fmt.ms(percentileOf(c.ttfcs, 0.9))} · n=${c.ttfcs.length}`}
         accent="info"
       />
+      {c.totCost > 0 && (
+        <KPI
+          label="Est. spend"
+          value={fmt.usd(c.totCost)}
+          sub={
+            c.subCost > 0
+              ? `${fmt.usd(c.totCost - c.subCost)} main · ${fmt.usd(c.subCost)} sub-agents`
+              : "all on the main thread"
+          }
+          accent="warn"
+        />
+      )}
     </div>
   )
 })
@@ -1653,6 +1674,10 @@ function TimelinePanel({
             {vm.convIds.map((conv) => {
               const on = focusedConv === conv
               const col = vm.colors.get(conv) ?? "var(--text-3)"
+              const convCost = vm.spans.reduce(
+                (a, sp) => a + (sp.conversation_id === conv ? (sp.usage.cost_usd ?? 0) : 0),
+                0,
+              )
               return (
                 <button
                   key={conv}
@@ -1669,6 +1694,9 @@ function TimelinePanel({
                 >
                   <span className="inline-block w-2 h-2 rounded-[2px] shrink-0" style={{ background: col }} />
                   {conv === vm.sid ? "session" : dispName(conv)}
+                  {convCost > 0 && (
+                    <span className="mono tnum text-[10.5px] text-[color:var(--text-4)]">{fmt.usd(convCost)}</span>
+                  )}
                 </button>
               )
             })}
@@ -1698,6 +1726,7 @@ function TimelinePanel({
           <div className="text-[color:var(--text-2)]">
             {clockAt(vm.t0ms, tipSpan.t)} · {fmt.ms(tipSpan.latency_ms)} (ttfc {fmt.ms(tipSpan.ttfc_ms)}) · in{" "}
             {fmt.compact(tipSpan.usage.input)} → out {fmt.compact(tipSpan.usage.output)}
+            {(tipSpan.usage.cost_usd ?? 0) > 0 && <> · {fmt.usd(tipSpan.usage.cost_usd)}</>}
           </div>
           <div className="text-[color:var(--text-3)]">
             {(() => {

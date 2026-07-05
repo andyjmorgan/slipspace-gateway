@@ -32,6 +32,10 @@ type SessionTotals struct {
 	Errors    int   `json:"errors"`
 	TokensIn  int64 `json:"tokens_in"`
 	TokensOut int64 `json:"tokens_out"`
+	// CostUSD is the session's summed estimated spend, from each event's
+	// span blob (same source as the token totals here). Zero when costing
+	// was off for every request.
+	CostUSD float64 `json:"cost_usd"`
 }
 
 // SessionView is every request in a session plus its aggregate totals.
@@ -54,6 +58,7 @@ func BuildSessionView(sessionID string, events []store.RequestEvent) SessionView
 		f := e.DecodeSpanFields()
 		v.Totals.TokensIn += f.TokensIn
 		v.Totals.TokensOut += f.TokensOut
+		v.Totals.CostUSD += f.CostUSD
 	}
 	return v
 }

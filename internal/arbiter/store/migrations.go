@@ -683,4 +683,25 @@ WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('cagg_cost_1m', start_offset => INTERVAL '3 hours', end_offset => INTERVAL '1 minute', schedule_interval => INTERVAL '1 minute', if_not_exists => TRUE);`,
 	},
+	{
+		version: 20,
+		name:    "promote_cost_column",
+		// Token Costing P4 (session / message / sub-agent rollups). The gateway
+		// stamps the pricing engine's estimate on the span as slipspace.cost.usd;
+		// summing it per session (and per conversation_id thread) straight out of
+		// the span_event JSONB would be the exact whole-blob detoast migration 10
+		// eliminated for tokens. Promote it to a DOUBLE PRECISION column,
+		// projected at ingest like tokens_in/tokens_out; the blob stays the
+		// source of truth (SpanFields still decodes cost + the unpriced flag for
+		// the inspector). No index — it is only ever summed under GROUP BYs on
+		// the already-indexed session_id / conversation_id, exactly like the
+		// token columns.
+		//
+		// Same deferral as v10: ADD COLUMN with a constant DEFAULT is
+		// metadata-only, and the historical fill is the out-of-band
+		// BackfillCost walker (v11 bookkeeping), never an inline scan here.
+		// Pre-backfill rows read 0 until the boot walker re-projects them.
+		sql: `
+ALTER TABLE request_events ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0;`,
+	},
 }

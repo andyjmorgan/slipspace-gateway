@@ -113,7 +113,7 @@ func (s *Store) UpsertRequestEventWithChecks(ctx context.Context, e RequestEvent
 	if _, err := tx.Exec(ctx, insertEventSQL,
 		e.CorrelationID, nullTime(e.ObservedAt), e.SessionID, e.ConversationID, e.ParentConversationID,
 		e.AgentID, e.UserID,
-		e.Provider, e.Model, e.Configuration, e.Protocol, e.StatusCode, e.TokensIn, e.TokensOut, tags, span); err != nil {
+		e.Provider, e.Model, e.Configuration, e.Protocol, e.StatusCode, e.TokensIn, e.TokensOut, e.CostUSD, tags, span); err != nil {
 		return fmt.Errorf("store: upsert event (with checks): %w", err)
 	}
 	for _, c := range checks {

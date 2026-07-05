@@ -408,8 +408,8 @@ summaries for the **Sessions** console page. Query params:
 
 The `configuration` / `tags` predicates are applied to the rows **before**
 aggregation, so a session appears when it has matching requests overlapping the
-window and the rollup (`messages` / `total_tokens` / `models` / `started_at` /
-`last_activity`) reflects only the matching subset. `started_at` / `last_activity`
+window and the rollup (`messages` / `total_tokens` / `total_cost` / `models` /
+`started_at` / `last_activity`) reflects only the matching subset. `started_at` / `last_activity`
 are the session's real bounds and may fall outside the window. Results are ordered
 by `last_activity DESC, session_id DESC`.
 
@@ -420,6 +420,7 @@ by `last_activity DESC, session_id DESC`.
       "session_id": "sess-123",
       "messages": 4,
       "total_tokens": 6000,
+      "total_cost": 0.0421,
       "models": ["claude-opus-4-8", "claude-haiku-4-5"],
       "started_at": "2026-06-07T10:00:00Z",
       "last_activity": "2026-06-07T10:42:00Z"

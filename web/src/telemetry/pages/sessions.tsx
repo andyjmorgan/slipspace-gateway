@@ -208,6 +208,7 @@ function SessionsList() {
               <SortHeader label="Messages" col="messages" sort={sort} onSort={onSort} align="right" />
               <SortHeader label="Subagents" col="subagents" sort={sort} onSort={onSort} align="right" />
               <SortHeader label="Tokens" col="tokens" sort={sort} onSort={onSort} align="right" />
+              <SortHeader label="Cost" col="cost" sort={sort} onSort={onSort} align="right" />
               <th scope="col" className="text-left font-medium px-4 py-2">Models</th>
               <th scope="col" className="text-left font-medium px-4 py-2">Tags</th>
               <SortHeader label="Started" col="started" sort={sort} onSort={onSort} />
@@ -218,7 +219,7 @@ function SessionsList() {
             {status === "loading" && (
               <SkeletonRows
                 rows={Math.min(limit, 12)}
-                cols={[{ w: "12rem" }, { w: "2.5rem", align: "right" }, { w: "2.5rem", align: "right" }, { w: "3rem", align: "right" }, { w: "8rem" }, { w: "6rem" }, { w: "9rem" }, { w: "4rem" }]}
+                cols={[{ w: "12rem" }, { w: "2.5rem", align: "right" }, { w: "2.5rem", align: "right" }, { w: "3rem", align: "right" }, { w: "3rem", align: "right" }, { w: "8rem" }, { w: "6rem" }, { w: "9rem" }, { w: "4rem" }]}
               />
             )}
             {status !== "loading" && sessions.map((s) => (
@@ -246,6 +247,9 @@ function SessionsList() {
                 <td className="mono tnum text-[12px] text-right px-4 py-2 text-[color:var(--text-3)]">
                   {s.total_tokens > 0 ? fmt.compact(s.total_tokens) : <Dash />}
                 </td>
+                <td className="mono tnum text-[12px] text-right px-4 py-2 text-[color:var(--text-3)]">
+                  {s.total_cost > 0 ? fmt.usd(s.total_cost) : <Dash />}
+                </td>
                 <td className="px-4 py-2"><ModelsCell models={s.models} /></td>
                 <td className="px-4 py-2"><TagCell tags={s.tags} /></td>
                 <td className="mono text-[11.5px] px-4 py-2 text-[color:var(--text-3)] whitespace-nowrap" title={fmt.fullTime(s.started_at)}>{fmt.fullTime(s.started_at)}</td>
@@ -253,7 +257,7 @@ function SessionsList() {
               </tr>
             ))}
             {status === "ok" && sessions.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{chips.length > 0 ? "No sessions match these filters." : "No sessions in this window."}</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-[12px] text-[color:var(--text-4)]">{chips.length > 0 ? "No sessions match these filters." : "No sessions in this window."}</td></tr>
             )}
           </tbody>
         </TableScroll>
