@@ -253,7 +253,7 @@ The container runs as UID `65532:65532`. ConfigMap and Secret projected files de
 
 ### Read-write config dir (admin write API)
 
-The rules write API (`POST/PUT/DELETE /admin/api/v1/config/rules`) re-marshals `policy.yaml` on every successful write via a temp-file rename inside `SLIPSPACE_CONFIG_DIR`. **Direct ConfigMap or Secret mounts are read-only at the kubelet projection layer** — even if the volumeMount drops `readOnly: true`, kubelet still refuses writes through the projected files. Without a writable mount, write API calls return `500` with `permission denied`.
+The rules write API (`POST/PUT/DELETE /admin/api/v1/config/rules`) atomically re-writes each edited block back to the file it was loaded from (`ResolvedConfig.SourceFiles`, defaulting to a per-block canonical filename such as `policy.yaml` when a block has no recorded origin) via a sibling temp-file + rename inside `SLIPSPACE_CONFIG_DIR`. In the standard single-file layout the rules block lives in `policy.yaml`, but the writer is not hardcoded to that file. **Direct ConfigMap or Secret mounts are read-only at the kubelet projection layer** — even if the volumeMount drops `readOnly: true`, kubelet still refuses writes through the projected files. Without a writable mount, write API calls return `500` with `permission denied`.
 
 Two patterns work in production:
 

@@ -418,7 +418,7 @@ The `Record` shape is the wire format every connector destination sees. Key fiel
 - `correlation_id`, `provider`, `protocol`, `model`, `configuration`, `api_key_name` — the post-rule resolved labels.
 - `session_id`, `session_id_source` — the resolved session/bundle id and the header it came from (see [Session bundling](#session-bundling)). Both omitted when no session header was present.
 - `agent_id`, `agent_id_source` — the resolved agent id and the header it came from (see [Agent id](#agent-id)). Both omitted when no agent header was present.
-- `user_id`, `user_id_source` — the resolved end-user id and the header it came from (see [User id](#user-id)). Both omitted when no user header was present. `schema_version` is `4` once these ship (`3` carried session + agent, `2` session only).
+- `user_id`, `user_id_source` — the resolved end-user id and the header it came from (see [User id](#user-id)). Both omitted when no user header was present. `schema_version` is `6`: `2` added session, `3` added agent, `4` added `user_id`, `5` added the charge-accounting token sub-buckets (reasoning, cache_creation_5m/1h, input/output audio) plus `server_tool_use` / `service_tier` / `inference_geo`, and `6` added the `Cost` block (gateway-computed USD + rate-card version).
 - `request`, `response` — method, path, headers, sha256, byte length, and either inline `body` or `body_omitted: true` (set when oversize behaviour stripped the body).
 - `tokens` — provider-reported usage when the upstream returned one.
 - `tags` — the set of tags `addTag` actions attached, in first-attach order, deduplicated.
