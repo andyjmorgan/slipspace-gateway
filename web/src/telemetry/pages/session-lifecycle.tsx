@@ -707,13 +707,28 @@ const StatCards = memo(function StatCards({ vm }: { vm: ViewModel }) {
       }
     }
     const nSrv = vm.ledger.filter((r) => r.server).length
-    // Estimated spend, split main-thread vs sub-agent threads so the card's
-    // subtitle answers "where did the money go" at a glance.
-    const totCost = vm.spans.reduce((a, s) => a + (s.usage.cost_usd ?? 0), 0)
+    // Spend aggregates. When any span carries cost the grid grows a whole
+    // 4-card cost row (total / rate / costliest / sub-agent split) so the
+    // layout stays 4-per-row symmetric; costing-off sessions keep the
+    // original 2×4.
+    const costs = vm.spans.map((s) => s.usage.cost_usd ?? 0)
+    const totCost = costs.reduce((a, v) => a + v, 0)
     const subCost = vm.spans.reduce(
       (a, s) => a + (s.conversation_id !== vm.sid ? (s.usage.cost_usd ?? 0) : 0),
       0,
     )
+    const nSubThreads = new Set(
+      vm.spans.filter((s) => s.conversation_id !== vm.sid && (s.usage.cost_usd ?? 0) > 0).map((s) => s.conversation_id),
+    ).size
+    let maxCost = 0
+    let maxCostSpan: (typeof vm.spans)[number] | null = null
+    for (const s of vm.spans) {
+      const v = s.usage.cost_usd ?? 0
+      if (v > maxCost) {
+        maxCost = v
+        maxCostSpan = s
+      }
+    }
     return {
       lats,
       outs,
@@ -728,6 +743,10 @@ const StatCards = memo(function StatCards({ vm }: { vm: ViewModel }) {
       nCli: vm.ledger.length - nSrv,
       totCost,
       subCost,
+      nSubThreads,
+      maxCost,
+      maxCostSpan,
+      medCost: median(costs.filter((v) => v > 0)),
     }
   }, [vm])
 
@@ -776,16 +795,38 @@ const StatCards = memo(function StatCards({ vm }: { vm: ViewModel }) {
         accent="info"
       />
       {c.totCost > 0 && (
-        <KPI
-          label="Est. spend"
-          value={fmt.usd(c.totCost)}
-          sub={
-            c.subCost > 0
-              ? `${fmt.usd(c.totCost - c.subCost)} main · ${fmt.usd(c.subCost)} sub-agents`
-              : "all on the main thread"
-          }
-          accent="warn"
-        />
+        <>
+          <KPI
+            label="Est. spend"
+            value={fmt.usd(c.totCost)}
+            sub={`median ${fmt.usd(c.medCost)} / span`}
+            accent="warn"
+          />
+          <KPI
+            label="Spend rate"
+            value={vm.dur > 0 ? `${fmt.usd((c.totCost / vm.dur) * 3600)}/hr` : "—"}
+            sub={`over ${fmt.uptime(vm.dur * 1000)}`}
+            accent="warn"
+          />
+          <KPI
+            label="Costliest request"
+            value={fmt.usd(c.maxCost)}
+            sub={
+              c.maxCostSpan
+                ? `${c.maxCostSpan.model ?? "unknown model"} · ${Math.round((c.maxCost / c.totCost) * 100)}% of spend`
+                : "—"
+            }
+          />
+          <KPI
+            label="Sub-agent spend"
+            value={c.subCost > 0 ? fmt.usd(c.subCost) : "$0.00"}
+            sub={
+              c.subCost > 0
+                ? `${c.nSubThreads} thread${c.nSubThreads === 1 ? "" : "s"} · ${Math.round((c.subCost / c.totCost) * 100)}% of spend`
+                : "all on the main thread"
+            }
+          />
+        </>
       )}
     </div>
   )
