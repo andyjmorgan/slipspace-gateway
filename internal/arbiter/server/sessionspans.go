@@ -62,6 +62,7 @@ const (
 	blobKeyCacheReadTokens  = "gen_ai.usage.cache_read.input_tokens"     //nolint:gosec // attribute key, not a credential
 	blobKeyCacheCreateToken = "gen_ai.usage.cache_creation.input_tokens" //nolint:gosec // attribute key, not a credential
 	blobKeyServerToolPrefix = "gen_ai.usage.server_tool_use."            //nolint:gosec // attribute key, not a credential
+	blobKeyCostUSD          = "slipspace.cost.usd"
 	blobKeyGenAIContent     = "gen_ai_content"
 )
 
@@ -311,6 +312,9 @@ func usageFromBlob(blob map[string]json.RawMessage) adminc.SessionSpanUsage {
 			}
 			u.ServerToolUse[strings.TrimPrefix(k, blobKeyServerToolPrefix)] = v
 		}
+	}
+	if v, ok := blobFloat(blob, blobKeyCostUSD); ok {
+		u.CostUSD = &v
 	}
 	return u
 }

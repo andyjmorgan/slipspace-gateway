@@ -23,6 +23,10 @@ func strKV(k, v string) *commonpb.KeyValue {
 func intKV(k string, v int64) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: v}}}
 }
+func doubleKV(k string, v float64) *commonpb.KeyValue {
+	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_DoubleValue{DoubleValue: v}}}
+}
+
 func boolKV(k string, v bool) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_BoolValue{BoolValue: v}}}
 }
@@ -116,6 +120,7 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 			intKV(attrOutputTokens, 20),
 			intKV(attrCacheReadTokens, 5),
 			intKV(attrCacheCreationTokens, 2),
+			doubleKV(attrCostUSD, 0.0125),
 			strKV(attrConversationID, "sess-9"),
 			strKV(attrAgentID, "agt-9"),
 			strKV(attrEnduserID, "usr-9"),
@@ -141,6 +146,11 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 	if e.TokensIn != 10 || e.TokensOut != 20 {
 		t.Errorf("token columns = (in %d, out %d), want (10, 20)", e.TokensIn, e.TokensOut)
 	}
+	// Promoted cost column (v20) — a float projection; intAttr would truncate
+	// this sub-dollar value to 0.
+	if e.CostUSD != 0.0125 {
+		t.Errorf("cost column = %v, want 0.0125", e.CostUSD)
+	}
 	// observed_at is the SPAN START time, not ingest now().
 	if e.ObservedAt.UnixNano() != 1_000_000_000 {
 		t.Errorf("observed_at = %d, want span start 1e9", e.ObservedAt.UnixNano())
@@ -152,6 +162,9 @@ func TestEventFromSpan_GenAIAttributes(t *testing.T) {
 	}
 	if f.TokensIn != 10 || f.TokensOut != 20 || f.TokensCached != 5 || f.TokensCacheCreation != 2 {
 		t.Errorf("tokens = %+v", f)
+	}
+	if f.CostUSD != 0.0125 {
+		t.Errorf("blob cost = %v, want 0.0125", f.CostUSD)
 	}
 	if !f.Streaming || f.Method != "POST" || f.GatewayID != "gw-9" {
 		t.Errorf("blob fields = %+v", f)

@@ -308,12 +308,15 @@ func TestListSessions(t *testing.T) {
 		// inspector/SpanFields path. Tags is likewise promoted to a column (v12):
 		// ingest sets RequestEvent.Tags from the span, so the seed sets it too
 		// (the facet/filter/rollup all read the column, not the blob).
+		// cost_usd is likewise promoted (v20): the seed prices each request at
+		// one micro-dollar per token so the session rollup sum is deterministic.
+		cost := float64(in+out) / 1e6
 		span := fmt.Sprintf(
-			`{"gen_ai.usage.input_tokens":%d,"gen_ai.usage.output_tokens":%d,"tags":["%s"]}`,
-			in, out, tag)
+			`{"gen_ai.usage.input_tokens":%d,"gen_ai.usage.output_tokens":%d,"slipspace.cost.usd":%g,"tags":["%s"]}`,
+			in, out, cost, tag)
 		if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
 			CorrelationID: id, SessionID: sess, Configuration: cfg, Model: model,
-			StatusCode: 200, ObservedAt: at, TokensIn: in, TokensOut: out,
+			StatusCode: 200, ObservedAt: at, TokensIn: in, TokensOut: out, CostUSD: cost,
 			Tags: []string{tag}, SpanEvent: []byte(span),
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
@@ -369,6 +372,10 @@ func TestListSessions(t *testing.T) {
 		}
 		if a.Messages != 2 || a.TotalTokens != 330 {
 			t.Errorf("A rollup = %+v, want messages 2 tokens 330", a)
+		}
+		// Cost rollup: 330 tokens seeded at 1 µ$/token = $0.000330.
+		if a.TotalCost < 0.000329 || a.TotalCost > 0.000331 {
+			t.Errorf("A TotalCost = %v, want 0.00033", a.TotalCost)
 		}
 		// Session A has no subagent threads (empty conversation_id rows excluded).
 		if a.Subagents != 0 {

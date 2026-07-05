@@ -127,3 +127,60 @@ func TestBackfillTags_Postgres(t *testing.T) {
 		t.Errorf("second run updated %d rows, want 0 (bookkeeping no-op)", n2)
 	}
 }
+
+// TestBackfillCost_Postgres proves the migration-v20 out-of-band cost backfill
+// through real Postgres: pre-v20 rows carry slipspace.cost.usd only in the
+// span_event blob (the promoted cost_usd column at its 0 default), and
+// BackfillCost re-projects the column with the jsonb_typeof guard — a
+// non-numeric value or an uncosted row lands 0 rather than aborting the batch.
+// A second run is a bookkeeping no-op.
+func TestBackfillCost_Postgres(t *testing.T) {
+	st := migratedStore(t)
+	ctx := context.Background()
+
+	seed := func(id, span string) {
+		t.Helper()
+		// CostUSD left 0 — the pre-v20 shape: cost only inside the blob.
+		if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
+			CorrelationID: id, StatusCode: 200, SpanEvent: []byte(span),
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("bfc-1", `{"slipspace.cost.usd":0.0125}`)
+	seed("bfc-2", `{"slipspace.cost.usd":2.5}`)
+	seed("bfc-3", `{"slipspace.cost.usd":"not a number"}`) // type guard -> 0
+	seed("bfc-4", `{"slipspace.method":"POST"}`)           // no cost key -> stays 0
+
+	n, err := st.BackfillCost(ctx, 2)
+	if err != nil {
+		t.Fatalf("BackfillCost: %v", err)
+	}
+	if n < 4 {
+		t.Errorf("rows updated = %d, want >= 4 (the seeded rows)", n)
+	}
+
+	want := map[string]float64{
+		"bfc-1": 0.0125,
+		"bfc-2": 2.5,
+		"bfc-3": 0,
+		"bfc-4": 0,
+	}
+	for id, w := range want {
+		got, err := st.GetRequestEvent(ctx, id)
+		if err != nil {
+			t.Fatalf("GetRequestEvent %s: %v", id, err)
+		}
+		if got.CostUSD != w {
+			t.Errorf("%s cost = %v, want %v", id, got.CostUSD, w)
+		}
+	}
+
+	n2, err := st.BackfillCost(ctx, 2)
+	if err != nil {
+		t.Fatalf("second BackfillCost: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second run updated %d rows, want 0 (bookkeeping no-op)", n2)
+	}
+}

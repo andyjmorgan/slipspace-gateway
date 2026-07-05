@@ -161,7 +161,7 @@ export function MessagesTableView({
   sort?: SortState
   onSort?: (key: string) => void
 }) {
-  const cols = agent ? 10 : 9
+  const cols = agent ? 11 : 10
   return (
     <TableScroll>
       <thead>
@@ -183,13 +183,14 @@ export function MessagesTableView({
             title="tokens in / tokens out"
             label={<>Tokens <span className="normal-case tracking-normal text-[color:var(--text-4)]">(in/out)</span></>}
           />
+          <th scope="col" className="text-right font-medium px-4 py-2">Cost</th>
         </tr>
       </thead>
       <tbody aria-busy={status === "loading"}>
         {status === "loading" && (
           <SkeletonRows
             rows={Math.min(limit, 12)}
-            cols={[{ w: "5rem" }, ...(agent ? [{ w: "5rem" }] : []), { w: "2.5rem" }, { w: "4rem" }, { w: "3.5rem" }, { w: "6rem" }, { w: "5rem" }, { w: "5rem" }, { w: "3rem", align: "right" as const }, { w: "3.5rem", align: "right" as const }]}
+            cols={[{ w: "5rem" }, ...(agent ? [{ w: "5rem" }] : []), { w: "2.5rem" }, { w: "4rem" }, { w: "3.5rem" }, { w: "6rem" }, { w: "5rem" }, { w: "5rem" }, { w: "3rem", align: "right" as const }, { w: "3.5rem", align: "right" as const }, { w: "3rem", align: "right" as const }]}
           />
         )}
         {status !== "loading" && entries.map((e, i) => (
@@ -218,6 +219,9 @@ export function MessagesTableView({
             <td className="mono tnum text-[12px] text-right px-4 py-2">{fmt.ms(e.duration_ms)}</td>
             <td className="mono tnum text-[11.5px] text-right px-4 py-2 text-[color:var(--text-3)]">
               {(e.tokens_in ?? 0) + (e.tokens_out ?? 0) > 0 ? `${fmt.compact(e.tokens_in ?? 0)}/${fmt.compact(e.tokens_out ?? 0)}` : <Dash />}
+            </td>
+            <td className="mono tnum text-[11.5px] text-right px-4 py-2 text-[color:var(--text-3)]">
+              {(e.cost_usd ?? 0) > 0 ? fmt.usd(e.cost_usd) : <Dash />}
             </td>
           </tr>
         ))}

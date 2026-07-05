@@ -128,6 +128,23 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		}
 	})
 
+	// The migration-v20 cost-column backfill runs out-of-band for the same
+	// reason as the token columns (re-deriving cost from span_event detoasts
+	// every span). Run-once via backfill_runs, non-fatal — a failure only
+	// leaves pre-v20 rows reading $0 in the session/thread spend rollups
+	// until the next boot retries.
+	safego.Go(ctx, "arbiter.backfill.cost", log, nil, func() {
+		n, err := st.BackfillCost(ctx, 0)
+		switch {
+		case err != nil && ctx.Err() != nil:
+			log.Info("cost column backfill interrupted by shutdown", "rows_updated", n)
+		case err != nil:
+			log.Error("cost column backfill failed", "rows_updated", n, "err", err)
+		case n > 0:
+			log.Info("cost column backfill complete", "rows_updated", n)
+		}
+	})
+
 	// Arbiter security scanner (optional, REF-008). When enabled it explodes
 	// each ingested span into check tasks at ingest (atomically with the span)
 	// and drains the outbox in the background. Disabled => ingest is untouched.

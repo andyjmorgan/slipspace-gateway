@@ -115,6 +115,11 @@ type SessionSpanUsage struct {
 	// (gen_ai.usage.server_tool_use.*), keyed by the provider's own counter
 	// name; null when the span carried none.
 	ServerToolUse map[string]int64 `json:"server_tool_use"`
+
+	// CostUSD is the gateway pricing engine's estimated USD spend for the
+	// span (slipspace.cost.usd). Null when costing was off or the model was
+	// unpriced — distinguishing "no estimate" from a genuine $0.
+	CostUSD *float64 `json:"cost_usd"`
 }
 
 // SessionSpanOutputPart is one normalized assistant output part. Type is one

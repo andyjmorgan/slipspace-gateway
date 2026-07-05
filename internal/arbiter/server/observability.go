@@ -503,6 +503,7 @@ func mapSession(sessionID string, events []store.RequestEvent) adminc.SessionVie
 			Errors:    base.Totals.Errors,
 			TokensIn:  base.Totals.TokensIn,
 			TokensOut: base.Totals.TokensOut,
+			CostUSD:   base.Totals.CostUSD,
 		},
 		Requests: make([]adminc.MessageEntry, 0, len(events)),
 	}
@@ -536,6 +537,7 @@ func mapSessionSummary(s store.SessionSummary) adminc.SessionSummary {
 		Messages:     s.Messages,
 		Subagents:    s.Subagents,
 		TotalTokens:  s.TotalTokens,
+		TotalCost:    s.TotalCost,
 		Models:       models,
 		Tags:         nonNil(s.Tags),
 		StartedAt:    s.Started.UTC(),
@@ -576,6 +578,7 @@ func mapEntry(e store.RequestEvent) adminc.MessageEntry {
 		TokensOut:            int(f.TokensOut),
 		TokensCached:         int(f.TokensCached),
 		TokensCacheCreation:  int(f.TokensCacheCreation),
+		CostUSD:              f.CostUSD,
 		PolicyRef:            f.PolicyRef,
 		Tags:                 f.Tags,
 	}

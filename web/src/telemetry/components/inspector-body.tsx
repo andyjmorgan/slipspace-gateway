@@ -281,6 +281,7 @@ function SpanTiles({ span, clock }: { span: SessionSpan; clock?: SpanClock }) {
         <TKV k="cache read" v={fmt.compact(u.cache_read)} />
         <TKV k="cache write" v={fmt.compact(u.cache_creation)} />
         <TKV k="cache share" v={cacheShare} />
+        <TKV k="est. cost" v={u.cost_usd != null ? fmt.usd(u.cost_usd) : "—"} />
       </Tile>
     </div>
   )

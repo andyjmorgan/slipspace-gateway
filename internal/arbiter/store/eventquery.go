@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -345,6 +346,10 @@ type SessionSummary struct {
 	Subagents int
 	// TotalTokens is the summed tokens_in+tokens_out across those requests.
 	TotalTokens int64
+	// TotalCost is the summed cost_usd across those requests — the session's
+	// estimated USD spend (v20 promoted column, so no blob detoast). Zero for
+	// sessions whose requests predate costing or were unpriced.
+	TotalCost float64
 	// Models is the distinct requested model names, empty strings excluded.
 	Models []string
 	// Tags is the distinct post-rule tag set across the matching rows (empty
@@ -394,6 +399,10 @@ var sessionSorts = map[string]sessionSort{
 	"messages":  {expr: "a.messages", num: func(s SessionSummary) int64 { return int64(s.Messages) }},
 	"subagents": {expr: "a.subagents", num: func(s SessionSummary) int64 { return int64(s.Subagents) }},
 	"tokens":    {expr: "a.total_tokens", num: func(s SessionSummary) int64 { return s.TotalTokens }},
+	// cost sorts on the spend aggregate; the seek expression and cursor value
+	// are both micro-USD integers so the keyset comparison stays exact (the
+	// cursor carries int64, and float equality at page edges would skip rows).
+	"cost": {expr: "(a.total_cost * 1000000)::bigint", num: func(s SessionSummary) int64 { return int64(math.Round(s.TotalCost * 1e6)) }},
 }
 
 // sessionCursor is the keyset position encoded into a session-list next_cursor:
@@ -504,6 +513,7 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
            WHERE conversation_id <> '' AND conversation_id <> session_id
          ) AS subagents,
          COALESCE(SUM(tokens_in + tokens_out), 0) AS total_tokens,
+         COALESCE(SUM(cost_usd), 0) AS total_cost,
          MIN(observed_at) AS started,
          MAX(observed_at) AS last_at,
          COALESCE(array_agg(DISTINCT model) FILTER (WHERE model <> ''), '{}') AS models
@@ -517,7 +527,7 @@ func (s *Store) ListSessions(ctx context.Context, p SessionListParams) ([]Sessio
   WHERE ` + innerWhere + `
   GROUP BY session_id
 )
-SELECT a.session_id, a.messages, a.subagents, a.total_tokens, a.started, a.last_at,
+SELECT a.session_id, a.messages, a.subagents, a.total_tokens, a.total_cost, a.started, a.last_at,
        a.models, COALESCE(t.tags, '{}') AS tags
 FROM agg a LEFT JOIN session_tags t USING (session_id)`
 	if len(outer) > 0 {
@@ -535,7 +545,7 @@ FROM agg a LEFT JOIN session_tags t USING (session_id)`
 	var out []SessionSummary
 	for rows.Next() {
 		var sum SessionSummary
-		if serr := rows.Scan(&sum.SessionID, &sum.Messages, &sum.Subagents, &sum.TotalTokens, &sum.Started, &sum.LastAt, &sum.Models, &sum.Tags); serr != nil {
+		if serr := rows.Scan(&sum.SessionID, &sum.Messages, &sum.Subagents, &sum.TotalTokens, &sum.TotalCost, &sum.Started, &sum.LastAt, &sum.Models, &sum.Tags); serr != nil {
 			return nil, "", fmt.Errorf("store: scan session summary: %w", serr)
 		}
 		out = append(out, sum)
@@ -610,7 +620,7 @@ SELECT COUNT(*) FROM agg`
 // ingest caps are off). Stripping it in SQL keeps a whole-session scan to the
 // few-KB residue per row instead of materializing every full blob in memory
 // (the 2026-06-10 prod OOM: 688 rows x ~410 KB ≈ 280 MB per request).
-const sessionRollupColumns = `correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, tokens_in, tokens_out, span_event - 'gen_ai_content' AS span_event`
+const sessionRollupColumns = `correlation_id, observed_at, session_id, conversation_id, parent_conversation_id, agent_id, user_id, provider, model, configuration, protocol, status_code, tokens_in, tokens_out, cost_usd, span_event - 'gen_ai_content' AS span_event`
 
 // Session-scoped read bounds. sessionScanBatch is the internal keyset batch
 // the rollup pages the table with; sessionPageDefault / sessionPageMax bound
