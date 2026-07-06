@@ -195,7 +195,7 @@ Anything else the client sends is forwarded verbatim unless a rule strips it via
 
 ## Outbound credential headers
 
-In managed mode, the destination builder mints exactly one credential header per request via [`credentialHeaderFor`](../cmd/gateway/destination.go) (`cmd/gateway/destination.go:220`). The header name and value format are read off the resolved selection target's `Auth` convention, with a per-provider default fallback:
+In managed mode, the destination builder mints exactly one credential header per request via [`credentialHeaderFor`](../cmd/gateway/destination.go) (defined at `cmd/gateway/destination.go:220`, invoked at `:181` for the `changeApiKey` override and `:204` for the managed default). The header name and value format are read off the resolved selection target's `Auth` convention, with a per-provider default fallback:
 
 1. `target.Auth.Header` + `target.Auth.Format` (if `target.Auth != nil` and `Header` is set) — the format string's `{key}` placeholder is replaced with the credential.
 2. `target.Auth.Header` + the raw credential (if `Format` is empty).
@@ -388,9 +388,9 @@ For passthrough mode there is no key rotation on the gateway side — the upstre
 - **[`docs/admin-console.md`](admin-console.md)** — the API-key reveal endpoint, Basic-auth password resolution, and redaction in the export bundle.
 - **[`docs/actions.md`](actions.md)** — the `setHeader` rule action (which can rewrite outbound headers, including a credential header, via `applyStateOverlays`) and the `changeApiKey` action (which writes `state.UpstreamCredentialOverride`, now read at the single credential mint site to override the upstream credential — literal-key substitution, or `useSlipSpaceKey` to forward the inbound `Authorization`).
 - **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `Resolver`, `AuthResult`, `Mode`, the discovery walk, and `UpstreamCredentialHeader` per-provider defaults.
-- **[`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go)** — `HTTPHandler`, the typed error → wire status mapping in `writeAuthError`, and the `Result` audit tags.
+- **[`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go)** — `HTTPHandler`, `classifyResult`, and the typed error → wire status mapping in `writeAuthError`. The `Result` audit-tag type and its constants (`ResultSuccess`/`ResultUnknownKey`/`ResultDisabledKey`/`ResultUnknownConfiguration`/…) are defined in [`internal/middleware/auth/errors.go`](../internal/middleware/auth/errors.go) and consumed by `classifyResult`.
 - **[`cmd/gateway/destination.go`](../cmd/gateway/destination.go)** — `buildDestination`, `resolveCredentialHeaders` (the credential precedence `switch`, including the `changeApiKey` override), and `credentialHeaderFor` (the single mint site).
 - **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — the closed `credentialHeaderNames` set (`handler.go:180`), the `authFormatPlaceholder` (`{key}`) constant, and the data-plane handler composition.
-- **[`internal/proxy/forwarder.go`](../internal/proxy/forwarder.go)** — the forwarder and its `alwaysDropHeaders` (`forwarder.go:187`), the unconditional inbound-strip list (`Authorization`/`Origin`/`Referer`/`Cookie`/`Accept-Encoding`).
+- **[`internal/proxy/forwarder.go`](../internal/proxy/forwarder.go)** — the forwarder and its `alwaysDropHeaders` (`forwarder.go:187`), the unconditional inbound-strip list (`X-Slipspace-Configuration`/`X-Slipspace-Identity`/`Authorization`/`Origin`/`Referer`/`Cookie`/`Accept-Encoding` — seven entries).
 - **[`internal/selection/selection.go`](../internal/selection/selection.go)** — `Target` (carries the pre-resolved `Auth` convention and `Credential` the destination builder consumes).
 - **[`CLAUDE.md`](../CLAUDE.md)** — load-bearing invariant 6 (credential header lives in one place per `(provider, endpoint)`) and the *Authentication & Auth Modes* design summary.

@@ -346,7 +346,7 @@ The `spa` label covers every `/admin/` URL that doesn't match a `/api/v1/*` patt
 
 | Method · Path | Response shape | Notes |
 |---|---|---|
-| `GET /admin/api/v1/policies` | `PoliciesResponse` | One row per configured resilience policy with per-target weight/order and per-(policy, target) circuit-breaker state from the in-process `BreakerStore`. Targets the breaker has never observed report `circuit_state: "unknown"`. See [`docs/resilience.md`](resilience.md) for the policy schema. |
+| `GET /admin/api/v1/policies` | `PoliciesResponse` | One row per configured resilience policy with per-target weight/order and per-(policy, target) circuit-breaker state from the in-process `BreakerStore`. A target the breaker has never observed reports `circuit_state: "closed"` (the breaker treats unknown (policy, target) pairs as healthy). `circuit_state: "unknown"` is reported only when the circuit-breaker source is not wired (e.g. a partial boot before the resilience orchestrator is attached), where the handler defaults every target to `"unknown"`. See [`docs/resilience.md`](resilience.md) for the policy schema. |
 
 ---
 
