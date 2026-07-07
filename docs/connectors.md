@@ -293,7 +293,7 @@ connectors:
 | `gateway_id` | string | no | Sent as the `X-Slipspace-Gateway-Id` header so a receiver that keys HMAC secrets per gateway (the Arbiter registry) can look the secret up. Optional for a generic receiver that verifies the signature alone; **required** when pushing to the Arbiter. |
 | `timeout_ms` | int (ms) | yes | Per-push HTTP timeout. Must be in `(0, 60000]`. |
 
-`rotation:` and `auth:` are not used by webhook connectors, and cloud-storage fields (`bucket`, `region`, `account`, `container`, `endpoint_url`, `use_path_style`) are explicitly rejected at config-load ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) `validateWebhook`).
+The `auth:` block and cloud-storage fields (`bucket`, `region`, `account`, `container`, `endpoint_url`, `use_path_style`) are explicitly rejected at config-load ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) `validateWebhook`). `rotation:` fields (`max_bytes`, `max_age_seconds`) are **not** rejected — a webhook is a real-time pusher rather than a spooled connector, so they are simply ignored.
 
 ### Delivery contract
 

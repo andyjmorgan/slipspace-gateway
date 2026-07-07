@@ -74,12 +74,12 @@ flowchart LR
 
 - **Open probes** — `GET /healthz` (liveness) and `GET /readyz` (readiness; 503 until Postgres is reachable, so a load balancer drains the instance while the store recovers).
 - **Open HMAC Record webhook** — `POST /api/v1/ingest/record`. "Open" in the routing sense only: it carries no Basic auth, because the push **authenticates itself** via its `X-Slipspace-Signature` HMAC. See [arbiter-webhook.md](arbiter-webhook.md).
-- **Basic-auth console + query API** — `GET /api/v1/dashboard/*`, `/api/v1/messages*`, `/api/v1/events*`, `/api/v1/sessions/{id}`, `/api/v1/facets`, plus the SPA bundle at `GET /` (`internal/arbiter/server/query.go::registerQueryRoutes`). Every API route is wrapped in `Server.basicAuth` (`server.go:109`). See [arbiter-api.md](arbiter-api.md).
+- **Basic-auth console + query API** — `GET /api/v1/dashboard/*`, `/api/v1/messages*`, `/api/v1/events*`, `/api/v1/sessions/{id}`, `/api/v1/facets`, plus the SPA bundle at `GET /` (`internal/arbiter/server/query.go::registerQueryRoutes`). Every API route is wrapped in `Server.basicAuth` (`server.go:143`). See [arbiter-api.md](arbiter-api.md).
 
 **OTLP gRPC listener — default `0.0.0.0:8687`** (`config.DefaultOTLPBind`, `config.go:28`). One gRPC server registers **both** OTLP receivers (`internal/arbiter/ingest/grpc.go::NewOTLPServer`):
 
 - the **trace** service (`ingest.TraceReceiver`) — one `request_events` row per gen_ai span; the span is the **single writer** of the entity (the complete span lands in `span_event`, the filter columns are projected from it);
-- the **metrics** service (`ingest.MetricsReceiver`) — `metric_points` rows from the gateway's exported counters and gauges. `metric_points` is a TimescaleDB hypertable; the dashboard reads four 1-minute continuous aggregates over it (never the entity). Histogram and summary metrics are skipped on ingest — only number data points land.
+- the **metrics** service (`ingest.MetricsReceiver`) — `metric_points` rows from the gateway's exported counters and gauges. `metric_points` is a TimescaleDB hypertable; the dashboard reads five 1-minute continuous aggregates over it (`cagg_requests_1m`, `cagg_tokens_1m`, `cagg_rules_1m`, `cagg_tags_1m`, and `cagg_cost_1m` — the cost rollup added in migration 19 for costing v2.1.0), never the entity. Histogram and summary metrics are skipped on ingest — only number data points land.
 
 Gateways export to `:8687` directly or via an intervening OTel collector.
 
@@ -93,12 +93,12 @@ The two listeners run on independent goroutines bound to the signal context (`sa
 
 CLAUDE.md **invariant #4** mandates that reporting and telemetry stay separate channels: OTel meters carry counters/histograms/gauges; the connector spool carries the end-of-pipeline **Record** (audit, billing, replay). "A Grafana panel must never read records from S3; the equivalent OTel meter exists for every dimension a dashboard cares about." The Arbiter is the consuming end of both channels, and it preserves that separation in its storage layout — it never reconstructs a meter from a Record, or vice versa.
 
-Under the **single-writer** rearchitecture, two ingest channels land in three tables (`internal/arbiter/store/migrations.go`, migrations `0006`–`0007`):
+Under the **single-writer** rearchitecture, two ingest channels land in three tables (`internal/arbiter/store/migrations.go`). `metric_points` is created in migration `0001` and only converted to a hypertable (with its continuous aggregates) in `0007`; migrations `0006`–`0007` create `request_events` and `record`:
 
 | Channel | Listener / route | Receiver | Table(s) | Role |
 |---|---|---|---|---|
 | **gen_ai spans** | OTLP gRPC `:8687` (trace) | `ingest.TraceReceiver` | `request_events` (**sole writer**) | The complete span in `span_event JSONB`; the filter columns (provider/model/configuration/protocol/status_code + the identity ids) projected from it. Drives recent-history + drill-down. |
-| **`slipspace.*` meters** | OTLP gRPC `:8687` (metrics) | `ingest.MetricsReceiver` | `metric_points` (hypertable) → four CAGGs | Raw number data points; the dashboard reads the 1-minute continuous aggregates over them for its rate / token / fired-row panels. |
+| **`slipspace.*` meters** | OTLP gRPC `:8687` (metrics) | `ingest.MetricsReceiver` | `metric_points` (hypertable) → five CAGGs | Raw number data points; the dashboard reads the 1-minute continuous aggregates over them (`cagg_requests_1m`, `cagg_tokens_1m`, `cagg_rules_1m`, `cagg_tags_1m`, `cagg_cost_1m`) for its rate / token / fired-row / cost panels. |
 | **Record** | HTTP `:8686` `POST /api/v1/ingest/record` | `ingest.RecordHandler` (`ingest/record.go`) | `record` (one verbatim blob per correlation id) | The full audit copy: bodies, headers, rule chain, resilience attempts — stored as the raw `cc.Record` bytes, joined to the entity lazily by `correlation_id` only when the inspector's record tab opens. |
 
 How this complies with invariant #4:
@@ -217,15 +217,15 @@ Validation (`config.Validate`) rejects, when the scanner is enabled, a malformed
 
 ### Generating the console password hash
 
-`console.password_hash` is verified with `bcrypt.CompareHashAndPassword` (`server.go:123`), so the YAML must carry a **bcrypt** hash, never cleartext. Generate one with `htpasswd` (from `apache2-utils` / `httpd-tools`), stripping the `user:` prefix and normalising the variant prefix to `$2a$`:
+`console.password_hash` is verified with `bcrypt.CompareHashAndPassword` (`server.go:179`), so the YAML must carry a **bcrypt** hash, never cleartext. Generate one with `htpasswd` (from `apache2-utils` / `httpd-tools`), stripping the `user:` prefix and normalising the variant prefix to `$2a$`:
 
 ```sh
 htpasswd -bnBC 10 "" 'your-console-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'
 ```
 
-Paste the `$2a$...` output as `password_hash`. The username comparison is `subtle.ConstantTimeCompare` and both branches always run (`server.go:121`), so a wrong username and a wrong password cost the same — no timing oracle.
+Paste the `$2a$...` output as `password_hash`. The username comparison is `subtle.ConstantTimeCompare` and both branches always run (`server.go:178`), so a wrong username and a wrong password cost the same — no timing oracle.
 
-> The console deliberately sends a **bare `401`** with **no `WWW-Authenticate` header** (`server.go:109` comment). The SPA drives the credential prompt with its own login form and attaches the `Authorization` header on every fetch; emitting the challenge header would make browsers pop their native auth dialog over the SPA on every poll. `curl --basic -u admin:… ` still works.
+> The console deliberately sends a **bare `401`** with **no `WWW-Authenticate` header** (`server.go:135` comment). The SPA drives the credential prompt with its own login form and attaches the `Authorization` header on every fetch; emitting the challenge header would make browsers pop their native auth dialog over the SPA on every poll. `curl --basic -u admin:… ` still works.
 
 ### Environment
 
@@ -233,19 +233,19 @@ The binary reads only two environment variables; everything else lives in the YA
 
 | Variable | Purpose | Source |
 |---|---|---|
-| `SLIPSPACE_ARBITER_CONFIG` | Default path to the config YAML when `-config` is not passed | `main.go:46` |
-| `LOG_LEVEL` | `debug` / `info` (default) / `warn` / `error` for the `slog` JSON handler | `main.go:55,149` |
+| `SLIPSPACE_ARBITER_CONFIG` | Default path to the config YAML when `-config` is not passed | `main.go:51` |
+| `LOG_LEVEL` | `debug` / `info` (default) / `warn` / `error` for the `slog` JSON handler | `main.go:60,226` |
 
-Flags: `-config <path>` (overrides `SLIPSPACE_ARBITER_CONFIG`) and `-version` (print version and exit). The service logs JSON to **stderr** with a fixed `service=arbiter` + `version` header (`main.go:164`).
+Flags: `-config <path>` (overrides `SLIPSPACE_ARBITER_CONFIG`) and `-version` (print version and exit). The service logs JSON to **stderr** with a fixed `service=arbiter` + `version` header (`main.go:242-245`).
 
 ---
 
 ## Startup and graceful shutdown
 
-`run` (`cmd/arbiter/main.go:68`) is the lifecycle:
+`run` (`cmd/arbiter/main.go:73`) is the lifecycle:
 
 1. **Load + validate** the config (`config.Load`).
-2. **Open Postgres** under a bounded budget — `storeOpenBudget = 15s` (`main.go:38`) — so a wedged database surfaces fast at boot instead of hanging the process. `store.Open` dials the pool and pings it (`store/store.go:87`).
+2. **Open Postgres** under a bounded budget — `storeOpenBudget = 15s` (`main.go:43`) — so a wedged database surfaces fast at boot instead of hanging the process. `store.Open` dials the pool and pings it (`store/store.go:87`).
 3. **Migrate** forward-only, each step in its own transaction, idempotent (`store.Migrate`, `store/store.go:113`). The applied schema version is logged.
 4. **Wire the feeds**: build the `registry` from `cfg.Gateways`, the `RecordHandler`, and the OTLP trace + metrics receivers; construct the console `Server`.
 5. **Serve both listeners** on context-bound goroutines.
@@ -253,9 +253,9 @@ Flags: `-config <path>` (overrides `SLIPSPACE_ARBITER_CONFIG`) and `-version` (p
 Shutdown is signal-driven (`SIGINT` / `SIGTERM` via `signal.NotifyContext`):
 
 - The OTLP gRPC server is stopped with `GracefulStop` (drains in-flight RPCs).
-- The HTTP server is drained with `Shutdown` under a **5-second** budget — `shutdownTimeout` (`main.go:37`). That shutdown context is **deliberately detached** from the cancelled signal context (`//nolint:contextcheck`, `main.go:143`) so the drain budget outlives the `SIGTERM` that triggered it.
+- The HTTP server is drained with `Shutdown` under a **5-second** budget — `shutdownTimeout` (`main.go:42`). That shutdown context is **deliberately detached** from the cancelled signal context (`//nolint:contextcheck`, `main.go:220`) so the drain budget outlives the `SIGTERM` that triggered it.
 
-If either listener returns a non-`ErrServerClosed` error before a signal arrives, `run` stops the OTLP server and returns the error, exiting non-zero (`main.go:128`).
+If either listener returns a non-`ErrServerClosed` error before a signal arrives, `run` stops the OTLP server and returns the error, exiting non-zero (`main.go:208`).
 
 ---
 
