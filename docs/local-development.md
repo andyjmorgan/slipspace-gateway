@@ -126,7 +126,7 @@ admin:
 
 ### `policy.yaml`
 
-This file is **v2-shaped** (`contracts/config/model.go`): a configuration carries `credentials` (one key per provider), `bindings` (the router as data — `(protocol, models)` → `provider` or `group`), `passthrough_bindings` (path-pattern families), `rule_names`, and `tags`. The v1 `upstream_credentials` / `resilience_name` fields and the routing actions (`changeProvider` / `changeUrl` / `useResiliencePolicy`) are gone — routing is bindings, and rules are pure request/response transforms (tags, header sets, body rewrites). It loads two configurations (`dev`, `production`) plus their api keys and rules:
+This file is **v2-shaped** (`contracts/config/model.go`): a configuration carries `credentials` (one key per provider), `bindings` (the router as data — `(protocol, models)` → `provider` or `group`), `passthrough_bindings` (path-pattern families), `rule_names`, and `tags`. The v1 `upstream_credentials` / `resilience_name` fields are gone — routing is bindings. Rules can still retarget the request: `changeProvider` (routing-affecting; re-resolved via `selection.ResolveTarget` on post-rule state), `changeModelName`, and `changeApiKey` are all live actions; only `changeUrl` and `useResiliencePolicy` are inert. The remaining rule actions are request/response transforms (tags, header sets, body rewrites). It loads two configurations (`dev`, `production`) plus their api keys and rules:
 
 ```yaml
 configurations:
@@ -335,7 +335,7 @@ Race detector is always on (`-race`). Goroutine leak detection via `goleak` runs
 4. Spawns `cmd/gateway` as a subprocess pointing at the tmp config and the per-test spool root
 5. Drives real HTTP against the gateway, asserts on the response, captured spool records, and Prometheus scrape
 
-The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), the S3 and Azure connectors (`connector_s3/`, `connector_azure/`), record reporting (`reporting/`), the Arbiter telemetry stack (`arbiter/`), cross-provider translation (`translate/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`); `types/` holds shared fixtures. Webhook receivers spin up a local `httptest.Server` per test; the `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE=true` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
+The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), the S3 and Azure connectors (`connector_s3/`, `connector_azure/`), record reporting (`reporting/`), the Arbiter telemetry stack (`arbiter/`), cross-provider translation (`translate/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`); `types/` holds shared fixtures. Webhook receivers spin up a local `httptest.Server` per test; the `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE=1` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
 
 Integration-style tests that need real dependencies live in this layer too, not behind a separate build tag — they bring up the dependency via testcontainers (SeaweedFS for S3, Azurite for Azure Blob, Postgres for telemetry), run the code against it, and assert on the dependency's state. `test/e2e/connector_s3/seaweedfs_test.go` is the canonical container-backed example.
 

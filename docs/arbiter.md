@@ -1,6 +1,6 @@
 # Arbiter
 
-The **Arbiter** is a standalone binary (`cmd/arbiter`, image `arbiter`) that one or more SlipSpace gateways report into. It is the central, Postgres-backed (TimescaleDB) home for everything a fleet of gateways emits: the gen_ai OTLP spans, the `slipspace.*` OTel meters, and the full per-request **Record** (request/response bodies, headers, rule chain, resilience attempts). The gen_ai span is the **single writer** of the per-request entity; the Record lands a lazy verbatim blob joined by `correlation_id` only when an operator opens the inspector; the meters feed pre-aggregated dashboards. The service serves an operator console — the same dashboard + message inspector the gateway's own admin console exposes, but fleet-wide and with full-history retention.
+The **Arbiter** is a standalone binary (`cmd/arbiter`, image `slipspace-arbiter`) that one or more SlipSpace gateways report into. It is the central, Postgres-backed (TimescaleDB) home for everything a fleet of gateways emits: the gen_ai OTLP spans, the `slipspace.*` OTel meters, and the full per-request **Record** (request/response bodies, headers, rule chain, resilience attempts). The gen_ai span is the **single writer** of the per-request entity; the Record lands a lazy verbatim blob joined by `correlation_id` only when an operator opens the inspector; the meters feed pre-aggregated dashboards. The service serves an operator console — the same dashboard + message inspector the gateway's own admin console exposes, but fleet-wide and with full-history retention.
 
 It is deployed **separately** from the gateway, with its **own Postgres**. The gateway data plane never depends on it: if the Arbiter is down, the gateway keeps forwarding traffic (OTLP export and Record push are best-effort, fire-and-forget). The service never sits on a request path and never signs receipts — it only ever *consumes* telemetry.
 
@@ -263,7 +263,7 @@ If either listener returns a non-`ErrServerClosed` error before a signal arrives
 
 The Arbiter is a **separate deployable** from the gateway, with its **own Postgres**. It shares no process, no config file, and no database with the gateway; the only coupling is the OTLP + HMAC-webhook wire contract (`deploy/docker/Dockerfile.arbiter` header).
 
-- **Image** — `arbiter`, built from `deploy/docker/Dockerfile.arbiter`. A multi-stage build compiles the second Vite target (`npm run build:telemetry`) into `internal/arbiter/server/webdist`, embeds it via `go:embed`, builds a static `CGO_ENABLED=0` binary, and ships it on `scratch` as non-root (`USER 65532:65532`). `EXPOSE 8686 8687`.
+- **Image** — `slipspace-arbiter` (the OCI image title in `deploy/docker/Dockerfile.arbiter`; the binary is `arbiter` and the local compose build tag is `arbiter:dev`), built from `deploy/docker/Dockerfile.arbiter`. A multi-stage build compiles the second Vite target (`npm run build:telemetry`) into `internal/arbiter/server/webdist`, embeds it via `go:embed`, builds a static `CGO_ENABLED=0` binary, and ships it on `scratch` as non-root (`USER 65532:65532`). `EXPOSE 8686 8687`.
 - **Local stack** — `docker-compose.arbiter.yaml` brings up Postgres 16 + the arbiter binary, mounting `deploy/compose/arbiter.yaml` at `/etc/slipspace/arbiter.yaml`. Run it independently of the gateway compose file:
 
   ```sh
