@@ -342,6 +342,32 @@ func TestCaptureContent_Attrs(t *testing.T) {
 	}
 }
 
+func TestCaptureContent_PreservesToolInputRole(t *testing.T) {
+	span := &tracepb.Span{Attributes: []*commonpb.KeyValue{
+		strKV(attrInputMessages, `[{"role":"tool","parts":[{"type":"tool_call_response","id":"toolu_1","result":"command output"}]}]`),
+	}}
+	b := captureContent(span, testContentCap)
+	var got struct {
+		InputMessages []struct {
+			Role  string `json:"role"`
+			Parts []struct {
+				Type   string `json:"type"`
+				Result string `json:"result"`
+			} `json:"parts"`
+		} `json:"input_messages"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("content decode: %v", err)
+	}
+	if len(got.InputMessages) != 1 || got.InputMessages[0].Role != "tool" {
+		t.Fatalf("input messages = %+v, want one tool-role message", got.InputMessages)
+	}
+	parts := got.InputMessages[0].Parts
+	if len(parts) != 1 || parts[0].Type != "tool_call_response" || parts[0].Result != "command output" {
+		t.Errorf("input parts = %+v, want preserved tool response", parts)
+	}
+}
+
 func TestCaptureContent_None(t *testing.T) {
 	if b := captureContent(&tracepb.Span{}, testContentCap); b != nil {
 		t.Errorf("content = %s, want nil", b)

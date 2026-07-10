@@ -86,9 +86,11 @@ type Content struct {
 	// request, not just the first, with each block preserved as its own part.
 	SystemInstructions []Part
 
-	// InputMessage is the latest user turn only (gen_ai.input.messages,
-	// bounded to one turn), carrying its real parts — text, pass-through
-	// media blocks, tool results. Nil when the request had no user turn.
+	// InputMessage is the latest input turn (gen_ai.input.messages, bounded
+	// to one turn), carrying its real parts — text, pass-through media blocks,
+	// tool results. Pure tool-result continuations use role "tool"; all other
+	// request turns retain their provider-normalised role. Nil when the request
+	// had no input turn.
 	InputMessage *Message
 
 	// ToolDefinitions is the request's tool list normalised to the spec
@@ -249,7 +251,8 @@ func anthropicContent(raw []byte) Content {
 	}
 	for _, m := range body.Messages {
 		if m.Role == "user" {
-			c.InputMessage = &Message{Role: "user", Parts: contentParts(m.Content)}
+			parts := contentParts(m.Content)
+			c.InputMessage = &Message{Role: inputRole(parts), Parts: parts}
 		}
 	}
 	return c
@@ -280,10 +283,26 @@ func geminiContent(raw []byte) Content {
 		// the explicit "function" role — accept both so the tool result is
 		// captured rather than dropped.
 		if m.Role == "user" || m.Role == "" || m.Role == "function" {
-			c.InputMessage = &Message{Role: "user", Parts: geminiParts(m.Parts)}
+			parts := geminiParts(m.Parts)
+			c.InputMessage = &Message{Role: inputRole(parts), Parts: parts}
 		}
 	}
 	return c
+}
+
+// inputRole maps a pure tool-result continuation to the GenAI semantic
+// convention's "tool" role. A provider may put tool responses under its user
+// role on the wire; mixed turns still represent user input and remain "user".
+func inputRole(parts []Part) string {
+	if len(parts) == 0 {
+		return "user"
+	}
+	for _, p := range parts {
+		if p.Type != "tool_call_response" {
+			return "user"
+		}
+	}
+	return "tool"
 }
 
 // geminiParts maps a Gemini parts array to bounded span parts via the shared

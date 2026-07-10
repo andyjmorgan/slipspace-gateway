@@ -460,6 +460,36 @@ func TestEmitTrace_ContentOnSpan(t *testing.T) {
 	}
 }
 
+func TestEmitTrace_AnthropicToolResultUsesToolRole(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	r := &reporterRun{
+		factory:       &reporterFactory{tracer: tp.Tracer("test"), captureContent: true},
+		provider:      "anthropic",
+		protocol:      "messages",
+		model:         "claude-sonnet-4",
+		configuration: "p",
+		started:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	ctx := bodycapture.WithCaptured(context.Background(), bodycapture.Captured{
+		Raw: []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"command output"}]}]}`),
+	})
+	r.emitTrace(ctx, events.Request{
+		Provider: "anthropic", Protocol: "messages", Model: "claude-sonnet-4", StatusCode: 200, DurationMs: 10,
+	}, nil)
+
+	attrs := sr.Ended()[0].Attributes()
+	v, ok := attrValue(attrs, observability.AttrGenAIInputMessages)
+	if !ok {
+		t.Fatal("gen_ai.input.messages absent")
+	}
+	got := v.AsString()
+	if !strings.Contains(got, `"role":"tool"`) || !strings.Contains(got, `"type":"tool_call_response"`) || !strings.Contains(got, "command output") {
+		t.Errorf("gen_ai.input.messages = %s, want tool-role response", got)
+	}
+}
+
 // The executor flag on a tool_call part must survive onto the span's
 // gen_ai.output.messages JSON — it is the only signal the telemetry console
 // has for bucketing a provider-hosted tool (e.g. OpenAI web_search, whose

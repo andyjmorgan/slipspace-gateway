@@ -121,6 +121,29 @@ func TestExtractContent_Anthropic_ToolUseAndResult(t *testing.T) {
 	if p.Type != "tool_call_response" || p.ID != "toolu_1" || p.Result != "42 degrees" {
 		t.Errorf("tool_result part = %+v", p)
 	}
+	if c.InputMessage.Role != "user" {
+		t.Errorf("mixed text/tool-result role = %q, want user", c.InputMessage.Role)
+	}
+}
+
+func TestExtractContent_Anthropic_PureToolResultsUseToolRole(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"tool_result","tool_use_id":"toolu_1","content":"sunny"},
+		{"type":"tool_result","tool_use_id":"toolu_2","content":"rainy"}
+	]}]}`)
+	c := genaiattr.ExtractContent("messages", raw)
+	if c.InputMessage == nil || c.InputMessage.Role != "tool" {
+		t.Fatalf("input message = %+v, want role tool", c.InputMessage)
+	}
+	if len(c.InputMessage.Parts) != 2 {
+		t.Fatalf("parts = %+v, want two tool responses", c.InputMessage.Parts)
+	}
+	for i, p := range c.InputMessage.Parts {
+		if p.Type != "tool_call_response" {
+			t.Errorf("part %d = %+v, want tool_call_response", i, p)
+		}
+	}
 }
 
 func TestExtractContent_Anthropic_Thinking(t *testing.T) {
@@ -287,6 +310,15 @@ func TestExtractContent_PartEdgeCases(t *testing.T) {
 	}
 	if c4.InputMessage.Parts[0].Name != "f" {
 		t.Errorf("functionResponse name = %q", c4.InputMessage.Parts[0].Name)
+	}
+	if c4.InputMessage.Role != "tool" {
+		t.Errorf("pure functionResponse role = %q, want tool", c4.InputMessage.Role)
+	}
+
+	// Text mixed with a function response remains a user turn.
+	c4Mixed := genaiattr.ExtractContent("generate_content", []byte(`{"contents":[{"role":"user","parts":[{"functionResponse":{"name":"f","response":{"ok":true}}},{"text":"continue"}]}]}`))
+	if c4Mixed.InputMessage == nil || c4Mixed.InputMessage.Role != "user" {
+		t.Errorf("mixed Gemini input = %+v, want role user", c4Mixed.InputMessage)
 	}
 
 	// An Anthropic tool_result with array content flattens text + content

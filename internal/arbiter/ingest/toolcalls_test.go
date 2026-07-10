@@ -30,7 +30,7 @@ func TestToolCallsFromEvent_CallAndResult(t *testing.T) {
 			"output_messages":[{"role":"assistant","parts":[
 				{"type":"tool_call","id":"toolu_1","name":"Skill","arguments":{"skill":"ship"},"executor":"client"}
 			]}],
-			"input_messages":[{"role":"user","parts":[
+			"input_messages":[{"role":"tool","parts":[
 				{"type":"tool_call_response","id":"toolu_0","result":"prior result"}
 			]}]
 		}`),

@@ -348,7 +348,7 @@ type reporterRun struct {
 	serverToolUse map[string]int
 
 	// reqContent is the bounded request content (system instructions,
-	// latest user turn, tool definitions) parsed once from the request body
+	// latest input turn, tool definitions) parsed once from the request body
 	// and shared by the span and event emitters. contentExtracted guards
 	// the lazy single parse (only done when content capture is enabled).
 	reqContent       genaiattr.Content
@@ -1517,7 +1517,7 @@ func (r *reporterRun) emitEvents(ctx context.Context, ev events.Request) {
 }
 
 // emitOperationDetails emits the gen_ai.client.inference.operation.details
-// event carrying the bounded prompt/response content: the latest user turn,
+// event carrying the bounded prompt/response content: the latest input turn,
 // the model's response, the system instructions, and the tool definitions.
 // Messages and tool definitions are recorded as structured log values (the
 // event's "MUST be structured" requirement); system_instructions is plain
@@ -1885,7 +1885,7 @@ func capText(s string, cap int) string {
 }
 
 // boundedContent parses the request body for the bounded prompt content
-// (system instructions, latest user turn, tool definitions) exactly once,
+// (system instructions, latest input turn, tool definitions) exactly once,
 // caching it so the span and event emitters share a single parse rather
 // than each re-parsing the body. Zero Content when no body was captured.
 func (r *reporterRun) boundedContent(ctx context.Context) genaiattr.Content {
