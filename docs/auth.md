@@ -163,7 +163,7 @@ flowchart LR
 | `X-Slipspace-Identity` valid but the key's `configuration:` is absent from `ConfigurationIndex` | 403 `unknown configuration` | `unknown_configuration` — load-time validation skew only |
 | Both selector headers present | `X-Slipspace-Identity` resolves; `LegacyConfigurationHeader` set → deprecation warning logged | (identity-path result tags) |
 | `X-Slipspace-Configuration: ""` (empty / whitespace-only) and no identity header | falls through to managed-mode discovery; whitespace is trimmed in resolution | (managed-mode result tags) |
-| `X-Slipspace-Configuration` names a Configuration absent from `ConfigurationIndex` | 403 `unknown configuration` | `unknown_configuration` |
+| `X-Slipspace-Configuration` names a Configuration absent from `ConfigurationIndex` | 403 `unknown configuration` | `unknown_configuration` — normal client error, **not** validation skew: this deprecated path 403s on any unknown client-supplied name |
 | Valid selector, no `Authorization` header | request forwarded with no `Authorization`; upstream returns its own auth error | `success` |
 | Valid selector + bogus `Authorization` value | forwarded verbatim; upstream returns 401/403 | `success` at the gateway layer — auth resolution succeeded, the upstream's rejection is its own concern. |
 

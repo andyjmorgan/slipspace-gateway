@@ -101,7 +101,7 @@ The loader recognises **nine** top-level keys (`internal/config/loader.go`, `key
 | `telemetry` | Operator-tunable telemetry knobs (today: GenAI content-capture byte caps). Optional; absent resolves to built-in defaults. |
 | `pricing` | Per-request USD cost estimation: rate-card overrides over the embedded defaults. Optional; absent means costing off. |
 
-The pre-rename `backends:` key is rejected with `ErrLegacyProvidersKey`. Any other unrecognised top-level key is silently ignored by the YAML decoder (the `configDoc` struct only has fields for the eight blocks above plus the `backends` trap).
+The pre-rename `backends:` key is rejected with `ErrLegacyProvidersKey`. Any other unrecognised top-level key is silently ignored by the YAML decoder (the `configDoc` struct only has fields for the nine blocks above plus the `backends` trap).
 
 ---
 

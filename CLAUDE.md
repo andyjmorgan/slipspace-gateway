@@ -84,7 +84,7 @@ Standard modern Go applies (current stable, `go.mod` pins the min; `gofmt`/`goim
 ### Logging
 
 - `log/slog` (stdlib) JSON handler only — no Zap/Zerolog/Logrus.
-- Enriched context fields: `service`, `version`, `correlation_id`, `api_key_id`, `configuration`, `provider`, `endpoint`, `model`. Per-request logger on `context.Context` via `logging.FromContext(ctx)`.
+- Enriched context fields: `service`, `version`, `correlation_id`, `session_id`, `agent_id`, `user_id`, `api_key_id`, `configuration`, `provider`, `protocol`, `model` (the field is `protocol`; `endpoint` was retired/renamed). Per-request logger on `context.Context` via `observability.FromContext(ctx)`.
 - **Provider response bodies are never logged in full** — they flow through the connector spool when bindings allow; only metadata + correlation IDs hit logs.
 
 ### Dependencies
