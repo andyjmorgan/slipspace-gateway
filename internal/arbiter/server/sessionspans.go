@@ -323,8 +323,8 @@ func usageFromBlob(blob map[string]json.RawMessage) adminc.SessionSpanUsage {
 // ingest stores: {input_messages, output_messages} of [{role, parts}], each
 // part in the gateway normalizer's uniform shape (text/reasoning carry
 // content, tool_call carries id/name/arguments, tool_call_response carries
-// id/result). Only the fields this projection reads are modelled — the blob
-// itself stays verbatim in the store.
+// id/response). Result reads the pre-v2.2.2 wire key so existing stored spans
+// remain renderable. The blob itself stays verbatim in the store.
 type spanContent struct {
 	InputMessages  []spanMessage `json:"input_messages"`
 	OutputMessages []spanMessage `json:"output_messages"`
@@ -341,8 +341,16 @@ type spanPart struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	Response  string          `json:"response"`
 	Result    string          `json:"result"`
 	Executor  string          `json:"executor"`
+}
+
+func (p spanPart) responseText() string {
+	if p.Response != "" {
+		return p.Response
+	}
+	return p.Result
 }
 
 // outputEnvelope flattens the assistant output messages into the DTO's
@@ -386,10 +394,11 @@ func outputEnvelope(msgs []spanMessage, fieldCap int, bodies bool) ([]adminc.Ses
 				}
 				parts = append(parts, part)
 			case "tool_call_response":
-				n := charCount(p.Result)
+				response := p.responseText()
+				n := charCount(response)
 				part := adminc.SessionSpanOutputPart{Type: "tool_call_response", ID: p.ID, Chars: &n, Executor: p.Executor}
 				if bodies {
-					part.Text = capText(p.Result, fieldCap)
+					part.Text = capText(response, fieldCap)
 				}
 				parts = append(parts, part)
 			default:
@@ -432,10 +441,11 @@ func inputEnvelope(msgs []spanMessage, fieldCap int, bodies bool) ([]adminc.Sess
 				totalChars += n
 				hasText = true
 			case "tool_call_response":
-				n := charCount(p.Result)
+				response := p.responseText()
+				n := charCount(response)
 				part := adminc.SessionSpanInputPart{Type: "tool_call_response", ID: p.ID, Chars: &n}
 				if bodies {
-					part.Text = capText(p.Result, fieldCap)
+					part.Text = capText(response, fieldCap)
 				}
 				parts = append(parts, part)
 			}

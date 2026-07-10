@@ -75,7 +75,15 @@ type genPart struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	Response  string          `json:"response"`
 	Result    string          `json:"result"`
+}
+
+func (p genPart) responseText() string {
+	if p.Response != "" {
+		return p.Response
+	}
+	return p.Result
 }
 
 // BuildUnits decodes a request event's stored gen_ai content into the scannable
@@ -138,7 +146,7 @@ func renderPart(p genPart) (kind, text string) {
 	case kindReasoning:
 		return kindReasoning, p.Content
 	case kindToolCallResponse:
-		return kindToolCallResponse, p.Result
+		return kindToolCallResponse, p.responseText()
 	case kindToolCall:
 		// Scan the call's name + argument JSON — injection/PII can ride in args.
 		var b strings.Builder

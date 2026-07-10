@@ -21,7 +21,13 @@ func msg(role string, parts ...map[string]any) map[string]any {
 }
 func textPart(s string) map[string]any { return map[string]any{"type": "text", "content": s} }
 func toolResult(s string) map[string]any {
-	return map[string]any{"type": "tool_call_response", "id": "t1", "result": s}
+	return map[string]any{"type": "tool_call_response", "id": "t1", "response": s}
+}
+
+func TestGenPartResponseText_LegacyResult(t *testing.T) {
+	if got := (genPart{Result: "legacy"}).responseText(); got != "legacy" {
+		t.Errorf("responseText = %q, want legacy", got)
+	}
 }
 
 func TestBuildUnits(t *testing.T) {

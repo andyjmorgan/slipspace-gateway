@@ -485,8 +485,11 @@ func TestEmitTrace_AnthropicToolResultUsesToolRole(t *testing.T) {
 		t.Fatal("gen_ai.input.messages absent")
 	}
 	got := v.AsString()
-	if !strings.Contains(got, `"role":"tool"`) || !strings.Contains(got, `"type":"tool_call_response"`) || !strings.Contains(got, "command output") {
+	if !strings.Contains(got, `"role":"tool"`) || !strings.Contains(got, `"type":"tool_call_response"`) || !strings.Contains(got, `"response":"command output"`) {
 		t.Errorf("gen_ai.input.messages = %s, want tool-role response", got)
+	}
+	if strings.Contains(got, `"result":`) {
+		t.Errorf("gen_ai.input.messages = %s, contains legacy result key", got)
 	}
 }
 

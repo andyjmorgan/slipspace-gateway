@@ -877,7 +877,7 @@ func TestE2E_SessionSpansDTO(t *testing.T) {
 		strKV("gen_ai.request.model", "claude-x"),
 		intKV("http.response.status_code", 200),
 		strSliceKV("gen_ai.response.finish_reasons", "end_turn"),
-		strKV("gen_ai.input.messages", `[{"role":"user","parts":[{"type":"tool_call_response","id":"toolu_e2e","result":"ok: 12 passed"}]}]`),
+		strKV("gen_ai.input.messages", `[{"role":"tool","parts":[{"type":"tool_call_response","id":"toolu_e2e","response":"ok: 12 passed"}]}]`),
 		strKV("gen_ai.output.messages", `[{"role":"assistant","parts":[{"type":"text","content":"all green"}]}]`),
 	)
 
@@ -1095,7 +1095,7 @@ func TestE2E_ToolCallIndex(t *testing.T) {
 		strKV("gen_ai.provider.name", "anthropic"),
 		strKV("gen_ai.request.model", "claude-x"),
 		intKV("http.response.status_code", 200),
-		strKV("gen_ai.input.messages", `[{"role":"user","parts":[{"type":"tool_call_response","id":"`+callID+`","result":"3 files"}]}]`),
+		strKV("gen_ai.input.messages", `[{"role":"tool","parts":[{"type":"tool_call_response","id":"`+callID+`","response":"3 files"}]}]`),
 	)
 
 	// The same row is now resolved: name + arguments from the call, result from

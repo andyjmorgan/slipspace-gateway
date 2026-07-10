@@ -148,7 +148,7 @@ func TestSessionSpanFromEvent(t *testing.T) {
 							"role": "assistant",
 							"parts": []any{
 								map[string]any{"type": "tool_call", "id": "srvtoolu_01", "name": "web_search", "arguments": map[string]any{"query": "go 1.26"}, "executor": "server"},
-								map[string]any{"type": "tool_call_response", "id": "srvtoolu_01", "result": "10 results", "executor": "server"},
+								map[string]any{"type": "tool_call_response", "id": "srvtoolu_01", "response": "10 results", "executor": "server"},
 								map[string]any{"type": "text", "content": "found it"},
 							},
 						}},

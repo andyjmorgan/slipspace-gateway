@@ -29,14 +29,23 @@ type genAIMessage struct {
 }
 
 // genAIPart is one normalized message part. tool_call carries id/name/arguments;
-// tool_call_response carries id/result; executor marks server vs client on both.
+// tool_call_response carries id/response; Result reads the pre-v2.2.2 wire key
+// so existing stored spans remain queryable.
 type genAIPart struct {
 	Type      string          `json:"type"`
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	Response  string          `json:"response"`
 	Result    string          `json:"result"`
 	Executor  string          `json:"executor"`
+}
+
+func (p genAIPart) responseText() string {
+	if p.Response != "" {
+		return p.Response
+	}
+	return p.Result
 }
 
 // ToolCallsFromEvent extracts a span's tool-call observations from the
@@ -113,11 +122,12 @@ func callObservation(e store.RequestEvent, p genAIPart) store.ToolCallObservatio
 // resultObservation builds the RESPONSE half from a tool_call_response part,
 // capping the result text (ResultChars carries the true size).
 func resultObservation(e store.RequestEvent, p genAIPart) store.ToolCallObservation {
+	result := p.responseText()
 	return store.ToolCallObservation{
 		Kind:          store.ToolResultHalf,
 		ToolCallID:    p.ID,
-		Result:        capRunes(p.Result, maxToolResultBytes),
-		ResultChars:   utf8.RuneCountInString(p.Result),
+		Result:        capRunes(result, maxToolResultBytes),
+		ResultChars:   utf8.RuneCountInString(result),
 		Executor:      p.Executor,
 		SessionID:     e.SessionID,
 		CorrelationID: e.CorrelationID,

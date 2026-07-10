@@ -70,6 +70,20 @@ func eventAttr(r otellog.Record, key string) (otellog.Value, bool) {
 	return val, found
 }
 
+func TestLogPartValue_ToolResponseUsesOTelResponseKey(t *testing.T) {
+	v := (emitPart{typ: observability.PartTypeToolCallResponse, id: "toolu_1", result: "command output"}).logPartValue()
+	got := map[string]otellog.Value{}
+	for _, kv := range v.AsMap() {
+		got[kv.Key] = kv.Value
+	}
+	if got["response"].AsString() != "command output" {
+		t.Errorf("response = %q, want command output", got["response"].AsString())
+	}
+	if _, ok := got["result"]; ok {
+		t.Error("structured tool response contains legacy result key")
+	}
+}
+
 func TestEmitEvents_ExceptionOnError(t *testing.T) {
 	rl := &recordingEventLogger{}
 	r := &reporterRun{

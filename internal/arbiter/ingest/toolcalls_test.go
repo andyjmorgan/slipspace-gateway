@@ -31,7 +31,7 @@ func TestToolCallsFromEvent_CallAndResult(t *testing.T) {
 				{"type":"tool_call","id":"toolu_1","name":"Skill","arguments":{"skill":"ship"},"executor":"client"}
 			]}],
 			"input_messages":[{"role":"tool","parts":[
-				{"type":"tool_call_response","id":"toolu_0","result":"prior result"}
+				{"type":"tool_call_response","id":"toolu_0","response":"prior result"}
 			]}]
 		}`),
 	}
@@ -117,7 +117,7 @@ func TestToolCallsFromEvent_ResultCapped(t *testing.T) {
 	big := strings.Repeat("x", maxToolResultBytes+500)
 	content, _ := json.Marshal(map[string]any{
 		"input_messages": []any{map[string]any{"role": "user", "parts": []any{
-			map[string]any{"type": "tool_call_response", "id": "toolu_big", "result": big},
+			map[string]any{"type": "tool_call_response", "id": "toolu_big", "response": big},
 		}}},
 	})
 	e := store.RequestEvent{CorrelationID: "corr-5", SpanEvent: spanEventWith(string(content))}

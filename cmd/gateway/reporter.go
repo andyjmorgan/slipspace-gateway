@@ -1760,7 +1760,7 @@ func (e emitPart) logPartValue() otellog.Value {
 		if e.id != "" {
 			kvs = append(kvs, otellog.String("id", e.id))
 		}
-		kvs = append(kvs, otellog.String("result", e.result))
+		kvs = append(kvs, otellog.String("response", e.result))
 		if e.executor != "" {
 			kvs = append(kvs, otellog.String("executor", e.executor))
 		}
@@ -1951,7 +1951,7 @@ func (e emitPart) jsonMap() map[string]any {
 		if e.id != "" {
 			m["id"] = e.id
 		}
-		m["result"] = e.result
+		m["response"] = e.result
 		if e.executor != "" {
 			m["executor"] = e.executor
 		}
