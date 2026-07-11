@@ -35,7 +35,7 @@ flowchart TD
     dash["GET /api/v1/dashboard/* (incl. security, security/audit)"]
     msgs["GET /api/v1/messages*"]
     facets["GET /api/v1/facets"]
-    events["GET /api/v1/events*"]
+    events["GET /api/v1/events, /events/{id}, /events/{id}/body, /events/{id}/span"]
     sessions["GET /api/v1/sessions, /sessions/{id}, /sessions/{id}/spans, /sessions/{id}/spans/{cid}"]
     toolcalls["GET /api/v1/tool-calls, /tool-calls/{id}, /tool-calls/facets"]
     security["GET /api/v1/verdict/{id}, /api/v1/findings"]

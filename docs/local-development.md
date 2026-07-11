@@ -387,7 +387,7 @@ If `golangci-lint` isn't installed (`command -v golangci-lint` returns nothing),
 
 ## Inspecting captured connector segments
 
-Connector segments are ndjson.zst files under `<spool-root>/records/<connector>/sealed/` (`internal/spool/spool.go::Spool` builds the per-connector tree under `Options.Root`). The spool root defaults to `/var/lib/slipspace/spool/` in both modes; for `make dev-compose` it lives on the `slipspace-spool` named volume. To inspect segments from a native `make dev` run, point the spool at the working tree first (`SLIPSPACE_SPOOL_ROOT=./tmp/spool`), then zstd-decompress and pipe through `jq`. Each line is one [`Record`](../contracts/connector/record.go):
+Connector segments are ndjson.zst files under `<spool-root>/records/<connector>/sealed/` (`internal/spool/spool.go::Spool` builds the per-connector tree under `Options.Root`, with five subdirectories: `active/`, `sealed/`, `uploading/`, `deadletter/`, and `quarantine/` — torn/undecodable segments are quarantined on startup recovery). The spool root defaults to `/var/lib/slipspace/spool/` in both modes; for `make dev-compose` it lives on the `slipspace-spool` named volume. To inspect segments from a native `make dev` run, point the spool at the working tree first (`SLIPSPACE_SPOOL_ROOT=./tmp/spool`), then zstd-decompress and pipe through `jq`. Each line is one [`Record`](../contracts/connector/record.go):
 
 ```sh
 # native make dev, with SLIPSPACE_SPOOL_ROOT=./tmp/spool exported for the gateway

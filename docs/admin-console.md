@@ -68,7 +68,7 @@ The console is off by default. Two things must both be true for the listener to 
 1. `gateway.admin.enabled: true` in the merged YAML.
 2. A non-empty password resolved from either the env var or the yaml `password` field.
 
-When either is false `startAdmin` logs `"admin console disabled"` and returns without opening a port — the rest of the gateway boots normally.
+These two conditions are checked in different places. `startAdmin` gates the listener solely on `admin.enabled` (`resolved.Admin != nil && resolved.Admin.Enabled`): when that's false it logs `"admin console disabled"` and returns without opening a port — the rest of the gateway boots normally. The non-empty-password requirement is *not* re-checked in `startAdmin`; it is enforced earlier, at config load, by `admin.Config.Validate`, which returns `ErrPasswordRequired` when `enabled: true` has no password — so an enabled console with no password fails to boot rather than logging `"admin console disabled"`.
 
 The minimum viable wiring:
 
