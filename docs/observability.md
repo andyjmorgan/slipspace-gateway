@@ -64,7 +64,7 @@ flowchart LR
     R1 -. enabled by<br/>SLIPSPACE_PROMETHEUS_BIND .-> R1
     R2 -. enabled by<br/>SLIPSPACE_OTLP_ENDPOINT .-> R2
     R3 --> Snap[Snapshotter<br/>5-min ring]
-    Snap --> Admin[Admin dashboard handlers<br/>/api/v1/dashboard, /api/v1/timeseries]
+    Snap --> Admin[Admin dashboard handlers<br/>/api/v1/dashboard/summary, /api/v1/dashboard/timeseries]
 ```
 
 `Provider.Shutdown` collapses every exporter shutdown and the MeterProvider shutdown into a single idempotent `once.Do` so graceful termination handlers can call it multiple times without double-flushing.
@@ -313,8 +313,8 @@ The snapshotter is the in-process windowed metric store that backs the admin con
 ```mermaid
 flowchart LR
     MR[ManualReader] -- Collect --> Snap[Snapshotter<br/>ring of Samples]
-    Snap -- WindowEnds(window) --> H1[/api/v1/dashboard<br/>summary handler]
-    Snap -- Samples() --> H2[/api/v1/timeseries<br/>time-bucketed handler]
+    Snap -- WindowEnds(window) --> H1[/api/v1/dashboard/summary<br/>summary handler]
+    Snap -- Samples() --> H2[/api/v1/dashboard/timeseries<br/>time-bucketed handler]
     H1 --> UI[Admin SPA<br/>dashboard cards + charts]
     H2 --> UI
 ```

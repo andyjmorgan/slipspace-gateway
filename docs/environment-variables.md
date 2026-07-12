@@ -160,7 +160,7 @@ The live messages pane shows a few-minute live tail of completed requests in the
 
 The ring (`*_CAPACITY`) sizes the message metadata list — once 100 entries are in, the oldest evict on each new arrival. 100 is deliberately small: a 1M-token-context request body can be 4 MB+, and the pane is honest about being a live tail, not a record of truth.
 
-The body store (`*_BODY_BYTES`) is a separate LRU that holds the captured request/response bodies keyed by `event_id`. At the 200 MiB default with the 8 MiB per-body cap, the store holds roughly 25 max-sized bodies or several hundred typical ones. The two LRUs evict independently — a message can show up in the live-tail pane after its body has already been evicted from the body store, in which case `GET /admin/api/v1/messages/{id}/body` returns 404 with `gone: true`.
+The body store (`*_BODY_BYTES`) is a separate LRU that holds the captured request/response bodies keyed by `event_id`. At the 200 MiB default with the 8 MiB per-body cap, the store holds roughly 25 max-sized bodies or several hundred typical ones. The two LRUs evict independently — a message can show up in the live-tail pane after its body has already been evicted from the body store, in which case `GET /admin/api/v1/messages/{event_id}/body` returns 404 (plain-text `not found`) — there is no `gone: true` response field.
 
 Three useful disable configurations:
 
