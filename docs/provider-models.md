@@ -96,10 +96,10 @@ same raw-bytes treatment applies to `Stop` (string or array of strings,
 > **`ToolCallFunction.Arguments` is a JSON string, not an object.** OpenAI ships
 > function-call arguments as a stringified JSON document, so `Arguments` is a Go
 > `string`; callers must `json.Unmarshal` it to recover the structured payload
-> (`chat.go:706-716`, `Arguments` at `chat.go:713`). In streaming,
+> (`chat.go:716-725`, `Arguments` at `chat.go:723`). In streaming,
 > `ToolCallFunctionDelta.Arguments` is emitted *without* `omitempty` because
 > OpenAI sends an empty-string delta as the "tool call begins" marker — dropping
-> it would lose the start signal (`chat.go:737-746`, `Arguments` at `chat.go:743`).
+> it would lose the start signal (`chat.go:747-755`, `Arguments` at `chat.go:753`).
 
 ## OpenAI — Responses API (`protocols/openai/responses`)
 

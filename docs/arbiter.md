@@ -113,7 +113,7 @@ The Record feed is the **gateway → service trust boundary**. `RecordHandler.Se
 
 ## Configuration
 
-Unlike the gateway — which scans a whole config **directory** — the Arbiter takes a **single YAML file** (`internal/arbiter/config/config.go::Load`). File contents are trusted (mounted from a k8s Secret or a filesystem-permissioned path); there is **no `${VAR}` / `env:` interpolation** inside the YAML, matching the gateway's "only file paths are env-overridable" rule. The decoder runs with `KnownFields(true)` (`config.go:101`), so a misspelled key is a hard parse error rather than a silently dropped field.
+Unlike the gateway — which scans a whole config **directory** — the Arbiter takes a **single YAML file** (`internal/arbiter/config/config.go::Load`). File contents are trusted (mounted from a k8s Secret or a filesystem-permissioned path); there is **no `${VAR}` / `env:` interpolation** inside the YAML, matching the gateway's "only file paths are env-overridable" rule. The decoder runs with `KnownFields(true)` (`config.go:262`), so a misspelled key is a hard parse error rather than a silently dropped field.
 
 ### Schema and defaults
 
