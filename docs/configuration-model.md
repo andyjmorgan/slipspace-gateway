@@ -156,7 +156,7 @@ providers:
 
 ### Auth validation
 
-`validateAuth` (`internal/config/config_validate.go:82`) enforces, per `auth` block on a protocol or passthrough family:
+`validateAuth` (`internal/config/config_validate.go:85`) enforces, per `auth` block on a protocol or passthrough family:
 
 - A non-empty `format` requires a non-empty `header` (`ErrAuthFormatWithoutHeader`) — a format with no header would be silently ignored.
 - A non-empty `format` must contain `{key}` **exactly once** (`ErrInvalidAuthFormat`).
@@ -409,7 +409,7 @@ Each rule must:
 
 Each connector entry must:
 
-- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:133`).
+- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:140`).
 - Pass `Connector.Validate()` — the per-type required-field check (s3 needs `bucket` + `region`, azure_blob needs `account` + `container`, webhook needs `url` + `secret_ref` + `timeout_ms`).
 - Be referenced by a defined `connector_bindings[].connector` name — an unknown reference aborts with `ErrUnknownConnectorReference`.
 
