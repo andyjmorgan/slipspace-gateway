@@ -180,3 +180,18 @@ advise:
 		t.Errorf("Candidates = %v", cfg.Advise.Candidates)
 	}
 }
+
+// TestRedacted_CarriesEffectiveRubric asserts the boot-resolved rubric rides
+// the applied-config snapshot into /api/v1/settings, and that `rubric:` is not
+// an authorable YAML key (yaml:"-" + KnownFields rejects it).
+func TestRedacted_CarriesEffectiveRubric(t *testing.T) {
+	t.Parallel()
+
+	cfg := adviseBase()
+	cfg.Advise = validAdvise()
+	cfg.Advise.Rubric = "resolved rubric text"
+	red := cfg.Redacted()
+	if red.Advise.Rubric != "resolved rubric text" {
+		t.Fatalf("Redacted().Advise.Rubric = %q, want the resolved text", red.Advise.Rubric)
+	}
+}

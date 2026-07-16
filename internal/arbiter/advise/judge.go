@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -31,6 +32,27 @@ anything whose scope is unclear. When unsure, do not switch.`
 
 // maxJudgeResponseBytes caps the judge's HTTP response body.
 const maxJudgeResponseBytes = 1 << 20
+
+// judgeAgentID is the named-agent id stamped on every judge request
+// (X-Slipspace-Agent-Id), so judge inferences appear in telemetry as a named
+// agent rather than anonymous SDK traffic.
+const judgeAgentID = "advise-judge"
+
+// ResolveRubric returns the effective judge rubric: the contents of
+// promptFile when set, else the built-in default. Resolved once at startup —
+// both the judge and the applied-config snapshot (served at /api/v1/settings)
+// consume the same resolved text, so the console always shows exactly what
+// the judge runs with.
+func ResolveRubric(promptFile string) (string, error) {
+	if promptFile == "" {
+		return defaultRubric, nil
+	}
+	raw, err := os.ReadFile(promptFile) //nolint:gosec // operator-trusted config path
+	if err != nil {
+		return "", fmt.Errorf("advise: read prompt_file: %w", err)
+	}
+	return string(raw), nil
+}
 
 // Judge classifies advisory requests by prompting a judge model over the
 // Anthropic messages wire shape (conventionally through a SlipSpace gateway
@@ -105,6 +127,16 @@ Task (first user message):
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+j.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	// Link the judge inference to the conversation it is deciding for: the
+	// gateway maps X-Slipspace-Thread-Id onto the span's conversation id, so
+	// the console's conversation view shows the judge call alongside the
+	// subagent's own requests. The named-agent id labels it as judge traffic.
+	// Session id is deliberately NOT set — that would fold the judge's spend
+	// into the user session's rollups.
+	if req.ConversationID != "" {
+		httpReq.Header.Set("X-Slipspace-Thread-Id", req.ConversationID)
+	}
+	httpReq.Header.Set("X-Slipspace-Agent-Id", judgeAgentID)
 
 	resp, err := j.httpc.Do(httpReq) //nolint:gosec // G704: request URL is the operator-configured judge upstream, not user input
 	if err != nil {

@@ -14,9 +14,11 @@ import (
 )
 
 // buildAdviseHandler constructs the routing-advisor handler from the advise
-// config block: the judge's bearer credential and optional rubric override
-// are read from their files at startup, never carried inline in config.
-func buildAdviseHandler(cfg config.Config, reg *registry.Registry, log *slog.Logger) (http.Handler, error) {
+// config block: the judge's bearer credential is read from its file at
+// startup, never carried inline in config. rubric is the effective judge
+// prompt already resolved by advise.ResolveRubric (main also stashes it on
+// the applied-config snapshot).
+func buildAdviseHandler(cfg config.Config, rubric string, reg *registry.Registry, log *slog.Logger) (http.Handler, error) {
 	keyRaw, err := os.ReadFile(cfg.Advise.Upstream.APIKeyFile) //nolint:gosec // operator-trusted config path
 	if err != nil {
 		return nil, fmt.Errorf("read api_key_file: %w", err)
@@ -24,15 +26,6 @@ func buildAdviseHandler(cfg config.Config, reg *registry.Registry, log *slog.Log
 	apiKey := string(bytes.TrimSpace(keyRaw))
 	if apiKey == "" {
 		return nil, fmt.Errorf("api_key_file %q is empty", cfg.Advise.Upstream.APIKeyFile)
-	}
-
-	rubric := ""
-	if cfg.Advise.PromptFile != "" {
-		raw, rerr := os.ReadFile(cfg.Advise.PromptFile) //nolint:gosec // operator-trusted config path
-		if rerr != nil {
-			return nil, fmt.Errorf("read prompt_file: %w", rerr)
-		}
-		rubric = string(raw)
 	}
 
 	judge := advise.NewJudge(
