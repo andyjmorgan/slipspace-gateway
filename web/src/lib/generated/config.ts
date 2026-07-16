@@ -11,9 +11,11 @@ import type { CircuitBreakerConfig } from "./resilience";
  */
 export const DefaultAdvisorTimeoutMs = 5000;
 /**
- * DefaultPinTTL is how long a stored pin stays live without renewal.
+ * DefaultPinTTLSeconds is how long a stored pin stays live without
+ * renewal. Declared in seconds (not time.Duration arithmetic) so the
+ * tygo-generated TS constant stays a plain number.
  */
-export const DefaultPinTTL = 2 * unknown /* time.Hour */;
+export const DefaultPinTTLSeconds = 7200;
 /**
  * DefaultApplyWindowRequests is how many requests into a conversation a
  * late-arriving verdict may still be applied. Past the window the prompt
@@ -72,7 +74,7 @@ export interface AgentRouting {
    */
   allow_models: string[];
   /**
-   * PinTTLSeconds is how long a pin lives. Zero applies DefaultPinTTL.
+   * PinTTLSeconds is how long a pin lives. Zero applies DefaultPinTTLSeconds.
    */
   pin_ttl_seconds?: number /* int */;
   /**

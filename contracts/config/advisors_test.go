@@ -103,9 +103,9 @@ func TestAgentRouting_PinTTL(t *testing.T) {
 		ar   *contractsconfig.AgentRouting
 		want time.Duration
 	}{
-		{"nil receiver takes default", nil, contractsconfig.DefaultPinTTL},
-		{"zero takes default", &contractsconfig.AgentRouting{}, contractsconfig.DefaultPinTTL},
-		{"negative takes default", &contractsconfig.AgentRouting{PinTTLSeconds: -1}, contractsconfig.DefaultPinTTL},
+		{"nil receiver takes default", nil, contractsconfig.DefaultPinTTLSeconds * time.Second},
+		{"zero takes default", &contractsconfig.AgentRouting{}, contractsconfig.DefaultPinTTLSeconds * time.Second},
+		{"negative takes default", &contractsconfig.AgentRouting{PinTTLSeconds: -1}, contractsconfig.DefaultPinTTLSeconds * time.Second},
 		{"explicit passes through", &contractsconfig.AgentRouting{PinTTLSeconds: 60}, 60 * time.Second},
 	}
 	for _, tc := range cases {
