@@ -20,8 +20,10 @@ const (
 	// the goroutine, not to protect latency.
 	DefaultAdvisorTimeoutMs = 5000
 
-	// DefaultPinTTL is how long a stored pin stays live without renewal.
-	DefaultPinTTL = 2 * time.Hour
+	// DefaultPinTTLSeconds is how long a stored pin stays live without
+	// renewal. Declared in seconds (not time.Duration arithmetic) so the
+	// tygo-generated TS constant stays a plain number.
+	DefaultPinTTLSeconds = 7200
 
 	// DefaultApplyWindowRequests is how many requests into a conversation a
 	// late-arriving verdict may still be applied. Past the window the prompt
@@ -69,7 +71,7 @@ type AgentRouting struct {
 	// this list decides.
 	AllowModels []string `yaml:"allow_models" json:"allow_models"`
 
-	// PinTTLSeconds is how long a pin lives. Zero applies DefaultPinTTL.
+	// PinTTLSeconds is how long a pin lives. Zero applies DefaultPinTTLSeconds.
 	PinTTLSeconds int `yaml:"pin_ttl_seconds,omitempty" json:"pin_ttl_seconds,omitempty"`
 
 	// ApplyWindowRequests is how many requests into a conversation a verdict
@@ -127,7 +129,7 @@ func (a Advisor) Timeout() time.Duration {
 // PinTTL returns the effective pin lifetime.
 func (ar *AgentRouting) PinTTL() time.Duration {
 	if ar == nil || ar.PinTTLSeconds <= 0 {
-		return DefaultPinTTL
+		return DefaultPinTTLSeconds * time.Second
 	}
 	return time.Duration(ar.PinTTLSeconds) * time.Second
 }
