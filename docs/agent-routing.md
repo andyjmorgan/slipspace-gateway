@@ -100,6 +100,20 @@ prompt programmatically, so a rubric edit cannot unshape the output contract.
 Verdicts are cached by template hash (agent family + system prefix + task text
 + tools), bounded and TTL'd.
 
+Observability of the judge itself:
+
+- The EFFECTIVE rubric (prompt_file contents, or the built-in default) is
+  resolved at boot and served on the applied-config snapshot — open
+  `/settings` in the Arbiter console and the `advise` block carries the full
+  text the judge runs with (`Rubric`). Any judge request's span also shows
+  the complete assembled prompt in `gen_ai.system_instructions`.
+- Every judge request carries `X-Slipspace-Thread-Id` set to the conversation
+  it is deciding for and `X-Slipspace-Agent-Id: advise-judge`, so in the
+  console the judge inference appears inside the judged conversation's view,
+  labelled as a named agent. The session id is deliberately not set — judge
+  spend stays out of user-session rollups and lands on the advisor
+  configuration's own cost line.
+
 Trust: the advise route verifies `X-Slipspace-Gateway-Id` +
 `X-Slipspace-Signature` (hex HMAC-SHA256 of the raw body) against the same
 `gateways[]` registry as the Record webhook. Judge failure returns 503 and the

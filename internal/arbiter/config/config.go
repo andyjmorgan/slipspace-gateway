@@ -95,6 +95,12 @@ type Advise struct {
 	// PromptFile optionally overrides the built-in judge rubric with an
 	// operator-authored one. The file is read at startup.
 	PromptFile string `yaml:"prompt_file,omitempty"`
+	// Rubric is the EFFECTIVE judge rubric (prompt_file contents, or the
+	// built-in default), resolved once at boot and stashed here so the
+	// applied-config snapshot served at GET /api/v1/settings shows exactly
+	// what the judge runs with. Never decoded from YAML (yaml:"-") — it is
+	// derived state, not an authorable key.
+	Rubric string `yaml:"-"`
 	// CacheTTLSeconds bounds the template-hash verdict cache. nil applies
 	// DefaultAdviseCacheTTLSeconds.
 	CacheTTLSeconds *int `yaml:"cache_ttl_seconds,omitempty"`
