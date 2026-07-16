@@ -39,6 +39,10 @@ type Server struct {
 	store   Pinger
 	queries Queries
 	webhook http.Handler
+	// advise is the HMAC-trusted agent-aware routing advisor (may be nil to
+	// disable the route). Like the webhook, it authenticates itself via
+	// signature, not Basic auth.
+	advise http.Handler
 	// appliedConfig is the redacted snapshot of the running service's loaded
 	// config, served read-only at GET /api/v1/settings so an operator can see
 	// what is in effect (listeners, caps, scanner block) without seeing a
@@ -69,6 +73,14 @@ func New(console config.Console, st Pinger, queries Queries, webhook http.Handle
 	return &Server{console: console, store: st, queries: queries, webhook: webhook, spanFieldCap: spanFieldCap, log: log}
 }
 
+// WithAdvise attaches the HMAC-trusted routing advisor handler (POST
+// /api/v1/advise/route) and returns the server for chaining. When never
+// called, the route is omitted.
+func (s *Server) WithAdvise(h http.Handler) *Server {
+	s.advise = h
+	return s
+}
+
 // WithAppliedConfig attaches the redacted applied-config snapshot the settings
 // endpoint serves and returns the server for chaining. cfg is stored verbatim —
 // the caller is responsible for passing an already-redacted Config (see
@@ -88,6 +100,10 @@ func (s *Server) Handler() http.Handler {
 	if s.webhook != nil {
 		// Open path: the Record ingest's own HMAC check is its auth, not Basic.
 		mux.Handle("POST /api/v1/ingest/record", s.webhook)
+	}
+	if s.advise != nil {
+		// Open path: the advisor's own HMAC check is its auth, not Basic.
+		mux.Handle("POST /api/v1/advise/route", s.advise)
 	}
 	s.registerQueryRoutes(mux)
 	// Applied-config (settings) view: Basic-auth gated, registered only when a

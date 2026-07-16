@@ -39,6 +39,12 @@ func (r *ResolvedConfig) Clone() *ResolvedConfig {
 			out.Configurations[name] = cloneConfiguration(cfg)
 		}
 	}
+	if r.Advisors != nil {
+		out.Advisors = make(contractsconfig.AdvisorsConfig, len(r.Advisors))
+		for name, a := range r.Advisors {
+			out.Advisors[name] = a
+		}
+	}
 	out.APIKeys = cloneAPIKeys(r.APIKeys)
 	out.Rules = cloneRules(r.Rules)
 	if r.Connectors != nil {
@@ -138,5 +144,10 @@ func cloneConfiguration(in contractsconfig.Configuration) contractsconfig.Config
 		}
 	}
 	out.ConnectorBindings = cloneConnectorBindings(in.ConnectorBindings)
+	if in.AgentRouting != nil {
+		ar := *in.AgentRouting
+		ar.AllowModels = cloneStringSlice(in.AgentRouting.AllowModels)
+		out.AgentRouting = &ar
+	}
 	return out
 }

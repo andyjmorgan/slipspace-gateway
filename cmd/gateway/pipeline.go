@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/internal/agentroute"
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
@@ -16,6 +17,7 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
+	"github.com/andyjmorgan/slipspace-gateway/protocols/anthropic/messages"
 )
 
 // protocolInfo is the result of mapping an inbound path to its v2 protocol.
@@ -103,7 +105,14 @@ func kindFromProtocol(ctx context.Context) (bodycapture.RequestKind, bool) {
 // can condition on provider/protocol/model. No binding match → 404 (no
 // fallthrough). Non-generative path: selection.MatchPassthrough picks the
 // opaque family → 404/405 on miss.
-func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Handler) http.Handler {
+//
+// Agent-aware routing hooks in here, before the resilience config is
+// synthesised: a pinned conversation's model override lands as the single
+// target's Alias, so the existing per-attempt changeModelName + body-rewrite
+// machinery applies it — the pin is a dynamic binding, with a binding's
+// precedence (rules cannot re-steer it, invariant #7). Pins apply to
+// single-target destinations only; group destinations are out of v1 scope.
+func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, errs *httperr.Writer, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		log := observability.FromContext(ctx)
@@ -168,6 +177,21 @@ func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Ha
 			return
 		}
 
+		var pinned *agentroute.Pin
+		if agentRouter != nil && dest.Single != nil && cfg.AgentRouting != nil {
+			if captured, capOK := bodycapture.FromContext(ctx); capOK {
+				if mreq, isMsg := captured.Body.(*messages.MessagesRequest); isMsg {
+					pinned = agentRouter.Evaluate(ctx, ar.ConfigurationName, cfg.AgentRouting,
+						pi.protocol, dest.Single.Provider, model, mreq, r.Header)
+				}
+			}
+			if pinned != nil {
+				single := *dest.Single
+				single.Alias = pinned.Model
+				dest.Single = &single
+			}
+		}
+
 		var (
 			rc       contractsres.ResilienceConfig
 			provider string
@@ -182,6 +206,10 @@ func selectionMiddleware(store *config.Store, errs *httperr.Writer, next http.Ha
 		state := rules.NewMutableState(provider, pi.protocol, "", pi.params, r.Header)
 		for _, t := range dest.Tags {
 			state.AddTag(t)
+		}
+		if pinned != nil {
+			state.AddTag("agent-route:" + pinned.Model)
+			log.InfoContext(ctx, "agentroute: pin applied", "model", pinned.Model, "reason", pinned.Reason)
 		}
 		state.PolicyRef = rc.Name
 

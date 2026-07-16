@@ -20,6 +20,7 @@ const (
 	keyAdmin          = "admin"
 	keyTelemetry      = "telemetry"
 	keyPricing        = "pricing"
+	keyAdvisors       = "advisors"
 )
 
 // Canonical filenames the writer falls back to for a block with no recorded

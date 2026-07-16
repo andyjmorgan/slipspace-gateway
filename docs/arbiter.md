@@ -74,6 +74,7 @@ flowchart LR
 
 - **Open probes** — `GET /healthz` (liveness) and `GET /readyz` (readiness; 503 until Postgres is reachable, so a load balancer drains the instance while the store recovers).
 - **Open HMAC Record webhook** — `POST /api/v1/ingest/record`. "Open" in the routing sense only: it carries no Basic auth, because the push **authenticates itself** via its `X-Slipspace-Signature` HMAC. See [arbiter-webhook.md](arbiter-webhook.md).
+- **Open HMAC routing advisor** — `POST /api/v1/advise/route` (present only when the `advise` config block is enabled). Same self-authenticating HMAC convention and the same `gateways[]` registry as the Record webhook, but a distinct channel: control-plane advice for agent-aware routing, neither telemetry nor audit. See [agent-routing.md](agent-routing.md).
 - **Basic-auth console + query API** — `GET /api/v1/dashboard/*`, `/api/v1/messages*`, `/api/v1/events*`, `/api/v1/sessions/{id}`, `/api/v1/facets`, plus the SPA bundle at `GET /` (`internal/arbiter/server/query.go::registerQueryRoutes`). Every API route is wrapped in `Server.basicAuth` (`server.go:143`). See [arbiter-api.md](arbiter-api.md).
 
 **OTLP gRPC listener — default `0.0.0.0:8687`** (`config.DefaultOTLPBind`, `config.go:28`). One gRPC server registers **both** OTLP receivers (`internal/arbiter/ingest/grpc.go::NewOTLPServer`):

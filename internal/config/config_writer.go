@@ -21,6 +21,7 @@ var writableBlockOrder = []string{
 	keyAdmin,
 	keyTelemetry,
 	keyPricing,
+	keyAdvisors,
 }
 
 // editableBlocks is the set of top-level blocks the admin write surface owns.
@@ -49,6 +50,7 @@ var defaultBlockFile = map[string]string{
 	keyAdmin:          filenameAdmin,
 	keyTelemetry:      filenamePolicy,
 	keyPricing:        filenamePolicy,
+	keyAdvisors:       filenamePolicy,
 }
 
 // WriteConfig persists every editable block of a v2 resolved config back to
@@ -159,6 +161,7 @@ func blockPresence(r *ResolvedConfig) map[string]bool {
 		keyAdmin:          r.Admin != nil,
 		keyTelemetry:      telemetryAuthored,
 		keyPricing:        r.Pricing != nil,
+		keyAdvisors:       len(r.Advisors) > 0,
 	}
 }
 
@@ -183,6 +186,8 @@ func appendResolvedBlock(root *yaml.Node, block string, r *ResolvedConfig) {
 		appendBlock(root, keyTelemetry, r.Telemetry)
 	case keyPricing:
 		appendBlock(root, keyPricing, r.Pricing)
+	case keyAdvisors:
+		appendBlock(root, keyAdvisors, r.Advisors)
 	}
 }
 
