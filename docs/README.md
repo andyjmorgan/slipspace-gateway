@@ -24,6 +24,7 @@ In a hurry? The **[FAQ](faq.md)** is the task-oriented shortcut — routing a mo
 | [Rules](rules.md) | Rules engine + every condition type + behavior=continue/exit |
 | [Actions](actions.md) | Every rule action — `changeProvider`, `setHeader`, `useResiliencePolicy`, `returnStatusCode`, ... |
 | [Resilience policies](resilience.md) | Failover, load_balance (LBWF + strict_weights), circuit breaker, attempt records |
+| [Agent-aware routing](agent-routing.md) | Identify the calling agent from headers, classify eligible conversations via the Arbiter advisor, pin cheaper models per conversation |
 | [Observability](observability.md) | Every OTel meter, runtime + process collectors, structured logs, snapshotter |
 | [Connectors](connectors.md) | The `connectors:` top-level block — s3 / azure_blob / webhook reference, per-type auth modes, key layout |
 | [Connector bindings](connector-bindings.md) | Per-configuration sampling, filter, body cap, oversize behaviour |

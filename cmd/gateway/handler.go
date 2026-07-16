@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/andyjmorgan/slipspace-gateway/internal/agentroute"
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
 	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
@@ -38,6 +39,7 @@ func buildDataPlaneHandler(
 	observerFactory proxy.ObserverFactory,
 	store *config.Store,
 	breakers resiliencemw.BreakerStore,
+	agentRouter *agentroute.Service,
 	meters *observability.Meters,
 	errs *httperr.Writer,
 	redactor *headers.Redactor,
@@ -48,7 +50,7 @@ func buildDataPlaneHandler(
 	h = rules.BodyRemarshalHandler(meters, h)
 	h = resiliencemw.HTTPHandler(nil, breakers, meters, h)
 	h = rules.HTTPHandler(evaluator, nil, observerFactory, h)
-	h = selectionMiddleware(store, errs, h)
+	h = selectionMiddleware(store, agentRouter, errs, h)
 	h = bodycapture.HTTPHandler(kindFromProtocol, redactor, h)
 	h = auth.HTTPHandler(resolver, h)
 	h = protocolMiddleware(h)

@@ -172,9 +172,24 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	// an operator can see the running config (incl. the scanner block) without
 	// any secret leaking — the password hash, HMAC secrets, evidence key, and DSN
 	// password are all redacted by Redacted().
-	httpSrv := server.New(cfg.Console, st, st, recordIngest, cfg.SpanFieldCap(), log).
-		WithAppliedConfig(cfg.Redacted()).
-		HTTPServer(cfg.HTTPBind)
+	srvBuilder := server.New(cfg.Console, st, st, recordIngest, cfg.SpanFieldCap(), log).
+		WithAppliedConfig(cfg.Redacted())
+
+	// Agent-aware routing advisor (optional). The judge routes through a
+	// gateway on a dedicated advisor configuration; trust reuses the same
+	// gateway HMAC registry as the Record webhook.
+	if cfg.AdviseEnabled() {
+		adviseHandler, aerr := buildAdviseHandler(cfg, reg, log)
+		if aerr != nil {
+			return fmt.Errorf("arbiter: advise: %w", aerr)
+		}
+		srvBuilder = srvBuilder.WithAdvise(adviseHandler)
+		log.Info("advise endpoint enabled",
+			"judge_model", cfg.Advise.Upstream.Model,
+			"candidates", cfg.Advise.Candidates)
+	}
+
+	httpSrv := srvBuilder.HTTPServer(cfg.HTTPBind)
 
 	errCh := make(chan error, 1)
 	safego.Go(ctx, "arbiter.serve.http", log, nil, func() {

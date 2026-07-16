@@ -292,6 +292,10 @@ type Configuration struct {
 	// ConnectorBindings attaches connectors with per-binding sampling /
 	// filter / size-cap overrides (unchanged from v1).
 	ConnectorBindings []ConnectorBinding `yaml:"connector_bindings,omitempty" json:"connector_bindings,omitempty"`
+
+	// AgentRouting is the agent-aware routing policy for this configuration;
+	// nil means off. See advisors.go.
+	AgentRouting *AgentRouting `yaml:"agent_routing,omitempty" json:"agent_routing,omitempty"`
 }
 
 // Model is the top-level v2 configuration document: the shared provider and

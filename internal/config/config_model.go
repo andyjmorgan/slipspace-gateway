@@ -50,6 +50,11 @@ type ResolvedConfig struct {
 	// Telemetry is the `telemetry` block; zero value yields built-in defaults.
 	Telemetry contractsconfig.Telemetry
 
+	// Advisors is the `advisors` block: the advisory endpoints agent-aware
+	// routing may consult, keyed by advisor name. Empty when the feature is
+	// unused.
+	Advisors contractsconfig.AdvisorsConfig
+
 	// Pricing is the `pricing` block; nil when absent (costing off).
 	// Like Admin/Telemetry it is shared read-only across clones — the
 	// admin write API does not edit it, so a YAML change requires a
@@ -100,6 +105,7 @@ type configDoc struct {
 	Admin          *admin.Config                            `yaml:"admin"`
 	Telemetry      *contractsconfig.Telemetry               `yaml:"telemetry"`
 	Pricing        *contractsconfig.Pricing                 `yaml:"pricing"`
+	Advisors       contractsconfig.AdvisorsConfig           `yaml:"advisors"`
 
 	// LegacyBackends captures the pre-rename `backends:` key solely so Load can
 	// reject it with a clear message — the block is `providers:` now and the cut
@@ -200,6 +206,9 @@ func (r *ResolvedConfig) mergeDoc(file string, doc *configDoc, seen map[string]s
 	if err := claim("pricing", doc.Pricing != nil); err != nil {
 		return err
 	}
+	if err := claim("advisors", len(doc.Advisors) > 0); err != nil {
+		return err
+	}
 
 	if len(doc.Providers) > 0 {
 		r.Providers = doc.Providers
@@ -227,6 +236,9 @@ func (r *ResolvedConfig) mergeDoc(file string, doc *configDoc, seen map[string]s
 	}
 	if doc.Pricing != nil {
 		r.Pricing = doc.Pricing
+	}
+	if len(doc.Advisors) > 0 {
+		r.Advisors = doc.Advisors
 	}
 	return nil
 }

@@ -71,6 +71,76 @@ type Config struct {
 	// Scanner is the optional Arbiter async security scanner. Disabled by
 	// default — the Arbiter is fully functional without it.
 	Scanner Scanner `yaml:"scanner"`
+	// Advise is the optional agent-aware routing advisor: an HMAC-trusted
+	// endpoint gateways ask to classify a conversation at birth, answered by
+	// prompting a judge model (routed through a gateway). Disabled by default.
+	Advise Advise `yaml:"advise"`
+}
+
+// Advise configures the agent-aware routing advisor (POST
+// /api/v1/advise/route). Gateways authenticate with the same HMAC registry as
+// the Record webhook. The advisor recommends; each gateway's allow_models
+// list decides — a bad prompt edit here cannot route traffic anywhere a
+// gateway has not approved.
+type Advise struct {
+	// Enabled turns the advisor on. Default false.
+	Enabled bool `yaml:"enabled"`
+	// Upstream is the judge model connection — conventionally a SlipSpace
+	// gateway with a dedicated advisor configuration, so the judge's own
+	// spend is attributed and its traffic is exempt from routing.
+	Upstream AdviseUpstream `yaml:"upstream"`
+	// Candidates is the cheaper models the judge may recommend, described to
+	// it in the prompt. A gateway still enforces its own allow_models.
+	Candidates []string `yaml:"candidates"`
+	// PromptFile optionally overrides the built-in judge rubric with an
+	// operator-authored one. The file is read at startup.
+	PromptFile string `yaml:"prompt_file,omitempty"`
+	// CacheTTLSeconds bounds the template-hash verdict cache. nil applies
+	// DefaultAdviseCacheTTLSeconds.
+	CacheTTLSeconds *int `yaml:"cache_ttl_seconds,omitempty"`
+}
+
+// AdviseUpstream is the judge model connection.
+type AdviseUpstream struct {
+	// BaseURL is the root of an Anthropic-messages-speaking endpoint (e.g.
+	// a SlipSpace gateway). The judge POSTs {base_url}/v1/messages.
+	BaseURL string `yaml:"base_url"`
+	// APIKeyFile is the path of the file holding the bearer credential (e.g.
+	// the advisor configuration's sk_live key). Only file paths live in
+	// config — never the secret itself.
+	APIKeyFile string `yaml:"api_key_file"`
+	// Model is the judge model name requested for classification calls.
+	Model string `yaml:"model"`
+	// TimeoutSeconds bounds one judge call. nil applies
+	// DefaultAdviseTimeoutSeconds.
+	TimeoutSeconds *int `yaml:"timeout_seconds,omitempty"`
+}
+
+// Advise defaults.
+const (
+	// DefaultAdviseTimeoutSeconds bounds one judge call when unset.
+	DefaultAdviseTimeoutSeconds = 30
+	// DefaultAdviseCacheTTLSeconds bounds the verdict cache when unset.
+	DefaultAdviseCacheTTLSeconds = 24 * 3600
+)
+
+// AdviseEnabled reports whether the routing advisor is on.
+func (c Config) AdviseEnabled() bool { return c.Advise.Enabled }
+
+// AdviseTimeoutSeconds resolves the judge call timeout.
+func (c Config) AdviseTimeoutSeconds() int {
+	if c.Advise.Upstream.TimeoutSeconds == nil || *c.Advise.Upstream.TimeoutSeconds <= 0 {
+		return DefaultAdviseTimeoutSeconds
+	}
+	return *c.Advise.Upstream.TimeoutSeconds
+}
+
+// AdviseCacheTTLSeconds resolves the verdict cache TTL.
+func (c Config) AdviseCacheTTLSeconds() int {
+	if c.Advise.CacheTTLSeconds == nil || *c.Advise.CacheTTLSeconds <= 0 {
+		return DefaultAdviseCacheTTLSeconds
+	}
+	return *c.Advise.CacheTTLSeconds
 }
 
 // Scanner configures the optional Arbiter async security scanner: the detector
@@ -388,6 +458,24 @@ func (c Config) Validate() error {
 		}
 		if err := validateScanFilters(c.Scanner); err != nil {
 			return err
+		}
+	}
+
+	if c.Advise.Enabled {
+		if c.Advise.Upstream.BaseURL == "" {
+			return errors.New("advise.upstream.base_url is required when advise.enabled")
+		}
+		if c.Advise.Upstream.APIKeyFile == "" {
+			return errors.New("advise.upstream.api_key_file is required when advise.enabled")
+		}
+		if c.Advise.Upstream.Model == "" {
+			return errors.New("advise.upstream.model is required when advise.enabled")
+		}
+		if len(c.Advise.Candidates) == 0 {
+			return errors.New("advise.candidates is required when advise.enabled")
+		}
+		if len(c.Gateways) == 0 {
+			return errors.New("advise.enabled requires at least one registered gateway (the HMAC trust registry)")
 		}
 	}
 	return nil

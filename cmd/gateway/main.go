@@ -197,7 +197,11 @@ func run(ctx context.Context) error {
 	if err := registerBreakerStateGauge(obs, breakers); err != nil {
 		return fmt.Errorf("gateway: register cb.state gauge: %w", err)
 	}
-	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, observerFactory, store, breakers, obs.Meters, errs, redactor, logger)
+	// agentRouter is nil when no advisors block is configured — the selection
+	// middleware treats nil as feature-off. Advisor endpoints bind at startup;
+	// per-configuration agent_routing policy reads live from each snapshot.
+	agentRouter := buildAgentRouter(store.Snapshot(), logger)
+	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, observerFactory, store, breakers, agentRouter, obs.Meters, errs, redactor, logger)
 
 	// responseCaptureMiddleware sits between recover and the data
 	// plane so every panic is still logged, but the per-request

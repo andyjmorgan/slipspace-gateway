@@ -2,6 +2,88 @@
 import type { CircuitBreakerConfig } from "./resilience";
 
 //////////
+// source: advisors.go
+
+/**
+ * DefaultAdvisorTimeoutMs bounds one advisory HTTP call. The call is
+ * asynchronous (never on the request path), so the bound exists to reclaim
+ * the goroutine, not to protect latency.
+ */
+export const DefaultAdvisorTimeoutMs = 5000;
+/**
+ * DefaultPinTTL is how long a stored pin stays live without renewal.
+ */
+export const DefaultPinTTL = 2 * unknown /* time.Hour */;
+/**
+ * DefaultApplyWindowRequests is how many requests into a conversation a
+ * late-arriving verdict may still be applied. Past the window the prompt
+ * cache is warm on the default model and a switch would cost more than it
+ * saves, so the verdict is discarded.
+ */
+export const DefaultApplyWindowRequests = 3;
+/**
+ * AdvisorsConfig is the merged top-level `advisors` block — a map from advisor
+ * name to its connection definition.
+ */
+export type AdvisorsConfig = { [key: string]: Advisor};
+/**
+ * Advisor is one advisory endpoint the gateway can consult for agent-aware
+ * routing verdicts (in practice: an Arbiter's POST /api/v1/advise/route).
+ */
+export interface Advisor {
+  /**
+   * Endpoint is the full URL of the advisory route endpoint.
+   */
+  endpoint: string;
+  /**
+   * HMACSecretFile is the path of the file holding the shared HMAC secret
+   * the gateway signs advisory requests with (same trust pattern as the
+   * Record webhook). Only file paths are env/config-carried — never the
+   * secret itself.
+   */
+  hmac_secret_file: string;
+  /**
+   * GatewayID is sent as the X-Slipspace-Gateway-Id header so the advisor
+   * verifies the signature against this gateway's registered secret (same
+   * convention as the webhook connector's gateway_id).
+   */
+  gateway_id: string;
+  /**
+   * TimeoutMs bounds one advisory call in milliseconds. Zero applies
+   * DefaultAdvisorTimeoutMs.
+   */
+  timeout_ms?: number /* int */;
+}
+/**
+ * AgentRouting is a configuration's agent-aware routing policy: identify the
+ * calling agent from headers, ask the named advisor to classify eligible
+ * conversations at birth, and pin the verdict's model for the conversation's
+ * lifetime. Absent (nil) means the feature is off for the configuration.
+ */
+export interface AgentRouting {
+  /**
+   * Advisor names an entry in the top-level advisors block.
+   */
+  advisor: string;
+  /**
+   * AllowModels is the enforcement point: a verdict whose model is not in
+   * this list is discarded. Must be non-empty — the advisor recommends,
+   * this list decides.
+   */
+  allow_models: string[];
+  /**
+   * PinTTLSeconds is how long a pin lives. Zero applies DefaultPinTTL.
+   */
+  pin_ttl_seconds?: number /* int */;
+  /**
+   * ApplyWindowRequests is how many requests into a conversation a verdict
+   * may still be applied (see DefaultApplyWindowRequests). Zero applies the
+   * default.
+   */
+  apply_window_requests?: number /* int */;
+}
+
+//////////
 // source: api_keys.go
 
 /**
@@ -699,6 +781,11 @@ export interface Configuration {
    * filter / size-cap overrides (unchanged from v1).
    */
   connector_bindings?: ConnectorBinding[];
+  /**
+   * AgentRouting is the agent-aware routing policy for this configuration;
+   * nil means off. See advisors.go.
+   */
+  agent_routing?: AgentRouting;
 }
 /**
  * Model is the top-level v2 configuration document: the shared provider and

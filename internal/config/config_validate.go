@@ -41,7 +41,35 @@ func (r *ResolvedConfig) Validate() error {
 	if err := r.Pricing.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrValidation, err)
 	}
+	if err := r.validateAdvisors(); err != nil {
+		return err
+	}
 	return r.validateConfigurations()
+}
+
+// validateAdvisors checks the advisors block and every configuration's
+// agent_routing reference into it.
+func (r *ResolvedConfig) validateAdvisors() error {
+	for name, a := range r.Advisors {
+		if err := a.Validate(name); err != nil {
+			return fmt.Errorf("%w: %v", ErrValidation, err)
+		}
+	}
+	for cfgName, cfg := range r.Configurations {
+		ar := cfg.AgentRouting
+		if ar == nil {
+			continue
+		}
+		if _, ok := r.Advisors[ar.Advisor]; !ok {
+			return fmt.Errorf("%w: configuration %q: agent_routing advisor %q: %v",
+				ErrValidation, cfgName, ar.Advisor, contractsconfig.ErrAgentRoutingAdvisor)
+		}
+		if len(ar.AllowModels) == 0 {
+			return fmt.Errorf("%w: configuration %q: %v",
+				ErrValidation, cfgName, contractsconfig.ErrAgentRoutingAllowModels)
+		}
+	}
+	return nil
 }
 
 func (r *ResolvedConfig) validateProviders() error {

@@ -152,7 +152,7 @@ func newTranslateEnv(t *testing.T) *testEnv {
 	forwarder := proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory(), ResponseBodyTransform: newResponseBodyTransform(meters, "", true)})
 	evaluator := rules.NewEvaluator(store, 8, meters)
 	errs := httperr.New(meters.ErrorResponsesTotal, logger)
-	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), meters, errs, nil, logger)
+	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), nil, meters, errs, nil, logger)
 	root := correlationMiddleware(logger, observability.NewSessionResolver(nil), observability.NewConversationResolver(nil), observability.NewParentResolver(nil), observability.NewAgentResolver(nil), observability.NewUserResolver(nil), nil, dataPlane)
 
 	gateway := httptest.NewServer(root)
