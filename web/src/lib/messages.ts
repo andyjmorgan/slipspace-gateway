@@ -55,6 +55,9 @@ export type MessageFilters = {
   configurations?: string[]
   protocols?: string[]
   statusClass?: string
+  // statusCodes narrows to exact HTTP codes (OR); stringly-typed because the
+  // MultiSelect UI trades in strings — the server parses ints.
+  statusCodes?: string[]
   tags?: string[]
   from?: string
   to?: string
@@ -100,6 +103,7 @@ export async function fetchMessagesPage(
   putAll("configuration", filters.configurations)
   putAll("protocol", filters.protocols)
   put("status_class", filters.statusClass)
+  putAll("status_code", filters.statusCodes)
   put("from", filters.from)
   put("to", filters.to)
   putAll("tags", filters.tags)
@@ -123,12 +127,13 @@ export async function fetchMessageByCorrelation(correlationId: string): Promise<
 }
 
 // Facets is the distinct dropdown values for the browser. Each list is sorted
-// and de-duplicated server-side.
+// and de-duplicated server-side; status_codes carries exact HTTP codes.
 export type Facets = {
   providers: string[]
   models: string[]
   configurations: string[]
   protocols: string[]
+  status_codes: number[]
   tags: string[]
 }
 
@@ -136,13 +141,19 @@ export type Facets = {
  * Fetches the distinct filter-dropdown values (cached server-side per window).
  * Pass the table's resolved time bounds so the dropdowns offer only values
  * present in the range being shown; omit for the all-history enumeration.
+ * sessionId scopes the enumeration to one session's rows (the session view's
+ * messages table), bypassing the server cache.
  */
-export async function fetchFacets(window?: { from?: string; to?: string }): Promise<Facets> {
+export async function fetchFacets(scope?: { from?: string; to?: string; sessionId?: string }): Promise<Facets> {
   const p = new URLSearchParams()
-  if (window?.from) p.set("from", window.from)
-  if (window?.to) p.set("to", window.to)
+  if (scope?.from) p.set("from", scope.from)
+  if (scope?.to) p.set("to", scope.to)
+  if (scope?.sessionId) p.set("session_id", scope.sessionId)
   const qs = p.toString()
-  return apiFetch<Facets>(qs ? `/api/v1/facets?${qs}` : `/api/v1/facets`)
+  const f = await apiFetch<Facets>(qs ? `/api/v1/facets?${qs}` : `/api/v1/facets`)
+  // A backend predating status_codes omits the field; default it so callers
+  // can map without a guard.
+  return { ...f, status_codes: f.status_codes ?? [] }
 }
 
 // GenAIMessagePart is a single part of a GenAI message — text, a model-issued

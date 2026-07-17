@@ -43,7 +43,7 @@ const STATUSES = [
   { value: "resolved", label: "Resolved" },
 ] as const
 
-const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], protocols: [], tags: [] }
+const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], protocols: [], status_codes: [], tags: [] }
 
 // statusTag renders the call's lifecycle: resolved (the result is in) reads
 // green, pending (awaiting the result turn) reads amber — not an error, a state.

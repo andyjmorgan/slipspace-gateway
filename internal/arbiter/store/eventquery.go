@@ -35,6 +35,10 @@ type EventFilter struct {
 	Models         []string
 	Providers      []string
 	Protocols      []string
+	// StatusCodes narrows to events whose exact HTTP status is ANY of the
+	// listed codes (OR within the dimension). Composes (AND) with StatusClass,
+	// though the console sends one or the other. Empty/nil means no predicate.
+	StatusCodes []int
 	// SessionID and CorrelationID are exact-match lookups for the message
 	// browser's two id search boxes; empty means no predicate.
 	SessionID     string
@@ -117,6 +121,12 @@ func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
 	if len(f.Tags) > 0 {
 		args = append(args, f.Tags)
 		where = append(where, fmt.Sprintf("tags @> $%d", len(args)))
+	}
+	// StatusCodes is the exact-code twin of the class predicate: one bound
+	// int[] behind = ANY, OR within the dimension.
+	if len(f.StatusCodes) > 0 {
+		args = append(args, f.StatusCodes)
+		where = append(where, fmt.Sprintf("status_code = ANY($%d)", len(args)))
 	}
 	if lo, hi, ok := statusClassBounds(f.StatusClass); ok {
 		args = append(args, lo)
