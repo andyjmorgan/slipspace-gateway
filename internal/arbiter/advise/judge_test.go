@@ -276,3 +276,69 @@ func TestParseVerdict(t *testing.T) {
 		})
 	}
 }
+
+// TestJudge_StructuredOutputSchema asserts the judge request carries the
+// structured-outputs constraint: output_config.format is a json_schema whose
+// model property is an enum of the candidates plus "" — the server-side
+// guarantee that the judge cannot emit a non-candidate model.
+func TestJudge_StructuredOutputSchema(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var gotBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		gotBody = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{{"type": "text", "text": `{"switch":true,"model":"cheap-candidate-a","reason":"trivial","confidence":0.9}`}},
+		})
+	}))
+	defer upstream.Close()
+
+	j := NewJudge(upstream.URL, "test-key", "judge-model-x", "", []string{"cheap-candidate-a", "cheap-candidate-b"}, 5*time.Second)
+	if _, err := j.Judge(context.Background(), contractsadvise.Request{FirstUserMessage: "list files"}); err != nil {
+		t.Fatalf("Judge: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	oc, ok := gotBody["output_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("request carries no output_config: %v", gotBody)
+	}
+	format, ok := oc["format"].(map[string]any)
+	if !ok || format["type"] != "json_schema" {
+		t.Fatalf("output_config.format is not a json_schema: %v", oc)
+	}
+	schema, ok := format["schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("format carries no schema: %v", format)
+	}
+	if schema["additionalProperties"] != false {
+		t.Errorf("schema additionalProperties = %v, want false", schema["additionalProperties"])
+	}
+	props := schema["properties"].(map[string]any)
+	modelProp := props["model"].(map[string]any)
+	enum, ok := modelProp["enum"].([]any)
+	if !ok {
+		t.Fatalf("model property has no enum: %v", modelProp)
+	}
+	want := []string{"", "cheap-candidate-a", "cheap-candidate-b"}
+	if len(enum) != len(want) {
+		t.Fatalf("model enum = %v, want %v", enum, want)
+	}
+	for i, v := range want {
+		if enum[i] != v {
+			t.Errorf("model enum[%d] = %v, want %q", i, enum[i], v)
+		}
+	}
+	for _, field := range []string{"switch", "model", "reason", "confidence"} {
+		if _, present := props[field]; !present {
+			t.Errorf("schema missing property %q", field)
+		}
+	}
+}
