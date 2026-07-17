@@ -704,4 +704,47 @@ SELECT add_continuous_aggregate_policy('cagg_cost_1m', start_offset => INTERVAL 
 		sql: `
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0;`,
 	},
+	{
+		version: 21,
+		name:    "advise_audit",
+		// Agent-routing judgement audit log: one row per advisory decision the
+		// advise handler serves (fresh judgement, cache hit, or judge failure),
+		// carrying the full request payload the judge saw and the verdict it
+		// returned. Written post-response by the advise handler (never on the
+		// advisory path's latency budget); append-only. Like scan_audit, this
+		// is a derived control-plane table — NOT the S3/spool Record channel —
+		// so reading it from the console stays inside invariant #4.
+		//
+		// The received_at index backs the newest-first audit list; the
+		// conversation_id index backs the savings join against request_events
+		// (which is itself indexed on conversation_id).
+		sql: `
+CREATE TABLE IF NOT EXISTS advise_audit (
+    id                 BIGSERIAL PRIMARY KEY,
+    received_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    gateway_id         TEXT        NOT NULL,
+    conversation_id    TEXT        NOT NULL,
+    session_id         TEXT        NOT NULL DEFAULT '',
+    configuration      TEXT        NOT NULL DEFAULT '',
+    protocol           TEXT        NOT NULL DEFAULT '',
+    provider           TEXT        NOT NULL DEFAULT '',
+    requested_model    TEXT        NOT NULL DEFAULT '',
+    agent_family       TEXT        NOT NULL DEFAULT '',
+    entrypoint         TEXT        NOT NULL DEFAULT '',
+    is_subagent        BOOLEAN     NOT NULL DEFAULT false,
+    tool_names         TEXT[]      NOT NULL DEFAULT '{}',
+    system_prefix      TEXT        NOT NULL DEFAULT '',
+    first_user_message TEXT        NOT NULL DEFAULT '',
+    verdict_switch     BOOLEAN     NOT NULL DEFAULT false,
+    verdict_model      TEXT        NOT NULL DEFAULT '',
+    verdict_reason     TEXT        NOT NULL DEFAULT '',
+    verdict_confidence REAL        NOT NULL DEFAULT 0,
+    cache_hit          BOOLEAN     NOT NULL DEFAULT false,
+    judge_latency_ms   INTEGER     NOT NULL DEFAULT 0,
+    error              TEXT        NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS advise_audit_received     ON advise_audit (received_at DESC);
+CREATE INDEX IF NOT EXISTS advise_audit_conversation ON advise_audit (conversation_id);`,
+	},
 }

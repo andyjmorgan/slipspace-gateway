@@ -134,6 +134,45 @@ configuration/protocol/provider/model, truncated `system_prefix` and
 `first_user_message` (4 KiB each), `tool_names`. Verdict (Arbiter → gateway):
 `{switch, model, reason, confidence}`.
 
+## Audit log and savings
+
+Every decided advisory call — fresh judgement, cache hit, or judge failure —
+is recorded post-response in the Arbiter's append-only `advise_audit` table
+(migration 21): the payload the judge saw (identity, truncated prompt
+excerpts, tool names), the verdict, and the cache/latency/error facts.
+Recording runs after the HTTP response on a detached context and can never
+fail or slow an advisory request.
+
+Two Basic-auth console endpoints serve it (see
+[arbiter-api.md](arbiter-api.md#advise-audit-agent-routing)):
+
+- `GET /api/v1/advise/audit` — the judgement log, newest first
+  (`?limit=`, `?before=` RFC3339 keyset cursor).
+- `GET /api/v1/advise/audit/savings` — savings attribution for down-ranked
+  traffic since `?since=` (default 24h): per pinned conversation, the
+  requests that actually ran on the pinned model (the `agent-route:<model>`
+  tag) and their measured spend, scaled to a would-have-cost counterfactual
+  by the operator's rate ratios; totals include the judge's own spend
+  (`judge_cost_usd`, keyed on the `advise-judge` agent id) and
+  `net_saved_usd` = saved − judge cost.
+
+Counterfactual pricing needs the optional rate card on the Arbiter's advise
+block — a per-model price weight (conventionally $ per million input tokens;
+only the ratios matter):
+
+```yaml
+advise:
+  model_rates:
+    claude-opus-4-8: 5.0
+    claude-sonnet-5: 2.0
+    claude-haiku-4-5: 1.0
+```
+
+A conversation whose requested or pinned model is missing from the rate card
+gets a null counterfactual — the API never guesses. `model_rates` validates
+(rates > 0) even when the advisor is disabled, since the savings endpoint
+prices historical audit rows.
+
 ## Scope and non-goals (v1)
 
 - Same-provider model swaps only (the pin sets a model alias; it does not

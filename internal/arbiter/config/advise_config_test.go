@@ -75,6 +75,34 @@ func TestValidate_Advise(t *testing.T) {
 			mutate:  func(c *Config) { c.Gateways = nil },
 			wantErr: "at least one registered gateway",
 		},
+		{
+			name:   "valid model_rates",
+			mutate: func(c *Config) { c.Advise.ModelRates = map[string]float64{"big-model": 5, "cheap-candidate-a": 1} },
+		},
+		{
+			name:    "model_rates with zero rate",
+			mutate:  func(c *Config) { c.Advise.ModelRates = map[string]float64{"big-model": 0} },
+			wantErr: "rate must be > 0",
+		},
+		{
+			name:    "model_rates with negative rate",
+			mutate:  func(c *Config) { c.Advise.ModelRates = map[string]float64{"big-model": -1} },
+			wantErr: "rate must be > 0",
+		},
+		{
+			name:    "model_rates with empty model name",
+			mutate:  func(c *Config) { c.Advise.ModelRates = map[string]float64{"": 1} },
+			wantErr: "empty model name",
+		},
+		{
+			// The savings endpoint prices historical audit rows even when the
+			// advisor is off, so rates validate independently of enabled.
+			name: "model_rates validated when advise disabled",
+			mutate: func(c *Config) {
+				c.Advise = Advise{ModelRates: map[string]float64{"big-model": 0}}
+			},
+			wantErr: "rate must be > 0",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

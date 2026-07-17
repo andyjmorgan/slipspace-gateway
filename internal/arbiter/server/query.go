@@ -49,6 +49,11 @@ type Queries interface {
 	ListToolCalls(ctx context.Context, p store.ToolCallListParams) ([]store.ToolCall, string, error)
 	GetToolCall(ctx context.Context, id string) (store.ToolCall, error)
 	ToolNames(ctx context.Context) ([]string, error)
+	// Advise audit surface — the judgement log (advise_audit table), newest
+	// first, and the measured spend of down-ranked conversations plus the
+	// judge's own overhead (keyed on its named-agent id).
+	ListAdviseAudit(ctx context.Context, limit int, before time.Time) ([]store.AdviseAuditEntry, error)
+	AdviseSavings(ctx context.Context, since time.Time, judgeAgentID string) ([]store.AdviseSavingsRow, float64, error)
 }
 
 // registerQueryRoutes mounts the Basic-auth-gated, DB-backed console API.
@@ -107,6 +112,10 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/tool-calls", gated(s.handleToolCalls))
 	mux.Handle("GET /api/v1/tool-calls/facets", gated(s.handleToolNames))
 	mux.Handle("GET /api/v1/tool-calls/{id}", gated(s.handleToolCall))
+	// Advise audit surface — every routing judgement (payload + verdict), and
+	// the savings attribution for down-ranked traffic (advise_audit.go).
+	mux.Handle("GET /api/v1/advise/audit", gated(s.handleAdviseAudit))
+	mux.Handle("GET /api/v1/advise/audit/savings", gated(s.handleAdviseSavings))
 }
 
 // filterFromQuery reads the shared equality/status filters from the query

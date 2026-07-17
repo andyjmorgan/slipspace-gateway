@@ -238,6 +238,40 @@ Indexes: `tool_call_name_observed (tool_name, observed_at DESC, tool_call_id DES
 
 ---
 
+## `advise_audit`
+
+The agent-routing judgement audit log (migration 21). One append-only row per
+advisory decision the advise handler serves — a fresh judgement, a cache hit,
+or a judge failure — carrying the full (truncated) payload the judge saw and
+the verdict it returned. Written by the handler **after** the HTTP response
+(never on the advisory path's latency budget); a failed insert is only logged.
+Like `scan_audit`, this is a derived control-plane table, not the S3/spool
+Record channel, so console reads stay within [invariant #4](../CLAUDE.md).
+
+| Column | Type | Default | Notes |
+|---|---|---|---|
+| `id` | `BIGSERIAL` | — | **Primary key.** |
+| `received_at` | `TIMESTAMPTZ` | `now()` | Decision time (DB-stamped; never backdated). The list's keyset axis. |
+| `gateway_id` | `TEXT` | — | The HMAC-verified gateway that asked. Required. |
+| `conversation_id` | `TEXT` | — | The subagent conversation the verdict decides for. Required; the savings join key. |
+| `session_id` / `configuration` / `protocol` / `provider` / `requested_model` | `TEXT` | `''` | The judged conversation's routing facts as the gateway sent them. |
+| `agent_family` / `entrypoint` / `is_subagent` | `TEXT` / `TEXT` / `BOOLEAN` | `''` / `''` / `false` | The tier-1 header identity. |
+| `tool_names` | `TEXT[]` | `'{}'` | The judged request's declared tools. |
+| `system_prefix` / `first_user_message` | `TEXT` | `''` | The prompt excerpts the judge read, re-truncated to 4 KiB at insert. |
+| `verdict_switch` / `verdict_model` / `verdict_reason` / `verdict_confidence` | `BOOLEAN` / `TEXT` / `TEXT` / `REAL` | `false` / `''` / `''` / `0` | The verdict (zero-valued on judge failure). |
+| `cache_hit` | `BOOLEAN` | `false` | Served from the template-hash cache (no judge call). |
+| `judge_latency_ms` | `INTEGER` | `0` | Wall-clock of the judge call (0 on cache hits). |
+| `error` | `TEXT` | `''` | Judge failure text when no verdict was produced. |
+
+Indexes: `advise_audit_received (received_at DESC)` backs the newest-first
+list; `advise_audit_conversation (conversation_id)` backs the savings join
+against `request_events` (pinned requests carry the `agent-route:<model>` tag
+and sum their promoted `cost_usd` column). Query surface:
+`GET /api/v1/advise/audit` and `GET /api/v1/advise/audit/savings`
+([arbiter-api.md](arbiter-api.md)).
+
+---
+
 ## Migration history
 
 Migrations are a forward-only, append-only ordered set in [`migrations.go`](../internal/arbiter/store/migrations.go). The runner ([`store.go::Migrate`](../internal/arbiter/store/store.go)) applies every entry whose `version` is newer than the highest recorded in `schema_migrations`, each in its own transaction (except `noTx` steps, below), and is idempotent on a fully-migrated database. **Never edit or renumber a shipped entry.**
@@ -264,6 +298,7 @@ Migrations are a forward-only, append-only ordered set in [`migrations.go`](../i
 | 18 | `tool_call_index` | Creates `tool_call` (one row per `tool_call_id`) + the `tool_call_name_observed` / `tool_call_observed` / `tool_call_session` indexes. | Tool-Call Index design note: makes individual tool calls first-class and searchable (audit every `Skill` call). Filled from `span_event.gen_ai_content` at ingest — the gateway already normalised tool calls across providers, so no per-protocol parsing. The call + result halves land on different spans of the same session and are joined on `tool_call_id` by two half-merging upserts; references `correlation_id` with **no foreign key** (like the scanner tables, ADR-003). Additive, forward-only; regular tx. |
 | 19 | `cagg_cost_1m` (`noTx`) | Creates the 1-minute cost continuous aggregate over `slipspace.cost.usd.total` (provider/model/configuration/protocol/category) `WITH NO DATA` + refresh policy. | **Cost timeseries.** The gateway's pricing engine (the `pricing:` block) emits per-request USD estimates; this CAGG is the dashboard's spend rollup. The view is correct from creation and fills as costing-enabled gateways report. |
 | 20 | `promote_cost_column` | Adds the `cost_usd` `DOUBLE PRECISION` column (`ADD COLUMN ... DEFAULT 0`, metadata-only, instant). No index — only ever summed under the already-indexed `session_id` / `conversation_id` GROUP BYs, like the token columns. | **Per-session / per-thread spend.** Summing `slipspace.cost.usd` out of the JSONB blob would be the exact whole-blob detoast migration 10 eliminated for tokens. Existing rows read 0 until the run-once boot backfill (`store.BackfillCost`, v11 bookkeeping) re-projects them. |
+| 21 | `advise_audit` | Creates `advise_audit` (append-only log of agent-routing judgements: request payload + verdict + cache/latency/error facts) + its `received_at DESC` and `conversation_id` indexes. | Agent-routing observability: judgements existed only as log lines. One row per decided advisory call, written post-response by the advise handler; the `conversation_id` index backs the savings attribution join against `request_events` (`agent-route:<model>` tag + `cost_usd`). Append-only, forward-only; regular tx. |
 
 > Migrations 1–5 describe the **pre-rearchitecture** schema. On a fresh database the runner still applies them in order before migration 6 rebuilds the entity — the early steps lay down structures that 6 then drops and recreates. Read migrations 1–5 as history; the **live** shape of `request_events` is migration 6's plus the additive columns from 9, 10, and the promoted `tags` column from 12, and the live metrics plane is migration 7's. In particular, migration 1's `streaming` / `detail` / `gen_ai_content` / measurement columns are **gone** — do not query them.
 
