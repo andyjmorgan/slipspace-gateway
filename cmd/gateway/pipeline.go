@@ -209,6 +209,14 @@ func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, e
 		}
 		if pinned != nil {
 			state.AddTag("agent-route:" + pinned.Model)
+			// A pin substitutes the model after the client chose its beta
+			// opt-ins; drop the ones the pinned model cannot serve (the 1M
+			// long-context beta on the haiku family) or the upstream rejects
+			// the whole request with a 400.
+			if agentroute.ReconcileBetas(r.Header, pinned.Model) {
+				state.AddTag("agent-route:stripped-context-1m")
+				log.InfoContext(ctx, "agentroute: stripped context-1m beta for pinned model", "model", pinned.Model)
+			}
 			log.InfoContext(ctx, "agentroute: pin applied", "model", pinned.Model, "reason", pinned.Reason)
 		}
 		state.PolicyRef = rc.Name
