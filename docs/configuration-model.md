@@ -87,7 +87,7 @@ flowchart TB
 
 ## Top-level keys
 
-The loader recognises **nine** top-level keys (`internal/config/loader.go`, `keyProviders`…`keyPricing`). Any of them may appear in any `*.yaml` file, subject to the single-authoring-home rule above.
+The loader recognises **ten** top-level keys (`internal/config/loader.go:13-24`, `keyProviders`…`keyAdvisors`). Any of them may appear in any `*.yaml` file, subject to the single-authoring-home rule above.
 
 | Key | Carries |
 |---|---|
@@ -100,8 +100,9 @@ The loader recognises **nine** top-level keys (`internal/config/loader.go`, `key
 | `admin` | Management-console gate. Optional; absent means the console never starts. |
 | `telemetry` | Operator-tunable telemetry knobs (today: GenAI content-capture byte caps). Optional; absent resolves to built-in defaults. |
 | `pricing` | Per-request USD cost estimation: rate-card overrides over the embedded defaults. Optional; absent means costing off. |
+| `advisors` | Agent-aware routing (added v2.3.0): advisor configuration for classifying agents and pinning models per conversation. Optional; absent means agent-aware routing off. |
 
-The pre-rename `backends:` key is rejected with `ErrLegacyProvidersKey`. Any other unrecognised top-level key is silently ignored by the YAML decoder (the `configDoc` struct only has fields for the nine blocks above plus the `backends` trap).
+The pre-rename `backends:` key is rejected with `ErrLegacyProvidersKey`. Any other unrecognised top-level key is silently ignored by the YAML decoder (the `configDoc` struct only has fields for the ten blocks above plus the `backends` trap).
 
 ---
 
@@ -215,7 +216,7 @@ Validation: a group must declare at least one target, every target must name a `
 
 ## `configurations` block
 
-`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:262`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
+`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:268`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
 
 ```yaml
 configurations:
@@ -237,16 +238,17 @@ configurations:
       tier: production
 ```
 
-### `Configuration` fields (`contracts/config/model.go:262`)
+### `Configuration` fields (`contracts/config/model.go:268`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `credentials` | map[string]string | no | Provider name → upstream credential this configuration holds for it; `{key}` resolves from here. An **empty-string** value means a no-credential provider (strip the credential and forward — useful for ollama-style upstreams). A provider referenced by a binding **must** have an entry here (even if empty); this is **not** checked at load — selection fails at request time with `selection: configuration holds no credential entry for provider <p>`. A credential naming a provider absent from `providers` aborts at load with `ErrValidation` (`configuration <name> credentials reference unknown provider <p>`, `config_validate.go:188-191`) — not `ErrUnknownConfiguration`, which is reserved for an api_key naming an unknown configuration. |
+| `credentials` | map[string]string | no | Provider name → upstream credential this configuration holds for it; `{key}` resolves from here. An **empty-string** value means a no-credential provider (strip the credential and forward — useful for ollama-style upstreams). A provider referenced by a binding **must** have an entry here (even if empty); this is **not** checked at load — selection fails at request time with `selection: configuration holds no credential entry for provider <p>`. A credential naming a provider absent from `providers` aborts at load with `ErrValidation` (`configuration <name> credentials reference unknown provider <p>`, `config_validate.go:219-222`) — not `ErrUnknownConfiguration`, which is reserved for an api_key naming an unknown configuration. |
 | `bindings` | []Binding | no | The generative routing table: `(protocol, model) → provider or group`. Evaluated in order; first match wins. See [`bindings`](#bindings-inside-a-configuration). |
 | `passthrough_bindings` | []PassthroughBinding | no | Exposes opaque endpoint families on this configuration. See [Passthrough families and bindings](#passthrough-families-and-bindings). |
 | `rule_names` | []string | no | Names of **transform** rules from the top-level `rules:` library this configuration applies (body/header/query rewrites, tags, short-circuits — not routing). Unknown names abort load with `ErrUnknownRuleName`. Evaluation order = list order. |
 | `tags` | map[string]string | no | Static configuration-level labels propagated to telemetry for every request under this configuration. **Not** the same channel as rule-attached request tags or binding tags — `configurations[].tags` does not bump `gateway.tags.applied.total`. Use this for static metadata (`tier: production`); use [`addTag`](actions.md#addtag) rule actions or [`Binding.tags`](#bindings-inside-a-configuration) for per-request labels. |
 | `connector_bindings` | []ConnectorBinding | no | Attaches one or more top-level connectors with per-binding sampling / filter / size-cap overrides. Empty (or absent) means no records are captured — the body-capture middleware short-circuits when no bindings exist. See [connector-bindings.md](connector-bindings.md). |
+| `agent_routing` | *AgentRouting | no | Agent-aware routing (added v2.3.0): per-configuration overrides for classifying agents and pinning models per conversation. |
 
 ---
 

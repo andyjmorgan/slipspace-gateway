@@ -55,7 +55,7 @@ flowchart LR
     ADM -- reads --> BRK
 ```
 
-Both listeners share the observability provider (meters, snapshotter), the live-feed ring, the body store, and the breaker store — those are constructed once at startup and passed into both wirings. Nothing else crosses the boundary. The admin handler never calls into the proxy chain; the proxy chain never writes to admin state apart from the four side-channels above.
+Both listeners share the observability provider (meters, snapshotter), the live-feed ring, the body store, and the breaker store — those are constructed once at startup and passed into both wirings. They also share the live `config.Store` (the single `ResolvedConfig` publisher — invariant #9) and the `ConfigDir` path the write/export API persists back to; the store is a first-class shared dependency, not a side-channel. The admin handler never calls into the proxy chain; the proxy chain never writes to admin state apart from the four side-channels above.
 
 Mount `/admin/` behind the same ingress as the data plane if you like — the SPA owns the `/admin/` URL prefix so the routing rule on the ingress side stays dumb (`Host: slipspace.example.com; PathPrefix: /admin → :8081`). Or expose the admin port through a sidecar / `kubectl port-forward` for loopback-only access. Both work; the gateway doesn't care.
 
