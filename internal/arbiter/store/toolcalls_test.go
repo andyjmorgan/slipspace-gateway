@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,28 @@ func TestListToolCalls(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("full filters: %v", err)
 	}
+	// The scalar filters degrade to one-element = ANY predicates; SessionID
+	// stays plain equality.
+	if sql := full.querySQL[len(full.querySQL)-1]; !strings.Contains(sql, "tool_name = ANY(") ||
+		!strings.Contains(sql, "provider = ANY(") || !strings.Contains(sql, "session_id = ") ||
+		strings.Contains(sql, "session_id = ANY(") {
+		t.Errorf("full-filter SQL = %q", sql)
+	}
+
+	// Plural values bind as one []string behind = ANY (OR within the dimension)
+	// and win over their scalar twins.
+	multi := &fakeQuerier{query: &fakeRows{scanErrs: []error{nil}}}
+	if _, _, err := newStore(multi).ListToolCalls(ctx(), ToolCallListParams{
+		Provider: "ignored", Providers: []string{"openai", "anthropic"},
+		Names: []string{"Read", "Write"}, Models: []string{"m1"},
+	}); err != nil {
+		t.Fatalf("multi filters: %v", err)
+	}
+	if sql := multi.querySQL[len(multi.querySQL)-1]; !strings.Contains(sql, "tool_name = ANY(") ||
+		!strings.Contains(sql, "provider = ANY(") || !strings.Contains(sql, "model = ANY(") {
+		t.Errorf("multi-filter SQL = %q", sql)
+	}
+
 	// pending status takes the other branch.
 	if _, _, err := newStore(&fakeQuerier{query: &fakeRows{}}).ListToolCalls(ctx(), ToolCallListParams{Status: "pending"}); err != nil {
 		t.Fatalf("pending: %v", err)

@@ -25,6 +25,16 @@ type EventFilter struct {
 	Provider      string
 	Protocol      string
 	StatusClass   string
+	// Configurations/Models/Providers/Protocols are the multi-value forms of
+	// the scalar dimensions above: an event matches when its value is ANY of
+	// the listed ones (OR within the dimension). When a plural is non-empty it
+	// takes precedence over its scalar twin; the scalars survive because the
+	// dashboard breakdown path reads them single-valued. Empty/nil means no
+	// predicate.
+	Configurations []string
+	Models         []string
+	Providers      []string
+	Protocols      []string
 	// SessionID and CorrelationID are exact-match lookups for the message
 	// browser's two id search boxes; empty means no predicate.
 	SessionID     string
@@ -51,11 +61,34 @@ type EventFilter struct {
 // never interpolates a user string into SQL — only column names, which come
 // from the package-internal allowlist.
 func appendFilter(where []string, args []any, f EventFilter) ([]string, []any) {
+	// The four categorical dimensions accept many values (OR within the
+	// dimension). A non-empty plural wins; a lone scalar degrades to a
+	// one-element slice so direct EventFilter{Provider: "x"} construction
+	// keeps its meaning. One-element slices still emit = ANY($N) — the
+	// planner treats it as equality, and a single shape keeps the paging
+	// queries' positional-arg reuse stable.
+	anyOf := []struct {
+		col    string
+		vals   []string
+		scalar string
+	}{
+		{"configuration", f.Configurations, f.Configuration},
+		{"model", f.Models, f.Model},
+		{"provider", f.Providers, f.Provider},
+		{"protocol", f.Protocols, f.Protocol},
+	}
+	for _, e := range anyOf {
+		vals := e.vals
+		if len(vals) == 0 && e.scalar != "" {
+			vals = []string{e.scalar}
+		}
+		if len(vals) == 0 {
+			continue
+		}
+		args = append(args, vals)
+		where = append(where, fmt.Sprintf("%s = ANY($%d)", e.col, len(args)))
+	}
 	eq := []struct{ col, val string }{
-		{"configuration", f.Configuration},
-		{"model", f.Model},
-		{"provider", f.Provider},
-		{"protocol", f.Protocol},
 		{"session_id", f.SessionID},
 		{"correlation_id", f.CorrelationID},
 		{"conversation_id", f.ConversationID},

@@ -1828,18 +1828,31 @@ function SessionMessagesPanel({
   const [limit, setLimit] = useState<number>(SESSION_MESSAGES_PAGE_SIZE)
   const isFixture = source === "fixture"
 
+  // Model header filter (multi-select, OR). Options come from the session's
+  // own loaded spans — complete session coverage, no extra fetch — which is
+  // also why Model is the only filterable column here: SessionSpan carries no
+  // provider/protocol/configuration/tags to enumerate. API mode pushes the
+  // selection into the server-side pager filters; fixture mode narrows the
+  // synthesized rows client-side.
+  const [modelSel, setModelSel] = useState<string[]>([])
+  const modelOptions = useMemo(
+    () => [...new Set(vm.spans.map((s) => s.model).filter((m): m is string => !!m))].sort(),
+    [vm.spans],
+  )
+
   // Query filters: session-scoped always; conversation-scoped when a sub-agent
   // is focused; from/to only when sliced — the full session needs no time
   // bounds, session_id already scopes the scan.
   const filters = useMemo<MessageFilters>(() => {
     const f: MessageFilters = { sessionId: vm.sid }
     if (focusedConv) f.conversationId = focusedConv
+    if (modelSel.length > 0) f.models = modelSel
     if (debounced) {
       f.from = new Date(vm.t0ms + debounced.d0 * 1000).toISOString()
       f.to = new Date(vm.t0ms + debounced.d1 * 1000).toISOString()
     }
     return f
-  }, [vm.sid, vm.t0ms, debounced, focusedConv])
+  }, [vm.sid, vm.t0ms, debounced, focusedConv, modelSel])
 
   const pager = useMessagesPager({
     filters,
@@ -1855,6 +1868,7 @@ function SessionMessagesPanel({
     return vm.spans
       .filter((s) => s.t >= d0 && s.t <= d1)
       .filter((s) => !focusedConv || s.conversation_id === focusedConv)
+      .filter((s) => modelSel.length === 0 || (s.model != null && modelSel.includes(s.model)))
       .slice()
       .reverse()
       .map((s) => ({
@@ -1868,7 +1882,7 @@ function SessionMessagesPanel({
         tokens_in: s.usage.input ?? 0,
         tokens_out: s.usage.output ?? 0,
       }))
-  }, [isFixture, vm, d0, d1, focusedConv])
+  }, [isFixture, vm, d0, d1, focusedConv, modelSel])
   // Fixture paging is tagged with the row set + page size it belongs to, so a
   // window or size change derives page one during render (no reset effect).
   const [fixNav, setFixNav] = useState<{ rows: MessageEntry[]; limit: number; page: number } | null>(null)
@@ -1918,6 +1932,9 @@ function SessionMessagesPanel({
         agent={(e) => {
           const conv = e.conversation_id ?? vm.sid
           return { label: dispName(conv), color: vm.colors.get(conv) }
+        }}
+        filters={{
+          model: { values: modelSel, options: modelOptions, onChange: setModelSel, allowSelectAll: true, emptyText: "No models in session" },
         }}
       />
       <MessagesPagerBar

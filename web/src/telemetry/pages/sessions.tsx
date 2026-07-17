@@ -8,8 +8,8 @@ import { Sheet } from "@/components/atoms/sheet"
 import { ActiveFilterChips, FilterField, FiltersButton, type Chip } from "@/components/atoms/filters"
 import { SkeletonRows } from "@/components/atoms/skeleton"
 import { Segmented } from "@/components/atoms/segmented"
-import { Select } from "@/components/atoms/select"
 import { MultiSelect } from "@/components/atoms/multi-select"
+import { HeaderFilter } from "@/components/atoms/header-filter"
 import { PageHeader } from "@/components/atoms/page-header"
 import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
@@ -57,11 +57,13 @@ function SessionsList() {
   }
 
   // Filters: tags (AND containment) + configuration/provider/model/protocol
-  // equality + relative window preset.
-  const [configuration, setConfiguration] = useState("")
-  const [provider, setProvider] = useState("")
-  const [model, setModel] = useState("")
-  const [protocol, setProtocol] = useState("")
+  // multi-selects (many values OR within the dimension) + relative window
+  // preset. The Models/Tags header funnel menus edit the same arrays as the
+  // sheet — one state, two surfaces.
+  const [configurations, setConfigurations] = useState<string[]>([])
+  const [providers, setProviders] = useState<string[]>([])
+  const [models, setModels] = useState<string[]>([])
+  const [protocols, setProtocols] = useState<string[]>([])
   const [tags, setTags] = useState<string[]>([])
   const [timeRange, setTimeRange] = useState<SessionTimeRange>("24h")
   const [limit, setLimit] = useState<number>(SESSION_DEFAULT_PAGE_SIZE)
@@ -90,7 +92,7 @@ function SessionsList() {
   useEffect(() => {
     cursorsRef.current = [""]
     setPageIndex(0)
-  }, [configuration, provider, model, protocol, tags, timeRange, limit, sort])
+  }, [configurations, providers, models, protocols, tags, timeRange, limit, sort])
 
   useEffect(() => {
     let cancelled = false
@@ -98,7 +100,7 @@ function SessionsList() {
     const range = SESSION_TIME_RANGES.find((r) => r.value === timeRange)
     const from = range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined
     fetchSessions(
-      { from, configuration, provider, model, protocol, tags },
+      { from, configurations, providers, models, protocols, tags },
       { cursor: cursorsRef.current[pageIndex] ?? "", limit, sort: sort?.key, order: sort && !sort.desc ? "asc" : "desc" },
     )
       .then((p) => {
@@ -120,12 +122,17 @@ function SessionsList() {
     return () => {
       cancelled = true
     }
-  }, [configuration, provider, model, protocol, tags, timeRange, sort, pageIndex, limit, reloadNonce, nav])
+  }, [configurations, providers, models, protocols, tags, timeRange, sort, pageIndex, limit, reloadNonce, nav])
 
-  // Facets back the dropdowns (cached server-side, cheap to re-fetch on Refresh).
+  // Facets back the dropdowns (cached server-side per window, cheap to
+  // re-fetch on Refresh). Window-scoped to the same range as the list, so the
+  // menus offer only values present in it; the relative bound is resolved
+  // here at fetch time (Date.now() must not run during render).
   useEffect(() => {
     let cancelled = false
-    fetchFacets()
+    const range = SESSION_TIME_RANGES.find((r) => r.value === timeRange)
+    const from = range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined
+    fetchFacets(from ? { from } : undefined)
       .then((f) => {
         if (!cancelled) setFacets(f)
       })
@@ -135,7 +142,7 @@ function SessionsList() {
     return () => {
       cancelled = true
     }
-  }, [reloadNonce])
+  }, [reloadNonce, timeRange])
 
   const onNext = () => {
     if (!nextCursor) return
@@ -149,10 +156,10 @@ function SessionsList() {
   }
   const onSort = (key: string) => setSort((s) => toggleSort(s, key))
   const clearFilters = () => {
-    setConfiguration("")
-    setProvider("")
-    setModel("")
-    setProtocol("")
+    setConfigurations([])
+    setProviders([])
+    setModels([])
+    setProtocols([])
     setTags([])
     // Clear restores the default window (24h), not the unbounded all-time scan
     // ("all" is the heaviest query — see the timeRange default above).
@@ -160,12 +167,12 @@ function SessionsList() {
   }
 
   const chips: Chip[] = [
-    configuration && { key: "config", label: "Config", value: configuration, onClear: () => setConfiguration("") },
-    provider && { key: "provider", label: "Provider", value: provider, onClear: () => setProvider("") },
-    model && { key: "model", label: "Model", value: model, onClear: () => setModel("") },
-    protocol && { key: "protocol", label: "Protocol", value: protocol, onClear: () => setProtocol("") },
+    ...configurations.map((v) => ({ key: `config:${v}`, label: "Config", value: v, onClear: () => setConfigurations(configurations.filter((x) => x !== v)) })),
+    ...providers.map((v) => ({ key: `provider:${v}`, label: "Provider", value: v, onClear: () => setProviders(providers.filter((x) => x !== v)) })),
+    ...models.map((v) => ({ key: `model:${v}`, label: "Model", value: v, onClear: () => setModels(models.filter((x) => x !== v)) })),
+    ...protocols.map((v) => ({ key: `protocol:${v}`, label: "Protocol", value: v, onClear: () => setProtocols(protocols.filter((x) => x !== v)) })),
     ...tags.map((t) => ({ key: `tag:${t}`, label: "Tag", value: t, onClear: () => setTags(tags.filter((x) => x !== t)) })),
-  ].filter(Boolean) as Chip[]
+  ] as Chip[]
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -209,8 +216,18 @@ function SessionsList() {
               <SortHeader label="Subagents" col="subagents" sort={sort} onSort={onSort} align="right" />
               <SortHeader label="Tokens" col="tokens" sort={sort} onSort={onSort} align="right" />
               <SortHeader label="Cost" col="cost" sort={sort} onSort={onSort} align="right" />
-              <th scope="col" className="text-left font-medium px-4 py-2">Models</th>
-              <th scope="col" className="text-left font-medium px-4 py-2">Tags</th>
+              <th scope="col" className="text-left font-medium px-4 py-2">
+                <span className="inline-flex items-center gap-1">
+                  Models
+                  <HeaderFilter label="model" values={models} options={facets.models} onChange={setModels} emptyText="No models in window" />
+                </span>
+              </th>
+              <th scope="col" className="text-left font-medium px-4 py-2">
+                <span className="inline-flex items-center gap-1">
+                  Tags
+                  <HeaderFilter label="tags" values={tags} options={facets.tags} onChange={setTags} allowSelectAll={false} emptyText="No tags in window" />
+                </span>
+              </th>
               <SortHeader label="Started" col="started" sort={sort} onSort={onSort} />
               <SortHeader label="Last activity" col="last" sort={sort} onSort={onSort} />
             </tr>
@@ -302,21 +319,21 @@ function SessionsList() {
       >
         <div className="flex flex-col gap-3.5">
           <div className="grid grid-cols-2 gap-3">
-            <FilterField label="Configuration">
-              <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} className="w-full" />
+            <FilterField label="Configuration (match any)">
+              <MultiSelect label="Config" values={configurations} options={facets.configurations} onChange={setConfigurations} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Provider">
-              <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} className="w-full" />
+            <FilterField label="Provider (match any)">
+              <MultiSelect label="Provider" values={providers} options={facets.providers} onChange={setProviders} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Model">
-              <Select label="Model" value={model} options={facets.models} onChange={setModel} className="w-full" />
+            <FilterField label="Model (match any)">
+              <MultiSelect label="Model" values={models} options={facets.models} onChange={setModels} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Protocol">
-              <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} className="w-full" />
+            <FilterField label="Protocol (match any)">
+              <MultiSelect label="Protocol" values={protocols} options={facets.protocols} onChange={setProtocols} allowSelectAll className="w-full" />
             </FilterField>
           </div>
           <FilterField label="Tags (match all)">
-            <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-full" />
+            <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} emptyText="No tags" className="w-full" />
           </FilterField>
         </div>
       </Sheet>

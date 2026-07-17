@@ -205,6 +205,15 @@ type ToolCallListParams struct {
 	Configuration string
 	Protocol      string
 	Model         string
+	// Names/Providers/Configurations/Protocols/Models are the multi-value forms
+	// of the categorical dimensions above: a call matches when its value is ANY
+	// of the listed ones (OR within the dimension). A non-empty plural takes
+	// precedence over its scalar twin; empty/nil means no predicate.
+	Names          []string
+	Providers      []string
+	Configurations []string
+	Protocols      []string
+	Models         []string
 	// Status narrows to "pending" (no result yet) or "resolved" (result present);
 	// empty means either.
 	Status string
@@ -261,22 +270,35 @@ func (s *Store) ListToolCalls(ctx context.Context, p ToolCallListParams) ([]Tool
 		args = append(args, p.To)
 		where = append(where, fmt.Sprintf("observed_at < $%d", len(args)))
 	}
-	// Equality filters: column names come from this package-internal allowlist,
-	// only values are bound as parameters.
-	eq := []struct{ col, val string }{
-		{"tool_name", p.Name},
-		{"session_id", p.SessionID},
-		{"provider", p.Provider},
-		{"configuration", p.Configuration},
-		{"protocol", p.Protocol},
-		{"model", p.Model},
+	// Categorical filters accept many values (OR within the dimension) via a
+	// single = ANY($N) placeholder; a lone scalar degrades to a one-element
+	// slice so direct scalar construction keeps its meaning. Column names come
+	// from this package-internal allowlist, only values are bound as parameters.
+	anyOf := []struct {
+		col    string
+		vals   []string
+		scalar string
+	}{
+		{"tool_name", p.Names, p.Name},
+		{"provider", p.Providers, p.Provider},
+		{"configuration", p.Configurations, p.Configuration},
+		{"protocol", p.Protocols, p.Protocol},
+		{"model", p.Models, p.Model},
 	}
-	for _, e := range eq {
-		if e.val == "" {
+	for _, e := range anyOf {
+		vals := e.vals
+		if len(vals) == 0 && e.scalar != "" {
+			vals = []string{e.scalar}
+		}
+		if len(vals) == 0 {
 			continue
 		}
-		args = append(args, e.val)
-		where = append(where, fmt.Sprintf("%s = $%d", e.col, len(args)))
+		args = append(args, vals)
+		where = append(where, fmt.Sprintf("%s = ANY($%d)", e.col, len(args)))
+	}
+	if p.SessionID != "" {
+		args = append(args, p.SessionID)
+		where = append(where, fmt.Sprintf("session_id = $%d", len(args)))
 	}
 	switch p.Status {
 	case "pending":

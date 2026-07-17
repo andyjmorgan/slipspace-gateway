@@ -9,7 +9,6 @@ import { PanelCard } from "@/components/atoms/card"
 import { Sheet } from "@/components/atoms/sheet"
 import { ActiveFilterChips, FilterField, FiltersButton, type Chip } from "@/components/atoms/filters"
 import { Segmented } from "@/components/atoms/segmented"
-import { Select } from "@/components/atoms/select"
 import { MultiSelect } from "@/components/atoms/multi-select"
 import { PageHeader } from "@/components/atoms/page-header"
 import {
@@ -62,10 +61,13 @@ export function MessagesPage() {
   const conversationId = useDebounced(convInput, 300)
   const agentId = useDebounced(agentInput, 300)
   const userId = useDebounced(userInput, 300)
-  const [provider, setProvider] = useState("")
-  const [model, setModel] = useState("")
-  const [configuration, setConfiguration] = useState("")
-  const [protocol, setProtocol] = useState("")
+  // Categorical dimensions are multi-select: many values OR within the
+  // dimension. The header funnel menus and the filter sheet edit these same
+  // arrays — one state, two surfaces, always in sync.
+  const [providers, setProviders] = useState<string[]>([])
+  const [models, setModels] = useState<string[]>([])
+  const [configurations, setConfigurations] = useState<string[]>([])
+  const [protocols, setProtocols] = useState<string[]>([])
   const [statusClass, setStatusClass] = useState("")
   const [tags, setTags] = useState<string[]>([])
   // Default the browse window to the last hour at 50 rows — the unbounded
@@ -86,8 +88,8 @@ export function MessagesPage() {
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
   // and must not run during render.
   const filters = useMemo<MessageFilters>(
-    () => ({ correlationId, sessionId, conversationId, agentId, userId, provider, model, configuration, protocol, statusClass, tags }),
-    [correlationId, sessionId, conversationId, agentId, userId, provider, model, configuration, protocol, statusClass, tags],
+    () => ({ correlationId, sessionId, conversationId, agentId, userId, providers, models, configurations, protocols, statusClass, tags }),
+    [correlationId, sessionId, conversationId, agentId, userId, providers, models, configurations, protocols, statusClass, tags],
   )
 
   // Data + paging state. The shared pager hook owns the keyset cursor stack;
@@ -116,11 +118,16 @@ export function MessagesPage() {
   const setSelected = (index: number | null) =>
     setSelection(index === null ? null : { list: entries, index })
 
-  // Facets load on mount and refresh; they back the dropdowns (cached server
-  // side, so re-fetching on Refresh is cheap).
+  // Facets load on mount, refresh, and every time-range change; they back the
+  // header funnel menus + sheet dropdowns (cached server side per window, so
+  // re-fetching on Refresh is cheap). Window-scoped so the menus offer only
+  // values present in the range the table is showing; the relative bound is
+  // resolved here at fetch time (Date.now() must not run during render).
   useEffect(() => {
     let cancelled = false
-    fetchFacets()
+    const range = TIME_RANGES.find((r) => r.value === timeRange)
+    const from = range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined
+    fetchFacets(from ? { from } : undefined)
       .then((f) => {
         if (!cancelled) setFacets(f)
       })
@@ -130,7 +137,7 @@ export function MessagesPage() {
     return () => {
       cancelled = true
     }
-  }, [reloadNonce])
+  }, [reloadNonce, timeRange])
 
   const clearFilters = () => {
     setCorrInput("")
@@ -138,10 +145,10 @@ export function MessagesPage() {
     setConvInput("")
     setAgentInput("")
     setUserInput("")
-    setProvider("")
-    setModel("")
-    setConfiguration("")
-    setProtocol("")
+    setProviders([])
+    setModels([])
+    setConfigurations([])
+    setProtocols([])
     setStatusClass("")
     setTags([])
     // Clear restores the default landing window (1h), not the unbounded all-time
@@ -159,13 +166,24 @@ export function MessagesPage() {
     convInput && { key: "conv", label: "Thread", value: convInput, onClear: () => setConvInput("") },
     agentInput && { key: "agent", label: "Agent", value: agentInput, onClear: () => setAgentInput("") },
     userInput && { key: "user", label: "User", value: userInput, onClear: () => setUserInput("") },
-    provider && { key: "provider", label: "Provider", value: provider, onClear: () => setProvider("") },
-    model && { key: "model", label: "Model", value: model, onClear: () => setModel("") },
-    configuration && { key: "config", label: "Config", value: configuration, onClear: () => setConfiguration("") },
-    protocol && { key: "protocol", label: "Protocol", value: protocol, onClear: () => setProtocol("") },
+    ...providers.map((v) => ({ key: `provider:${v}`, label: "Provider", value: v, onClear: () => setProviders(providers.filter((x) => x !== v)) })),
+    ...models.map((v) => ({ key: `model:${v}`, label: "Model", value: v, onClear: () => setModels(models.filter((x) => x !== v)) })),
+    ...configurations.map((v) => ({ key: `config:${v}`, label: "Config", value: v, onClear: () => setConfigurations(configurations.filter((x) => x !== v)) })),
+    ...protocols.map((v) => ({ key: `protocol:${v}`, label: "Protocol", value: v, onClear: () => setProtocols(protocols.filter((x) => x !== v)) })),
     statusClass && { key: "status", label: "Status", value: statusClass, onClear: () => setStatusClass("") },
     ...tags.map((t) => ({ key: `tag:${t}`, label: "Tag", value: t, onClear: () => setTags(tags.filter((x) => x !== t)) })),
   ].filter(Boolean) as Chip[]
+
+  // tableFilters binds the categorical columns' header funnel menus to the
+  // same state the sheet edits. "All" is offered on the OR dimensions only —
+  // tags is AND containment, where selecting every tag matches ~nothing.
+  const tableFilters = {
+    provider: { values: providers, options: facets.providers, onChange: setProviders, allowSelectAll: true, emptyText: "No providers in window" },
+    protocol: { values: protocols, options: facets.protocols, onChange: setProtocols, allowSelectAll: true, emptyText: "No protocols in window" },
+    model: { values: models, options: facets.models, onChange: setModels, allowSelectAll: true, emptyText: "No models in window" },
+    configuration: { values: configurations, options: facets.configurations, onChange: setConfigurations, allowSelectAll: true, emptyText: "No configurations in window" },
+    tags: { values: tags, options: facets.tags, onChange: setTags, allowSelectAll: false, emptyText: "No tags in window" },
+  }
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -193,6 +211,7 @@ export function MessagesPage() {
           onRowClick={(_e, i) => setSelected(i)}
           sort={sort}
           onSort={(key) => setSort((s) => toggleSort(s, key))}
+          filters={tableFilters}
         />
 
         <MessagesPagerBar
@@ -258,21 +277,21 @@ export function MessagesPage() {
             </FilterField>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <FilterField label="Provider">
-              <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} className="w-full" />
+            <FilterField label="Provider (match any)">
+              <MultiSelect label="Provider" values={providers} options={facets.providers} onChange={setProviders} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Model">
-              <Select label="Model" value={model} options={facets.models} onChange={setModel} className="w-full" />
+            <FilterField label="Model (match any)">
+              <MultiSelect label="Model" values={models} options={facets.models} onChange={setModels} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Configuration">
-              <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} className="w-full" />
+            <FilterField label="Configuration (match any)">
+              <MultiSelect label="Config" values={configurations} options={facets.configurations} onChange={setConfigurations} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Protocol">
-              <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} className="w-full" />
+            <FilterField label="Protocol (match any)">
+              <MultiSelect label="Protocol" values={protocols} options={facets.protocols} onChange={setProtocols} allowSelectAll className="w-full" />
             </FilterField>
           </div>
           <FilterField label="Tags (match all)">
-            <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} className="w-full" />
+            <MultiSelect label="Tags" values={tags} options={facets.tags} onChange={setTags} emptyText="No tags" className="w-full" />
           </FilterField>
           <FilterField label="Status">
             <Segmented value={statusClass} onChange={setStatusClass} options={STATUS_CLASSES.map((s) => ({ value: s.value, label: s.label }))} />

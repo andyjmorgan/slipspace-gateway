@@ -40,9 +40,28 @@ func TestToolCalls_List(t *testing.T) {
 	if e.ToolName != "Skill" || e.Status != "resolved" || string(e.Arguments) != `{"skill":"ship"}` {
 		t.Errorf("entry = %+v", e)
 	}
-	// The handler plumbed every filter through to the store params.
-	if p := q.lastToolParams; p.Name != "Skill" || p.Status != "resolved" || p.Limit != 10 {
+	// The handler plumbed every filter through to the store params, including
+	// the plural slice the query builder reads.
+	if p := q.lastToolParams; p.Name != "Skill" || p.Status != "resolved" || p.Limit != 10 ||
+		len(p.Names) != 1 || p.Names[0] != "Skill" {
 		t.Errorf("params = %+v", p)
+	}
+}
+
+func TestToolCalls_RepeatedCategoricalParams(t *testing.T) {
+	// The categorical dimensions are repeatable — every value reaches the plural
+	// store params (OR within the dimension).
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	resp := get(t, h, "/api/v1/tool-calls?name=Read&name=Write&provider=openai&provider=anthropic"+
+		"&configuration=prod&configuration=staging&protocol=messages&model=m1&model=m2", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	p := q.lastToolParams
+	if len(p.Names) != 2 || p.Names[1] != "Write" || len(p.Providers) != 2 ||
+		len(p.Configurations) != 2 || len(p.Protocols) != 1 || len(p.Models) != 2 {
+		t.Errorf("plural params not plumbed: %+v", p)
 	}
 }
 

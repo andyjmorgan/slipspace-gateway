@@ -35,7 +35,7 @@ type Queries interface {
 	// full blob at a time.
 	EventsBySessionRollup(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
 	EventsBySessionPage(ctx context.Context, p store.SessionPageParams, fn func(store.RequestEvent) error) (string, error)
-	Facets(ctx context.Context) (store.Facets, error)
+	Facets(ctx context.Context, from, to time.Time) (store.Facets, error)
 	// Arbiter security surface — the verdict + findings for one request.
 	GetVerdict(ctx context.Context, correlationID string) (store.Verdict, error)
 	ListFindings(ctx context.Context, correlationID string) ([]store.Finding, error)
@@ -120,7 +120,11 @@ func (s *Server) registerQueryRoutes(mux *http.ServeMux) {
 
 // filterFromQuery reads the shared equality/status filters from the query
 // string. The message browser adds exact session/correlation lookups and a
-// repeated ?tags= multi-value param (AND containment).
+// repeated ?tags= multi-value param (AND containment). The four categorical
+// dimensions (configuration/model/provider/protocol) are also repeatable —
+// many values OR together — parsed into the plural EventFilter slices; the
+// scalar twins keep the first value for the dashboard breakdown path, which
+// stays single-valued.
 func filterFromQuery(r *http.Request) store.EventFilter {
 	q := r.URL.Query()
 	return store.EventFilter{
@@ -129,6 +133,10 @@ func filterFromQuery(r *http.Request) store.EventFilter {
 		Model:                q.Get("model"),
 		Provider:             q.Get("provider"),
 		Protocol:             q.Get("protocol"),
+		Configurations:       nonEmpty(q["configuration"]),
+		Models:               nonEmpty(q["model"]),
+		Providers:            nonEmpty(q["provider"]),
+		Protocols:            nonEmpty(q["protocol"]),
 		StatusClass:          q.Get("status_class"),
 		SessionID:            q.Get("session_id"),
 		CorrelationID:        q.Get("correlation_id"),

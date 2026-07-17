@@ -474,29 +474,99 @@ func TestListSessions(t *testing.T) {
 
 // TestFacets_TagsFromColumn proves the tag facet enumerates the promoted tags
 // column (v12) — the fix for the ~30 s span_event detoast that emptied the
-// dropdowns. A seeded tag appears in the distinct facet set.
+// dropdowns. A seeded tag appears in the distinct facet set, and the optional
+// observed_at window excludes values outside it.
 func TestFacets_TagsFromColumn(t *testing.T) {
 	st := migratedStore(t)
 	ctx := context.Background()
+	now := time.Now()
 	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
 		CorrelationID: "facet-tag-1", SessionID: "facet-sess", StatusCode: 200,
-		ObservedAt: time.Now(), Tags: []string{"facet-uniq-tag"},
+		ObservedAt: now, Tags: []string{"facet-uniq-tag"},
 		SpanEvent: []byte(`{"tags":["facet-uniq-tag"]}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	f, err := st.Facets(ctx)
+	// A second event well outside the window carries a distinct model + tag —
+	// present in the unbounded enumeration, absent from the windowed one.
+	if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
+		CorrelationID: "facet-tag-2", SessionID: "facet-sess", StatusCode: 200,
+		Model: "facet-old-model", ObservedAt: now.Add(-48 * time.Hour),
+		Tags:      []string{"facet-old-tag"},
+		SpanEvent: []byte(`{"tags":["facet-old-tag"]}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	has := func(vals []string, want string) bool {
+		for _, v := range vals {
+			if v == want {
+				return true
+			}
+		}
+		return false
+	}
+	f, err := st.Facets(ctx, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatalf("Facets: %v", err)
 	}
-	found := false
-	for _, tag := range f.Tags {
-		if tag == "facet-uniq-tag" {
-			found = true
+	if !has(f.Tags, "facet-uniq-tag") || !has(f.Tags, "facet-old-tag") {
+		t.Errorf("unbounded facet tags %v missing seeded tags", f.Tags)
+	}
+	// Windowed to the last hour: the old event's model + tag drop out.
+	fw, err := st.Facets(ctx, now.Add(-time.Hour), time.Time{})
+	if err != nil {
+		t.Fatalf("windowed Facets: %v", err)
+	}
+	if !has(fw.Tags, "facet-uniq-tag") {
+		t.Errorf("windowed facet tags %v missing in-window tag", fw.Tags)
+	}
+	if has(fw.Tags, "facet-old-tag") || has(fw.Models, "facet-old-model") {
+		t.Errorf("windowed facets leaked out-of-window values: tags=%v models=%v", fw.Tags, fw.Models)
+	}
+}
+
+// TestListEvents_MultiValueFilters proves the categorical dimensions OR their
+// values through real SQL: two providers selected returns both providers'
+// events and excludes the third, on the same seeded rows.
+func TestListEvents_MultiValueFilters(t *testing.T) {
+	st := migratedStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	for i, p := range []string{"mv-openai", "mv-anthropic", "mv-gemini"} {
+		if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
+			CorrelationID: fmt.Sprintf("mv-%d", i), SessionID: "mv-sess", StatusCode: 200,
+			Provider: p, ObservedAt: now.Add(-time.Duration(i) * time.Minute),
+			SpanEvent: []byte(`{}`),
+		}); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if !found {
-		t.Errorf("facet tags %v missing seeded tag", f.Tags)
+	got, _, err := st.ListEventsFiltered(ctx, store.EventListParams{
+		Filter: store.EventFilter{
+			SessionID: "mv-sess",
+			Providers: []string{"mv-openai", "mv-anthropic"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ListEventsFiltered: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d events, want 2: %+v", len(got), got)
+	}
+	for _, e := range got {
+		if e.Provider == "mv-gemini" {
+			t.Errorf("multi-value provider filter leaked %q", e.Provider)
+		}
+	}
+	// The count path shares appendFilter — it must agree with the list.
+	n, err := st.CountEventsFiltered(ctx, store.EventCountParams{
+		Filter: store.EventFilter{SessionID: "mv-sess", Providers: []string{"mv-openai", "mv-anthropic"}},
+	})
+	if err != nil {
+		t.Fatalf("CountEventsFiltered: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("count = %d, want 2", n)
 	}
 }
 

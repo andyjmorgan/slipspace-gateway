@@ -10,7 +10,8 @@ import { JsonViewer } from "@/components/atoms/json-viewer"
 import { Sheet } from "@/components/atoms/sheet"
 import { ActiveFilterChips, FilterField, FiltersButton, type Chip } from "@/components/atoms/filters"
 import { Segmented } from "@/components/atoms/segmented"
-import { Select } from "@/components/atoms/select"
+import { MultiSelect } from "@/components/atoms/multi-select"
+import { HeaderFilter } from "@/components/atoms/header-filter"
 import { PageHeader } from "@/components/atoms/page-header"
 import { cn } from "@/lib/utils"
 import { fmt } from "@/lib/fmt"
@@ -62,14 +63,17 @@ function statusTag(status: string) {
 export function ToolCallsPage() {
   const nav = useNavigate()
 
-  const [name, setName] = useState("")
+  // Categorical dimensions are multi-select: many values OR within the
+  // dimension. The header funnel menus (Tool/Provider columns) and the filter
+  // sheet edit these same arrays — one state, two surfaces.
+  const [names, setNames] = useState<string[]>([])
   const [sessInput, setSessInput] = useState("")
   const sessionId = useDebounced(sessInput, 300)
   const [status, setStatus] = useState<ToolCallStatus>("")
-  const [provider, setProvider] = useState("")
-  const [configuration, setConfiguration] = useState("")
-  const [protocol, setProtocol] = useState("")
-  const [model, setModel] = useState("")
+  const [providers, setProviders] = useState<string[]>([])
+  const [configurations, setConfigurations] = useState<string[]>([])
+  const [protocols, setProtocols] = useState<string[]>([])
+  const [models, setModels] = useState<string[]>([])
   const [timeRange, setTimeRange] = useState<TimeRange>("24h")
   const [limit, setLimit] = useState<number>(TOOL_CALL_DEFAULT_PAGE_SIZE)
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -78,27 +82,32 @@ export function ToolCallsPage() {
   const [toolNames, setToolNames] = useState<string[]>([])
   const [facets, setFacets] = useState<Facets>(EMPTY_FACETS)
 
-  // The dropdowns load on mount + refresh. Tool names come from the tool-call
-  // facet; provider/model/config/protocol reuse the shared message facets (the
-  // same dimensions, cached server-side). Both degrade to empty on failure.
+  // The dropdowns load on mount + refresh + time-range change. Tool names come
+  // from the tool-call facet; provider/model/config/protocol reuse the shared
+  // message facets (the same dimensions, cached server-side per window and
+  // scoped to the page's range so the menus offer only values present in it;
+  // the relative bound resolves here at fetch time — Date.now() must not run
+  // during render). Both degrade to empty on failure.
   useEffect(() => {
     let cancelled = false
     fetchToolNames()
       .then((n) => !cancelled && setToolNames(n))
       .catch(() => {})
-    fetchFacets()
+    const range = TIME_RANGES.find((r) => r.value === timeRange)
+    const from = range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined
+    fetchFacets(from ? { from } : undefined)
       .then((f) => !cancelled && setFacets(f))
       .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [reloadNonce])
+  }, [reloadNonce, timeRange])
 
   // Pure predicates; the relative time bound resolves at fetch time (Date.now()
   // is impure and must not run during render).
   const filters = useMemo<ToolCallFilters>(
-    () => ({ name, sessionId, status, provider, configuration, protocol, model }),
-    [name, sessionId, status, provider, configuration, protocol, model],
+    () => ({ names, sessionId, status, providers, configurations, protocols, models }),
+    [names, sessionId, status, providers, configurations, protocols, models],
   )
 
   const { entries, status: pageStatus, err, pageIndex, hasNext, onNext, onPrev } = useToolCallsPager({
@@ -121,24 +130,24 @@ export function ToolCallsPage() {
     setSelection(index === null ? null : { list: entries, index })
 
   const clearFilters = () => {
-    setName("")
+    setNames([])
     setSessInput("")
     setStatus("")
-    setProvider("")
-    setConfiguration("")
-    setProtocol("")
-    setModel("")
+    setProviders([])
+    setConfigurations([])
+    setProtocols([])
+    setModels([])
     setTimeRange("24h")
   }
 
   const chips: Chip[] = [
-    name && { key: "name", label: "Tool", value: name, onClear: () => setName("") },
+    ...names.map((v) => ({ key: `name:${v}`, label: "Tool", value: v, onClear: () => setNames(names.filter((x) => x !== v)) })),
     sessInput && { key: "sess", label: "Session", value: sessInput, onClear: () => setSessInput("") },
     status && { key: "status", label: "Status", value: status, onClear: () => setStatus("") },
-    provider && { key: "provider", label: "Provider", value: provider, onClear: () => setProvider("") },
-    configuration && { key: "config", label: "Config", value: configuration, onClear: () => setConfiguration("") },
-    protocol && { key: "protocol", label: "Protocol", value: protocol, onClear: () => setProtocol("") },
-    model && { key: "model", label: "Model", value: model, onClear: () => setModel("") },
+    ...providers.map((v) => ({ key: `provider:${v}`, label: "Provider", value: v, onClear: () => setProviders(providers.filter((x) => x !== v)) })),
+    ...configurations.map((v) => ({ key: `config:${v}`, label: "Config", value: v, onClear: () => setConfigurations(configurations.filter((x) => x !== v)) })),
+    ...protocols.map((v) => ({ key: `protocol:${v}`, label: "Protocol", value: v, onClear: () => setProtocols(protocols.filter((x) => x !== v)) })),
+    ...models.map((v) => ({ key: `model:${v}`, label: "Model", value: v, onClear: () => setModels(models.filter((x) => x !== v)) })),
   ].filter(Boolean) as Chip[]
 
   const empty = chips.length > 0 ? "No tool calls match these filters." : "No tool calls in this window."
@@ -146,7 +155,7 @@ export function ToolCallsPage() {
   return (
     <div className="flex flex-col gap-3.5">
       <PageHeader title="Tool Calls" sub="Audit individual tool invocations — inputs and results, searchable by tool">
-        <Select label="Tool" value={name} options={toolNames} onChange={setName} className="w-44" />
+        <MultiSelect label="Tool" values={names} options={toolNames} onChange={setNames} allowSelectAll className="w-44" />
         <Segmented value={status} onChange={setStatus} options={STATUSES.map((s) => ({ value: s.value, label: s.label }))} />
         <Segmented value={timeRange} onChange={setTimeRange} options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))} />
         <FiltersButton count={chips.length} onClick={() => setFiltersOpen(true)} />
@@ -170,6 +179,8 @@ export function ToolCallsPage() {
           empty={empty}
           onRowClick={(i) => setSelected(i)}
           onSession={(s) => setSessInput(s)}
+          nameFilter={{ values: names, options: toolNames, onChange: setNames }}
+          providerFilter={{ values: providers, options: facets.providers, onChange: setProviders }}
         />
         <PagerBar
           limit={limit}
@@ -215,8 +226,8 @@ export function ToolCallsPage() {
         }
       >
         <div className="flex flex-col gap-3.5">
-          <FilterField label="Tool name">
-            <Select label="Tool" value={name} options={toolNames} onChange={setName} className="w-full" />
+          <FilterField label="Tool name (match any)">
+            <MultiSelect label="Tool" values={names} options={toolNames} onChange={setNames} allowSelectAll className="w-full" />
           </FilterField>
           <FilterField label="Session ID">
             <Input
@@ -231,17 +242,17 @@ export function ToolCallsPage() {
             <Segmented value={status} onChange={setStatus} options={STATUSES.map((s) => ({ value: s.value, label: s.label }))} />
           </FilterField>
           <div className="grid grid-cols-2 gap-3">
-            <FilterField label="Provider">
-              <Select label="Provider" value={provider} options={facets.providers} onChange={setProvider} className="w-full" />
+            <FilterField label="Provider (match any)">
+              <MultiSelect label="Provider" values={providers} options={facets.providers} onChange={setProviders} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Model">
-              <Select label="Model" value={model} options={facets.models} onChange={setModel} className="w-full" />
+            <FilterField label="Model (match any)">
+              <MultiSelect label="Model" values={models} options={facets.models} onChange={setModels} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Configuration">
-              <Select label="Config" value={configuration} options={facets.configurations} onChange={setConfiguration} className="w-full" />
+            <FilterField label="Configuration (match any)">
+              <MultiSelect label="Config" values={configurations} options={facets.configurations} onChange={setConfigurations} allowSelectAll className="w-full" />
             </FilterField>
-            <FilterField label="Protocol">
-              <Select label="Protocol" value={protocol} options={facets.protocols} onChange={setProtocol} className="w-full" />
+            <FilterField label="Protocol (match any)">
+              <MultiSelect label="Protocol" values={protocols} options={facets.protocols} onChange={setProtocols} allowSelectAll className="w-full" />
             </FilterField>
           </div>
         </div>
@@ -252,6 +263,8 @@ export function ToolCallsPage() {
 
 // ToolCallsTable is the keyset page table. Clicking a row opens the inspector;
 // clicking the session cell sets the session filter instead (stopPropagation).
+// nameFilter / providerFilter wire those columns' header funnel menus to the
+// page's shared filter state.
 function ToolCallsTable({
   entries,
   status,
@@ -259,6 +272,8 @@ function ToolCallsTable({
   empty,
   onRowClick,
   onSession,
+  nameFilter,
+  providerFilter,
 }: {
   entries: ToolCallEntry[]
   status: "loading" | "ok" | "error"
@@ -266,6 +281,8 @@ function ToolCallsTable({
   empty: string
   onRowClick: (index: number) => void
   onSession: (sessionId: string) => void
+  nameFilter?: { values: string[]; options: string[]; onChange: (v: string[]) => void }
+  providerFilter?: { values: string[]; options: string[]; onChange: (v: string[]) => void }
 }) {
   const th = "px-3 py-2 text-left text-[10px] font-medium uppercase tracking-[0.06em] text-[color:var(--text-4)]"
   const td = "px-3 py-2 align-middle border-t border-[color:var(--border)]"
@@ -286,10 +303,20 @@ function ToolCallsTable({
     <TableScroll>
       <thead>
         <tr>
-          <th className={th}>Tool</th>
+          <th className={th}>
+            <span className="inline-flex items-center gap-1">
+              Tool
+              {nameFilter && <HeaderFilter label="tool" emptyText="No tools seen" {...nameFilter} />}
+            </span>
+          </th>
           <th className={th}>Status</th>
           <th className={th}>Session</th>
-          <th className={th}>Provider</th>
+          <th className={th}>
+            <span className="inline-flex items-center gap-1">
+              Provider
+              {providerFilter && <HeaderFilter label="provider" emptyText="No providers in window" {...providerFilter} />}
+            </span>
+          </th>
           <th className={th}>Called</th>
           <th className={cn(th, "text-right")}>Args</th>
           <th className={cn(th, "text-right")}>Result</th>

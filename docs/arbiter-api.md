@@ -108,11 +108,11 @@ messages/recent, events). Each maps to a column predicate in
 
 | Param | Column | Semantics |
 |---|---|---|
-| `configuration` | `configuration` | exact match |
+| `configuration` | `configuration` | **repeatable**; `?configuration=a&configuration=b` matches events whose value is **ANY** of the listed ones (`= ANY($N)`, OR within the dimension) |
 | `gateway` | `gateway_id` | exact match |
-| `model` | `model` | exact match |
-| `provider` | `provider` | exact match (post-rule provider) |
-| `protocol` | `protocol` | exact match (the wire protocol/endpoint; the UI labels this column **"endpoint"**) |
+| `model` | `model` | **repeatable**; OR within the dimension, as `configuration` |
+| `provider` | `provider` | **repeatable**; OR within the dimension (post-rule provider) |
+| `protocol` | `protocol` | **repeatable**; OR within the dimension (the wire protocol/endpoint; the UI labels this column **"endpoint"**) |
 | `status_class` | `status_code` | one of `2xx` / `4xx` / `5xx`; maps to a range predicate (`5xx` is open-ended `>= 500`) — `statusClassBounds`, lines 81-92 |
 | `session_id` | `session_id` | exact match |
 | `correlation_id` | `correlation_id` | exact match |
@@ -121,7 +121,13 @@ messages/recent, events). Each maps to a column predicate in
 | `tags` | `tags` | **repeatable**; `?tags=a&tags=b` requires the event's post-rule tag set to contain **ALL** listed tags (array `@>` containment against the promoted `tags text[]` column, GIN-indexed via `request_events_tags_arr`). Blank values are dropped (`nonEmpty`). |
 
 An absent or empty param adds no predicate on that dimension. All present
-predicates are AND-combined.
+predicates are AND-combined. Note the two multi-value semantics: the four
+categorical dimensions (`configuration`/`model`/`provider`/`protocol`) OR
+their values (an event matches any listed value), while `tags` ANDs its values
+(the event must carry all of them). Blank values are dropped everywhere. The
+**dashboard** routes read these dimensions single-valued (the first occurrence)
+— multi-value applies to the browser routes (`/messages`, `/events`,
+`/sessions`, `/tool-calls`).
 
 > **Naming note.** The `protocol` filter and the `protocols` facet are the same
 > `request_events.protocol` column, surfaced on the wire as `protocols`
@@ -324,8 +330,12 @@ response carries the gen_ai content with the raw bodies empty.
 
 #### `GET /api/v1/facets`
 
-Handler `handleFacets` (lines 167-183). No params. Returns the distinct dropdown
-values for the message browser:
+Handler `handleFacets`. Optional `?from` / `?to` RFC3339 bounds
+(`parseWindowBounds`, same convention as the browser routes; a malformed bound
+is a 400) scope the enumeration to events observed in that window, so the
+dropdowns offer only values present in the range the table is showing. Absent
+bounds enumerate all history. Returns the distinct dropdown values for the
+message browser:
 
 ```json
 {
@@ -347,12 +357,16 @@ and emptied all dropdowns past the request deadline; the column projection
 (`unnest(tags)`) is what fixed it. The blob remains the source of truth for the
 inspector, but facets and filters read the column.
 
-**Caching.** Facets are memoized behind a mutex with a **30-second TTL**
-(`facetsTTL`, `observability.go` lines 194-223). The lock is held *across* the
-refresh query, so a burst of concurrent dropdown opens collapses into a single
-table scan rather than a thundering herd; subsequent opens within the TTL are
-served from memory. A newly-seen provider/model/tag therefore appears in the
-dropdowns within at most 30 seconds.
+**Caching.** Facets are memoized behind a mutex with a **30-second TTL**, one
+entry per requested window (`facetsTTL` / `facetsCache`, `observability.go`).
+The cache key quantizes the `from`/`to` bounds to 10-second buckets
+(`facetsKeyQuantum`) — the SPA resolves relative presets ("last 1h") to a
+fresh timestamp on every fetch, so exact bounds would never repeat and the
+cache would never hit. The lock is held *across* the refresh query, so a burst
+of concurrent dropdown opens on one window collapses into a single table scan
+rather than a thundering herd; expired entries are pruned opportunistically. A
+newly-seen provider/model/tag therefore appears in the dropdowns within at
+most 30 seconds.
 
 ### Events + sessions (telemetry-native)
 
@@ -402,12 +416,12 @@ summaries for the **Sessions** console page. Query params:
 | Param | Meaning |
 |---|---|
 | `from` / `to` | RFC3339 window bounds (either omittable). A session is included when its **span overlaps** `[from, to)` — i.e. it was active during the window, even if it began before or continues after it. |
-| `configuration` | Exact-match configuration filter (`store.EventFilter`). |
+| `configuration` / `provider` / `protocol` / `model` (each repeatable) | Categorical filters (`store.EventFilter`); many values OR within the dimension (`= ANY`). |
 | `tags` (repeatable) | AND containment over the post-rule tag set. |
 | `cursor` | Opaque keyset cursor from a prior `next_cursor`. |
 | `limit` | Page size (default 100, capped 500). |
 
-The `configuration` / `tags` predicates are applied to the rows **before**
+The categorical / `tags` predicates are applied to the rows **before**
 aggregation, so a session appears when it has matching requests overlapping the
 window and the rollup (`messages` / `total_tokens` / `total_cost` / `models` /
 `started_at` / `last_activity`) reflects only the matching subset. `started_at` / `last_activity`
@@ -610,10 +624,11 @@ not indexed.
 
 Handler `handleToolCalls` (`toolcalls.go`). Filtered, keyset-paged list, newest
 first by `observed_at` (the first-seen time), in a `{tool_calls, next_cursor}`
-envelope. Filters (all AND, all optional): `name` (exact tool name),
-`session_id`, `provider`, `configuration`, `protocol`, `model`, `status`
-(`pending` | `resolved`), and a `from`/`to` window on `observed_at`. `limit`
-defaults to 100, capped at 500.
+envelope. Filters (all AND across dimensions, all optional): `name` (tool
+name), `provider`, `configuration`, `protocol`, `model` — each **repeatable**,
+many values OR within the dimension (`= ANY`) — plus `session_id` (exact),
+`status` (`pending` | `resolved`), and a `from`/`to` window on `observed_at`.
+`limit` defaults to 100, capped at 500.
 
 ```json
 {

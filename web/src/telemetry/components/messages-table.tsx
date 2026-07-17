@@ -11,6 +11,7 @@ import { ProviderChip } from "@/components/atoms/provider-chip"
 import { TableScroll } from "@/components/atoms/card"
 import { SkeletonRows } from "@/components/atoms/skeleton"
 import { Segmented } from "@/components/atoms/segmented"
+import { HeaderFilter } from "@/components/atoms/header-filter"
 import { cn } from "@/lib/utils"
 import { fmt } from "@/lib/fmt"
 import { MESSAGE_PAGE_SIZES } from "@/lib/messages-pager"
@@ -31,9 +32,22 @@ export function toggleSort(prev: SortState | undefined, key: string): SortState 
   return prev?.key === key ? { key, desc: !prev.desc } : { key, desc: true }
 }
 
+// ColumnFilter is the per-column filter binding a table view threads to its
+// header's HeaderFilter menu: the selected values, the offered options, and
+// the change handler. allowSelectAll/emptyText tune the panel per dimension
+// (tags withholds "All" — its AND semantics make it meaningless).
+export type ColumnFilter = {
+  values: string[]
+  options: string[]
+  onChange: (v: string[]) => void
+  emptyText?: string
+  allowSelectAll?: boolean
+}
+
 // SortHeader is a table <th>: a sortable column button (with an asc/desc/idle
-// indicator + aria-sort) when onSort is supplied, else a plain header. Shared
-// by the messages and sessions tables so both sort the same way.
+// indicator + aria-sort) when onSort is supplied, else a plain header, plus an
+// optional column filter menu (the funnel popover). Shared by the messages and
+// sessions tables so both sort and filter the same way.
 export function SortHeader({
   label,
   col,
@@ -41,6 +55,8 @@ export function SortHeader({
   onSort,
   align = "left",
   title,
+  filter,
+  filterLabel,
 }: {
   label: React.ReactNode
   col: string
@@ -48,35 +64,46 @@ export function SortHeader({
   onSort?: (key: string) => void
   align?: "left" | "right"
   title?: string
+  // filter, when provided, renders a HeaderFilter menu beside the label;
+  // filterLabel names the dimension in its accessible name (defaults to col).
+  filter?: ColumnFilter
+  filterLabel?: string
 }) {
   const base = cn("font-medium px-4 py-2", align === "right" ? "text-right" : "text-left")
+  const menu = filter ? <HeaderFilter label={filterLabel ?? col} {...filter} /> : null
   if (!onSort) {
     return (
       <th scope="col" className={base} title={title}>
-        {label}
+        <span className={cn("inline-flex items-center gap-1", align === "right" && "flex-row-reverse")}>
+          {label}
+          {menu}
+        </span>
       </th>
     )
   }
   const active = sort?.key === col
   return (
     <th scope="col" className={base} aria-sort={active ? (sort!.desc ? "descending" : "ascending") : "none"}>
-      <button
-        type="button"
-        onClick={() => onSort(col)}
-        title={title ?? "Sort by this column"}
-        className={cn(
-          "inline-flex items-center gap-1 -mx-1 px-1 rounded-[3px] hover:text-[color:var(--text)] focus-visible:outline-2 focus-visible:outline-[color:var(--accent)]",
-          align === "right" && "flex-row-reverse",
-          active && "text-[color:var(--text)]",
-        )}
-      >
-        {label}
-        {active ? (
-          sort!.desc ? <ArrowDown size={12} /> : <ArrowUp size={12} />
-        ) : (
-          <ArrowUpDown size={12} className="opacity-40" />
-        )}
-      </button>
+      <span className={cn("inline-flex items-center gap-1", align === "right" && "flex-row-reverse")}>
+        <button
+          type="button"
+          onClick={() => onSort(col)}
+          title={title ?? "Sort by this column"}
+          className={cn(
+            "inline-flex items-center gap-1 -mx-1 px-1 rounded-[3px] hover:text-[color:var(--text)] focus-visible:outline-2 focus-visible:outline-[color:var(--accent)]",
+            align === "right" && "flex-row-reverse",
+            active && "text-[color:var(--text)]",
+          )}
+        >
+          {label}
+          {active ? (
+            sort!.desc ? <ArrowDown size={12} /> : <ArrowUp size={12} />
+          ) : (
+            <ArrowUpDown size={12} className="opacity-40" />
+          )}
+        </button>
+        {menu}
+      </span>
     </th>
   )
 }
@@ -129,6 +156,19 @@ function rowTime(iso: string): string {
   return d.toLocaleTimeString(undefined, { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0")
 }
 
+// MessagesTableFilters binds the categorical columns' header filter menus to
+// the caller's filter state — one entry per filterable column, each rendered
+// as a funnel popover on that column's header. Omit the bundle (or an entry)
+// for plain headers. Both the global browser and the session embed pass this,
+// so the header affordance lives in exactly one component.
+export type MessagesTableFilters = {
+  provider?: ColumnFilter
+  protocol?: ColumnFilter
+  model?: ColumnFilter
+  configuration?: ColumnFilter
+  tags?: ColumnFilter
+}
+
 /**
  * MessagesTableView renders one page of MessageEntry rows with the browser's
  * standard columns, the loading skeleton, and the empty state. Pure
@@ -144,6 +184,7 @@ export function MessagesTableView({
   agent,
   sort,
   onSort,
+  filters,
 }: {
   entries: MessageEntry[]
   status: "loading" | "ok" | "error"
@@ -160,6 +201,9 @@ export function MessagesTableView({
   // whose rows are a client-side slice — its headers stay plain.
   sort?: SortState
   onSort?: (key: string) => void
+  // filters wires the categorical columns' header filter menus; omitted
+  // headers stay plain.
+  filters?: MessagesTableFilters
 }) {
   const cols = agent ? 11 : 10
   return (
@@ -169,11 +213,16 @@ export function MessagesTableView({
           <SortHeader label="Time" col="time" sort={sort} onSort={onSort} />
           {agent && <th scope="col" className="text-left font-medium px-4 py-2">Agent</th>}
           <SortHeader label="Status" col="status" sort={sort} onSort={onSort} />
-          <SortHeader label="Provider" col="provider" sort={sort} onSort={onSort} />
-          <SortHeader label="Protocol" col="protocol" sort={sort} onSort={onSort} />
-          <SortHeader label="Model" col="model" sort={sort} onSort={onSort} />
-          <SortHeader label="Configuration" col="configuration" sort={sort} onSort={onSort} />
-          <th scope="col" className="text-left font-medium px-4 py-2">Tags</th>
+          <SortHeader label="Provider" col="provider" sort={sort} onSort={onSort} filter={filters?.provider} />
+          <SortHeader label="Protocol" col="protocol" sort={sort} onSort={onSort} filter={filters?.protocol} />
+          <SortHeader label="Model" col="model" sort={sort} onSort={onSort} filter={filters?.model} />
+          <SortHeader label="Configuration" col="configuration" sort={sort} onSort={onSort} filter={filters?.configuration} />
+          <th scope="col" className="text-left font-medium px-4 py-2">
+            <span className="inline-flex items-center gap-1">
+              Tags
+              {filters?.tags && <HeaderFilter label="tags" {...filters.tags} />}
+            </span>
+          </th>
           <th scope="col" className="text-right font-medium px-4 py-2">Duration</th>
           <SortHeader
             col="tokens"

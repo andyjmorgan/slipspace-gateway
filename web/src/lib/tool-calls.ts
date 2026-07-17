@@ -17,16 +17,18 @@ export type { ToolCallEntry }
 export type ToolCallStatus = "" | "pending" | "resolved"
 
 // ToolCallFilters is the audit filter set. Empty fields are omitted from the
-// query string (no predicate). `name` is the exact tool name; `sessionId` is an
-// exact match; `status` narrows to pending/resolved.
+// query string (no predicate). The categorical dimensions (names/providers/
+// configurations/protocols/models) send one repeated param per value and OR
+// within the dimension; `sessionId` is an exact match; `status` narrows to
+// pending/resolved.
 export type ToolCallFilters = {
-  name?: string
+  names?: string[]
   sessionId?: string
   status?: ToolCallStatus
-  provider?: string
-  configuration?: string
-  protocol?: string
-  model?: string
+  providers?: string[]
+  configurations?: string[]
+  protocols?: string[]
+  models?: string[]
   from?: string
   to?: string
 }
@@ -57,13 +59,16 @@ export async function fetchToolCallsPage(
   const put = (k: string, v?: string) => {
     if (v) p.set(k, v)
   }
-  put("name", filters.name)
+  const putAll = (k: string, vs?: string[]) => {
+    for (const v of vs ?? []) if (v) p.append(k, v)
+  }
+  putAll("name", filters.names)
   put("session_id", filters.sessionId)
   put("status", filters.status)
-  put("provider", filters.provider)
-  put("configuration", filters.configuration)
-  put("protocol", filters.protocol)
-  put("model", filters.model)
+  putAll("provider", filters.providers)
+  putAll("configuration", filters.configurations)
+  putAll("protocol", filters.protocols)
+  putAll("model", filters.models)
   put("from", filters.from)
   put("to", filters.to)
   put("cursor", opts.cursor)

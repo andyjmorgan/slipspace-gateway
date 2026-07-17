@@ -41,17 +41,19 @@ export async function fetchRecentMessages(limit?: number): Promise<MessagesRecen
 }
 
 // MessageFilters is the message browser's filter set. Empty fields are omitted
-// from the query string (no predicate); tags is AND containment.
+// from the query string (no predicate). The categorical dimensions
+// (providers/models/configurations/protocols) send one repeated param per
+// value and OR within the dimension; tags is AND containment.
 export type MessageFilters = {
   correlationId?: string
   sessionId?: string
   conversationId?: string
   agentId?: string
   userId?: string
-  provider?: string
-  model?: string
-  configuration?: string
-  protocol?: string
+  providers?: string[]
+  models?: string[]
+  configurations?: string[]
+  protocols?: string[]
   statusClass?: string
   tags?: string[]
   from?: string
@@ -85,19 +87,22 @@ export async function fetchMessagesPage(
   const put = (k: string, v?: string) => {
     if (v) p.set(k, v)
   }
+  const putAll = (k: string, vs?: string[]) => {
+    for (const v of vs ?? []) if (v) p.append(k, v)
+  }
   put("correlation_id", filters.correlationId)
   put("session_id", filters.sessionId)
   put("conversation_id", filters.conversationId)
   put("agent_id", filters.agentId)
   put("user_id", filters.userId)
-  put("provider", filters.provider)
-  put("model", filters.model)
-  put("configuration", filters.configuration)
-  put("protocol", filters.protocol)
+  putAll("provider", filters.providers)
+  putAll("model", filters.models)
+  putAll("configuration", filters.configurations)
+  putAll("protocol", filters.protocols)
   put("status_class", filters.statusClass)
   put("from", filters.from)
   put("to", filters.to)
-  for (const t of filters.tags ?? []) p.append("tags", t)
+  putAll("tags", filters.tags)
   put("cursor", opts.cursor)
   if (opts.limit && opts.limit > 0) p.set("limit", String(opts.limit))
   // sort defaults (newest-first by time) are the server's default — only send
@@ -127,9 +132,17 @@ export type Facets = {
   tags: string[]
 }
 
-/** Fetches the distinct filter-dropdown values (cached server-side). */
-export async function fetchFacets(): Promise<Facets> {
-  return apiFetch<Facets>(`/api/v1/facets`)
+/**
+ * Fetches the distinct filter-dropdown values (cached server-side per window).
+ * Pass the table's resolved time bounds so the dropdowns offer only values
+ * present in the range being shown; omit for the all-history enumeration.
+ */
+export async function fetchFacets(window?: { from?: string; to?: string }): Promise<Facets> {
+  const p = new URLSearchParams()
+  if (window?.from) p.set("from", window.from)
+  if (window?.to) p.set("to", window.to)
+  const qs = p.toString()
+  return apiFetch<Facets>(qs ? `/api/v1/facets?${qs}` : `/api/v1/facets`)
 }
 
 // GenAIMessagePart is a single part of a GenAI message — text, a model-issued
