@@ -47,7 +47,9 @@ func toolCallEntryFrom(t store.ToolCall) adminc.ToolCallEntry {
 // handleToolCalls serves the filtered, keyset-paged tool-call list as
 // {tool_calls, next_cursor}. Filters: ?name (tool name), ?session_id,
 // ?provider/?configuration/?protocol/?model, ?status (pending|resolved), and
-// an optional ?from/?to window — the same idioms as the event list.
+// an optional ?from/?to window — the same idioms as the event list. The
+// categorical params (name/provider/configuration/protocol/model) are
+// repeatable: many values OR together within the dimension.
 func (s *Server) handleToolCalls(w http.ResponseWriter, r *http.Request) {
 	from, to, bad := parseWindowBounds(r)
 	if bad != "" {
@@ -56,17 +58,22 @@ func (s *Server) handleToolCalls(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	calls, next, err := s.queries.ListToolCalls(r.Context(), store.ToolCallListParams{
-		From:          from,
-		To:            to,
-		Name:          q.Get("name"),
-		SessionID:     q.Get("session_id"),
-		Provider:      q.Get("provider"),
-		Configuration: q.Get("configuration"),
-		Protocol:      q.Get("protocol"),
-		Model:         q.Get("model"),
-		Status:        q.Get("status"),
-		Cursor:        q.Get("cursor"),
-		Limit:         limitParam(r, 0),
+		From:           from,
+		To:             to,
+		Name:           q.Get("name"),
+		SessionID:      q.Get("session_id"),
+		Provider:       q.Get("provider"),
+		Configuration:  q.Get("configuration"),
+		Protocol:       q.Get("protocol"),
+		Model:          q.Get("model"),
+		Names:          nonEmpty(q["name"]),
+		Providers:      nonEmpty(q["provider"]),
+		Configurations: nonEmpty(q["configuration"]),
+		Protocols:      nonEmpty(q["protocol"]),
+		Models:         nonEmpty(q["model"]),
+		Status:         q.Get("status"),
+		Cursor:         q.Get("cursor"),
+		Limit:          limitParam(r, 0),
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {

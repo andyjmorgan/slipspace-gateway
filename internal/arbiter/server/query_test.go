@@ -48,19 +48,23 @@ type fakeQueries struct {
 	facets           store.Facets
 	facetsErr        error
 	facetsHits       int
-	verdict          store.Verdict
-	verdictErr       error
-	findings         []store.Finding
-	findingsErr      error
-	findingRows      []store.FindingRow
-	findingRowsErr   error
-	toolCalls        []store.ToolCall
-	toolCallsNext    string
-	toolCallsErr     error
-	toolCall         store.ToolCall
-	toolCallErr      error
-	toolNames        []string
-	toolNamesErr     error
+	// lastFacetsFrom / lastFacetsTo record the window bounds of the most recent
+	// Facets call so the windowed-facets plumbing test can assert on them.
+	lastFacetsFrom time.Time
+	lastFacetsTo   time.Time
+	verdict        store.Verdict
+	verdictErr     error
+	findings       []store.Finding
+	findingsErr    error
+	findingRows    []store.FindingRow
+	findingRowsErr error
+	toolCalls      []store.ToolCall
+	toolCallsNext  string
+	toolCallsErr   error
+	toolCall       store.ToolCall
+	toolCallErr    error
+	toolNames      []string
+	toolNamesErr   error
 	// lastToolParams records the ToolCallListParams of the most recent
 	// ListToolCalls call so the tool-call filter-plumbing test can assert on it.
 	lastToolParams store.ToolCallListParams
@@ -107,8 +111,9 @@ func (f *fakeQueries) CountEventsFiltered(_ context.Context, _ store.EventCountP
 func (f *fakeQueries) CountSessions(_ context.Context, _ store.SessionCountParams) (int64, error) {
 	return f.sessionsTotal, f.sessionsCountErr
 }
-func (f *fakeQueries) Facets(context.Context) (store.Facets, error) {
+func (f *fakeQueries) Facets(_ context.Context, from, to time.Time) (store.Facets, error) {
 	f.facetsHits++
+	f.lastFacetsFrom, f.lastFacetsTo = from, to
 	return f.facets, f.facetsErr
 }
 func (f *fakeQueries) GetRequestEvent(context.Context, string) (store.RequestEvent, error) {
@@ -363,6 +368,35 @@ func TestMessages_FiltersAndPaging(t *testing.T) {
 	if len(f.Tags) != 2 || f.Tags[0] != "eu" || f.Tags[1] != "pii" {
 		t.Errorf("tags not plumbed: %+v", f.Tags)
 	}
+	// Single-valued categorical params also land in the plural slices (the form
+	// the query builder reads).
+	if len(f.Providers) != 1 || f.Providers[0] != "openai" || len(f.Models) != 1 ||
+		len(f.Configurations) != 1 || len(f.Protocols) != 1 {
+		t.Errorf("plural filters not plumbed: %+v", f)
+	}
+}
+
+func TestMessages_RepeatedCategoricalParams(t *testing.T) {
+	// The categorical dimensions are repeatable: every value reaches the store's
+	// plural slices (OR within the dimension); blanks are dropped.
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	resp := get(t, h,
+		"/api/v1/messages?provider=openai&provider=anthropic&model=gpt-4o&model=claude-x&model="+
+			"&configuration=prod&configuration=staging&protocol=chat_completions&protocol=messages", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	f := q.lastParams.Filter
+	if len(f.Providers) != 2 || f.Providers[0] != "openai" || f.Providers[1] != "anthropic" {
+		t.Errorf("providers = %+v", f.Providers)
+	}
+	if len(f.Models) != 2 || f.Models[0] != "gpt-4o" || f.Models[1] != "claude-x" {
+		t.Errorf("models (blank must drop) = %+v", f.Models)
+	}
+	if len(f.Configurations) != 2 || len(f.Protocols) != 2 {
+		t.Errorf("configurations/protocols = %+v / %+v", f.Configurations, f.Protocols)
+	}
 }
 
 func TestMessages_SortPlumbed(t *testing.T) {
@@ -458,6 +492,32 @@ func TestFacets(t *testing.T) {
 	_ = get(t, h, "/api/v1/facets", true)
 	if q.facetsHits != 1 {
 		t.Errorf("facets store hits = %d, want 1 (cached)", q.facetsHits)
+	}
+}
+
+func TestFacets_WindowPlumbedAndCachedPerWindow(t *testing.T) {
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	// The ?from/?to bounds reach the store.
+	if resp := get(t, h, "/api/v1/facets?from=2026-07-17T10:00:00Z&to=2026-07-17T11:00:00Z", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if q.lastFacetsFrom.IsZero() || q.lastFacetsTo.IsZero() {
+		t.Errorf("window not plumbed: from=%v to=%v", q.lastFacetsFrom, q.lastFacetsTo)
+	}
+	// A different window is a distinct cache entry (second store hit); repeating
+	// the first window inside the TTL still serves from cache.
+	_ = get(t, h, "/api/v1/facets?from=2026-07-17T09:00:00Z", true)
+	if q.facetsHits != 2 {
+		t.Errorf("distinct window should miss cache: hits = %d, want 2", q.facetsHits)
+	}
+	_ = get(t, h, "/api/v1/facets?from=2026-07-17T10:00:00Z&to=2026-07-17T11:00:00Z", true)
+	if q.facetsHits != 2 {
+		t.Errorf("repeated window should hit cache: hits = %d, want 2", q.facetsHits)
+	}
+	// A malformed bound is a 400, same as the list endpoints.
+	if resp := get(t, h, "/api/v1/facets?from=x", true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("bad from: %d", resp.Code)
 	}
 }
 

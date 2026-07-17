@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 )
 
 // Facets is the set of distinct dimension values the message browser's dropdowns
@@ -22,12 +24,32 @@ type Facets struct {
 	Tags []string
 }
 
-// Facets returns the distinct values per filter dimension for the dropdowns.
-// The scalar columns use SELECT DISTINCT (empty strings excluded); Tags unnests
-// the promoted tags text[] column (GIN-indexed) so the AND tag filter and its
-// dropdown share one source. The result is small and cacheable — the server layer
-// holds it behind a short TTL so a dropdown open is instant after the first scan.
-func (s *Store) Facets(ctx context.Context) (Facets, error) {
+// Facets returns the distinct values per filter dimension for the dropdowns,
+// bounded to the observed_at window when From/To are non-zero (a zero bound is
+// open on that side) — so the dropdowns offer only values actually present in
+// the range the table is showing. The scalar columns use SELECT DISTINCT
+// (empty strings excluded); Tags unnests the promoted tags text[] column
+// (GIN-indexed) so the AND tag filter and its dropdown share one source. The
+// result is small and cacheable — the server layer holds it behind a short
+// per-window TTL so a dropdown open is instant after the first scan.
+func (s *Store) Facets(ctx context.Context, from, to time.Time) (Facets, error) {
+	// The window predicate is assembled from fixed fragments + bound params —
+	// never user strings — and shared by every per-column query below.
+	var bounds []string
+	var args []any
+	if !from.IsZero() {
+		args = append(args, from)
+		bounds = append(bounds, fmt.Sprintf("observed_at >= $%d", len(args)))
+	}
+	if !to.IsZero() {
+		args = append(args, to)
+		bounds = append(bounds, fmt.Sprintf("observed_at < $%d", len(args)))
+	}
+	window := ""
+	if len(bounds) > 0 {
+		window = " AND " + strings.Join(bounds, " AND ")
+	}
+
 	var f Facets
 	cols := []struct {
 		col string
@@ -42,18 +64,22 @@ func (s *Store) Facets(ctx context.Context) (Facets, error) {
 		// Column name comes from this package-internal allowlist, never user
 		// input, so the format is safe.
 		vals, err := s.distinctStrings(ctx,
-			fmt.Sprintf(`SELECT DISTINCT %s FROM request_events WHERE %s <> '' ORDER BY 1`, c.col, c.col))
+			fmt.Sprintf(`SELECT DISTINCT %s FROM request_events WHERE %s <> ''%s ORDER BY 1`, c.col, c.col, window), args...)
 		if err != nil {
 			return Facets{}, fmt.Errorf("store: facets %s: %w", c.col, err)
 		}
 		*c.dst = vals
 	}
 	// Tags unnests the promoted tags text[] column (v12) — empty arrays yield no
-	// rows, so no WHERE guard is needed. This replaced a
+	// rows, so only the window needs a WHERE guard. This replaced a
 	// jsonb_array_elements_text(span_event->'tags') scan that detoasted every
 	// span (~30 s on prod) and emptied all dropdowns when it blew the deadline.
+	tagsWhere := ""
+	if len(bounds) > 0 {
+		tagsWhere = " WHERE " + strings.Join(bounds, " AND ")
+	}
 	tags, err := s.distinctStrings(ctx,
-		`SELECT DISTINCT t FROM request_events, LATERAL unnest(tags) AS t ORDER BY 1`)
+		`SELECT DISTINCT t FROM request_events, LATERAL unnest(tags) AS t`+tagsWhere+` ORDER BY 1`, args...)
 	if err != nil {
 		return Facets{}, fmt.Errorf("store: facets tags: %w", err)
 	}
@@ -62,8 +88,8 @@ func (s *Store) Facets(ctx context.Context) (Facets, error) {
 }
 
 // distinctStrings runs a single-column query and collects the values.
-func (s *Store) distinctStrings(ctx context.Context, query string) ([]string, error) {
-	rows, err := s.db.Query(ctx, query)
+func (s *Store) distinctStrings(ctx context.Context, query string, args ...any) ([]string, error) {
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

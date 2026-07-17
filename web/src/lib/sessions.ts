@@ -23,15 +23,17 @@ export type SessionListPage = {
   total: number
 }
 
-// SessionListFilters is the session list's filter set. Empty fields are omitted
-// from the query string; tags is AND containment. from is a resolved RFC3339
-// lower bound (the page computes it from a relative preset at fetch time).
+// SessionListFilters is the session list's filter set. Empty fields are
+// omitted from the query string. The categorical dimensions send one repeated
+// param per value and OR within the dimension; tags is AND containment. from
+// is a resolved RFC3339 lower bound (the page computes it from a relative
+// preset at fetch time).
 export type SessionListFilters = {
   from?: string
-  configuration?: string
-  provider?: string
-  model?: string
-  protocol?: string
+  configurations?: string[]
+  providers?: string[]
+  models?: string[]
+  protocols?: string[]
   tags?: string[]
 }
 
@@ -47,12 +49,15 @@ export async function fetchSessions(
   opts: { cursor?: string; limit?: number; sort?: string; order?: "asc" | "desc" } = {},
 ): Promise<SessionListPage> {
   const p = new URLSearchParams()
+  const putAll = (k: string, vs?: string[]) => {
+    for (const v of vs ?? []) if (v) p.append(k, v)
+  }
   if (filters.from) p.set("from", filters.from)
-  if (filters.configuration) p.set("configuration", filters.configuration)
-  if (filters.provider) p.set("provider", filters.provider)
-  if (filters.model) p.set("model", filters.model)
-  if (filters.protocol) p.set("protocol", filters.protocol)
-  for (const t of filters.tags ?? []) p.append("tags", t)
+  putAll("configuration", filters.configurations)
+  putAll("provider", filters.providers)
+  putAll("model", filters.models)
+  putAll("protocol", filters.protocols)
+  putAll("tags", filters.tags)
   if (opts.cursor) p.set("cursor", opts.cursor)
   if (opts.limit && opts.limit > 0) p.set("limit", String(opts.limit))
   if (opts.sort) p.set("sort", opts.sort)

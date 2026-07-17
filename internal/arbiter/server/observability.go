@@ -319,11 +319,18 @@ func (s *Server) handleObsMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "next_cursor": next, "total": total})
 }
 
-// handleFacets emits the distinct dropdown values for the message browser. The
-// values come from cachedFacets, so repeated dropdown opens don't rescan the
-// event table within the TTL.
+// handleFacets emits the distinct dropdown values for the message browser,
+// bounded to the optional ?from/?to window so the dropdowns list only values
+// present in the range the table shows. The values come from cachedFacets, so
+// repeated dropdown opens on the same window don't rescan the event table
+// within the TTL.
 func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
-	f, err := s.cachedFacets(r.Context())
+	from, to, bad := parseWindowBounds(r)
+	if bad != "" {
+		writeError(w, http.StatusBadRequest, "invalid "+bad)
+		return
+	}
+	f, err := s.cachedFacets(r.Context(), from, to)
 	if err != nil {
 		s.queryError(w, "facets", err)
 		return
@@ -351,29 +358,70 @@ func nonNil(in []string) []string {
 // dropdown opens with a single scan.
 const facetsTTL = 30 * time.Second
 
-// facetsCache memoizes the distinct dropdown values behind a mutex. The lock is
-// held across the refresh query so a burst of concurrent opens collapses to one
-// scan rather than a thundering herd.
+// facetsKeyQuantum coarsens the window bounds used as the cache key. The SPA
+// resolves relative presets ("last 1h") to a fresh timestamp on every fetch, so
+// exact bounds would never repeat and the cache would never hit; rounding to
+// this quantum makes near-simultaneous fetches of the same preset share one
+// entry. The resulting window skew (< quantum) is far inside facetsTTL's
+// staleness budget.
+const facetsKeyQuantum = 10 * time.Second
+
+// facetsCache memoizes the distinct dropdown values per (quantized) window
+// behind a mutex. The lock is held across the refresh query so a burst of
+// concurrent opens on one window collapses to a single scan rather than a
+// thundering herd; expired entries are pruned opportunistically, and the live
+// key set stays tiny because windows come from a small preset list.
 type facetsCache struct {
 	mu      sync.Mutex
+	entries map[facetsKey]facetsEntry
+}
+
+// facetsKey identifies one cached window: its quantized from/to bounds (zero
+// for an open side).
+type facetsKey struct {
+	from int64
+	to   int64
+}
+
+type facetsEntry struct {
 	value   store.Facets
 	expires time.Time
 }
 
-// cachedFacets returns the facets, refreshing from the store when the cache has
-// expired.
-func (s *Server) cachedFacets(ctx context.Context) (store.Facets, error) {
+// quantize maps a window bound onto its cache-key bucket; the zero time (no
+// bound) maps to 0.
+func quantize(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Truncate(facetsKeyQuantum).Unix()
+}
+
+// cachedFacets returns the facets for the window, refreshing from the store
+// when its entry is missing or expired.
+func (s *Server) cachedFacets(ctx context.Context, from, to time.Time) (store.Facets, error) {
+	key := facetsKey{from: quantize(from), to: quantize(to)}
 	s.facets.mu.Lock()
 	defer s.facets.mu.Unlock()
-	if time.Now().Before(s.facets.expires) {
-		return s.facets.value, nil
+	now := time.Now()
+	if e, ok := s.facets.entries[key]; ok && now.Before(e.expires) {
+		return e.value, nil
 	}
-	f, err := s.queries.Facets(ctx)
+	f, err := s.queries.Facets(ctx, from, to)
 	if err != nil {
 		return store.Facets{}, err
 	}
-	s.facets.value = f
-	s.facets.expires = time.Now().Add(facetsTTL)
+	if s.facets.entries == nil {
+		s.facets.entries = make(map[facetsKey]facetsEntry)
+	}
+	// Prune dead windows so a long-lived process doesn't accumulate one entry
+	// per historical quantum bucket.
+	for k, e := range s.facets.entries {
+		if !now.Before(e.expires) {
+			delete(s.facets.entries, k)
+		}
+	}
+	s.facets.entries[key] = facetsEntry{value: f, expires: now.Add(facetsTTL)}
 	return f, nil
 }
 
