@@ -152,7 +152,12 @@ func (s *Service) dispatch(ctx context.Context, client *Client, ar *contractscon
 		var pin *Pin
 		switch {
 		case !verdict.Switch:
-			// continue as configured
+			// Continue as configured — but say so: a silently-declined
+			// verdict is indistinguishable from a lost advisory in the
+			// gateway logs (the arbiter's advise_audit table records the
+			// full judgement either way).
+			s.logger.Info("agentroute: verdict declined switch, continuing as configured",
+				"conversation_id", key, "reason", verdict.Reason)
 		case !modelIn(allowed, verdict.Model):
 			s.logger.Warn("agentroute: verdict model not in allow_models, discarding",
 				"conversation_id", key, "model", verdict.Model)
