@@ -56,6 +56,200 @@ export interface Config {
 }
 
 //////////
+// source: advise.go
+
+/**
+ * AdviseAuditItem is one routing judgement on the wire — the payload the
+ * judge saw plus the verdict it returned — for GET /api/v1/advise/audit.
+ * Mirrors the arbiter's advise_audit row (store.AdviseAuditEntry) in
+ * snake_case; the SPA decodes the generated TypeScript shape without
+ * translation.
+ */
+export interface AdviseAuditItem {
+  /**
+   * ReceivedAt is when the advisory request arrived — the keyset cursor
+   * for paging (?before=).
+   */
+  received_at: string;
+  /**
+   * GatewayID is the HMAC-authenticated gateway that asked.
+   */
+  gateway_id: string;
+  /**
+   * ConversationID is the subagent conversation the verdict decides for.
+   */
+  conversation_id: string;
+  /**
+   * SessionID is the parent session, when the gateway resolved one.
+   */
+  session_id?: string;
+  /**
+   * Configuration is the gateway configuration the conversation runs under.
+   */
+  configuration?: string;
+  /**
+   * Protocol is the wire protocol of the judged conversation.
+   */
+  protocol?: string;
+  /**
+   * Provider is the pre-pin upstream provider.
+   */
+  provider?: string;
+  /**
+   * RequestedModel is the model the conversation asked for before any pin.
+   */
+  requested_model?: string;
+  /**
+   * AgentFamily is the identified client family (e.g. claude-code).
+   */
+  agent_family?: string;
+  /**
+   * Entrypoint is the client entrypoint parsed from its User-Agent.
+   */
+  entrypoint?: string;
+  /**
+   * IsSubagent reports the tier-1 identification that gated eligibility.
+   */
+  is_subagent: boolean;
+  /**
+   * ToolNames is the tool list the judge saw.
+   */
+  tool_names?: string[];
+  /**
+   * SystemPrefix is the truncated system-prompt excerpt the judge saw.
+   */
+  system_prefix?: string;
+  /**
+   * FirstUserMessage is the truncated task excerpt the judge saw.
+   */
+  first_user_message?: string;
+  /**
+   * VerdictSwitch reports whether the judge recommended switching model.
+   * Consumers MUST key on this field: a declined verdict can still carry
+   * a non-empty VerdictModel (structured outputs cannot conditionally
+   * force it empty), and the gateway ignores the model unless switching.
+   */
+  verdict_switch: boolean;
+  /**
+   * VerdictModel is the recommended model when switching.
+   */
+  verdict_model?: string;
+  /**
+   * VerdictReason is the judge's short justification.
+   */
+  verdict_reason?: string;
+  /**
+   * VerdictConfidence is the judge's self-reported confidence (0..1).
+   */
+  verdict_confidence: number /* float64 */;
+  /**
+   * CacheHit reports the verdict came from the template cache (no judge
+   * inference ran for this call).
+   */
+  cache_hit: boolean;
+  /**
+   * JudgeLatencyMs is the judge inference latency; 0 on cache hits.
+   */
+  judge_latency_ms: number /* int */;
+  /**
+   * Error is the judge failure text when no verdict was produced (the
+   * gateway failed open and the conversation ran as configured).
+   */
+  error?: string;
+}
+/**
+ * AdviseAuditPage is the response shape for GET /api/v1/advise/audit:
+ * judgements newest-first, keyset-paged by received_at (?before=).
+ */
+export interface AdviseAuditPage {
+  /**
+   * Items is one page of judgements, newest first. Pass the last item's
+   * received_at as ?before= to fetch the next page.
+   */
+  items: AdviseAuditItem[];
+}
+/**
+ * AdviseSavingsItem is one down-ranked conversation's spend attribution for
+ * GET /api/v1/advise/audit/savings.
+ */
+export interface AdviseSavingsItem {
+  /**
+   * ConversationID is the pinned conversation.
+   */
+  conversation_id: string;
+  /**
+   * RequestedModel is what the conversation asked for.
+   */
+  requested_model: string;
+  /**
+   * PinnedModel is what the judge routed it to.
+   */
+  pinned_model: string;
+  /**
+   * PinnedRequests is how many requests actually ran on the pin.
+   */
+  pinned_requests: number /* int64 */;
+  /**
+   * ActualUSD is the measured spend of the pinned requests.
+   */
+  actual_usd: number /* float64 */;
+  /**
+   * CounterfactualUSD is the would-have-cost on the requested model,
+   * ratio-scaled from advise.model_rates. Null when either model has no
+   * configured rate — never guessed.
+   */
+  counterfactual_usd?: number /* float64 */;
+  /**
+   * SavedUSD is CounterfactualUSD - ActualUSD; null with it.
+   */
+  saved_usd?: number /* float64 */;
+}
+/**
+ * AdviseSavingsTotals aggregates the attribution across conversations and
+ * charges the judge's own inference spend against the saving.
+ */
+export interface AdviseSavingsTotals {
+  /**
+   * ActualUSD is the summed measured spend of all pinned requests.
+   */
+  actual_usd: number /* float64 */;
+  /**
+   * CounterfactualUSD sums only rows with a configured rate pair.
+   */
+  counterfactual_usd: number /* float64 */;
+  /**
+   * SavedUSD is the summed per-row saving (rate-covered rows only).
+   */
+  saved_usd: number /* float64 */;
+  /**
+   * JudgeCostUSD is the judge's own inference spend in the window.
+   */
+  judge_cost_usd: number /* float64 */;
+  /**
+   * NetSavedUSD is SavedUSD - JudgeCostUSD.
+   */
+  net_saved_usd: number /* float64 */;
+}
+/**
+ * AdviseSavingsResponse is the response shape for
+ * GET /api/v1/advise/audit/savings.
+ */
+export interface AdviseSavingsResponse {
+  /**
+   * Since is the window start the attribution covers.
+   */
+  since: string;
+  /**
+   * Items is the per-conversation attribution, largest actual spend first.
+   */
+  items: AdviseSavingsItem[];
+  /**
+   * Totals is the aggregate including the judge-cost offset.
+   */
+  totals: AdviseSavingsTotals;
+}
+
+//////////
 // source: dashboard.go
 
 /**

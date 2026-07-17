@@ -63,7 +63,7 @@ export type FetchHandle<T> = {
   refetch: () => void
 }
 
-function useFetch<T>(path: string, pollMs = DEFAULT_POLL_MS): FetchHandle<T> {
+export function useFetch<T>(path: string, pollMs = DEFAULT_POLL_MS): FetchHandle<T> {
   const [state, setState] = useState<FetchState<T>>({ status: "loading" })
   // Track the latest state in a ref so the poll closure can see the
   // current state without re-firing the effect on every state change.

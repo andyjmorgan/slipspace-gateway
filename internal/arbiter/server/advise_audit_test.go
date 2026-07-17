@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/advise"
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/config"
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
@@ -33,7 +34,7 @@ func TestHandleAdviseAudit(t *testing.T) {
 		t.Errorf("limit plumbed = %d, want 5", q.lastAdviseLimit)
 	}
 	var body struct {
-		Items []adviseAuditItem `json:"items"`
+		Items []admin.AdviseAuditItem `json:"items"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -101,7 +102,7 @@ func TestHandleAdviseSavings(t *testing.T) {
 	if q.lastSavingsJudgeID != advise.JudgeAgentID {
 		t.Errorf("judge agent id plumbed = %q, want %q", q.lastSavingsJudgeID, advise.JudgeAgentID)
 	}
-	var body adviseSavingsResponse
+	var body admin.AdviseSavingsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestHandleAdviseSavings(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("no-config status = %d", resp.Code)
 	}
-	body = adviseSavingsResponse{}
+	body = admin.AdviseSavingsResponse{}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
