@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/andyjmorgan/slipspace-gateway/contracts/advise"
 	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
@@ -207,18 +208,53 @@ func firstUserMessage(req *messages.MessagesRequest) string {
 			continue
 		}
 		if s, ok := m.ContentAsString(); ok {
-			return truncate(s)
+			return truncate(stripSystemReminders(s))
 		}
 		if blocks, ok := m.ContentAsBlocks(); ok {
+			// A reminder-only text block (Claude Code's injected context) falls
+			// through to the next text block, where the actual task text lives.
 			for _, b := range blocks {
 				if tb, isText := b.(*messages.TextBlock); isText {
-					return truncate(tb.Text)
+					if s := stripSystemReminders(tb.Text); s != "" {
+						return truncate(s)
+					}
 				}
 			}
 		}
 		return ""
 	}
 	return ""
+}
+
+// System-reminder delimiters as Claude Code emits them.
+const (
+	reminderOpen  = "<system-reminder>"
+	reminderClose = "</system-reminder>"
+)
+
+// stripSystemReminders drops leading <system-reminder>…</system-reminder>
+// blocks (and surrounding whitespace) from a user message, returning the text
+// that follows. Claude Code prepends injected context (CLAUDE.md contents,
+// hook output) to a subagent's first message inside these markers, and the
+// block alone regularly exceeds the advisory excerpt's 4 KiB budget — an
+// unstripped excerpt is 100% boilerplate and the judge never sees the task
+// (observed live: a trivial echo probe judged onto the most expensive
+// candidate because only agent boilerplate survived truncation). An
+// unterminated opener means everything remaining is reminder — nothing usable
+// follows, so the result is empty and a block-array caller falls through to
+// the next text block.
+func stripSystemReminders(s string) string {
+	for {
+		s = strings.TrimSpace(s)
+		if !strings.HasPrefix(s, reminderOpen) {
+			return s
+		}
+		end := strings.Index(s, reminderClose)
+		if end < 0 {
+			return ""
+		}
+		s = s[end+len(reminderClose):]
+	}
 }
 
 // toolNames lists the declared tool names.

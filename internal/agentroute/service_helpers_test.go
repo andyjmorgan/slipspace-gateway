@@ -130,6 +130,38 @@ func TestFirstUserMessage(t *testing.T) {
 			msgs: []messages.Message{msg("user", json.RawMessage(`{"type":"text","text":"object-form"}`))},
 			want: "",
 		},
+		{
+			// Claude Code prepends injected context in <system-reminder> markers;
+			// the judge must see the task, not the boilerplate.
+			name: "string content strips a leading system-reminder",
+			msgs: []messages.Message{msg("user", json.RawMessage(
+				`"<system-reminder>\nCLAUDE.md contents here\n</system-reminder>\nrun the echo probe"`))},
+			want: "run the echo probe",
+		},
+		{
+			name: "string content strips stacked system-reminders",
+			msgs: []messages.Message{msg("user", json.RawMessage(
+				`"<system-reminder>one</system-reminder> <system-reminder>two</system-reminder>  the task"`))},
+			want: "the task",
+		},
+		{
+			name: "reminder-only text block falls through to the task block",
+			msgs: []messages.Message{msg("user", json.RawMessage(
+				`[{"type":"text","text":"<system-reminder>injected</system-reminder>"},{"type":"text","text":"summarize the loader"}]`))},
+			want: "summarize the loader",
+		},
+		{
+			name: "unterminated reminder yields empty, not boilerplate",
+			msgs: []messages.Message{msg("user", json.RawMessage(
+				`"<system-reminder>never closed..."`))},
+			want: "",
+		},
+		{
+			name: "mid-text reminder is left alone (only leading blocks strip)",
+			msgs: []messages.Message{msg("user", json.RawMessage(
+				`"do the task <system-reminder>note</system-reminder>"`))},
+			want: "do the task <system-reminder>note</system-reminder>",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
