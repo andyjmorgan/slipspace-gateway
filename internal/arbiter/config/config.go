@@ -98,9 +98,12 @@ type Advise struct {
 	// Rubric is the EFFECTIVE judge rubric (prompt_file contents, or the
 	// built-in default), resolved once at boot and stashed here so the
 	// applied-config snapshot served at GET /api/v1/settings shows exactly
-	// what the judge runs with. Never decoded from YAML (yaml:"-") — it is
-	// derived state, not an authorable key.
-	Rubric string `yaml:"-"`
+	// what the judge runs with. The yaml tag exists ONLY for that snapshot —
+	// handleSettings round-trips the config through yaml.Marshal, so a
+	// yaml:"-" field silently vanishes from /settings (v2.3.1 shipped that
+	// bug). It is derived state, not an authorable key: Validate rejects a
+	// config file that sets it.
+	Rubric string `yaml:"rubric,omitempty"`
 	// CacheTTLSeconds bounds the template-hash verdict cache. nil applies
 	// DefaultAdviseCacheTTLSeconds.
 	CacheTTLSeconds *int `yaml:"cache_ttl_seconds,omitempty"`
@@ -467,6 +470,11 @@ func (c Config) Validate() error {
 		}
 	}
 
+	if c.Advise.Rubric != "" {
+		// Validate runs at Load time, before boot resolves the rubric — a
+		// non-empty value here can only come from the config file.
+		return errors.New("advise.rubric is derived at boot (from prompt_file or the built-in default); it is not an authorable key")
+	}
 	if c.Advise.Enabled {
 		if c.Advise.Upstream.BaseURL == "" {
 			return errors.New("advise.upstream.base_url is required when advise.enabled")

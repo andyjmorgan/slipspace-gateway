@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // adviseBase returns a Config valid except for the advise block, including the
@@ -193,5 +195,48 @@ func TestRedacted_CarriesEffectiveRubric(t *testing.T) {
 	red := cfg.Redacted()
 	if red.Advise.Rubric != "resolved rubric text" {
 		t.Fatalf("Redacted().Advise.Rubric = %q, want the resolved text", red.Advise.Rubric)
+	}
+}
+
+// TestRedacted_RubricSurvivesSettingsSerialization asserts the rubric is
+// present in the settings payload SHAPE, not just on the struct —
+// handleSettings round-trips the redacted config through yaml.Marshal, and a
+// yaml:"-" tag silently drops the field from /settings (the v2.3.1 bug this
+// guards against).
+func TestRedacted_RubricSurvivesSettingsSerialization(t *testing.T) {
+	t.Parallel()
+
+	cfg := adviseBase()
+	cfg.Advise = validAdvise()
+	cfg.Advise.Rubric = "the effective rubric text"
+
+	raw, err := yaml.Marshal(cfg.Redacted())
+	if err != nil {
+		t.Fatalf("yaml.Marshal(Redacted()): %v", err)
+	}
+	var tree map[string]any
+	if err := yaml.Unmarshal(raw, &tree); err != nil {
+		t.Fatalf("yaml.Unmarshal settings tree: %v", err)
+	}
+	advise, ok := tree["advise"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings tree has no advise block: %v", tree)
+	}
+	if got := advise["rubric"]; got != "the effective rubric text" {
+		t.Fatalf("settings advise.rubric = %v, want the effective rubric text", got)
+	}
+}
+
+// TestValidate_RejectsAuthoredRubric asserts `rubric:` in a config file is
+// refused — it is boot-derived state, authorable only via prompt_file.
+func TestValidate_RejectsAuthoredRubric(t *testing.T) {
+	t.Parallel()
+
+	cfg := adviseBase()
+	cfg.Advise = validAdvise()
+	cfg.Advise.Rubric = "authored"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "advise.rubric is derived") {
+		t.Fatalf("Validate() = %v, want advise.rubric-is-derived error", err)
 	}
 }
