@@ -35,6 +35,17 @@ const (
 	cheapModel      = "e2e-cheap-model"
 	notAllowedModel = "e2e-not-allowed"
 
+	// haikuCheapModel is synthetic but carries the claude-haiku prefix the
+	// gateway's hardcoded beta-reconciliation predicate matches — pinning to
+	// it must strip context-1m-* tokens from Anthropic-Beta.
+	haikuCheapModel = "claude-haiku-e2e-cheap"
+
+	// betaHeader is the Anthropic beta opt-in header a Claude Code client
+	// forwards; the context-1m token is the one a haiku pin cannot serve.
+	betaHeader           = "Anthropic-Beta"
+	betaWithContext1M    = "claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14"
+	betaWithoutContext1M = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14"
+
 	gatewayID  = "e2e-gw"
 	hmacSecret = "e2e-agentroute-hmac-secret" //nolint:gosec // test fixture, not a credential
 
@@ -61,11 +72,11 @@ configurations:
       anthropic: sk-ant-dev-mock
 
     bindings:
-      - { protocol: messages, models: ["e2e-*"], provider: anthropic }
+      - { protocol: messages, models: ["e2e-*", "claude-haiku-e2e-*"], provider: anthropic }
 
     agent_routing:
       advisor: arbiter
-      allow_models: ["e2e-cheap-model"]
+      allow_models: ["e2e-cheap-model", "claude-haiku-e2e-cheap"]
       apply_window_requests: 3
 
     tags:
@@ -459,6 +470,102 @@ func TestAgentRoute_PlainSDKUserAgent(t *testing.T) {
 	}
 	if got := capturedModel(t, *last); got != defaultModel {
 		t.Errorf("upstream model = %q, want %q", got, defaultModel)
+	}
+}
+
+// TestAgentRoute_HaikuPinStripsContext1MBeta covers beta reconciliation on a
+// model substitution: a subagent request opting in to the 1M long-context
+// beta forwards the header verbatim while unpinned, but once the
+// conversation is pinned to a haiku-family model the context-1m token is
+// stripped (the upstream rejects it on haiku with a 400) while every other
+// beta token survives in order.
+func TestAgentRoute_HaikuPinStripsContext1MBeta(t *testing.T) {
+	t.Parallel()
+	h, stub := newAgentRouteHarness(t,
+		fmt.Sprintf(`{"switch":true,"model":%q,"reason":"trivial","confidence":0.9}`, haikuCheapModel))
+	stageMessagesResponse(h)
+
+	headers := subagentHeaders("e2e-conv-beta-1")
+	headers.Set(betaHeader, betaWithContext1M)
+
+	// Request 1 is always unpinned: the opt-in must reach upstream verbatim.
+	resp1 := h.PostJSON("/v1/messages", messagesBody(true), headers)
+	assertMessagesOK(t, resp1, "request 1")
+	first := h.LastCapturedRequest()
+	if first == nil {
+		t.Fatal("no upstream capture for request 1")
+	}
+	if got := first.Headers[betaHeader]; got != betaWithContext1M {
+		t.Fatalf("request 1 upstream %s = %q, want verbatim %q", betaHeader, got, betaWithContext1M)
+	}
+
+	waitForAdvisorCalls(t, stub, 1, 5*time.Second)
+
+	// Poll same-conversation requests until the pin lands, then assert the
+	// upstream-received header on the pinned request.
+	deadline := time.Now().Add(5 * time.Second)
+	var pinnedCapture *harness.CapturedRequest
+	for time.Now().Before(deadline) {
+		resp := h.PostJSON("/v1/messages", messagesBody(true), headers)
+		assertMessagesOK(t, resp, "pinned request")
+		last := h.LastCapturedRequest()
+		if last == nil {
+			t.Fatal("no upstream capture for pinned request")
+		}
+		if capturedModel(t, *last) == haikuCheapModel {
+			pinnedCapture = last
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if pinnedCapture == nil {
+		t.Fatalf("upstream never received the pinned model %q; captured models: %v",
+			haikuCheapModel, allCapturedModels(t, h))
+	}
+	if got := pinnedCapture.Headers[betaHeader]; got != betaWithoutContext1M {
+		t.Fatalf("pinned request upstream %s = %q, want %q (context-1m stripped, other tokens intact)",
+			betaHeader, got, betaWithoutContext1M)
+	}
+}
+
+// TestAgentRoute_NonHaikuPinKeepsBetaHeader is the counter-case: a pin to a
+// non-haiku model must not touch the client's beta opt-ins at all.
+func TestAgentRoute_NonHaikuPinKeepsBetaHeader(t *testing.T) {
+	t.Parallel()
+	h, stub := newAgentRouteHarness(t,
+		`{"switch":true,"model":"e2e-cheap-model","reason":"trivial","confidence":0.9}`)
+	stageMessagesResponse(h)
+
+	headers := subagentHeaders("e2e-conv-beta-2")
+	headers.Set(betaHeader, betaWithContext1M)
+
+	resp1 := h.PostJSON("/v1/messages", messagesBody(true), headers)
+	assertMessagesOK(t, resp1, "request 1")
+
+	waitForAdvisorCalls(t, stub, 1, 5*time.Second)
+
+	deadline := time.Now().Add(5 * time.Second)
+	var pinnedCapture *harness.CapturedRequest
+	for time.Now().Before(deadline) {
+		resp := h.PostJSON("/v1/messages", messagesBody(true), headers)
+		assertMessagesOK(t, resp, "pinned request")
+		last := h.LastCapturedRequest()
+		if last == nil {
+			t.Fatal("no upstream capture for pinned request")
+		}
+		if capturedModel(t, *last) == cheapModel {
+			pinnedCapture = last
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if pinnedCapture == nil {
+		t.Fatalf("upstream never received the pinned model %q; captured models: %v",
+			cheapModel, allCapturedModels(t, h))
+	}
+	if got := pinnedCapture.Headers[betaHeader]; got != betaWithContext1M {
+		t.Fatalf("pinned request upstream %s = %q, want verbatim %q (non-haiku pin must not touch betas)",
+			betaHeader, got, betaWithContext1M)
 	}
 }
 
