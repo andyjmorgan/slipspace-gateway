@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -505,7 +506,7 @@ func TestFacets_TagsFromColumn(t *testing.T) {
 		}
 		return false
 	}
-	f, err := st.Facets(ctx, time.Time{}, time.Time{})
+	f, err := st.Facets(ctx, time.Time{}, time.Time{}, store.EventFilter{})
 	if err != nil {
 		t.Fatalf("Facets: %v", err)
 	}
@@ -513,7 +514,7 @@ func TestFacets_TagsFromColumn(t *testing.T) {
 		t.Errorf("unbounded facet tags %v missing seeded tags", f.Tags)
 	}
 	// Windowed to the last hour: the old event's model + tag drop out.
-	fw, err := st.Facets(ctx, now.Add(-time.Hour), time.Time{})
+	fw, err := st.Facets(ctx, now.Add(-time.Hour), time.Time{}, store.EventFilter{})
 	if err != nil {
 		t.Fatalf("windowed Facets: %v", err)
 	}
@@ -534,7 +535,7 @@ func TestListEvents_MultiValueFilters(t *testing.T) {
 	now := time.Now()
 	for i, p := range []string{"mv-openai", "mv-anthropic", "mv-gemini"} {
 		if err := st.UpsertRequestEvent(ctx, store.RequestEvent{
-			CorrelationID: fmt.Sprintf("mv-%d", i), SessionID: "mv-sess", StatusCode: 200,
+			CorrelationID: fmt.Sprintf("mv-%d", i), SessionID: "mv-sess", StatusCode: 200 + i*100,
 			Provider: p, ObservedAt: now.Add(-time.Duration(i) * time.Minute),
 			SpanEvent: []byte(`{}`),
 		}); err != nil {
@@ -567,6 +568,37 @@ func TestListEvents_MultiValueFilters(t *testing.T) {
 	}
 	if n != 2 {
 		t.Errorf("count = %d, want 2", n)
+	}
+
+	// Exact status codes OR the same way (seeded 200/300/400).
+	byCode, _, err := st.ListEventsFiltered(ctx, store.EventListParams{
+		Filter: store.EventFilter{SessionID: "mv-sess", StatusCodes: []int{200, 400}},
+	})
+	if err != nil {
+		t.Fatalf("ListEventsFiltered status codes: %v", err)
+	}
+	if len(byCode) != 2 {
+		t.Fatalf("status-code filter got %d events, want 2: %+v", len(byCode), byCode)
+	}
+	for _, e := range byCode {
+		if e.StatusCode == 300 {
+			t.Errorf("status-code filter leaked %d", e.StatusCode)
+		}
+	}
+
+	// Session-scoped facets offer exactly this session's values — the
+	// dropdown-options path for the session view's messages table.
+	sf, err := st.Facets(ctx, time.Time{}, time.Time{}, store.EventFilter{SessionID: "mv-sess"})
+	if err != nil {
+		t.Fatalf("session-scoped Facets: %v", err)
+	}
+	if len(sf.Providers) != 3 || len(sf.StatusCodes) != 3 {
+		t.Errorf("session facets = providers %v codes %v, want 3 each", sf.Providers, sf.StatusCodes)
+	}
+	for _, p := range sf.Providers {
+		if !strings.HasPrefix(p, "mv-") {
+			t.Errorf("session facets leaked other sessions' provider %q", p)
+		}
 	}
 }
 

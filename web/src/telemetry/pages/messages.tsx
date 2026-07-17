@@ -40,7 +40,7 @@ const STATUS_CLASSES = [
   { value: "5xx", label: "5xx" },
 ] as const
 
-const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], protocols: [], tags: [] }
+const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], protocols: [], status_codes: [], tags: [] }
 
 // MessagesPage is the request browser: a filter bar (two exact id boxes, four
 // facet dropdowns, a tags AND multi-select, status-class + time-range presets)
@@ -69,6 +69,7 @@ export function MessagesPage() {
   const [configurations, setConfigurations] = useState<string[]>([])
   const [protocols, setProtocols] = useState<string[]>([])
   const [statusClass, setStatusClass] = useState("")
+  const [statusCodes, setStatusCodes] = useState<string[]>([])
   const [tags, setTags] = useState<string[]>([])
   // Default the browse window to the last hour at 50 rows — the unbounded
   // all-time view scans far too much to be a useful landing state. Operators
@@ -88,8 +89,8 @@ export function MessagesPage() {
   // is resolved from timeRange at fetch time, not here — Date.now() is impure
   // and must not run during render.
   const filters = useMemo<MessageFilters>(
-    () => ({ correlationId, sessionId, conversationId, agentId, userId, providers, models, configurations, protocols, statusClass, tags }),
-    [correlationId, sessionId, conversationId, agentId, userId, providers, models, configurations, protocols, statusClass, tags],
+    () => ({ correlationId, sessionId, conversationId, agentId, userId, providers, models, configurations, protocols, statusClass, statusCodes, tags }),
+    [correlationId, sessionId, conversationId, agentId, userId, providers, models, configurations, protocols, statusClass, statusCodes, tags],
   )
 
   // Data + paging state. The shared pager hook owns the keyset cursor stack;
@@ -150,6 +151,7 @@ export function MessagesPage() {
     setConfigurations([])
     setProtocols([])
     setStatusClass("")
+    setStatusCodes([])
     setTags([])
     // Clear restores the default landing window (1h), not the unbounded all-time
     // scan — see the timeRange default above. Clearing to "all" would silently
@@ -171,6 +173,7 @@ export function MessagesPage() {
     ...configurations.map((v) => ({ key: `config:${v}`, label: "Config", value: v, onClear: () => setConfigurations(configurations.filter((x) => x !== v)) })),
     ...protocols.map((v) => ({ key: `protocol:${v}`, label: "Protocol", value: v, onClear: () => setProtocols(protocols.filter((x) => x !== v)) })),
     statusClass && { key: "status", label: "Status", value: statusClass, onClear: () => setStatusClass("") },
+    ...statusCodes.map((v) => ({ key: `code:${v}`, label: "Code", value: v, onClear: () => setStatusCodes(statusCodes.filter((x) => x !== v)) })),
     ...tags.map((t) => ({ key: `tag:${t}`, label: "Tag", value: t, onClear: () => setTags(tags.filter((x) => x !== t)) })),
   ].filter(Boolean) as Chip[]
 
@@ -178,6 +181,7 @@ export function MessagesPage() {
   // same state the sheet edits. "All" is offered on the OR dimensions only —
   // tags is AND containment, where selecting every tag matches ~nothing.
   const tableFilters = {
+    status: { values: statusCodes, options: facets.status_codes.map(String), onChange: setStatusCodes, allowSelectAll: true, emptyText: "No statuses in window" },
     provider: { values: providers, options: facets.providers, onChange: setProviders, allowSelectAll: true, emptyText: "No providers in window" },
     protocol: { values: protocols, options: facets.protocols, onChange: setProtocols, allowSelectAll: true, emptyText: "No protocols in window" },
     model: { values: models, options: facets.models, onChange: setModels, allowSelectAll: true, emptyText: "No models in window" },
@@ -295,6 +299,9 @@ export function MessagesPage() {
           </FilterField>
           <FilterField label="Status">
             <Segmented value={statusClass} onChange={setStatusClass} options={STATUS_CLASSES.map((s) => ({ value: s.value, label: s.label }))} />
+          </FilterField>
+          <FilterField label="Status code (match any)">
+            <MultiSelect label="Code" values={statusCodes} options={facets.status_codes.map(String)} onChange={setStatusCodes} allowSelectAll className="w-full" />
           </FilterField>
         </div>
       </Sheet>

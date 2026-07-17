@@ -321,16 +321,26 @@ func (s *Server) handleObsMessages(w http.ResponseWriter, r *http.Request) {
 
 // handleFacets emits the distinct dropdown values for the message browser,
 // bounded to the optional ?from/?to window so the dropdowns list only values
-// present in the range the table shows. The values come from cachedFacets, so
+// present in the range the table shows, and narrowed by the shared filter
+// params (session_id etc.) so a session-scoped surface can offer only the
+// values its rows carry. Unfiltered lookups come from cachedFacets, so
 // repeated dropdown opens on the same window don't rescan the event table
-// within the TTL.
+// within the TTL; filtered lookups bypass the cache — they're narrow indexed
+// scans, and caching per filter combination would bloat the key space.
 func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
 	from, to, bad := parseWindowBounds(r)
 	if bad != "" {
 		writeError(w, http.StatusBadRequest, "invalid "+bad)
 		return
 	}
-	f, err := s.cachedFacets(r.Context(), from, to)
+	filter := filterFromQuery(r)
+	var f store.Facets
+	var err error
+	if filterIsZero(filter) {
+		f, err = s.cachedFacets(r.Context(), from, to)
+	} else {
+		f, err = s.queries.Facets(r.Context(), from, to, filter)
+	}
 	if err != nil {
 		s.queryError(w, "facets", err)
 		return
@@ -340,8 +350,18 @@ func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
 		"models":         nonNil(f.Models),
 		"configurations": nonNil(f.Configurations),
 		"protocols":      nonNil(f.Protocols),
+		"status_codes":   nonNilInts(f.StatusCodes),
 		"tags":           nonNil(f.Tags),
 	})
+}
+
+// nonNilInts renders a nil int slice as [] rather than null, as nonNil does
+// for strings.
+func nonNilInts(in []int) []int {
+	if in == nil {
+		return []int{}
+	}
+	return in
 }
 
 // nonNil renders a nil slice as [] rather than null so the SPA can map over it
@@ -407,7 +427,7 @@ func (s *Server) cachedFacets(ctx context.Context, from, to time.Time) (store.Fa
 	if e, ok := s.facets.entries[key]; ok && now.Before(e.expires) {
 		return e.value, nil
 	}
-	f, err := s.queries.Facets(ctx, from, to)
+	f, err := s.queries.Facets(ctx, from, to, store.EventFilter{})
 	if err != nil {
 		return store.Facets{}, err
 	}

@@ -35,7 +35,7 @@ type Queries interface {
 	// full blob at a time.
 	EventsBySessionRollup(ctx context.Context, sessionID string) ([]store.RequestEvent, error)
 	EventsBySessionPage(ctx context.Context, p store.SessionPageParams, fn func(store.RequestEvent) error) (string, error)
-	Facets(ctx context.Context, from, to time.Time) (store.Facets, error)
+	Facets(ctx context.Context, from, to time.Time, f store.EventFilter) (store.Facets, error)
 	// Arbiter security surface — the verdict + findings for one request.
 	GetVerdict(ctx context.Context, correlationID string) (store.Verdict, error)
 	ListFindings(ctx context.Context, correlationID string) ([]store.Finding, error)
@@ -137,6 +137,7 @@ func filterFromQuery(r *http.Request) store.EventFilter {
 		Models:               nonEmpty(q["model"]),
 		Providers:            nonEmpty(q["provider"]),
 		Protocols:            nonEmpty(q["protocol"]),
+		StatusCodes:          intValues(q["status_code"]),
 		StatusClass:          q.Get("status_class"),
 		SessionID:            q.Get("session_id"),
 		CorrelationID:        q.Get("correlation_id"),
@@ -156,6 +157,36 @@ func nonEmpty(in []string) []string {
 		if v != "" {
 			out = append(out, v)
 		}
+	}
+	return out
+}
+
+// filterIsZero reports whether no filter predicate is set — the cacheable
+// whole-window facets case. Hand-rolled because EventFilter carries slices
+// (not comparable); keep in sync with the fields filterFromQuery populates.
+func filterIsZero(f store.EventFilter) bool {
+	return f.Configuration == "" && f.Gateway == "" && f.Model == "" &&
+		f.Provider == "" && f.Protocol == "" && f.StatusClass == "" &&
+		f.SessionID == "" && f.CorrelationID == "" && f.ConversationID == "" &&
+		f.ParentConversationID == "" && f.AgentID == "" && f.UserID == "" &&
+		len(f.Configurations) == 0 && len(f.Models) == 0 && len(f.Providers) == 0 &&
+		len(f.Protocols) == 0 && len(f.StatusCodes) == 0 && len(f.Tags) == 0
+}
+
+// intValues parses a repeated numeric param (?status_code=200&status_code=429),
+// dropping blank or non-numeric entries the same way nonEmpty drops blanks —
+// a stray malformed value must not become a predicate or an error.
+func intValues(in []string) []int {
+	var out []int
+	for _, v := range in {
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			continue
+		}
+		out = append(out, n)
 	}
 	return out
 }

@@ -96,7 +96,7 @@ func TestBackfillTags_Postgres(t *testing.T) {
 	}
 
 	hasTag := func() bool {
-		f, err := st.Facets(ctx, time.Time{}, time.Time{})
+		f, err := st.Facets(ctx, time.Time{}, time.Time{}, store.EventFilter{})
 		if err != nil {
 			t.Fatalf("Facets: %v", err)
 		}

@@ -12,7 +12,7 @@ import { PageHeader } from "@/components/atoms/page-header"
 import { SkeletonTiles, SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
 import { UnauthorizedError } from "@/lib/api"
-import { fetchMessageByCorrelation, type MessageEntry, type MessageFilters } from "@/lib/messages"
+import { fetchFacets, fetchMessageByCorrelation, type Facets, type MessageEntry, type MessageFilters } from "@/lib/messages"
 import {
   fetchFullSpan,
   fetchSessionSpans,
@@ -1828,17 +1828,44 @@ function SessionMessagesPanel({
   const [limit, setLimit] = useState<number>(SESSION_MESSAGES_PAGE_SIZE)
   const isFixture = source === "fixture"
 
-  // Model header filter (multi-select, OR). Options come from the session's
-  // own loaded spans — complete session coverage, no extra fetch — which is
-  // also why Model is the only filterable column here: SessionSpan carries no
-  // provider/protocol/configuration/tags to enumerate. API mode pushes the
-  // selection into the server-side pager filters; fixture mode narrows the
-  // synthesized rows client-side.
+  // Column header filters (multi-select, OR within a dimension; tags is AND).
+  // The same six dimensions the global browser offers, so both messages
+  // tables filter identically. API mode pushes the selections into the
+  // server-side pager filters and enumerates options via the session-scoped
+  // facets fetch below; fixture mode narrows the synthesized rows client-side
+  // on the dimensions the spans carry (model + status) and derives those
+  // options from the spans.
+  const [statusSel, setStatusSel] = useState<string[]>([])
+  const [providerSel, setProviderSel] = useState<string[]>([])
+  const [protocolSel, setProtocolSel] = useState<string[]>([])
   const [modelSel, setModelSel] = useState<string[]>([])
-  const modelOptions = useMemo(
-    () => [...new Set(vm.spans.map((s) => s.model).filter((m): m is string => !!m))].sort(),
-    [vm.spans],
-  )
+  const [configSel, setConfigSel] = useState<string[]>([])
+  const [tagSel, setTagSel] = useState<string[]>([])
+
+  // Facet options: session-scoped from the API (bypasses the server's
+  // whole-window cache); on the fixture fallback, derived from the loaded
+  // spans for the dimensions they carry.
+  const [apiFacets, setApiFacets] = useState<{ sid: string; v: Facets } | null>(null)
+  useEffect(() => {
+    if (isFixture) return
+    let cancelled = false
+    fetchFacets({ sessionId: vm.sid })
+      .then((f) => {
+        if (!cancelled) setApiFacets({ sid: vm.sid, v: f })
+      })
+      .catch(() => {
+        /* menus degrade to empty options; the table still loads */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isFixture, vm.sid])
+  const facetOptions = useMemo<Facets>(() => {
+    if (!isFixture && apiFacets && apiFacets.sid === vm.sid) return apiFacets.v
+    const models = [...new Set(vm.spans.map((s) => s.model).filter((m): m is string => !!m))].sort()
+    const codes = [...new Set(vm.spans.map((s) => s.status).filter((c): c is number => c != null && c !== 0))].sort((a, b) => a - b)
+    return { providers: [], models, configurations: [], protocols: [], status_codes: codes, tags: [] }
+  }, [isFixture, apiFacets, vm.sid, vm.spans])
 
   // Query filters: session-scoped always; conversation-scoped when a sub-agent
   // is focused; from/to only when sliced — the full session needs no time
@@ -1846,13 +1873,18 @@ function SessionMessagesPanel({
   const filters = useMemo<MessageFilters>(() => {
     const f: MessageFilters = { sessionId: vm.sid }
     if (focusedConv) f.conversationId = focusedConv
+    if (statusSel.length > 0) f.statusCodes = statusSel
+    if (providerSel.length > 0) f.providers = providerSel
+    if (protocolSel.length > 0) f.protocols = protocolSel
     if (modelSel.length > 0) f.models = modelSel
+    if (configSel.length > 0) f.configurations = configSel
+    if (tagSel.length > 0) f.tags = tagSel
     if (debounced) {
       f.from = new Date(vm.t0ms + debounced.d0 * 1000).toISOString()
       f.to = new Date(vm.t0ms + debounced.d1 * 1000).toISOString()
     }
     return f
-  }, [vm.sid, vm.t0ms, debounced, focusedConv, modelSel])
+  }, [vm.sid, vm.t0ms, debounced, focusedConv, statusSel, providerSel, protocolSel, modelSel, configSel, tagSel])
 
   const pager = useMessagesPager({
     filters,
@@ -1869,6 +1901,7 @@ function SessionMessagesPanel({
       .filter((s) => s.t >= d0 && s.t <= d1)
       .filter((s) => !focusedConv || s.conversation_id === focusedConv)
       .filter((s) => modelSel.length === 0 || (s.model != null && modelSel.includes(s.model)))
+      .filter((s) => statusSel.length === 0 || statusSel.includes(String(s.status ?? 0)))
       .slice()
       .reverse()
       .map((s) => ({
@@ -1882,7 +1915,7 @@ function SessionMessagesPanel({
         tokens_in: s.usage.input ?? 0,
         tokens_out: s.usage.output ?? 0,
       }))
-  }, [isFixture, vm, d0, d1, focusedConv, modelSel])
+  }, [isFixture, vm, d0, d1, focusedConv, modelSel, statusSel])
   // Fixture paging is tagged with the row set + page size it belongs to, so a
   // window or size change derives page one during render (no reset effect).
   const [fixNav, setFixNav] = useState<{ rows: MessageEntry[]; limit: number; page: number } | null>(null)
@@ -1934,7 +1967,12 @@ function SessionMessagesPanel({
           return { label: dispName(conv), color: vm.colors.get(conv) }
         }}
         filters={{
-          model: { values: modelSel, options: modelOptions, onChange: setModelSel, allowSelectAll: true, emptyText: "No models in session" },
+          status: { values: statusSel, options: facetOptions.status_codes.map(String), onChange: setStatusSel, allowSelectAll: true, emptyText: "No statuses in session" },
+          provider: { values: providerSel, options: facetOptions.providers, onChange: setProviderSel, allowSelectAll: true, emptyText: "No providers in session" },
+          protocol: { values: protocolSel, options: facetOptions.protocols, onChange: setProtocolSel, allowSelectAll: true, emptyText: "No protocols in session" },
+          model: { values: modelSel, options: facetOptions.models, onChange: setModelSel, allowSelectAll: true, emptyText: "No models in session" },
+          configuration: { values: configSel, options: facetOptions.configurations, onChange: setConfigSel, allowSelectAll: true, emptyText: "No configurations in session" },
+          tags: { values: tagSel, options: facetOptions.tags, onChange: setTagSel, allowSelectAll: false, emptyText: "No tags in session" },
         }}
       />
       <MessagesPagerBar

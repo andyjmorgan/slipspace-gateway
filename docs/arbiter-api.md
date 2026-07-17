@@ -114,6 +114,7 @@ messages/recent, events). Each maps to a column predicate in
 | `provider` | `provider` | **repeatable**; OR within the dimension (post-rule provider) |
 | `protocol` | `protocol` | **repeatable**; OR within the dimension (the wire protocol/endpoint; the UI labels this column **"endpoint"**) |
 | `status_class` | `status_code` | one of `2xx` / `4xx` / `5xx`; maps to a range predicate (`5xx` is open-ended `>= 500`) — `statusClassBounds`, lines 81-92 |
+| `status_code` | `status_code` | **repeatable**; exact codes ORed (`status_code = ANY`). Blank/non-numeric entries are dropped (`intValues`). Composes (AND) with `status_class`. |
 | `session_id` | `session_id` | exact match |
 | `correlation_id` | `correlation_id` | exact match |
 | `agent_id` | `agent_id` | exact match (the resolved agent/sub-agent id) |
@@ -334,8 +335,13 @@ Handler `handleFacets`. Optional `?from` / `?to` RFC3339 bounds
 (`parseWindowBounds`, same convention as the browser routes; a malformed bound
 is a 400) scope the enumeration to events observed in that window, so the
 dropdowns offer only values present in the range the table is showing. Absent
-bounds enumerate all history. Returns the distinct dropdown values for the
-message browser:
+bounds enumerate all history. The route also accepts the **common filter
+params** (`filterFromQuery` — e.g. `?session_id=`), narrowing every dimension
+to the matching rows; the session view's messages table uses this to offer
+only its session's values. Filtered lookups bypass the TTL cache (narrow
+indexed scans; the cache holds only whole-window results). Returns the
+distinct dropdown values for the message browser, including `status_codes`
+(distinct exact HTTP codes, zero excluded):
 
 ```json
 {
@@ -343,6 +349,7 @@ message browser:
   "models": ["claude-opus-4-1", "gpt-4o"],
   "configurations": ["team-a"],
   "protocols": ["chat_completions", "messages"],
+  "status_codes": [200, 429, 500],
   "tags": ["billing", "internal"]
 }
 ```

@@ -31,7 +31,7 @@ type SessionTimeRange = (typeof SESSION_TIME_RANGES)[number]["value"]
 const SESSION_PAGE_SIZES = [50, 100, 200] as const
 const SESSION_DEFAULT_PAGE_SIZE = 50
 
-const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], protocols: [], tags: [] }
+const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], protocols: [], status_codes: [], tags: [] }
 
 // SessionsPage is the browsable list of sessions active in a time range
 // (/sessions). A row opens the session's lifecycle dashboard (sessions/:id —

@@ -48,23 +48,25 @@ type fakeQueries struct {
 	facets           store.Facets
 	facetsErr        error
 	facetsHits       int
-	// lastFacetsFrom / lastFacetsTo record the window bounds of the most recent
-	// Facets call so the windowed-facets plumbing test can assert on them.
-	lastFacetsFrom time.Time
-	lastFacetsTo   time.Time
-	verdict        store.Verdict
-	verdictErr     error
-	findings       []store.Finding
-	findingsErr    error
-	findingRows    []store.FindingRow
-	findingRowsErr error
-	toolCalls      []store.ToolCall
-	toolCallsNext  string
-	toolCallsErr   error
-	toolCall       store.ToolCall
-	toolCallErr    error
-	toolNames      []string
-	toolNamesErr   error
+	// lastFacetsFrom / lastFacetsTo / lastFacetsFilter record the args of the
+	// most recent Facets call so the windowed/filtered facets plumbing tests
+	// can assert on them.
+	lastFacetsFrom   time.Time
+	lastFacetsTo     time.Time
+	lastFacetsFilter store.EventFilter
+	verdict          store.Verdict
+	verdictErr       error
+	findings         []store.Finding
+	findingsErr      error
+	findingRows      []store.FindingRow
+	findingRowsErr   error
+	toolCalls        []store.ToolCall
+	toolCallsNext    string
+	toolCallsErr     error
+	toolCall         store.ToolCall
+	toolCallErr      error
+	toolNames        []string
+	toolNamesErr     error
 	// lastToolParams records the ToolCallListParams of the most recent
 	// ListToolCalls call so the tool-call filter-plumbing test can assert on it.
 	lastToolParams store.ToolCallListParams
@@ -132,9 +134,10 @@ func (f *fakeQueries) CountEventsFiltered(_ context.Context, _ store.EventCountP
 func (f *fakeQueries) CountSessions(_ context.Context, _ store.SessionCountParams) (int64, error) {
 	return f.sessionsTotal, f.sessionsCountErr
 }
-func (f *fakeQueries) Facets(_ context.Context, from, to time.Time) (store.Facets, error) {
+func (f *fakeQueries) Facets(_ context.Context, from, to time.Time, filter store.EventFilter) (store.Facets, error) {
 	f.facetsHits++
 	f.lastFacetsFrom, f.lastFacetsTo = from, to
+	f.lastFacetsFilter = filter
 	return f.facets, f.facetsErr
 }
 func (f *fakeQueries) GetRequestEvent(context.Context, string) (store.RequestEvent, error) {
@@ -420,6 +423,21 @@ func TestMessages_RepeatedCategoricalParams(t *testing.T) {
 	}
 }
 
+func TestMessages_RepeatedStatusCodes(t *testing.T) {
+	// ?status_code is repeatable; blank and non-numeric entries drop rather
+	// than erroring or becoming a match-nothing predicate.
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	resp := get(t, h, "/api/v1/messages?status_code=200&status_code=429&status_code=&status_code=abc", true)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	codes := q.lastParams.Filter.StatusCodes
+	if len(codes) != 2 || codes[0] != 200 || codes[1] != 429 {
+		t.Errorf("status codes = %+v", codes)
+	}
+}
+
 func TestMessages_SortPlumbed(t *testing.T) {
 	q := &fakeQueries{}
 	h := newQueryServer(t, q)
@@ -539,6 +557,30 @@ func TestFacets_WindowPlumbedAndCachedPerWindow(t *testing.T) {
 	// A malformed bound is a 400, same as the list endpoints.
 	if resp := get(t, h, "/api/v1/facets?from=x", true); resp.Code != http.StatusBadRequest {
 		t.Fatalf("bad from: %d", resp.Code)
+	}
+}
+
+func TestFacets_FilteredBypassesCache(t *testing.T) {
+	// A filtered lookup (the session-scoped dropdowns path) reaches the store
+	// with the filter and never populates or reads the unfiltered cache.
+	q := &fakeQueries{}
+	h := newQueryServer(t, q)
+	if resp := get(t, h, "/api/v1/facets?session_id=sess-9", true); resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if q.lastFacetsFilter.SessionID != "sess-9" {
+		t.Errorf("filter not plumbed: %+v", q.lastFacetsFilter)
+	}
+	// Repeating the same filtered call hits the store again (no caching)...
+	_ = get(t, h, "/api/v1/facets?session_id=sess-9", true)
+	if q.facetsHits != 2 {
+		t.Errorf("filtered lookups must bypass cache: hits = %d, want 2", q.facetsHits)
+	}
+	// ...while the unfiltered path still caches.
+	_ = get(t, h, "/api/v1/facets", true)
+	_ = get(t, h, "/api/v1/facets", true)
+	if q.facetsHits != 3 {
+		t.Errorf("unfiltered should cache: hits = %d, want 3", q.facetsHits)
 	}
 }
 

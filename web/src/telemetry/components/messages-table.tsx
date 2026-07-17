@@ -162,6 +162,7 @@ function rowTime(iso: string): string {
 // for plain headers. Both the global browser and the session embed pass this,
 // so the header affordance lives in exactly one component.
 export type MessagesTableFilters = {
+  status?: ColumnFilter
   provider?: ColumnFilter
   protocol?: ColumnFilter
   model?: ColumnFilter
@@ -212,7 +213,7 @@ export function MessagesTableView({
         <tr className="text-[11px] uppercase tracking-[0.07em] text-[color:var(--text-3)]">
           <SortHeader label="Time" col="time" sort={sort} onSort={onSort} />
           {agent && <th scope="col" className="text-left font-medium px-4 py-2">Agent</th>}
-          <SortHeader label="Status" col="status" sort={sort} onSort={onSort} />
+          <SortHeader label="Status" col="status" sort={sort} onSort={onSort} filter={filters?.status} />
           <SortHeader label="Provider" col="provider" sort={sort} onSort={onSort} filter={filters?.provider} />
           <SortHeader label="Protocol" col="protocol" sort={sort} onSort={onSort} filter={filters?.protocol} />
           <SortHeader label="Model" col="model" sort={sort} onSort={onSort} filter={filters?.model} />
