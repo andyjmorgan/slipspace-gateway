@@ -185,7 +185,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 			return fmt.Errorf("arbiter: advise: %w", aerr)
 		}
 		cfg.Advise.Rubric = rubric
-		adviseHandler, aerr = buildAdviseHandler(cfg, rubric, reg, log)
+		adviseHandler, aerr = buildAdviseHandler(cfg, rubric, reg, st, log)
 		if aerr != nil {
 			return fmt.Errorf("arbiter: advise: %w", aerr)
 		}

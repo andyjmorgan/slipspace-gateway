@@ -39,6 +39,7 @@ flowchart TD
     sessions["GET /api/v1/sessions, /sessions/{id}, /sessions/{id}/spans, /sessions/{id}/spans/{cid}"]
     toolcalls["GET /api/v1/tool-calls, /tool-calls/{id}, /tool-calls/facets"]
     security["GET /api/v1/verdict/{id}, /api/v1/findings"]
+    adviseaudit["GET /api/v1/advise/audit, /advise/audit/savings"]
   end
   client --> open
   client --> hmac
@@ -662,6 +663,66 @@ array, never null). The literal `/facets` route is matched ahead of `/{id}`.
 > from the same gen_ai span feed as `request_events` — never the connector spool
 > or S3, and not a meter. Aggregate dashboard panels still read CAGGs over
 > `metric_points`; this surface is a per-call audit read, not an aggregate.
+
+### Advise audit (agent routing)
+
+Every agent-routing judgement the advisor serves — fresh, cached, or failed —
+is recorded post-response in the append-only `advise_audit` table (migration
+21): the payload the judge saw (identity, prompt excerpts, tools), the verdict,
+and the cache/latency/error facts. See [agent-routing.md](agent-routing.md)
+and [arbiter-database-schema.md](arbiter-database-schema.md#advise_audit).
+
+#### `GET /api/v1/advise/audit`
+
+Handler `handleAdviseAudit` (`advise_audit.go`). The judgement log, newest
+first, in an `{items}` envelope mirroring the table in snake_case
+(`received_at`, `gateway_id`, `conversation_id`, identity + payload fields,
+`verdict_switch` / `verdict_model` / `verdict_reason` / `verdict_confidence`,
+`cache_hit`, `judge_latency_ms`, `error`). `limit` caps the page (store-clamped
+to 200); `before` (RFC3339) is the keyset cursor — pass the last row's
+`received_at` to fetch the next page. A bad `before` is `400`.
+
+#### `GET /api/v1/advise/audit/savings`
+
+Handler `handleAdviseSavings`. Savings attribution for the traffic the judge
+down-ranked: for every switch verdict since `?since=` (RFC3339, default the
+last 24 hours), the requests that actually ran pinned (`request_events` joined
+on `conversation_id` + the `agent-route:<model>` tag, at or after the verdict)
+and their summed `cost_usd`, scaled into a counterfactual by the operator's
+`advise.model_rates` ratios (counterfactual = actual x rate[requested] /
+rate[pinned]):
+
+```json
+{
+ "since": "2026-07-16T08:00:00Z",
+ "items": [
+  {
+    "conversation_id": "conv-1",
+    "requested_model": "claude-opus-4-8",
+    "pinned_model": "claude-haiku-4-5",
+    "pinned_requests": 21,
+    "actual_usd": 2.1,
+    "counterfactual_usd": 10.5,
+    "saved_usd": 8.4
+  }
+ ],
+ "totals": {
+  "actual_usd": 2.1,
+  "counterfactual_usd": 10.5,
+  "saved_usd": 8.4,
+  "judge_cost_usd": 0.12,
+  "net_saved_usd": 8.28
+ }
+}
+```
+
+A row whose requested or pinned model has no configured rate carries **null**
+`counterfactual_usd` / `saved_usd` (never guessed) and is excluded from those
+totals; `actual_usd` always sums. `judge_cost_usd` is the summed `cost_usd` of
+every request the judge itself made in the window (keyed on its
+`advise-judge` named-agent id), and `net_saved_usd` charges it against the
+saving — the routing layer's overhead is always on the bill. A bad `since` is
+`400`.
 
 ### Security — findings + verdict (Arbiter)
 

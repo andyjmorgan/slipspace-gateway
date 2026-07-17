@@ -82,6 +82,17 @@ type fakeQueries struct {
 	// lastPageParams records the SessionPageParams of the most recent
 	// EventsBySessionPage call so the spans paging tests can assert plumbing.
 	lastPageParams store.SessionPageParams
+	// Advise audit surface: canned rows + errors, plus the args of the most
+	// recent calls so the plumbing tests can assert them.
+	adviseAudit        []store.AdviseAuditEntry
+	adviseAuditErr     error
+	lastAdviseLimit    int
+	lastAdviseBefore   time.Time
+	adviseSavings      []store.AdviseSavingsRow
+	adviseJudgeCost    float64
+	adviseSavingsErr   error
+	lastSavingsSince   time.Time
+	lastSavingsJudgeID string
 }
 
 func (f *fakeQueries) QueryDashboardSummary(context.Context, store.DashboardParams) (store.DashboardSummary, error) {
@@ -96,6 +107,16 @@ func (f *fakeQueries) QueryDashboardSecurity(context.Context, time.Time, time.Ti
 func (f *fakeQueries) ListScanAudit(_ context.Context, _, _ time.Time, limit int) ([]store.ScanAuditEntry, error) {
 	f.lastAuditLimit = limit
 	return f.scanAudit, f.scanAuditErr
+}
+func (f *fakeQueries) ListAdviseAudit(_ context.Context, limit int, before time.Time) ([]store.AdviseAuditEntry, error) {
+	f.lastAdviseLimit = limit
+	f.lastAdviseBefore = before
+	return f.adviseAudit, f.adviseAuditErr
+}
+func (f *fakeQueries) AdviseSavings(_ context.Context, since time.Time, judgeAgentID string) ([]store.AdviseSavingsRow, float64, error) {
+	f.lastSavingsSince = since
+	f.lastSavingsJudgeID = judgeAgentID
+	return f.adviseSavings, f.adviseJudgeCost, f.adviseSavingsErr
 }
 func (f *fakeQueries) ListEventsFiltered(_ context.Context, p store.EventListParams) ([]store.RequestEvent, string, error) {
 	f.lastParams = p

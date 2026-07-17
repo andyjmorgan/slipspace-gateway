@@ -95,8 +95,8 @@ func TestJudge_ConversationLinkHeaders(t *testing.T) {
 		t.Errorf("call 2 X-Slipspace-Thread-Id = %q, want unset", gotThread[1])
 	}
 	for i, a := range gotAgent {
-		if a != judgeAgentID {
-			t.Errorf("call %d X-Slipspace-Agent-Id = %q, want %q", i+1, a, judgeAgentID)
+		if a != JudgeAgentID {
+			t.Errorf("call %d X-Slipspace-Agent-Id = %q, want %q", i+1, a, JudgeAgentID)
 		}
 	}
 	if !strings.Contains(defaultRubric, "routing judge") {

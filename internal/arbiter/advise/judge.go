@@ -33,11 +33,6 @@ anything whose scope is unclear. When unsure, do not switch.`
 // maxJudgeResponseBytes caps the judge's HTTP response body.
 const maxJudgeResponseBytes = 1 << 20
 
-// judgeAgentID is the named-agent id stamped on every judge request
-// (X-Slipspace-Agent-Id), so judge inferences appear in telemetry as a named
-// agent rather than anonymous SDK traffic.
-const judgeAgentID = "advise-judge"
-
 // ResolveRubric returns the effective judge rubric: the contents of
 // promptFile when set, else the built-in default. Resolved once at startup —
 // both the judge and the applied-config snapshot (served at /api/v1/settings)
@@ -185,7 +180,7 @@ Task (first user message):
 	if req.ConversationID != "" {
 		httpReq.Header.Set("X-Slipspace-Thread-Id", req.ConversationID)
 	}
-	httpReq.Header.Set("X-Slipspace-Agent-Id", judgeAgentID)
+	httpReq.Header.Set("X-Slipspace-Agent-Id", JudgeAgentID)
 
 	resp, err := j.httpc.Do(httpReq) //nolint:gosec // G704: request URL is the operator-configured judge upstream, not user input
 	if err != nil {

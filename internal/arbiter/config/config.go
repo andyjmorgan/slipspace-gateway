@@ -107,6 +107,14 @@ type Advise struct {
 	// CacheTTLSeconds bounds the template-hash verdict cache. nil applies
 	// DefaultAdviseCacheTTLSeconds.
 	CacheTTLSeconds *int `yaml:"cache_ttl_seconds,omitempty"`
+	// ModelRates is the operator's per-model price weight (conventionally
+	// dollars per million input tokens), used ONLY to scale a down-ranked
+	// conversation's measured spend into its would-have-cost counterfactual
+	// on the advise savings endpoint: counterfactual = actual x
+	// rate[requested] / rate[pinned]. Ratios are what matter, not absolute
+	// dollars. A conversation whose requested or pinned model has no rate
+	// gets a null counterfactual — never a guessed one.
+	ModelRates map[string]float64 `yaml:"model_rates,omitempty"`
 }
 
 // AdviseUpstream is the judge model connection.
@@ -490,6 +498,17 @@ func (c Config) Validate() error {
 		}
 		if len(c.Gateways) == 0 {
 			return errors.New("advise.enabled requires at least one registered gateway (the HMAC trust registry)")
+		}
+	}
+	// Rates are validated whenever provided (not only when advise.enabled) —
+	// the savings endpoint reads them for historical audit rows even after the
+	// advisor itself is switched off.
+	for model, rate := range c.Advise.ModelRates {
+		if model == "" {
+			return errors.New("advise.model_rates: empty model name")
+		}
+		if rate <= 0 {
+			return fmt.Errorf("advise.model_rates[%s]: rate must be > 0", model)
 		}
 	}
 	return nil

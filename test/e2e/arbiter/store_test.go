@@ -522,3 +522,97 @@ func TestMetricPoints_InsertAndList(t *testing.T) {
 		t.Fatalf("got %d points, want >= 2", len(got))
 	}
 }
+
+// TestAdviseAudit_RoundTripAndSavings proves the advise_audit table (migration
+// 21) against real Postgres: insert + newest-first list, and the savings
+// attribution join — pinned requests are matched by conversation_id + the
+// agent-route:<model> tag at-or-after the verdict, duplicate verdicts for one
+// conversation collapse to the earliest, and the judge's own overhead is
+// summed by its named-agent id.
+func TestAdviseAudit_RoundTripAndSavings(t *testing.T) {
+	st := migratedStore(t)
+	ctx := context.Background()
+	base := time.Now().UTC()
+
+	insert := func(e store.AdviseAuditEntry) {
+		t.Helper()
+		if err := st.InsertAdviseAudit(ctx, e); err != nil {
+			t.Fatalf("InsertAdviseAudit: %v", err)
+		}
+	}
+	// A switch verdict, its duplicate (cache re-issue), and a continue verdict.
+	insert(store.AdviseAuditEntry{GatewayID: "gw-e2e", ConversationID: "adv-conv-1",
+		RequestedModel: "big-model-x", AgentFamily: "claude-code", IsSubagent: true,
+		ToolNames: []string{"Read"}, SystemPrefix: "sys", FirstUserMessage: "task",
+		VerdictSwitch: true, VerdictModel: "pin-model-x", VerdictReason: "trivial",
+		VerdictConfidence: 0.9, JudgeLatencyMs: 1500})
+	insert(store.AdviseAuditEntry{GatewayID: "gw-e2e", ConversationID: "adv-conv-1",
+		RequestedModel: "big-model-x", VerdictSwitch: true, VerdictModel: "pin-model-x",
+		CacheHit: true})
+	insert(store.AdviseAuditEntry{GatewayID: "gw-e2e", ConversationID: "adv-conv-2",
+		RequestedModel: "big-model-x", VerdictSwitch: false, VerdictReason: "non-trivial"})
+
+	got, err := st.ListAdviseAudit(ctx, 10, time.Time{})
+	if err != nil {
+		t.Fatalf("ListAdviseAudit: %v", err)
+	}
+	if len(got) < 3 {
+		t.Fatalf("rows = %d, want >= 3", len(got))
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].ReceivedAt.After(got[i-1].ReceivedAt) {
+			t.Fatalf("not newest-first at %d", i)
+		}
+	}
+	var first store.AdviseAuditEntry
+	for _, e := range got {
+		if e.ConversationID == "adv-conv-1" && !e.CacheHit {
+			first = e
+		}
+	}
+	if first.RequestedModel != "big-model-x" || !first.VerdictSwitch ||
+		first.VerdictModel != "pin-model-x" || first.JudgeLatencyMs != 1500 ||
+		len(first.ToolNames) != 1 || first.SystemPrefix != "sys" {
+		t.Errorf("round-trip = %+v", first)
+	}
+
+	// Pinned traffic: two tagged events count, an untagged sibling does not,
+	// and the judge's spend is keyed on its agent id.
+	events := []store.RequestEvent{
+		{CorrelationID: "adv-evt-1", ConversationID: "adv-conv-1", Provider: "anthropic",
+			Model: "pin-model-x", CostUSD: 0.5, Tags: []string{"agent-route:pin-model-x"},
+			ObservedAt: base.Add(time.Minute), SpanEvent: []byte(`{}`)},
+		{CorrelationID: "adv-evt-2", ConversationID: "adv-conv-1", Provider: "anthropic",
+			Model: "pin-model-x", CostUSD: 0.25, Tags: []string{"agent-route:pin-model-x"},
+			ObservedAt: base.Add(2 * time.Minute), SpanEvent: []byte(`{}`)},
+		{CorrelationID: "adv-evt-3", ConversationID: "adv-conv-1", Provider: "anthropic",
+			Model: "big-model-x", CostUSD: 5, // request 1, before the pin: no tag
+			ObservedAt: base.Add(3 * time.Minute), SpanEvent: []byte(`{}`)},
+		{CorrelationID: "adv-evt-judge", ConversationID: "adv-conv-1", Provider: "anthropic",
+			Model: "judge-model", AgentID: "advise-judge", CostUSD: 0.1,
+			ObservedAt: base.Add(time.Minute), SpanEvent: []byte(`{}`)},
+	}
+	for _, e := range events {
+		if err := st.UpsertRequestEvent(ctx, e); err != nil {
+			t.Fatalf("UpsertRequestEvent(%s): %v", e.CorrelationID, err)
+		}
+	}
+
+	rows, judgeCost, err := st.AdviseSavings(ctx, base.Add(-time.Hour), "advise-judge")
+	if err != nil {
+		t.Fatalf("AdviseSavings: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("savings rows = %d, want 1 (duplicate verdicts must collapse; continue verdicts excluded): %+v", len(rows), rows)
+	}
+	r := rows[0]
+	if r.ConversationID != "adv-conv-1" || r.RequestedModel != "big-model-x" || r.PinnedModel != "pin-model-x" {
+		t.Errorf("row identity = %+v", r)
+	}
+	if r.PinnedRequests != 2 || r.ActualUSD < 0.74 || r.ActualUSD > 0.76 {
+		t.Errorf("pinned = %d @ $%v, want 2 @ $0.75 (untagged request must not count)", r.PinnedRequests, r.ActualUSD)
+	}
+	if judgeCost < 0.09 || judgeCost > 0.11 {
+		t.Errorf("judge cost = %v, want 0.1", judgeCost)
+	}
+}
