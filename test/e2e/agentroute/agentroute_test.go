@@ -593,3 +593,135 @@ func allCapturedModels(t *testing.T, h *harness.Harness) []string {
 	}
 	return models
 }
+
+// messagesBodyWithEffort is messagesBody plus the adaptive-thinking
+// output_config a fable/opus Claude Code client sends with every request.
+func messagesBodyWithEffort(extra map[string]any) map[string]any {
+	body := messagesBody(true)
+	oc := map[string]any{"effort": "high"}
+	for k, v := range extra {
+		oc[k] = v
+	}
+	body["output_config"] = oc
+	return body
+}
+
+// capturedOutputConfig returns the raw output_config object the upstream
+// received, or nil when the key is absent.
+func capturedOutputConfig(t *testing.T, c harness.CapturedRequest) map[string]any {
+	t.Helper()
+	var body struct {
+		OutputConfig map[string]any `json:"output_config"`
+	}
+	if err := json.Unmarshal([]byte(c.Body), &body); err != nil {
+		t.Fatalf("captured body is not JSON: %v (body=%s)", err, c.Body)
+	}
+	return body.OutputConfig
+}
+
+// pinnedCaptureFor polls same-conversation requests until the upstream sees
+// the pinned model, returning that capture.
+func pinnedCaptureFor(t *testing.T, h *harness.Harness, body map[string]any, headers http.Header, wantModel string) harness.CapturedRequest {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp := h.PostJSON("/v1/messages", body, headers)
+		assertMessagesOK(t, resp, "pinned request")
+		last := h.LastCapturedRequest()
+		if last == nil {
+			t.Fatal("no upstream capture for pinned request")
+		}
+		if capturedModel(t, *last) == wantModel {
+			return *last
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("upstream never received the pinned model %q; captured models: %v",
+		wantModel, allCapturedModels(t, h))
+	return harness.CapturedRequest{}
+}
+
+// TestAgentRoute_HaikuPinStripsEffort is the body-side sibling of the
+// context-1m beta case: haiku rejects output_config.effort, so a haiku pin
+// must strip it before forwarding. When effort is the only output_config
+// content the whole block disappears rather than leaving {} behind.
+func TestAgentRoute_HaikuPinStripsEffort(t *testing.T) {
+	t.Parallel()
+	h, stub := newAgentRouteHarness(t,
+		fmt.Sprintf(`{"switch":true,"model":%q,"reason":"trivial","confidence":0.9}`, haikuCheapModel))
+	stageMessagesResponse(h)
+
+	headers := subagentHeaders("e2e-conv-effort-1")
+	body := messagesBodyWithEffort(nil)
+
+	// Request 1 is always unpinned: effort must reach upstream verbatim.
+	resp1 := h.PostJSON("/v1/messages", body, headers)
+	assertMessagesOK(t, resp1, "request 1")
+	first := h.LastCapturedRequest()
+	if first == nil {
+		t.Fatal("no upstream capture for request 1")
+	}
+	if oc := capturedOutputConfig(t, *first); oc == nil || oc["effort"] != "high" {
+		t.Fatalf("request 1 upstream output_config = %v, want effort high verbatim", oc)
+	}
+
+	waitForAdvisorCalls(t, stub, 1, 5*time.Second)
+
+	pinned := pinnedCaptureFor(t, h, body, headers, haikuCheapModel)
+	if oc := capturedOutputConfig(t, pinned); oc != nil {
+		t.Fatalf("pinned request upstream output_config = %v, want the effort-only block removed entirely", oc)
+	}
+}
+
+// TestAgentRoute_HaikuPinKeepsFormatWhenStrippingEffort proves the strip is
+// surgical: structured-output format survives a haiku pin, only effort goes.
+func TestAgentRoute_HaikuPinKeepsFormatWhenStrippingEffort(t *testing.T) {
+	t.Parallel()
+	h, stub := newAgentRouteHarness(t,
+		fmt.Sprintf(`{"switch":true,"model":%q,"reason":"trivial","confidence":0.9}`, haikuCheapModel))
+	stageMessagesResponse(h)
+
+	headers := subagentHeaders("e2e-conv-effort-2")
+	body := messagesBodyWithEffort(map[string]any{
+		"format": map[string]any{"type": "json_schema", "schema": map[string]any{"type": "object"}},
+	})
+
+	resp1 := h.PostJSON("/v1/messages", body, headers)
+	assertMessagesOK(t, resp1, "request 1")
+
+	waitForAdvisorCalls(t, stub, 1, 5*time.Second)
+
+	pinned := pinnedCaptureFor(t, h, body, headers, haikuCheapModel)
+	oc := capturedOutputConfig(t, pinned)
+	if oc == nil {
+		t.Fatal("pinned request upstream lost output_config entirely; format must survive")
+	}
+	if _, hasEffort := oc["effort"]; hasEffort {
+		t.Fatalf("pinned request upstream output_config = %v, want effort stripped", oc)
+	}
+	if _, hasFormat := oc["format"]; !hasFormat {
+		t.Fatalf("pinned request upstream output_config = %v, want format intact", oc)
+	}
+}
+
+// TestAgentRoute_NonHaikuPinKeepsEffort is the counter-case: a pin to a
+// non-haiku model must forward the client's output_config untouched.
+func TestAgentRoute_NonHaikuPinKeepsEffort(t *testing.T) {
+	t.Parallel()
+	h, stub := newAgentRouteHarness(t,
+		`{"switch":true,"model":"e2e-cheap-model","reason":"trivial","confidence":0.9}`)
+	stageMessagesResponse(h)
+
+	headers := subagentHeaders("e2e-conv-effort-3")
+	body := messagesBodyWithEffort(nil)
+
+	resp1 := h.PostJSON("/v1/messages", body, headers)
+	assertMessagesOK(t, resp1, "request 1")
+
+	waitForAdvisorCalls(t, stub, 1, 5*time.Second)
+
+	pinned := pinnedCaptureFor(t, h, body, headers, cheapModel)
+	if oc := capturedOutputConfig(t, pinned); oc == nil || oc["effort"] != "high" {
+		t.Fatalf("pinned request upstream output_config = %v, want effort high verbatim (non-haiku pin must not touch the body)", oc)
+	}
+}

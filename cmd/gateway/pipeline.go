@@ -8,6 +8,7 @@ import (
 
 	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 	"github.com/andyjmorgan/slipspace-gateway/internal/agentroute"
+	"github.com/andyjmorgan/slipspace-gateway/internal/bodypatch"
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
@@ -177,10 +178,15 @@ func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, e
 			return
 		}
 
-		var pinned *agentroute.Pin
+		var (
+			pinned  *agentroute.Pin
+			pinOps  []bodypatch.Op
+			pinBody *messages.MessagesRequest
+		)
 		if agentRouter != nil && dest.Single != nil && cfg.AgentRouting != nil {
 			if captured, capOK := bodycapture.FromContext(ctx); capOK {
 				if mreq, isMsg := captured.Body.(*messages.MessagesRequest); isMsg {
+					pinBody = mreq
 					pinned = agentRouter.Evaluate(ctx, ar.ConfigurationName, cfg.AgentRouting,
 						pi.protocol, dest.Single.Provider, model, mreq, r.Header)
 				}
@@ -189,6 +195,7 @@ func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, e
 				single := *dest.Single
 				single.Alias = pinned.Model
 				dest.Single = &single
+				pinOps = agentroute.ReconcileBody(pinBody, pinned.Model)
 			}
 		}
 
@@ -216,6 +223,15 @@ func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, e
 			if agentroute.ReconcileBetas(r.Header, pinned.Model) {
 				state.AddTag("agent-route:stripped-context-1m")
 				log.InfoContext(ctx, "agentroute: stripped context-1m beta for pinned model", "model", pinned.Model)
+			}
+			// Same reconciliation for body parameters: haiku rejects the
+			// adaptive-thinking output_config.effort a fable/opus client sends
+			// with every request (400 "This model does not support the effort
+			// parameter"), which would break the pinned conversation.
+			if len(pinOps) > 0 {
+				state.BodyRewrites = append(state.BodyRewrites, pinOps...)
+				state.AddTag("agent-route:stripped-effort")
+				log.InfoContext(ctx, "agentroute: stripped output_config.effort for pinned model", "model", pinned.Model)
 			}
 			log.InfoContext(ctx, "agentroute: pin applied", "model", pinned.Model, "reason", pinned.Reason)
 		}
