@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	adminc "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/advise"
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/store"
 )
@@ -14,62 +15,8 @@ import (
 // control-plane tables (advise_audit, request_events) — never the S3/spool
 // Record channel — so the console stays inside invariant #4.
 
-// adviseAuditItem is one judgement row on the wire, mirroring
-// store.AdviseAuditEntry in snake_case.
-type adviseAuditItem struct {
-	ReceivedAt        time.Time `json:"received_at"`
-	GatewayID         string    `json:"gateway_id"`
-	ConversationID    string    `json:"conversation_id"`
-	SessionID         string    `json:"session_id,omitempty"`
-	Configuration     string    `json:"configuration,omitempty"`
-	Protocol          string    `json:"protocol,omitempty"`
-	Provider          string    `json:"provider,omitempty"`
-	RequestedModel    string    `json:"requested_model,omitempty"`
-	AgentFamily       string    `json:"agent_family,omitempty"`
-	Entrypoint        string    `json:"entrypoint,omitempty"`
-	IsSubagent        bool      `json:"is_subagent"`
-	ToolNames         []string  `json:"tool_names,omitempty"`
-	SystemPrefix      string    `json:"system_prefix,omitempty"`
-	FirstUserMessage  string    `json:"first_user_message,omitempty"`
-	VerdictSwitch     bool      `json:"verdict_switch"`
-	VerdictModel      string    `json:"verdict_model,omitempty"`
-	VerdictReason     string    `json:"verdict_reason,omitempty"`
-	VerdictConfidence float64   `json:"verdict_confidence"`
-	CacheHit          bool      `json:"cache_hit"`
-	JudgeLatencyMs    int       `json:"judge_latency_ms"`
-	Error             string    `json:"error,omitempty"`
-}
-
-// adviseSavingsItem is one down-ranked conversation's savings attribution.
-// CounterfactualUSD and SavedUSD are null when the operator has not
-// configured a rate for either model involved — the API never guesses.
-type adviseSavingsItem struct {
-	ConversationID    string   `json:"conversation_id"`
-	RequestedModel    string   `json:"requested_model"`
-	PinnedModel       string   `json:"pinned_model"`
-	PinnedRequests    int64    `json:"pinned_requests"`
-	ActualUSD         float64  `json:"actual_usd"`
-	CounterfactualUSD *float64 `json:"counterfactual_usd"`
-	SavedUSD          *float64 `json:"saved_usd"`
-}
-
-// adviseSavingsTotals sums the attribution. CounterfactualUSD and SavedUSD
-// sum only the priced rows; NetSavedUSD is SavedUSD minus the judge's own
-// spend in the window, so the routing layer's overhead is always on the bill.
-type adviseSavingsTotals struct {
-	ActualUSD         float64 `json:"actual_usd"`
-	CounterfactualUSD float64 `json:"counterfactual_usd"`
-	SavedUSD          float64 `json:"saved_usd"`
-	JudgeCostUSD      float64 `json:"judge_cost_usd"`
-	NetSavedUSD       float64 `json:"net_saved_usd"`
-}
-
-// adviseSavingsResponse is the GET /api/v1/advise/audit/savings body.
-type adviseSavingsResponse struct {
-	Since  time.Time           `json:"since"`
-	Items  []adviseSavingsItem `json:"items"`
-	Totals adviseSavingsTotals `json:"totals"`
-}
+// The wire DTOs live in contracts/admin/advise.go (tygo-generated into the
+// SPA); this file only maps store rows onto them.
 
 // handleAdviseAudit serves the judgement log, newest first. ?limit= caps the
 // page (store-clamped to 200); ?before= (RFC3339) is the keyset cursor —
@@ -89,9 +36,9 @@ func (s *Server) handleAdviseAudit(w http.ResponseWriter, r *http.Request) {
 		s.queryError(w, "advise audit", err)
 		return
 	}
-	items := make([]adviseAuditItem, 0, len(entries))
+	items := make([]adminc.AdviseAuditItem, 0, len(entries))
 	for _, e := range entries {
-		items = append(items, adviseAuditItem{
+		items = append(items, adminc.AdviseAuditItem{
 			ReceivedAt:        e.ReceivedAt,
 			GatewayID:         e.GatewayID,
 			ConversationID:    e.ConversationID,
@@ -115,14 +62,19 @@ func (s *Server) handleAdviseAudit(w http.ResponseWriter, r *http.Request) {
 			Error:             e.Error,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, adminc.AdviseAuditPage{Items: items})
 }
 
 // handleAdviseSavings serves the savings attribution for switch verdicts
-// since ?since= (RFC3339; default the last 24 hours). Counterfactuals are
-// ratio-scaled from the operator's advise.model_rates.
+// since ?since= (RFC3339), or over the console-standard ?window= token
+// (?since= wins when both are present; default the last 24 hours).
+// Counterfactuals are ratio-scaled from the operator's advise.model_rates.
 func (s *Server) handleAdviseSavings(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().Add(-24 * time.Hour)
+	if r.URL.Query().Get("window") != "" {
+		_, dur := parseWindow(r)
+		since = time.Now().Add(-dur)
+	}
 	if v := r.URL.Query().Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
@@ -153,11 +105,11 @@ func (s *Server) handleAdviseSavings(w http.ResponseWriter, r *http.Request) {
 // has no configured rate keeps null counterfactual/saved and is excluded
 // from those totals — never guessed. NetSavedUSD charges the judge's own
 // spend against the saving.
-func attributeSavings(rows []store.AdviseSavingsRow, judgeCostUSD float64, rates map[string]float64) adviseSavingsResponse {
-	items := make([]adviseSavingsItem, 0, len(rows))
-	var totals adviseSavingsTotals
+func attributeSavings(rows []store.AdviseSavingsRow, judgeCostUSD float64, rates map[string]float64) adminc.AdviseSavingsResponse {
+	items := make([]adminc.AdviseSavingsItem, 0, len(rows))
+	var totals adminc.AdviseSavingsTotals
 	for _, r := range rows {
-		item := adviseSavingsItem{
+		item := adminc.AdviseSavingsItem{
 			ConversationID: r.ConversationID,
 			RequestedModel: r.RequestedModel,
 			PinnedModel:    r.PinnedModel,
@@ -178,5 +130,5 @@ func attributeSavings(rows []store.AdviseSavingsRow, judgeCostUSD float64, rates
 	}
 	totals.JudgeCostUSD = judgeCostUSD
 	totals.NetSavedUSD = totals.SavedUSD - judgeCostUSD
-	return adviseSavingsResponse{Items: items, Totals: totals}
+	return adminc.AdviseSavingsResponse{Items: items, Totals: totals}
 }
