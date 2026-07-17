@@ -97,8 +97,14 @@ advise:
 
 The candidate list and the JSON response schema are always appended to the
 prompt programmatically, so a rubric edit cannot unshape the output contract.
-Verdicts are cached by template hash (agent family + system prefix + task text
-+ tools), bounded and TTL'd.
+The verdict is additionally enforced server-side via structured outputs
+(`output_config.format`, GA on the Messages API incl. Haiku-tier judges): the
+judge's response is constrained to the verdict JSON schema, with the `model`
+field an enum of the configured candidates — a non-candidate model cannot be
+emitted. The prompt-level instruction and the brace-extraction parser remain
+as fallback for upstreams that ignore the field. Verdicts are cached by
+template hash (agent family + system prefix + task text + tools), bounded and
+TTL'd.
 
 Observability of the judge itself:
 

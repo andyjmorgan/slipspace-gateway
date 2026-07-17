@@ -63,7 +63,44 @@ type Judge struct {
 	model      string
 	rubric     string
 	candidates []string
-	httpc      *http.Client
+	// schema is the JSON schema the judge's output is server-side constrained
+	// to (structured outputs, output_config.format). Built once from the
+	// candidate list: the verdict's model field is an enum of the candidates
+	// plus "" — the judge cannot emit a non-candidate model.
+	schema map[string]any
+	httpc  *http.Client
+}
+
+// verdictSchema builds the structured-outputs schema for advise.Verdict.
+// Structured-outputs rules: every object needs additionalProperties:false;
+// numeric range constraints are unsupported (confidence bounds live in the
+// prompt); enum is supported and carries the candidate allow-list.
+func verdictSchema(candidates []string) map[string]any {
+	modelEnum := append([]string{""}, candidates...)
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"switch", "model", "reason", "confidence"},
+		"properties": map[string]any{
+			"switch": map[string]any{
+				"type":        "boolean",
+				"description": "true to re-route the conversation to a cheaper model, false to continue as configured",
+			},
+			"model": map[string]any{
+				"type":        "string",
+				"enum":        modelEnum,
+				"description": "the candidate model to switch to; empty string when switch is false",
+			},
+			"reason": map[string]any{
+				"type":        "string",
+				"description": "short justification for the verdict",
+			},
+			"confidence": map[string]any{
+				"type":        "number",
+				"description": "self-reported confidence between 0 and 1",
+			},
+		},
+	}
 }
 
 // NewJudge builds a judge. rubric empty applies the built-in default.
@@ -77,6 +114,7 @@ func NewJudge(baseURL, apiKey, model, rubric string, candidates []string, timeou
 		model:      model,
 		rubric:     rubric,
 		candidates: candidates,
+		schema:     verdictSchema(candidates),
 		httpc:      &http.Client{Timeout: timeout},
 	}
 }
@@ -111,6 +149,17 @@ Task (first user message):
 		"model":      j.model,
 		"max_tokens": 300,
 		"system":     system,
+		// Structured outputs (GA, no beta header; supported on the cheap
+		// judge tiers incl. Haiku 4.5): the response is server-side
+		// constrained to the verdict schema, with the model field an enum of
+		// the candidates. parseVerdict below stays as the fallback for
+		// upstreams that ignore the field.
+		"output_config": map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"schema": j.schema,
+			},
+		},
 		"messages": []map[string]any{
 			{"role": "user", "content": user},
 		},
