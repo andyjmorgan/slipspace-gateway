@@ -159,7 +159,7 @@ The lazily-joined verbatim Record blob — the full per-request digital record (
 | Column | Type | Default | Notes |
 |---|---|---|---|
 | `correlation_id` | `TEXT` | — | **Primary key**; the lazy join key to `request_events`. |
-| `received_at` | `TIMESTAMPTZ` | `now()` | Server-side ingest time (the moment the webhook landed), not a producer clock. |
+| `received_at` | `TIMESTAMPTZ` | — (NOT NULL) | Server-side ingest time (the moment the webhook landed), not a producer clock. No column default — the value is supplied by the ingest upsert as `COALESCE($2, now())` ([`record.go`](../internal/arbiter/store/record.go)), so it equals `now()` only when the pusher omits it. |
 | `body` | `BYTEA` | — (NOT NULL) | The raw `cc.Record` bytes exactly as received — the signature was verified over these bytes, so the inspector renders exactly what the gateway signed. Deserialized lazily into `cc.Record` only when the record/inspector tab opens. |
 
 `UpsertRecord` is `INSERT … ON CONFLICT (correlation_id) DO UPDATE`, so a re-push (pusher retry, operator replay) overwrites in place rather than duplicating. `GetRecordBody` returns the raw bytes or `ErrRecordNotFound`; **an absent row is normal** — it means reporting forwarding was off for the request, or the push has not yet arrived. The console degrades gracefully to the entity-only view in that case.

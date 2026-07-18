@@ -157,23 +157,23 @@ gateways:
 
 | Key | Type | Default | Meaning | Source |
 |---|---|---|---|---|
-| `http_bind` | string | `0.0.0.0:8686` | Console + HMAC webhook listener | `config.go:27,38,114` |
-| `otlp_bind` | string | `0.0.0.0:8687` | OTLP gRPC listener (traces + metrics) | `config.go:28,40,117` |
+| `http_bind` | string | `0.0.0.0:8686` | Console + HMAC webhook listener | `config.go:27,49,362` |
+| `otlp_bind` | string | `0.0.0.0:8687` | OTLP gRPC listener (traces + metrics) | `config.go:28,51,365` |
 | `content_max_bytes` | int (pointer) | `16384` | Per-request gen_ai content cap from OTLP spans. Unset → default; `0`/negative → unlimited | `config.go` (`DefaultContentMaxBytes`, `ContentCap`) |
 | `span_field_max_bytes` | int (pointer) | `65536` | Per-field content cap the session-spans projection applies to served text/args. Unset → default; `0`/negative → unlimited | `config.go` (`DefaultSpanFieldMaxBytes`, `SpanFieldCap`) |
-| `postgres.dsn` | string | — (**required**) | pgx/libpq connection string | `config.go:59` |
-| `console.username` | string | — (**required**) | HTTP Basic login | `config.go:65` |
-| `console.password_hash` | string | — (**required**) | **bcrypt** hash of the console password | `config.go:69` |
-| `gateways[].id` | string | — (**required**) | Stable gateway identifier echoed on its Record pushes and carried on events for stitching | `config.go:76` |
-| `gateways[].hmac_secret` | string | — (**required**) | Shared secret the gateway signs Record pushes with | `config.go:79` |
+| `postgres.dsn` | string | — (**required**) | pgx/libpq connection string | `config.go:307` |
+| `console.username` | string | — (**required**) | HTTP Basic login | `config.go:313` |
+| `console.password_hash` | string | — (**required**) | **bcrypt** hash of the console password | `config.go:317` |
+| `gateways[].id` | string | — (**required**) | Stable gateway identifier echoed on its Record pushes and carried on events for stitching | `config.go:324` |
+| `gateways[].hmac_secret` | string | — (**required**) | Shared secret the gateway signs Record pushes with | `config.go:327` |
 
-`content_max_bytes` is modelled as a `*int` so the loader can distinguish "unset" (take the `16384` default) from an explicit `0` (unlimited). `Config.ContentCap` (`config.go:125`) resolves the effective value, which the trace receiver treats as "keep the whole content" when `<= 0`.
+`content_max_bytes` is modelled as a `*int` so the loader can distinguish "unset" (take the `16384` default) from an explicit `0` (unlimited). `Config.ContentCap` (`config.go:378`) resolves the effective value, which the trace receiver treats as "keep the whole content" when `<= 0`.
 
 When a span's assembled gen_ai content exceeds the effective cap, the service stores **no** content for that request — only a marker `{"truncated": true, "original_bytes": N}` (`internal/arbiter/ingest/content.go`). The bounded content lives under `gen_ai_content` inside the entity's `span_event` blob. So an over-cap request still appears in the console with its metadata intact, but the gen_ai content in the inspector is replaced by that marker. The full bodies are unaffected on the **Record** feed — they land verbatim in the `record` table for audit/replay; the cap only bounds the console's convenience copy taken from OTLP spans.
 
 ### Validation
 
-`Config.Validate` (`config.go:135`) runs after defaults are applied and rejects, with a specific error, any config that would leave the service unable to do its job:
+`Config.Validate` (`config.go:431`) runs after defaults are applied and rejects, with a specific error, any config that would leave the service unable to do its job:
 
 - `postgres.dsn is required` — no store to write to.
 - `console.username is required` / `console.password_hash is required` — no credentials to guard the console.
@@ -218,13 +218,13 @@ Validation (`config.Validate`) rejects, when the scanner is enabled, a malformed
 
 ### Generating the console password hash
 
-`console.password_hash` is verified with `bcrypt.CompareHashAndPassword` (`server.go:179`), so the YAML must carry a **bcrypt** hash, never cleartext. Generate one with `htpasswd` (from `apache2-utils` / `httpd-tools`), stripping the `user:` prefix and normalising the variant prefix to `$2a$`:
+`console.password_hash` is verified with `bcrypt.CompareHashAndPassword` (`server.go:195`), so the YAML must carry a **bcrypt** hash, never cleartext. Generate one with `htpasswd` (from `apache2-utils` / `httpd-tools`), stripping the `user:` prefix and normalising the variant prefix to `$2a$`:
 
 ```sh
 htpasswd -bnBC 10 "" 'your-console-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'
 ```
 
-Paste the `$2a$...` output as `password_hash`. The username comparison is `subtle.ConstantTimeCompare` and both branches always run (`server.go:178`), so a wrong username and a wrong password cost the same — no timing oracle.
+Paste the `$2a$...` output as `password_hash`. The username comparison is `subtle.ConstantTimeCompare` and both branches always run (`server.go:194`), so a wrong username and a wrong password cost the same — no timing oracle.
 
 > The console deliberately sends a **bare `401`** with **no `WWW-Authenticate` header** (`server.go:135` comment). The SPA drives the credential prompt with its own login form and attaches the `Authorization` header on every fetch; emitting the challenge header would make browsers pop their native auth dialog over the SPA on every poll. `curl --basic -u admin:… ` still works.
 
