@@ -201,7 +201,7 @@ No `gateway.yaml`. Server-level configuration (HTTP bind, spool root, log level,
 ### Invocation
 
 ```sh
-go run ./cmd/mockllm --port 5555 --responses test/fixtures/openai-chat.yaml
+go run ./cmd/mockllm --port 5555 --responses ./my-responses.yaml
 ```
 
 Two flags:
@@ -209,7 +209,7 @@ Two flags:
 | Flag | Default | Notes |
 |---|---|---|
 | `--port` | `5555` | TCP port to listen on. Bind is `0.0.0.0`. |
-| `--responses` | unset | Optional YAML or JSON file of canned responses to seed the global pool at startup. File extension picks the decoder (`.yaml` / `.yml` / `.json`). |
+| `--responses` | unset | Optional YAML or JSON file of canned responses to seed the global pool at startup. File extension picks the decoder (`.yaml` / `.yml` / `.json`). No seed fixture ships in the repo — point this at your own file (e.g. `./my-responses.yaml`) or omit the flag. |
 
 `LOG_LEVEL` env var (debug / info / warn / error) controls the slog level.
 

@@ -180,7 +180,7 @@ Three useful disable configurations:
 
 `SLIPSPACE_RULES_MAX_GROUP_DEPTH` exists as a guardrail against pathological YAML that would otherwise stack-overflow the evaluator. Operator-authored policies almost never need more than 3-4 levels — the default 8 is conservative. The upper bound (`MaxRulesMaxGroupDepth`, currently 64) is the validator's hard ceiling; beyond that, the cost of *authoring* a rule tree this deep outweighs any expressive gain. Use a flat priority chain instead.
 
-When evaluation breaches the cap, the evaluator records a `rules.evaluation_depth_exceeded` metric increment and short-circuits as no-match — the request continues without a rule fired.
+When evaluation breaches the cap, the evaluator increments `gateway.rule.errors.total` with attribute `error_kind=group_depth` and short-circuits as no-match — the request continues without a rule fired.
 
 ---
 

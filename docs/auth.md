@@ -222,7 +222,7 @@ The destination builder defends the credential surface beyond just minting the r
 | no-credential — line 198 (`target.Credential == ""`) | Managed mode, no override, where the resolved target has no credential (`Configuration.Credentials[provider]` absent or `""`) | Adds every credential header name in the closed set (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) to `DropHeaders`; sets none. The upstream sees no credential — appropriate for endpoints the gateway is not authenticated against. |
 | credential-set — line 203 (`default`) | Managed mode, no override, with a non-empty `target.Credential` | Mints the header via `credentialHeaderFor(target, target.Credential)`; adds every *other* credential header name in the closed set to `DropHeaders` so an inbound openai-style Bearer cannot leak to anthropic. |
 
-The closed set `credentialHeaderNames` (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) is defined in [`cmd/gateway/handler.go:180`](../cmd/gateway/handler.go).
+The closed set `credentialHeaderNames` (`Authorization`, `X-Api-Key`, `X-Goog-Api-Key`) is defined in [`cmd/gateway/handler.go:182`](../cmd/gateway/handler.go).
 
 ---
 
@@ -366,7 +366,7 @@ If you see a SlipSpace secret in the log stream, you have a bug. Open an issue.
 
 The admin console exposes a per-key reveal endpoint at `GET /admin/api/v1/config/api-keys/reveal?configuration=<name>&name=<key-name>` ([`docs/admin-console.md`](admin-console.md#api-routes)). Both query params are required; 400 on missing, 404 on no match. List endpoints stay redacted by default — reveal is opt-in, per-row, behind HTTP Basic auth.
 
-Upstream credentials (`Configuration.Credentials`) are intended to **never** be revealed by the admin console — the configuration inspector and the export bundle replace them with `***` via the redactor in [`internal/admin/configexport/redact.go`](../internal/admin/configexport/redact.go). The redactor (`redactConfigurations`) redacts both the v2 key `credentials` and the legacy v1 key `upstream_credentials`, so v2 Configuration.Credentials values are masked in the export bundle. Only the gateway-issued SlipSpace secrets can be revealed, and only by name.
+Upstream credentials (`Configuration.Credentials`) are intended to **never** be revealed by the admin console, but two different redactors mask them depending on which admin surface is hit. The Configuration inspector's detail view (`GET /admin/api/v1/config/configurations/{name}`) uses `redactMap`/`redact` ([`internal/admin/redact.go`](../internal/admin/redact.go)), which projects each credential to a `{length, last4}` stub — not the literal string `***`. The Settings page's tabbed YAML export/download view goes through `redactConfigurations` ([`internal/admin/configexport/redact.go`](../internal/admin/configexport/redact.go)), which does replace credential values with the literal `***` in the raw YAML text, redacting both the v2 key `credentials` and the legacy v1 key `upstream_credentials`. Only the gateway-issued SlipSpace secrets can be revealed, and only by name.
 
 ### Key rotation
 
@@ -390,7 +390,7 @@ For passthrough mode there is no key rotation on the gateway side — the upstre
 - **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `Resolver`, `AuthResult`, `Mode`, the discovery walk, and `UpstreamCredentialHeader` per-provider defaults.
 - **[`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go)** — `HTTPHandler`, `classifyResult`, and the typed error → wire status mapping in `writeAuthError`. The `Result` audit-tag type and its constants (`ResultSuccess`/`ResultUnknownKey`/`ResultDisabledKey`/`ResultUnknownConfiguration`/…) are defined in [`internal/middleware/auth/errors.go`](../internal/middleware/auth/errors.go) and consumed by `classifyResult`.
 - **[`cmd/gateway/destination.go`](../cmd/gateway/destination.go)** — `buildDestination`, `resolveCredentialHeaders` (the credential precedence `switch`, including the `changeApiKey` override), and `credentialHeaderFor` (the single mint site).
-- **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — the closed `credentialHeaderNames` set (`handler.go:180`), the `authFormatPlaceholder` (`{key}`) constant, and the data-plane handler composition.
+- **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — the closed `credentialHeaderNames` set (`handler.go:182`), the `authFormatPlaceholder` (`{key}`) constant, and the data-plane handler composition.
 - **[`internal/proxy/forwarder.go`](../internal/proxy/forwarder.go)** — the forwarder and its `alwaysDropHeaders` (`forwarder.go:187`), the unconditional inbound-strip list (`X-Slipspace-Configuration`/`X-Slipspace-Identity`/`Authorization`/`Origin`/`Referer`/`Cookie`/`Accept-Encoding` — seven entries).
 - **[`internal/selection/selection.go`](../internal/selection/selection.go)** — `Target` (carries the pre-resolved `Auth` convention and `Credential` the destination builder consumes).
 - **[`CLAUDE.md`](../CLAUDE.md)** — load-bearing invariant 6 (credential header lives in one place per `(provider, endpoint)`) and the *Authentication & Auth Modes* design summary.

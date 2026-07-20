@@ -141,14 +141,14 @@ providers:
 | `protocols` | map[string]ProviderProtocol | no | Generative wire shapes this provider serves, keyed by protocol name (see [Protocol resolution](#protocol-resolution)). A provider must declare **at least one** `protocols` entry **or** one `passthrough` family, else validation fails. |
 | `passthrough` | map[string]PassthroughFamily | no | Opaque/stateful endpoint families this provider exposes (e.g. Anthropic message batches), keyed by family name. Proxied verbatim — never typed, GenAI-telemetried, or payload-captured. See [Passthrough families and bindings](#passthrough-families-and-bindings). |
 
-### `ProviderProtocol` fields (`contracts/config/model.go:80`)
+### `ProviderProtocol` fields (`contracts/config/model.go:84`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `path` | string | no | Upstream path template appended to `base_url`. May contain `{name}` placeholders the gateway substitutes (e.g. Gemini's `/v1beta/models/{model}:{op}`). |
 | `auth` | ProviderAuth | no | Per-protocol credential override. Absent (`nil`) defers to the provider-native default for the wire shape. This is what lets a provider's OpenAI-compat `chat` surface authenticate with `Authorization: Bearer` while its native protocol uses a different header (invariant #6). |
 
-### `ProviderAuth` fields (`contracts/config/model.go:97`)
+### `ProviderAuth` fields (`contracts/config/model.go:101`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -157,7 +157,7 @@ providers:
 
 ### Auth validation
 
-`validateAuth` (`internal/config/config_validate.go:85`) enforces, per `auth` block on a protocol or passthrough family:
+`validateAuth` (`internal/config/config_validate.go:113`) enforces, per `auth` block on a protocol or passthrough family:
 
 - A non-empty `format` requires a non-empty `header` (`ErrAuthFormatWithoutHeader`) — a format with no header would be silently ignored.
 - A non-empty `format` must contain `{key}` **exactly once** (`ErrInvalidAuthFormat`).
@@ -168,7 +168,7 @@ There is no provider-level `auth_header` / `auth_format` in v2: auth is set per 
 
 ## `groups` block
 
-`groups:` is a map from group name to a resilience definition (`contractsconfig.GroupsConfig`, `contracts/config/model.go:136`). A group is a named failover / load-balance unit the orchestrator routes across. Targets are arbitrary providers, so a group cuts across providers — the only constraint is **protocol-preserving**: every target must serve the binding's protocol (no mid-failover translation). Groups replace v1 `resilience_policies`; a binding references a group through `Binding.Group` instead of a configuration carrying a single global `resilience_name`.
+`groups:` is a map from group name to a resilience definition (`contractsconfig.GroupsConfig`, `contracts/config/model.go:142`). A group is a named failover / load-balance unit the orchestrator routes across. Targets are arbitrary providers, so a group cuts across providers — the only constraint is **protocol-preserving**: every target must serve the binding's protocol (no mid-failover translation). Groups replace v1 `resilience_policies`; a binding references a group through `Binding.Group` instead of a configuration carrying a single global `resilience_name`.
 
 ```yaml
 groups:
@@ -196,7 +196,7 @@ groups:
 | `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:150`). |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
-| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:99`). |
+| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:131`). |
 
 ### `Target` fields (`contracts/config/model.go:178`)
 
@@ -275,7 +275,7 @@ bindings:
 |---|---|---|---|
 | `protocol` | string | yes | The generative protocol this binding serves — one of the protocol constants (see [Protocol resolution](#protocol-resolution)). Unknown protocol aborts validation. |
 | `models` | []string | no | Client-requested model patterns this binding matches. Exact string, or a single **trailing-`*`** prefix wildcard (interior or multiple `*` is rejected). An **empty** model set is a **catch-all** for the protocol (default-permissive, invariant #1) — never a default-deny. |
-| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:231-235`, `validateBindings`). |
+| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:262-266`, `validateBindings`). |
 | `group` | string | conditionally | Names a resilience group destination. Mutually exclusive with `provider`. |
 | `alias` | string | no | Rewrites the request body model name for the **single-provider** case (sugar for the binding's implicit target alias). **Ignored when `group` is set** — group targets carry their own aliases. |
 | `query` | map[string]string | no | Single-provider per-use query override. Ignored when `group` is set. |
@@ -290,7 +290,7 @@ bindings:
 - A pattern ending in `*` is a **prefix** match (`gpt-*` matches `gpt-4o`).
 - Otherwise the pattern is compared **exactly**.
 
-`Select` walks the configuration's bindings in order and returns the **first** binding whose `protocol` equals the request protocol and whose `models` match the request model. No fallthrough: when no binding matches, selection returns `ErrNoBinding`, which the data plane maps to a 404 with error code `no_binding` (`cmd/gateway/pipeline.go:162-163`) — the model is simply not served on that protocol by this configuration.
+`Select` walks the configuration's bindings in order and returns the **first** binding whose `protocol` equals the request protocol and whose `models` match the request model. No fallthrough: when no binding matches, selection returns `ErrNoBinding`, which the data plane maps to a 404 with error code `no_binding` (`cmd/gateway/pipeline.go:172-173`) — the model is simply not served on that protocol by this configuration.
 
 ### Binding validation (`internal/config/config_validate.go::validateBindings`)
 
