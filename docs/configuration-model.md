@@ -187,18 +187,18 @@ groups:
         alias: claude-sonnet-4-5
 ```
 
-### `Group` fields (`contracts/config/model.go:143`)
+### `Group` fields (`contracts/config/model.go:149`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:19`). |
+| `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:13`, values starting at `:19`). |
 | `failure_status_codes` | []int | no | Upstream HTTP status set treated as a failure for retry / circuit-breaker accounting. Empty falls back to "5xx is a failure". |
-| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:150`). |
+| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:151`). |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
-| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:131`). |
+| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:130`). |
 
-### `Target` fields (`contracts/config/model.go:178`)
+### `Target` fields (`contracts/config/model.go:184`)
 
 The atom a binding or group dispatches to: a provider reference plus per-use overrides that compose over the provider's own values (target wins).
 
@@ -210,7 +210,7 @@ The atom a binding or group dispatches to: a provider reference plus per-use ove
 | `path` | string | no | Overrides the protocol path for this target (e.g. an Azure deployment-specific path on a shared provider connection). |
 | `weight` | int | no | Relative selection weight in `load_balance` mode. Zero is treated as 1 (even weighting); ignored in `failover` mode, where declaration order drives sequencing. |
 
-Validation: a group must declare at least one target, every target must name a `provider`, and that provider must exist (`internal/config/config_validate.go::validateGroups`). The protocol-preserving check happens at the **binding** level — when a binding references a group, every target in that group must serve the binding's protocol (`validateBindings`, `config_validate.go:229`).
+Validation: a group must declare at least one target, every target must name a `provider`, and that provider must exist (`internal/config/config_validate.go::validateGroups`, provider-existence check at `:137`). The protocol-preserving check happens at the **binding** level — when a binding references a group, every target in that group must serve the binding's protocol (`validateBindings`, `config_validate.go:283`).
 
 ---
 
@@ -254,7 +254,7 @@ configurations:
 
 ## `bindings` (inside a configuration)
 
-A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:207`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
+A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:213`, doc comment starts `:207`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
 
 ```yaml
 bindings:
@@ -269,13 +269,13 @@ bindings:
     tags: ["surface:messages"]
 ```
 
-### `Binding` fields (`contracts/config/model.go:207`)
+### `Binding` fields (`contracts/config/model.go:213`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `protocol` | string | yes | The generative protocol this binding serves — one of the protocol constants (see [Protocol resolution](#protocol-resolution)). Unknown protocol aborts validation. |
 | `models` | []string | no | Client-requested model patterns this binding matches. Exact string, or a single **trailing-`*`** prefix wildcard (interior or multiple `*` is rejected). An **empty** model set is a **catch-all** for the protocol (default-permissive, invariant #1) — never a default-deny. |
-| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:262-266`, `validateBindings`). |
+| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:262-265`, `validateBindings`). |
 | `group` | string | conditionally | Names a resilience group destination. Mutually exclusive with `provider`. |
 | `alias` | string | no | Rewrites the request body model name for the **single-provider** case (sugar for the binding's implicit target alias). **Ignored when `group` is set** — group targets carry their own aliases. |
 | `query` | map[string]string | no | Single-provider per-use query override. Ignored when `group` is set. |
@@ -398,7 +398,7 @@ Lookups use `SecretIndex` (built post-validate); the slice exists for enumeratio
 
 Each rule must:
 
-- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:122`).
+- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:152`, enforced in `validateLibraries`).
 - Pass `RuleContract.Validate()` — the per-rule semantic checks.
 
 > **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names against the `groups` block — the action is inert in v2, so an unknown name is simply a no-op at runtime rather than a load error (see [actions.md](actions.md#useresiliencepolicy)).
@@ -411,7 +411,7 @@ Each rule must:
 
 Each connector entry must:
 
-- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:140`).
+- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:167`, enforced in `validateLibraries`).
 - Pass `Connector.Validate()` — the per-type required-field check (s3 needs `bucket` + `region`, azure_blob needs `account` + `container`, webhook needs `url` + `secret_ref` + `timeout_ms`).
 - Be referenced by a defined `connector_bindings[].connector` name — an unknown reference aborts with `ErrUnknownConnectorReference`.
 
@@ -581,7 +581,7 @@ What this gives the data plane post-load (`internal/config/config_model.go::buil
 - `ConnectorIndex`: connector name → `*Connector`.
 - `PricingTable`: compiled rate card for per-request USD costing.
 
-`SourceFiles` (block name → originating filename, so the admin write path persists a mutated block back to the file it came from) is **not** built here — it is populated during `Load` (`internal/config/config_model.go:154`, `r.SourceFiles = seen`, recorded by `mergeDoc` as each block's origin file).
+`SourceFiles` (block name → originating filename, so the admin write path persists a mutated block back to the file it came from) is **not** built here — it is populated during `Load` (`internal/config/config_model.go:160`, `r.SourceFiles = seen`, recorded by `mergeDoc` as each block's origin file).
 
 There is **no** `RouteIndex` in v2 — routing is not index-based. Each request resolves its destination at request time by `ProtocolForPath` then `Select` against the owning configuration's bindings (`internal/selection`).
 

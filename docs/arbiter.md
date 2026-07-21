@@ -86,7 +86,7 @@ Gateways export to `:8687` directly or via an intervening OTel collector.
 
 The two listeners run on independent goroutines bound to the signal context (`safego.Go(ctx, "telemetry.serve.http", …)` and `"telemetry.serve.otlp"`); the first to return an error tears the other down.
 
-> The exact ports are **defaults**, applied only when the YAML omits them (`config.applyDefaults`, `config.go:113`). Set `http_bind` / `otlp_bind` to override.
+> The exact ports are **defaults**, applied only when the YAML omits them (`config.applyDefaults`, `config.go:361`). Set `http_bind` / `otlp_bind` to override.
 
 ---
 
@@ -114,7 +114,7 @@ The Record feed is the **gateway → service trust boundary**. `RecordHandler.Se
 
 ## Configuration
 
-Unlike the gateway — which scans a whole config **directory** — the Arbiter takes a **single YAML file** (`internal/arbiter/config/config.go::Load`). File contents are trusted (mounted from a k8s Secret or a filesystem-permissioned path); there is **no `${VAR}` / `env:` interpolation** inside the YAML, matching the gateway's "only file paths are env-overridable" rule. The decoder runs with `KnownFields(true)` (`config.go:262`), so a misspelled key is a hard parse error rather than a silently dropped field.
+Unlike the gateway — which scans a whole config **directory** — the Arbiter takes a **single YAML file** (`internal/arbiter/config/config.go::Load`). File contents are trusted (mounted from a k8s Secret or a filesystem-permissioned path); there is **no `${VAR}` / `env:` interpolation** inside the YAML, matching the gateway's "only file paths are env-overridable" rule. The decoder runs with `KnownFields(true)` (`config.go:349`), so a misspelled key is a hard parse error rather than a silently dropped field.
 
 ### Schema and defaults
 
@@ -254,7 +254,7 @@ Flags: `-config <path>` (overrides `SLIPSPACE_ARBITER_CONFIG`) and `-version` (p
 Shutdown is signal-driven (`SIGINT` / `SIGTERM` via `signal.NotifyContext`):
 
 - The OTLP gRPC server is stopped with `GracefulStop` (drains in-flight RPCs).
-- The HTTP server is drained with `Shutdown` under a **5-second** budget — `shutdownTimeout` (`main.go:42`). That shutdown context is **deliberately detached** from the cancelled signal context (`//nolint:contextcheck`, `main.go:220`) so the drain budget outlives the `SIGTERM` that triggered it.
+- The HTTP server is drained with `Shutdown` under a **5-second** budget — `shutdownTimeout` (`main.go:43`). That shutdown context is **deliberately detached** from the cancelled signal context (`//nolint:contextcheck`, `main.go:247`) so the drain budget outlives the `SIGTERM` that triggered it.
 
 If either listener returns a non-`ErrServerClosed` error before a signal arrives, `run` stops the OTLP server and returns the error, exiting non-zero (`main.go:208`).
 

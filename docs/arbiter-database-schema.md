@@ -172,7 +172,7 @@ A secondary index `record_received_at (received_at)` backs retention/pruning sca
 
 ## `metric_points` + continuous aggregates
 
-The raw OTLP numeric timeseries — the **number data points** (gauges + sums/counters) a gateway pushed over OTLP — is a **TimescaleDB hypertable** (migration 7). The dashboard does not query it directly; it reads four **continuous aggregates** that pre-bucket the meter feed at one minute. Defined in [`metrics.go::MetricPoint`](../internal/arbiter/store/metrics.go) (table) and the migration-7 DDL (CAGGs).
+The raw OTLP numeric timeseries — the **number data points** (gauges + sums/counters) a gateway pushed over OTLP — is a **TimescaleDB hypertable** (migration 7). The dashboard does not query it directly; it reads five **continuous aggregates** that pre-bucket the meter feed at one minute. Defined in [`metrics.go::MetricPoint`](../internal/arbiter/store/metrics.go) (table) and the migration-7 DDL (CAGGs).
 
 Only number points land here. `PointsFromMetric` ([`ingest/otlp.go`](../internal/arbiter/ingest/otlp.go)) extracts a metric's gauge and sum data points; its `default:` branch returns nil, so **histogram and summary metrics are dropped on ingest**. The consequence is structural: the gateway's latency *histograms* never reach `metric_points`, and **the dashboard exposes no latency percentiles** (see below).
 
