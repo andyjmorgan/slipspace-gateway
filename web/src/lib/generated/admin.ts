@@ -178,6 +178,11 @@ export interface AdviseSavingsItem {
    */
   conversation_id: string;
   /**
+   * SessionID is the root session the conversation belongs to, when known; the
+   * console links a row to /sessions/<session_id> when present.
+   */
+  session_id?: string;
+  /**
    * RequestedModel is what the conversation asked for.
    */
   requested_model: string;

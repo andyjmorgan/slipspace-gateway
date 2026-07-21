@@ -111,6 +111,7 @@ func attributeSavings(rows []store.AdviseSavingsRow, judgeCostUSD float64, rates
 	for _, r := range rows {
 		item := adminc.AdviseSavingsItem{
 			ConversationID: r.ConversationID,
+			SessionID:      r.SessionID,
 			RequestedModel: r.RequestedModel,
 			PinnedModel:    r.PinnedModel,
 			PinnedRequests: r.PinnedRequests,

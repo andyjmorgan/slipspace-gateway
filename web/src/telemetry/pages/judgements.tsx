@@ -3,23 +3,15 @@ import { useNavigate } from "react-router"
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
-import { KPI } from "@/components/atoms/kpi"
 import { PageHeader } from "@/components/atoms/page-header"
-import { Segmented } from "@/components/atoms/segmented"
 import { SkeletonBlock } from "@/components/atoms/skeleton"
 import { fmt } from "@/lib/fmt"
-import { type DashboardWindow } from "@/lib/dashboard"
-import {
-  fetchAdviseAuditBefore,
-  useAdviseAudit,
-  useAdviseSavings,
-  type AdviseAuditItem,
-  type AdviseSavingsItem,
-} from "@/lib/advise"
+import { fetchAdviseAuditBefore, useAdviseAudit, type AdviseAuditItem } from "@/lib/advise"
+import { AgentLink } from "../components/agent-link"
 
 // verdictBadge maps a judgement outcome to its label + design-system tone.
-// Keyed on verdict_switch / error, never on verdict_model being non-empty —
-// a declined verdict can still carry a model (structured outputs cannot
+// Keyed on verdict_switch / error, never on verdict_model being non-empty — a
+// declined verdict can still carry a model (structured outputs cannot
 // conditionally force it empty) and consumers must ignore it.
 function verdictBadge(e: AdviseAuditItem): { label: string; color: string } {
   if (e.error) return { label: "error", color: "var(--err)" }
@@ -27,16 +19,13 @@ function verdictBadge(e: AdviseAuditItem): { label: string; color: string } {
   return { label: e.verdict_model || "switch", color: "var(--ok)" }
 }
 
-// AgentRoutingPage is the operator view of the agent-aware routing advisor:
-// the judgement audit log (what the judge saw, what it decided, why) and the
-// savings attribution (measured pinned spend vs the rate-card counterfactual,
-// net of the judge's own inference cost). Read-only over the arbiter's
-// advise_audit + request_events tables.
-export function AgentRoutingPage() {
+// JudgementsPage is the routing judgement log: one row per decided advisory
+// call — what the judge saw, what it decided, why. The newest page polls; older
+// pages are fetched on demand and appended. Read-only over the arbiter's
+// advise_audit table.
+export function JudgementsPage() {
   const nav = useNavigate()
-  const [window, setWindow] = useState<DashboardWindow>("24h")
   const audit = useAdviseAudit()
-  const savings = useAdviseSavings(window)
 
   // Older judgement pages, appended below the polled head page.
   const [older, setOlder] = useState<AdviseAuditItem[]>([])
@@ -44,14 +33,12 @@ export function AgentRoutingPage() {
   const [exhausted, setExhausted] = useState(false)
 
   useEffect(() => {
-    if (audit.state.status === "unauthorized" || savings.state.status === "unauthorized") {
-      nav("/login", { replace: true })
-    }
-  }, [audit.state, savings.state, nav])
+    if (audit.state.status === "unauthorized") nav("/login", { replace: true })
+  }, [audit.state, nav])
 
   const head: AdviseAuditItem[] = audit.state.status === "ok" ? (audit.state.data.items ?? []) : []
-  // Drop any overlap between the polled head and previously-loaded older
-  // pages (the head grows as new judgements land).
+  // Drop any overlap between the polled head and previously-loaded older pages
+  // (the head grows as new judgements land).
   const seen = new Set(head.map((e) => `${e.received_at}:${e.conversation_id}`))
   const items = [...head, ...older.filter((e) => !seen.has(`${e.received_at}:${e.conversation_id}`))]
 
@@ -71,47 +58,27 @@ export function AgentRoutingPage() {
       .finally(() => setLoadingOlder(false))
   }
 
-  const refreshing = audit.state.status === "loading" || savings.state.status === "loading"
+  const refreshing = audit.state.status === "loading"
 
   return (
     <div className="flex flex-col gap-3.5">
-      <PageHeader title="Agent routing" sub="Judge verdicts and the spend the down-ranking saved">
-        <Segmented
-          value={window}
-          onChange={setWindow}
-          options={[
-            { value: "1h", label: "1h" },
-            { value: "24h", label: "24h" },
-            { value: "7d", label: "7d" },
-            { value: "30d", label: "30d" },
-          ]}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            audit.refetch()
-            savings.refetch()
-          }}
-          disabled={refreshing}
-          aria-label="Refresh"
-        >
+      <PageHeader title="Judgement Log" sub="Every routing decision the judge made — the payload it saw and the verdict it returned">
+        <Button variant="ghost" size="sm" onClick={() => audit.refetch()} disabled={refreshing} aria-label="Refresh">
           <RefreshCw className={refreshing ? "animate-spin" : undefined} /> <span className="hidden sm:inline">Refresh</span>
         </Button>
       </PageHeader>
 
-      {savings.state.status === "error" && (
-        <ErrorNote label="savings" message={savings.state.message} />
+      {audit.state.status === "error" && (
+        <div
+          className="rounded-[var(--radius-lg)] border border-[color:var(--border)] p-4 text-[13px]"
+          style={{ color: "var(--err)", background: "var(--err-bg)" }}
+        >
+          Failed to load judgement log: <span className="mono">{audit.state.message}</span>
+        </div>
       )}
-      {audit.state.status === "error" && <ErrorNote label="judgement log" message={audit.state.message} />}
-
-      <SavingsPanel window={window} state={savings.state} />
 
       <PanelCard>
-        <PanelHead
-          title="Judgement log"
-          sub={audit.state.status === "ok" ? `${items.length} loaded · newest first` : undefined}
-        />
+        <PanelHead title="Judgements" sub={audit.state.status === "ok" ? `${items.length} loaded · newest first` : undefined} />
         {audit.state.status === "loading" && (
           <div className="px-4 py-3">
             <SkeletonBlock height={180} />
@@ -141,86 +108,9 @@ export function AgentRoutingPage() {
   )
 }
 
-function ErrorNote({ label, message }: { label: string; message: string }) {
-  return (
-    <div
-      className="rounded-[var(--radius-lg)] border border-[color:var(--border)] p-4 text-[13px]"
-      style={{ color: "var(--err)", background: "var(--err-bg)" }}
-    >
-      Failed to load {label}: <span className="mono">{message}</span>
-    </div>
-  )
-}
-
-// SavingsPanel renders the attribution totals as KPI tiles plus the
-// per-conversation breakdown. Null counterfactuals (models without a
-// configured rate) render as an em-dash — the API never guesses, neither
-// does the UI.
-function SavingsPanel({
-  window,
-  state,
-}: {
-  window: DashboardWindow
-  state: ReturnType<typeof useAdviseSavings>["state"]
-}) {
-  if (state.status === "loading") {
-    return <SkeletonBlock height={92} />
-  }
-  if (state.status !== "ok") return null
-  const { totals, items } = state.data
-  const rows: AdviseSavingsItem[] = items ?? []
-  return (
-    <>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KPI
-          label="Net saved"
-          value={fmt.usd(totals.net_saved_usd)}
-          sub={`over ${window}`}
-          accent={totals.net_saved_usd >= 0 ? "ok" : "warn"}
-        />
-        <KPI label="Saved" value={fmt.usd(totals.saved_usd)} sub="vs counterfactual" />
-        <KPI
-          label="Pinned spend"
-          value={fmt.usd(totals.actual_usd)}
-          sub={`would have been ${fmt.usd(totals.counterfactual_usd)}`}
-        />
-        <KPI label="Judge cost" value={fmt.usd(totals.judge_cost_usd)} sub="charged against saving" />
-      </div>
-
-      {rows.length > 0 && (
-        <PanelCard>
-          <PanelHead title="Down-ranked conversations" sub={`${rows.length} · ${window}`} />
-          <div className="flex flex-col">
-            {rows.map((r) => (
-              <div
-                key={r.conversation_id}
-                className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2.5 px-4 py-2.5 border-t border-[color:var(--border)] first:border-t-0 text-[12px]"
-              >
-                <span className="min-w-0 truncate">
-                  <span className="mono">{r.conversation_id}</span>
-                  <span className="text-[color:var(--text-4)]">
-                    {" "}
-                    · {r.requested_model} → {r.pinned_model} · {r.pinned_requests} req
-                  </span>
-                </span>
-                <span className="mono tnum text-[color:var(--text-3)]">{fmt.usd(r.actual_usd)}</span>
-                <span className="mono tnum text-[color:var(--text-4)]">
-                  {r.counterfactual_usd == null ? "—" : fmt.usd(r.counterfactual_usd)}
-                </span>
-                <span className="mono tnum" style={{ color: r.saved_usd == null ? "var(--text-4)" : "var(--ok)" }}>
-                  {r.saved_usd == null ? "no rate" : `+${fmt.usd(r.saved_usd)}`}
-                </span>
-              </div>
-            ))}
-          </div>
-        </PanelCard>
-      )}
-    </>
-  )
-}
-
 // JudgementRow is one audit entry: a single summary line, expandable to the
-// exact excerpts the judge saw (system prefix, task, tools).
+// exact excerpts the judge saw (system prefix, task, tools) and the routing
+// facts, with a link out to the owning session.
 function JudgementRow({ entry }: { entry: AdviseAuditItem }) {
   const [open, setOpen] = useState(false)
   const badge = verdictBadge(entry)
@@ -251,6 +141,7 @@ function JudgementRow({ entry }: { entry: AdviseAuditItem }) {
           <span className="text-[color:var(--text-4)]">
             {" "}
             · {entry.agent_family || "unknown"}
+            {entry.is_subagent ? " · sub" : ""}
             {entry.cache_hit ? " · cached" : entry.judge_latency_ms ? ` · ${entry.judge_latency_ms}ms` : ""}
             {entry.verdict_reason ? ` · ${entry.verdict_reason}` : entry.error ? ` · ${entry.error}` : ""}
           </span>
@@ -288,9 +179,10 @@ function JudgementRow({ entry }: { entry: AdviseAuditItem }) {
               </pre>
             </JudgementDetail>
           )}
-          <div className="text-[11px] text-[color:var(--text-4)]">
-            {entry.gateway_id} · {entry.configuration || "—"} · {entry.protocol || "—"} · {entry.provider || "—"}
-            {entry.session_id ? ` · session ${entry.session_id}` : ""}
+          <div className="flex flex-wrap items-center gap-1 text-[11px] text-[color:var(--text-4)]">
+            <span>Agent</span>
+            <AgentLink conversationId={entry.conversation_id} sessionId={entry.session_id} className="text-[11px]" />
+            <span>· {entry.gateway_id} · {entry.configuration || "—"} · {entry.protocol || "—"} · {entry.provider || "—"}</span>
           </div>
         </div>
       )}

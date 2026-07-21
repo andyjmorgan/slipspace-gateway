@@ -150,6 +150,9 @@ func (s *Store) ListAdviseAudit(ctx context.Context, limit int, before time.Time
 type AdviseSavingsRow struct {
 	// ConversationID is the pinned conversation.
 	ConversationID string
+	// SessionID is the root session the conversation belongs to, when known
+	// (max over the verdict rows, so an empty id yields to a real one).
+	SessionID string
 	// RequestedModel is the model the conversation asked for before the pin.
 	RequestedModel string
 	// PinnedModel is the model the verdict pinned it to.
@@ -171,20 +174,20 @@ func (s *Store) AdviseSavings(ctx context.Context, since time.Time, judgeAgentID
 	rows, err := s.db.Query(ctx,
 		`WITH pinned AS (
 		    SELECT conversation_id, requested_model, verdict_model,
-		           min(received_at) AS pinned_at
+		           min(received_at) AS pinned_at, max(session_id) AS session_id
 		    FROM advise_audit
 		    WHERE verdict_switch AND verdict_model <> '' AND received_at >= $1
 		    GROUP BY conversation_id, requested_model, verdict_model
 		)
-		SELECT p.conversation_id, p.requested_model, p.verdict_model,
+		SELECT p.conversation_id, p.session_id, p.requested_model, p.verdict_model,
 		       count(e.correlation_id), COALESCE(sum(e.cost_usd), 0)
 		FROM pinned p
 		LEFT JOIN request_events e
 		  ON e.conversation_id = p.conversation_id
 		 AND e.tags @> ARRAY['agent-route:' || p.verdict_model]
 		 AND e.observed_at >= p.pinned_at
-		GROUP BY p.conversation_id, p.requested_model, p.verdict_model
-		ORDER BY 5 DESC`, since)
+		GROUP BY p.conversation_id, p.session_id, p.requested_model, p.verdict_model
+		ORDER BY 6 DESC`, since)
 	if err != nil {
 		return nil, 0, fmt.Errorf("store: advise savings: %w", err)
 	}
@@ -193,7 +196,7 @@ func (s *Store) AdviseSavings(ctx context.Context, since time.Time, judgeAgentID
 	var out []AdviseSavingsRow
 	for rows.Next() {
 		var r AdviseSavingsRow
-		if err := rows.Scan(&r.ConversationID, &r.RequestedModel, &r.PinnedModel,
+		if err := rows.Scan(&r.ConversationID, &r.SessionID, &r.RequestedModel, &r.PinnedModel,
 			&r.PinnedRequests, &r.ActualUSD); err != nil {
 			return nil, 0, fmt.Errorf("store: scan advise-savings row: %w", err)
 		}
