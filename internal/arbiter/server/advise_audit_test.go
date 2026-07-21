@@ -89,7 +89,7 @@ func newAdviseServer(t *testing.T, q Queries, rates map[string]float64) http.Han
 func TestHandleAdviseSavings(t *testing.T) {
 	q := &fakeQueries{
 		adviseSavings: []store.AdviseSavingsRow{
-			{ConversationID: "c1", RequestedModel: "big-model", PinnedModel: "small-model", PinnedRequests: 20, ActualUSD: 2.0},
+			{ConversationID: "c1", SessionID: "sess-1", RequestedModel: "big-model", PinnedModel: "small-model", PinnedRequests: 20, ActualUSD: 2.0},
 			{ConversationID: "c2", RequestedModel: "unpriced-model", PinnedModel: "small-model", PinnedRequests: 3, ActualUSD: 1.0},
 		},
 		adviseJudgeCost: 0.5,
@@ -109,10 +109,11 @@ func TestHandleAdviseSavings(t *testing.T) {
 	if len(body.Items) != 2 {
 		t.Fatalf("items = %d, want 2", len(body.Items))
 	}
-	// c1: both models priced -> counterfactual 2.0 * 5/1 = 10, saved 8.
+	// c1: both models priced -> counterfactual 2.0 * 5/1 = 10, saved 8; the
+	// session id flows through for the console's row → session link.
 	c1 := body.Items[0]
 	if c1.CounterfactualUSD == nil || math.Abs(*c1.CounterfactualUSD-10) > 1e-9 ||
-		c1.SavedUSD == nil || math.Abs(*c1.SavedUSD-8) > 1e-9 {
+		c1.SavedUSD == nil || math.Abs(*c1.SavedUSD-8) > 1e-9 || c1.SessionID != "sess-1" {
 		t.Errorf("c1 = %+v", c1)
 	}
 	// c2: requested model unpriced -> null, never guessed.

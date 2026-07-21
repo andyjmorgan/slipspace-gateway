@@ -14,7 +14,8 @@ import { SessionLifecyclePage } from "./pages/session-lifecycle"
 import { SecurityPage } from "./pages/security"
 import { SecurityAuditPage } from "./pages/security-audit"
 import { ToolCallsPage } from "./pages/tool-calls"
-import { AgentRoutingPage } from "./pages/agent-routing"
+import { DownrankedPage } from "./pages/downranked"
+import { JudgementsPage } from "./pages/judgements"
 import { SettingsPage } from "./pages/settings"
 
 // App is the telemetry console root: a Basic-auth login gate wrapping the
@@ -30,7 +31,11 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="messages" element={<MessagesPage />} />
           <Route path="tool-calls" element={<ToolCallsPage />} />
-          <Route path="agent-routing" element={<AgentRoutingPage />} />
+          {/* Agent Routing is a section: Downranked (savings) + Judgements
+              (the judge's decision log). /agent-routing opens Downranked. */}
+          <Route path="agent-routing" element={<Navigate to="/agent-routing/downranked" replace />} />
+          <Route path="agent-routing/downranked" element={<DownrankedPage />} />
+          <Route path="agent-routing/judgements" element={<JudgementsPage />} />
           {/* Security is a section: Findings (flagged traffic) + Audit (scan
               failures). /security redirects to Findings for old links. */}
           <Route path="security" element={<Navigate to="/security/findings" replace />} />
@@ -93,7 +98,14 @@ const NAV: NavEntry[] = [
   },
   { to: "/messages", label: "Messages", icon: ListTree, end: false },
   { to: "/tool-calls", label: "Tool Calls", icon: Wrench, end: false },
-  { to: "/agent-routing", label: "Agent Routing", icon: Waypoints, end: false },
+  {
+    label: "Agent Routing",
+    icon: Waypoints,
+    items: [
+      { to: "/agent-routing/downranked", label: "Downranked", end: false },
+      { to: "/agent-routing/judgements", label: "Judgements", end: false },
+    ],
+  },
   { divider: true },
   { to: "/settings", label: "Settings", icon: Settings2, end: false },
 ]

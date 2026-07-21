@@ -92,6 +92,10 @@ type AdviseSavingsItem struct {
 	// ConversationID is the pinned conversation.
 	ConversationID string `json:"conversation_id"`
 
+	// SessionID is the root session the conversation belongs to, when known; the
+	// console links a row to /sessions/<session_id> when present.
+	SessionID string `json:"session_id,omitempty"`
+
 	// RequestedModel is what the conversation asked for.
 	RequestedModel string `json:"requested_model"`
 
