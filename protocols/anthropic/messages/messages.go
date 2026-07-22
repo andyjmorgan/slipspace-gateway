@@ -210,8 +210,9 @@ func (m *Message) SetContentBlocks(blocks []ContentBlock) error {
 type Tool struct {
 	// Type identifies an Anthropic-defined (pre-built) tool by its
 	// versioned discriminator (e.g. "web_search_20250305",
-	// "computer_20241022", "tool_search_tool_regex"). Omitted for custom
-	// tools defined purely by Name + InputSchema.
+	// "computer_20241022", "tool_search_tool_regex_20251119",
+	// "tool_search_tool_bm25_20251119"). Omitted for custom tools defined
+	// purely by Name + InputSchema.
 	// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use
 	Type string `json:"type,omitempty"`
 
@@ -227,6 +228,16 @@ type Tool struct {
 	// arguments. Kept raw so callers build schemas without going through
 	// a typed schema model.
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+
+	// DeferLoading marks the tool for on-demand loading through the tool
+	// search tool: the definition is still sent on every request, but it
+	// only enters the model's context when discovered via a tool search
+	// (returned as a tool_reference block the API expands server-side).
+	// Anthropic rejects requests where every tool is deferred, and a
+	// deferred tool may not also carry CacheControl. Nil/false loads the
+	// definition up front.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
+	DeferLoading *bool `json:"defer_loading,omitempty"`
 
 	// MaxUses caps how many times the model may invoke this tool within a
 	// single request. Primarily used with Anthropic server tools

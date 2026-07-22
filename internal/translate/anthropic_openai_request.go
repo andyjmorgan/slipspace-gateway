@@ -102,11 +102,20 @@ func translateMessagesRequestToChat(body []byte) ([]byte, []Drop, error) {
 }
 
 // translateTools maps Anthropic tool definitions to OpenAI function tools.
-// CacheControl has no OpenAI equivalent and is dropped.
+// CacheControl has no OpenAI equivalent and is dropped. Anthropic's
+// server-side tool search tools are dropped whole (translating them into a
+// callable OpenAI function would invite calls no one can execute), and the
+// defer_loading flag on individual tools is dropped while the tool definition
+// itself still translates — OpenAI loads every tool up front.
 func translateTools(in []messages.Tool) ([]chat.Tool, []Drop) {
 	out := make([]chat.Tool, 0, len(in))
 	var drops []Drop
 	for i, t := range in {
+		switch t.Type {
+		case "tool_search_tool_regex_20251119", "tool_search_tool_bm25_20251119":
+			drops = append(drops, Drop{Field: fmt.Sprintf("tools[%d].%s", i, t.Type), Reason: reasonNoTargetEquivalent})
+			continue
+		}
 		fn := &chat.ToolFunction{
 			Name:        t.Name,
 			Description: t.Description,
@@ -115,6 +124,9 @@ func translateTools(in []messages.Tool) ([]chat.Tool, []Drop) {
 			fn.Parameters = t.InputSchema
 		}
 		out = append(out, chat.Tool{Type: "function", Function: fn})
+		if t.DeferLoading != nil {
+			drops = append(drops, Drop{Field: fmt.Sprintf("tools[%d].defer_loading", i), Reason: reasonNoTargetEquivalent})
+		}
 		if t.CacheControl != nil {
 			drops = append(drops, Drop{Field: fmt.Sprintf("tools[%d].cache_control", i), Reason: reasonNoTargetEquivalent})
 		}

@@ -381,6 +381,106 @@ func TestUnmarshalContentBlocks_MixedSlice(t *testing.T) {
 	}
 }
 
+// TestUnmarshalContentBlock_ToolSearchToolResult covers the success shape of
+// a server-side tool search: a nested tool_search_tool_search_result object
+// whose tool_references point at discovered deferred tools. Shape from the
+// tool-search-tool doc's response example.
+func TestUnmarshalContentBlock_ToolSearchToolResult(t *testing.T) {
+	in := []byte(`{"content":{"tool_references":[{"tool_name":"get_weather","type":"tool_reference"}],"type":"tool_search_tool_search_result"},"tool_use_id":"srvtoolu_01ABC123","type":"tool_search_tool_result"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ts, ok := v.(*ToolSearchToolResultBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if ts.ToolUseID != "srvtoolu_01ABC123" {
+		t.Fatalf("tool_use_id = %q", ts.ToolUseID)
+	}
+	if ts.BlockType() != "tool_search_tool_result" {
+		t.Fatalf("block type = %q", ts.BlockType())
+	}
+	rc, ok := ts.ResultContent()
+	if !ok {
+		t.Fatalf("ResultContent not ok")
+	}
+	if rc.Type != "tool_search_tool_search_result" {
+		t.Fatalf("result type = %q", rc.Type)
+	}
+	if len(rc.ToolReferences) != 1 || rc.ToolReferences[0].ToolName != "get_weather" {
+		t.Fatalf("tool_references = %+v", rc.ToolReferences)
+	}
+	roundTrip(t, in, v)
+}
+
+// TestUnmarshalContentBlock_ToolSearchToolResultError covers the error shape
+// (200-status tool-result error object with error_code/error_message).
+func TestUnmarshalContentBlock_ToolSearchToolResultError(t *testing.T) {
+	in := []byte(`{"content":{"error_code":"invalid_tool_input","error_message":"Invalid regular expression pattern: missing ) at position 1","type":"tool_search_tool_result_error"},"tool_use_id":"srvtoolu_01ABC123","type":"tool_search_tool_result"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ts, ok := v.(*ToolSearchToolResultBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	rc, ok := ts.ResultContent()
+	if !ok {
+		t.Fatalf("ResultContent not ok")
+	}
+	if rc.Type != "tool_search_tool_result_error" || rc.ErrorCode != "invalid_tool_input" {
+		t.Fatalf("result = %+v", rc)
+	}
+	if len(rc.ToolReferences) != 0 {
+		t.Fatalf("error variant carries tool_references: %+v", rc.ToolReferences)
+	}
+	roundTrip(t, in, v)
+}
+
+// TestUnmarshalContentBlock_ToolSearchToolResult_UnknownContentShape proves
+// the block still round-trips when Anthropic ships a content shape this
+// package has not modelled (ResultContent degrades to ok=false, raw Content
+// is preserved verbatim).
+func TestUnmarshalContentBlock_ToolSearchToolResult_UnknownContentShape(t *testing.T) {
+	in := []byte(`{"content":[{"novel":true,"type":"future_result"}],"tool_use_id":"srvtoolu_9","type":"tool_search_tool_result"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ts, ok := v.(*ToolSearchToolResultBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if _, ok := ts.ResultContent(); ok {
+		t.Fatalf("ResultContent must not parse an array content shape")
+	}
+	roundTrip(t, in, v)
+}
+
+// TestUnmarshalContentBlock_ToolReference covers the standalone
+// tool_reference block used by custom (client-side) tool search
+// implementations inside tool_result content arrays.
+func TestUnmarshalContentBlock_ToolReference(t *testing.T) {
+	in := []byte(`{"tool_name":"discovered_tool_name","type":"tool_reference"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tr, ok := v.(*ToolReferenceBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if tr.ToolName != "discovered_tool_name" {
+		t.Fatalf("tool_name = %q", tr.ToolName)
+	}
+	if tr.BlockType() != "tool_reference" {
+		t.Fatalf("block type = %q", tr.BlockType())
+	}
+	roundTrip(t, in, v)
+}
+
 func TestUnmarshalContentBlocks_NonArray(t *testing.T) {
 	_, err := UnmarshalContentBlocks([]byte(`{"not":"array"}`))
 	if err == nil {
@@ -400,6 +500,9 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ServerToolUseBlock{}),
 		reflect.TypeOf(WebSearchToolResultBlock{}),
 		reflect.TypeOf(WebFetchToolResultBlock{}),
+		reflect.TypeOf(ToolSearchToolResultBlock{}),
+		reflect.TypeOf(ToolSearchResult{}),
+		reflect.TypeOf(ToolReferenceBlock{}),
 		reflect.TypeOf(ThinkingBlock{}),
 		reflect.TypeOf(RedactedThinkingBlock{}),
 		reflect.TypeOf(UnknownBlock{}),
@@ -420,7 +523,7 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 }
 
 func TestContentBlock_RegistryCoversAllConcreteTypes(t *testing.T) {
-	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "server_tool_use": false, "web_search_tool_result": false, "web_fetch_tool_result": false, "thinking": false, "redacted_thinking": false}
+	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "server_tool_use": false, "web_search_tool_result": false, "web_fetch_tool_result": false, "tool_search_tool_result": false, "tool_reference": false, "thinking": false, "redacted_thinking": false}
 	for k := range blockRegistry.Factories {
 		if _, ok := want[k]; !ok {
 			t.Errorf("unexpected registry key %q", k)

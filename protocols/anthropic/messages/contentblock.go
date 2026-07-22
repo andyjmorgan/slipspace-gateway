@@ -378,6 +378,130 @@ func (b *WebFetchToolResultBlock) UnmarshalJSON(data []byte) error {
 // resulting object.
 func (b WebFetchToolResultBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
 
+// ToolSearchToolResultBlock is the "tool_search_tool_result" content block
+// carrying the outcome of a server-side tool search invocation
+// (tool_search_tool_regex_20251119 / tool_search_tool_bm25_20251119). Content
+// holds either a {type:"tool_search_tool_search_result"} object whose
+// tool_references array points at the discovered (deferred) tools, or a
+// {type:"tool_search_tool_result_error"} object, so it is kept raw to
+// round-trip both shapes intact — use ResultContent for the typed projection.
+// Unknown fields round-trip via the embedded DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
+type ToolSearchToolResultBlock struct {
+	// Type is the wire "type" discriminator, always "tool_search_tool_result".
+	Type string `json:"type"`
+
+	// ToolUseID echoes the ID of the ServerToolUseBlock this result answers
+	// (prefixed "srvtoolu_"; clients must never send a tool_result for it).
+	ToolUseID string `json:"tool_use_id"`
+
+	// Content carries the search-result object or an error object; kept raw
+	// because Anthropic emits both shapes here.
+	Content json.RawMessage `json:"content,omitempty"`
+
+	// Caller attributes the result to its invoker (e.g. {"type":"direct"}).
+	Caller *ToolCaller `json:"caller,omitempty"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "tool_search_tool_result" discriminator.
+func (ToolSearchToolResultBlock) BlockType() string { return "tool_search_tool_result" }
+
+func (ToolSearchToolResultBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *ToolSearchToolResultBlock) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, b)
+}
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b ToolSearchToolResultBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
+// ResultContent projects the raw Content into its typed object form. ok is
+// false when Content is empty or not a JSON object. The returned value covers
+// both wire variants — dispatch on Type ("tool_search_tool_search_result" or
+// "tool_search_tool_result_error").
+func (b ToolSearchToolResultBlock) ResultContent() (c ToolSearchResult, ok bool) {
+	if len(b.Content) == 0 {
+		return ToolSearchResult{}, false
+	}
+	if err := json.Unmarshal(b.Content, &c); err != nil {
+		return ToolSearchResult{}, false
+	}
+	return c, true
+}
+
+// ToolSearchResult is the typed object form of
+// ToolSearchToolResultBlock.Content. Type discriminates the two wire
+// variants: "tool_search_tool_search_result" carries ToolReferences (empty
+// when the search matched nothing — not an error), and
+// "tool_search_tool_result_error" carries ErrorCode/ErrorMessage
+// (invalid_tool_input, unavailable, too_many_requests,
+// execution_time_exceeded). Unknown fields round-trip via the embedded
+// DynamicProperties.
+type ToolSearchResult struct {
+	// Type is the result kind ("tool_search_tool_search_result" or
+	// "tool_search_tool_result_error").
+	Type string `json:"type"`
+
+	// ToolReferences lists the discovered tools on a successful search; the
+	// API expands each reference into its full (deferred) tool definition
+	// server-side.
+	ToolReferences []ToolReferenceBlock `json:"tool_references,omitempty"`
+
+	// ErrorCode classifies the failure on the error variant.
+	ErrorCode string `json:"error_code,omitempty"`
+
+	// ErrorMessage is the human-readable failure detail on the error variant.
+	ErrorMessage string `json:"error_message,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into r, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (r *ToolSearchResult) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, r) }
+
+// MarshalJSON encodes r and merges DynamicProperties.Extra back into the
+// resulting object.
+func (r ToolSearchResult) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(r) }
+
+// ToolReferenceBlock is the "tool_reference" content block pointing at a tool
+// definition by name. Anthropic's built-in tool search returns them inside a
+// ToolSearchToolResultBlock; custom (client-side) tool search implementations
+// return them inside an ordinary tool_result content array, and the API
+// expands either form into the referenced deferred tool's full definition.
+// Every referenced name must have a matching entry in the request's Tools.
+// Unknown fields round-trip via the embedded DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
+type ToolReferenceBlock struct {
+	// Type is the wire "type" discriminator, always "tool_reference".
+	Type string `json:"type"`
+
+	// ToolName names the referenced tool from the request's Tools array.
+	ToolName string `json:"tool_name"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "tool_reference" discriminator.
+func (ToolReferenceBlock) BlockType() string { return "tool_reference" }
+
+func (ToolReferenceBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *ToolReferenceBlock) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, b)
+}
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b ToolReferenceBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
 // ThinkingBlock is the "thinking" content block variant carrying the model's
 // extended-thinking trace. The non-streaming response embeds it directly; the
 // streaming response delivers it as a thinking content_block_start followed by
@@ -484,6 +608,10 @@ var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
 		"web_fetch_tool_result": func() ContentBlock {
 			return &WebFetchToolResultBlock{}
 		},
+		"tool_search_tool_result": func() ContentBlock {
+			return &ToolSearchToolResultBlock{}
+		},
+		"tool_reference":    func() ContentBlock { return &ToolReferenceBlock{} },
 		"thinking":          func() ContentBlock { return &ThinkingBlock{} },
 		"redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
 	},

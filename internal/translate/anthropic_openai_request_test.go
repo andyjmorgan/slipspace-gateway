@@ -149,6 +149,53 @@ func TestTranslateRequest_ToolsAndToolChoice(t *testing.T) {
 	}
 }
 
+// TestTranslateRequest_ToolSearchToolsDropped covers tool search translation:
+// the server-side search tool is dropped whole (never emitted as a callable
+// OpenAI function), deferred tools still translate as ordinary function tools,
+// and the defer_loading flag itself is recorded as a drop.
+func TestTranslateRequest_ToolSearchToolsDropped(t *testing.T) {
+	req, drops := decodeChat(t, `{"model":"m","max_tokens":1,
+		"tools":[
+			{"type":"tool_search_tool_regex_20251119","name":"tool_search_tool_regex"},
+			{"name":"get_weather","description":"d","input_schema":{"type":"object"},"defer_loading":true},
+			{"type":"tool_search_tool_bm25_20251119","name":"tool_search_tool_bm25"}
+		],
+		"messages":[{"role":"user","content":"x"}]}`)
+	if len(req.Tools) != 1 {
+		t.Fatalf("tools = %+v, want only the deferred custom tool", req.Tools)
+	}
+	if req.Tools[0].Function == nil || req.Tools[0].Function.Name != "get_weather" {
+		t.Fatalf("tools[0] = %+v, want get_weather function", req.Tools[0])
+	}
+	if !hasDrop(drops, "tools[0].tool_search_tool_regex_20251119") {
+		t.Errorf("expected regex tool-search drop, got %+v", drops)
+	}
+	if !hasDrop(drops, "tools[2].tool_search_tool_bm25_20251119") {
+		t.Errorf("expected bm25 tool-search drop, got %+v", drops)
+	}
+	if !hasDrop(drops, "tools[1].defer_loading") {
+		t.Errorf("expected defer_loading drop, got %+v", drops)
+	}
+}
+
+// TestTranslateRequest_ToolSearchResultBlockDropped proves a replayed
+// assistant turn carrying tool-search history translates with the
+// tool_search_tool_result block dropped (counted), like other server-side
+// blocks with no OpenAI equivalent.
+func TestTranslateRequest_ToolSearchResultBlockDropped(t *testing.T) {
+	_, drops := decodeChat(t, `{"model":"m","max_tokens":1,
+		"messages":[{"role":"assistant","content":[
+			{"type":"server_tool_use","id":"srvtoolu_1","name":"tool_search_tool_regex","input":{"pattern":"weather"}},
+			{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_1","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"get_weather"}]}}
+		]}]}`)
+	if !hasDrop(drops, "messages[0].content[0].server_tool_use") {
+		t.Errorf("expected server_tool_use drop, got %+v", drops)
+	}
+	if !hasDrop(drops, "messages[0].content[1].tool_search_tool_result") {
+		t.Errorf("expected tool_search_tool_result drop, got %+v", drops)
+	}
+}
+
 func TestTranslateRequest_ToolChoiceSpecificTool(t *testing.T) {
 	req, _ := decodeChat(t, `{"model":"m","max_tokens":1,
 		"tool_choice":{"type":"tool","name":"calc","disable_parallel_tool_use":true},

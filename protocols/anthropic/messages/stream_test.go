@@ -38,6 +38,25 @@ func TestUnmarshalStreamEvent_ContentBlockStart(t *testing.T) {
 	})
 }
 
+// TestUnmarshalStreamEvent_ContentBlockStartToolSearchResult covers the
+// tool-search streaming shape: the whole tool_search_tool_result block
+// arrives on content_block_start (no deltas follow), per the tool-search-tool
+// doc's streaming example.
+func TestUnmarshalStreamEvent_ContentBlockStartToolSearchResult(t *testing.T) {
+	in := []byte(`{"content_block":{"content":{"tool_references":[{"tool_name":"get_weather","type":"tool_reference"}],"type":"tool_search_tool_search_result"},"tool_use_id":"srvtoolu_xyz789","type":"tool_search_tool_result"},"index":2,"type":"content_block_start"}`)
+	streamRoundTrip(t, in, "content_block_start", func(ev StreamEvent) {
+		cbs := ev.(*ContentBlockStartEvent)
+		ts, ok := cbs.ContentBlock.(*ToolSearchToolResultBlock)
+		if !ok {
+			t.Fatalf("content_block = %T", cbs.ContentBlock)
+		}
+		rc, ok := ts.ResultContent()
+		if !ok || len(rc.ToolReferences) != 1 || rc.ToolReferences[0].ToolName != "get_weather" {
+			t.Fatalf("result content = %+v (ok=%v)", rc, ok)
+		}
+	})
+}
+
 func TestUnmarshalStreamEvent_ContentBlockStartUnknownBlock(t *testing.T) {
 	in := []byte(`{"content_block":{"payload":"keep","type":"future_block"},"index":2,"type":"content_block_start"}`)
 	streamRoundTrip(t, in, "content_block_start", func(ev StreamEvent) {
