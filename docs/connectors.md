@@ -109,7 +109,7 @@ Every secret a connector reads is named indirectly via a `secret_ref` mini-langu
 | `env:NAME` | Read the named environment variable at startup (connector construction). The variable must be set; an unset variable fails boot loudly. Note: a variable set to an empty string is accepted (resolves to empty) — only an unset variable is an error. |
 | `file:/absolute/path` | Read the file at the absolute path. Trailing CR/LF is trimmed. |
 
-Anything else (literal credential, `kubernetes:`, etc.) is rejected at config-load with `secret_ref must start with env: or file:`.
+Anything else (literal credential, `kubernetes:`, etc.) is rejected at config-load with `must start with "env:" or "file:"`. (The similar-sounding `secret_ref must start with env: or file:` is a separate message raised by the runtime secret loader, not the config-load validator.)
 
 The indirection keeps credential material out of the YAML file on disk — if the file is captured for audit, all that's exposed is the name of the env var or the file path. Webhook signing secrets, static cloud credentials, and SAS tokens all flow through the same mini-language.
 

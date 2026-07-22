@@ -60,11 +60,22 @@ flowchart TD
   non-nil `Queries` (`New(...)` in `server.go`); without a store-backed query
   layer they are absent.
 
+> **Note on `contracts/admin` route prefixes.** The `contracts/admin` DTOs are
+> shared between two mount points: the gateway's own embedded admin console
+> (mounted under `/admin/api/v1/*`) and the Arbiter console (mounted under
+> `/api/v1/*`, the routes documented here). Individual DTO file doc-comments may
+> cite either prefix depending on which server's route they were annotated
+> against — e.g. `policies.go` and parts of `messages.go` say `/admin/api/v1/...`
+> while `dashboard.go`, `settings.go`, `verdict.go`, and the session routes in
+> `messages.go` say `/api/v1/...`. This is not a bug, just an artifact of reusing
+> one DTO package across two servers; each comment is correct for its own
+> consumer.
+
 ## Authentication
 
 Every `/api/v1/dashboard/*`, `/messages*`, `/facets`, `/events*`,
 `/sessions/*`, `/verdict/{id}`, and `/findings` route is wrapped by `Server.basicAuth`
-(`server.go::basicAuth`, lines 109-127). The credentials are the single console
+(`server.go::basicAuth`, lines 159-168). The credentials are the single console
 user from config (`console.username` + `console.password_hash`, a bcrypt hash;
 see [arbiter.md](arbiter.md#configuration)). There is no env
 override and no second account.
@@ -76,10 +87,10 @@ Authorization: Basic base64(username:password)
 - Username is compared with `subtle.ConstantTimeCompare`; the password with
   `bcrypt.CompareHashAndPassword`. Both branches are evaluated regardless of the
   username result so a wrong user and a wrong password cost the same
-  (`credentialsValid`, lines 121-127).
+  (`credentialsValid`, lines 189-203).
 - A rejected request returns a **bare `401` with `text/plain` body
-  `unauthorized\n` and deliberately NO `WWW-Authenticate` header** (lines
-  100-108). This mirrors `internal/admin.BasicAuth`: the SPA drives the login
+  `unauthorized\n` and deliberately NO `WWW-Authenticate` header** (line
+  163). This mirrors `internal/admin.BasicAuth`: the SPA drives the login
   form itself and sends `Authorization` on every fetch, so suppressing the
   challenge header stops browsers from popping their native auth dialog over the
   SPA on each poll. `curl --basic -u user:pass` still works.

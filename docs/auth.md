@@ -33,7 +33,7 @@ A request reaches the gateway with some combination of these signals:
 - An `Authorization: Bearer <token>` header — may carry a SlipSpace-issued secret (managed) or an upstream provider token (passthrough).
 - A provider-native credential header — `x-api-key` (Anthropic SDKs) or `x-goog-api-key` (Gemini SDKs).
 
-The auth middleware ([`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)) inspects those signals and resolves to one of two outcomes:
+The auth middleware ([`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go)) inspects those signals (via [`resolver.go::Resolve`](../internal/middleware/auth/resolver.go)) and resolves to one of two outcomes:
 
 | Mode | Inbound signal | Outbound credential |
 |---|---|---|
