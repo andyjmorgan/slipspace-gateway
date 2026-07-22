@@ -371,6 +371,46 @@ func TestTool_AndToolChoice_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestTool_DeferLoading_RoundTrip covers the tool-search request surface: a
+// deferred custom tool decodes typed (not into Extra) and a tool-search
+// server tool round-trips by its versioned type discriminator.
+func TestTool_DeferLoading_RoundTrip(t *testing.T) {
+	in := []byte(`{"defer_loading":true,"description":"Get the weather at a specific location","input_schema":{"properties":{"location":{"type":"string"}},"required":["location"],"type":"object"},"name":"get_weather"}`)
+	var tool Tool
+	if err := json.Unmarshal(in, &tool); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if tool.DeferLoading == nil || !*tool.DeferLoading {
+		t.Fatalf("defer_loading not typed: %v (extra=%v)", tool.DeferLoading, tool.Extra)
+	}
+	if len(tool.Extra) != 0 {
+		t.Fatalf("unmapped fields leaked: %v", tool.Extra)
+	}
+	out, err := json.Marshal(tool)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("tool drift\n in: %s\nout: %s", in, out)
+	}
+
+	searchIn := []byte(`{"name":"tool_search_tool_regex","type":"tool_search_tool_regex_20251119"}`)
+	var search Tool
+	if err := json.Unmarshal(searchIn, &search); err != nil {
+		t.Fatalf("search unmarshal: %v", err)
+	}
+	if search.Type != "tool_search_tool_regex_20251119" {
+		t.Fatalf("search type = %q", search.Type)
+	}
+	searchOut, err := json.Marshal(search)
+	if err != nil {
+		t.Fatalf("search marshal: %v", err)
+	}
+	if !jsonValueEqual(t, searchIn, searchOut) {
+		t.Fatalf("search tool drift\n in: %s\nout: %s", searchIn, searchOut)
+	}
+}
+
 func TestMessagesResponse_UsageDriftFieldsRoundTrip(t *testing.T) {
 	in := []byte(`{
 		"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-7",
