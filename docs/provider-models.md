@@ -194,20 +194,20 @@ Registry at `contentblock.go:473-491` (`blockRegistry`, discriminator field
 | `web_search_tool_result` | `WebSearchToolResultBlock` | Server web-search result |
 | `web_fetch_tool_result` | `WebFetchToolResultBlock` | Server web-fetch result |
 | `thinking` | `ThinkingBlock` (`contentblock.go:390`) | See signature echo below |
-| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:423`) | Opaque encrypted `Data` |
+| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:547`) | Opaque encrypted `Data` |
 | *(any other)* | `UnknownBlock` (`contentblock.go:453`) | Fallback |
 
 ### Thinking blocks and the signature-echo requirement
 
 Extended thinking is **load-bearing for round-tripping**, not just informational:
 
-- `ThinkingBlock.Signature` (`contentblock.go:400`; invariant documented at
+- `ThinkingBlock.Signature` (`contentblock.go:524`; invariant documented at
   `contentblock.go:386-389`) is a cryptographic
   attestation over the thinking trace. The client **MUST echo it back verbatim**
   on the assistant turn or tool use cannot resume — so it must round-trip
   exactly. In streaming it arrives as a terminal `signature_delta` after the
   `thinking_delta` fragments (`stream.go`, `SignatureDelta`).
-- `RedactedThinkingBlock.Data` (`contentblock.go:428`; invariant documented at
+- `RedactedThinkingBlock.Data` (`contentblock.go:552`; invariant documented at
   `contentblock.go:418-422`) is thinking the
   provider encrypted after tripping a safety classifier. It carries no
   human-readable content but must likewise be echoed back verbatim alongside any

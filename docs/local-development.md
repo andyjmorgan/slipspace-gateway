@@ -42,7 +42,7 @@ From a fresh clone:
 make dev
 ```
 
-That single target brings up the mock LLM as a container, then runs the gateway natively via `go run ./cmd/gateway` so edits hot-reload on the next request through ctrl-C / re-run. The data plane binds on `:8585`, Prometheus scrape on `:9090`, admin console (off by default in native mode, enabled in compose mode) on `:8081`. The connector spool root defaults to `/var/lib/slipspace/spool/` (`config.DefaultSpoolRoot`, `internal/config/env.go`) in **both** modes — the Makefile's `DEV_ENV` block does not override `SLIPSPACE_SPOOL_ROOT`, so native `make dev` writes there too. To land segments under the working tree for easy inspection, set `SLIPSPACE_SPOOL_ROOT=./tmp/spool` yourself when you run the gateway.
+That single target brings up the mock LLM as a container, then runs the gateway natively via `go run ./cmd/gateway` so edits hot-reload on the next request through ctrl-C / re-run. The data plane binds on `:8585`, Prometheus scrape on `:9090`, admin console enabled in both native and compose mode via `config-dev/admin.yaml` (`enabled: true`) — native binds `127.0.0.1:8081` (loopback only, since go-run has no container port-forward constraint), compose binds `0.0.0.0:8081` via the `deploy/compose/admin.yaml` overlay so the host port mapping reaches it. The connector spool root defaults to `/var/lib/slipspace/spool/` (`config.DefaultSpoolRoot`, `internal/config/env.go`) in **both** modes — the Makefile's `DEV_ENV` block does not override `SLIPSPACE_SPOOL_ROOT`, so native `make dev` writes there too. To land segments under the working tree for easy inspection, set `SLIPSPACE_SPOOL_ROOT=./tmp/spool` yourself when you run the gateway.
 
 ```mermaid
 flowchart LR
