@@ -11,11 +11,10 @@ Run with `make e2e` (build tag `e2e`; Docker required for the connector integrat
 ```go
 func New(t *testing.T) *Harness {
     h := &Harness{}
-    h.SpoolRoot = t.TempDir()
+    // (spool allocated internally via os.MkdirTemp, cleaned on Stop)
     h.MockLLM = startMockLLM(t)
     h.Gateway = startGateway(t, gatewayConfig{
         ProvidersUpstream: h.MockLLM.URL,
-        SpoolRoot:         h.SpoolRoot,
     })
     t.Cleanup(h.Stop)
     return h

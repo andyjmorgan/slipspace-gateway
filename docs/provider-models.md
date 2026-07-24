@@ -180,9 +180,9 @@ Two fields accept either a bare string or an array and are kept as
 
 ### Content blocks — the `type`-discriminated union
 
-Registry at `contentblock.go:473-491` (`blockRegistry`, discriminator field
-`type`; 9 factories including `server_tool_use`, `web_search_tool_result`,
-`web_fetch_tool_result`):
+Registry at `contentblock.go:597-619` (`blockRegistry`, discriminator field
+`type`; 11 factories including `server_tool_use`, `web_search_tool_result`,
+`web_fetch_tool_result`, `tool_search_tool_result`, `tool_reference`):
 
 | `type` | Type | Notes |
 |---|---|---|
@@ -193,6 +193,8 @@ Registry at `contentblock.go:473-491` (`blockRegistry`, discriminator field
 | `server_tool_use` | `ServerToolUseBlock` | Server-side tool invocation |
 | `web_search_tool_result` | `WebSearchToolResultBlock` | Server web-search result |
 | `web_fetch_tool_result` | `WebFetchToolResultBlock` | Server web-fetch result |
+| `tool_search_tool_result` | `ToolSearchToolResultBlock` | Tool-search result (PR #470) |
+| `tool_reference` | `ToolReferenceBlock` | Tool reference (PR #470) |
 | `thinking` | `ThinkingBlock` (`contentblock.go:390`) | See signature echo below |
 | `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:547`) | Opaque encrypted `Data` |
 | *(any other)* | `UnknownBlock` (`contentblock.go:453`) | Fallback |

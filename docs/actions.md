@@ -777,7 +777,7 @@ Returns:
 Outcome{
     Terminate: true,
     Response: &Response{
-        StatusCode: clamped(a.StatusCode),
+        StatusCode: outOfRangeFallback(a.StatusCode, 500),
         Body:       []byte(a.Body),
         BodyType:   a.BodyType,
     },
@@ -788,7 +788,7 @@ Outcome{
 
 ### Special behaviour
 
-- **StatusCode is clamped to `[100, 599]`**, with out-of-band values mapping to `500`. This guarantees a misconfigured rule produces a recognisably-bad response rather than a `panic` in `net/http.WriteHeader`.
+- **StatusCode outside `[100, 599]` falls back to `500`**. This guarantees a misconfigured rule produces a recognisably-bad response rather than a `panic` in `net/http.WriteHeader`.
 - `BodyType` selects only the `Content-Type` family; SlipSpace does not validate that `Body` is well-formed JSON when `BodyType: json`. The bytes are written verbatim.
 - Empty `Body` is allowed — `204 No Content` with no body is the obvious use case.
 

@@ -255,7 +255,7 @@ The server exposes a small control surface for test harnesses to stage and inspe
 | `/control/state` | `GET` | Returns `{"responses": [...], "sessions": {...}, "request_count": N}`. `responses` is the global pool; `sessions` only contains non-empty per-session pools. |
 | `/control/captured?session=<id>` | `GET` | Returns every captured inbound request (method, path, query, headers, body, session ID). Optional `session=` filters to one scenario. Bounded ring of 32. |
 | `/control/captured` | `DELETE` | Clears the captured-request log. |
-| `/healthz` | `GET` | Returns 200 `ok`. Used by docker-compose health checks. |
+| `/healthz` | `GET` | Returns 200 `ok` and is used by the e2e harness as a readiness probe (waitForHTTP against mockllm before the gateway starts) — not by a docker-compose healthcheck (no compose file defines one for mockllm; the only compose healthcheck is Postgres in deploy/quickstart/compose.arbiter.yaml). |
 
 The control-plane is unauthenticated — mockllm is a dev tool, and the listener is meant to live on a private compose network, not the public internet.
 
