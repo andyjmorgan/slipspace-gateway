@@ -16,11 +16,12 @@ Both modes resolve to a named **Configuration** — a reusable policy bundle (up
 
 ## Where the canonical design lives
 
-**DonkeyWork project `522d9204-c3b6-4719-b0c9-8ef91b968314`** ("SlipSpace Gateway") holds the source of truth: 20+ design notes, 16 milestones, 120+ tasks with acceptance criteria.
+DonkeyWork Notes was decommissioned on 2026-07-03 — its MCP tools (`mcp__donkeywork__notes_list_by_project`, `mcp__donkeywork__milestones_list`, `mcp__donkeywork__tasks_list_by_milestone`) no longer exist. The design corpus was exported to Obsidian and now holds the source of truth: 20+ design notes, 16 milestones, 120+ tasks with acceptance criteria.
 
 Fetch via:
-- `mcp__donkeywork__notes_list_by_project` for the design notes
-- `mcp__donkeywork__milestones_list` then `mcp__donkeywork__tasks_list_by_milestone` for tasks
+- `~/vaults/Personal/SlipSpace/` for the design notes
+- `~/vaults/Personal/SlipSpace/Milestones/` for milestones/tasks
+- `~/vaults/Personal/SlipSpace/DonkeyWork Archive/` for the original DonkeyWork export
 
 The notes you'll reference most often:
 
@@ -50,7 +51,7 @@ Shipped through **v1.1.18**: data plane forwarding for all three providers (stre
 
 **Queued:** v1.0.3 real `llmImpersonation` synthesisers; v1.2+ DLP guardrails, Bedrock, hot reload, RBAC.
 
-The per-milestone changelog (acceptance criteria, what shipped when) lives in the DonkeyWork milestones — fetch via `mcp__donkeywork__milestones_list`. Don't track milestone history here.
+The per-milestone changelog (acceptance criteria, what shipped when) lives in `~/vaults/Personal/SlipSpace/Milestones/`. Don't track milestone history here.
 
 ## Load-bearing invariants (NEVER violate)
 
@@ -72,7 +73,7 @@ These are the rules that, if broken, silently break customers or destabilize the
 
 8. **Tests reading captured records MUST sort by `(ts_ns, instance_id, seq)`.** Per-track drain into a sealed segment is in-order, but across spool tracks and across instances there is no global ordering guarantee — the upload workers run independently and the destination sees records interleaved. Tests that assert order in connector output (sealed segments, destination contents) need the stable composite sort key — never receive order. The pre-v1.1.17 form of this rule used `MatchedAt` / `Started` on NATS events; the underlying lesson is the same.
 
-9. **The live `ResolvedConfig` is only ever published through `config.Store`.** Consumers (router, auth resolver, rules evaluator, forwarder, reporter, admin handlers) hold a `*config.Store`, never a `*ResolvedConfig`. Reads go `store.Snapshot()` at request top and use that snapshot for the rest of the request — never re-snapshot mid-handler. Writers (admin write endpoints) `Clone` → mutate clone → `RevalidateAndIndex` → `WriteConfig` → `store.Replace` in that order, and only that order (`WritePolicyYAML` is now a back-compat alias for `WriteConfig`, which routes every editable block back to its `SourceFiles` origin). Skipping the clone, mutating the live snapshot in place, or persisting before validation breaks the atomicity contract — in-flight requests would see torn state. See `internal/config/store.go` for the model and `internal/admin/rules_write.go::commitClone` for the canonical write path.
+9. **The live `ResolvedConfig` is only ever published through `config.Store`.** Consumers (router, auth resolver, rules evaluator, forwarder, reporter, admin handlers) hold a `*config.Store`, never a `*ResolvedConfig`. Reads go `store.Snapshot()` at the top of each handler stage and use that snapshot for the rest of that stage — never re-snapshot part-way through a stage's own logic. A request may legitimately snapshot more than once as it crosses stages (selection, final forward, reporting); each snapshot is internally consistent, and the atomicity contract is per-stage, not per-request. Writers (admin write endpoints) `Clone` → mutate clone → `RevalidateAndIndex` → `WriteConfig` → `store.Replace` in that order, and only that order (`WritePolicyYAML` is now a back-compat alias for `WriteConfig`, which routes every editable block back to its `SourceFiles` origin). Skipping the clone, mutating the live snapshot in place, or persisting before validation breaks the atomicity contract — in-flight requests would see torn state. See `internal/config/store.go` for the model and `internal/admin/rules_write.go::commitClone` for the canonical write path.
 
 ## Engineering standards
 
@@ -168,7 +169,7 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 - **File contents are trusted** (mounted from k8s Secrets or filesystem-permissioned). No `${VAR}` or `env:` syntax inside YAML. Only file paths are env-overridable.
 - API keys are flat references to named Configurations. Configurations carry rules + resilience + default upstream credentials.
 - Two auth modes (see *Authentication & Auth Modes* note) — passthrough wins if both `X-Slipspace-Configuration` header and SlipSpace-issued bearer are present.
-- **Config edits via the admin write API apply live** — rules, providers, groups, configurations, api-keys, and connectors all have CRUD endpoints under `/admin/api/v1/config/...` that clone the snapshot, validate, persist back to each block's source file (`config.WriteConfig` routes to the block's `SourceFiles` origin, not a fixed `policy.yaml`), then publish through `config.Store.Replace` — no restart. The data plane reads each request's snapshot atomically, so mid-flight requests see either the pre-swap or post-swap config, never a torn mix. Direct YAML file edits on disk and the `admin` / `telemetry` blocks still require a process restart; v1.2+ adds `fsnotify`-based automatic reload for that path.
+- **Config edits via the admin write API apply live** — rules, providers, groups, configurations, api-keys, and connectors all have CRUD endpoints under `/admin/api/v1/config/...` that clone the snapshot, validate, persist back to each block's source file (`config.WriteConfig` routes to the block's `SourceFiles` origin, not a fixed `policy.yaml`), then publish through `config.Store.Replace` — no restart. The data plane reads each request's snapshot atomically, so mid-flight requests see either the pre-swap or post-swap config, never a torn mix. Direct YAML file edits on disk and the `admin` / `telemetry` blocks still require a process restart. Automatic `fsnotify`-based reload for that path is still unimplemented (no fsnotify dependency exists) — it remains a backlog item, not a shipped v1.2 feature.
 
 ## Testing requirements
 
@@ -240,11 +241,11 @@ PR titles + descriptions follow the global `~/.claude/CLAUDE.md` rules (semantic
 
 ## Working style for AI assistants
 
-Follow the global working-style rules (drive don't present, one decision at a time, push back, verify before citing, keep it tight). Repo-specific: **if the user requests a feature without a corresponding design note, propose the note first and stub it in DonkeyWork** — the design notes are the spec.
+Follow the global working-style rules (drive don't present, one decision at a time, push back, verify before citing, keep it tight). Repo-specific: **if the user requests a feature without a corresponding design note, propose the note first and stub it in the vault** — the design notes are the spec.
 
 ## Quick links
 
 - Repo: `git@github.com:andyjmorgan/slipspace-gateway.git`
-- DonkeyWork project: `522d9204-c3b6-4719-b0c9-8ef91b968314`
+- Design vault (DonkeyWork Notes decommissioned 2026-07-03): `~/vaults/Personal/SlipSpace/`
 - .NET predecessor (read-only reference): `~/Source/Repos/airia-ai-gateway`
 - Mock LLM (temporary, never commit): `~/Source/Repos/airia-llmock`

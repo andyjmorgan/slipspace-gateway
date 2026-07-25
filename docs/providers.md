@@ -306,7 +306,7 @@ This pairs with the model-keyed binding pattern. A Configuration that binds `cha
 
 ## Passthrough families
 
-A passthrough family is an opaque, stateful endpoint group proxied **verbatim** — Anthropic's message-batches surface (create / get / results / cancel), a provider's files API, and similar. Passthrough requests are never typed, never GenAI-telemetried, never payload-captured; only header/query rewrites and plain HTTP metrics apply. See [`PassthroughFamily`](../contracts/config/model.go) and [`selection.MatchPassthrough`](../internal/selection/selection.go).
+A passthrough family is an opaque, stateful endpoint group proxied **verbatim** — Anthropic's message-batches surface (create / get / results / cancel), a provider's files API, and similar. Passthrough requests are never *typed* — no protocol model is parsed ([`bodycapture`](../internal/middleware/bodycapture) short-circuits `KindPassthrough` with a nil typed body) and no GenAI telemetry is emitted; only header/query rewrites and plain HTTP metrics apply. They **are** still recorded by the connector spool: whenever the resolved configuration declares `connector_bindings`, [`cmd/gateway/reporter.go`](../cmd/gateway/reporter.go) builds a `Record` carrying the raw request and response bodies, their SHA-256 digests, and the redacted headers — there is no passthrough exemption in `enqueueRecord`. To keep passthrough payloads out of the spool, drop `connector_bindings` on that configuration or exclude them via sampling/filters. See [`PassthroughFamily`](../contracts/config/model.go) and [`selection.MatchPassthrough`](../internal/selection/selection.go).
 
 Unlike generative protocols, a passthrough family is **selected by path pattern, not by model**:
 
@@ -346,7 +346,7 @@ At request time, when the inbound path does not resolve to a generative protocol
 - No family claims the path → `ErrNoPassthrough` → 404.
 - A family claims the path but not the method → `ErrMethodNotAllowed` → 405.
 
-The matched family's `auth` is resolved through the same [`credentialHeaderFor`](../cmd/gateway/destination.go) mint site as a generative protocol; `nil` family auth defers to the provider-native default. In telemetry, a passthrough request labels `endpoint` with the **family name** (e.g. `messages_batches`), not a protocol ([`cmd/gateway/handler.go::buildFinalHandler`](../cmd/gateway/handler.go)).
+The matched family's `auth` is resolved through the same [`credentialHeaderFor`](../cmd/gateway/destination.go) mint site as a generative protocol; `nil` family auth defers to the provider-native default. In telemetry, the request labels are `provider`, `protocol`, `model`, `method`, `configuration` (`observability.RequestLabels`, populated at [`cmd/gateway/handler.go::buildFinalHandler`](../cmd/gateway/handler.go) — passthrough and generative each set their own), and a passthrough request labels `protocol` with the **family name** (e.g. `messages_batches`) rather than a protocol name. The v1 `endpoint` label was retired when v2 routing landed.
 
 ---
 

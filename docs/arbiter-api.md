@@ -84,13 +84,19 @@ override and no second account.
 Authorization: Basic base64(username:password)
 ```
 
-- Username is compared with `subtle.ConstantTimeCompare`; the password with
-  `bcrypt.CompareHashAndPassword`. Both branches are evaluated regardless of the
-  username result so a wrong user and a wrong password cost the same
-  (`credentialsValid`, lines 189-203).
+- On a cache miss the username is compared with `subtle.ConstantTimeCompare` and
+  the password with `bcrypt.CompareHashAndPassword`. Both branches are evaluated
+  regardless of the username result so a wrong user and a wrong password cost the
+  same (`credentialsValid`, lines 189-203).
+- Successful verifications are then memoized for `authCacheTTL` = **5 minutes**
+  in `authCache` (lines 170-238), keyed by a SHA-256 of `user` + NUL +
+  `password`, so a browsing session pays bcrypt at most once per window. Only
+  successes are cached — a wrong password always pays the full bcrypt, and an
+  attacker cannot grow the map. A rotated console password takes effect within
+  that 5-minute window.
 - A rejected request returns a **bare `401` with `text/plain` body
-  `unauthorized\n` and deliberately NO `WWW-Authenticate` header** (line
-  163). This mirrors `internal/admin.BasicAuth`: the SPA drives the login
+  `unauthorized\n` and deliberately NO `WWW-Authenticate` header** (lines
+  159-168). This mirrors `internal/admin.BasicAuth`: the SPA drives the login
   form itself and sends `Authorization` on every fetch, so suppressing the
   challenge header stops browsers from popping their native auth dialog over the
   SPA on each poll. `curl --basic -u user:pass` still works.
@@ -169,16 +175,19 @@ Ordering is `(observed_at DESC, correlation_id DESC)`
 (`ListEventsFiltered`, `eventquery.go` lines 141-211).
 
 - **Page size** comes from `?limit`. The store default is **100** and the cap is
-  **500** (`eventListPageDefault` / `eventListPageMax`, lines 136-139); a
+  **500** (`eventListPageDefault` / `eventListPageMax`, lines 238-239); a
   `limit <= 0` or out-of-range value is clamped. The HTTP layer passes `limit=0`
   by default for these two routes (`intParam(r, "limit", 0)`), so they inherit
   the store's 100/500.
 - The store fetches `limit+1` rows to learn whether a further page exists. When
   it does, `next_cursor` encodes the last *returned* row's position; otherwise
   `next_cursor` is `""` (the final page).
-- The **cursor is opaque**: base64url (`RawURLEncoding`, no padding) of the JSON
-  `{"o": "<observed_at RFC3339Nano>", "c": "<correlation_id>"}`
-  (`eventCursor` + `encodeCursor`, lines 113-122). Do not construct it by hand.
+- The **cursor is opaque**: base64url (`RawURLEncoding`, no padding) of a JSON
+  object carrying `{"o": "<observed_at RFC3339Nano>", "c": "<correlation_id>"}`
+  for the default `(observed_at DESC, correlation_id DESC)` ordering, plus two
+  `omitempty` fields — `"n"` (the sort column's value at the page boundary) and
+  `"s"` (the sort key) — present only when the request used `?sort`/`?order`
+  (`eventCursor` + `encodeCursor`, lines 213-222). Do not construct it by hand.
 - A malformed/tampered cursor returns `400 {"error":"invalid cursor"}`
   (`store.ErrInvalidCursor`, surfaced in `handleObsMessages` / `handleEvents`).
 

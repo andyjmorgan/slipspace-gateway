@@ -274,7 +274,7 @@ Optional session/bundle marker. [`observability.SlipSpaceSessionHeader`](../inte
 
 ### `X-Slipspace-Identity` / `X-Slipspace-Configuration`
 
-Passthrough-mode configuration selector: the client brings its own upstream credential and names the SlipSpace configuration to apply on top of it. [`auth.HeaderIdentity`](../internal/middleware/auth/resolver.go) (`"X-Slipspace-Identity"`) is the current header; [`auth.HeaderConfiguration`](../internal/middleware/auth/resolver.go) (`"X-Slipspace-Configuration"`) is the **deprecated** legacy spelling, still accepted. When both are present, `X-Slipspace-Identity` wins and the legacy header is flagged.
+Passthrough-mode configuration selector: the client brings its own upstream credential and names the SlipSpace configuration to apply on top of it. [`auth.HeaderIdentity`](../internal/middleware/auth/resolver.go) (`"X-Slipspace-Identity"`) is the current header; [`auth.HeaderConfiguration`](../internal/middleware/auth/resolver.go) (`"X-Slipspace-Configuration"`) is the **deprecated** legacy spelling, still accepted. When both are present, `X-Slipspace-Identity` wins and the legacy header is flagged. The resolver also silently accepts the pre-rebrand aliases `X-Sluice-Identity` and `X-Sluice-Configuration` ([`internal/middleware/auth/resolver.go:54-55`](../internal/middleware/auth/resolver.go)) with identical precedence — these are compatibility-only fallbacks for in-flight clients and should not be used by new callers.
 
 | Direction | Behaviour |
 |---|---|

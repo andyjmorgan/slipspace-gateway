@@ -292,7 +292,7 @@ A v2 target is a provider reference plus a small set of per-use overrides that c
 | `query` | Adds or overrides query-string params, composed over the provider's default query. |
 | `weight` | Relative load-balance share (ignored in failover). |
 
-There is no authorable per-target action block in v2. Internally, the orchestrator still applies the same per-attempt machinery the v1.2 engine used: selection synthesises an internal `changeProvider` (+ `changeModelName` when an `alias` is set) per target, clones the post-selection state once per attempt, and applies those internal actions to the clone — so different attempts cannot stack their mutations. `changeProvider` / `changeModelName` remain authorable rule actions (routing-affecting per CLAUDE.md invariant 7) and are additionally reused as the orchestrator's internal per-attempt synthesis primitives.
+There is no authorable per-target action block in v2. Internally, the orchestrator still applies the same per-attempt machinery the v1.2 engine used: selection synthesises an internal `changeProvider` (+ `changeModelName` when an `alias` is set) per target, clones the post-selection state once per attempt, and applies those internal actions to the clone — so different attempts cannot stack their mutations. `changeProvider` / `changeModelName` are no longer authorable rule actions in v2 — they survive only as the orchestrator's internal per-attempt synthesis primitives (`providerSwitchActions`, cmd/gateway/destination.go). Model-keyed redirect is expressed as a binding (models pattern → provider) on the Configuration, per CLAUDE.md invariant 7. A `changeProvider` left in a rule's baseline state is overwritten per attempt by `buildAttemptState`.
 
 **Why this matters for failover:** the destination of attempt N is *not* a fixed URL baked at config-load. Switching `state.Provider` triggers the final handler to re-resolve the endpoint, base URL, credential, and auth-header convention on the *new* provider (invariant 7). This is what lets a single group send the same logical model to providers with different credential conventions — e.g. OpenAI's `Authorization: Bearer` primary and Anthropic's OpenAI-compat `chat` surface as the backup, each authenticating correctly (invariant 6).
 
@@ -417,7 +417,7 @@ Per-attempt fields ([`contracts/connector/record.go`](../contracts/connector/rec
 
 ### Admin console
 
-- **`/policies`** (read-only): one card per resilience group, with the per-target weight table and a live circuit-breaker state badge per `(group, provider)`.
+- **`/policies`**: one card per resilience group, with the per-target weight table and a live circuit-breaker state badge per `(group, provider)`. Groups are editable from here — a "New group" button and a per-group "Edit" link open the group editor (`/groups/new`, `/groups/{name}/edit`), which writes through the CRUD endpoints under `/admin/api/v1/config/groups` and applies live (clone → validate → persist → Store.Replace).
 - **Live messages modal**: when an entry's `attempts.length > 1`, a per-attempt breakdown table renders below the rule-match section. One row per attempt: provider/target name, status code, duration, outcome chip.
 
 The admin endpoint behind `/policies` is `GET /admin/api/v1/policies` — same auth shape as the rest of the console.

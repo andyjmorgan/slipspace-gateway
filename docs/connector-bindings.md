@@ -203,7 +203,7 @@ When a record's body exceeds `max_body_bytes`, the binding's `oversize_behaviour
 
 | Value | Behaviour |
 |---|---|
-| `metadata_only` (default) | Strip both request and response bodies; set `Request.BodyOmitted` and `Response.BodyOmitted` to `true`; ship the rest of the record (headers, timing, tokens, rule matches, attempts). |
+| `metadata_only` (default) | Strip both request and response bodies; set `Request.BodyOmitted` and `Response.BodyOmitted` to `true`; also drop the assembled streaming rollup (`Response.Assembled` is cleared and `Response.AssemblyPartial` reset to `false`) so a metadata-only record never ships a large reconstruction the operator asked to cap; ship the rest of the record (headers, timing, tokens, rule matches, attempts). |
 | `drop_record` | Skip the record entirely — no enqueue. |
 
 `metadata_only` is the safe default. The consumer downstream sees a record that says "this request happened, here are the labels and tokens, the body was too big to capture." `drop_record` is appropriate when the downstream pipeline is genuinely useless without bodies (e.g. a webhook receiver that does prompt content analysis) and you'd rather have nothing than partial.
@@ -219,6 +219,8 @@ Either outcome is logged at **ERROR** so the capping is never silent — an oper
 The message reads `...; record dropped` for `drop_record`. `logOversize` ([`cmd/gateway/reporter.go`](../cmd/gateway/reporter.go)) attaches `connector`, `connector_type`, the effective cap that was hit (`max_body_bytes`), and the body length that tripped it (`body_bytes`), so a recurring oversize is easy to spot and re-tune. The `correlation_id` (and `service` / `version`) are not arguments to that call — they come from the per-request enriched logger that `observability.FromContext(ctx)` returns, set once per request in [`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go) (`baseLogger.With(LogFieldCorrelationID, id)`). Because the reporter runs on the request context, every oversize breadcrumb is automatically keyed to the request's `correlation_id`.
 
 The cap **does not** truncate the body to fit. Either the body is captured in full or it is replaced with `BodyOmitted=true`. There is no head-only / partial body shape on the wire — keep that separation explicit so consumers can't accidentally read truncated content as authoritative.
+
+The assembled streaming rollup (`Response.Assembled`) is treated as part of the response-body family for capping purposes — it goes with the response body, not with the metadata that survives (`applyOversize` in [`cmd/gateway/binding.go`](../cmd/gateway/binding.go)).
 
 ---
 
