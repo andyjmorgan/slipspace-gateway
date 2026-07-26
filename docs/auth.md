@@ -82,7 +82,7 @@ Three rules to internalise:
 
 1. **Either passthrough selector takes precedence over any bearer.** If `X-Slipspace-Identity` or `X-Slipspace-Configuration` is present, resolution is passthrough — the `Authorization` bearer is forwarded verbatim, never looked up as a managed key. This is by design: callers carrying a selector are explicitly asking to keep their own upstream credential and let the gateway pick the policy. Document it for clients so a managed-mode key doesn't silently turn into a passthrough resolution because they added a selector header by accident.
 2. **Between the two selectors, `X-Slipspace-Identity` wins.** When both are present, the identity secret resolves the Configuration and `AuthResult.LegacyConfigurationHeader` is set so the HTTP handler can emit a deprecation warning — the signal an operator watches to find callers still on the guessable `X-Slipspace-Configuration`. An unknown or disabled identity secret fails **401**, not 403, so an attacker cannot probe configuration names by presenting random identity values (contrast the legacy header, which 403s on an unknown name and so leaks name validity).
-3. **Managed-mode key discovery walks one header at a time and stops at the first present.** Authorization Bearer wins, then `x-api-key`, then `x-goog-api-key`. If the first present header carries a value that is *not* a known SlipSpace secret, resolution short-circuits to 401 rather than falling through — an attacker cannot stuff multiple headers to confuse the resolver.
+3. **Managed-mode key discovery walks Authorization Bearer, then `x-api-key`, then `x-goog-api-key`, and stops at the first header that yields a token.** A malformed `Authorization` (no `Bearer ` prefix, or an empty token) is a discovery miss and DOES fall through to `x-api-key` then `x-goog-api-key` — see `TestResolver_Managed_MalformedAuthorizationFallsThroughToNative`. Once a token is extracted, resolution short-circuits: if that value is not a known SlipSpace secret the request fails 401 and the remaining headers are never consulted, so an attacker cannot stuff multiple headers to confuse the resolver.
 
 ---
 
@@ -104,7 +104,7 @@ flowchart LR
 
 ### Algorithm
 
-1. The auth middleware walks `Authorization` → `x-api-key` → `x-goog-api-key` looking for a SlipSpace secret. The first present header wins; if its value is unknown, resolution fails 401 without falling through.
+1. The auth middleware walks `Authorization` → `x-api-key` → `x-goog-api-key` looking for a SlipSpace secret. A malformed `Authorization` (no parseable Bearer token) is a discovery miss and falls through to the next header; the first header that yields a token wins, and if that token's value is unknown, resolution fails 401 without falling through further.
 2. The matched `APIKey` is looked up in `SecretIndex`. If `Enabled` is false, resolution fails 401.
 3. `APIKey.Configuration` names a Configuration. If the name is missing from `ConfigurationIndex`, resolution fails 403 with `unknown configuration`.
 4. `AuthResult.DropHeaders` is seeded with **all four** selector headers (`X-Slipspace-Identity`, `X-Slipspace-Configuration`, plus the retained legacy compat selectors `X-Sluice-Identity` and `X-Sluice-Configuration` — always, they are policy-routing metadata never forwarded) plus the source header the SlipSpace secret was discovered on. The SlipSpace secret never leaves the gateway.
@@ -248,7 +248,8 @@ Content-Type: application/json
 3. `Authorization` parses as `Bearer sk_live_acme_prod_42`.
 4. `SecretIndex` lookup returns:
    ```yaml
-   - secret: sk_live_acme_prod_42
+   - id: 8f2c1e9a-... # optional, minted by the admin API on create
+     secret: sk_live_acme_prod_42
      name: acme-prod
      configuration: production
      enabled: true
@@ -370,7 +371,7 @@ Upstream credentials (`Configuration.Credentials`) are intended to **never** be 
 
 ### Key rotation
 
-API-key changes apply live. The admin write API (`POST`/`PUT`/`PATCH`/`DELETE /admin/api/v1/config/api-keys`, plus `GET .../reveal`) clones the config snapshot, validates, persists back to the block's source YAML (`config.WriteConfig`), and publishes through `config.Store.Replace` — no restart. The auth resolver holds a `*config.Store` and calls `store.Snapshot()` at the top of every `Resolve`, so an in-flight rotation is picked up atomically (a request sees either the pre-swap or post-swap key set, never a mix). Only direct on-disk YAML edits, and the `admin`/`telemetry` blocks, still require a process restart; fsnotify-based auto-reload of on-disk edits remains deferred to v1.2+. Rotating a key is a two-step process:
+API-key changes apply live. The admin write API (`POST /admin/api/v1/config/api-keys`, `PUT`/`PATCH`/`DELETE /admin/api/v1/config/api-keys/{id}`, plus `GET /admin/api/v1/config/api-keys` and `GET .../api-keys/reveal`) clones the config snapshot, validates, persists back to the block's source YAML (`config.WriteConfig`), and publishes through `config.Store.Replace` — no restart. The auth resolver holds a `*config.Store` and calls `store.Snapshot()` at the top of every `Resolve`, so an in-flight rotation is picked up atomically (a request sees either the pre-swap or post-swap key set, never a mix). Only direct on-disk YAML edits, and the `admin`/`telemetry` blocks, still require a process restart; fsnotify-based auto-reload of on-disk edits remains deferred to v1.2+. Rotating a key is a two-step process:
 
 1. Edit `policy.yaml` to add the replacement key (and optionally mark the old key `enabled: false` to retire it gracefully).
 2. Update the client to use the replacement secret.
