@@ -691,7 +691,7 @@ rules:
       logicalOperator: And
       children:
         - { type: provider, operator: Equals, expectedProvider: openai }
-        - { type: protocol, operator: Equals, expectedProtocol: chat_completions }
+        - { type: protocol, operator: Equals, expectedProtocol: chat }
         - { type: bodyField, target: request.body.stream, operator: Equals, value: "true" }
     actions:
       - type: rewriteField
@@ -731,7 +731,7 @@ rules:
       logicalOperator: And
       children:
         - { type: provider, operator: Equals, expectedProvider: anthropic }
-        - { type: protocol, operator: Equals, expectedProtocol: messages_batches_create }
+        - { type: protocol, operator: Equals, expectedProtocol: messages_batches }
     actions:
       - type: rewriteField
         target: response.body.results_url

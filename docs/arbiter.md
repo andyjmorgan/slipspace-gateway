@@ -243,11 +243,11 @@ Flags: `-config <path>` (overrides `SLIPSPACE_ARBITER_CONFIG`) and `-version` (p
 
 ## Startup and graceful shutdown
 
-`run` (`cmd/arbiter/main.go:73`) is the lifecycle:
+`run` (`cmd/arbiter/main.go:74`) is the lifecycle:
 
 1. **Load + validate** the config (`config.Load`).
-2. **Open Postgres** under a bounded budget — `storeOpenBudget = 15s` (`main.go:43`) — so a wedged database surfaces fast at boot instead of hanging the process. `store.Open` dials the pool and pings it (`store/store.go:87`).
-3. **Migrate** forward-only, each step in its own transaction, idempotent (`store.Migrate`, `store/store.go:113`). The applied schema version is logged.
+2. **Open Postgres** under a bounded budget — `storeOpenBudget = 15s` (`main.go:44`) — so a wedged database surfaces fast at boot instead of hanging the process. `store.Open` dials the pool and pings it (`store/store.go:88`).
+3. **Migrate** forward-only, each step in its own transaction, idempotent (`store.Migrate`, `store/store.go:114`). The applied schema version is logged.
 4. **Wire the feeds**: build the `registry` from `cfg.Gateways`, the `RecordHandler`, and the OTLP trace + metrics receivers; construct the console `Server`.
 5. **Serve both listeners** on context-bound goroutines.
 

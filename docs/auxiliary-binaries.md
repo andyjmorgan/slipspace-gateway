@@ -129,8 +129,8 @@ On failure: `FAIL: <category>: <error message>`. Exit code is `1`. The category 
 |---|---|
 | `invalid_env` | One of the `SLIPSPACE_*` env vars failed validation (bad log level, bad bind address, unknown OTLP protocol, etc.). |
 | `empty_directory` | The directory exists but contains no YAML files. |
-| `unexpected_config_file` | A `.yaml`/`.yml` file in the directory uses a filename the loader doesn't recognise. |
-| `wrong_file_for_key` | A top-level key (`gateway`, `providers`, `configurations`, `api_keys`, ...) appears in a file the convention puts a different key in. |
+| `unexpected_config_file` | **Legacy (v1) code.** Unreachable under the v2 schema — the loader merges every `*.yaml`/`.yml` file by top-level key with no fixed-filename allowlist (`internal/config/loader.go:34-37`). Never emitted for a v2 bundle. |
+| `wrong_file_for_key` | **Legacy (v1) code.** Same as above — v2 allows any key in any file. Never emitted for a v2 bundle. |
 | `no_configurations` | The bundle parsed but defines zero configurations. |
 | `unknown_configuration` | An API key or rule references a configuration name that doesn't exist. |
 | `path_collision` | **Legacy (v1) code.** Defined in `cmd/cli/validate.go` but unreachable under the v2 schema — providers no longer carry `path_prefix`/route paths (routing is protocol + binding based; see [routing.md](routing.md)). Retained for back-compat; never emitted for a v2 bundle. |
