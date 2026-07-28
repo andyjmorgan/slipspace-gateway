@@ -45,7 +45,7 @@ When in doubt, check the notes — they're the long-form. This file is the index
 
 ## Current state
 
-Shipped through **v1.1.18**: data plane forwarding for all three providers (streaming + non-streaming), rules engine, resilience orchestrator (failover, load_balance, load_balance_with_failover; circuit breaker), connector spool (s3 / azure_blob / webhook), admin console (dashboard + config inspector + live messages), and the rules read-write API + visual editor. OpenAI-compat chat surfaces on Anthropic + Gemini.
+Shipped through **v2.3.9**: data plane forwarding for all three providers (streaming + non-streaming), rules engine, resilience orchestrator (failover, load_balance, load_balance_with_failover; circuit breaker), connector spool (s3 / azure_blob / webhook), admin console (dashboard + config inspector + live messages), and the rules read-write API + visual editor. OpenAI-compat chat surfaces on Anthropic + Gemini.
 
 **Cross-provider translation (v1.2):** shipped **bidirectionally** for **Anthropic Messages ↔ OpenAI Chat** — both `messages`→`chat` and `chat`→`messages` are registered translators (direct pairwise matrix, no hub), each covering request, non-streaming + streaming response, tool calls, and error responses — triggered by the explicit `translate` rule action (`internal/translate/`), fail-closed on undeclared/unsupported pairs, with a drop counter + flag-gated `X-Slipspace-Translation-Lossy` header. Proven by a Go e2e differential matrix on both arms, the native Anthropic **and** OpenAI Python SDK wire-compat suites, and a property-coverage meta-test. See [docs/actions.md → `translate`](docs/actions.md#translate). Deferred post-MVP: Gemini translation, mixed-protocol resilience groups (cross-dialect failover), base-config auto-mapping.
 
@@ -204,7 +204,7 @@ The `protocols/` packages model the on-the-wire shapes of OpenAI, Anthropic, and
 - **`DynamicProperties` + `UnknownX` safety net is non-negotiable** — every model type embeds `DynamicProperties`; every polymorphic base has an `UnknownX` fallback. A new struct without these is a regression (invariant #1).
 - **Test surface per model type:** golden round-trips are inline table-driven cases in each `protocols/*/*_test.go` (byte-equivalent modulo key order); `test/fixtures/` holds E2E fixtures, not the per-type golden round-trips; fuzz on every `UnmarshalJSON` ("if it parses, it round-trips", ≥10min in CI); unknown-discriminator + unknown-field tests via `UnknownX` / `DynamicProperties.Extra`; a `TestX_AllExportedFieldsHaveJSONTag` reflection meta-test enforcing `json` tags.
 - **When touching `protocols/`:** cite the source for any new field (docs link / captured payload / SDK PR), add a fixture if the shape is new, add a fuzz seed for non-trivial value spaces, update the `Unknown*` fallback for new concrete types, run `make py-compat` locally before pushing.
-- **Drift early-warning:** scheduled `fixture-refresh.yaml` runs the compat suite against the latest published SDKs and files a `provider-drift` issue on failure.
+- **Drift early-warning:** a scheduled Claude cron/skill (`unmapped-field-remediation`, Sun 07:37) discovers the last 7 days' unmapped provider fields from live traffic (the `gateway.unmapped_fields.total` metric / observability data), validates each against the public provider docs, and files a `provider-drift` GitHub issue for genuine drift. This is **not** a GitHub Actions workflow re-running the SDK compat suite — there is no `.github/workflows/fixture-refresh.yaml` in the repo.
 
 ## E2E requirements
 

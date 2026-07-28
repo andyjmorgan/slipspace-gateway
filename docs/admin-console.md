@@ -31,7 +31,7 @@ This page is the operator's reference: enabling the console, configuring the pas
 
 ## Topology
 
-The admin listener and the data plane share a process but nothing else. They are wired in `cmd/gateway/main.go` as two distinct `http.Server`s, started under their own goroutines, drained independently.
+The admin listener and the data plane share a process but nothing else. Both listeners are started from `cmd/gateway/main.go`: the admin console gets its own `http.Server` constructed inline in `startAdmin`, while the data plane's `http.Server` is built by `server.New` (`internal/server/server.go`) and started from main. They run under their own goroutines and are drained independently.
 
 ```mermaid
 flowchart LR

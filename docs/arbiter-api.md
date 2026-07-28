@@ -159,11 +159,12 @@ Two distinct window conventions:
 
 - **Dashboard routes** use a coarse `?window` token — one of `15m`, `1h`, `6h`,
   `24h`, `7d`, `30d`; an unknown or absent token defaults to `1h`
-  (`observability.go::parseWindow`, lines 23-38). The upper bound is padded by a
+  (`observability.go::parseWindow`, lines 25-43). The upper bound is padded by a
   one-minute `clockSkewMargin` so an event stamped by a slightly-ahead Postgres
   `now()` still falls inside the window (lines 40-50).
 - **Browser routes** (`/messages`, `/events`) use precise `?from` / `?to`
-  bounds, each an **RFC3339** timestamp (`parseWindowBounds`, lines 83-100). An
+  bounds, each an **RFC3339** timestamp (`query.go::parseWindowBounds`, lines
+  206-223). An
   unparseable value returns `400 {"error":"invalid from"}` (or `invalid to`). An
   absent bound adds no predicate, so the browser pages across all history unless
   explicitly bounded.
