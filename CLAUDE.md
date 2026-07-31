@@ -153,7 +153,7 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 - `protocols/` (PUBLIC) — on-the-wire models, one per protocol a provider speaks: `openai/{chat,responses,models}`, `anthropic/{messages,models}`, `gemini/{content,models}`.
 - `models/` (PUBLIC) — shared multimodal types + `dynamic.go` (`DynamicProperties`).
 - `contracts/` (PUBLIC) — control-plane schemas: `rules`, `resilience`, `config`, `connector`.
-- `web/` SPA source, `deploy/{docker,helm}`, `test/{e2e,fixtures,python,smoke}`, `.github/workflows/`.
+- `web/` SPA source, `deploy/{docker,compose,quickstart,detectors}`, `test/{e2e,fixtures,python,smoke}`, `.github/workflows/`.
 
 ### Layout rules
 

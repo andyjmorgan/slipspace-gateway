@@ -168,7 +168,7 @@ Three useful disable configurations:
 - `SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=100 SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0` — metadata-only pane, no body capture. Useful when the gateway is memory-constrained and you only want recent-request visibility.
 - Defaults — both panes work, with the 200 MiB body store budget.
 
-`SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES > 0` is required whenever `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES > 0`; setting one without the other is an invalid configuration and `Validate` rejects it.
+`SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES > 0` is required whenever `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES > 0`; that is the only combination `Validate` rejects. The reverse (a non-zero per-body cap with `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`) is accepted — body capture is off and the per-body cap is ignored.
 
 ---
 

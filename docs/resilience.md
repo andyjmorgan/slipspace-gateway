@@ -190,6 +190,10 @@ There is no per-target `name`, `order`, `failure_status_codes`, `circuit_breaker
 
 If both `failure_threshold > 0` and `failure_rate_threshold > 0`, **both** must breach to trip. Combining them is how you avoid false positives at low traffic (`minimum_throughput`) while still tripping promptly on a real outage (`failure_threshold`).
 
+### Parsed but not wired
+
+The v2 group schema **accepts and validates** `retry:` blocks and `timeout_seconds` fields (at the policy/group level and the target level) for backward compatibility with v1 YAML that may be in circulation. However, **the orchestrator does not read or enforce them — they have no runtime effect.** Retry is expressed as a resilience group with multiple targets; the orchestrator tries targets in order until one commits. Attempt-level time bounding comes only from the group's `response_header_timeout_seconds`, which overrides the gateway-wide upstream response-header timeout at the forwarder level (`internal/proxy/transport.go`). Do not author `retry:` or `timeout_seconds` in v2 group configurations.
+
 ---
 
 ## Binding a request to a group
@@ -328,7 +332,7 @@ stateDiagram-v2
 
 `sampling_duration_seconds` is sliced into 1-second buckets. The breaker counts successes + failures into the current bucket; on tick the cursor advances and the new bucket starts fresh. The window is the sum of all live buckets — there's no global rolling counter to drift.
 
-When the cursor advances by more than `len(buckets)` seconds at once (a quiet gateway suddenly takes a request), every bucket is reset rather than walking the wrap-around — the breaker reads as if no traffic happened during the silence.
+When the cursor advances by `len(buckets)` seconds or more at once (a quiet gateway suddenly takes a request), every bucket is cleared and the window starts empty, rather than walking the wrap-around — the breaker reads as if no traffic happened during the silence.
 
 ### Trip conditions
 

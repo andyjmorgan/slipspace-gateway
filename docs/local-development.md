@@ -64,7 +64,7 @@ curl http://127.0.0.1:8585/openai/v1/chat/completions \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
 ```
 
-The mock LLM has no canned response staged by default; tests stage responses via its `/control/responses` endpoint (see [Mock LLM](#mock-llm)) — for ad-hoc curl, an empty pool returns a synthetic default.
+The mock LLM has no canned response staged by default; tests stage responses via its `/control/responses` endpoint (see [Mock LLM](#mock-llm)) — for ad-hoc curl, an unmatched request returns HTTP 404 with body `{"error":"no canned response"}`, so stage a response via `/control/responses` first.
 
 To exercise the production-shaped image (SPA bundled, gateway + admin console behind one binary), use `make dev-compose` instead. Slower iteration (image rebuild on Go or SPA changes) but matches what ships.
 
@@ -282,8 +282,8 @@ Every target in the `Makefile`, in the order they appear there:
 | `dev-real` | `scripts/dev-real-config.sh` + `docker compose -f docker-compose.yaml -f docker-compose.real.yaml --env-file .env up -d --no-deps --build gateway` | `.env` with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | — | Real-upstream stack. Generates `config-dev.real/` from `.env` and reaches OpenAI / Anthropic / Gemini directly. For the qwen path you also need a `kubectl port-forward` on host port `11434`. |
 | `dev-real-down` | `docker compose -f docker-compose.yaml -f docker-compose.real.yaml down` | — | — | Tears down the real-upstream stack. |
 | `e2e` | `go test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...` | `TESTCONTAINERS_RYUK_DISABLED=true` | e2e | Spawns the gateway + mockllm binaries per test, plus a tmp spool dir per test. Webhook subsuites use a local `httptest.Server` as the receiver. Requires Docker. |
-| `py-compat` | builds `/tmp/slipspace-gateway` + `/tmp/slipspace-mockllm`, then `uv run pytest -v` in `test/python/` | — | wire-compat | Runs the official OpenAI / Anthropic / Gemini SDKs against a spawned stack. Release-blocking. |
-| `smoke` | `uv run pytest -v` in `test/smoke/` | `SLIPSPACE_API_KEY=$KEY` (required), `SLIPSPACE_BASE_URL` (optional, defaults to `https://slipspace.donkeywork.dev`), `SLIPSPACE_SMOKE_QWEN=true` (optional) | smoke | Post-deploy harness against a live gateway. Without `SLIPSPACE_API_KEY` everything skips. |
+| `py-compat` | builds `/tmp/slipspace-gateway` + `/tmp/slipspace-mockllm`, then `cd test/python && uv run --project . pytest -v` | — | wire-compat | Runs the official OpenAI / Anthropic / Gemini SDKs against a spawned stack. Release-blocking. |
+| `smoke` | `cd test/smoke && uv run --project . pytest -v` | `SLIPSPACE_API_KEY=$KEY` (required), `SLIPSPACE_BASE_URL` (optional, defaults to `https://slipspace.donkeywork.dev`), `SLIPSPACE_SMOKE_QWEN=true` (optional) | smoke | Post-deploy harness against a live gateway. Without `SLIPSPACE_API_KEY` everything skips. |
 | `clean` | `rm -f coverage.out coverage.html` | — | — | Drops coverage artefacts. |
 | `tools` | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` | — | — | One-shot installer for the lint toolchain. |
 
@@ -335,7 +335,7 @@ Race detector is always on (`-race`). Goroutine leak detection via `goleak` runs
 4. Spawns `cmd/gateway` as a subprocess pointing at the tmp config and the per-test spool root
 5. Drives real HTTP against the gateway, asserts on the response, captured spool records, and Prometheus scrape
 
-The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), the S3 and Azure connectors (`connector_s3/`, `connector_azure/`), record reporting (`reporting/`), the Arbiter telemetry stack (`arbiter/`), cross-provider translation (`translate/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), and shutdown (`shutdown/`); `types/` holds shared fixtures. Webhook receivers spin up a local `httptest.Server` per test; the `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE=1` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
+The harness lives in `test/e2e/harness/`. Sub-suites cover providers (`providers/`), streaming (`streaming/`), rules (`rules/`), resilience (`resilience/`), the S3 and Azure connectors (`connector_s3/`, `connector_azure/`), record reporting (`reporting/`), the Arbiter telemetry stack (`arbiter/`), cross-provider translation (`translate/`), auth (`auth/`), correlation (`correlation/`), errors (`errors/`), admin (`admin/`), agent-aware routing (`agentroute/`), and shutdown (`shutdown/`); `types/` holds shared fixtures. Webhook receivers spin up a local `httptest.Server` per test; the `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE=1` env var is set on the spawned gateway so the runtime SSRF guard accepts the loopback target.
 
 Integration-style tests that need real dependencies live in this layer too, not behind a separate build tag — they bring up the dependency via testcontainers (SeaweedFS for S3, Azurite for Azure Blob, Postgres for telemetry), run the code against it, and assert on the dependency's state. `test/e2e/connector_s3/seaweedfs_test.go` is the canonical container-backed example.
 
