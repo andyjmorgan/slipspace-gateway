@@ -112,7 +112,7 @@ configurations:
       - tag-internal-requests   # runs third, sees state from rules 1 and 2
 ```
 
-The loader resolves each name once at config-load time and the engine walks a priority-sorted slice per-request — there's no per-request name lookup. Unknown rule names fail at load with `ErrUnknownRuleName`; you do not get a runtime miss.
+The loader resolves each name once at config-load time and the engine walks the pre-resolved, declaration-ordered slice per-request — there's no per-request name lookup. Unknown rule names fail at load with `ErrUnknownRuleName`; you do not get a runtime miss.
 
 ### What happens when a condition doesn't match
 

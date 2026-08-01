@@ -226,7 +226,7 @@ htpasswd -bnBC 10 "" 'your-console-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'
 
 Paste the `$2a$...` output as `password_hash`. The username comparison is `subtle.ConstantTimeCompare` and both branches always run (`server.go:194`), so a wrong username and a wrong password cost the same — no timing oracle.
 
-> The console deliberately sends a **bare `401`** with **no `WWW-Authenticate` header** (`server.go:135` comment). The SPA drives the credential prompt with its own login form and attaches the `Authorization` header on every fetch; emitting the challenge header would make browsers pop their native auth dialog over the SPA on every poll. `curl --basic -u admin:… ` still works.
+> The console deliberately sends a **bare `401`** with **no `WWW-Authenticate` header** (`server.go:151-158` comment; the 401 is written at `server.go:163`). The SPA drives the credential prompt with its own login form and attaches the `Authorization` header on every fetch; emitting the challenge header would make browsers pop their native auth dialog over the SPA on every poll. `curl --basic -u admin:… ` still works.
 
 ### Environment
 

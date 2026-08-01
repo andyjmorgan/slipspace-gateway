@@ -1,6 +1,6 @@
 # Auxiliary Binaries
 
-SlipSpace ships three binaries from this repo. `cmd/gateway` is the data plane — every other doc in this directory is about it. This page covers the other two: `cmd/cli` (operator toolkit) and `cmd/mockllm` (test upstream surrogate).
+SlipSpace ships four binaries from this repo. `cmd/gateway` is the data plane — every other doc in this directory is about it — and `cmd/arbiter` is the central telemetry + security convergence service, documented separately in [arbiter.md](arbiter.md). This page covers the remaining two: `cmd/cli` (operator toolkit) and `cmd/mockllm` (test upstream surrogate).
 
 This page is the reference. It documents every flag, every subcommand, every exit code, plus when an operator or developer would actually reach for each.
 

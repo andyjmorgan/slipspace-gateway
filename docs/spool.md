@@ -175,7 +175,7 @@ Retry backoff defaults (the `RetryOpts` tunables in [`internal/spool/options.go`
 | `Multiplier` | 2.0 | Doubles the ceiling between attempts. |
 | `MaxAttempts` | 8 | Total `Upload` calls including the first. After 8 retryable failures, the segment lands in deadletter. |
 
-Eight attempts with doubling starting at 1s capped at 60s give a worst-case wall-clock of roughly 5 minutes before a segment deadletters — long enough to ride out a brief destination outage, short enough that disk pressure doesn't accumulate during a sustained one.
+Eight attempts means seven sleeps whose ceilings grow 1 s → 2 → 4 → 8 → 16 → 32 → 60 s; with full jitter each actual sleep is uniform in [0, ceiling), so the worst-case wall-clock before a segment deadletters is about 2 minutes (~1 minute typical) — long enough to ride out a brief destination outage, short enough that disk pressure doesn't accumulate during a sustained one.
 
 **Deadletter is the operator decision point.** Segments in `deadletter/` are still on disk and readable; the gateway will not retry them on its own. Inspect, decide whether to replay (move back to sealed/), discard, or escalate.
 
@@ -247,7 +247,7 @@ A back-of-envelope for picking values:
 | Ring depth (per track, default 10 000) | Burst tolerance during a brief drain stall. 10 000 records ≈ 10–20 seconds of high-rate traffic on a single pod. Raise if you see hot-path drops during normal operation. |
 | Rotation size (default 64 MiB uncompressed) | Trade off delivery latency vs upload overhead. 64 MiB takes 5–15 s to fill at moderate rates. |
 | Rotation age (default 60 s) | Floor on delivery latency. 60 s is acceptable for billing/audit; ≤5 s for live monitoring downstream. |
-| `MaxAttempts` × `MaxBackoff` | Outage tolerance. 8 × 60 s ≈ 5 min before deadletter. |
+| `MaxAttempts` × `MaxBackoff` | Outage tolerance. Sum of the seven jittered sleeps (ceilings 1→60 s) ≈ 2 min worst case before deadletter. |
 | Spool root PVC size | (segment size) × (segments parked under sustained outage) × (connectors) × 2 for headroom. See "Disk path: spool full" above. |
 | `FailuresToOpen` | Latency before the breaker stops claiming. Five consecutive failures opens; lower for more sensitive destinations. |
 
@@ -257,7 +257,7 @@ For most deployments, the defaults are fine. Adjust the PVC size generously befo
 
 ## Environment variables
 
-The spool reads one env var directly:
+One env var configures the spool. It is read by the gateway's env loader (`internal/config/env.go`) and passed to `spool.New` as `Options.Root` — the `internal/spool` package itself never touches the environment:
 
 | Variable | Default | Effect |
 |---|---|---|

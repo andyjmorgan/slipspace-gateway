@@ -65,7 +65,7 @@ Mount `/admin/` behind the same ingress as the data plane if you like — the SP
 
 The console is off by default. Two things must both be true for the listener to come up:
 
-1. `gateway.admin.enabled: true` in the merged YAML.
+1. `admin.enabled: true` in the merged YAML (`admin` is a top-level key — there is no `gateway:` parent block).
 2. A non-empty password resolved from either the env var or the yaml `password` field.
 
 These two conditions are checked in different places. `startAdmin` gates the listener solely on `admin.enabled` (`resolved.Admin != nil && resolved.Admin.Enabled`): when that's false it logs `"admin console disabled"` and returns without opening a port — the rest of the gateway boots normally. The non-empty-password requirement is *not* re-checked in `startAdmin`; it is enforced earlier, at config load, by `admin.Config.Validate`, which returns `ErrPasswordRequired` when `enabled: true` has no password — so an enabled console with no password fails to boot rather than logging `"admin console disabled"`.
@@ -255,7 +255,7 @@ The console writes most of the policy YAML. Each mutating handler runs the same 
 Common behaviour across every write resource:
 
 - **503** when `SLIPSPACE_CONFIG_DIR` is empty (the `writableGuard` in `rules_write.go`) — the data plane runs fine, but admin writes are disabled. The on-disk write also requires the config dir to be writable; see [deployment.md → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api).
-- **400** on a malformed / empty body or a missing name; the body cap is 256 KiB (`maxConfigBodyBytes` in `config_write.go`, the shared cap for all config-write resources).
+- **400** on a malformed / empty body or a missing name; the body cap is 256 KiB (`maxConfigBodyBytes` in `config_write.go`) for the configurations, providers, groups, connectors, and api-keys resources. The rules resource uses its own `maxRuleBodyBytes` cap (`rules_write.go`).
 - **409** (shape `{error, name}`, with `used_by:[...]` added on referential-integrity refusals) on a duplicate name (POST), a rename attempt (PUT), or a delete blocked by referrers.
 - **422** (shape `{error, detail}`) when `RevalidateAndIndex` rejects the clone (unknown provider/group reference, invalid binding, empty group targets, …).
 - **204** on a successful DELETE; **201** on a successful POST; **200** on a successful PUT/PATCH.
