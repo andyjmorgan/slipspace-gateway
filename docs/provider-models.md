@@ -131,7 +131,7 @@ Request highlights:
 Response highlights:
 
 - **`Output []OutputItem`** is the ordered list of items the model emitted.
-  `OutputItem` (`responses.go:457-496`) is modelled as a **single struct**, not a
+  `OutputItem` (`responses.go:462-501`) is modelled as a **single struct**, not a
   registry union, because the item shape evolves frequently: `Type` is the
   discriminator and the variant-specific payloads `Content`, `Output`, and
   `Summary` are kept as `json.RawMessage` so callers dispatch on `Type` and
@@ -142,7 +142,8 @@ Response highlights:
 - **`Usage`** uses `input_tokens`/`output_tokens` naming (not chat's
   `prompt`/`completion`), so it is a **distinct local type** from the chat
   package's `Usage` (`responses.go:380-399`); `OutputTokensDetails.ReasoningTokens`
-  reports reasoning spend (`responses.go:431-434`).
+  reports reasoning spend (`OutputTokensDetails` at `responses.go:433-441`,
+  `ReasoningTokens` at `responses.go:439`).
 - Many echoed scalars (`MaxToolCalls`, `PromptCacheKey`, `SafetyIdentifier`,
   `User`, `Moderation`, `Instructions`, `Tools`, `ToolChoice`) are kept raw
   precisely because OpenAI emits them as `null` when unset and the gateway must
@@ -171,7 +172,7 @@ Two fields accept either a bare string or an array and are kept as
 
 - **`MessagesRequest.System`** — a string or an array of `SystemBlock`. Read with
   `SystemAsString` / `SystemAsBlocks`, write with `SetSystemString` /
-  `SetSystemBlocks` (`messages.go:89-133`). A `SystemBlock` (`messages.go:319-331`)
+  `SetSystemBlocks` (`messages.go:89-133`). A `SystemBlock` (`messages.go:330-342`)
   carries `Text` plus an optional `CacheControl`.
 - **`Message.Content`** — a string or an array of `ContentBlock`. Read with
   `ContentAsString` / `ContentAsBlocks`, write with `SetContentString` /
@@ -195,32 +196,33 @@ Registry at `contentblock.go:597-619` (`blockRegistry`, discriminator field
 | `web_fetch_tool_result` | `WebFetchToolResultBlock` | Server web-fetch result |
 | `tool_search_tool_result` | `ToolSearchToolResultBlock` | Tool-search result (PR #470) |
 | `tool_reference` | `ToolReferenceBlock` | Tool reference (PR #470) |
-| `thinking` | `ThinkingBlock` (`contentblock.go:390`) | See signature echo below |
+| `thinking` | `ThinkingBlock` (`contentblock.go:514`) | See signature echo below |
 | `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:547`) | Opaque encrypted `Data` |
-| *(any other)* | `UnknownBlock` (`contentblock.go:453`) | Fallback |
+| *(any other)* | `UnknownBlock` (`contentblock.go:577`) | Fallback |
 
 ### Thinking blocks and the signature-echo requirement
 
 Extended thinking is **load-bearing for round-tripping**, not just informational:
 
 - `ThinkingBlock.Signature` (`contentblock.go:524`; invariant documented at
-  `contentblock.go:386-389`) is a cryptographic
+  `contentblock.go:510-513`) is a cryptographic
   attestation over the thinking trace. The client **MUST echo it back verbatim**
   on the assistant turn or tool use cannot resume — so it must round-trip
   exactly. In streaming it arrives as a terminal `signature_delta` after the
   `thinking_delta` fragments (`stream.go`, `SignatureDelta`).
-- `RedactedThinkingBlock.Data` (`contentblock.go:552`; invariant documented at
-  `contentblock.go:418-422`) is thinking the
+- `RedactedThinkingBlock.Data` (`RedactedThinkingBlock` at `contentblock.go:547`,
+  `Data` at `contentblock.go:552`; invariant documented at
+  `contentblock.go:542-546`) is thinking the
   provider encrypted after tripping a safety classifier. It carries no
   human-readable content but must likewise be echoed back verbatim alongside any
   sibling thinking blocks.
 
 The request enables thinking via `MessagesRequest.Thinking *ThinkingConfig`
-(`messages.go:59`; `ThinkingConfig` type + `budget_tokens` at `messages.go:297-306`).
+(`messages.go:59`; `ThinkingConfig` type + `budget_tokens` at `messages.go:308-317`).
 
 ### Response-side fields: context management, containers, cache tiers
 
-`MessagesResponse` (`response.go:14-56`) and its `Usage` (`response.go:151-187`)
+`MessagesResponse` (`response.go:14-56`) and its `Usage` (`response.go:188-240`)
 carry several beta / accounting structures:
 
 - **`ContextManagement`** (`response.go:61-69`) reports the context-editing
@@ -229,14 +231,14 @@ carry several beta / accounting structures:
 - **`Container`** (`response.go:358-378`) describes the code-execution sandbox
   (`ID` + `ExpiresAt`) when the request used the code-execution tool; the `ID`
   can be reused across requests to preserve workspace state.
-- **`Usage.ServerToolUse`** (`ServerToolUseUsage`, `response.go:200-206`) counts
+- **`Usage.ServerToolUse`** (`ServerToolUseUsage`, `response.go:242-276`) counts
   server-side tool calls (e.g. web search).
 - **Cache accounting** is tiered: `Usage.CacheCreationInputTokens` /
   `CacheReadInputTokens` (`response.go:198-202`) plus `CacheCreation`
   (`response.go:316-336`) which splits writes into the 5-minute and 1-hour
   ephemeral tiers (`Ephemeral5mInputTokens` / `Ephemeral1hInputTokens`). The
   request marks cacheable spans with `CacheControl` (`type: "ephemeral"`,
-  `messages.go:396-401`) on system blocks, tools, and content blocks.
+  `messages.go:407-412`) on system blocks, tools, and content blocks.
 - **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:340-343`) reports
   output tokens spent inside thinking blocks.
 - **`Usage.Iterations`** (`[]IterationUsage`) breaks usage down per server-side
@@ -248,7 +250,7 @@ carry several beta / accounting structures:
   `DynamicProperties`.
 
 The request also exposes `OutputConfig.Effort` (reasoning-effort hint,
-`messages.go:345-358`, `Effort` at `messages.go:348`) and `ServiceTier`
+`messages.go:356-369`, `Effort` at `messages.go:359`) and `ServiceTier`
 (`messages.go:62`).
 
 ### Messages streaming events

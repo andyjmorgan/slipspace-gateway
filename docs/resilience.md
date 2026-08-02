@@ -192,7 +192,7 @@ If both `failure_threshold > 0` and `failure_rate_threshold > 0`, **both** must 
 
 ### Parsed but not wired
 
-The v2 group schema **accepts and validates** `retry:` blocks and `timeout_seconds` fields (at the policy/group level and the target level) for backward compatibility with v1 YAML that may be in circulation. However, **the orchestrator does not read or enforce them — they have no runtime effect.** Retry is expressed as a resilience group with multiple targets; the orchestrator tries targets in order until one commits. Attempt-level time bounding comes only from the group's `response_header_timeout_seconds`, which overrides the gateway-wide upstream response-header timeout at the forwarder level (`internal/proxy/transport.go`). Do not author `retry:` or `timeout_seconds` in v2 group configurations.
+`retry:` and `timeout_seconds` are v1 `resilience_policies` fields and are **NOT** part of the v2 group schema. `contracts/config.Group` and `contracts/config.Target` have no such fields, and the YAML loader is non-strict, so these keys are silently ignored under `groups:` — they are neither parsed nor validated and have no effect. Inter-attempt backoff is not implemented; failover retries immediately. Retry is expressed as a resilience group with multiple targets; the orchestrator tries targets in order until one commits. Attempt-level time bounding comes only from the group's `response_header_timeout_seconds`, which overrides the gateway-wide upstream response-header timeout at the forwarder level (`internal/proxy/transport.go`). Do not author `retry:` or `timeout_seconds` in v2 group configurations.
 
 ---
 
@@ -422,7 +422,7 @@ Per-attempt fields ([`contracts/connector/record.go`](../contracts/connector/rec
 ### Admin console
 
 - **`/policies`**: one card per resilience group, with the per-target weight table and a live circuit-breaker state badge per `(group, provider)`. Groups are editable from here — a "New group" button and a per-group "Edit" link open the group editor (`/groups/new`, `/groups/{name}/edit`), which writes through the CRUD endpoints under `/admin/api/v1/config/groups` and applies live (clone → validate → persist → Store.Replace).
-- **Live messages modal**: when an entry's `attempts.length > 1`, a per-attempt breakdown table renders below the rule-match section. One row per attempt: provider/target name, status code, duration, outcome chip.
+- **Live messages modal**: when an entry carries any attempts (`attempts.length > 0`), the modal renders a per-attempt breakdown table (target, outcome, status, duration) under the policy chip — a single-attempt orchestrated request shows a one-row table, not a hidden one.
 
 The admin endpoint behind `/policies` is `GET /admin/api/v1/policies` — same auth shape as the rest of the console.
 

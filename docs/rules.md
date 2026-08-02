@@ -80,7 +80,7 @@ rules:
 | `actions` | yes | Ordered list of polymorphic action objects. A terminating action (`returnStatusCode`, `llmImpersonation`) short-circuits the per-rule action loop — see [`docs/actions.md`](actions.md). |
 | `behavior` | no | `continue` (default) or `exit`. Controls whether the engine keeps walking the chain after this rule's actions complete. See [below](#behavior-continue-vs-exit). |
 
-YAML keys are camelCase by convention (`expectedModelName`, `keyOperator`); the equivalent JSON wire format is snake_case (`expected_model_name`, `key_operator`). The polymorphic decoders accept both shapes — the wire format you see in the admin console's JSON tab will differ from your YAML, by design.
+YAML keys are camelCase by convention (`expectedModelName`, `keyOperator`); the equivalent JSON wire format is snake_case (`expected_model_name`, `key_operator`). Each decoder accepts only its own shape. YAML config is decoded against the camelCase `yaml` tags; the admin JSON API is decoded against the snake_case `json` tags. The two are not interchangeable — a camelCase key in a JSON payload does not bind to the typed field, it is preserved verbatim in `DynamicProperties.Extra` and round-trips back out unchanged (invariant #1), which means a typo'd or wrong-cased key silently has no effect rather than erroring. The wire format you see in the admin console's JSON tab will differ from your YAML, by design.
 
 ---
 

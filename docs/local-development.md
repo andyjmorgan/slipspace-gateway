@@ -422,7 +422,7 @@ Not worth tracking down — the assignment is best-effort and a retry almost alw
 golangci-lint cache clean
 ```
 
-**Two mockllm sources.** `ghcr.io/andyjmorgan/slipspace-mockllm` is the published image referenced by the committed `docker-compose.yaml`; `cmd/mockllm` is the local Go source. They're the same binary — the image is built from `cmd/mockllm` via `deploy/docker/Dockerfile.mockllm`. If you're iterating on the mock itself, use `make dev-with-overlay` and the `docker-compose.dev.yaml.example` overlay to build the image from your local tree. If you're just consuming the mock, the published image is the safe default.
+**Two mockllm sources.** The committed `docker-compose.yaml` *builds* the mock locally from `deploy/docker/Dockerfile.mockllm` and tags it `slipspace-mockllm:dev` — it does not pull from GHCR. `ghcr.io/andyjmorgan/slipspace-mockllm` is the published image produced from the same `cmd/mockllm` source by `.github/workflows/release.yaml`, and is what the quickstart smoke overlay (`deploy/quickstart/compose.smoke.yaml`) consumes. If you're iterating on the mock itself, use `make dev-with-overlay` and the `docker-compose.dev.yaml.example` overlay to build the image from your local tree. If you're just consuming the mock, the published image is the safe default.
 
 **Hardcoding `claude-haiku-4-5` or `gemini-2.0-flash-001` as no-match probes.** Tests that pick a real model name to assert "no rule matches" break when the policy library grows a rule that matches that prefix (happened twice during v1.0.2). Use synthetic names like `nomatch-internal` or `unmapped-model` instead.
 

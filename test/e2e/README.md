@@ -6,20 +6,22 @@ Run with `make e2e` (build tag `e2e`; Docker required for the connector integrat
 
 ## Harness
 
-`test/e2e/harness/` owns process lifecycle. `New(t)` allocates a per-test temp spool dir, starts the mock LLM, starts the gateway pointed at it, and registers cleanup:
+`test/e2e/harness/` owns process lifecycle. `New(t)` delegates to `NewWithOptions(t, Options{})`, which starts the in-process capture server, the mock LLM, and the gateway, then registers cleanup:
 
 ```go
 func New(t *testing.T) *Harness {
-    h := &Harness{}
-    // (spool allocated internally via os.MkdirTemp, cleaned on Stop)
-    h.MockLLM = startMockLLM(t)
-    h.Gateway = startGateway(t, gatewayConfig{
-        ProvidersUpstream: h.MockLLM.URL,
-    })
-    t.Cleanup(h.Stop)
-    return h
+    t.Helper()
+    return NewWithOptions(t, Options{})
 }
+
+// NewWithOptions (harness.go:108) — abridged:
+h.startCaptureServer()
+h.startMockLLM(t, repoRoot)
+h.startGateway(t, repoRoot) // allocates the per-test temp spool dir
+t.Cleanup(h.Stop)
 ```
+
+The mock is wired into the gateway by materializing a per-test copy of `config-dev/` into a temp dir (`os.MkdirTemp("", "slipspace-e2e-config-*")`, harness.go:479) and string-replacing the compose alias `mockllm:5555` with the live mock's address (harness.go:517) — there is no `gatewayConfig` struct and no `ProvidersUpstream` field. The harness exposes the running addresses as `h.MockLLMURL` and `h.GatewayURL`.
 
 Test helpers:
 

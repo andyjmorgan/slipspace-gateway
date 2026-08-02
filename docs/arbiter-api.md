@@ -30,9 +30,11 @@ flowchart TD
   end
   subgraph hmac[Self-authenticating — HMAC]
     ingest["POST /api/v1/ingest/record"]
+    advise["POST /api/v1/advise/route"]
   end
   subgraph gated[HTTP Basic auth]
     dash["GET /api/v1/dashboard/* (incl. security, security/audit)"]
+    settings["GET /api/v1/settings"]
     msgs["GET /api/v1/messages*"]
     facets["GET /api/v1/facets"]
     events["GET /api/v1/events, /events/{id}, /events/{id}/body, /events/{id}/span"]
@@ -54,8 +56,18 @@ flowchart TD
   authenticates itself with an HMAC signature header rather than Basic auth, so
   it sits in the open zone. Full spec in
   [arbiter-webhook.md](arbiter-webhook.md).
-- **Console query API** — everything under `/api/v1/` except `ingest/record` is
-  registered by `server.go::registerQueryRoutes` (in `query.go`) and wrapped in
+- **`POST /api/v1/advise/route`** — the agent-routing advisory endpoint, also
+  open, since it self-authenticates by HMAC on the same trust convention as the
+  Record webhook. Mounted only when the server was built with a non-nil Advise
+  handler (`server.go::Handler`, the `s.advise != nil` branch, wired by
+  `WithAdvise`).
+- **`GET /api/v1/settings`** — the redacted applied-config view, Basic-auth +
+  gzip, mounted only when the server was built with an applied config
+  (`server.go::Handler`, the `s.appliedConfig != nil` branch, wired by
+  `WithAppliedConfig`). It is independent of the query store, so it works even
+  when the DB-backed routes are absent.
+- **Console query API** — every other route under `/api/v1/` is registered by
+  `server.go::registerQueryRoutes` (in `query.go`) and wrapped in
   `Server.basicAuth`. These routes only mount when the server was built with a
   non-nil `Queries` (`New(...)` in `server.go`); without a store-backed query
   layer they are absent.
@@ -74,7 +86,7 @@ flowchart TD
 ## Authentication
 
 Every `/api/v1/dashboard/*`, `/messages*`, `/facets`, `/events*`,
-`/sessions/*`, `/verdict/{id}`, and `/findings` route is wrapped by `Server.basicAuth`
+`/sessions/*`, `/verdict/{id}`, `/findings`, and `/settings` route is wrapped by `Server.basicAuth`
 (`server.go::basicAuth`, lines 159-168). The credentials are the single console
 user from config (`console.username` + `console.password_hash`, a bcrypt hash;
 see [arbiter.md](arbiter.md#configuration)). There is no env
@@ -213,7 +225,8 @@ encodes position, not the predicate set.
 
 ## Routes
 
-All routes are `GET` and return `application/json` on success. Errors are a JSON
+All routes are `GET` except the HMAC-authed `POST /api/v1/advise/route`, and
+return `application/json` on success. Errors are a JSON
 `{"error":"…"}` body (`server.go::writeError`). Common codes: `400` (bad
 param/cursor), `401` (auth), `404` (not found), `500` (query failure — the
 detail is logged, not returned).
@@ -715,6 +728,24 @@ is recorded post-response in the append-only `advise_audit` table (migration
 and the cache/latency/error facts. See [agent-routing.md](agent-routing.md)
 and [arbiter-database-schema.md](arbiter-database-schema.md#advise_audit).
 
+#### `POST /api/v1/advise/route`
+
+Handler `advise.Handler.ServeHTTP` (`internal/arbiter/advise/advise.go`) — the
+advisory endpoint itself, not a console read. It is **not** Basic-auth gated: the
+gateway signs the body and the handler verifies it against the gateway registry,
+the same HMAC convention as the Record webhook (`X-Slipspace-Gateway-Id` +
+`X-Slipspace-Signature`; missing or rejected → `401`, body over 256 KiB → `413`).
+The route mounts only when the server was built with `WithAdvise`.
+
+The body is a `contracts/advise.Request` (identity + gateway-truncated prompt
+excerpts + tool names); the response is a `contracts/advise.Verdict`
+(`switch`, `model`, `reason`, `confidence`). Verdicts are memoized by a hash of
+the request template, so a repeated conversation costs no judge call. A
+malformed body is `400`; a judge failure is **`503`**, deliberately, so the
+gateway fails open and may retry on a later request of the same conversation.
+Every outcome — fresh, cached, or failed — is appended to `advise_audit` and
+readable through the two routes below.
+
 #### `GET /api/v1/advise/audit`
 
 Handler `handleAdviseAudit` (`advise_audit.go`). The judgement log, newest
@@ -813,6 +844,24 @@ and carries both deep-link targets — `correlation_id` (→ message inspector) 
 `unit_role`, the `offending_text` that fired, and the `severity` band. Fields
 sourced from the source `request_events` row (`model`, `configuration`,
 `observed_at`) are empty when that row has aged out of retention.
+
+### Settings (applied config)
+
+#### `GET /api/v1/settings`
+
+Handler `handleSettings` (`settings.go`). The running service's applied config,
+read-only and with secrets already redacted at construction
+(`config.Config.Redacted` → `WithAppliedConfig`), so an operator can confirm what
+is in effect — listeners, content caps, the scanner block, the gateway registry —
+without seeing a credential. Registered outside `registerQueryRoutes` and
+independent of the query store, so it answers even when the DB-backed routes are
+absent; it takes no query parameters.
+
+`config.Config` carries yaml tags rather than json tags, so the snapshot is
+round-tripped through YAML into a generic tree first: the response keys match the
+snake_case YAML the operator wrote, and the console can offer a faithful
+JSON⇄YAML toggle over the same shape. Returns `contracts/admin.SettingsResponse`
+(`{"config": {…}}`).
 
 ## Error reference
 

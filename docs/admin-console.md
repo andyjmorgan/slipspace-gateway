@@ -357,7 +357,7 @@ The SPA's router (`web/src/App.tsx`) protects every page behind `<ProtectedRoute
 | Page | Path(s) | Backing endpoints | Purpose |
 |---|---|---|---|
 | Login | `/login` | `GET /api/v1/version`, `GET /api/v1/auth/me` | Credential capture. Stores the password in `sessionStorage` on success. |
-| Dashboard | `/dashboard` | `GET /api/v1/dashboard/summary`, `GET /api/v1/dashboard/timeseries` | Totals, per-provider/endpoint/configuration/model tables, rules-fired, tags-fired, provider-health, and a p95 curve from `timeseries`. Single-page summary + sparkline charts. |
+| Dashboard | `/dashboard` | `GET /api/v1/dashboard/summary`, `GET /api/v1/dashboard/timeseries` | Totals, per-provider/protocol/configuration/model tables, rules-fired, tags-fired, provider-health, and a p95 curve from `timeseries`. Single-page summary + sparkline charts. |
 | Live messages | `/messages` | `GET /api/v1/messages/recent`, `GET /api/v1/messages/stream`, `GET /api/v1/messages/{event_id}/body` | Streaming list of completed requests with body modal. Up/down keyboard navigation through entries. Per-attempt expansion table when the entry is bound to a resilience policy. |
 | Configurations | `/configurations`, `/configurations/:name` | `GET·POST·PUT·DELETE /api/v1/config/configurations[/{name}]` | Configuration inspector. Detail page shows the resolved rule chain, redacted credentials, bindings, and the keyed API-keys table with per-row reveal. |
 | Configuration editor | `/configurations/new`, `/configurations/:name/edit` | `GET·POST·PUT /api/v1/config/configurations[/{name}]` | Create / edit a configuration — credentials, bindings, passthrough bindings, rule names, connector bindings. |

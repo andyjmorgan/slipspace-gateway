@@ -116,7 +116,7 @@ Anything else needs justification in the PR description.
 - **`init()` for non-trivial work** — registration of polymorphic factories is the only acceptable use.
 - **Global mutable state** — package-level vars must be `const` or read-only after init.
 - **`interface{}` / `any` in public APIs** — strong typing or generic interfaces; `any` is a code smell unless at a serialization boundary.
-- **Reflection in hot paths** — `DynamicProperties` is borderline; the marshaller is the only place.
+- **Reflection in hot paths** — confined to the `models` package: the `DynamicProperties` marshaller (`models/dynamic.go`) and the unmapped-field walker (`models/unmapped.go`, called per-request from `internal/observability/unmapped`). Nowhere else imports `reflect`.
 - **Magic struct tags beyond `json` / `yaml`** — no `validate:`, no `mapstructure:`. Validation is explicit code.
 - **`gomock` / `mockery`** — hand-rolled interface stubs are 10 lines and clearer than generated mocks.
 

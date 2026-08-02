@@ -45,14 +45,17 @@ secrets are configured.
 
 ## What it covers
 
+Routing is model-keyed under v2 — the smokes hit unprefixed routes and the
+configuration's bindings pick the backend from the model name.
+
 | Test | Endpoint |
 |---|---|
-| `test_openai_chat.py` | `POST /openai/v1/chat/completions` |
-| `test_openai_responses.py` | `POST /openai/v1/responses` |
-| `test_anthropic_messages.py` | `POST /anthropic/v1/messages` |
-| `test_anthropic_chat.py` | `POST /anthropic/v1/chat/completions` (OpenAI-compat surface) |
-| `test_gemini_generate.py` | `POST /gemini/v1beta/models/{model}:generateContent` |
-| `test_gemini_chat.py` | `POST /gemini/v1beta/openai/chat/completions` (OpenAI-compat surface) |
+| `test_openai_chat.py` | `POST /v1/chat/completions` (gpt-*) |
+| `test_openai_responses.py` | `POST /v1/responses` |
+| `test_anthropic_messages.py` | `POST /v1/messages` (claude-*) |
+| `test_anthropic_chat.py` | `POST /v1/chat/completions` with a claude-* model (OpenAI-compat surface on the anthropic backend) |
+| `test_gemini_generate.py` | `POST /v1beta/models/{model}:generateContent` |
+| `test_gemini_chat.py` | `POST /v1/chat/completions` with a gemini-* model (OpenAI-compat surface) |
 | `test_changeprovider_redirect.py` | model-keyed `changeProvider` rules: claude-* / gemini-* on the openai surface |
 | `test_qwen_redirect.py` | cluster-side qwen rules (opt-in via `SLIPSPACE_SMOKE_QWEN=true`) |
 | `test_gptoss_translate.py` | model-keyed `translate`-action redirect onto the gpt-oss surface (opt-in via `SLIPSPACE_SMOKE_GPTOSS=true`) |
@@ -60,6 +63,6 @@ secrets are configured.
 ## Adding a new smoke
 
 1. Create `test_<provider>_<surface>.py` next to the existing tests. Reuse the `base_url` and `api_key` fixtures from `conftest.py`.
-2. Drive the official SDK with `base_url=f"{base_url}/<route prefix>"`. Don't `requests.post` directly — using the SDK is what makes this a wire-compat check.
+2. Drive the official SDK with `base_url=f"{base_url}/v1"` (or bare `base_url` for the Anthropic/Gemini SDKs, which append their own version segment). Don't `requests.post` directly — using the SDK is what makes this a wire-compat check.
 3. If the assertion depends on a rule or configuration that only exists in a specific deploy, gate it on an env var and skip cleanly when unset (see `test_qwen_redirect.py` for the pattern).
 4. Update this table.

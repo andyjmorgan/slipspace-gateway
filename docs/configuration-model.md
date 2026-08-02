@@ -139,7 +139,7 @@ providers:
 | `required_headers` | map[string]string | no | Headers injected on every forwarded request to this provider (e.g. `anthropic-version: 2023-06-01`). |
 | `query` | map[string]string | no | Default query-string params appended to every request to this provider (e.g. Azure's `api-version`). A binding or group target may add or override entries; the effective set is provider ∪ override, override winning. |
 | `protocols` | map[string]ProviderProtocol | no | Generative wire shapes this provider serves, keyed by protocol name (see [Protocol resolution](#protocol-resolution)). A provider must declare **at least one** `protocols` entry **or** one `passthrough` family, else validation fails. |
-| `passthrough` | map[string]PassthroughFamily | no | Opaque/stateful endpoint families this provider exposes (e.g. Anthropic message batches), keyed by family name. Proxied verbatim — never typed, GenAI-telemetried, or payload-captured. See [Passthrough families and bindings](#passthrough-families-and-bindings). |
+| `passthrough` | map[string]PassthroughFamily | no | Opaque/stateful endpoint families this provider exposes (e.g. Anthropic message batches), keyed by family name. Proxied verbatim — never typed, never GenAI-telemetried. "Verbatim" governs forwarding, not audit: raw bodies **are** still captured into connector Records (under `bodycapture.KindPassthrough`) when the resolved configuration has `connector_bindings`. See [Passthrough families and bindings](#passthrough-families-and-bindings). |
 
 ### `ProviderProtocol` fields (`contracts/config/model.go:84`)
 
@@ -196,7 +196,7 @@ groups:
 | `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:151`). |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
-| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:130`). |
+| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:131`). |
 
 ### `Target` fields (`contracts/config/model.go:184`)
 
@@ -210,7 +210,7 @@ The atom a binding or group dispatches to: a provider reference plus per-use ove
 | `path` | string | no | Overrides the protocol path for this target (e.g. an Azure deployment-specific path on a shared provider connection). |
 | `weight` | int | no | Relative selection weight in `load_balance` mode. Zero is treated as 1 (even weighting); ignored in `failover` mode, where declaration order drives sequencing. |
 
-Validation: a group must declare at least one target, every target must name a `provider`, and that provider must exist (`internal/config/config_validate.go::validateGroups`, provider-existence check at `:137`). The protocol-preserving check happens at the **binding** level — when a binding references a group, every target in that group must serve the binding's protocol (`validateBindings`, `config_validate.go:283`).
+Validation: a group must declare at least one target, every target must name a `provider`, and that provider must exist (`internal/config/config_validate.go::validateGroups`, provider-existence check at `:137-139` — `if _, ok := r.Providers[t.Provider]; !ok`). The protocol-preserving check happens at the **binding** level — when a binding references a group, every target in that group must serve the binding's protocol (`validateBindings`, `config_validate.go:283`).
 
 ---
 
@@ -336,21 +336,21 @@ configurations:
         tags: ["surface:batches"]
 ```
 
-### `PassthroughFamily` fields (`contracts/config/model.go:112`)
+### `PassthroughFamily` fields (`contracts/config/model.go:118`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `auth` | ProviderAuth | no | Credential convention for this family; `nil` defers to the provider-native default. Validated by the same `validateAuth` rules as protocol auth. |
 | `paths` | []PassthroughPath | yes | Inbound path patterns this family claims; must declare at least one. |
 
-### `PassthroughPath` fields (`contracts/config/model.go:124`)
+### `PassthroughPath` fields (`contracts/config/model.go:130`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `match` | string | yes | Inbound path pattern, optionally containing `{name}` placeholders (e.g. `/v1/messages/batches/{id}/results`). Captured params are surfaced to the forwarder; a pattern with no placeholders is an exact-string compare. |
 | `methods` | []string | yes | HTTP methods this path accepts. Matched case-insensitively. A claimed path with an unaccepted method yields `ErrMethodNotAllowed`. |
 
-### `PassthroughBinding` fields (`contracts/config/model.go:246`)
+### `PassthroughBinding` fields (`contracts/config/model.go:252`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -398,7 +398,7 @@ Lookups use `SecretIndex` (built post-validate); the slice exists for enumeratio
 
 Each rule must:
 
-- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:152`, enforced in `validateLibraries`).
+- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:153`, enforced in `validateLibraries`).
 - Pass `RuleContract.Validate()` — the per-rule semantic checks.
 
 > **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names against the `groups` block — the action is inert in v2, so an unknown name is simply a no-op at runtime rather than a load error (see [actions.md](actions.md#useresiliencepolicy)).
@@ -411,7 +411,7 @@ Each rule must:
 
 Each connector entry must:
 
-- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:167`, enforced in `validateLibraries`).
+- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:168`, enforced in `validateLibraries`).
 - Pass `Connector.Validate()` — the per-type required-field check (s3 needs `bucket` + `region`, azure_blob needs `account` + `container`, webhook needs `url` + `secret_ref` + `timeout_ms`).
 - Be referenced by a defined `connector_bindings[].connector` name — an unknown reference aborts with `ErrUnknownConnectorReference`.
 

@@ -579,7 +579,7 @@ The first rule attaches a tag; the second consumes it. Rule order in `Configurat
 
 ### Gotchas
 
-- Set-semantics means double-adding the same tag is a silent no-op, but the rule still records `actions_applied`. If you rely on tag count for billing, drive the counter off `gateway.tags.applied.total` (which dedupes via `state.AddTag`'s return value).
+- Set-semantics means double-adding the same tag is a silent no-op, but the rule still records `actions_applied`. Dedup happens in `MutableState.AddTag`, which is a set — re-adding an existing tag is a no-op. `applyAddTag` ignores the return value. The `gateway.tags.applied.total` counter is not bumped per `addTag` firing; the reporter (`cmd/gateway/reporter.go::populateTags`) copies the final deduped tag set onto the Record and increments the counter once per unique tag, so N identical `addTag` actions in a chain produce exactly one increment. If you rely on tag count for billing, drive the counter off `gateway.tags.applied.total`.
 - Convention: tags are free-form strings, but operators usually use a `prefix:value` form (`tier:gold`, `audit:pii`, `region:eu`) to namespace. The engine treats them as opaque strings.
 
 ---

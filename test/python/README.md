@@ -74,9 +74,12 @@ test/python/
 
 ## Why subprocess and not docker-compose
 
-The `ghcr.io/andyjmorgan/slipspace-mockllm` image is not yet published (v0.1
-task). Until it is, the local Go binary is the source of truth, so we spawn it
-directly. The Go E2E harness in `test/e2e/harness/` follows the same pattern.
+The mock is published as `ghcr.io/andyjmorgan/slipspace-mockllm` by
+`.github/workflows/release.yaml`, but the compat suite deliberately spawns the
+locally built Go binary instead: it must test the tree under change, not the
+last released image. `conftest.py` always rebuilds `cmd/gateway` and
+`cmd/mockllm` before the session (`test/python/conftest.py:89-91`). The Go E2E
+harness in `test/e2e/harness/` follows the same pattern.
 
 ## SDK version policy
 
