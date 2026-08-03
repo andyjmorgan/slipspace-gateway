@@ -157,7 +157,7 @@ A record passes iff **every** populated predicate evaluates true:
 
 **Model patterns.** Trailing-`*` is the only wildcard form. `"claude-*"` matches `claude-haiku-4-5` and `claude-opus-4-7`; `"gpt-4o"` matches only the exact name. `"*-mini"` (leading or interior wildcards) is rejected at config-load.
 
-**Tag fields.** Tags come from `addTag` rule actions on the request path; see [actions.md → addTag](actions.md#addtag). The same tag values flow into `Record.Tags`, and these predicates filter against that set. Configuration-level `tags:` metadata on `Configuration` is **not** the same channel — it does not flow into `Record.Tags` and the filter does not see it. Use `addTag` for per-request labels you intend to filter on.
+**Tag fields.** Tags reaching `Record.Tags` come from two places: `addTag` rule actions on the request path (see [actions.md → addTag](actions.md#addtag)), and the `tags:` list on the matched `models` / `passthrough` binding of the Configuration, which is applied at selection time (`cmd/gateway/pipeline.go`). Agent routing adds `agent-route:<model>` when a pin fires. These predicates filter against that combined set. Configuration-level `tags:` metadata (the `map[string]string` on `Configuration`) is a different channel — it does not flow into `Record.Tags` and the filter does not see it. Use `addTag` for per-request labels you intend to filter on.
 
 ---
 

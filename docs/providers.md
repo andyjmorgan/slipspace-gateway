@@ -482,7 +482,7 @@ The loader runs `Validate()` ([`internal/config/config_validate.go`](../internal
 | Protocol or family `auth.format` set without `auth.header`. | [`ErrAuthFormatWithoutHeader`](../internal/config/errors.go). |
 | Protocol or family `auth.format` lacks exactly one `{key}`. | [`ErrInvalidAuthFormat`](../internal/config/errors.go). |
 | Passthrough family declares no `paths`, or a path has an empty `match` / empty `methods`. | `ErrValidation` — `passthrough %q ...`. |
-| A binding references an unknown provider/group, or the provider/group does not serve the binding's protocol. | `ErrValidation` — `bindings[%d]: ...` (see [`validateBindings`](../internal/config/config_validate.go)). |
+| A binding references an unknown provider/group, or the provider/group does not serve the binding's protocol. | `ErrValidation` — `configuration %q bindings[%d]: ...` (e.g. `configuration "acme" bindings[0]: set exactly one of provider or group`; see [`validateBindings`](../internal/config/config_validate.go)). |
 | A configuration's `credentials` or `passthrough_bindings` reference an unknown provider/family. | `ErrValidation` — `configuration %q ...`. |
 
 > The v1 sentinels `ErrPathCollision` and `ErrPrefixRequiredEmpty` are never produced by v2 validation — there is no route table to collide and no prefix to require. (The symbols still exist in [`internal/config/errors.go`](../internal/config/errors.go) with vestigial `errors.Is` branches in [`cmd/cli/validate.go`](../cmd/cli/validate.go) that can never fire; treat them as deprecated/dead.) `ErrAuthFormatWithoutHeader` and `ErrInvalidAuthFormat` carry over unchanged because the auth-format invariant is identical.

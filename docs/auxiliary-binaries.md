@@ -129,7 +129,7 @@ On failure: `FAIL: <category>: <error message>`. Exit code is `1`. The category 
 |---|---|
 | `invalid_env` | One of the `SLIPSPACE_*` env vars failed validation (bad log level, bad bind address, unknown OTLP protocol, etc.). |
 | `empty_directory` | The directory exists but contains no YAML files. |
-| `unexpected_config_file` | **Legacy (v1) code.** Unreachable under the v2 schema — the loader merges every `*.yaml` file (the `.yml` spelling is **not** recognised — `internal/config/config_model.go` filters on `filepath.Ext(name) != ".yaml"`, so a `.yml` file is silently skipped) by top-level key with no fixed-filename allowlist (`internal/config/loader.go:34-37`). Never emitted for a v2 bundle. |
+| `unexpected_config_file` | **Legacy (v1) code.** Unreachable under the v2 schema — the loader merges every `*.yaml` file (the `.yml` spelling is **not** recognised — `internal/config/config_model.go` filters on `filepath.Ext(name) != ".yaml"`, so a `.yml` file is silently skipped) by top-level key with no fixed-filename allowlist (`internal/config/config_model.go:126-135`). Never emitted for a v2 bundle. |
 | `wrong_file_for_key` | **Legacy (v1) code.** Same as above — v2 allows any key in any file. Never emitted for a v2 bundle. |
 | `no_configurations` | The bundle parsed but defines zero configurations. |
 | `unknown_configuration` | An API key or rule references a configuration name that doesn't exist. |

@@ -115,7 +115,7 @@ Request highlights:
   kept raw (`responses.go:25-28`).
 - **`Reasoning *ReasoningOptions`** (`effort` + `summary`) configures reasoning
   models (`responses.go:48`; `ReasoningOptions` at `responses.go:303-313`, `Effort`
-  `:306`, `Summary` `:310` — note `responses.go:337-347` is the separate
+  `:306`, `Summary` `:310` — note `responses.go:328` is the separate
   response-side `ReasoningOutput`); `MaxOutputTokens` caps generated
   *and* reasoning tokens (`responses.go:42-44`).
 - **Statefulness:** `PreviousResponseID` chains to a prior stored response
@@ -137,7 +137,7 @@ Response highlights:
   `Summary` are kept as `json.RawMessage` so callers dispatch on `Type` and
   decode the shape they need; `Arguments` (`responses.go:487`) is a Go `string`
   because OpenAI ships function arguments as a JSON-encoded string, matching the
-  chat package's `ToolCallFunction.Arguments` convention. `OutputText` (`responses.go:161-163`) is
+  chat package's `ToolCallFunction.Arguments` convention. `OutputText` (`responses.go:164`) is
   the convenience concatenated-text projection.
 - **`Usage`** uses `input_tokens`/`output_tokens` naming (not chat's
   `prompt`/`completion`), so it is a **distinct local type** from the chat
@@ -278,7 +278,7 @@ v1.0** — `streamGenerateContent` emits a sequence of values with the same
 Gemini distinguishes content parts by *which top-level key is present*
 (`{"text":…}`, `{"inlineData":…}`, `{"functionCall":…}`) rather than by a
 discriminator field. `PolymorphicRegistry` assumes a single discriminator, so
-Gemini parts use a hand-rolled `UnmarshalPart` (`parts.go:405-431`) that inspects
+Gemini parts use a hand-rolled `UnmarshalPart` (`parts.go:409`) that inspects
 the key set against `partFactories` (`parts.go:395-403`):
 
 | Key | Type | Notes |
@@ -293,7 +293,7 @@ the key set against `partFactories` (`parts.go:395-403`):
 | *(no known key)* | `UnknownPart` (`parts.go:375`) | Fallback; whole object kept in `Extra` |
 
 An object with **no keys at all** returns `ErrEmptyPart` rather than producing an
-empty `UnknownPart` (`parts.go:25-29`, `:414`).
+empty `UnknownPart` (`parts.go:25-29`, `:415`).
 
 ### Thinking, thought signatures, and code execution
 

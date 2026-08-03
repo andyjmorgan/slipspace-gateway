@@ -753,6 +753,8 @@ The two intentional exceptions are `SLIPSPACE_ADMIN_PASSWORD` (kept out of YAML 
 
 The invariants the loader enforces, and the sentinel each violation wraps (`internal/config/errors.go`, `internal/config/config_validate.go`). Many binding/provider/group failures wrap the umbrella `ErrValidation` with a specific message at the call site.
 
+`ResolvedConfig.Validate` runs six steps in order (`internal/config/config_validate.go:28-47`): `validateProviders` → `validateGroups` → `validateLibraries` → `Pricing.Validate` → `validateAdvisors` → `validateConfigurations`. So the pricing block's own `Validate` and the advisors/`agent_routing` cross-check (the named advisor must exist in the `advisors` block; `allow_models` must be non-empty) both run **before** configuration and binding validation — a bad rate card or a dangling advisor reference aborts the load before any binding error is reported.
+
 | Sentinel | Triggered by |
 |---|---|
 | `ErrEmptyDirectory` | Config dir has no `*.yaml` files. |
@@ -781,7 +783,7 @@ The admin block's `ErrPasswordRequired` / `ErrInvalidBindAddr` propagate from `a
 
 These are documented intentionally — don't fix them without checking the milestone first.
 
-1. **Live edits flow through the admin write API only.** The write API carries full CRUD for rules, providers, groups, configurations, api_keys, and connectors; every mutation clones the live snapshot, validates (`RevalidateAndIndex`), persists atomically, and publishes through `config.Store.Replace` so the next request sees the new config — no restart, no torn reads (see [Atomic snapshot store](#atomic-snapshot-store)). Direct YAML edits on disk (and the `admin` / `telemetry` blocks, which have no write endpoints) still require a process restart. v1.3+ adds an `fsnotify`-based reload path.
+1. **Live edits flow through the admin write API only.** The write API carries CRUD for rules, providers, groups, configurations, api_keys, and connectors — `GET`/`POST`/`PUT`/`DELETE` per resource, plus a `PATCH /api/v1/config/api-keys/{id}` that api_keys alone registers (`internal/admin/mux.go:196-197`) for partial updates such as enable/disable without resubmitting the whole key; every mutation clones the live snapshot, validates (`RevalidateAndIndex`), persists atomically, and publishes through `config.Store.Replace` so the next request sees the new config — no restart, no torn reads (see [Atomic snapshot store](#atomic-snapshot-store)). Direct YAML edits on disk (and the `admin` / `telemetry` blocks, which have no write endpoints) still require a process restart. v1.3+ adds an `fsnotify`-based reload path.
 
    ### Atomic snapshot store
 

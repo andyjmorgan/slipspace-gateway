@@ -36,7 +36,7 @@ SLIPSPACE_API_KEY=sk_live_... uv run pytest -v
 Or against a local stack:
 
 ```sh
-SLIPSPACE_BASE_URL=http://127.0.0.1:8080 SLIPSPACE_API_KEY=sk_live_... uv run pytest -v
+SLIPSPACE_BASE_URL=http://127.0.0.1:8585 SLIPSPACE_API_KEY=sk_live_... uv run pytest -v
 ```
 
 `SLIPSPACE_BASE_URL` defaults to `https://slipspace.donkeywork.dev`. Without

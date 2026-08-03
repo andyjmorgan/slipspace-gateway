@@ -304,7 +304,7 @@ Every inbound `gpt-4-turbo*` model name is rewritten to `gpt-4o` before the requ
 
 Writes `state.UpstreamURL`. Non-terminating.
 
-> **v2 status — currently inert.** `applyChangeUrl` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) line 163) parses `newUrl` and stores it on `state.UpstreamURL`, but **nothing in the v2 data plane reads that field.** `buildDestination` builds `dest.UpstreamURL` from the resolved `selection.Target` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) lines 107-114), and the only post-rule overlay step — `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 303-320) — touches only `QueryAdditions` and `OutgoingHeaders`. `state.UpstreamURL` is written, cloned, and never consulted. The action still parses, validates, and round-trips. Tracked as a code follow-up. To pin a region or override the host in v2, set the provider's base URL in `providers.yaml`.
+> **v2 status — currently inert.** `applyChangeUrl` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) line 163) parses `newUrl` and stores it on `state.UpstreamURL`, but **nothing in the v2 data plane reads that field.** `buildDestination` builds `dest.UpstreamURL` from the resolved `selection.Target` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) lines 107-114), and the only post-rule overlay step — `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 306-320) — touches only `QueryAdditions` and `OutgoingHeaders`. `state.UpstreamURL` is written, cloned, and never consulted. The action still parses, validates, and round-trips. Tracked as a code follow-up. To pin a region or override the host in v2, set the provider's base URL in `providers.yaml`.
 
 ### YAML
 
@@ -546,7 +546,7 @@ This pattern lets a single classifier rule fan out into multiple downstream beha
 
 The reporter drains `state.Tags` at request completion onto `Record.Tags` (the captured connector record) and the live-feed `Entry`, and bumps `gateway.tags.applied.total` once per tag.
 
-This channel is rule-action-driven and request-scoped. It is **separate from** the static `configurations[].tags` map (see [`configuration-model.md`](configuration-model.md#configurations-block)): configuration-level tags carry as request context for logs and the admin configuration detail page, but they do NOT propagate to `Record.Tags` and do NOT bump `gateway.tags.applied.total`. If you want a tag to surface in audit and dashboards, fire an `addTag` action.
+`state.Tags` is not exclusively rule-driven. Three writers feed it, and all three reach `Record.Tags` and `gateway.tags.applied.total`: the `addTag` action; binding-level `tags:` (`bindings[].tags` and passthrough-binding `tags:`), applied by `selectionMiddleware` at `cmd/gateway/pipeline.go:214-215` and `:155-156`; and agent-route tags (`agent-route:*`) at `cmd/gateway/pipeline.go:218-233`. What does NOT propagate is the configuration-level `configurations[].tags` **map** (`map[string]string`, see [`configuration-model.md`](configuration-model.md#configurations-block)) — it carries as request context for logs and the admin configuration detail page only, and never reaches `Record.Tags` or the counter.
 
 ### Worked example — classify then transform
 

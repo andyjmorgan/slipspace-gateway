@@ -274,7 +274,7 @@ Every target in the `Makefile`, in the order they appear there:
 | `fmt` | `go fmt ./...` + `goimports -local github.com/andyjmorgan/slipspace-gateway` | — | — | Local convenience. CI fails on dirty diffs. |
 | `lint` | `golangci-lint run ./...` | — | unit | Non-negotiable before commit. Install with `brew install golangci-lint` if missing. |
 | `test` | `go test -race -coverprofile=coverage.out -covermode=atomic` | — | unit | Skips `web/node_modules`. Race detector on. |
-| `coverage` | `test` + `scripts/coverage-gate.sh coverage.out 95` | — | unit + gate | Same as `test`, then fails if total coverage is under 95%. |
+| `coverage` | `test` + `scripts/coverage-gate.sh coverage.out 95` | — | unit + gate | Same as `test`, then fails if any gated package is under 95%. |
 | `dev` | `docker compose up -d mockllm` + `go run ./cmd/gateway` | `SLIPSPACE_CONFIG_DIR=./config-dev`, `SLIPSPACE_HTTP_BIND=0.0.0.0:8585`, `SLIPSPACE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLIPSPACE_LOG_LEVEL=debug` (the Makefile `DEV_ENV` block — note it does **not** set `SLIPSPACE_SPOOL_ROOT`, so the spool falls back to `/var/lib/slipspace/spool`) | — | The fast inner loop. Container infra + native gateway. |
 | `dev-with-overlay` | `docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d` + `go run ./cmd/gateway` | same as `dev` | — | Requires `docker-compose.dev.yaml` (copy from `.example`). |
 | `dev-compose` | `docker compose up -d --build` | — | — | Builds the gateway image with the SPA embedded and brings up both services (gateway + mockllm). Slow iteration; matches production shape. Pair with `make web-dev` for SPA-only hot reload. |
@@ -283,7 +283,7 @@ Every target in the `Makefile`, in the order they appear there:
 | `dev-real-down` | `docker compose -f docker-compose.yaml -f docker-compose.real.yaml down` | — | — | Tears down the real-upstream stack. |
 | `e2e` | `go test -tags=e2e -race -count=1 -timeout=5m ./test/e2e/...` | `TESTCONTAINERS_RYUK_DISABLED=true` | e2e | Spawns the gateway + mockllm binaries per test, plus a tmp spool dir per test. Webhook subsuites use a local `httptest.Server` as the receiver. Requires Docker. |
 | `py-compat` | builds `/tmp/slipspace-gateway` + `/tmp/slipspace-mockllm`, then `cd test/python && uv run --project . pytest -v` | — | wire-compat | Runs the official OpenAI / Anthropic / Gemini SDKs against a spawned stack. Release-blocking. |
-| `smoke` | `cd test/smoke && uv run --project . pytest -v` | `SLIPSPACE_API_KEY=$KEY` (required), `SLIPSPACE_BASE_URL` (optional, defaults to `https://slipspace.donkeywork.dev`), `SLIPSPACE_SMOKE_QWEN=true` (optional) | smoke | Post-deploy harness against a live gateway. Without `SLIPSPACE_API_KEY` everything skips. |
+| `smoke` | `cd test/smoke && uv run --project . pytest -v` | `SLIPSPACE_API_KEY=$KEY` (required), `SLIPSPACE_BASE_URL` (optional, defaults to `https://slipspace.donkeywork.dev`), `SLIPSPACE_SMOKE_QWEN=true` (optional), `SLIPSPACE_SMOKE_GPTOSS=true` (optional, enables `test_gptoss_translate.py`) | smoke | Post-deploy harness against a live gateway. Without `SLIPSPACE_API_KEY` everything skips. |
 | `clean` | `rm -f coverage.out coverage.html` | — | — | Drops coverage artefacts. |
 | `tools` | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` | — | — | One-shot installer for the lint toolchain. |
 
