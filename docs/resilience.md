@@ -262,7 +262,7 @@ The two mode names are aliases at the YAML level. The behaviour split is governe
 
 - **Default (`strict_weights: false`) — LBWF semantics.** On a retryable failure the orchestrator removes the failed target from the pool and re-rolls from what remains. The walk continues until a target commits or the pool is empty (same terminal handling as failover).
 
-- **`strict_weights: true` — canary mirroring.** The first selection wins or fails. No re-roll. The client sees the first attempt's outcome verbatim. Used when you *want* the under-weighted target's failure rate to surface — e.g. a 95/5 canary where suppressing the 5% pool's errors would defeat the purpose.
+- **`strict_weights: true` — canary mirroring.** The first selection wins or fails. No re-roll. The client sees the first attempt's **status code**; the upstream body is not passed through — a discarded attempt's bytes are dropped by the BufferingResponseWriter and the orchestrator writes the generic `http.StatusText` body for that status. The point is that the under-weighted target's failures surface as failures rather than being masked by a re-roll. Used when you *want* the under-weighted target's failure rate to surface — e.g. a 95/5 canary where suppressing the 5% pool's errors would defeat the purpose.
 
 ```mermaid
 flowchart TB
@@ -422,7 +422,7 @@ Per-attempt fields ([`contracts/connector/record.go`](../contracts/connector/rec
 ### Admin console
 
 - **`/policies`**: one card per resilience group, with the per-target weight table and a live circuit-breaker state badge per `(group, provider)`. Groups are editable from here — a "New group" button and a per-group "Edit" link open the group editor (`/groups/new`, `/groups/{name}/edit`), which writes through the CRUD endpoints under `/admin/api/v1/config/groups` and applies live (clone → validate → persist → Store.Replace).
-- **Live messages modal**: when an entry carries any attempts (`attempts.length > 0`), the modal renders a per-attempt breakdown table (target, outcome, status, duration) under the policy chip — a single-attempt orchestrated request shows a one-row table, not a hidden one.
+- **Telemetry request inspector**: when an entry carries any attempts (`attempts.length > 0`), the inspector renders a per-attempt breakdown table under the policy chip with four columns — attempt index, target, status code (falling back to the transport error string, then `—`), and outcome — so a single-attempt orchestrated request shows a one-row table, not a hidden one. Per-attempt duration is carried on the Record but is not rendered. The gateway admin console's live-messages view does not render the attempt history.
 
 The admin endpoint behind `/policies` is `GET /admin/api/v1/policies` — same auth shape as the rest of the console.
 

@@ -379,7 +379,7 @@ flowchart TB
     Mode -- "managed, target.Credential set" --> Set[credentialHeaderFor: set the<br/>provider/protocol header, drop<br/>the other credential headers]
 ```
 
-The same `resolveCredentialHeaders` mint site is reused for passthrough-family requests in `buildPassthroughDestination` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) line 241), so a `changeApiKey` override applies there too.
+The same `resolveCredentialHeaders` mint site is reused for passthrough-family requests in `buildPassthroughDestination` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) line 250, calling `resolveCredentialHeaders` at line 293), so a `changeApiKey` override applies there too.
 
 ### Gotchas
 

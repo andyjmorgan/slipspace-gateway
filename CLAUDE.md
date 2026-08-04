@@ -94,7 +94,6 @@ Keep the dep graph small. Approved deps:
 
 - `gopkg.in/yaml.v3` — YAML
 - `github.com/google/uuid` — UUIDs
-- `github.com/knadh/koanf/v2` — layered config (YAML + env)
 - `go.opentelemetry.io/otel` + exporters — OTel
 - `github.com/prometheus/client_golang` — Prometheus registry the OTel→Prom bridge requires (`otelprom` needs a `prometheus.Registerer`); also supplies the `Go` + `Process` collectors on `/metrics`
 - `github.com/klauspost/compress/zstd` — segment compression in the connector spool (`internal/spool/segment.go`)
@@ -106,6 +105,7 @@ Keep the dep graph small. Approved deps:
 Conditionally approved (decide on first use):
 
 - `github.com/go-chi/chi/v5` — routing. Not currently imported, and unlikely to be — stdlib `http.ServeMux` covers current needs. Drop candidate.
+- `github.com/knadh/koanf/v2` — layered config. Not currently imported and unlikely to be — YAML is `gopkg.in/yaml.v3` and env resolution is hand-rolled in `internal/config/env.go`. Drop candidate.
 
 Anything else needs justification in the PR description.
 
@@ -113,7 +113,7 @@ Anything else needs justification in the PR description.
 
 - **DI containers** — explicit constructor injection only. Construct a `Server` struct with all its deps at startup; per-request state lives on `context.Context`.
 - **`testify`** — stdlib `testing` is enough.
-- **`init()` for non-trivial work** — registration of polymorphic factories is the only acceptable use.
+- **`init()` for non-trivial work** — registration into a package-level registry is the only acceptable use: polymorphic model factories (`protocols/`) and cross-provider translator registration (`internal/translate/anthropic_openai.go`, `internal/translate/openai_anthropic.go`). One further exception exists by exemption: `internal/observability/livefeed/compress.go` builds the zstd encoder/decoder singletons in `init` and panics on failure. Anything else belongs in an explicit constructor.
 - **Global mutable state** — package-level vars must be `const` or read-only after init.
 - **`interface{}` / `any` in public APIs** — strong typing or generic interfaces; `any` is a code smell unless at a serialization boundary.
 - **Reflection in hot paths** — confined to the `models` package: the `DynamicProperties` marshaller (`models/dynamic.go`) and the unmapped-field walker (`models/unmapped.go`, called per-request from `internal/observability/unmapped`). No other hand-written package imports `reflect`; generated code under `gen/` (protobuf runtime, e.g. `gen/slipspace/detect/v1/detect.pb.go`) is exempt.
@@ -152,7 +152,7 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 - `internal/` — engines: `proxy` (includes the ReverseProxy-based forwarder, `forwarder.go`), `pipeline`, `middleware/{auth,bodycapture,rules,resilience,guardrails,sseframe,genaiattr,tokens}`, `config`, `selection` (v2 routing/binding resolution — replaced the old `keys`/`routing` packages in PR #150), `spool`, `connector`, `observability`, `server`, plus `admin`, `agentroute`, `arbiter`, `bodypatch`, `contentredact`, `headers`, `httperr`, `pricing`, `safego`, `translate`, `version`.
 - `protocols/` (PUBLIC) — on-the-wire models, one per protocol a provider speaks: `openai/{chat,responses,models}`, `anthropic/{messages,models}`, `gemini/{content,models}`.
 - `models/` (PUBLIC) — shared multimodal types + `dynamic.go` (`DynamicProperties`).
-- `contracts/` (PUBLIC) — control-plane schemas: `rules`, `resilience`, `config`, `connector`.
+- `contracts/` (PUBLIC) — control-plane schemas: `config`, `rules`, `resilience`, `connector`, `admin`, `advise`, `events`.
 - `web/` SPA source, `deploy/{docker,compose,quickstart,detectors}`, `test/{e2e,fixtures,python,smoke}`, `.github/workflows/`.
 
 ### Layout rules
@@ -195,7 +195,7 @@ Unit (internal correctness) and E2E (wire contract through the real binary) are 
 
 - **Never hardcode real model names as negative/no-match probes.** `claude-haiku-4-5` / `gemini-2.0-flash-001` break when the policy library grows a rule matching that prefix (happened twice in v1.0.2). Use synthetic names like `nomatch-internal` / `unmapped-model`.
 - **Tests reading captured records sort by `(ts_ns, instance_id, seq)`, never receive order** — see invariant #8.
-- Stdlib `testing` only — hand-rolled stubs, no `gomock`/`mockery`/`testify`. `-race` everywhere; `goleak` at teardown. Fuzz every `UnmarshalJSON` + the YAML loader + route detection (corpora in `testdata/fuzz/`). Real-over-mock (testcontainers MinIO beats a fake `S3Putter`).
+- Stdlib `testing` only — hand-rolled stubs, no `gomock`/`mockery`/`testify`. `-race` everywhere; `goleak.VerifyTestMain` at teardown in packages that own background goroutines (currently `internal/middleware/guardrails`, `internal/observability`, `internal/pipeline`, `test/e2e/streaming`) — add it whenever a new package spawns workers. Fuzz every `UnmarshalJSON` + the YAML loader + route detection (corpora in `testdata/fuzz/`). Real-over-mock (testcontainers MinIO beats a fake `S3Putter`).
 
 ## Protocol contracts — perpetual maintenance
 
@@ -208,11 +208,7 @@ The `protocols/` packages model the on-the-wire shapes of OpenAI, Anthropic, and
 
 ## E2E requirements
 
-E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`: `PostJSON`/`PostStream`/`Get`/`ExpectEvent`/`ExpectNoEvent`, plus an in-process httptest webhook capture server) and the full `(provider, endpoint) × variant × auth` matrix live in `test/e2e/README.md`. Every case asserts:
-
-- HTTP status correct; body shape round-trips via the typed `providers` package.
-- Captured connector record matches the **post-rule** labels + body envelope; **no** record when the configuration has no `connector_bindings` or sampling/filter excludes the request.
-- `X-Slipspace-Correlation-Id` set on response; `X-Slipspace-Session-Id` echoed when sent.
+E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`: `PostJSON`/`PostStream`/`Get`/`ExpectEvent`/`ExpectNoEvent`, plus an in-process httptest webhook capture server) and the full `(provider, endpoint) × variant × auth` matrix live in `test/e2e/README.md`. Every case asserts HTTP status and body shape (round-tripped via the typed `protocols/` packages). Connector-record assertions (post-rule labels + body envelope, and **no** record when the configuration has no `connector_bindings` or sampling excludes the request) and response-header assertions (`X-Slipspace-Correlation-Id` set, `X-Slipspace-Session-Id` echoed when sent) are owned by the dedicated suites — `test/e2e/reporting/`, `test/e2e/correlation/`, `test/e2e/rules/return_status_test.go` — rather than repeated in every provider case.
 
 ## Local dev
 
