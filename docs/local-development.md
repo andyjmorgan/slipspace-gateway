@@ -285,7 +285,7 @@ Every target in the `Makefile`, in the order they appear there:
 | `py-compat` | builds `/tmp/slipspace-gateway` + `/tmp/slipspace-mockllm`, then `cd test/python && uv run --project . pytest -v` | — | wire-compat | Runs the official OpenAI / Anthropic / Gemini SDKs against a spawned stack. Release-blocking. |
 | `smoke` | `cd test/smoke && uv run --project . pytest -v` | `SLIPSPACE_API_KEY=$KEY` (required), `SLIPSPACE_BASE_URL` (optional, defaults to `https://slipspace.donkeywork.dev`), `SLIPSPACE_SMOKE_QWEN=true` (optional), `SLIPSPACE_SMOKE_GPTOSS=true` (optional, enables `test_gptoss_translate.py`) | smoke | Post-deploy harness against a live gateway. Without `SLIPSPACE_API_KEY` everything skips. |
 | `clean` | `rm -f coverage.out coverage.html` | — | — | Drops coverage artefacts. |
-| `tools` | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` | — | — | One-shot installer for the lint toolchain. |
+| `tools` | `go install golangci-lint + tygo@v0.2.21 + buf@v1.47.2 + protoc-gen-go + protoc-gen-go-grpc` | — | — | One-shot installer for the lint and codegen toolchain (golangci-lint for `make lint`; tygo/buf/protoc-gen-go/protoc-gen-go-grpc for `make generate`). |
 
 Total: 22 `.PHONY` targets, plus `web-telemetry` (a real target that isn't declared phony).
 

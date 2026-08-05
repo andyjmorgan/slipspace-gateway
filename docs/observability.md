@@ -362,7 +362,7 @@ The 200→503 flip is the contract the kubelet's eviction loop reads. The shutdo
 
 The transition is one-way per process — there is no "undrain" path. A pod that has begun draining stays draining until it exits.
 
-`Content-Type` is `text/plain; charset=utf-8` and the body is two bytes plus a newline (`ok\n`) or eight plus a newline (`draining\n`), so the probe's curl wire cost is negligible. If a request `ctx` is already cancelled when the handler runs (client disconnect, upstream timeout — rare on a probe path), the handler returns early without writing the body to avoid noisy "use of closed connection" log noise.
+The 200 `ok\n` and 503 `draining\n` responses carry `Content-Type: text/plain; charset=utf-8`, and the body is two bytes plus a newline (`ok\n`) or eight plus a newline (`draining\n`), so the probe's curl wire cost is negligible. The 405 response sets only `Allow: GET` — it returns before the `Content-Type` header is set ([`internal/server/healthz.go:33-37`](../internal/server/healthz.go)) and has no body. If a request `ctx` is already cancelled when the handler runs (client disconnect, upstream timeout — rare on a probe path), the handler returns early without writing the body to avoid noisy "use of closed connection" log noise.
 
 The admin listener has no health endpoint of its own — its lifecycle is bound to the same root context as the data plane, and `kubectl` style introspection against the admin port is rarely useful. Probe the data plane; the admin port's readiness is implied.
 

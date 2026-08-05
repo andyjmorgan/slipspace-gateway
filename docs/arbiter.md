@@ -234,7 +234,7 @@ The binary reads only two environment variables; everything else lives in the YA
 
 | Variable | Purpose | Source |
 |---|---|---|
-| `SLIPSPACE_ARBITER_CONFIG` | Default path to the config YAML when `-config` is not passed | `main.go:51` |
+| `SLIPSPACE_ARBITER_CONFIG` | Default path to the config YAML when `-config` is not passed | `main.go:52` |
 | `LOG_LEVEL` | `debug` / `info` (default) / `warn` / `error` for the `slog` JSON handler | `main.go:61` |
 
 Flags: `-config <path>` (overrides `SLIPSPACE_ARBITER_CONFIG`) and `-version` (print version and exit). The service logs JSON to **stderr** with a fixed `service=arbiter` + `version` header (`main.go:268-272`).

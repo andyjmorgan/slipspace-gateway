@@ -319,7 +319,7 @@ The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts
 > source checkout or build toolchain. The composes in *this* section build from
 > source and target the mock LLM for development.
 
-The committed [`docker-compose.yaml`](../docker-compose.yaml) brings up the gateway image + the published `slipspace-mockllm`, mounted against `config-dev/` for the policy bundle. This is the path that mirrors production layout most closely — the same image, the same mount conventions, the same env vars.
+The committed [`docker-compose.yaml`](../docker-compose.yaml) brings up the gateway image + the Go mock LLM built locally from `deploy/docker/Dockerfile.mockllm` (tagged `slipspace-mockllm:dev`), mounted against `config-dev/` for the policy bundle. This is the path that mirrors production layout most closely — the same image, the same mount conventions, the same env vars.
 
 ```sh
 make dev-compose          # builds + starts gateway, mockllm
@@ -343,7 +343,7 @@ Two overlays sit alongside the committed compose. Both are stacked with `-f dock
 
 | Overlay | Tracked? | Purpose |
 |---|---|---|
-| `docker-compose.dev.yaml` | gitignored | Local mock-LLM override. Sample at [`docker-compose.dev.yaml.example`](../docker-compose.dev.yaml.example) — copy + edit. Two common shapes: build the in-repo Go `cmd/mockllm` locally, or point at the legacy C# mock from a sibling workspace. The committed compose always references the published `ghcr.io/andyjmorgan/slipspace-mockllm` image so CI and onboarding work out of the box. |
+| `docker-compose.dev.yaml` | gitignored | Local mock-LLM override. Sample at [`docker-compose.dev.yaml.example`](../docker-compose.dev.yaml.example) — copy + edit. Two common shapes: build the in-repo Go `cmd/mockllm` locally, or point at the legacy C# mock from a sibling workspace. The committed compose builds the in-repo Go mock from `deploy/docker/Dockerfile.mockllm` as `slipspace-mockllm:dev`, so CI and onboarding work out of the box without a GHCR pull; the published `ghcr.io/andyjmorgan/slipspace-mockllm` image is consumed only by `deploy/quickstart/compose.smoke.yaml`. |
 | [`docker-compose.real.yaml`](../docker-compose.real.yaml) | committed | Swaps the mock-pointed `config-dev` mount for `config-dev.real`, which `scripts/dev-real-config.sh` materialises from `.env`. Reaches `api.openai.com` / `api.anthropic.com` / `generativelanguage.googleapis.com` plus a host-port-forwarded ollama. Driven by `make dev-real`. |
 
 ### Pure-Go dev loop

@@ -148,7 +148,7 @@ The blob is built by `buildSpanEvent` ([`ingest/extract.go`](../internal/arbiter
 
 The fired-rule **lifecycle** beyond names (`RuleChain` — actions applied, terminated, error) and the resilience `Attempts` are also carried in the blob when the gateway emits them, decoded into `RuleChainEntry` / `AttemptDetail`. Tool results are captured as `tool_call_response` message parts inside `gen_ai_content` across all four protocols.
 
-Query tags inside the blob with the JSONB operators — e.g. `WHERE span_event->'tags' @> '["prod"]'` (GIN-indexed) or `jsonb_array_elements_text(span_event->'rules_fired')` to unnest fired rules. An empty `tags` / `rules_fired` simply means none were applied.
+Query tags via the promoted `tags text[]` column — e.g. `WHERE tags @> ARRAY['prod']` (GIN-indexed by `request_events_tags_arr`, migration 12); the blob copy under `span_event->'tags'` is retained for history but is no longer the query path. `rules_fired` still lives inside the blob: use `span_event->'rules_fired' @> '["name"]'` or `jsonb_array_elements_text(span_event->'rules_fired')`. An empty `tags` / `rules_fired` simply means none were applied.
 
 ---
 

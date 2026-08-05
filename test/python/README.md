@@ -78,7 +78,8 @@ The mock is published as `ghcr.io/andyjmorgan/slipspace-mockllm` by
 `.github/workflows/release.yaml`, but the compat suite deliberately spawns the
 locally built Go binary instead: it must test the tree under change, not the
 last released image. `conftest.py` always rebuilds `cmd/gateway` and
-`cmd/mockllm` before the session (`test/python/conftest.py:89-91`). The Go E2E
+`cmd/mockllm` before the session (`test/python/conftest.py:88-100` — the
+`_ensure_binary` helper; the `go build` subprocess call is at lines 98-99). The Go E2E
 harness in `test/e2e/harness/` follows the same pattern.
 
 ## SDK version policy
