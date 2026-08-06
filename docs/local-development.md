@@ -126,7 +126,7 @@ admin:
 
 ### `policy.yaml`
 
-This file is **v2-shaped** (`contracts/config/model.go`): a configuration carries `credentials` (one key per provider), `bindings` (the router as data — `(protocol, models)` → `provider` or `group`), `passthrough_bindings` (path-pattern families), `rule_names`, and `tags`. The v1 `upstream_credentials` / `resilience_name` fields are gone — routing is bindings. Rules can still retarget the request: `changeProvider` (routing-affecting; re-resolved via `selection.ResolveTarget` on post-rule state), `changeModelName`, and `changeApiKey` are all live actions; only `changeUrl` and `useResiliencePolicy` are inert. The remaining rule actions are request/response transforms (tags, header sets, body rewrites). It loads two configurations (`dev`, `production`) plus their api keys and rules:
+This file is **v2-shaped** (`contracts/config/model.go`): a configuration carries `credentials` (one key per provider), `bindings` (the router as data — `(protocol, models)` → `provider` or `group`), `passthrough_bindings` (path-pattern families), `rule_names`, and `tags`. The v1 `upstream_credentials` / `resilience_name` fields are gone — routing is bindings. Rules can still retarget the request: `changeModelName` and `changeApiKey` are live actions — `changeApiKey` is honoured at the single credential mint site (`cmd/gateway/destination.go::resolveCredentialHeaders`). Three authorable actions are inert in v2: `changeUrl` (`state.UpstreamURL` is written but never read — `applyStateOverlays`, `cmd/gateway/pipeline.go:306`, touches only `QueryAdditions` and `OutgoingHeaders`), `useResiliencePolicy` (superseded by the binding-derived `ResilienceConfig`), and a rule-authored `changeProvider` (overwritten on every attempt by `buildAttemptState`, `internal/middleware/resilience/middleware.go:691`, which re-applies the selected target's own `providerSwitchActions`). Model-keyed redirect is expressed as a binding (`models` pattern -> `provider`) on the Configuration, not as a `changeProvider` rule; `ChangeProviderAction` survives only as the orchestrator's internal per-attempt primitive. See CLAUDE.md load-bearing invariant #7. The remaining rule actions are request/response transforms (tags, header sets, body rewrites). It loads two configurations (`dev`, `production`) plus their api keys and rules:
 
 ```yaml
 configurations:
@@ -204,12 +204,13 @@ No `gateway.yaml`. Server-level configuration (HTTP bind, spool root, log level,
 go run ./cmd/mockllm --port 5555 --responses ./my-responses.yaml
 ```
 
-Two flags:
+Three flags:
 
 | Flag | Default | Notes |
 |---|---|---|
 | `--port` | `5555` | TCP port to listen on. Bind is `0.0.0.0`. |
 | `--responses` | unset | Optional YAML or JSON file of canned responses to seed the global pool at startup. File extension picks the decoder (`.yaml` / `.yml` / `.json`). No seed fixture ships in the repo — point this at your own file (e.g. `./my-responses.yaml`) or omit the flag. |
+| `--version` | — | Print `mockllm <version>` to stdout and exit 0. |
 
 `LOG_LEVEL` env var (debug / info / warn / error) controls the slog level.
 
@@ -286,6 +287,7 @@ Every target in the `Makefile`, in the order they appear there:
 | `smoke` | `cd test/smoke && uv run --project . pytest -v` | `SLIPSPACE_API_KEY=$KEY` (required), `SLIPSPACE_BASE_URL` (optional, defaults to `https://slipspace.donkeywork.dev`), `SLIPSPACE_SMOKE_QWEN=true` (optional), `SLIPSPACE_SMOKE_GPTOSS=true` (optional, enables `test_gptoss_translate.py`) | smoke | Post-deploy harness against a live gateway. Without `SLIPSPACE_API_KEY` everything skips. |
 | `clean` | `rm -f coverage.out coverage.html` | — | — | Drops coverage artefacts. |
 | `tools` | `go install golangci-lint + tygo@v0.2.21 + buf@v1.47.2 + protoc-gen-go + protoc-gen-go-grpc` | — | — | One-shot installer for the lint and codegen toolchain (golangci-lint for `make lint`; tygo/buf/protoc-gen-go/protoc-gen-go-grpc for `make generate`). |
+| `generate` | `buf generate` + `tygo generate` | — | — | Codegen pipeline: the detector contract proto -> Go under `gen/`, then the Go contracts -> frontend TypeScript under `web/src/lib/generated/`. Both outputs are committed; CI fails on a stale diff. Install the toolchain with `make tools`. |
 
 Total: 22 `.PHONY` targets, plus `web-telemetry` (a real target that isn't declared phony).
 

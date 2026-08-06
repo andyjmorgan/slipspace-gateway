@@ -187,6 +187,8 @@ var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
         "server_tool_use":   func() ContentBlock { return &ServerToolUseBlock{} },
         "web_search_tool_result": func() ContentBlock { return &WebSearchToolResultBlock{} },
         "web_fetch_tool_result":  func() ContentBlock { return &WebFetchToolResultBlock{} },
+        "tool_search_tool_result": func() ContentBlock { return &ToolSearchToolResultBlock{} },
+        "tool_reference":          func() ContentBlock { return &ToolReferenceBlock{} },
         "thinking":          func() ContentBlock { return &ThinkingBlock{} },
         "redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
     },
