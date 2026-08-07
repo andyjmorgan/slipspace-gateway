@@ -200,7 +200,7 @@ Defaults (see [`internal/spool/options.go`](../internal/spool/options.go) `Break
 
 The breaker is independent of the spool record's `policy_ref` / `attempts` (those are *resilience policies on the upstream request path*, not on connector delivery). Two different abstractions, both called "circuit breaker" — one watches upstream providers per-request, the other watches connector destinations per-segment.
 
-The breaker state shows up on `Spool.Stats()` per track. There is no admin UI surface for it yet — operators read it via Prometheus when the gateway exposes those counters in a future release.
+The breaker state is tracked per track in `Spool.Stats()`, but the `Stats` map's value type (`trackStats`) is unexported and the method currently has no caller outside `internal/spool` — there is no admin UI, no `/metrics` gauge, and no operator-readable surface for breaker state today. Reading it requires a code change that exports the per-track stats or bridges them to an OTel meter.
 
 ---
 
@@ -291,7 +291,7 @@ Resilience does not complicate this. The captured payload mirrors the **client-v
 
 - [connectors.md](connectors.md) — the destination types, including the spool-backed `s3` / `azure_blob` split from real-time `webhook`.
 - [connector-bindings.md](connector-bindings.md) — the per-configuration sampling / filter / size-cap knobs that decide which records reach each connector.
-- [observability.md](observability.md) — `/metrics` exposes Go runtime and process collectors; per-track spool counters are surfaced via `Spool.Stats()`.
+- [observability.md](observability.md) — `/metrics` exposes Go runtime and process collectors; per-track spool counters exist in-process on `Spool.Stats()` only (unexported value type, no caller) and are not yet surfaced anywhere.
 - [environment-variables.md](environment-variables.md) — the full SLIPSPACE_* reference.
 - [deployment.md](deployment.md) — PVC mount for the spool root, K8s topology with destinations.
 - [`internal/spool/`](../internal/spool/) — implementation. `spool.go` is the entry point; `track.go` is the per-connector runtime; `manager.go` is the directory abstraction.

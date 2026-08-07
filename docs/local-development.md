@@ -196,7 +196,7 @@ No `gateway.yaml`. Server-level configuration (HTTP bind, spool root, log level,
 
 ## Mock LLM
 
-`cmd/mockllm` is a Go HTTP server that impersonates OpenAI, Anthropic, and Gemini. It replaces a legacy C# mock that used to live in a sibling workspace (`~/Source/Repos/airia-llmock/`) — the Go rewrite is the committed source of truth and the only mock that's published as a container image (`ghcr.io/andyjmorgan/slipspace-mockllm`, though the dev compose still builds from source).
+`cmd/mockllm` is a Go HTTP server that impersonates OpenAI, Anthropic, and Gemini. It replaces a legacy C# mock that lived outside this repo — the Go rewrite is the committed source of truth and the only mock that's published as a container image (`ghcr.io/andyjmorgan/slipspace-mockllm`, though the dev compose still builds from source).
 
 ### Invocation
 

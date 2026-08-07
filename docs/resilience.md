@@ -67,7 +67,7 @@ flowchart LR
 
 Selection synthesises the orchestrator's input from the chosen binding and stashes it on the request context; rules then run as pure request/response transforms over that selected state; the resilience middleware reads the synthesised config directly (it does not look a policy up by name). A single-provider binding is synthesised as a degenerate `ModeNone` group of one target, so single-shot and orchestrated requests flow through the same machinery. Because rules run **before** the orchestrator, rule conditions see the binding-selected provider/model — the orchestrator's per-attempt provider switch happens later, downstream of rules.
 
-For each attempt the orchestrator wraps the response writer in a `BufferingResponseWriter` so it can discard a failing attempt's bytes before the next one runs. The buffer flushes to the real `http.ResponseWriter` only on commit — the first non-retryable outcome.
+For each attempt the orchestrator wraps the response writer in a `BufferingResponseWriter`. It intercepts only `WriteHeader` — body bytes are never buffered. The status line is the commit-or-discard decision point: a status in the attempt's retry set (or a transport error with no `WriteHeader` at all) is swallowed and `Committed` stays false, so the next attempt can run; any other status passes straight through to the real `http.ResponseWriter` and commits, after which body writes stream through untouched.
 
 ---
 
@@ -249,7 +249,7 @@ flowchart TB
     CBCheck -- yes --> Run[switch provider<br/>+ apply alias to clone of state]
     Run --> Forward[next.ServeHTTP<br/>via BufferingResponseWriter]
     Forward --> Decide{ShouldRetry?}
-    Decide -- no --> Commit[flush buf to client<br/>record success]
+    Decide -- no --> Commit[status commits,<br/>body streams to client<br/>record success]
     Decide -- yes --> Record2[record failure_status<br/>or transport_error]
     Record2 --> Loop
 ```
@@ -262,7 +262,7 @@ The two mode names are aliases at the YAML level. The behaviour split is governe
 
 - **Default (`strict_weights: false`) — LBWF semantics.** On a retryable failure the orchestrator removes the failed target from the pool and re-rolls from what remains. The walk continues until a target commits or the pool is empty (same terminal handling as failover).
 
-- **`strict_weights: true` — canary mirroring.** The first selection wins or fails. No re-roll. The client sees the first attempt's **status code**; the upstream body is not passed through — a discarded attempt's bytes are dropped by the BufferingResponseWriter and the orchestrator writes the generic `http.StatusText` body for that status. The point is that the under-weighted target's failures surface as failures rather than being masked by a re-roll. Used when you *want* the under-weighted target's failure rate to surface — e.g. a 95/5 canary where suppressing the 5% pool's errors would defeat the purpose.
+- **`strict_weights: true` — canary mirroring.** The first selection wins or fails. No re-roll. The client sees the first attempt's **status code**; the upstream body is not passed through — once the status is discarded the BufferingResponseWriter silently absorbs the attempt's subsequent body writes, and the orchestrator writes the generic `http.StatusText` body for that status. The point is that the under-weighted target's failures surface as failures rather than being masked by a re-roll. Used when you *want* the under-weighted target's failure rate to surface — e.g. a 95/5 canary where suppressing the 5% pool's errors would defeat the purpose.
 
 ```mermaid
 flowchart TB

@@ -4,7 +4,11 @@ The `protocols/` packages model the on-the-wire shapes of the three providers
 SlipSpace fronts. Each package mirrors one wire surface of one provider and exists
 so the gateway can parse a request, apply rules, and re-marshal it without
 dropping fields. Every exported struct embeds `models.DynamicProperties` and
-every polymorphic union has an `UnknownX` fallback — the round-tripping
+every polymorphic union has an `UnknownX` fallback — with one deliberate
+exception: `MessageContent` (`protocols/openai/chat/content_parts.go:328-330`)
+wraps a bare `json.RawMessage` and embeds nothing, because it retains the
+provider's string-or-array bytes verbatim and is therefore lossless by
+construction rather than by unknown-field capture. The round-tripping
 machinery is documented in [models.md](models.md); this page is the catalogue of
 the **notable concrete types** per provider.
 
