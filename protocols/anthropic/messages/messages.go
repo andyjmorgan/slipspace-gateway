@@ -246,6 +246,20 @@ type Tool struct {
 	// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
 	MaxUses *int `json:"max_uses,omitempty"`
 
+	// AllowedDomains restricts an Anthropic server tool (web_search /
+	// web_fetch, versions 20250305+) to results from these domains only.
+	// Entries are bare domains with an optional path (no scheme). Mutually
+	// exclusive with BlockedDomains — the API 400s when both are set. Nil
+	// leaves results unrestricted.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+
+	// BlockedDomains excludes results from these domains on an Anthropic
+	// server tool (web_search / web_fetch, versions 20250305+). Mutually
+	// exclusive with AllowedDomains — the API 400s when both are set.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+	BlockedDomains []string `json:"blocked_domains,omitempty"`
+
 	// CacheControl marks the tool definition as eligible for prompt
 	// caching at the configured tier.
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
@@ -306,12 +320,21 @@ func (m Metadata) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(m
 // ThinkingConfig configures extended thinking on supported Anthropic models.
 // Unknown fields round-trip via the embedded DynamicProperties.
 type ThinkingConfig struct {
-	// Type is the thinking mode ("enabled", "disabled").
+	// Type is the thinking mode ("adaptive", "enabled", "disabled").
+	// "adaptive" is the primary mode on current models; "enabled" +
+	// budget_tokens is deprecated on Claude 4.6 and rejected (400) on 4.7+.
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/thinking#configuring-thinking
 	Type string `json:"type"`
 
 	// BudgetTokens caps tokens spent on thinking; only meaningful when
 	// Type == "enabled".
 	BudgetTokens *int `json:"budget_tokens,omitempty"`
+
+	// Display controls whether summarized thinking text is returned
+	// ("summarized") or thinking blocks arrive with an empty thinking field
+	// ("omitted"). Invalid when Type == "disabled".
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display
+	Display string `json:"display,omitempty"`
 
 	models.DynamicProperties
 }

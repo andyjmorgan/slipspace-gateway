@@ -500,6 +500,10 @@ func TestChat_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(URLCitation{}),
 		reflect.TypeOf(UrlCitationAnnotation{}),
 		reflect.TypeOf(UnknownAnnotation{}),
+		reflect.TypeOf(ErrorResponse{}),
+		reflect.TypeOf(ErrorObject{}),
+		reflect.TypeOf(ReasoningOptions{}),
+		reflect.TypeOf(ThinkOption{}),
 	}
 	for _, rt := range types {
 		t.Run(rt.Name(), func(t *testing.T) {

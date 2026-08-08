@@ -570,6 +570,146 @@ func TestTool_ServerToolFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestThinkingConfig_DisplayRoundTrip covers thinking.display — the
+// summarized/omitted display control — decoding typed alongside both the
+// "adaptive" and legacy "enabled" modes with nothing left in Extra.
+func TestThinkingConfig_DisplayRoundTrip(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      []byte
+		display string
+	}{
+		{
+			name:    "adaptive summarized",
+			in:      []byte(`{"display":"summarized","type":"adaptive"}`),
+			display: "summarized",
+		},
+		{
+			name:    "enabled omitted with budget",
+			in:      []byte(`{"budget_tokens":2048,"display":"omitted","type":"enabled"}`),
+			display: "omitted",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg ThinkingConfig
+			if err := json.Unmarshal(tc.in, &cfg); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if cfg.Display != tc.display {
+				t.Fatalf("display = %q, want %q", cfg.Display, tc.display)
+			}
+			if _, ok := cfg.Extra["display"]; ok {
+				t.Fatalf("display leaked into Extra instead of typed Display: %v", cfg.Extra)
+			}
+			out, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !jsonValueEqual(t, tc.in, out) {
+				t.Fatalf("round-trip drift\n in: %s\nout: %s", tc.in, out)
+			}
+		})
+	}
+}
+
+// TestThinkingConfig_UnknownSiblingRoundTrip confirms a not-yet-typed sibling
+// of display still lands in DynamicProperties.Extra and round-trips intact.
+func TestThinkingConfig_UnknownSiblingRoundTrip(t *testing.T) {
+	in := []byte(`{"display":"omitted","future_knob":{"depth":2},"type":"adaptive"}`)
+	var cfg ThinkingConfig
+	if err := json.Unmarshal(in, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.Display != "omitted" {
+		t.Fatalf("display = %q", cfg.Display)
+	}
+	if _, ok := cfg.Extra["future_knob"]; !ok {
+		t.Fatalf("future_knob missing from Extra: %v", cfg.Extra)
+	}
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("round-trip drift\n in: %s\nout: %s", in, out)
+	}
+}
+
+// TestTool_DomainFilterFieldsRoundTrip covers the web-search server-tool
+// domain filters allowed_domains and blocked_domains (mutually exclusive on
+// the wire, so exercised in separate cases) — both decode typed with nothing
+// left in Extra.
+func TestTool_DomainFilterFieldsRoundTrip(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      []byte
+		field   string
+		domains []string
+	}{
+		{
+			name:    "allowed_domains",
+			in:      []byte(`{"allowed_domains":["example.com","trusteddomain.org/blog"],"max_uses":5,"name":"web_search","type":"web_search_20250305"}`),
+			field:   "allowed_domains",
+			domains: []string{"example.com", "trusteddomain.org/blog"},
+		},
+		{
+			name:    "blocked_domains",
+			in:      []byte(`{"blocked_domains":["untrustedsource.com"],"name":"web_search","type":"web_search_20250305"}`),
+			field:   "blocked_domains",
+			domains: []string{"untrustedsource.com"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var tool Tool
+			if err := json.Unmarshal(tc.in, &tool); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := tool.AllowedDomains
+			if tc.field == "blocked_domains" {
+				got = tool.BlockedDomains
+			}
+			if !reflect.DeepEqual(got, tc.domains) {
+				t.Fatalf("%s = %v, want %v", tc.field, got, tc.domains)
+			}
+			if _, ok := tool.Extra[tc.field]; ok {
+				t.Fatalf("%s leaked into Extra instead of typed field: %v", tc.field, tool.Extra)
+			}
+			out, err := json.Marshal(tool)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !jsonValueEqual(t, tc.in, out) {
+				t.Fatalf("round-trip drift\n in: %s\nout: %s", tc.in, out)
+			}
+		})
+	}
+}
+
+// TestTool_UnknownSiblingRoundTrip confirms a not-yet-typed sibling of the
+// domain filters still lands in DynamicProperties.Extra and round-trips.
+func TestTool_UnknownSiblingRoundTrip(t *testing.T) {
+	in := []byte(`{"allowed_domains":["example.com"],"name":"web_search","type":"web_search_20250305","user_location":{"city":"San Francisco","type":"approximate"}}`)
+	var tool Tool
+	if err := json.Unmarshal(in, &tool); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(tool.AllowedDomains, []string{"example.com"}) {
+		t.Fatalf("allowed_domains = %v", tool.AllowedDomains)
+	}
+	if _, ok := tool.Extra["user_location"]; !ok {
+		t.Fatalf("user_location missing from Extra: %v", tool.Extra)
+	}
+	out, err := json.Marshal(tool)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !jsonValueEqual(t, in, out) {
+		t.Fatalf("round-trip drift\n in: %s\nout: %s", in, out)
+	}
+}
+
 func TestMessages_AllExportedFieldsHaveJSONTag(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeOf(MessagesRequest{}),

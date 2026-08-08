@@ -113,6 +113,119 @@ func TestResponsesResponse_IncompleteWithReasoning(t *testing.T) {
 	roundTripJSON(t, in, &resp)
 }
 
+func TestResponsesResponse_ReasoningEncryptedContent(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+	}{
+		{
+			// include=["reasoning.encrypted_content"] / ZDR stateless
+			// reasoning: the reasoning item carries the encrypted trace.
+			name: "populated",
+			in: []byte(`{` +
+				`"created_at":1700000000,` +
+				`"id":"resp_enc",` +
+				`"model":"gpt-5.3-codex",` +
+				`"object":"response",` +
+				`"output":[{"encrypted_content":"gAAAAABz9k…redacted…==","id":"rs_1","summary":[],"type":"reasoning"}],` +
+				`"status":"completed"` +
+				`}`),
+		},
+		{
+			// OpenAI emits encrypted_content as explicit null when not
+			// populated; the null must survive the round trip.
+			name: "null",
+			in: []byte(`{` +
+				`"created_at":1700000000,` +
+				`"id":"resp_enc_null",` +
+				`"model":"o4-mini",` +
+				`"object":"response",` +
+				`"output":[{"encrypted_content":null,"id":"rs_2","summary":[],"type":"reasoning"}],` +
+				`"status":"completed"` +
+				`}`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var resp ResponsesResponse
+			if err := json.Unmarshal(tc.in, &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(resp.Output) != 1 || resp.Output[0].Type != "reasoning" {
+				t.Fatalf("output = %+v", resp.Output)
+			}
+			if len(resp.Output[0].EncryptedContent) == 0 {
+				t.Fatalf("encrypted_content not captured: %+v", resp.Output[0])
+			}
+			if len(resp.Output[0].Extra) != 0 {
+				t.Fatalf("encrypted_content leaked into Extra: %v", resp.Output[0].Extra)
+			}
+			roundTripJSON(t, tc.in, &resp)
+		})
+	}
+}
+
+func TestResponsesResponse_MessagePhase(t *testing.T) {
+	cases := []struct {
+		name  string
+		phase string
+	}{
+		{name: "commentary", phase: "commentary"},
+		{name: "final_answer", phase: "final_answer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := []byte(`{` +
+				`"created_at":1700000000,` +
+				`"id":"resp_phase",` +
+				`"model":"gpt-5.3-codex",` +
+				`"object":"response",` +
+				`"output":[{"content":[{"text":"Working on it.","type":"output_text"}],"id":"msg_1","phase":"` + tc.phase + `","role":"assistant","status":"completed","type":"message"}],` +
+				`"status":"completed"` +
+				`}`)
+			var resp ResponsesResponse
+			if err := json.Unmarshal(in, &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(resp.Output) != 1 || resp.Output[0].Phase != tc.phase {
+				t.Fatalf("phase = %q, output = %+v", resp.Output[0].Phase, resp.Output)
+			}
+			roundTripJSON(t, in, &resp)
+		})
+	}
+}
+
+func TestStreamEvent_OutputItemDoneReasoningEncryptedContent(t *testing.T) {
+	in := []byte(`{` +
+		`"item":{"encrypted_content":"gAAAAABstream==","id":"rs_9","phase":"commentary","summary":[],"type":"reasoning"},` +
+		`"output_index":0,` +
+		`"sequence_number":4,` +
+		`"type":"response.output_item.done"` +
+		`}`)
+	e, err := UnmarshalStreamEvent(in)
+	if err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	done, ok := e.(*OutputItemDoneEvent)
+	if !ok {
+		t.Fatalf("event type = %T", e)
+	}
+	var item OutputItem
+	if err := json.Unmarshal(done.Item, &item); err != nil {
+		t.Fatalf("unmarshal item: %v", err)
+	}
+	if item.Type != "reasoning" || string(item.EncryptedContent) != `"gAAAAABstream=="` {
+		t.Fatalf("item = %+v", item)
+	}
+	if item.Phase != "commentary" {
+		t.Fatalf("phase = %q", item.Phase)
+	}
+	if len(item.Extra) != 0 {
+		t.Fatalf("fields leaked into Extra: %v", item.Extra)
+	}
+	roundTripJSON(t, in, e)
+}
+
 func TestResponsesRequest_CodexEchoedFields(t *testing.T) {
 	in := []byte(`{` +
 		`"include":["reasoning.encrypted_content"],` +

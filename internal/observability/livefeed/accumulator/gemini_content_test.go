@@ -118,6 +118,84 @@ func TestAccumulate_GeminiCodeExecutionAndGrounding(t *testing.T) {
 	}
 }
 
+// TestAccumulate_GeminiTopLevelErrorAndUnknownFields locks the fix for the
+// rollup dropping response-level data absorb() didn't explicitly copy: an
+// unknown top-level field (invariant #1's DynamicProperties safety net) on an
+// early chunk, a mid-stream top-level error envelope, and the typed
+// modelStatus member must all survive into the assembled rollup exactly as a
+// non-streaming decode would keep them. This replays the empirical scenario
+// from the rollup-fidelity audit (issue #476).
+func TestAccumulate_GeminiTopLevelErrorAndUnknownFields(t *testing.T) {
+	raw := []byte(strings.Join([]string{
+		`data: {"candidates":[{"content":{"parts":[{"text":"ab"}],"role":"model"},"index":0}],"someNewGoogleField":{"k":1},"modelStatus":{"modelStage":"LEGACY","retirementTime":"2026-09-24T00:00:00Z","message":"deprecated"}}`,
+		"",
+		`data: {"candidates":[{"content":{"parts":[{"text":"c"}],"role":"model"},"finishReason":"STOP","index":0}],"error":{"code":429,"message":"quota exceeded","status":"RESOURCE_EXHAUSTED"}}`,
+		"",
+		"",
+	}, "\n"))
+
+	got := Accumulate("gemini", "generate_content", raw)
+	if got.Partial {
+		t.Fatalf("unexpected partial reassembly")
+	}
+	var resp geminicontent.GenerateContentResponse
+	if err := json.Unmarshal(got.Assembled, &resp); err != nil {
+		t.Fatalf("assembled not parseable: %v\n%s", err, got.Assembled)
+	}
+	if len(resp.Error) == 0 || !strings.Contains(string(resp.Error), "RESOURCE_EXHAUSTED") {
+		t.Errorf("top-level error envelope dropped in reassembly: %s", got.Assembled)
+	}
+	if raw, ok := resp.Extra["someNewGoogleField"]; !ok || string(raw) != `{"k":1}` {
+		t.Errorf("unknown top-level field dropped in reassembly: %s", got.Assembled)
+	}
+	if resp.ModelStatus == nil || resp.ModelStatus.ModelStage != "LEGACY" ||
+		resp.ModelStatus.RetirementTime != "2026-09-24T00:00:00Z" {
+		t.Errorf("modelStatus dropped in reassembly: %s", got.Assembled)
+	}
+}
+
+// TestAccumulate_GeminiEmptyPlaceholderDoesNotWipeMetadata locks the
+// documented last-non-EMPTY-wins carry for candidate metadata: a wire
+// placeholder ("groundingMetadata":{} etc., or null) arriving on a later
+// chunk unmarshals to a non-nil pointer-to-zero-struct (or a 2-byte
+// RawMessage) and, pre-fix, overwrote the populated subtree — destroying
+// every citation and source URL for a grounded answer.
+func TestAccumulate_GeminiEmptyPlaceholderDoesNotWipeMetadata(t *testing.T) {
+	raw := []byte(strings.Join([]string{
+		`data: {"candidates":[{"content":{"parts":[{"text":"Grounded."}],"role":"model"},"index":0,` +
+			`"groundingMetadata":{"webSearchQueries":["q"],"groundingChunks":[{"web":{"uri":"https://ex.com","title":"t"}}]},` +
+			`"citationMetadata":{"citationSources":[{"uri":"https://ex.com"}]},` +
+			`"urlContextMetadata":{"urlMetadata":[{"retrievedUrl":"https://ex.com"}]}}]}`,
+		"",
+		`data: {"candidates":[{"content":{"parts":[{"text":" Done."}],"role":"model"},"finishReason":"STOP","index":0,` +
+			`"groundingMetadata":{},"citationMetadata":{},"urlContextMetadata":{}}],"usageMetadata":{"totalTokenCount":3}}`,
+		"",
+		"",
+	}, "\n"))
+
+	got := Accumulate("gemini", "generate_content", raw)
+	if got.Partial {
+		t.Fatalf("unexpected partial reassembly")
+	}
+	var resp geminicontent.GenerateContentResponse
+	if err := json.Unmarshal(got.Assembled, &resp); err != nil {
+		t.Fatalf("assembled not parseable: %v\n%s", err, got.Assembled)
+	}
+	if len(resp.Candidates) != 1 {
+		t.Fatalf("candidates = %+v", resp.Candidates)
+	}
+	c := resp.Candidates[0]
+	if gm := c.GroundingMetadata; gm == nil || len(gm.WebSearchQueries) != 1 || len(gm.GroundingChunks) != 1 {
+		t.Errorf("populated groundingMetadata wiped by empty placeholder: %s", got.Assembled)
+	}
+	if cm := c.CitationMetadata; cm == nil || len(cm.CitationSources) != 1 {
+		t.Errorf("populated citationMetadata wiped by empty placeholder: %s", got.Assembled)
+	}
+	if !strings.Contains(string(c.URLContextMetadata), "retrievedUrl") {
+		t.Errorf("populated urlContextMetadata wiped by empty placeholder: %s", got.Assembled)
+	}
+}
+
 // TestAccumulate_GeminiPreservesPartOrder locks the rollup-fidelity fix for
 // interleaved code-execution transcripts: text/code/text must round-trip in the
 // order Gemini streamed them, with consecutive text deltas merged but a text

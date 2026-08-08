@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 )
@@ -67,6 +68,16 @@ func FuzzChatCompletionRequest(f *testing.F) {
 		`{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],"temperature":0.5,"max_tokens":10}`,
 		`{"model":"m","messages":[{"role":"future","x":1}]}`,
 		`{"model":"m","messages":[],"new_field":1}`,
+		// Ollama OpenAI-compat: polymorphic think (bool | level string).
+		`{"model":"gemma4","messages":[],"think":true}`,
+		`{"model":"gemma4","messages":[],"think":false}`,
+		`{"model":"qwen3","messages":[],"think":"high"}`,
+		`{"model":"qwen3","messages":[],"think":"max"}`,
+		`{"model":"qwen3","messages":[],"think":null}`,
+		// vLLM/llama.cpp OpenAI-compat: open-ended chat_template_kwargs.
+		`{"model":"gemma4","messages":[],"chat_template_kwargs":{"enable_thinking":false}}`,
+		// Ollama OpenAI-compat: nested reasoning.effort next to the flat field.
+		`{"model":"gemma4","messages":[],"reasoning":{"effort":"low"},"reasoning_effort":"low"}`,
 		`{}`,
 	}
 	for _, s := range seeds {
@@ -104,6 +115,80 @@ func FuzzChatCompletionResponse(f *testing.F) {
 			return
 		}
 		if _, err := json.Marshal(resp); err != nil {
+			t.Fatalf("marshal after parse: %v\nin: %s", err, in)
+		}
+	})
+}
+
+// FuzzThinkOption drives the raw-preserving polymorphic think field: whatever
+// parses must marshal back equivalent to the input (the whole point of the
+// type), modulo the compaction + HTML escaping json.Marshal applies to
+// Marshaler output.
+func FuzzThinkOption(f *testing.F) {
+	seeds := []string{
+		`true`,
+		`false`,
+		`"high"`,
+		`"medium"`,
+		`"low"`,
+		`"max"`,
+		`"future-level"`,
+		`null`,
+		`0`,
+		`{"unexpected":"object"}`,
+		`[]`,
+		`""`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, in string) {
+		var th ThinkOption
+		if err := json.Unmarshal([]byte(in), &th); err != nil {
+			return
+		}
+		out, err := json.Marshal(th)
+		if err != nil {
+			t.Fatalf("marshal after parse: %v\nin: %s", err, in)
+		}
+		// json.Marshal compacts and HTML-escapes Marshaler output, so the
+		// exact expectation is HTMLEscape(Compact(in)) — anything else is a
+		// genuine round-trip drift.
+		var compacted bytes.Buffer
+		if err := json.Compact(&compacted, []byte(in)); err != nil {
+			t.Fatalf("compact input: %v\nin: %s", err, in)
+		}
+		var want bytes.Buffer
+		json.HTMLEscape(&want, compacted.Bytes())
+		if !bytes.Equal(out, want.Bytes()) {
+			t.Fatalf("raw drift: in %s want %s out %s", in, want.Bytes(), out)
+		}
+		// Projections must never panic; errors are fine.
+		_, _ = th.Bool()
+		_, _ = th.Level()
+	})
+}
+
+// FuzzErrorResponse drives the OpenAI error envelope, including compat-server
+// variants (numeric code, missing param) and unknown fields.
+func FuzzErrorResponse(f *testing.F) {
+	seeds := []string{
+		`{"error":{"message":"m","type":"invalid_request_error","param":null,"code":null}}`,
+		`{"error":{"message":"m","type":"invalid_request_error","param":"model","code":"model_not_found"}}`,
+		`{"error":{"message":"m","type":"api_error","code":500}}`,
+		`{"error":{"message":"m","type":"rate_limit_error","param":null,"code":null,"extra":1},"request_id":"req_1"}`,
+		`{"error":{}}`,
+		`{}`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, in string) {
+		var er ErrorResponse
+		if err := json.Unmarshal([]byte(in), &er); err != nil {
+			return
+		}
+		if _, err := json.Marshal(er); err != nil {
 			t.Fatalf("marshal after parse: %v\nin: %s", err, in)
 		}
 	})

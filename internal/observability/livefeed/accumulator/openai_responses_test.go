@@ -144,9 +144,9 @@ func TestAccumulate_OpenAIResponses_FoldsOutputItemDoneIntoEmptyCompleted(t *tes
 	if resp.Output[1].Name != "get_weather" || resp.Output[1].Arguments != `{"city":"SF"}` {
 		t.Errorf("function_call name/args not preserved: name=%q args=%q", resp.Output[1].Name, resp.Output[1].Arguments)
 	}
-	// encrypted_content rides DynamicProperties.Extra on the reasoning item.
-	if _, ok := resp.Output[0].Extra["encrypted_content"]; !ok {
-		t.Errorf("reasoning encrypted_content dropped; Extra=%v", resp.Output[0].Extra)
+	// encrypted_content is a typed OutputItem field and must survive the fold.
+	if got := string(resp.Output[0].EncryptedContent); got != `"ENC=="` {
+		t.Errorf("reasoning encrypted_content dropped; EncryptedContent=%q Extra=%v", got, resp.Output[0].Extra)
 	}
 }
 

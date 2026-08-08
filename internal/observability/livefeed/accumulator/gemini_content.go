@@ -3,6 +3,7 @@ package accumulator
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/andyjmorgan/slipspace-gateway/models"
 	geminicontent "github.com/andyjmorgan/slipspace-gateway/protocols/gemini/content"
@@ -18,12 +19,15 @@ import (
 // per-candidate merge across chunks: adjacent TextPart fragments
 // concatenate, FunctionCallPart entries land in arrival order, and
 // the last non-empty FinishReason / UsageMetadata / ModelVersion /
-// ResponseID / PromptFeedback overwrites the running base. Candidate
+// ResponseID / ModelStatus / PromptFeedback / Error (and any unknown
+// top-level fields, per key) overwrites the running base. Candidate
 // metadata Gemini delivers on its own chunks (groundingMetadata,
 // urlContextMetadata, citationMetadata, safetyRatings, finishMessage,
 // logprobsResult and any unknown fields) is likewise carried
-// last-non-empty-wins so it survives reassembly. Unknown part kinds
-// round-trip via the typed Part registry.
+// last-non-empty-wins so it survives reassembly. Non-empty means
+// carrying content: a placeholder `{}` or `null` arriving after the
+// populated chunk never overwrites a populated subtree. Unknown part
+// kinds round-trip via the typed Part registry.
 func accumulateGeminiContent(raw []byte) Result {
 	state := newGeminiState()
 	res := Result{}
@@ -67,7 +71,9 @@ type geminiCandidateState struct {
 	tokenCount   *int
 	// Candidate-level metadata Gemini delivers on its own chunks (usually the
 	// terminal one) — carried last-non-empty-wins so it survives reassembly
-	// rather than being dropped. groundingMetadata is the load-bearing one
+	// rather than being dropped, where "empty" includes a non-nil pointer to a
+	// zero struct and a raw `{}`/`null` (a wire placeholder must not wipe a
+	// previously populated subtree). groundingMetadata is the load-bearing one
 	// (Google Search web grounding); the rest round-trip for fidelity.
 	finishMessage      *string
 	safetyRatings      []geminicontent.SafetyRating
@@ -130,6 +136,25 @@ func (s *geminiState) absorb(chunk *geminicontent.GenerateContentResponse) {
 	if chunk.ResponseID != "" {
 		s.base.ResponseID = chunk.ResponseID
 	}
+	if ms := chunk.ModelStatus; ms != nil &&
+		(ms.ModelStage != "" || ms.RetirementTime != "" || ms.Message != "" || len(ms.Extra) > 0) {
+		s.base.ModelStatus = ms
+	}
+	// Google can deliver the top-level error envelope mid-stream (e.g. a 429
+	// after some candidates already streamed); a non-streaming decode keeps
+	// it, so the rollup must too.
+	if !rawEmpty(chunk.Error) {
+		s.base.Error = chunk.Error
+	}
+	// Unknown top-level fields ride in DynamicProperties.Extra — merge them
+	// onto the base (last-wins per key, mirroring the per-candidate merge
+	// below) so the invariant-#1 safety net holds on the rollup path.
+	for k, v := range chunk.Extra {
+		if s.base.Extra == nil {
+			s.base.Extra = map[string]json.RawMessage{}
+		}
+		s.base.Extra[k] = v
+	}
 
 	for _, cand := range chunk.Candidates {
 		idx := 0
@@ -165,16 +190,20 @@ func (s *geminiState) absorb(chunk *geminicontent.GenerateContentResponse) {
 		if len(cand.SafetyRatings) > 0 {
 			st.safetyRatings = cand.SafetyRatings
 		}
-		if cand.CitationMetadata != nil {
-			st.citationMetadata = cand.CitationMetadata
+		if cm := cand.CitationMetadata; cm != nil &&
+			(len(cm.CitationSources) > 0 || len(cm.Extra) > 0) {
+			st.citationMetadata = cm
 		}
-		if cand.GroundingMetadata != nil {
-			st.groundingMetadata = cand.GroundingMetadata
+		if gm := cand.GroundingMetadata; gm != nil &&
+			(gm.SearchEntryPoint != nil || len(gm.GroundingChunks) > 0 ||
+				len(gm.GroundingSupports) > 0 || len(gm.WebSearchQueries) > 0 ||
+				!rawEmpty(gm.RetrievalMetadata) || len(gm.Extra) > 0) {
+			st.groundingMetadata = gm
 		}
-		if len(cand.URLContextMetadata) > 0 {
+		if !rawEmpty(cand.URLContextMetadata) {
 			st.urlContextMetadata = cand.URLContextMetadata
 		}
-		if len(cand.LogprobsResult) > 0 {
+		if !rawEmpty(cand.LogprobsResult) {
 			st.logprobsResult = cand.LogprobsResult
 		}
 		for k, v := range cand.Extra {
@@ -184,6 +213,14 @@ func (s *geminiState) absorb(chunk *geminicontent.GenerateContentResponse) {
 			st.extra[k] = v
 		}
 	}
+}
+
+// rawEmpty reports whether raw carries no content — absent, JSON null, or an
+// empty object. The last-non-empty-wins carries use it so a wire placeholder
+// (`{}` / `null`) arriving after the populated chunk cannot wipe the subtree.
+func rawEmpty(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s == "" || s == "null" || s == "{}"
 }
 
 func (s *geminiState) assemble() geminicontent.GenerateContentResponse {

@@ -94,6 +94,9 @@ var chatRequestFieldDisposition = map[string]string{
 	"Seed":                dispDropped, // no Anthropic equivalent
 	"Modalities":          dispDropped, // no Anthropic equivalent
 	"ReasoningEffort":     dispMapped,  // -> messages.OutputConfig.Effort
+	"Reasoning":           dispMapped,  // effort -> messages.OutputConfig.Effort (flat field wins)
+	"Think":               dispDropped, // Ollama-compat thinking toggle; no Anthropic equivalent (signalled)
+	"ChatTemplateKwargs":  dispDropped, // vLLM/llama.cpp template kwargs; no Anthropic equivalent (signalled)
 	"ServiceTier":         dispMapped,  // -> messages.ServiceTier
 	"Audio":               dispDropped, // no Anthropic equivalent
 	"Metadata":            dispDropped, // only user_id maps (via User); bag dropped

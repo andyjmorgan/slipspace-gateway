@@ -67,8 +67,14 @@ func translateChatRequestToMessages(body []byte) ([]byte, []Drop, error) {
 	}
 
 	// OpenAI's reasoning_effort maps cleanly to Anthropic's output_config.effort.
-	if src.ReasoningEffort != "" {
+	// The nested Ollama-compat reasoning.effort spelling maps to the same
+	// control; the flat field wins when both are present (they express one
+	// knob, so there is nothing to drop).
+	switch {
+	case src.ReasoningEffort != "":
 		dst.OutputConfig = &messages.OutputConfig{Effort: src.ReasoningEffort}
+	case src.Reasoning != nil && src.Reasoning.Effort != "":
+		dst.OutputConfig = &messages.OutputConfig{Effort: src.Reasoning.Effort}
 	}
 
 	// OpenAI's end-user identifier maps to Anthropic metadata.user_id.
@@ -90,6 +96,11 @@ func translateChatRequestToMessages(body []byte) ([]byte, []Drop, error) {
 	addDropIf(src.Audio != nil, "audio")
 	addDropIf(len(src.Metadata) > 0, "metadata")
 	addDropIf(src.Store != nil, "store")
+	// Ollama/vLLM OpenAI-compat extensions with no Anthropic equivalent.
+	// (reasoning.effort is not in this list — it maps to output_config.effort
+	// above.)
+	addDropIf(src.Think != nil, "think")
+	addDropIf(len(src.ChatTemplateKwargs) > 0, "chat_template_kwargs")
 
 	if len(src.Tools) > 0 {
 		tools, td := translateToolsToMessages(src.Tools)
