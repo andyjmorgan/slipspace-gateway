@@ -96,6 +96,26 @@ type ChatCompletionRequest struct {
 	// request when running on a reasoning-capable model.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
+	// Reasoning nests reasoning controls as an object ({"effort": ...}) —
+	// the Responses-API shape that Ollama's OpenAI-compat surface also
+	// accepts on chat completions, as a sibling of the flat ReasoningEffort.
+	// Native OpenAI Chat Completions does not carry this field.
+	// Ref: https://docs.ollama.com/api/openai-compatibility
+	Reasoning *ReasoningOptions `json:"reasoning,omitempty"`
+
+	// Think is Ollama's native thinking control surfaced on the
+	// OpenAI-compat chat surface: a bool toggle or a level string
+	// ("high"/"medium"/"low"/"max"). Polymorphic; the exact wire shape is
+	// preserved by ThinkOption. Ref: https://docs.ollama.com/api/chat
+	Think *ThinkOption `json:"think,omitempty"`
+
+	// ChatTemplateKwargs passes template-specific kwargs (e.g.
+	// {"enable_thinking": false}) through to the server's chat template — a
+	// vLLM/llama.cpp OpenAI-compat convention. The inner shape is
+	// template/model-defined, so it is kept raw.
+	// Ref: https://docs.vllm.ai/en/latest/features/reasoning_outputs.html
+	ChatTemplateKwargs json.RawMessage `json:"chat_template_kwargs,omitempty"`
+
 	// ServiceTier selects a service tier (e.g., "default", "flex").
 	ServiceTier string `json:"service_tier,omitempty"`
 
@@ -524,6 +544,29 @@ func (a *AudioOptions) UnmarshalJSON(data []byte) error { return models.Unmarsha
 // MarshalJSON encodes a and merges DynamicProperties.Extra back into the
 // resulting object.
 func (a AudioOptions) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
+// ReasoningOptions is the nested reasoning-control object on a
+// ChatCompletionRequest ({"reasoning":{"effort":...}}). Mirrors the
+// protocols/openai/responses ReasoningOptions shape; on chat completions it
+// is an OpenAI-compat extension accepted by Ollama, mapping to the same
+// thinking control as the flat ReasoningEffort field. Unknown fields
+// round-trip via the embedded DynamicProperties.
+// Ref: https://docs.ollama.com/api/openai-compatibility
+type ReasoningOptions struct {
+	// Effort is the requested reasoning effort (e.g., "low", "medium",
+	// "high").
+	Effort string `json:"effort,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into o, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (o *ReasoningOptions) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, o) }
+
+// MarshalJSON encodes o and merges DynamicProperties.Extra back into the
+// resulting object.
+func (o ReasoningOptions) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(o) }
 
 // ResponseMessage is the assistant's reply for a single Choice in a
 // non-streaming ChatCompletionResponse. Content may be a JSON string or an

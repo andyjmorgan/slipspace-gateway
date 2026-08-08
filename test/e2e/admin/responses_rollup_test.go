@@ -57,8 +57,8 @@ func TestAdmin_ResponsesStream_OutputItemsFolded(t *testing.T) {
 	if resp.Output[0].Type != "reasoning" {
 		t.Errorf("Output[0].Type=%q want reasoning (ordered by output_index)", resp.Output[0].Type)
 	}
-	if _, ok := resp.Output[0].Extra["encrypted_content"]; !ok {
-		t.Errorf("reasoning encrypted_content dropped; Extra=%v", resp.Output[0].Extra)
+	if got := string(resp.Output[0].EncryptedContent); got != `"ENC=="` {
+		t.Errorf("reasoning encrypted_content dropped; EncryptedContent=%q Extra=%v", got, resp.Output[0].Extra)
 	}
 	if resp.Output[1].Type != "function_call" || resp.Output[1].Name != "get_weather" {
 		t.Errorf("Output[1] not the function_call item: %+v", resp.Output[1])

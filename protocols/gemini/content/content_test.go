@@ -300,6 +300,36 @@ func TestGenerateContentResponse_StreamingChunkRoundTrip(t *testing.T) {
 	roundTripJSON(t, in, chunk)
 }
 
+// TestGenerateContentResponse_ModelStatusRoundTrip locks the typed decode of
+// the documented top-level modelStatus member
+// (https://ai.google.dev/api/generate-content#ModelStatus): it must land on
+// the typed field (nothing left in Extra) and round-trip byte-equivalent,
+// including an unknown nested field.
+func TestGenerateContentResponse_ModelStatusRoundTrip(t *testing.T) {
+	in := []byte(`{` +
+		`"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}],` +
+		`"modelStatus":{"futureStatusField":1,"message":"gemini-1.5-pro is deprecated","modelStage":"LEGACY","retirementTime":"2026-09-24T00:00:00Z"},` +
+		`"modelVersion":"gemini-1.5-pro",` +
+		`"responseId":"r-2"` +
+		`}`)
+	var resp GenerateContentResponse
+	if err := json.Unmarshal(in, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ms := resp.ModelStatus
+	if ms == nil || ms.ModelStage != "LEGACY" || ms.RetirementTime != "2026-09-24T00:00:00Z" ||
+		ms.Message != "gemini-1.5-pro is deprecated" {
+		t.Fatalf("modelStatus = %+v", ms)
+	}
+	if len(resp.Extra) != 0 {
+		t.Fatalf("modelStatus leaked into Extra: %v", resp.Extra)
+	}
+	if _, ok := ms.Extra["futureStatusField"]; !ok {
+		t.Fatalf("unknown nested field lost: %+v", ms.Extra)
+	}
+	roundTripJSON(t, in, resp)
+}
+
 func TestPromptFeedback_RoundTrip(t *testing.T) {
 	in := []byte(`{"blockReason":"SAFETY","safetyRatings":[{"category":"HARM_CATEGORY_HATE","probability":"HIGH"}]}`)
 	var f PromptFeedback
@@ -352,6 +382,7 @@ func TestContent_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(CitationSource{}),
 		reflect.TypeOf(PromptFeedback{}),
 		reflect.TypeOf(UsageMetadata{}),
+		reflect.TypeOf(ModelStatus{}),
 		reflect.TypeOf(ModalityTokenCount{}),
 		reflect.TypeOf(GroundingMetadata{}),
 		reflect.TypeOf(SearchEntryPoint{}),

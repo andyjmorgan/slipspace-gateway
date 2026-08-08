@@ -10,6 +10,7 @@ func FuzzUnmarshalStreamEvent(f *testing.F) {
 		`{"type":"response.created","sequence_number":0,"response":{}}`,
 		`{"type":"response.output_text.delta","item_id":"m","output_index":0,"content_index":0,"delta":"hi","sequence_number":1}`,
 		`{"type":"response.completed","sequence_number":9,"response":{"id":"r1"}}`,
+		`{"type":"response.output_item.done","output_index":0,"sequence_number":4,"item":{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"gAAAAAB=="}}`,
 		`{"type":"response.failed","error":{"message":"boom"}}`,
 		`{"type":"response.unknown_future","extra":42}`,
 		`{}`,
@@ -86,6 +87,7 @@ func FuzzResponsesResponse(f *testing.F) {
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[]}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"incomplete","incomplete_details":{"reason":"x"}}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","billing":{"payer":"developer"},"frequency_penalty":0,"presence_penalty":0,"moderation":null,"reasoning":{"context":null,"effort":"low"}}`,
+		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":null},{"type":"message","id":"msg_1","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"hi"}]}],"metadata":{"k":"v"}}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[],"temperature":1,"top_p":1,"top_logprobs":0,"max_output_tokens":2048,"max_tool_calls":null,"store":true,"background":false,"completed_at":2,"truncation":"disabled","service_tier":"default","prompt_cache_retention":"in_memory","prompt_cache_key":null,"safety_identifier":null,"user":null,"instructions":null,"tools":[],"tool_choice":"auto","text":{"format":{"type":"text"}}}`,
 		`{}`,
 	}

@@ -30,6 +30,12 @@ type GenerateContentResponse struct {
 	// ResponseID is Google's response identifier.
 	ResponseID string `json:"responseId,omitempty"`
 
+	// ModelStatus reports the lifecycle stage of the model that served the
+	// response (and its retirement time, if scheduled). One of the six
+	// documented top-level response members:
+	// https://ai.google.dev/api/generate-content#ModelStatus
+	ModelStatus *ModelStatus `json:"modelStatus,omitempty"`
+
 	// Error carries Google's top-level error envelope
 	// ({code, message, status, details}) when generateContent fails
 	// without an HTTP-transport error. Kept raw because the details array
@@ -48,6 +54,33 @@ func (r *GenerateContentResponse) UnmarshalJSON(data []byte) error {
 // MarshalJSON encodes r and merges DynamicProperties.Extra back into the
 // resulting object.
 func (r GenerateContentResponse) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(r) }
+
+// ModelStatus describes the lifecycle stage of the underlying model and its
+// retirement time when applicable, per
+// https://ai.google.dev/api/generate-content#ModelStatus. Unknown fields
+// round-trip via the embedded DynamicProperties.
+type ModelStatus struct {
+	// ModelStage is the model's lifecycle stage enum
+	// ("EXPERIMENTAL", "PREVIEW", "STABLE", "LEGACY", ...).
+	ModelStage string `json:"modelStage,omitempty"`
+
+	// RetirementTime is the RFC 3339 timestamp at which the model will be
+	// retired, when scheduled.
+	RetirementTime string `json:"retirementTime,omitempty"`
+
+	// Message is Google's human-readable elaboration of the model status.
+	Message string `json:"message,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into s, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (s *ModelStatus) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, s) }
+
+// MarshalJSON encodes s and merges DynamicProperties.Extra back into the
+// resulting object.
+func (s ModelStatus) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(s) }
 
 // Candidate is one of N candidate completions emitted by the model.
 // Unknown fields round-trip via the embedded DynamicProperties.

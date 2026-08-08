@@ -134,17 +134,48 @@ func TestChatToMessages_DroppedScalars(t *testing.T) {
 		"audio":{"voice":"alloy","format":"wav"},
 		"metadata":{"k":"v"},
 		"store":true,
+		"think":"high",
+		"chat_template_kwargs":{"enable_thinking":true},
 		"messages":[{"role":"user","content":"hi"}]
 	}`)
 
 	for _, f := range []string{
 		"n", "stream_options", "presence_penalty", "frequency_penalty",
 		"logit_bias", "logprobs", "top_logprobs", "response_format", "seed",
-		"modalities", "audio", "metadata", "store",
+		"modalities", "audio", "metadata", "store", "think",
+		"chat_template_kwargs",
 	} {
 		if !hasDrop(drops, f) {
 			t.Errorf("missing expected drop %q; drops=%+v", f, drops)
 		}
+	}
+}
+
+// TestChatToMessages_NestedReasoningEffort covers the Ollama-compat nested
+// reasoning.effort spelling: it maps to output_config.effort like the flat
+// reasoning_effort, and the flat field wins when both are present (one knob,
+// two spellings — nothing is dropped).
+func TestChatToMessages_NestedReasoningEffort(t *testing.T) {
+	req, drops := decodeMessagesReq(t, `{
+		"model":"m","max_tokens":8,
+		"reasoning":{"effort":"low"},
+		"messages":[{"role":"user","content":"hi"}]
+	}`)
+	if req.OutputConfig == nil || req.OutputConfig.Effort != "low" {
+		t.Errorf("OutputConfig = %+v, want effort=low", req.OutputConfig)
+	}
+	if hasDrop(drops, "reasoning") {
+		t.Errorf("reasoning must map, not drop; drops=%+v", drops)
+	}
+
+	req, _ = decodeMessagesReq(t, `{
+		"model":"m","max_tokens":8,
+		"reasoning_effort":"high",
+		"reasoning":{"effort":"low"},
+		"messages":[{"role":"user","content":"hi"}]
+	}`)
+	if req.OutputConfig == nil || req.OutputConfig.Effort != "high" {
+		t.Errorf("OutputConfig = %+v, want flat reasoning_effort to win", req.OutputConfig)
 	}
 }
 

@@ -478,6 +478,14 @@ type OutputItem struct {
 	// on message items). Kept raw because the shape varies by Type.
 	Content json.RawMessage `json:"content,omitempty"`
 
+	// Phase labels an assistant message item (Type == "message") as
+	// intermediate commentary ("commentary") or the final answer
+	// ("final_answer"). Models like gpt-5.3-codex and beyond require
+	// callers to preserve and resend the phase on assistant messages, so
+	// dropping it degrades behaviour. See
+	// https://developers.openai.com/api/docs/guides/reasoning.
+	Phase string `json:"phase,omitempty"`
+
 	// Name is the function name on function/tool-call items.
 	Name string `json:"name,omitempty"`
 
@@ -496,6 +504,15 @@ type OutputItem struct {
 	// Summary is the reasoning summary payload on reasoning items. Kept
 	// raw because OpenAI has shipped both string and array shapes.
 	Summary json.RawMessage `json:"summary,omitempty"`
+
+	// EncryptedContent is the encrypted reasoning trace on reasoning items
+	// (Type == "reasoning"), used by Zero Data Retention orgs to resend
+	// reasoning statelessly (historically opted in via
+	// include=["reasoning.encrypted_content"], now populated by default on
+	// POST /v1/responses). Kept raw because OpenAI emits it as null when
+	// not populated. See
+	// https://developers.openai.com/api/docs/guides/reasoning.
+	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
 
 	models.DynamicProperties
 }
