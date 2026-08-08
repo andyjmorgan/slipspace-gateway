@@ -130,7 +130,7 @@ The console query routes share two parameter families.
 
 ### Filters
 
-`filterFromQuery` (`query.go`, lines 53-66) reads the same equality + status
+`filterFromQuery` (`query.go`, lines 128-150) reads the same equality + status
 filters on every route that takes them (dashboard summary/timeseries, messages,
 messages/recent, events). Each maps to a column predicate in
 `store.EventFilter` / `appendFilter` (`eventquery.go`, lines 20-76):
@@ -398,7 +398,11 @@ and emptied all dropdowns past the request deadline; the column projection
 (`unnest(tags)`) is what fixed it. The blob remains the source of truth for the
 inspector, but facets and filters read the column.
 
-**Caching.** Facets are memoized behind a mutex with a **30-second TTL**, one
+**Caching.** Only the **unfiltered** whole-window lookup is cached: `handleFacets`
+consults the memo just when the request carries no filter predicate
+(`filterIsZero(f)`, `observability.go`, lines 322-355) — any request with a
+filter (`?session_id=`, `?provider=`, …) queries the store directly on every
+call. Unfiltered facets are memoized behind a mutex with a **30-second TTL**, one
 entry per requested window (`facetsTTL` / `facetsCache`, `observability.go`).
 The cache key quantizes the `from`/`to` bounds to 10-second buckets
 (`facetsKeyQuantum`) — the SPA resolves relative presets ("last 1h") to a
@@ -540,7 +544,8 @@ a malformed cursor. The SPA fetcher (`web/src/lib/session-spans.ts`) follows
 `next_cursor` until exhausted, so the page still renders the complete session
 — paging bounds *server* memory, not the rendered list. The store streams
 rows through a callback (`store.EventsBySessionPage`) into a small
-order-preserving worker pool (`spanProjectWorkers`, capped at 8), so the
+order-preserving worker pool (`spanProjectWorkers()`, `sessionspans.go`, lines
+152-164 — `min(GOMAXPROCS, 8)`, so a small-core pod runs fewer than 8), so the
 service holds a bounded handful of full `span_event` blobs plus one page of
 capped DTOs at a time — never the whole session (the pre-paging single-shot
 array peaked at 600 MB+ on big sessions and OOM-killed the service) — while

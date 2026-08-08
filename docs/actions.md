@@ -645,7 +645,8 @@ Both scopes are supported. **`request.body.*`** targets apply on the request pat
 ### Target language
 
 ```
-target  := "request.body." dotted_path
+target  := scope "." dotted_path
+scope   := "request.body" | "response.body"
 segment := [A-Za-z_][A-Za-z0-9_]*
 ```
 
@@ -827,7 +828,7 @@ The gateway returns a 410 Gone to the client immediately; no upstream call, no t
 
 - `returnStatusCode` short-circuits ALL subsequent actions on the same rule, AND all subsequent rules in the configuration. If you want bookkeeping (an `addTag`, a `setHeader` on the synthetic response), put it *before* the `returnStatusCode` in the action list.
 - The synthetic response is *not* sent to upstream; reporting fires with no upstream attempt recorded. Dashboards distinguish synthetic from forwarded traffic via the absence of an upstream status code on the `gateway.request` envelope.
-- Do not use `returnStatusCode` inside a resilience target's `actions` list. The validator does not currently reject it but the orchestrator's behaviour is undefined — see [resilience.md — Known limitations](resilience.md#known-limitations) item 5.
+- Do not use `returnStatusCode` or `llmImpersonation` inside a resilience target's `actions` list. The validator does not reject them, but `buildAttemptState` ([`internal/middleware/resilience/middleware.go:691-707`](../internal/middleware/resilience/middleware.go)) discards the `Outcome` returned by `ApplyAction` — the terminating response is silently dropped and the attempt proceeds upstream.
 
 ---
 

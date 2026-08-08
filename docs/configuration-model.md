@@ -753,7 +753,7 @@ The two intentional exceptions are `SLIPSPACE_ADMIN_PASSWORD` (kept out of YAML 
 
 The invariants the loader enforces, and the sentinel each violation wraps (`internal/config/errors.go`, `internal/config/config_validate.go`). Many binding/provider/group failures wrap the umbrella `ErrValidation` with a specific message at the call site.
 
-`ResolvedConfig.Validate` runs six steps in order (`internal/config/config_validate.go:28-47`): `validateProviders` → `validateGroups` → `validateLibraries` → `Pricing.Validate` → `validateAdvisors` → `validateConfigurations`. So the pricing block's own `Validate` and the advisors/`agent_routing` cross-check (the named advisor must exist in the `advisors` block; `allow_models` must be non-empty) both run **before** configuration and binding validation — a bad rate card or a dangling advisor reference aborts the load before any binding error is reported.
+`ResolvedConfig.Validate` first guards the empty tree — `len(r.Configurations) == 0` returns `ErrNoConfigurations` (`internal/config/config_validate.go:29-31`) — then runs six steps in order (`config_validate.go:32-47`): `validateProviders` → `validateGroups` → `validateLibraries` → `Pricing.Validate` → `validateAdvisors` → `validateConfigurations`. So the pricing block's own `Validate` and the advisors/`agent_routing` cross-check (the named advisor must exist in the `advisors` block; `allow_models` must be non-empty) both run **before** configuration and binding validation — a bad rate card or a dangling advisor reference aborts the load before any binding error is reported.
 
 | Sentinel | Triggered by |
 |---|---|

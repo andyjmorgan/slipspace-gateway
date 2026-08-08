@@ -221,7 +221,7 @@ Gemini `Part` is also a discriminated union but dispatches by **key-presence**
 (`{"text":…}` vs `{"functionCall":…}`) rather than a single discriminator field,
 so it has its own hand-rolled `UnmarshalPart` instead of the shared registry —
 see [provider-models.md → Gemini parts](provider-models.md#parts--key-presence-polymorphism)
-and `protocols/gemini/content/parts.go:405-431`.
+and `protocols/gemini/content/parts.go:409-433`.
 
 ## CollectUnmapped
 
