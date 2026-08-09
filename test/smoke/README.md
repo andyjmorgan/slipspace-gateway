@@ -56,7 +56,7 @@ configuration's bindings pick the backend from the model name.
 | `test_anthropic_chat.py` | `POST /v1/chat/completions` with a claude-* model (OpenAI-compat surface on the anthropic backend) |
 | `test_gemini_generate.py` | `POST /v1beta/models/{model}:generateContent` |
 | `test_gemini_chat.py` | `POST /v1/chat/completions` with a gemini-* model (OpenAI-compat surface) |
-| `test_changeprovider_redirect.py` | model-keyed `changeProvider` rules: claude-* / gemini-* on the openai surface |
+| `test_changeprovider_redirect.py` | model-keyed binding redirect: claude-* / gemini-* models sent to the openai surface, routed by the configuration's model bindings |
 | `test_qwen_redirect.py` | cluster-side qwen rules (opt-in via `SLIPSPACE_SMOKE_QWEN=true`) |
 | `test_gptoss_translate.py` | model-keyed `translate`-action redirect onto the gpt-oss surface (opt-in via `SLIPSPACE_SMOKE_GPTOSS=true`) |
 

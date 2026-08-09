@@ -39,7 +39,7 @@ The rule engine sits between auth/body-capture and the forwarder. Its only job i
 
 Three flavours of mutation, in increasing reach:
 
-- **Steer.** `changeProvider`, `changeModelName`, `changeApiKey` rewrite where the request is going. (`changeUrl` and `useResiliencePolicy` still parse and validate but are **inert** in v2 — the data plane never reads the state they write; route to a different URL or resilience group with a binding edit instead. See [actions.md → `changeUrl`](actions.md#changeurl).)
+- **Steer.** `changeModelName` and `changeApiKey` rewrite where the request is going. (`changeUrl`, `useResiliencePolicy`, and a rule-authored `changeProvider` still parse and validate but are **inert** in v2 — the data plane never reads the state they write. `changeProvider` survives only as the resilience orchestrator's internal per-attempt primitive, and `buildAttemptState` overwrites any rule-authored value every attempt. Route to a different provider, URL, or resilience group with a binding edit instead. See [actions.md → `changeProvider`](actions.md#changeprovider) and [actions.md → `changeUrl`](actions.md#changeurl).)
 - **Annotate.** `setHeader`, `appendQueryString`, `addTag` decorate the outbound request or the in-process state.
 - **Short-circuit.** `returnStatusCode`, `llmImpersonation` end the pipeline with a synthetic response — the forwarder never runs.
 
@@ -61,16 +61,18 @@ A rule is one entry in the top-level `rules:` library:
 
 ```yaml
 rules:
-  - name: route-claude-codex
+  - name: tag-claude-traffic
     condition:
       type: modelName
       operator: StartsWith
       expectedModelName: claude-
     actions:
-      - type: changeProvider
-        newProvider: anthropic
+      - type: addTag
+        tag: claude-family
     behavior: continue
 ```
+
+Note that provider steering is a binding concern, not a rule action, in v2 — a rule-authored `changeProvider` is inert (see [Steer](#mental-model) above and [actions.md → `changeProvider`](actions.md#changeprovider)).
 
 | Field | Required | Notes |
 |---|---|---|
@@ -189,7 +191,7 @@ condition:
 
 ### `modelName`
 
-Matches the resolved model name with a string operator. The model name is read from the typed body's `model` field (OpenAI chat, OpenAI responses, Anthropic messages) or `state.PathParams["model"]` (Gemini, where the model lives on the URL). The cascade keeps the resolved name current — a rule preceded by `changeModelName` sees the new value.
+Matches the resolved model name with a string operator. The model name is read from `state.PathParams["model"]` first — Gemini's URL-templated model, and the value `changeModelName` writes there on any protocol — falling back to the typed body's `model` field (OpenAI chat, OpenAI responses, Anthropic messages). Gemini bodies carry no model, so Gemini always resolves via PathParams. The cascade keeps the resolved name current — a rule preceded by `changeModelName` sees the new value.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -385,27 +387,22 @@ See [`docs/environment-variables.md`](environment-variables.md) for the full lis
 
 Goal: any request whose model starts with `claude-` should be routed to the `anthropic` provider, regardless of which protocol it landed on.
 
+This is **not** a rule — in v2, model-keyed provider redirect is a *binding* on the Configuration. A rule-authored `changeProvider` is inert: the resilience orchestrator rebuilds the per-attempt state from the binding's own target and overwrites it (`buildAttemptState`, `internal/middleware/resilience/middleware.go:691`).
+
 ```yaml
 configurations:
   production:
     credentials:
       openai: sk-openai-mock
       anthropic: sk-ant-mock
-    rule_names:
-      - route-claude-to-anthropic
-
-rules:
-  - name: route-claude-to-anthropic
-    condition:
-      type: modelName
-      operator: StartsWith
-      expectedModelName: claude-
-    actions:
-      - type: changeProvider
-        newProvider: anthropic
+    bindings:
+      - models: ['claude-*']
+        provider: anthropic
+      - models: ['*']
+        provider: openai
 ```
 
-Why this works: the rule's condition reads the live `Model` from the request body (OpenAI chat) or `state.PathParams["model"]` (Gemini path-style). `changeProvider` flips `state.Provider`. The destination builder reads `state.Provider` post-rule and re-resolves the protocol on `anthropic` — see invariant 7 in `CLAUDE.md`. The credential header convention follows automatically (invariant 6); you do not need to also change the API key.
+Why this works: selection resolves the binding *before* rules run and stashes the chosen target; after rules, the final handler calls `selection.ResolveTarget(state.Protocol, state.Provider, ...)` and re-resolves the upstream endpoint on `anthropic` (invariant 7 in `CLAUDE.md`). The credential header convention follows automatically (invariant 6); you do not need to also change the API key. E2E coverage: `test/e2e/providers/changeprovider_redirect_test.go`.
 
 ### Short-circuit on a header using `behavior: exit`
 

@@ -89,7 +89,7 @@ func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
 }
 ```
 
-(`protocols/openai/chat/chat.go:120-127`)
+(`protocols/openai/chat/chat.go:140-149`)
 
 ### UnmarshalDynamic
 
@@ -233,7 +233,7 @@ signal that drives the `gateway.unmapped_fields.total` meter described in
 fields this build does not model, which is the early-warning that a provider
 spec has drifted ahead of `protocols/`.
 
-Path construction (`models/unmapped.go:16-26`, `collectUnmapped` `:49-84`):
+Path construction (`joinPath` `models/unmapped.go:96-101`, `collectUnmapped` `:49-84`):
 
 - Each path is the chain of `json` field names from the root to the embedding
   struct, joined by `.`, with the unmapped key appended.

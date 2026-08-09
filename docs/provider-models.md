@@ -4,11 +4,13 @@ The `protocols/` packages model the on-the-wire shapes of the three providers
 SlipSpace fronts. Each package mirrors one wire surface of one provider and exists
 so the gateway can parse a request, apply rules, and re-marshal it without
 dropping fields. Every exported struct embeds `models.DynamicProperties` and
-every polymorphic union has an `UnknownX` fallback — with one deliberate
-exception: `MessageContent` (`protocols/openai/chat/content_parts.go:328-330`)
-wraps a bare `json.RawMessage` and embeds nothing, because it retains the
-provider's string-or-array bytes verbatim and is therefore lossless by
-construction rather than by unknown-field capture. The round-tripping
+every polymorphic union has an `UnknownX` fallback — with two deliberate
+exceptions, both following the same raw-preservation pattern:
+`MessageContent` (`protocols/openai/chat/content_parts.go:328-330`) and
+`ThinkOption` (`protocols/openai/chat/think.go:25-27`). Each wraps a bare
+unexported `raw json.RawMessage` and embeds nothing, because it re-emits the
+provider's bytes verbatim and is therefore lossless by construction rather
+than by unknown-field capture. The round-tripping
 machinery is documented in [models.md](models.md); this page is the catalogue of
 the **notable concrete types** per provider.
 
@@ -100,10 +102,11 @@ same raw-bytes treatment applies to `Stop` (string or array of strings,
 > **`ToolCallFunction.Arguments` is a JSON string, not an object.** OpenAI ships
 > function-call arguments as a stringified JSON document, so `Arguments` is a Go
 > `string`; callers must `json.Unmarshal` it to recover the structured payload
-> (`chat.go:716-725`, `Arguments` at `chat.go:723`). In streaming,
+> (`chat.go:759-767`, `Arguments` at `chat.go:766`). In streaming,
 > `ToolCallFunctionDelta.Arguments` is emitted *without* `omitempty` because
 > OpenAI sends an empty-string delta as the "tool call begins" marker — dropping
-> it would lose the start signal (`chat.go:747-755`, `Arguments` at `chat.go:753`).
+> it would lose the start signal (`chat.go:790-797`, `Arguments` at `chat.go:796`;
+> rationale godoc at `chat.go:786-789`).
 
 ## OpenAI — Responses API (`protocols/openai/responses`)
 
@@ -135,13 +138,15 @@ Request highlights:
 Response highlights:
 
 - **`Output []OutputItem`** is the ordered list of items the model emitted.
-  `OutputItem` (`responses.go:462-501`) is modelled as a **single struct**, not a
+  `OutputItem` (`responses.go:462-518`) is modelled as a **single struct**, not a
   registry union, because the item shape evolves frequently: `Type` is the
   discriminator and the variant-specific payloads `Content`, `Output`, and
   `Summary` are kept as `json.RawMessage` so callers dispatch on `Type` and
-  decode the shape they need; `Arguments` (`responses.go:487`) is a Go `string`
+  decode the shape they need; `Arguments` (`responses.go:495`) is a Go `string`
   because OpenAI ships function arguments as a JSON-encoded string, matching the
-  chat package's `ToolCallFunction.Arguments` convention. `OutputText` (`responses.go:164`) is
+  chat package's `ToolCallFunction.Arguments` convention. The struct also carries
+  `Phase` (`responses.go:487`) and the encrypted reasoning trace
+  `EncryptedContent json.RawMessage` (`responses.go:515`). `OutputText` (`responses.go:164`) is
   the convenience concatenated-text projection.
 - **`Usage`** uses `input_tokens`/`output_tokens` naming (not chat's
   `prompt`/`completion`), so it is a **distinct local type** from the chat
@@ -242,7 +247,8 @@ carry several beta / accounting structures:
   (`response.go:316-336`) which splits writes into the 5-minute and 1-hour
   ephemeral tiers (`Ephemeral5mInputTokens` / `Ephemeral1hInputTokens`). The
   request marks cacheable spans with `CacheControl` (`type: "ephemeral"`,
-  `messages.go:407-412`) on system blocks, tools, and content blocks.
+  `messages.go:427-443`, type at `:430`) on system blocks, tools, and content
+  blocks.
 - **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:340-343`) reports
   output tokens spent inside thinking blocks.
 - **`Usage.Iterations`** (`[]IterationUsage`) breaks usage down per server-side
@@ -349,11 +355,13 @@ rich response metadata:
   bucketed + numeric probability/severity, `Blocked`) appears both on each
   `Candidate` and on `PromptFeedback` (`response.go:325-335`, which also carries
   a `BlockReason` if the prompt itself was rejected).
-- **`UsageMetadata`** (`response.go:347-391`) — carried on
+- **`UsageMetadata`** (`response.go:378-424`, type at `:380`) — carried on
   `GenerateContentResponse` (`response.go:25`), not on `Candidate` — accounts
-  tokens with per-modality breakdowns (`ModalityTokenCount`, `response.go:404-413`):
-  prompt, candidates, cached-content, tool-use, and `ThoughtsTokenCount` for the
-  thinking trace.
+  tokens with per-modality breakdowns (`ModalityTokenCount`, `response.go:437`):
+  prompt, candidates, cached-content, tool-use, and `ThoughtsTokenCount`
+  (`response.go:406`) for the thinking trace.
+- **`ModelStatus *ModelStatus`** (`response.go:37`) reports the lifecycle stage of
+  the model that served the response, plus its retirement time when scheduled.
 
 ## Models-list surfaces
 
