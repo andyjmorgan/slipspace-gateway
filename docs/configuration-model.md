@@ -516,7 +516,7 @@ Semantics:
 
 ## Protocol resolution
 
-A request's **protocol** is fixed by its inbound path — there is one canonical base path per wire shape (`internal/selection/protocol.go::ProtocolForPath`). The model then rides in the request body (except for Gemini's `generate_content`, where the model is part of the path).
+A request's **protocol** is fixed by its inbound path — there is one canonical base path per wire shape, plus a no-version-segment alias for each of the four fixed protocols (`internal/selection/protocol.go::ProtocolForPath`). The model then rides in the request body (except for Gemini's `generate_content`, where the model is part of the path).
 
 | Inbound path | Protocol constant | Value |
 |---|---|---|

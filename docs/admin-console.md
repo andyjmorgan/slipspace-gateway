@@ -2,9 +2,9 @@
 
 SlipSpace's admin console is a management surface bolted onto the gateway binary. It runs as a **second `http.Server` on its own port** (default `:8081`), separate from the data plane (`:8585`), so admin traffic and proxy traffic never share a listener — no shared connection pool, no shared middleware stack, no risk of a stuck admin handler back-pressuring the request path.
 
-The console exposes both read-only inspection surfaces (dashboard, live messages, policies, bindings, export) and a write API spanning most of the policy YAML: full CRUD for **Configurations, Providers, Groups, Connectors, Rules, and API Keys**. Bindings are exposed read-only (they are edited as part of a Configuration). Every write clones the live config snapshot, validates the clone, persists the YAML atomically, and publishes via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLIPSPACE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
+The console exposes both read-only inspection surfaces (dashboard, live messages, policies, bindings, export) and a write API spanning most of the policy YAML: full CRUD for **Configurations, Providers, Groups, Connectors, Rules, and API Keys**. Those five non-key resources expose `GET`/`POST` on the collection and `GET`/`PUT`/`DELETE` on `/{name}`; `PATCH` exists only on `/api/v1/config/api-keys/{id}` (the `enabled` toggle). Bindings are exposed read-only (they are edited as part of a Configuration). Every write clones the live config snapshot, validates the clone, persists the YAML atomically, and publishes via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLIPSPACE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
 
-The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `admin.enabled: true` *and* a password is configured. With either condition false, the listener never opens.
+The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `admin.enabled: true`. `startAdmin` (`cmd/gateway/main.go`) skips the listener entirely when the admin block is absent or disabled. Enabling the console without a password is not a silent no-op: config validation returns `ErrPasswordRequired` (`contracts/admin/admin.go`) and the gateway refuses to boot.
 
 This page is the operator's reference: enabling the console, configuring the password, every env var the live-feed honours, every route the API exposes, every SPA page that consumes them.
 
@@ -270,7 +270,7 @@ Common behaviour across every write resource:
 | Rules | `POST /config/rules`, `PUT·DELETE /config/rules/{name}` | Body is a `RuleContract` JSON payload (snake_case). DELETE 409s with `used_by` naming configurations that reference the rule via `rule_names`. The visual rule editor round-trips this surface. |
 | API Keys | `POST /config/api-keys`, `PUT·PATCH·DELETE /config/api-keys/{id}` | See [API Keys](#api-keys) below — the only resource that mints a secret and reveals it once. |
 
-All mutating paths are method-routed under Go 1.22 `ServeMux` patterns, so `GET` and the write verbs share a path without colliding. The URL name/id is authoritative on `PUT`/`PATCH`/`DELETE`; rename is rejected (409) — change a name by deleting and re-creating.
+All mutating paths are method-routed under Go 1.22 `ServeMux` patterns, so `GET` and the write verbs share a path without colliding. `PATCH` is bound on the api-keys resource only (`internal/admin/mux.go`) — the other five accept `PUT`/`DELETE` on `/{name}` and nothing else. The URL name/id is authoritative on `PUT`/`PATCH`/`DELETE`; rename is rejected (409) — change a name by deleting and re-creating.
 
 ### API Keys
 

@@ -304,7 +304,7 @@ Migrations are a forward-only, append-only ordered set in [`migrations.go`](../i
 
 ### `noTx` migrations
 
-Migration 7 sets `noTx: true`: its statements run with autocommit instead of one wrapping transaction, because `CREATE MATERIALIZED VIEW … WITH (timescaledb.continuous)` cannot run inside a transaction block. `noTx` SQL is split on `;` and each statement executed in turn, so it MUST NOT contain embedded semicolons (no dollar-quoted bodies) and every statement MUST be idempotent (`IF NOT EXISTS` / `if_not_exists`) — a mid-batch failure re-runs the whole step, since the version row is recorded only after all statements succeed.
+Migrations 7 (`metric_points_hypertable_caggs`) and 19 (`cagg_cost_1m`) set `noTx: true`: their statements run with autocommit instead of one wrapping transaction, because `CREATE MATERIALIZED VIEW … WITH (timescaledb.continuous)` cannot run inside a transaction block. `noTx` SQL is split on `;` and each statement executed in turn, so it MUST NOT contain embedded semicolons (no dollar-quoted bodies) and every statement MUST be idempotent (`IF NOT EXISTS` / `if_not_exists`) — a mid-batch failure re-runs the whole step, since the version row is recorded only after all statements succeed.
 
 ---
 

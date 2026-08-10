@@ -2,7 +2,7 @@
 
 E2E tests are **the spec**, not a nice-to-have. They are black-box: build the `gateway` binary, spin up the mock LLM via subprocess, hit the gateway over real HTTP, and assert on what a real client (and the configured connectors) actually see. **A feature is not done without an E2E case proving it works through the binary.**
 
-Run with `make e2e` (build tag `e2e`; Docker required for the connector integration containers — SeaweedFS, Azurite).
+Run with `make e2e` (build tag `e2e`; Docker required for the integration containers — SeaweedFS (S3), Azurite (Azure Blob), and Postgres (the arbiter suite, `test/e2e/arbiter/shared_postgres_test.go`)).
 
 ## Harness
 

@@ -31,7 +31,7 @@ The notes you'll reference most often:
 - **Provider Models + DynamicProperties (load-bearing)** — unknown-field preservation, polymorphic content
 - **Rule Schema** — conditions, actions, evaluator algorithm
 - **Resilience Schema + Engine** — orchestrators, circuit breaker
-- **Connector + Spool Architecture** — disk-backed ndjson.zst buffer between OnComplete and per-destination upload workers (s3 / azure_blob / webhook). Replaces NATS reporting from v1.1 onward.
+- **Connector + Spool Architecture** — disk-backed ndjson.zst buffer between OnComplete and per-destination upload workers (s3 / azure_blob durable destinations; the `webhook` connector type is a real-time, non-spooled pusher realized by `internal/arbiter/pusher` and wired directly in `cmd/gateway` — `internal/connector/factory.Build` rejects it). Replaces NATS reporting from v1.1 onward.
 - **Telemetry Strategy (OTel)** — meters, scrape vs push
 - **Testing Strategy** — 95% + E2E first-class + Python SDK compat
 - **Coding Standards** — modern Go conventions
@@ -45,7 +45,7 @@ When in doubt, check the notes — they're the long-form. This file is the index
 
 ## Current state
 
-Shipped through **v2.3.9**: data plane forwarding for all three providers (streaming + non-streaming), rules engine, resilience orchestrator (failover, load_balance, load_balance_with_failover; circuit breaker), connector spool (s3 / azure_blob / webhook), admin console (dashboard + config inspector + live messages), and the rules read-write API + visual editor. OpenAI-compat chat surfaces on Anthropic + Gemini.
+Shipped through **v2.3.10**: data plane forwarding for all three providers (streaming + non-streaming), rules engine, resilience orchestrator (failover, load_balance, load_balance_with_failover; circuit breaker), connector spool (s3 / azure_blob durable destinations; the `webhook` connector type is a real-time, non-spooled pusher realized by `internal/arbiter/pusher` and wired directly in `cmd/gateway` — `internal/connector/factory.Build` rejects it), admin console (dashboard + config inspector + live messages), and the rules read-write API + visual editor. OpenAI-compat chat surfaces on Anthropic + Gemini.
 
 **Cross-provider translation (v1.2):** shipped **bidirectionally** for **Anthropic Messages ↔ OpenAI Chat** — both `messages`→`chat` and `chat`→`messages` are registered translators (direct pairwise matrix, no hub), each covering request, non-streaming + streaming response, tool calls, and error responses — triggered by the explicit `translate` rule action (`internal/translate/`), fail-closed on undeclared/unsupported pairs, with a drop counter + flag-gated `X-Slipspace-Translation-Lossy` header. Proven by a Go e2e differential matrix on both arms, the native Anthropic **and** OpenAI Python SDK wire-compat suites, and a property-coverage meta-test. See [docs/actions.md → `translate`](docs/actions.md#translate). Deferred post-MVP: Gemini translation, mixed-protocol resilience groups (cross-dialect failover), base-config auto-mapping.
 
