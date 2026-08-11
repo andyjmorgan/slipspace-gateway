@@ -433,7 +433,7 @@ Each envelope holds:
 | `AssemblyPartial` | `true` when the accumulator hit a malformed chunk or unknown delta type mid-stream and could not complete reassembly. `ResponseAssembled` then holds whatever was parseable up to that point. |
 | `RequestHeaders`, `ResponseHeaders` | HTTP header snapshots, with credential-bearing values replaced by `[REDACTED]` via `internal/headers.Redactor.Redact` server-side before storage. |
 
-The byte-heavy fields are **zstd-compressed** before storage; the `Bytes()` accounting tracks compressed memory, so a 200 MiB budget commonly holds several GiB of logical content. Envelopes whose compressed size exceeds the entire budget are silently dropped — operators need a bigger budget. `Get` decompresses on the way out and bumps recency.
+The byte-heavy fields are **zstd-compressed** before storage (`compressEnvelope`, `internal/observability/livefeed/compress.go`), and the LRU's byte budget accounts the *compressed* size — `Put` charges `compressEnvelope(env).bytes()` against the budget — so a 200 MiB budget commonly holds several GiB of logical content. Note the exported helper `BodyEnvelope.Bytes()` measures the *uncompressed* payload (request + response + assembled response + header maps) and is not what the budget uses. Envelopes whose compressed size exceeds the entire budget are silently dropped — operators need a bigger budget. `Get` decompresses on the way out and bumps recency.
 
 ### What's never captured
 

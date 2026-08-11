@@ -188,7 +188,7 @@ auth:
   external_id_ref: env:S3_AUDIT_EXTERNAL_ID
 ```
 
-The validator enforces that fields belonging to other modes (`sas_token_ref`, `account_key_ref`) are absent on s3 connectors, and rejects credential refs on `workload_identity` (the SDK chain handles it).
+The validator rejects **all** credential refs under `workload_identity` (the SDK chain handles it), and rejects the azure-only `sas_token_ref` / `account_key_ref` under `static`. Note the gap: the `assume_role` branch does not inspect those azure fields, so a stray `sas_token_ref` or `account_key_ref` on an `assume_role` s3 connector passes config-load and is silently ignored rather than rejected ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) `validateS3Auth`). The azure validator is equally lax in the other direction — `sas_token` and `account_key` modes do not reject `access_key_id_ref` / `secret_access_key_ref` / `role_arn`.
 
 ### Caveats
 

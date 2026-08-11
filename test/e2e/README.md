@@ -31,6 +31,17 @@ Test helpers:
 - `(*Harness).ExpectEvent(subject, timeout)` — poll for a captured connector record matching `subject`.
 - `(*Harness).ExpectNoEvent(subject, window)` — assert no matching record arrives within `window`.
 
+Mockllm control (`harness/mockllm.go`):
+
+- `(*Harness).StageMockResponse(c)` / `(*Harness).ResetMockResponses()` — stage and clear canned upstream responses.
+- `(*Harness).FetchMockState()` / `(*Harness).MockRequestCount()` — read the mock's staged state and request counter.
+- `(*Harness).FetchCapturedRequests()` / `(*Harness).LastCapturedRequest()` — inspect what the gateway forwarded upstream.
+
+Process + endpoints (`harness/harness.go`):
+
+- `h.GatewayURL` / `h.MockLLMURL` — the running addresses (struct fields); `(*Harness).PromURL()` — base URL of the gateway's Prometheus scrape endpoint.
+- `(*Harness).SendGatewaySignal(sig)` / `(*Harness).WaitGatewayExit(timeout)` / `(*Harness).Stop()` — signal, await, and tear down the spawned gateway.
+
 The harness runs its own in-process capture server and translates each connector `Record` into an event via `emitRecord` — there is no standalone `WebhookReceiver(t)`, `ReadSealedRecords`, or `ExpectRecord`. Beyond `New(t)`, `NewWithOptions(t, opts)` constructs a harness with non-default `Options`. For session-scoped mockllm staging, `(*Harness).NewSession(t)` returns a `Session` with `Stage`, `Post`, `PostStream`, and `Captured`.
 
 Tests reading captured records **sort by `(ts_ns, instance_id, seq)`, never receive order** — see load-bearing invariant #8 in `CLAUDE.md`.

@@ -57,7 +57,7 @@ on `role` rather than `type` — chat-completions is the only OpenAI surface whe
 the string-or-array shape: a chat message's content may be a bare JSON string or
 an array of content parts. The raw bytes are retained verbatim, with
 `IsString`/`IsArray`/`IsNull` to inspect and `AsString`/`AsParts` to project
-(`content_parts.go:363-402`).
+(`content_parts.go:357-402`).
 
 ### Content parts — the `type`-discriminated union
 
@@ -102,7 +102,7 @@ same raw-bytes treatment applies to `Stop` (string or array of strings,
 > **`ToolCallFunction.Arguments` is a JSON string, not an object.** OpenAI ships
 > function-call arguments as a stringified JSON document, so `Arguments` is a Go
 > `string`; callers must `json.Unmarshal` it to recover the structured payload
-> (`chat.go:759-767`, `Arguments` at `chat.go:766`). In streaming,
+> (`chat.go:759-769`, `Arguments` at `chat.go:766`). In streaming,
 > `ToolCallFunctionDelta.Arguments` is emitted *without* `omitempty` because
 > OpenAI sends an empty-string delta as the "tool call begins" marker — dropping
 > it would lose the start signal (`chat.go:790-797`, `Arguments` at `chat.go:796`;
@@ -278,7 +278,7 @@ at `stream.go:372`). The `ContentBlockDelta` payload is itself a union:
 ## Gemini — generateContent (`protocols/gemini/content`)
 
 `GenerateContentRequest` (`content.go:14-41`) and `GenerateContentResponse`
-(`response.go:15-40`). Gemini has **no separate streaming event hierarchy in
+(`response.go:15-46`). Gemini has **no separate streaming event hierarchy in
 v1.0** — `streamGenerateContent` emits a sequence of values with the same
 `GenerateContentResponse` shape, one per chunk, so the one type serves both
 (`response.go:9-14`).

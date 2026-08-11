@@ -231,12 +231,12 @@ The closed set `credentialHeaderNames` (`Authorization`, `X-Api-Key`, `X-Goog-Ap
 
 ## Worked example: managed
 
-Client hits `/openai/v1/chat/completions` with a SlipSpace-issued bearer.
+Client hits `/v1/chat/completions` with a SlipSpace-issued bearer.
 
 ### Inbound
 
 ```http
-POST /openai/v1/chat/completions HTTP/1.1
+POST /v1/chat/completions HTTP/1.1
 Host: slipspace.example.com
 Authorization: Bearer sk_live_acme_prod_42
 Content-Type: application/json
@@ -246,7 +246,7 @@ Content-Type: application/json
 
 ### Resolution
 
-1. Routing maps `/openai/v1/chat/completions` to `(provider=openai, endpoint=chat_completions)`.
+1. `protocolMiddleware` maps `/v1/chat/completions` to `protocol=chat` ([`internal/selection/protocol.go:29-46`](../internal/selection/protocol.go)). There is no provider prefix in v2 — the provider is chosen later by the resolved Configuration's bindings, and an unrecognised path falls through to per-configuration passthrough matching.
 2. Auth middleware: `X-Slipspace-Configuration` absent → managed-mode discovery.
 3. `Authorization` parses as `Bearer sk_live_acme_prod_42`.
 4. `SecretIndex` lookup returns:
@@ -298,7 +298,7 @@ Claude Code is configured to point its OAuth-issued upstream Anthropic token at 
 ### Inbound
 
 ```http
-POST /anthropic/v1/messages HTTP/1.1
+POST /v1/messages HTTP/1.1
 Host: slipspace.example.com
 X-Slipspace-Configuration: code-assistants
 Authorization: Bearer sk-ant-oauth-USER-OWNED-TOKEN-...
@@ -310,7 +310,7 @@ Content-Type: application/json
 
 ### Resolution
 
-1. Routing maps `/anthropic/v1/messages` to `(provider=anthropic, endpoint=messages)`.
+1. `protocolMiddleware` maps `/v1/messages` to `protocol=messages`; the provider is resolved from the Configuration's bindings after auth, not from the path.
 2. Auth middleware: `X-Slipspace-Configuration: code-assistants` is non-empty → **passthrough wins** even if the bearer also happened to be a known SlipSpace secret.
 3. `ConfigurationIndex["code-assistants"]` returns the `code-assistants` bundle (rules, resilience, tags).
 4. `AuthResult`:
