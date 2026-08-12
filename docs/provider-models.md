@@ -30,9 +30,9 @@ struct, the struct is the source of truth — fix the doc.
 
 ## OpenAI — chat completions (`protocols/openai/chat`)
 
-The request body is `ChatCompletionRequest` (`chat.go:21-116`); the
-non-streaming reply is `ChatCompletionResponse` (`chat.go:132-162`); a streaming
-reply is a sequence of `ChatCompletionChunk` (`chat.go:178-209`) whose
+The request body is `ChatCompletionRequest` (`chat.go:21-136`); the
+non-streaming reply is `ChatCompletionResponse` (`chat.go:152-182`); a streaming
+reply is a sequence of `ChatCompletionChunk` (`chat.go:198-229`) whose
 `ChunkChoice.Delta` fragments the receiver concatenates.
 
 ### Messages — the `role`-discriminated union

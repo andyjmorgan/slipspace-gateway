@@ -246,7 +246,7 @@ Content-Type: application/json
 
 ### Resolution
 
-1. `protocolMiddleware` maps `/v1/chat/completions` to `protocol=chat` ([`internal/selection/protocol.go:29-46`](../internal/selection/protocol.go)). There is no provider prefix in v2 — the provider is chosen later by the resolved Configuration's bindings, and an unrecognised path falls through to per-configuration passthrough matching.
+1. `protocolMiddleware` ([`cmd/gateway/pipeline.go:62`](../cmd/gateway/pipeline.go)) maps `/v1/chat/completions` to `protocol=chat` via `selection.ProtocolForPath` ([`internal/selection/protocol.go:29-46`](../internal/selection/protocol.go)). There is no provider prefix in v2 — the provider is chosen later by the resolved Configuration's bindings, and an unrecognised path falls through to per-configuration passthrough matching.
 2. Auth middleware: `X-Slipspace-Configuration` absent → managed-mode discovery.
 3. `Authorization` parses as `Bearer sk_live_acme_prod_42`.
 4. `SecretIndex` lookup returns:

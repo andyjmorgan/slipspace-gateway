@@ -46,7 +46,7 @@ That single target brings up the mock LLM as a container, then runs the gateway 
 
 ```mermaid
 flowchart LR
-    Dev[make dev] --> Compose[docker compose up -d<br/>mockllm]
+    Dev[make dev] --> Compose[docker compose -f docker-compose.yaml<br/>up -d mockllm]
     Dev --> GoRun[go run ./cmd/gateway<br/>SLIPSPACE_CONFIG_DIR=./config-dev]
     Compose --> Mock[mockllm:5555<br/>compose network]
     GoRun --> Data[":8585<br/>data plane"]
@@ -274,9 +274,9 @@ Every target in the `Makefile`, in the order they appear there:
 | `vet` | `go vet ./...` | — | unit | Cheap; runs in `all` and in CI. |
 | `fmt` | `go fmt ./...` + `goimports -local github.com/andyjmorgan/slipspace-gateway` | — | — | Local convenience. CI fails on dirty diffs. |
 | `lint` | `golangci-lint run ./...` | — | unit | Non-negotiable before commit. Install with `brew install golangci-lint` if missing. |
-| `test` | `go test -race -coverprofile=coverage.out -covermode=atomic` | — | unit | Skips `web/node_modules`. Race detector on. |
+| `test` | `go test -race -coverprofile=coverage.out -covermode=atomic $(go list ./... \| grep -v 'web/node_modules')` | — | unit | The `web/node_modules` filter on the package list is load-bearing — plain `./...` would walk it. Race detector on. |
 | `coverage` | `test` + `scripts/coverage-gate.sh coverage.out 95` | — | unit + gate | Same as `test`, then fails if any gated package is under 95%. |
-| `dev` | `docker compose up -d mockllm` + `go run ./cmd/gateway` | `SLIPSPACE_CONFIG_DIR=./config-dev`, `SLIPSPACE_HTTP_BIND=0.0.0.0:8585`, `SLIPSPACE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLIPSPACE_LOG_LEVEL=debug` (the Makefile `DEV_ENV` block — note it does **not** set `SLIPSPACE_SPOOL_ROOT`, so the spool falls back to `/var/lib/slipspace/spool`) | — | The fast inner loop. Container infra + native gateway. |
+| `dev` | `docker compose -f docker-compose.yaml up -d mockllm` + `go run ./cmd/gateway` | `SLIPSPACE_CONFIG_DIR=./config-dev`, `SLIPSPACE_HTTP_BIND=0.0.0.0:8585`, `SLIPSPACE_PROMETHEUS_BIND=0.0.0.0:9090`, `SLIPSPACE_LOG_LEVEL=debug` (the Makefile `DEV_ENV` block — note it does **not** set `SLIPSPACE_SPOOL_ROOT`, so the spool falls back to `/var/lib/slipspace/spool`) | — | The fast inner loop. Container infra + native gateway. The explicit `-f docker-compose.yaml` pins the committed file so the gitignored `docker-compose.dev.yaml` overlay is never picked up implicitly. |
 | `dev-with-overlay` | `docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d` + `go run ./cmd/gateway` | same as `dev` | — | Requires `docker-compose.dev.yaml` (copy from `.example`). |
 | `dev-compose` | `docker compose up -d --build` | — | — | Builds the gateway image with the SPA embedded and brings up both services (gateway + mockllm). Slow iteration; matches production shape. Pair with `make web-dev` for SPA-only hot reload. |
 | `dev-compose-down` | `docker compose down` | — | — | Tears down the compose stack. |
