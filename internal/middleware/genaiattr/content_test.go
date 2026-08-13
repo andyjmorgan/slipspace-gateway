@@ -391,6 +391,20 @@ func TestExtractContent_ToolResponseCapture(t *testing.T) {
 			wantResult: "18C and sunny",
 		},
 		{
+			// OpenAI custom-tool continuation uses a distinct output-item type
+			// but the same call_id/output join contract.
+			name:     "openai_responses_custom_tool",
+			endpoint: "responses",
+			raw: `{
+				"input": [
+					{"type":"custom_tool_call","id":"ctc_1","call_id":"call_custom_1","name":"exec","input":"print(1)"},
+					{"type":"custom_tool_call_output","call_id":"call_custom_1","output":"1"}
+				]
+			}`,
+			wantID:     "call_custom_1",
+			wantResult: "1",
+		},
+		{
 			// Real Gemini capture: functionResponse part under role "user".
 			name:     "gemini_user_role",
 			endpoint: "generate_content",

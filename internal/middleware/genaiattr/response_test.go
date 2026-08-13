@@ -860,6 +860,39 @@ func TestExtractResponse_OpenAIResponses_ServerTools(t *testing.T) {
 	})
 }
 
+func TestExtractResponse_OpenAIResponses_CustomTool(t *testing.T) {
+	t.Parallel()
+
+	// OpenAI custom tools are caller-executed free-form tools. Their output
+	// item carries the real tool name and input directly; it must not fall
+	// through the generic *_call server-tool mapping as "custom_tool".
+	raw := []byte(`{"output":[{"type":"custom_tool_call","id":"ctc_1","call_id":"call_1","status":"completed","name":"exec","input":"print(1)"}]}`)
+	got := genaiattr.ExtractResponse("responses", raw)
+	tc := toolCalls(got.OutputParts)
+	if len(tc) != 1 {
+		t.Fatalf("tool calls = %+v, want one custom tool call", tc)
+	}
+	if tc[0].ID != "call_1" || tc[0].Name != "exec" || string(tc[0].Arguments) != `"print(1)"` {
+		t.Errorf("custom tool call = %+v", tc[0])
+	}
+	if tc[0].Executor != "client" {
+		t.Errorf("custom tool executor = %q, want client", tc[0].Executor)
+	}
+}
+
+func TestExtractResponse_OpenAIResponses_StreamCustomTool(t *testing.T) {
+	t.Parallel()
+
+	sse := "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"custom_tool_call\",\"id\":\"ctc_2\",\"call_id\":\"call_2\",\"name\":\"exec\",\"status\":\"in_progress\"}}\n\n" +
+		"data: {\"type\":\"response.custom_tool_call_input.delta\",\"item_id\":\"ctc_2\",\"delta\":\"print(\"}\n\n" +
+		"data: {\"type\":\"response.custom_tool_call_input.delta\",\"item_id\":\"ctc_2\",\"delta\":\"1)\"}\n\n"
+	got := genaiattr.ExtractResponse("responses", []byte(sse))
+	tc := toolCalls(got.OutputParts)
+	if len(tc) != 1 || tc[0].Name != "exec" || tc[0].ID != "call_2" || string(tc[0].Arguments) != `"print(1)"` {
+		t.Fatalf("custom tool calls = %+v", tc)
+	}
+}
+
 // Chat Completions has no server-tool output items (search-preview models
 // return plain text with annotations) — the extractor must keep emitting
 // exactly [text, tool_call...] with no response parts.

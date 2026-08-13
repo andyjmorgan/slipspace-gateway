@@ -200,15 +200,16 @@ func openAIResponsesContent(raw []byte) Content {
 	}
 	if json.Unmarshal(body.Input, &items) == nil {
 		// As with chat, the latest input turn is either the last user item or
-		// the contiguous trailing run of function_call_output items (a tool-
-		// continuation request). function_call_output items carry no role —
+		// the contiguous trailing run of function_call_output or
+		// custom_tool_call_output items (a tool-continuation request). Tool
+		// output items carry no role —
 		// they are identified by type — so they must be matched before the
 		// role-keyed branches, which would otherwise clobber the input turn
 		// with empty parts.
 		var toolTurn *Message
 		for _, it := range items {
-			if it.Type == "function_call_output" {
-				// {type:"function_call_output", call_id, output}.
+			if it.Type == "function_call_output" || it.Type == "custom_tool_call_output" {
+				// {type:"{function|custom_tool}_call_output", call_id, output}.
 				if toolTurn == nil {
 					toolTurn = &Message{Role: "tool"}
 				}
