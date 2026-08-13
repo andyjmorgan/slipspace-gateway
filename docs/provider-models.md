@@ -272,7 +272,8 @@ The streaming union (`stream.go`, dispatched on event `type`) is:
 at `stream.go:372`). The `ContentBlockDelta` payload is itself a union:
 `TextDelta`, `InputJSONDelta`, `ThinkingDelta`, `SignatureDelta`,
 `CitationsDelta`, `UnknownContentBlockDelta` (`stream.go:431-598`,
-`CitationsDelta` (type `citations_delta`) at `stream.go:607`,
+`CitationsDelta` (type `citations_delta`) at `stream.go:551`, registered at
+`stream.go:607`,
 `UnknownContentBlockDelta` at `stream.go:578`).
 
 ## Gemini — generateContent (`protocols/gemini/content`)
