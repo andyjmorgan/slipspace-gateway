@@ -327,7 +327,8 @@ func (a *toolAcc) merge(tc openAIToolCall) {
 }
 
 // responsesOutput is one Responses-API output item: an assistant message
-// (content parts with type "output_text"), a function_call item, or a
+// (content parts with type "output_text"), a function_call/custom_tool_call
+// item, or a
 // server-tool item (web_search_call, file_search_call, code_interpreter_call,
 // computer_call, mcp_call, ...). The fields past Content are the server-tool
 // argument and result carriers — which are populated depends on the item type
@@ -367,7 +368,7 @@ type responsesOutput struct {
 // mints a phantom call.
 func responsesServerToolName(itemType string) (string, bool) {
 	switch itemType {
-	case "", "function_call", "message", "reasoning", "function_call_output", "computer_call_output":
+	case "", "function_call", "custom_tool_call", "message", "reasoning", "function_call_output", "custom_tool_call_output", "computer_call_output":
 		return "", false
 	case "mcp_list_tools", "mcp_approval_request", "mcp_approval_response":
 		return itemType, true
@@ -376,6 +377,23 @@ func responsesServerToolName(itemType string) (string, bool) {
 		return name, true
 	}
 	return "", false
+}
+
+// mergeCustomItem folds an OpenAI custom_tool_call into the same client-side
+// tool-call shape as function_call. Custom tools differ only in their free-form
+// input: the wire carries {name,input} instead of {name,arguments}. The actual
+// name must win over the item-type family name, and the caller executes the
+// tool and returns a custom_tool_call_output on a later request.
+func (a *toolAcc) mergeCustomItem(o responsesOutput) {
+	if o.Name != "" {
+		a.name = o.Name
+	}
+	if id := firstNonEmpty(o.CallID, o.ID); id != "" {
+		a.id = id
+	}
+	if input := nonEmptyRaw(o.Input); len(input) > 0 {
+		a.argsOverride = input
+	}
 }
 
 // responsesServerToolArgs is the best-effort argument projection of a
@@ -500,6 +518,10 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 				acc.args.WriteString(o.Arguments)
 				continue
 			}
+			if o.Type == "custom_tool_call" {
+				accFor(firstNonEmpty(o.ID, o.CallID)).mergeCustomItem(o)
+				continue
+			}
 			// Server-tool items (web_search_call, file_search_call, ...)
 			// become tool_call parts; without this branch they would fall
 			// through to text extraction and contribute nothing.
@@ -541,7 +563,7 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 		switch ch.Type {
 		case "response.output_text.delta":
 			out.WriteString(ch.Delta)
-		case "response.function_call_arguments.delta":
+		case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 			accFor(ch.ItemID).args.WriteString(ch.Delta)
 		case "response.output_item.added", "response.output_item.done":
 			if ch.Item != nil && ch.Item.Type == "function_call" {
@@ -552,6 +574,8 @@ func extractOpenAIResponsesResponse(frames [][]byte) ResponseAttrs {
 				if id := firstNonEmpty(ch.Item.CallID, ch.Item.ID); id != "" {
 					acc.id = id
 				}
+			} else if ch.Item != nil && ch.Item.Type == "custom_tool_call" {
+				accFor(firstNonEmpty(ch.Item.ID, ch.ItemID)).mergeCustomItem(*ch.Item)
 			} else if ch.Item != nil {
 				// Streamed server-tool items arrive whole on the added/done
 				// events (arguments don't fragment like function_call's);
