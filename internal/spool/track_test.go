@@ -376,3 +376,96 @@ func TestTrack_SealCurrentBestEffortLogsAndSwallows(t *testing.T) {
 	}
 	tr.sealCurrentBestEffort() // must not panic
 }
+
+// TestUploadOne_LostClaimRaceIsSkipNotSuccess covers the benign half of the
+// Claim split: a segment a sibling worker already claimed is reported as
+// errClaimRaceLost so attemptUploads skips it, rather than as nil, which
+// the caller would record on the breaker as a delivery that never happened.
+func TestUploadOne_LostClaimRaceIsSkipNotSuccess(t *testing.T) {
+	tr := newTestTrack(t, trackOptions{conn: &namedFake{name: "x"}})
+
+	// A sealed path that does not exist — exactly what a lost race leaves
+	// behind, since the winner already renamed it into uploading/.
+	missing := filepath.Join(tr.manager.root, stateSealed, "0000000000000000-deadbeef.ndjson.zst")
+
+	err := tr.uploadOne(context.Background(), missing)
+	if !errors.Is(err, errClaimRaceLost) {
+		t.Fatalf("uploadOne on a vanished segment = %v, want errClaimRaceLost", err)
+	}
+	if tr.uploadsOK.Load() != 0 {
+		t.Errorf("uploadsOK = %d, want 0 — a lost race delivered nothing", tr.uploadsOK.Load())
+	}
+}
+
+// TestUploadOne_ClaimFailureIsNotSuccess covers the half that was broken: a
+// Claim error that is NOT a lost race (here, a path outside sealed/, which
+// assertUnder rejects) must surface as an error so the breaker sees it.
+// Previously every Claim error returned nil and reset the failure counter.
+func TestUploadOne_ClaimFailureIsNotSuccess(t *testing.T) {
+	tr := newTestTrack(t, trackOptions{conn: &namedFake{name: "x"}})
+
+	// Under the spool root but in the wrong state dir: assertUnder fails
+	// with an error that is not os.ErrNotExist.
+	wrongDir := filepath.Join(tr.manager.root, stateUploading, "0000000000000000-deadbeef.ndjson.zst")
+
+	err := tr.uploadOne(context.Background(), wrongDir)
+	if err == nil {
+		t.Fatal("uploadOne returned nil for a real Claim failure — the caller would record a delivery")
+	}
+	if errors.Is(err, errClaimRaceLost) {
+		t.Fatalf("a non-ENOENT Claim error was misreported as a lost race: %v", err)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("test setup wrong: expected a non-ENOENT failure, got %v", err)
+	}
+	if tr.uploadsOK.Load() != 0 {
+		t.Errorf("uploadsOK = %d, want 0", tr.uploadsOK.Load())
+	}
+}
+
+// TestAttemptUploads_ClaimFailureOpensBreaker is the end of the causal chain
+// the bug broke: on a persistently unclaimable spool the breaker must open
+// instead of resetting on every pass.
+func TestAttemptUploads_ClaimFailureOpensBreaker(t *testing.T) {
+	tr := newTestTrack(t, trackOptions{
+		conn:    &namedFake{name: "x"},
+		breaker: BreakerOpts{FailuresToOpen: 2, HalfOpenAfter: time.Hour},
+	})
+
+	// Two sealed entries that Claim will reject for a non-ENOENT reason.
+	// ListSealed reads the directory, so create real files, then make the
+	// sealed dir unwritable so the rename out of it fails.
+	for _, n := range []string{"0000000000000001-aaaaaaaa", "0000000000000002-bbbbbbbb"} {
+		p := filepath.Join(tr.manager.root, stateSealed, n+".ndjson.zst")
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatalf("seed sealed segment: %v", err)
+		}
+	}
+	sealedDir := filepath.Join(tr.manager.root, stateSealed)
+	//nolint:gosec // G302 targets file modes; this is a directory, which needs
+	// the execute bit to stay traversable — 0o500 is r-x precisely so ListSealed
+	// can still read it while the rename out of it fails with EACCES.
+	if err := os.Chmod(sealedDir, 0o500); err != nil {
+		t.Fatalf("chmod sealed dir: %v", err)
+	}
+	//nolint:gosec // G302 targets file modes; restoring a directory to rwx so
+	// t.TempDir cleanup can remove it.
+	t.Cleanup(func() { _ = os.Chmod(sealedDir, 0o700) })
+
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions do not deny rename")
+	}
+
+	// attemptUploads returns after the first failure, so one pass records
+	// one failure. Two passes is what the drain loop actually does — and is
+	// precisely what the bug defeated: each pass used to end in
+	// RecordSuccess, resetting the consecutive-failure counter so the
+	// breaker could never reach its threshold no matter how many passes ran.
+	tr.attemptUploads(context.Background())
+	tr.attemptUploads(context.Background())
+
+	if got := tr.breaker.State(); got == breakerClosed {
+		t.Error("breaker still closed after repeated Claim failures — " +
+			"a failed claim is being recorded as a successful upload")
+	}
+}
