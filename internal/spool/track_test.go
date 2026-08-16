@@ -442,9 +442,14 @@ func TestAttemptUploads_ClaimFailureOpensBreaker(t *testing.T) {
 		}
 	}
 	sealedDir := filepath.Join(tr.manager.root, stateSealed)
-	if err := os.Chmod(sealedDir, 0o500); err != nil { // r-x: rename out fails with EACCES
+	//nolint:gosec // G302 targets file modes; this is a directory, which needs
+	// the execute bit to stay traversable — 0o500 is r-x precisely so ListSealed
+	// can still read it while the rename out of it fails with EACCES.
+	if err := os.Chmod(sealedDir, 0o500); err != nil {
 		t.Fatalf("chmod sealed dir: %v", err)
 	}
+	//nolint:gosec // G302 targets file modes; restoring a directory to rwx so
+	// t.TempDir cleanup can remove it.
 	t.Cleanup(func() { _ = os.Chmod(sealedDir, 0o700) })
 
 	if os.Geteuid() == 0 {
