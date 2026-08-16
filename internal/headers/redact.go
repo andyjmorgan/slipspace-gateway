@@ -14,7 +14,8 @@ import (
 // providers we forward to plus our own X-Slipspace-Identity:
 // Authorization, Proxy-Authorization, X-Api-Key, x-api-key,
 // Anthropic-Api-Key, X-Goog-Api-Key, Cookie, Set-Cookie,
-// X-Auth-Token, X-CSRF-Token, X-API-Secret, X-Slipspace-Identity.
+// X-Auth-Token, X-CSRF-Token, X-API-Secret, X-Slipspace-Identity,
+// X-Sluice-Identity.
 // Over-redacting on display is the safer error.
 var builtinSensitiveSubstrings = []string{
 	"auth",
@@ -24,6 +25,13 @@ var builtinSensitiveSubstrings = []string{
 	"cookie",
 	"secret",
 	"slipspace-identity",
+	// The pre-rename compat header (auth.legacyHeaderIdentity,
+	// "X-Sluice-Identity") carries the same live api-key secret as its
+	// current-name twin and is still an accepted passthrough selector, so
+	// it needs the same masking. Matched as its own substring rather than
+	// by folding both into "-identity", which would silently capture
+	// unrelated headers. Remove alongside the compat shim itself.
+	"sluice-identity",
 }
 
 // Redactor masks credential-bearing headers. Construct one via

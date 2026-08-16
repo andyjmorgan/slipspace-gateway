@@ -9,16 +9,21 @@ func TestRedactor_IsSensitive_Builtins(t *testing.T) {
 	t.Parallel()
 	r := NewRedactor(nil)
 	cases := map[string]bool{
-		"Authorization":              true,
-		"authorization":              true,
-		"Proxy-Authorization":        true,
-		"X-Api-Key":                  true,
-		"x-api-key":                  true,
-		"Anthropic-Api-Key":          true,
-		"X-Goog-Api-Key":             true,
-		"X-Apikey":                   true,
-		"X-Slipspace-Identity":       true,
-		"x-slipspace-identity":       true,
+		"Authorization":        true,
+		"authorization":        true,
+		"Proxy-Authorization":  true,
+		"X-Api-Key":            true,
+		"x-api-key":            true,
+		"Anthropic-Api-Key":    true,
+		"X-Goog-Api-Key":       true,
+		"X-Apikey":             true,
+		"X-Slipspace-Identity": true,
+		"x-slipspace-identity": true,
+		// Pre-rename compat header — carries the same live api-key secret
+		// and is still an accepted passthrough selector, so it must mask
+		// for as long as the shim is accepted.
+		"X-Sluice-Identity":          true,
+		"x-sluice-identity":          true,
 		"Cookie":                     true,
 		"Set-Cookie":                 true,
 		"X-Auth-Token":               true,
@@ -111,6 +116,7 @@ func TestRedactor_Redact_MasksCredentials(t *testing.T) {
 		"Authorization":        []string{"Bearer sk-abc123"},
 		"X-Api-Key":            []string{"sk-secret"},
 		"X-Slipspace-Identity": []string{"sk_live_supersecret_must_not_leak"},
+		"X-Sluice-Identity":    []string{"sk_live_legacy_must_not_leak_either"},
 		"X-Acme-Trace-Id":      []string{"tenant-tenant-tenant"}, // operator extra
 		"Cookie":               []string{"session=xyz; other=qux"},
 		"Content-Type":         []string{"application/json"},
@@ -121,6 +127,7 @@ func TestRedactor_Redact_MasksCredentials(t *testing.T) {
 		"Authorization",
 		"X-Api-Key",
 		"X-Slipspace-Identity",
+		"X-Sluice-Identity",
 		"X-Acme-Trace-Id",
 		"Cookie",
 	} {
