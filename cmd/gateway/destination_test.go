@@ -202,3 +202,87 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+// TestBuildDestination_MintedCredentialHeaderNotDropped pins the invariant the
+// case mismatch broke: the credential header the builder just minted must never
+// appear in DropHeaders.
+//
+// credentialHeaderNames is canonical-case ("X-Api-Key") while
+// auth.UpstreamCredentialHeader returns the lowercase wire literals
+// ("x-api-key", "x-goog-api-key"), so an exact-string compare never matched for
+// anthropic or gemini and added the minted header to its own drop list. That
+// was benign only because the forwarder applies DropHeaders before
+// OutgoingHeaders — an accident. This test holds the contract independently of
+// that ordering.
+func TestBuildDestination_MintedCredentialHeaderNotDropped(t *testing.T) {
+	cases := []struct {
+		provider string
+		header   string
+		format   string
+	}{
+		{"anthropic", "x-api-key", "{key}"},
+		{"gemini", "x-goog-api-key", "{key}"},
+		{"openai", "Authorization", "Bearer {key}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			target := selection.Target{ //nolint:gosec // synthetic test fixture, not a real credential
+				Provider:   tc.provider,
+				BaseURL:    "https://upstream.example.com",
+				Path:       "/v1/x",
+				Auth:       &contractsconfig.ProviderAuth{Header: tc.header, Format: tc.format},
+				Credential: "sk-upstream",
+			}
+			dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "Bearer client-token", nil)
+			if err != nil {
+				t.Fatalf("buildDestination: %v", err)
+			}
+			if got := dest.OutgoingHeaders.Get(tc.header); got != "sk-upstream" && got != "Bearer sk-upstream" {
+				t.Fatalf("%s = %q, want the minted credential", tc.header, got)
+			}
+			for _, d := range dest.DropHeaders {
+				if http.CanonicalHeaderKey(d) == http.CanonicalHeaderKey(tc.header) {
+					t.Errorf("DropHeaders = %v contains the just-minted header %q — "+
+						"only the forwarder applying drops before outgoing headers keeps this from "+
+						"stripping the upstream credential", dest.DropHeaders, tc.header)
+				}
+			}
+			// The other credential headers must still be dropped.
+			for _, other := range credentialHeaderNames {
+				if http.CanonicalHeaderKey(other) == http.CanonicalHeaderKey(tc.header) {
+					continue
+				}
+				if !contains(dest.DropHeaders, other) {
+					t.Errorf("DropHeaders = %v, want %q dropped so an inbound credential "+
+						"cannot leak cross-provider", dest.DropHeaders, other)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildDestination_ChangeApiKeyOverrideKeepsMintedHeader covers the same
+// invariant on the changeApiKey literal branch, which mints through the same
+// helper.
+func TestBuildDestination_ChangeApiKeyOverrideKeepsMintedHeader(t *testing.T) {
+	target := selection.Target{ //nolint:gosec // synthetic test fixture, not a real credential
+		Provider:   "anthropic",
+		BaseURL:    "https://api.anthropic.com",
+		Path:       "/v1/messages",
+		Auth:       &contractsconfig.ProviderAuth{Header: "x-api-key", Format: "{key}"},
+		Credential: "sk-upstream-anthropic",
+	}
+	override := "sk-override"
+	dest, err := buildDestination(target, nil, auth.ModeManaged, nil, "Bearer client-token", &override)
+	if err != nil {
+		t.Fatalf("buildDestination: %v", err)
+	}
+	if got := dest.OutgoingHeaders.Get("x-api-key"); got != "sk-override" {
+		t.Fatalf("x-api-key = %q, want the override credential", got)
+	}
+	for _, d := range dest.DropHeaders {
+		if http.CanonicalHeaderKey(d) == http.CanonicalHeaderKey("x-api-key") {
+			t.Errorf("DropHeaders = %v contains the just-minted x-api-key", dest.DropHeaders)
+		}
+	}
+}
