@@ -250,8 +250,11 @@ func decodeRuleBody(w http.ResponseWriter, body io.Reader) (rulescontract.RuleCo
 }
 
 // commitClone is the shared tail every write handler runs: validate
-// the clone, reindex it, persist policy.yaml, then atomically swap.
-// On any error the live snapshot is untouched.
+// the clone, reindex it, persist it via config.WriteConfig (which
+// routes each editable block back to its SourceFiles origin, not to a
+// fixed policy.yaml), then atomically swap. On any error the live
+// snapshot is untouched. This ordering — validate → persist → Replace
+// — is CLAUDE.md invariant 9.
 func commitClone(clone *config.ResolvedConfig, configDir string, store *config.Store) error {
 	if err := clone.RevalidateAndIndex(); err != nil {
 		return validationError{wrapped: err}

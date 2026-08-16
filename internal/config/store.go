@@ -79,7 +79,8 @@ func (s *Store) Subscribe(fn func(*ResolvedConfig)) {
 // Replace publishes next as the live snapshot and dispatches it to every
 // registered subscriber. next must be non-nil; callers are responsible
 // for cloning + validating before they call here (the admin write path
-// does Clone → mutate → Validate → Replace → persist).
+// does Clone → mutate → Validate → persist → Replace, in that order —
+// CLAUDE.md invariant 9; see internal/admin.commitClone).
 //
 // Replace serialises with other Replace calls under mu but does not block
 // readers. The subscribe-list is snapshotted under mu and dispatched
