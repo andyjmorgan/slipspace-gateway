@@ -529,6 +529,24 @@ func startAdmin(ctx context.Context, store *config.Store, obs *observability.Pro
 		logger.InfoContext(ctx, "admin console disabled")
 		return
 	}
+	// admin.Config.Validate() already encodes this rule — it returns
+	// ErrPasswordRequired for enabled-with-no-password — but nothing called
+	// it, so the guard was dead code. Without it the listener came up and
+	// internal/admin.BasicAuth compared the supplied password against "",
+	// which succeeds for an empty one: anyone reaching the port
+	// authenticated as admin and got config read/write plus api-key reveal.
+	//
+	// Refusing the listener rather than failing boot is deliberate. A
+	// misconfigured deployment loses its console but keeps serving proxy
+	// traffic, so this closes the hole without turning an existing running
+	// config into a crash loop. Promoting it to a boot-time failure is the
+	// stronger contract and is tracked separately.
+	if err := resolved.Admin.Validate(); err != nil {
+		logger.ErrorContext(ctx, "admin console NOT started: invalid admin config",
+			slog.String("err", err.Error()),
+			slog.String("bind_addr", resolved.Admin.EffectiveBindAddr()))
+		return
+	}
 
 	providers := make([]string, 0, len(resolved.Providers))
 	for name := range resolved.Providers {

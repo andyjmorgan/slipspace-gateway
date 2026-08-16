@@ -48,6 +48,13 @@ type Options struct {
 	// AdminEnabled. Ignored when AdminEnabled is false.
 	AdminPassword string
 
+	// AdminOmitPassword writes admin.yaml with an explicitly empty
+	// password instead of substituting the default, so a test can drive
+	// the enabled-without-credential path. Only meaningful with
+	// AdminEnabled; the gateway is expected to refuse to open the
+	// listener, so the harness will not be able to reach AdminURL.
+	AdminOmitPassword bool
+
 	// ExternalURL sets SLIPSPACE_EXTERNAL_URL on the spawned gateway,
 	// resolving the {external_url} template reference used by
 	// response-side body rewrites. Empty leaves it unset.
