@@ -328,7 +328,7 @@ func (h *Harness) tryStartGateway(t *testing.T, repoRoot, configDir string) (ret
 	h.adminBindPort = adminPort
 	if h.opts.AdminEnabled {
 		password := h.opts.AdminPassword
-		if password == "" {
+		if password == "" && !h.opts.AdminOmitPassword {
 			password = "test-password"
 		}
 		h.AdminPassword = password
@@ -386,7 +386,10 @@ func (h *Harness) tryStartGateway(t *testing.T, repoRoot, configDir string) (ret
 		return collided.Load(), fmt.Errorf("gateway did not become ready: %w", err)
 	}
 
-	if h.opts.AdminEnabled {
+	// AdminOmitPassword drives the enabled-without-credential path, where
+	// the gateway is expected to refuse the listener — so there is nothing
+	// to wait for and probing would time out by design.
+	if h.opts.AdminEnabled && !h.opts.AdminOmitPassword {
 		// /api/v1/auth/me requires Basic auth — accept 200 (authenticated
 		// somehow) or 401 (the live admin demanding credentials), but
 		// reject anything else; a 202 would mean a port collision.
