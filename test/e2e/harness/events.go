@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +62,46 @@ type Envelope struct {
 	// an oversize cap — read it here rather than through InlinePayload,
 	// which is the flattened request-event projection.
 	Record *cc.Record
+
+	// TsNs, InstanceID and Seq carry the source Record's ordering key
+	// through to every envelope fanned out of it, including the
+	// rule.matched projections that drop it from their own payload.
+	// [SortByRecordOrder] is the only supported way to order captured
+	// envelopes — see CLAUDE.md invariant #8.
+	TsNs       int64
+	InstanceID string
+	Seq        uint64
+
+	// SubSeq breaks ties between envelopes fanned out of a single Record,
+	// which by construction share one (TsNs, InstanceID, Seq). It is the
+	// index within the fan-out — for rule.matched, the rule's position in
+	// Record.RulesFired, i.e. evaluation order.
+	SubSeq int
+}
+
+// SortByRecordOrder sorts envelopes in place by the connector record
+// ordering key (TsNs, InstanceID, Seq), with SubSeq breaking ties between
+// envelopes fanned out of the same Record.
+//
+// Tests must order captured envelopes through this helper rather than by
+// receive order or by a single timestamp field: per-track drain is in-order,
+// but across spool tracks and gateway instances the destination sees records
+// interleaved (CLAUDE.md invariant #8). The sort is stable so that envelopes
+// sharing a complete key retain arrival order rather than permuting.
+func SortByRecordOrder(envs []Envelope) {
+	sort.SliceStable(envs, func(i, j int) bool {
+		a, b := envs[i], envs[j]
+		if a.TsNs != b.TsNs {
+			return a.TsNs < b.TsNs
+		}
+		if a.InstanceID != b.InstanceID {
+			return a.InstanceID < b.InstanceID
+		}
+		if a.Seq != b.Seq {
+			return a.Seq < b.Seq
+		}
+		return a.SubSeq < b.SubSeq
+	})
 }
 
 // ObjectRef points at a payload held in out-of-band object storage
@@ -198,10 +239,13 @@ func (h *Harness) emitRecord(rec cc.Record) {
 			Mode:          PayloadInline,
 			InlinePayload: payload,
 			Record:        &recCopy,
+			TsNs:          rec.TsNs,
+			InstanceID:    rec.InstanceID,
+			Seq:           rec.Seq,
 		})
 	}
 
-	for _, rf := range rec.RulesFired {
+	for i, rf := range rec.RulesFired {
 		rm := events.RuleMatched{
 			CorrelationID:  rec.CorrelationID,
 			Configuration:  rec.Configuration,
@@ -219,6 +263,13 @@ func (h *Harness) emitRecord(rec cc.Record) {
 				Timestamp:     time.Unix(0, rec.TsNs).UTC(),
 				Mode:          PayloadInline,
 				InlinePayload: payload,
+				TsNs:          rec.TsNs,
+				InstanceID:    rec.InstanceID,
+				Seq:           rec.Seq,
+				// Every rule fired by one request shares that request's
+				// (TsNs, InstanceID, Seq); the RulesFired index is what
+				// distinguishes them, and it is evaluation order.
+				SubSeq: i,
 			})
 		}
 	}
