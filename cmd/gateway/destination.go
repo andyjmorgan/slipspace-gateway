@@ -180,11 +180,7 @@ func resolveCredentialHeaders(
 		// provider's header format, drop the rest.
 		name, value := credentialHeaderFor(target, *override)
 		outgoing.Set(name, value)
-		for _, h := range credentialHeaderNames {
-			if h != name {
-				drops = appendUnique(drops, h)
-			}
-		}
+		drops = dropOtherCredentialHeaders(drops, name)
 	case override != nil:
 		// changeApiKey UseSlipSpaceKey sentinel (empty string): forward the
 		// inbound bearer verbatim, stripping nothing.
@@ -203,11 +199,31 @@ func resolveCredentialHeaders(
 	default:
 		name, value := credentialHeaderFor(target, target.Credential)
 		outgoing.Set(name, value)
-		for _, h := range credentialHeaderNames {
-			if h != name {
-				drops = appendUnique(drops, h)
-			}
+		drops = dropOtherCredentialHeaders(drops, name)
+	}
+	return drops
+}
+
+// dropOtherCredentialHeaders adds every credential header in the closed set
+// EXCEPT minted to drops, so an inbound Bearer/x-api-key cannot leak
+// cross-provider while the header we just set survives.
+//
+// The comparison canonicalises both sides. credentialHeaderNames is written in
+// canonical case ("X-Api-Key") while auth.UpstreamCredentialHeader returns the
+// lowercase wire literals ("x-api-key", "x-goog-api-key"), so an exact-string
+// compare never matched for anthropic or gemini and added the just-minted
+// header to its own drop list. That is benign only because the forwarder
+// applies DropHeaders before OutgoingHeaders — an ordering that is
+// load-bearing by accident. Any reordering, or a second consumer of
+// Destination.DropHeaders, would strip the upstream credential and 401 every
+// managed anthropic/gemini request.
+func dropOtherCredentialHeaders(drops []string, minted string) []string {
+	canonical := http.CanonicalHeaderKey(minted)
+	for _, h := range credentialHeaderNames {
+		if http.CanonicalHeaderKey(h) == canonical {
+			continue
 		}
+		drops = appendUnique(drops, h)
 	}
 	return drops
 }
