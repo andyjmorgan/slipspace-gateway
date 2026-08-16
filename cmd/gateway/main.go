@@ -121,6 +121,16 @@ func run(ctx context.Context) error {
 	// the admin write path that calls store.Replace.
 	store := config.NewStore(resolved)
 
+	// gateway.config_reload.total is the admin write API's only
+	// observability signal — it applies edits live, so an operator
+	// correlating a behaviour change with a config edit has nothing else
+	// to look at. Store.Replace is the single publish path (invariant #9),
+	// so subscribing here counts every swap regardless of which write
+	// endpoint caused it. The callback swallows Subscribe's immediate
+	// registration call, which is not a reload.
+	onConfigReload := observability.ConfigReloadCounter(ctx, obs.Meters.ConfigReloadTotal)
+	store.Subscribe(func(*config.ResolvedConfig) { onConfigReload() })
+
 	resolver := auth.NewResolver(store)
 
 	liveFeed, err := buildLiveFeed(env, logger)
