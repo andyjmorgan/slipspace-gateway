@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
@@ -240,5 +242,77 @@ func TestConfigurationsWrite_DisabledAndPersistError(t *testing.T) {
 	}
 	if rec := do(t, ConfigurationsDeleteHandler(store2, badDir), http.MethodDelete, "/api/v1/config/configurations/spare", ""); rec.Code != http.StatusInternalServerError {
 		t.Errorf("delete persist error = %d, want 500", rec.Code)
+	}
+}
+
+// TestBuildConfiguration_PreservesAgentRouting pins the data-loss fix.
+// agent_routing is the one Configuration field configurationWriteBody does
+// not model, so a PUT that edits a tag used to replace the whole struct and
+// drop it — persisted to YAML, silently disabling agent-aware routing.
+func TestBuildConfiguration_PreservesAgentRouting(t *testing.T) {
+	existing := contractsconfig.Configuration{
+		Credentials: map[string]string{"openai": "sk-old"},
+		AgentRouting: &contractsconfig.AgentRouting{
+			Advisor:     "arb",
+			AllowModels: []string{"claude-haiku-4-5", "claude-sonnet-4-5"},
+		},
+	}
+	// A body that edits only tags — exactly the console's "add a tag" PUT.
+	body := configurationWriteBody{Tags: map[string]string{"tier": "prod"}}
+
+	got := buildConfiguration(body, existing)
+
+	if got.AgentRouting == nil {
+		t.Fatal("agent_routing dropped by a PUT that did not mention it")
+	}
+	if got.AgentRouting.Advisor != "arb" {
+		t.Errorf("advisor = %q, want arb", got.AgentRouting.Advisor)
+	}
+	if len(got.AgentRouting.AllowModels) != 2 {
+		t.Errorf("allow_models = %v, want 2 entries", got.AgentRouting.AllowModels)
+	}
+	if got.Tags["tier"] != "prod" {
+		t.Errorf("the edit itself was lost: tags = %v", got.Tags)
+	}
+}
+
+// TestBuildConfiguration_CreateHasNoAgentRouting checks the create path,
+// which passes a zero Configuration as existing.
+func TestBuildConfiguration_CreateHasNoAgentRouting(t *testing.T) {
+	got := buildConfiguration(configurationWriteBody{Tags: map[string]string{"a": "b"}},
+		contractsconfig.Configuration{})
+	if got.AgentRouting != nil {
+		t.Errorf("create invented agent_routing: %+v", got.AgentRouting)
+	}
+}
+
+// TestConfigurationWriteBody_CoversEveryConfigurationField is the guard that
+// would have caught this class. Every exported field on
+// contractsconfig.Configuration must either be modelled on the write body or
+// be listed here as deliberately carried forward from the existing value.
+// A new field fails this test until someone decides which it is, rather than
+// being silently zeroed by the next PUT.
+func TestConfigurationWriteBody_CoversEveryConfigurationField(t *testing.T) {
+	// Fields intentionally not on the write body, preserved from existing.
+	preserved := map[string]bool{"AgentRouting": true}
+
+	modelled := map[string]bool{}
+	bt := reflect.TypeOf(configurationWriteBody{})
+	for i := range bt.NumField() {
+		modelled[bt.Field(i).Name] = true
+	}
+
+	ct := reflect.TypeOf(contractsconfig.Configuration{})
+	for i := range ct.NumField() {
+		f := ct.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		if modelled[f.Name] || preserved[f.Name] {
+			continue
+		}
+		t.Errorf("Configuration.%s is neither modelled on configurationWriteBody nor listed as preserved — "+
+			"a PUT will silently zero it; add it to the write body or to the preserved set in buildConfiguration",
+			f.Name)
 	}
 }

@@ -47,6 +47,16 @@ func buildConfiguration(body configurationWriteBody, existing contractsconfig.Co
 		RuleNames:           body.RuleNames,
 		Tags:                body.Tags,
 		ConnectorBindings:   body.ConnectorBindings,
+
+		// AgentRouting is the one Configuration field the write body does
+		// not model, so it must be carried forward rather than rebuilt.
+		// Without this, editing a tag through the console replaced the
+		// whole struct and silently dropped agent-aware routing — persisted
+		// to YAML by WriteConfig, so every later request lost 3-tier judge
+		// routing with no error and no diff shown to the operator. Same
+		// "omitted means unchanged" convention mergeSecret uses below. On
+		// create, existing is the zero Configuration, so this is nil.
+		AgentRouting: existing.AgentRouting,
 	}
 	if len(body.Credentials) > 0 {
 		out.Credentials = make(map[string]string, len(body.Credentials))
