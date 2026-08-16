@@ -121,7 +121,9 @@ func WriteConfig(dir string, resolved *ResolvedConfig) error {
 	for _, fname := range files {
 		root := &yaml.Node{Kind: yaml.MappingNode}
 		for _, block := range fileBlocks[fname] {
-			appendResolvedBlock(root, block, resolved)
+			if err := appendResolvedBlock(root, block, resolved); err != nil {
+				return fmt.Errorf("config: build %s: %w", fname, err)
+			}
 		}
 		body, err := yaml.Marshal(root)
 		if err != nil {
@@ -165,30 +167,33 @@ func blockPresence(r *ResolvedConfig) map[string]bool {
 	}
 }
 
-// appendResolvedBlock attaches one named block of resolved onto root.
-func appendResolvedBlock(root *yaml.Node, block string, r *ResolvedConfig) {
+// appendResolvedBlock attaches one named block of resolved onto root,
+// returning any yaml encode failure so WriteConfig aborts before touching a
+// file rather than persisting a config with that block silently emptied.
+func appendResolvedBlock(root *yaml.Node, block string, r *ResolvedConfig) error {
 	switch block {
 	case keyProviders:
-		appendBlock(root, keyProviders, r.Providers)
+		return appendBlock(root, keyProviders, r.Providers)
 	case keyGroups:
-		appendBlock(root, keyGroups, r.Groups)
+		return appendBlock(root, keyGroups, r.Groups)
 	case keyConfigurations:
-		appendBlock(root, keyConfigurations, r.Configurations)
+		return appendBlock(root, keyConfigurations, r.Configurations)
 	case keyAPIKeys:
-		appendBlock(root, keyAPIKeys, r.APIKeys)
+		return appendBlock(root, keyAPIKeys, r.APIKeys)
 	case keyRules:
-		appendBlock(root, keyRules, r.Rules)
+		return appendBlock(root, keyRules, r.Rules)
 	case keyConnectors:
-		appendBlock(root, keyConnectors, r.Connectors)
+		return appendBlock(root, keyConnectors, r.Connectors)
 	case keyAdmin:
-		appendBlock(root, keyAdmin, r.Admin)
+		return appendBlock(root, keyAdmin, r.Admin)
 	case keyTelemetry:
-		appendBlock(root, keyTelemetry, r.Telemetry)
+		return appendBlock(root, keyTelemetry, r.Telemetry)
 	case keyPricing:
-		appendBlock(root, keyPricing, r.Pricing)
+		return appendBlock(root, keyPricing, r.Pricing)
 	case keyAdvisors:
-		appendBlock(root, keyAdvisors, r.Advisors)
+		return appendBlock(root, keyAdvisors, r.Advisors)
 	}
+	return nil
 }
 
 // atomicWriteFile writes body to path via a sibling temp file + rename, so a
