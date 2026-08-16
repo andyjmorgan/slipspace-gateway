@@ -5,8 +5,10 @@ import (
 	"time"
 )
 
-// breakerState is the circuit-breaker FSM. Exposed as an int for the
-// connector_circuit_breaker_state gauge.
+// breakerState is the per-track circuit-breaker FSM. Backed by an int so a
+// snapshot can be carried on trackStats.BreakerState; the spool publishes no
+// breaker gauge of its own (gateway.cb.state is the resilience middleware's
+// breaker, a different subsystem).
 type breakerState int
 
 const (
@@ -15,9 +17,11 @@ const (
 	breakerOpen
 )
 
-// breaker is a per-track circuit-breaker. closed → halfOpen on N
-// consecutive Upload failures; halfOpen → closed on a probe success or
-// → open on probe failure; open → halfOpen after a cooldown elapses.
+// breaker is a per-track circuit-breaker. closed → open on N consecutive
+// Upload failures; open → halfOpen once halfOpenAfter has elapsed (decided
+// lazily in Allow, so there is no timer goroutine); halfOpen → closed on a
+// probe success or back → open on a probe failure. closed never transitions
+// straight to halfOpen.
 type breaker struct {
 	mu               sync.Mutex
 	state            breakerState

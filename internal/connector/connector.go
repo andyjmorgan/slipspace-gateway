@@ -29,7 +29,9 @@ type Connector interface {
 	Name() string
 
 	// Type returns the connector type identifier ("s3", "azure_blob",
-	// "webhook", "testfs"). Used for metric labels and recovery routing.
+	// "testfs"). Used for metric labels and recovery routing. "webhook"
+	// is not among them — it is a real-time pusher, not a spool
+	// destination, and factory.Build rejects it.
 	Type() string
 
 	// Upload ships a single sealed segment. ctx carries the per-attempt

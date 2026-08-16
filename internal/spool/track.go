@@ -26,7 +26,6 @@ type trackStats struct {
 	UploadsRetried  uint64
 	UploadsDLQ      uint64
 	BreakerState    breakerState
-	UploadInFlight  bool
 	PendingSegments int
 }
 
