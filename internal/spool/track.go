@@ -2,6 +2,7 @@ package spool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -299,6 +300,12 @@ func (t *track) attemptUploads(ctx context.Context) {
 		default:
 		}
 		if err := t.uploadOne(ctx, path); err != nil {
+			// A lost claim race is neither a delivery nor a failure: a
+			// sibling worker owns that segment now, so recording either
+			// outcome would attribute its result to this worker.
+			if errors.Is(err, errClaimRaceLost) {
+				continue
+			}
 			t.breaker.RecordFailure()
 			return
 		}
@@ -306,14 +313,35 @@ func (t *track) attemptUploads(ctx context.Context) {
 	}
 }
 
+// errClaimRaceLost reports that a sealed segment was claimed by a sibling
+// upload worker between ListSealed and Claim. It is a benign skip, not a
+// delivery and not a failure, so attemptUploads moves to the next segment
+// without touching the circuit breaker.
+var errClaimRaceLost = errors.New("spool: sealed segment claimed by another worker")
+
 // uploadOne claims one sealed segment, calls Connector.Upload with the
 // retry schedule, and either Completes, deadletters, or leaves the
 // segment in sealed/ depending on the outcome.
+//
+// Returns errClaimRaceLost when a sibling worker won the claim; any other
+// error is a real local failure the caller records against the breaker.
 func (t *track) uploadOne(ctx context.Context, sealedPath string) error {
 	uploading, err := t.manager.Claim(sealedPath)
 	if err != nil {
-		// Most likely a sibling worker claimed it first; benign.
-		return nil
+		// Only ENOENT means a sibling worker won the rename race. Every
+		// other error — EACCES, EIO, EXDEV, a read-only filesystem, an
+		// assertUnder violation — is a local failure, and returning nil
+		// here reported the segment as delivered: the breaker recorded a
+		// success, its consecutive-failure counter reset every pass, and
+		// segments piled up in sealed/ with no error log and no signal.
+		if errors.Is(err, os.ErrNotExist) {
+			return errClaimRaceLost
+		}
+		t.opts.logger.Error("spool: claim sealed segment",
+			slog.String("track", t.name),
+			slog.String("path", sealedPath),
+			slog.String("err", err.Error()))
+		return fmt.Errorf("spool: claim %q: %w", sealedPath, err)
 	}
 	seg := cc.SealedSegment{
 		Path:       uploading,
