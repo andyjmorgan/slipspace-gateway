@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -328,28 +327,33 @@ func TestRules_ListOrderEvaluation(t *testing.T) {
 	stageChatOK(h)
 	fireChat(t, h, nil)
 
-	// Drain all three rule.matched events, then sort by MatchedAt
-	// (set inside Evaluate, which runs sequentially per request) to
-	// recover evaluation order. The harness fans each Record.RulesFired
-	// entry out as a separate envelope, and receive order is not
-	// guaranteed to match evaluation order; MatchedAt is the
-	// authoritative per-event timestamp.
+	// Drain all three rule.matched events, then order them by the record
+	// ordering key (CLAUDE.md invariant #8) to recover evaluation order.
+	//
+	// MatchedAt cannot do this job: the harness stamps every rule fanned
+	// out of a Record with that Record's TsNs, so all three events here
+	// carry an identical timestamp. Sorting on it is sorting on a
+	// constant, and an unstable sort over a constant key leaves the order
+	// unspecified — it only looked correct because Go's sort.Slice falls
+	// back to insertion sort under 12 elements.
 	want := []string{"rule-a", "rule-b", "rule-c"}
+	envs := make([]harness.Envelope, 0, len(want))
+	for range want {
+		envs = append(envs, h.ExpectEvent("gateway.rule.matched", 5*time.Second))
+	}
+	harness.SortByRecordOrder(envs)
+
 	matches := make([]events.RuleMatched, 0, len(want))
-	for i := range want {
-		env := h.ExpectEvent("gateway.rule.matched", 5*time.Second)
+	for i, env := range envs {
 		var rm events.RuleMatched
 		if err := json.Unmarshal(env.InlinePayload, &rm); err != nil {
 			t.Fatalf("decode rule.matched[%d]: %v", i, err)
 		}
 		matches = append(matches, rm)
 	}
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].MatchedAt.Before(matches[j].MatchedAt)
-	})
 	for i, expect := range want {
 		if matches[i].RuleName != expect {
-			t.Errorf("matches[%d].RuleName = %q, want %q (sorted by MatchedAt)", i, matches[i].RuleName, expect)
+			t.Errorf("matches[%d].RuleName = %q, want %q (sorted by record order)", i, matches[i].RuleName, expect)
 		}
 	}
 }
