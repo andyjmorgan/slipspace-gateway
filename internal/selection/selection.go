@@ -271,8 +271,14 @@ func matchesModelPatterns(model string, patterns []string) bool {
 }
 
 // PassthroughMatch is the resolved outcome of an opaque passthrough family
-// match. The request is proxied verbatim to Provider with the family's auth and
-// any captured path params; no typed parsing, no GenAI telemetry, no capture.
+// match. The request is proxied verbatim to Provider with the family's auth
+// and any captured path params; no typed parsing and no GenAI telemetry.
+//
+// Capture is NOT skipped: the raw body and the redacted headers are still
+// captured, under bodycapture.KindPassthrough, and reach the admin live-feed
+// and the connector spool exactly as a typed protocol's would. Only the
+// typed Body is nil. Choosing a passthrough family is not a way to keep a
+// sensitive upstream's payloads out of the record.
 type PassthroughMatch struct {
 	// Family is the passthrough family name (telemetry / diagnostics).
 	Family string

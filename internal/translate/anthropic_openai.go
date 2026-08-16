@@ -40,7 +40,8 @@ func (anthropicOpenAIChat) TranslateError(status int, body []byte) ([]byte, erro
 	return translateChatErrorToMessages(status, body)
 }
 
-// init registers the (messages, chat) translator with the default registry —
-// the one permitted use of init in this codebase (polymorphic/translator
-// registration).
+// init registers the (messages, chat) translator with the default registry.
+// Registration into a package-level registry is the sanctioned use of init
+// here (see CLAUDE.md); note the protocols/ polymorphic factories need no
+// init at all — they are package-level var initializers.
 func init() { Register(anthropicOpenAIChat{}) }
