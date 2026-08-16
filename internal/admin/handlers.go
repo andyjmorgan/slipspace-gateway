@@ -111,6 +111,7 @@ func emptySummary(providers []string, window time.Duration) adminc.DashboardSumm
 		ByConfiguration: []adminc.DashboardConfigurationRow{},
 		ByModel:         []adminc.DashboardModelRow{},
 		RulesFired:      []adminc.DashboardRuleFiredRow{},
+		TagsFired:       []adminc.DashboardTagFiredRow{},
 		ProviderHealth:  health,
 	}
 }

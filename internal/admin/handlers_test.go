@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -84,26 +85,21 @@ func TestDashboardSummaryHandler_EmptySnapshotter(t *testing.T) {
 	}
 
 	// SPA accesses .length and .map() on every slice field without
-	// optional chaining — JSON null would crash the dashboard on
-	// first paint. Lock the no-nil-slices contract here so a future
-	// DashboardSummary field addition either initialises in
-	// emptySummary or fails this gate.
-	if got.ByProvider == nil {
-		t.Error("ByProvider serialised as nil; SPA expects empty array")
-	}
-	if got.ByProtocol == nil {
-		t.Error("ByProtocol serialised as nil; SPA expects empty array")
-	}
-	if got.ByConfiguration == nil {
-		t.Error("ByConfiguration serialised as nil; SPA expects empty array")
-	}
-	if got.ByModel == nil {
-		t.Error("ByModel serialised as nil; SPA expects empty array")
-	}
-	if got.RulesFired == nil {
-		t.Error("RulesFired serialised as nil; SPA expects empty array")
-	}
-	if got.ProviderHealth == nil {
-		t.Error("ProviderHealth serialised as nil; SPA expects empty array")
+	// optional chaining — JSON null would crash the dashboard on first
+	// paint. Walk the struct by reflection rather than enumerating the
+	// fields by hand: the hand-written list this replaces silently
+	// omitted TagsFired when that field was added, which is exactly the
+	// regression the gate is supposed to catch. Reflection makes a new
+	// slice field fail here until emptySummary initialises it.
+	rv := reflect.ValueOf(got)
+	for i := range rv.NumField() {
+		f := rv.Field(i)
+		if f.Kind() != reflect.Slice {
+			continue
+		}
+		if f.IsNil() {
+			t.Errorf("%s serialised as nil; SPA expects an empty array — initialise it in emptySummary",
+				rv.Type().Field(i).Name)
+		}
 	}
 }
