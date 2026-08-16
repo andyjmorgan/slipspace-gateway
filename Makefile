@@ -129,8 +129,13 @@ tools:
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	$(GO) install github.com/gzuidhof/tygo@v0.2.21
 	$(GO) install github.com/bufbuild/buf/cmd/buf@v1.47.2
-	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	# Pinned, like buf/tygo above: the generators stamp their own version into
+	# gen/**.pb.go, so an unpinned @latest silently regenerates a diff the moment
+	# upstream tags a release, and CI's stale-generated-code gate fails on a
+	# version comment nobody changed. Bump these deliberately, with the
+	# regenerated output in the same commit.
+	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
 
 # generate runs the codegen pipeline: `buf generate` first (the detector
 # contract proto -> Go under gen/), then `tygo generate` (the Go contracts ->

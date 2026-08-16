@@ -64,8 +64,11 @@ jobs:
         run: |
           go install github.com/gzuidhof/tygo@v0.2.21
           go install github.com/bufbuild/buf/cmd/buf@v1.47.2
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+          # Pinned to match the versions stamped into the committed gen/**.pb.go.
+          # @latest made this job fail on a generator version bump alone; keep in
+          # lockstep with the same pins in the Makefile's `tools` target.
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
       - name: regenerate generated code
         run: |
           buf generate
