@@ -3,9 +3,13 @@
 #
 # Usage: coverage-gate.sh <coverage.out> <min-percent>
 #
-# Gates packages under internal/, models/, contracts/, providers/. cmd/, test/,
+# Gates packages under internal/, models/, contracts/, protocols/. cmd/, test/,
 # and generated code are excluded. Passes silently when the profile is empty or
 # no gated packages are present (scaffold PRs have no Go code yet).
+#
+# protocols/ is the wire-model surface and carries the repo's highest silent-
+# failure risk (a dropped provider field produces no error and no metric), so it
+# is gated deliberately, not incidentally.
 
 set -euo pipefail
 
@@ -27,7 +31,7 @@ fi
 #   <import-path>/<file>:startLine.col,endLine.col numStmt count
 exec awk -v module="$module" -v min="$min" '
 BEGIN {
-  gated_re = "^" module "/(internal|models|contracts|providers)(/|$)"
+  gated_re = "^" module "/(internal|models|contracts|protocols)(/|$)"
 }
 /^mode:/ { next }
 NF == 0 { next }
