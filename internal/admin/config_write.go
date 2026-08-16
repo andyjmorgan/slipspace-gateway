@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 	"sort"
+	"strconv"
 
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
@@ -151,9 +152,18 @@ func referrersToConfiguration(snap *config.ResolvedConfig, name string) []string
 	for i := range snap.APIKeys {
 		k := &snap.APIKeys[i]
 		if k.Configuration == name {
+			// Never fall back to k.Secret. Only `secret` is required on an
+			// api key, so an unnamed key used to put its full sk_live_...
+			// value in the 409 body — and from there into the admin access
+			// log and any console toast rendering the referrer list. Fall
+			// back to the stable ID, then to the positional index, both of
+			// which identify the blocking key without disclosing it.
 			label := k.Name
+			if label == "" && k.ID != nil {
+				label = k.ID.String()
+			}
 			if label == "" {
-				label = k.Secret
+				label = "#" + strconv.Itoa(i)
 			}
 			out = append(out, "api_key:"+label)
 		}
