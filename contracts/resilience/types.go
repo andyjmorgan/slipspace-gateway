@@ -1,6 +1,8 @@
 // Package resilience defines the public schema for the gateway's resilience
-// policy. The schema is parsed and validated in v1.0 but evaluation is deferred
-// to v1.2; see the "Resilience Schema + Engine" design note for the long-form.
+// policy. The schema is parsed, validated, and evaluated — the orchestrator
+// that consumes it is internal/middleware/resilience (middleware.go for the
+// failover / load-balance dispatch, breaker.go for the circuit breaker). See
+// the "Resilience Schema + Engine" design note for the long-form.
 package resilience
 
 import (
@@ -12,9 +14,11 @@ import (
 // ResilienceMode selects which orchestration strategy applies to a Configuration.
 type ResilienceMode string
 
-// Resilience modes accepted in YAML. v1.0 parses these but only ModeNone is
-// honoured at runtime; the other modes activate when v1.1 wires the
-// orchestrators.
+// Resilience modes accepted in YAML. Every mode dispatches at runtime:
+// ModeFailover runs the ordered walk, ModeLoadBalance and
+// ModeLoadBalanceWithFailover run the weighted pick, and ModeNone (or an
+// unrecognised future mode) degenerates to a single attempt against the first
+// target. See internal/middleware/resilience/middleware.go.
 const (
 	ModeNone ResilienceMode = "none"
 
@@ -92,7 +96,7 @@ type ResilienceConfig struct {
 	// FailureStatusCodes is the policy-wide retry-trigger set. Per-target
 	// FailureStatusCodes on ResilienceTarget overrides this list for the
 	// target it lives on. Empty falls back to "5xx is a failure" at the
-	// orchestrator (v1.2).
+	// orchestrator.
 	FailureStatusCodes []int `yaml:"failure_status_codes,omitempty" json:"failure_status_codes,omitempty"`
 }
 
@@ -154,12 +158,24 @@ type CircuitBreakerConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
 	// FailureThreshold is the absolute failure count within the sampling
-	// window that trips the breaker.
+	// window that trips the breaker. Zero disables the absolute arm. When
+	// FailureRateThreshold is also non-zero, both arms must be breached
+	// before the breaker opens — see FailureRateThreshold.
 	FailureThreshold int `yaml:"failure_threshold" json:"failure_threshold"`
 
 	// FailureRateThreshold is the failure ratio in [0, 1] within the
-	// sampling window that trips the breaker. Considered alongside
-	// FailureThreshold; either may trip.
+	// sampling window that trips the breaker. Zero disables the rate arm.
+	//
+	// The two thresholds conjoin, they do not alternate: when exactly one
+	// is set that arm alone decides, but when BOTH are non-zero the breaker
+	// opens only once the absolute count and the failure rate are breached
+	// together. Setting failure_threshold: 5 alongside
+	// failure_rate_threshold: 0.5 therefore does not trip on the 5th
+	// failure unless failures are also >50% of the window. This is
+	// deliberate — pairing them is how a policy avoids tripping on a burst
+	// that is small relative to healthy traffic. See
+	// internal/middleware/resilience/breaker.go (shouldTrip) and
+	// docs/resilience.md.
 	FailureRateThreshold float64 `yaml:"failure_rate_threshold" json:"failure_rate_threshold"`
 
 	// SamplingDurationSeconds is the rolling window over which failures and

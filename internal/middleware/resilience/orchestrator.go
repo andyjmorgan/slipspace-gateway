@@ -1,6 +1,8 @@
-// Package resilience holds the gateway's resilience orchestrators. v1.0 ships
-// only the no-op NoneOrchestrator that single-attempts via the supplied
-// ExecuteFunc; failover, load-balance, and circuit-breaker land in v1.1. The
+// Package resilience holds the gateway's resilience machinery. Failover,
+// load-balance, load_balance_with_failover, and the circuit breaker are
+// implemented in middleware.go's HTTPHandler (breaker.go for the circuit
+// breaker); the Orchestrator/NoneOrchestrator abstraction in this file is a
+// superseded v1.0 shim not referenced by the current request path. The
 // public policy schema lives in contracts/resilience.
 package resilience
 
@@ -12,9 +14,11 @@ import (
 )
 
 // Orchestrator runs the request against one or more targets per the
-// configured resilience mode. v1.0 only NoneOrchestrator is implemented;
-// failover, load-balance, and circuit-breaker arrive in v1.1 once the schema
-// is locked.
+// configured resilience mode. Only NoneOrchestrator is implemented here;
+// failover, load-balance, and circuit-breaker are implemented directly in
+// middleware.go's HTTPHandler rather than through this interface (see the
+// package doc), so Orchestrator itself is unused by the current request
+// path.
 //
 // Implementations must be safe for concurrent use across requests since one
 // Orchestrator instance is shared by the entire pipeline.
@@ -53,8 +57,9 @@ type Result struct {
 
 // NoneOrchestrator single-attempts the first configured target (or the
 // zero-value target when none are configured) without retry, circuit
-// breaking, or failover. It is the v1.0 shim that keeps the pipeline
-// wiring stable while the real orchestrators land in v1.1.
+// breaking, or failover. It is a superseded v1.0 shim; the real failover,
+// load-balance, and circuit-breaker behavior lives in middleware.go's
+// HTTPHandler, not here.
 type NoneOrchestrator struct{}
 
 // Execute invokes exec exactly once against the first target (or the

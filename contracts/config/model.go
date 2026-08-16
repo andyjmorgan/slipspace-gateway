@@ -155,9 +155,12 @@ type Group struct {
 	// failure".
 	FailureStatusCodes []int `yaml:"failure_status_codes,omitempty" json:"failure_status_codes,omitempty"`
 
-	// CircuitBreaker is the group-wide breaker. Breaker state is tracked
-	// per-provider (the failure unit), so a dead provider is skipped by every
-	// group that includes it.
+	// CircuitBreaker is the group-wide breaker config, applied to every
+	// target in the group. Breaker *state* is keyed per (group, provider)
+	// — internal/middleware/resilience/breaker.go (breakerKey) — so a
+	// provider tripped inside this group keeps taking traffic from any
+	// other group that also lists it. State is per-pod and in-process; it
+	// does not survive a restart or replicate across replicas.
 	CircuitBreaker *resilience.CircuitBreakerConfig `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
 
 	// StrictWeights, in load_balance mode, makes the first weighted-random

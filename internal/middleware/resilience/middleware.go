@@ -101,10 +101,12 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 //     attempts may leak state between attempts because the typed
 //     body is shared. The fix is body restoration via re-parse from
 //     Captured.Raw before each attempt; deferred to a follow-up.
-//   - Per-attempt OTel meters (RequestsTotal, RequestDuration, TTFB,
-//     UpstreamErrors) still fire from the per-attempt reporter
-//     observer. PR-10b refines the meter semantics to per-request and
-//     adds the dedicated gateway.resilience.* counters.
+//   - Meter granularity is split by design. RequestsTotal and
+//     RequestDuration are emitted once per request with the overall
+//     duration and final status — cmd/gateway/reporter.go installs a
+//     terminal publish hook on the attempt buffer for that. TTFC and
+//     UpstreamErrorsTotal remain per-attempt, so a request that failed
+//     over contributes one upstream-error sample per failed attempt.
 //   - Policy.ResponseHeaderTimeoutSeconds, when set, overrides the
 //     gateway-wide Transport.ResponseHeaderTimeout for every attempt
 //     under the policy (see withPolicyResponseHeaderTimeout) — the
