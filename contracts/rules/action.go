@@ -294,15 +294,25 @@ func (a *ReturnStatusCodeAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a ReturnStatusCodeAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
-// LlmImpersonationAction is a TERMINATING action that returns a fake LLM
-// completion to the client without contacting upstream. Useful for
-// blocked-content responses that still look like a model completion.
+// LlmImpersonationAction is a TERMINATING action that answers the client
+// directly, without contacting upstream. Useful for blocked-content
+// responses.
+//
+// What ships today is a stub: the evaluator returns Message verbatim as a
+// 200 text/plain body, NOT a provider-shaped completion envelope, so an
+// SDK pointed at the gateway sees an unparseable body rather than a fake
+// chat.completion. The per-provider response-shape synthesisers
+// (chat.completion / response / message / candidates, plus their streaming
+// variants) are deferred to v1.0.3+. The stub is deliberately honest —
+// see internal/middleware/rules/actions.go (applyLlmImpersonation) and
+// docs/actions.md.
 type LlmImpersonationAction struct {
 	// Type is the polymorphic discriminator; always "llmImpersonation".
 	Type string `yaml:"type" json:"type"`
 
-	// Message is the synthetic completion text wrapped in the upstream
-	// provider's response shape.
+	// Message is the synthetic completion text. Emitted as a bare
+	// text/plain body until the per-provider synthesisers land; it is not
+	// wrapped in the upstream provider's response shape today.
 	Message string `yaml:"message" json:"message"`
 
 	models.DynamicProperties `yaml:",inline"`
@@ -360,24 +370,27 @@ func (a *AddTagAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a AddTagAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
-// UseResiliencePolicyAction binds the request to a named resilience
-// policy declared in the top-level `resilience_policies:` library.
-// The rules engine writes state.PolicyRef; the v1.2 orchestrator reads
-// it post-rules and loops over the policy's targets. Non-terminating
-// — earlier or later rules can still mutate headers, attach tags, and
-// so on. Multiple useResiliencePolicy actions in a chain: last writer
-// wins (the rule engine evaluates in declaration order).
+// UseResiliencePolicyAction is INERT under v2 and retained only so
+// existing YAML keeps parsing. It writes state.PolicyRef, but nothing
+// reads it: v2 resolves resilience from the Configuration's binding —
+// selection synthesises a ResilienceConfig and stashes it on the
+// request context, and the orchestrator prefers that over PolicyRef
+// (internal/middleware/resilience/middleware.go). The gateway also
+// wires the by-name PolicyLookup to nil (cmd/gateway/handler.go).
 //
-// Set PolicyName to "" to *clear* a previously-set PolicyRef; the
-// orchestrator falls back to single-shot when no policy is in effect.
+// The v1 top-level `resilience_policies:` library it used to reference
+// no longer exists — groups replaced it (contracts/config.GroupsConfig),
+// and a binding names a group directly. Bind resilience with a binding
+// edit, not this action. See docs/actions.md and docs/resilience.md.
 type UseResiliencePolicyAction struct {
 	// Type is the polymorphic discriminator; always "useResiliencePolicy".
 	Type string `yaml:"type" json:"type"`
 
-	// PolicyName references a ResilienceConfig.Name in the top-level
-	// `resilience_policies:` library. Validated cross-reference at
-	// config-load time — unknown names are a startup error, not a
-	// silent runtime fall-through.
+	// PolicyName is the v1 policy name. Nothing validates it — there is
+	// no cross-reference check at config load, because there is no v2
+	// library to check it against — and nothing reads the state it
+	// writes, so any value (including an unknown one) loads clean and is
+	// a runtime no-op.
 	PolicyName string `yaml:"policyName" json:"policy_name"`
 
 	models.DynamicProperties `yaml:",inline"`
