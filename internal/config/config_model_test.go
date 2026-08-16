@@ -138,9 +138,17 @@ func TestLoad_EmptyAndParseErrors(t *testing.T) {
 	if _, err := Load(context.Background(), t.TempDir()); !errors.Is(err, ErrEmptyDirectory) {
 		t.Fatalf("empty dir: want ErrEmptyDirectory, got %v", err)
 	}
+	// Malformed YAML must wrap ErrParse, not merely be non-nil:
+	// cmd/cli's reason classifier branches on errors.Is(err, ErrParse)
+	// to report "parse_error", and asserting only err != nil let that
+	// branch sit unreachable.
 	dir := writeDir(t, map[string]string{"bad.yaml": "providers: {{{not yaml"})
-	if _, err := Load(context.Background(), dir); err == nil {
+	_, err := Load(context.Background(), dir)
+	if err == nil {
 		t.Fatal("parse error: want error, got nil")
+	}
+	if !errors.Is(err, ErrParse) {
+		t.Fatalf("parse error: want wrapped ErrParse, got %v", err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()

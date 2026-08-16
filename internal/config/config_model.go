@@ -147,7 +147,11 @@ func Load(ctx context.Context, dir string) (*ResolvedConfig, error) {
 		}
 		var doc configDoc
 		if uerr := yaml.Unmarshal(raw, &doc); uerr != nil {
-			return nil, fmt.Errorf("config: load parse %q: %w", name, uerr)
+			// Wrap ErrParse, not just the yaml error: cmd/cli's reason
+			// classifier branches on errors.Is(err, config.ErrParse) to
+			// report "parse_error", and a bare wrap left that branch
+			// unreachable so malformed YAML was diagnosed as "other".
+			return nil, fmt.Errorf("config: load %q: %w: %w", name, ErrParse, uerr)
 		}
 		if doc.LegacyBackends.Kind != 0 {
 			return nil, fmt.Errorf("config: load %q: %w", name, ErrLegacyProvidersKey)
