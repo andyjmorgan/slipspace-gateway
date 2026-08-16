@@ -1,6 +1,7 @@
 // Package rules defines the public schema for the gateway's rule engine. The
-// schema is parsed and validated in v1.0 but evaluation is deferred to v1.1;
-// see the "Rule Schema" design note for the long-form.
+// schema is parsed, validated, and evaluated — the evaluator that consumes it
+// is internal/middleware/rules. See the "Rule Schema" design note for the
+// long-form.
 //
 // YAML tags are camelCase (the operator-authored wire format); JSON tags are
 // snake_case (the internal/API representation). They differ on purpose.

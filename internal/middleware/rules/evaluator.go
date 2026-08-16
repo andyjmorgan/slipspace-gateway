@@ -136,7 +136,7 @@ func (e *Evaluator) Evaluate(
 		// Cascade: each rule's Condition sees the live state left by
 		// every earlier rule's actions — not the frozen snapshot from
 		// the start of Evaluate. liveGatewayContext derives Provider
-		// / Endpoint / Model / Headers from state + body so a catch-
+		// / Protocol / Model / Headers from state + body so a catch-
 		// all rule keyed on a normalised model name fires regardless
 		// of which upstream rule normalised it. Each rule still
 		// matches at most once per request; the single-pass loop

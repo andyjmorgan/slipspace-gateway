@@ -8,16 +8,24 @@ type APIKeysConfig []APIKey
 
 // APIKey is a single gateway-issued credential.
 type APIKey struct {
-	// ID is the stable identifier the admin write API and the (future)
-	// central control plane address the key by. Optional in operator-authored
-	// YAML — nil is allowed for the local file model — and minted by the admin
-	// API on create; the central server requires it. Same nilable-UUID pattern
-	// as RuleContract.ID / ResilienceConfig.ID.
+	// ID is the stable identifier the admin write API addresses the key by.
+	// Optional in operator-authored YAML — nil is allowed for the local file
+	// model — and minted by the admin API on create. Same nilable-UUID
+	// pattern as RuleContract.ID / ResilienceConfig.ID.
 	ID *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 
 	// Secret is the bearer token clients present (conventionally prefixed
 	// "sk_live_…" for production keys or "sk_dev_…" for development keys).
-	// Authentication compares this in constant time.
+	//
+	// Authentication resolves it by indexed lookup against the snapshot's
+	// SecretIndex, not by comparing it against each configured key in turn
+	// (internal/middleware/auth/resolver.go). That is the timing-relevant
+	// property: a map lookup does not walk the secret byte by byte, so it
+	// leaks no prefix information the way a short-circuiting == over a
+	// candidate list would, and Go's per-process hash seed keeps a caller
+	// from steering bucket collisions. The secret must still be
+	// high-entropy — the index is a lookup, not a slow hash, so it is no
+	// defence against an offline guess of a weak secret.
 	Secret string `yaml:"secret" json:"secret"`
 
 	// Name is a human-readable label surfaced in logs and reporting events;

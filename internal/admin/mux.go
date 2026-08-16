@@ -120,7 +120,7 @@ const Prefix = "/admin"
 //   - GET  /admin/api/v1/config/configurations[/{name}]
 //   - GET  /admin/api/v1/config/rules[/{name}]
 //   - GET  /admin/api/v1/config/providers[/{name}]
-//   - GET  /admin/api/v1/config/routes        — flattened route index
+//   - GET  /admin/api/v1/config/bindings      — flattened binding index
 //   - All other /admin/* paths                — SPA static + index.html fallback
 //
 // HTTP Basic auth wraps the /admin/api/v1/* tree. The SPA's static

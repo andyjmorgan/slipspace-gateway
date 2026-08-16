@@ -1,8 +1,9 @@
 // Package connector defines the public wire format every connector emits
 // and the typed-error contract every connector returns from Upload.
 //
-// The shape of [Record] is the v1 wire format. Per the connector schema
-// rule (see DonkeyWork design note "Connector + Spool Architecture"),
+// The shape of [Record] is versioned by [SchemaVersion], which every
+// emitted Record carries. Per the connector schema rule (see the
+// "Connector + Spool Architecture" design note),
 // fields can be added but never removed, renamed, type-narrowed, or
 // repurposed. Breaking changes ship as a new connector type, never as a
 // schema bump on an existing one.

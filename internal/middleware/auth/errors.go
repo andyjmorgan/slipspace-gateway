@@ -19,18 +19,19 @@ var ErrUnauthorized = errors.New("auth: unauthorized")
 // or at request time (auth resolve). One conceptual error, two phrasing layers.
 var ErrUnknownConfiguration = fmt.Errorf("auth: %w", config.ErrUnknownConfiguration)
 
-// ErrNoRoute signals the auth middleware was invoked without a routing decision
-// on the request context. This is a programming error in the middleware wiring
-// — auth must run downstream of routing.
-var ErrNoRoute = errors.New("auth: no route on context")
-
 // Result is the audit tag emitted in structured logs for the resolution
 // outcome.
 type Result string
 
-// Result tags emitted in the structured "result" field of auth log entries.
-// These are the values referenced by the Authentication & Auth Modes design
-// note and consumed by downstream log dashboards.
+// Result tags emitted in the structured "result" field of auth log entries,
+// and consumed by downstream log dashboards. This is the complete set
+// classifyResult can produce.
+//
+// There is deliberately no separate tag for a missing versus a malformed
+// bearer: every managed-mode discovery miss collapses into ErrUnauthorized
+// with no APIKey attached, so both log as ResultUnknownKey. Splitting them
+// would need a distinguishing sentinel threaded out of discoverManagedKey.
+// See docs/auth.md.
 const (
 	ResultSuccess Result = "success"
 
@@ -39,8 +40,4 @@ const (
 	ResultDisabledKey Result = "disabled_key"
 
 	ResultUnknownConfiguration Result = "unknown_configuration"
-
-	ResultMalformedBearer Result = "malformed_bearer"
-
-	ResultMissingBearer Result = "missing_bearer"
 )

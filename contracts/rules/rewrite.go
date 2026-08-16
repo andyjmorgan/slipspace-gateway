@@ -12,9 +12,12 @@ import (
 )
 
 // TargetScope is the body a rewrite action or body-field condition
-// addresses. Only request.body is honoured on the request path;
-// response.body is reserved for the response-side rewrite work and
-// rejected at config-load today.
+// addresses. Write actions (rewriteField / removeField / appendField)
+// accept both scopes: request.body ops apply on the request path,
+// response.body ops are queued onto MutableState.ResponseRewrites and
+// applied from the proxy's ModifyResponse hook. Only the bodyField
+// *condition* rejects response.body at config load, since conditions
+// evaluate at request time and the response does not exist yet.
 type TargetScope string
 
 // Target scopes accepted by the body-rewrite actions and bodyField

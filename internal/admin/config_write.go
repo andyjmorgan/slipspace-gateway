@@ -47,10 +47,15 @@ func isDryRun(r *http.Request) bool {
 // rules_write.go and is already block-agnostic — it takes a whole
 // *ResolvedConfig clone, so every resource reuses it unchanged.
 
-// PreviewResult is the validation half of a diff-preview: whether a candidate
+// PreviewResult is the whole of a ?dry_run=true response: whether a candidate
 // mutation would pass RevalidateAndIndex, and the underlying error when not.
-// The structural before/after diff is assembled by each per-resource handler
-// (which knows the single resource that changed) and layered on top of this.
+// It is validate-only — no structural before/after diff is produced by any
+// handler, so a caller gets "this would be accepted/rejected" and nothing to
+// render a diff from. The console composes its own before/after from the
+// resource it already holds.
+//
+// Dry-run is honoured on create, replace, and patch only. The DELETE handlers
+// have no dry-run branch and commit immediately.
 type PreviewResult struct {
 	// Valid reports whether the mutated clone passed RevalidateAndIndex.
 	Valid bool `json:"valid"`

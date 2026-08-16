@@ -61,7 +61,8 @@ type BodyEnvelope struct {
 
 	// RequestHeaders is the inbound HTTP header snapshot, with
 	// credential-bearing values replaced by "[REDACTED]" via
-	// internal/headers.RedactSensitive before it lands here. Nil when
+	// (*internal/headers.Redactor).Redact, applied at capture time in
+	// internal/middleware/bodycapture, before it lands here. Nil when
 	// header capture wasn't wired (older requests in the LRU, tests
 	// that skip the middleware).
 	RequestHeaders map[string][]string

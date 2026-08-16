@@ -91,8 +91,10 @@ func (s *Server) WithAppliedConfig(cfg config.Config) *Server {
 }
 
 // Handler returns the routed HTTP handler. Probes and the HMAC-authed webhook
-// are open (the webhook authenticates itself via signature); the console API and
-// shell are behind Basic auth.
+// are open (the webhook authenticates itself via signature), and so is the SPA
+// shell at GET / — only the console *API* is behind Basic auth. This mirrors
+// internal/admin: the bundle is static and unauthenticated, and the SPA drives
+// its own login form off a 401 from the API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)

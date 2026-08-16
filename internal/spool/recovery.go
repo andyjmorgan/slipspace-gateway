@@ -31,9 +31,11 @@ type RecoveryReport struct {
 // Recover restores spool invariants after a process restart:
 //
 //  1. Anything in uploading/ moves back to sealed/. The previous process
-//     was mid-upload; the new process retries from scratch. Idempotency
-//     on the destination side is provided by SealedSegment.DeliveryID
-//     which the caller persists in a sidecar — out of scope for this PR.
+//     was mid-upload; the new process retries from scratch. A segment can
+//     therefore be delivered more than once. Deduplication is the
+//     destination's job: SealedSegment.DeliveryID is stable across
+//     retries, so a connector keys its object name or idempotency header
+//     off it. The gateway keeps no delivered-id ledger of its own.
 //
 //  2. Anything in active/ is validated by attempting to decode the
 //     zstd stream end-to-end. Cleanly-decoding segments are sealed so

@@ -98,17 +98,24 @@ export type APIKeysConfig = APIKey[];
  */
 export interface APIKey {
   /**
-   * ID is the stable identifier the admin write API and the (future)
-   * central control plane address the key by. Optional in operator-authored
-   * YAML — nil is allowed for the local file model — and minted by the admin
-   * API on create; the central server requires it. Same nilable-UUID pattern
-   * as RuleContract.ID / ResilienceConfig.ID.
+   * ID is the stable identifier the admin write API addresses the key by.
+   * Optional in operator-authored YAML — nil is allowed for the local file
+   * model — and minted by the admin API on create. Same nilable-UUID
+   * pattern as RuleContract.ID / ResilienceConfig.ID.
    */
   id?: string;
   /**
    * Secret is the bearer token clients present (conventionally prefixed
    * "sk_live_…" for production keys or "sk_dev_…" for development keys).
-   * Authentication compares this in constant time.
+   * Authentication resolves it by indexed lookup against the snapshot's
+   * SecretIndex, not by comparing it against each configured key in turn
+   * (internal/middleware/auth/resolver.go). That is the timing-relevant
+   * property: a map lookup does not walk the secret byte by byte, so it
+   * leaks no prefix information the way a short-circuiting == over a
+   * candidate list would, and Go's per-process hash seed keeps a caller
+   * from steering bucket collisions. The secret must still be
+   * high-entropy — the index is a lookup, not a slow hash, so it is no
+   * defence against an offline guess of a weak secret.
    */
   secret: string;
   /**
@@ -612,9 +619,12 @@ export interface Group {
    */
   failure_status_codes?: number /* int */[];
   /**
-   * CircuitBreaker is the group-wide breaker. Breaker state is tracked
-   * per-provider (the failure unit), so a dead provider is skipped by every
-   * group that includes it.
+   * CircuitBreaker is the group-wide breaker config, applied to every
+   * target in the group. Breaker *state* is keyed per (group, provider)
+   * — internal/middleware/resilience/breaker.go (breakerKey) — so a
+   * provider tripped inside this group keeps taking traffic from any
+   * other group that also lists it. State is per-pod and in-process; it
+   * does not survive a restart or replicate across replicas.
    */
   circuit_breaker?: CircuitBreakerConfig;
   /**

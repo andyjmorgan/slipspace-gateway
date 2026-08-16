@@ -91,11 +91,13 @@ const (
 	// AttrGenAIUsageCacheReadInputTokens are the spec span/event attributes
 	// for provider-managed prompt-cache tokens (defined on the GenAI
 	// Anthropic page). gen_ai.usage.input_tokens is the cache-inclusive
-	// total. The spec has no cache metric — cache counts live as these
-	// attributes; the former slipspace.tokens.cache* counters are dropped in
-	// favour of them (conformance: our overlap with OTel gives way to OTel).
-	// Billing aggregation continues to ride the connector Record, not a
-	// meter (invariant #4).
+	// total. The spec has no cache metric, so on the span these counts
+	// travel as attributes rather than as a gen_ai meter. That is a
+	// separate channel from the slipspace.tokens.cached.total /
+	// slipspace.tokens.cache_creation.total counters, which are still
+	// declared, registered, and emitted (see meters.go) and which the
+	// admin dashboard's cache panel reads — do not remove them. Billing
+	// aggregation rides the connector Record, not a meter (invariant #4).
 	AttrGenAIUsageCacheCreationInputTokens = "gen_ai.usage.cache_creation.input_tokens" //nolint:gosec // G101 false positive: attribute key, not a credential
 	AttrGenAIUsageCacheReadInputTokens     = "gen_ai.usage.cache_read.input_tokens"     //nolint:gosec // G101 false positive: attribute key, not a credential
 

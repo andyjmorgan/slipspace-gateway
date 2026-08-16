@@ -38,11 +38,11 @@ func ApplyAction(
 	return applyAction(act, state, body)
 }
 
-// applyAction dispatches a non-terminating action to its evaluator.
-// Terminating actions (returnStatusCode, llmImpersonation) ship in
-// later PRs; UnknownAction returns a passthrough Outcome for
-// forward-compat with control-plane-minted action types this build
-// does not yet model.
+// applyAction dispatches an action to its evaluator. The terminating
+// actions (returnStatusCode, llmImpersonation) are dispatched here too
+// and signal termination through Outcome.Terminate. UnknownAction
+// returns a passthrough Outcome for forward-compat with action types
+// this build does not yet model.
 func applyAction(
 	act contractsrules.Action,
 	state *MutableState,
@@ -258,10 +258,15 @@ func applyAppendQueryString(a contractsrules.AppendQueryStringAction, state *Mut
 }
 
 // errEmptyValue is the common sentinel for "the rule arrived with a
-// required string field empty". The contract package's Validate
-// catches most of these at load time; this is the runtime
-// belt-and-braces against an UnknownAction that round-tripped
-// through DynamicProperties with a missing field.
+// required string field empty".
+//
+// This is the only check for most actions, not a second line of defence.
+// Only the translate and body-rewrite actions implement the contract
+// package's optional validate() hook, so a rule with an empty tag,
+// header name, provider, api-key, query key, or impersonation message
+// loads clean and fails here — per request, on every match — rather
+// than at config load. Widening load-time validation is tracked
+// separately; until then an authoring mistake surfaces at request time.
 var errEmptyValue = errors.New("rules: required value is empty")
 
 // applyLlmImpersonation is TERMINATING. v1.0.1 ships a stub
@@ -279,10 +284,9 @@ var errEmptyValue = errors.New("rules: required value is empty")
 // obvious in monitoring and keeps SDK round-tripping from masking
 // the deferral with subtly-wrong output.
 //
-// Empty Message returns errEmptyValue — the contract package's
-// Validate already enforces non-empty Message at load time; this
-// is the runtime belt-and-braces against an UnknownAction that
-// round-tripped through DynamicProperties with a missing field.
+// Empty Message returns errEmptyValue. Nothing rejects it earlier —
+// LlmImpersonationAction implements no load-time validate() hook — so
+// this is the sole enforcement point and it fires per request.
 func applyLlmImpersonation(a contractsrules.LlmImpersonationAction) (contractsrules.Outcome, error) {
 	msg := strings.TrimSpace(a.Message)
 	if msg == "" {
@@ -352,14 +356,15 @@ func recordBodyOp(state *MutableState, kind bodypatch.OpKind, actionType, target
 
 // applyUseResiliencePolicy writes a.PolicyName into state.PolicyRef.
 // Non-terminating; last writer wins when multiple rules in a chain
-// invoke this action. An empty PolicyName explicitly clears any
-// previously-set PolicyRef — the orchestrator treats that as
-// "single-shot, fall back to configuration default."
+// invoke this action.
 //
-// Trimming is intentionally permissive here: the config-load
-// cross-validator (internal/config) already proves a non-empty
-// PolicyName resolves to a real policy, and trimming an empty value
-// to empty preserves the "clear" semantics.
+// The write is INERT under v2: selection stashes the binding-derived
+// ResilienceConfig on the request context and the orchestrator prefers
+// that over state.PolicyRef, while the gateway wires the by-name
+// PolicyLookup to nil. Nothing validates PolicyName either — v2 has no
+// `resilience_policies:` library to cross-check it against — so an
+// unknown name is a silent no-op rather than a startup error. Trimming
+// is permissive for that reason: there is no real policy to resolve.
 func applyUseResiliencePolicy(a contractsrules.UseResiliencePolicyAction, state *MutableState) (contractsrules.Outcome, error) {
 	state.PolicyRef = strings.TrimSpace(a.PolicyName)
 	return contractsrules.Outcome{}, nil

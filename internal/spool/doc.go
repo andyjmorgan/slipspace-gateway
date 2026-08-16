@@ -2,8 +2,9 @@
 // the gateway's body-capture middleware and the upload workers that ship
 // sealed segments to connector destinations.
 //
-// The package ships in two layers. This PR lands the disk-level
-// primitives:
+// The package implements two layers of primitives:
+//
+// Disk-level:
 //
 //   - Segment — one ndjson.zst file currently being written, with
 //     rotation triggers and frame validation.
@@ -13,10 +14,13 @@
 //   - Recover — startup scan that restores invariants after a crash
 //     (uploading → sealed, torn active → quarantine).
 //
-// A later PR adds the in-memory ring, the Start/Stop lifecycle, and the
-// fan-out across connectors. Those decisions depend on how body capture
-// hands buffers to the spool, which is the subject of the next PR in
-// the series.
+// In-memory runtime:
+//
+//   - Spool — the root lifecycle manager with Start/Stop.
+//   - Track — per-connector ring buffer with rotation, retry, and
+//     circuit-breaker orchestration.
+//   - Options, BackOff, CircuitBreaker — configuration and resilience
+//     policies for individual upload attempts.
 //
 // Loss policy is best-effort: rotation does an fsync; crash mid-write
 // can lose the current segment's unflushed tail (sub-MB typically).

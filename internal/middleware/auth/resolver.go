@@ -126,9 +126,12 @@ type AuthResult struct {
 	LegacyConfigurationHeader bool
 }
 
-// Resolver decides the auth outcome for a request: given inbound headers and
-// the routed (provider, endpoint) pair, it returns an AuthResult plus the
-// header swap to apply, or a typed sentinel error.
+// Resolver decides the auth outcome for a request from the inbound headers
+// alone: it identifies the Configuration and returns an AuthResult plus the
+// header swap to apply, or a typed sentinel error. It makes no routing
+// decision — provider, protocol, and upstream target are resolved downstream
+// by internal/selection from the Configuration's bindings (CLAUDE.md
+// invariant 7), so the resolver runs upstream of routing, not after it.
 //
 // Resolver contains no HTTP serving concerns and is safe to call from tests
 // without standing up a server. HTTPHandler is the http.Handler adapter.

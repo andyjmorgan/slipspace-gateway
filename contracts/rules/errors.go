@@ -50,9 +50,11 @@ var ErrInvalidTarget = errors.New("rules: invalid body target")
 // value cannot be decoded from its wire form.
 var ErrInvalidRewriteValue = errors.New("rules: invalid rewrite value")
 
-// ErrResponseScopeUnsupported is returned when a rule targets
-// response.body — response-side rewrites are deferred to a follow-up;
-// only request.body is honoured today.
+// ErrResponseScopeUnsupported is returned when a bodyField *condition*
+// targets response.body. Conditions evaluate on the request path, before
+// any response exists, so the scope is rejected at config load. It does
+// not apply to the write actions — rewriteField / removeField /
+// appendField accept response.body and are applied in the response phase.
 var ErrResponseScopeUnsupported = errors.New("rules: response.body scope not yet supported")
 
 // ErrUnknownBodyFieldOperator is returned when a BodyFieldCondition
