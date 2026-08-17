@@ -4,7 +4,7 @@ SlipSpace's admin console is a management surface bolted onto the gateway binary
 
 The console exposes both read-only inspection surfaces (dashboard, live messages, policies, bindings, export) and a write API spanning most of the policy YAML: full CRUD for **Configurations, Providers, Groups, Connectors, Rules, and API Keys**. Those five non-key resources expose `GET`/`POST` on the collection and `GET`/`PUT`/`DELETE` on `/{name}`; `PATCH` exists only on `/api/v1/config/api-keys/{id}` (the `enabled` toggle). Bindings are exposed read-only (they are edited as part of a Configuration). Every write clones the live config snapshot, validates the clone, persists the YAML atomically, and publishes via `config.Store.Replace` — no pod restart, and in-flight requests are unaffected. The write API requires `SLIPSPACE_CONFIG_DIR` to be writable; see [Configuration mount → Read-write config dir](deployment.md#read-write-config-dir-admin-write-api) for the production pattern.
 
-The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `admin.enabled: true`. `startAdmin` (`cmd/gateway/main.go`) skips the listener entirely when the admin block is absent or disabled. Enabling the console without a password is not a silent no-op: config validation returns `ErrPasswordRequired` (`contracts/admin/admin.go`) and the gateway refuses to boot.
+The console is two things stitched together: an embedded React SPA served at `/admin/` and a JSON control-plane API mounted at `/admin/api/v1/*`. Both come up only when `admin.enabled: true`. `startAdmin` (`cmd/gateway/main.go`) skips the listener entirely when the admin block is absent or disabled. Enabling the console without a password is not a silent no-op: config validation returns `ErrPasswordRequired` (`contracts/admin/admin.go`) and `startAdmin` refuses to bind the admin listener — it logs `admin console NOT started: invalid admin config` and returns, while the gateway continues serving proxy traffic. Refusing only the listener (rather than failing boot) is deliberate: a mis-set admin password must not take the data plane down. Promoting this to a boot-time failure is tracked separately.
 
 This page is the operator's reference: enabling the console, configuring the password, every env var the live-feed honours, every route the API exposes, every SPA page that consumes them.
 
@@ -68,7 +68,7 @@ The console is off by default. Two things must both be true for the listener to 
 1. `admin.enabled: true` in the merged YAML (`admin` is a top-level key — there is no `gateway:` parent block).
 2. A non-empty password resolved from either the env var or the yaml `password` field.
 
-These two conditions are checked in different places. `startAdmin` gates the listener solely on `admin.enabled` (`resolved.Admin != nil && resolved.Admin.Enabled`): when that's false it logs `"admin console disabled"` and returns without opening a port — the rest of the gateway boots normally. The non-empty-password requirement is *not* re-checked in `startAdmin`; it is enforced earlier, at config load, by `admin.Config.Validate`, which returns `ErrPasswordRequired` when `enabled: true` has no password — so an enabled console with no password fails to boot rather than logging `"admin console disabled"`.
+These two conditions are checked in different places. `startAdmin` gates the listener solely on `admin.enabled` (`resolved.Admin != nil && resolved.Admin.Enabled`): when that's false it logs `"admin console disabled"` and returns without opening a port — the rest of the gateway boots normally. The non-empty-password requirement is enforced in `startAdmin` (`cmd/gateway/main.go`), which calls `resolved.Admin.Validate()` after the enabled check and before binding. This is the only call site — nothing validates the admin block at config load. When validation fails the listener is not started: the gateway logs `admin console NOT started: invalid admin config` and keeps serving proxy traffic. Before this guard existed the listener came up and `BasicAuth` compared the supplied password against `""`, which succeeds for an empty one — anyone reaching the port authenticated as admin.
 
 The minimum viable wiring:
 
@@ -85,10 +85,10 @@ The literal value here is what the YAML loader sees; substitute via your secret 
 | Condition | Behaviour |
 |---|---|
 | `enabled: false` | Config passes regardless of bind/password — no listener starts. |
-| `enabled: true`, no password (yaml + env both empty) | Returns `ErrPasswordRequired`. Boot fails. |
-| `enabled: true`, password set, malformed `bind_addr` | Returns `ErrInvalidBindAddr`. Boot fails. |
+| `enabled: true`, no password (yaml + env both empty) | Returns `ErrPasswordRequired`. Admin listener refused; gateway boots and serves proxy traffic. Logged at ERROR as `admin console NOT started: invalid admin config`. |
+| `enabled: true`, password set, malformed `bind_addr` | Returns `ErrInvalidBindAddr`. Admin listener refused; gateway boots and serves proxy traffic (same ERROR log as `ErrPasswordRequired`). |
 
-The fail-loud-at-boot rule exists so an operator who wanted the console on but mis-wired the password doesn't ship a silently disabled listener.
+The refuse-the-listener rule exists so a misconfigured console never silently degrades to an open port, while a bad admin password can never take the data plane down with it.
 
 ---
 
@@ -137,7 +137,7 @@ The admin console exposes a redacted-config export at [`GET /admin/api/v1/config
 | `:9090` | Binds all interfaces on a custom port. |
 | `192.0.2.10:8081` | Binds a specific interface. |
 
-The validator runs `net.SplitHostPort` + numeric-port check at load time, so `bind_addr: "garbage"` or `bind_addr: "host:notaport"` fails boot with `ErrInvalidBindAddr` rather than panicking at `net.Listen`.
+The validator runs `net.SplitHostPort` + numeric-port check in `startAdmin` immediately before binding, so `bind_addr: "garbage"` or `bind_addr: "host:notaport"` refuses the admin listener with `ErrInvalidBindAddr` (ERROR log) — while the gateway continues to serve proxy traffic — rather than panicking at `net.Listen`.
 
 `bind_addr` must not collide with the data-plane `SLIPSPACE_HTTP_BIND`. The OS will surface that as `EADDRINUSE` at `srv.ListenAndServe` time — the admin watcher logs it and the goroutine exits, but the gateway keeps serving traffic.
 
@@ -259,7 +259,7 @@ Common behaviour across every write resource:
 - **409** (shape `{error, name}`, with `used_by:[...]` added on referential-integrity refusals) on a duplicate name (POST), a rename attempt (PUT), or a delete blocked by referrers.
 - **422** (shape `{error, detail}`) when `RevalidateAndIndex` rejects the clone (unknown provider/group reference, invalid binding, empty group targets, …).
 - **204** on a successful DELETE; **201** on a successful POST; **200** on a successful PUT/PATCH.
-- **`?dry_run=true`** validates a candidate mutation against a clone and returns a `PreviewResult` (`{valid, error}`) **without** persisting or swapping the live snapshot — the safety floor for the console's diff-preview.
+- **`?dry_run=true`** validates a candidate mutation against a clone and returns a `PreviewResult` (`{valid, error}`) **without** persisting or swapping the live snapshot — the safety floor for the console's diff-preview. Honoured on `POST` (create), `PUT` (replace) and `PATCH` only — `DELETE` handlers ignore the parameter and commit immediately.
 
 | Resource | Mutating methods · Path | Notes |
 |---|---|---|

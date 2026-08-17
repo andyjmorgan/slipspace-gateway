@@ -218,7 +218,7 @@ Validation (`config.Validate`) rejects, when the scanner is enabled, a malformed
 
 ### Generating the console password hash
 
-`console.password_hash` is verified with `bcrypt.CompareHashAndPassword` (`server.go:195`), so the YAML must carry a **bcrypt** hash, never cleartext. Generate one with `htpasswd` (from `apache2-utils` / `httpd-tools`), stripping the `user:` prefix and normalising the variant prefix to `$2a$`:
+`console.password_hash` is verified with `bcrypt.CompareHashAndPassword` (`server.go:197`), so the YAML must carry a **bcrypt** hash, never cleartext. Generate one with `htpasswd` (from `apache2-utils` / `httpd-tools`), stripping the `user:` prefix and normalising the variant prefix to `$2a$`:
 
 ```sh
 htpasswd -bnBC 10 "" 'your-console-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'

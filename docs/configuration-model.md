@@ -2,7 +2,7 @@
 
 Everything the gateway needs to serve traffic lives in YAML files under `SLIPSPACE_CONFIG_DIR` (default `/etc/slipspace/`). The loader reads **every** `*.yaml` file in that directory, merges the top-level blocks by key into a single `ResolvedConfig`, validates cross-block references, then builds the runtime indexes the data plane reads on every request.
 
-This is the **v2** configuration model. Routing defaults to config data: the inbound request path fixes a *protocol*, the request body carries a *model*, and a configuration's **bindings** map `(protocol, model)` to a provider or a resilience group. A rule can still override the upstream credential per-request with `changeApiKey`, but the three legacy routing actions — `changeProvider`, `changeUrl` and `useResiliencePolicy` — are **inert** in v2: they parse and validate, but the data plane never honours the state they write (see [actions.md](actions.md#changeurl)). A rule-authored `changeProvider` is overwritten on every attempt by `buildAttemptState` (`internal/middleware/resilience/middleware.go:691-707`) re-applying the selected target's own `providerSwitchActions` (`cmd/gateway/destination.go:70-77`); `ChangeProviderAction` survives only as that internal per-attempt primitive. Model-keyed redirect is expressed as a binding, not a rule. Route to a different provider, URL or resilience group with a binding edit, not a rule. There is no path-based route table, no provider `endpoints`/`accepted_paths`/`prefix*` schema, and no top-level `resilience_policies` block — those were v1 concepts retired into bindings, groups, and provider `protocols`. See `internal/config/config_model.go` (the loader) and `contracts/config/model.go` (the schema) for the source of truth.
+This is the **v2** configuration model. Routing defaults to config data: the inbound request path fixes a *protocol*, the request body carries a *model*, and a configuration's **bindings** map `(protocol, model)` to a provider or a resilience group. A rule can still override the upstream credential per-request with `changeApiKey`, but the three legacy routing actions — `changeProvider`, `changeUrl` and `useResiliencePolicy` — are **inert** in v2: they parse and validate, but the data plane never honours the state they write (see [actions.md](actions.md#changeurl)). A rule-authored `changeProvider` is overwritten on every attempt by `buildAttemptState` (`internal/middleware/resilience/middleware.go:693-709`) re-applying the selected target's own `providerSwitchActions` (`cmd/gateway/destination.go:66-76`); `ChangeProviderAction` survives only as that internal per-attempt primitive. Model-keyed redirect is expressed as a binding, not a rule. Route to a different provider, URL or resilience group with a binding edit, not a rule. There is no path-based route table, no provider `endpoints`/`accepted_paths`/`prefix*` schema, and no top-level `resilience_policies` block — those were v1 concepts retired into bindings, groups, and provider `protocols`. See `internal/config/config_model.go` (the loader) and `contracts/config/model.go` (the schema) for the source of truth.
 
 This page is the operator's reference for that on-disk schema — what files exist, which top-level keys may appear, every field on every type, how the pieces bind together, and what's deliberately out of scope.
 
@@ -191,14 +191,14 @@ groups:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:13`, values starting at `:19`). |
+| `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:15`, values at `:23-29`). |
 | `failure_status_codes` | []int | no | Upstream HTTP status set treated as a failure for retry / circuit-breaker accounting. Empty falls back to "5xx is a failure". |
-| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:151`). |
+| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:155`). |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
 | `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:131`). |
 
-### `Target` fields (`contracts/config/model.go:184`)
+### `Target` fields (`contracts/config/model.go:187`)
 
 The atom a binding or group dispatches to: a provider reference plus per-use overrides that compose over the provider's own values (target wins).
 
@@ -216,7 +216,7 @@ Validation: a group must declare at least one target, every target must name a `
 
 ## `configurations` block
 
-`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:268`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
+`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:271`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
 
 ```yaml
 configurations:
@@ -238,7 +238,7 @@ configurations:
       tier: production
 ```
 
-### `Configuration` fields (`contracts/config/model.go:268`)
+### `Configuration` fields (`contracts/config/model.go:271`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -254,7 +254,7 @@ configurations:
 
 ## `bindings` (inside a configuration)
 
-A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:213`, doc comment starts `:207`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
+A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:216`, doc comment starts `:210`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
 
 ```yaml
 bindings:
@@ -269,7 +269,7 @@ bindings:
     tags: ["surface:messages"]
 ```
 
-### `Binding` fields (`contracts/config/model.go:213`)
+### `Binding` fields (`contracts/config/model.go:216`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -350,7 +350,7 @@ configurations:
 | `match` | string | yes | Inbound path pattern, optionally containing `{name}` placeholders (e.g. `/v1/messages/batches/{id}/results`). Captured params are surfaced to the forwarder; a pattern with no placeholders is an exact-string compare. |
 | `methods` | []string | yes | HTTP methods this path accepts. Matched case-insensitively. A claimed path with an unaccepted method yields `ErrMethodNotAllowed`. |
 
-### `PassthroughBinding` fields (`contracts/config/model.go:252`)
+### `PassthroughBinding` fields (`contracts/config/model.go:255`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -459,6 +459,7 @@ telemetry:
 | YAML state | Behaviour |
 |---|---|
 | key absent | use built-in default (32 KiB / 32 KiB / 64 KiB) |
+| key present, value `N < 0` | treated as unset — use built-in default (`resolveCap`, `contracts/config/telemetry.go:107-109`) |
 | key present, value `0` | unbounded — no truncation, no drop |
 | key present, value `N > 0` | cap at N bytes |
 
@@ -760,6 +761,7 @@ The invariants the loader enforces, and the sentinel each violation wraps (`inte
 | `ErrEmptyDirectory` | Config dir has no `*.yaml` files. |
 | `ErrDuplicateKey` | A top-level block (`providers`, `groups`, `configurations`, …) is set by more than one file. |
 | `ErrLegacyProvidersKey` | A file carries the pre-rename `backends:` key (renamed to `providers:`, no alias). |
+| `ErrParse` | A `*.yaml` file fails to unmarshal. `Load` double-wraps it — `fmt.Errorf("config: load %q: %w: %w", name, ErrParse, uerr)` (`internal/config/config_model.go:154`) — so `cmd/cli`'s reason classifier can branch on `errors.Is(err, config.ErrParse)` and report `parse_error` instead of `other`. |
 | `ErrNoConfigurations` | The merged tree has zero entries under `configurations`. |
 | `ErrUnknownConfiguration` | An `api_keys[]` entry names a configuration that does not exist. |
 | `ErrUnknownRuleName` | A configuration's `rule_names[]` names a rule not in the library. |
@@ -775,7 +777,7 @@ The invariants the loader enforces, and the sentinel each violation wraps (`inte
 
 The admin block's `ErrPasswordRequired` / `ErrInvalidBindAddr` propagate from `admin.Config.Validate` when an `admin:` block is present.
 
-> Several v1 sentinels (`ErrPathCollision`, `ErrPrefixRequiredEmpty`, `ErrUnknownResilienceName`, `ErrDuplicateResilienceName`, `ErrDuplicateResilienceID`, `ErrTargetProviderMissingCredential`, `ErrUnexpectedConfigFile`, `ErrWrongFileForKey`, `ErrDuplicateRuleID`, `ErrParse`) remain defined in `errors.go` but are no longer wired into the v2 validator — they describe routing/resilience concepts that no longer exist. They are inert and should not appear in any v2 error.
+> Several v1 sentinels (`ErrPathCollision`, `ErrPrefixRequiredEmpty`, `ErrUnknownResilienceName`, `ErrDuplicateResilienceName`, `ErrDuplicateResilienceID`, `ErrTargetProviderMissingCredential`, `ErrUnexpectedConfigFile`, `ErrWrongFileForKey`, `ErrDuplicateRuleID`) remain defined in `errors.go` but are no longer wired into the v2 validator — they describe routing/resilience concepts that no longer exist. They are inert and should not appear in any v2 error.
 
 ---
 
@@ -787,7 +789,7 @@ These are documented intentionally — don't fix them without checking the miles
 
    ### Atomic snapshot store
 
-   `internal/config/store.go::Store` owns the live `ResolvedConfig` behind an `atomic.Pointer`. Every consumer (router, auth resolver, rules evaluator, forwarder, reporter, admin handlers) holds the `*Store`, never the `*ResolvedConfig` itself. Reads call `store.Snapshot()` at request top and operate on that pointer for the rest of the request — a `Replace` landing mid-handler is invisible to the in-flight call. Writers (admin mutations only) follow `Clone → mutate → RevalidateAndIndex → WriteConfig → Store.Replace`; failure at any step leaves the live snapshot untouched. (`WritePolicyYAML` is retained only as a back-compat alias that delegates to `WriteConfig`, which routes each mutated top-level block back to the file recorded in `ResolvedConfig.SourceFiles` — falling back to `providers.yaml` / `policy.yaml` / `admin.yaml` only for a block with no recorded origin, e.g. one first introduced through the admin API (`internal/config/loader.go:26-32`). No write targets a fixed `policy.yaml`. The canonical commit path, `internal/admin/rules_write.go::commitClone`, calls `WriteConfig(configDir, clone)` directly; the stale "persist policy.yaml" phrasing survives only in that function's comment, `internal/admin/rules_write.go:252-261`.) This is load-bearing invariant #9 in [`CLAUDE.md`](../CLAUDE.md).
+   `internal/config/store.go::Store` owns the live `ResolvedConfig` behind an `atomic.Pointer`. Every consumer (router, auth resolver, rules evaluator, forwarder, reporter, admin handlers) holds the `*Store`, never the `*ResolvedConfig` itself. Reads call `store.Snapshot()` at request top and operate on that pointer for the rest of the request — a `Replace` landing mid-handler is invisible to the in-flight call. Writers (admin mutations only) follow `Clone → mutate → RevalidateAndIndex → WriteConfig → Store.Replace`; failure at any step leaves the live snapshot untouched. (`WritePolicyYAML` is retained only as a back-compat alias that delegates to `WriteConfig`, which routes each mutated top-level block back to the file recorded in `ResolvedConfig.SourceFiles` — falling back to `providers.yaml` / `policy.yaml` / `admin.yaml` only for a block with no recorded origin, e.g. one first introduced through the admin API (`internal/config/loader.go:26-32`). No write targets a fixed `policy.yaml`. The canonical commit path, `internal/admin/rules_write.go::commitClone` (`internal/admin/rules_write.go:258-267`), calls `WriteConfig(configDir, clone)` directly, and its godoc (`:251-257`) says so — routing each editable block back to its `SourceFiles` origin, not to a fixed `policy.yaml`.) This is load-bearing invariant #9 in [`CLAUDE.md`](../CLAUDE.md).
 
 2. **No `${VAR}` substitution.** See [Why no `${VAR}` substitution](#why-no-var-substitution). The one operator escape hatch is `SLIPSPACE_ADMIN_PASSWORD`.
 

@@ -21,7 +21,7 @@ h.startGateway(t, repoRoot) // allocates the per-test temp spool dir
 t.Cleanup(h.Stop)
 ```
 
-The mock is wired into the gateway by materializing a per-test copy of `config-dev/` into a temp dir (`os.MkdirTemp("", "slipspace-e2e-config-*")`, harness.go:479) and string-replacing the compose alias `mockllm:5555` with the live mock's address (harness.go:517) — there is no `gatewayConfig` struct and no `ProvidersUpstream` field. The harness exposes the running addresses as `h.MockLLMURL` and `h.GatewayURL`.
+The mock is wired into the gateway by materializing a per-test copy of `config-dev/` into a temp dir (`os.MkdirTemp("", "slipspace-e2e-config-*")`, harness.go:482) and string-replacing the compose alias `mockllm:5555` with the live mock's address (harness.go:520) — there is no `gatewayConfig` struct and no `ProvidersUpstream` field. The harness exposes the running addresses as `h.MockLLMURL` and `h.GatewayURL`.
 
 Test helpers:
 

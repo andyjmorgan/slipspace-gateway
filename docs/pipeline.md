@@ -349,8 +349,11 @@ Two distinct redactors guard different channels; do not conflate them:
 - **[`internal/headers.Redactor`](../internal/headers/redact.go)** masks
   credential-bearing **header names** for operator-facing display (debug logs, the
   live-feed body envelope). A built-in lowercase-substring list (`auth`,
-  `api-key`, `apikey`, `token`, `cookie`, `secret`, `slipspace-identity`) is always
-  active; operators can add extras via `NewRedactor`. `Redactor.Extras()` returns
+  `api-key`, `apikey`, `token`, `cookie`, `secret`, `slipspace-identity`,
+  `sluice-identity`) is always active — the last of those covers the pre-rename
+  compat selector header, which carries the same live api-key secret as its
+  current-name twin and is removed alongside the compat shim; operators can add
+  extras via `NewRedactor`. `Redactor.Extras()` returns
   *only* the operator-supplied substrings (built-ins excluded) so observability
   code can report what the operator added rather than the full match set.
 
