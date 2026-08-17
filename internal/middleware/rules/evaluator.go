@@ -86,9 +86,10 @@ type Result struct {
 	SourceRule *contractsrules.RuleContract
 }
 
-// Evaluate walks the rules attached to gc.ConfigurationName in
-// priority-sorted order. On each matched rule the actions run in
-// sequence, each Apply call gets the same MutableState handle so
+// Evaluate walks the rules attached to gc.ConfigurationName in the
+// configuration's rule_names declaration order (there is no priority
+// field; list position is the order). On each matched rule the actions
+// run in sequence, each Apply call gets the same MutableState handle so
 // later actions observe earlier mutations.
 //
 // Behavior=Exit halts iteration after the current rule's actions

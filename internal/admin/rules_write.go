@@ -44,8 +44,9 @@ type RuleValidationError struct {
 // request body into a RuleContract (polymorphic Condition + Actions
 // dispatched by the existing UnmarshalJSON), clones the current
 // snapshot, appends the rule to clone.Rules, runs Validate + reindex
-// on the clone, persists policy.yaml, then swaps the snapshot via
-// Store.Replace.
+// on the clone, persists via config.WriteConfig (which routes each
+// editable block back to its SourceFiles origin, not to a fixed
+// policy.yaml), then swaps the snapshot via Store.Replace.
 //
 // Response codes:
 //

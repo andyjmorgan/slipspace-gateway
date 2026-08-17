@@ -345,6 +345,7 @@ func extractBearer(v string) (string, bool) {
 // pair the gateway uses to convey credential to provider for managed-
 // mode requests. Exported so the single credential mint site — the
 // gateway's destination builder (cmd/gateway/destination.go::
+// resolveCredentialHeaders, via its per-provider format helper
 // credentialHeaderFor) — can re-mint the header for a post-rule
 // changeApiKey override against the post-rule provider's format
 // without duplicating the per-provider format table (invariant #6).

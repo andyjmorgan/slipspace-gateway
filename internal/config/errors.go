@@ -6,13 +6,16 @@ import "errors"
 // *.yaml files.
 var ErrEmptyDirectory = errors.New("config: directory contains no yaml files")
 
-// ErrUnexpectedConfigFile is returned when the configuration directory
-// contains a file whose name is not one of the two accepted filenames
-// (providers.yaml, policy.yaml).
+// ErrUnexpectedConfigFile is a retained v1 sentinel and is no longer returned.
+// The v2 loader merges every *.yaml in the config directory by top-level key
+// and has no filename allowlist (see Load in config_model.go). Kept only so
+// existing errors.Is callers still compile.
 var ErrUnexpectedConfigFile = errors.New("config: unexpected file in config directory")
 
-// ErrWrongFileForKey is returned when a top-level key appears in a file that
-// is not authorized to carry it — e.g., `providers:` in policy.yaml.
+// ErrWrongFileForKey is a retained v1 sentinel and is no longer returned. Under
+// the v2 model any file may carry any top-level key; the only per-key rule is
+// that one block must not be set by two files (see ErrDuplicateKey). Kept only
+// so existing errors.Is callers still compile.
 var ErrWrongFileForKey = errors.New("config: top-level key is not allowed in this file")
 
 // ErrNoConfigurations is returned when the merged tree contains zero entries
@@ -23,14 +26,15 @@ var ErrNoConfigurations = errors.New("config: at least one configuration require
 // name that does not exist in the merged tree.
 var ErrUnknownConfiguration = errors.New("config: api_key references unknown configuration")
 
-// ErrPathCollision is returned when two providers claim the same fully-resolved
-// route path. With prefix disambiguation, collisions are only possible when
-// two providers both have `prefix_required: false` and share an accepted_path,
-// or when two providers share both the same prefix and an accepted_path.
+// ErrPathCollision is a retained v1 sentinel and is no longer returned. It
+// described the retired prefix-routing model, where providers claimed
+// fully-resolved route paths disambiguated by prefix. Kept only so existing
+// errors.Is callers still compile.
 var ErrPathCollision = errors.New("config: route path claimed by multiple endpoints")
 
-// ErrPrefixRequiredEmpty is returned when a provider has `prefix_required: true`
-// but no prefix value — the provider would be unreachable.
+// ErrPrefixRequiredEmpty is a retained v1 sentinel and is no longer returned.
+// `prefix_required` belonged to the retired prefix-routing model. Kept only so
+// existing errors.Is callers still compile.
 var ErrPrefixRequiredEmpty = errors.New("config: prefix_required is true but prefix is empty")
 
 // ErrInvalidAuthFormat is returned when a provider- or endpoint-level

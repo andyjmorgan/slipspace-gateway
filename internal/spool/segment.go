@@ -63,8 +63,9 @@ type Segment struct {
 	records int
 
 	// bytesUncompressed sums the byte lengths of every record (json + \n)
-	// before zstd. Reported via Stats for the manifest's
-	// bytes_uncompressed field.
+	// before zstd. Reported via Segment.Stats as
+	// SegmentStats.BytesUncompressed. No manifest sidecar is written — the
+	// design note's manifest.json was never implemented.
 	bytesUncompressed int64
 
 	// tsMinNs and tsMaxNs track the per-segment range of Record.TsNs.

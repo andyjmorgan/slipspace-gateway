@@ -305,8 +305,10 @@ func applyLlmImpersonation(a contractsrules.LlmImpersonationAction) (contractsru
 // applyAddTag attaches a.Tag to state's tag set. Idempotent — adding
 // a tag that's already present is a no-op (set semantics). Empty
 // Tag returns errEmptyValue so a misconfigured rule fails loudly
-// at evaluate time rather than silently doing nothing — the contract
-// package's Validate also enforces this at load.
+// at evaluate time rather than silently doing nothing. Nothing rejects
+// it earlier — AddTagAction implements no load-time validate() hook —
+// so this is the sole enforcement point and it fires per request (see
+// errEmptyValue).
 func applyAddTag(a contractsrules.AddTagAction, state *MutableState) (contractsrules.Outcome, error) {
 	t := strings.TrimSpace(a.Tag)
 	if t == "" {

@@ -10,16 +10,16 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
-// These cases exercise the v1.0.2 "model-keyed redirect" pattern:
-// a customer sends to the OpenAI surface, a rule fires on the model
-// name and rewrites state.Provider, and the destination builder
-// re-resolves the new provider's chat_completions endpoint (URL +
-// credential + auth header format) automatically.
+// These cases exercise the "model-keyed redirect" pattern:
+// a customer sends to the OpenAI surface, the claude-prefixed model
+// matches an anthropic binding on the Configuration, and
+// selection.ResolveTarget re-resolves transport (URL + credential +
+// auth header format) on the post-rule provider automatically.
 //
-// No changeUrl / setHeader / changeApiKey in the rule YAML — only
-// the changeProvider action. The whole machinery is the per-endpoint
-// auth_header override (PR #13) + provider switch in MutableState
-// (v1.0.1) + destination builder credential lookup (PR #12).
+// The redirect is binding-driven, not rule-driven: config-dev/policy.yaml
+// carries no changeProvider rule. state.Provider is set by the
+// orchestrator's internal providerSwitchActions derived from the selected
+// binding, and the credential is minted once in the destination builder.
 
 func TestRule_ChangeProvider_ClaudeRedirectsToAnthropic(t *testing.T) {
 	t.Parallel()

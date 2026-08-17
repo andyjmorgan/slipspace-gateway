@@ -112,16 +112,22 @@ const Prefix = "/admin"
 // NewMux builds the management-console http.Handler.
 //
 // Routes (all under Prefix):
-//   - GET  /admin/                            — SPA index (auto-redirect from /admin)
 //   - GET  /admin/api/v1/version              — unauthenticated; binary version
-//   - GET  /admin/api/v1/auth/me              — auth probe; 200 + {"username":"admin"}
-//   - GET  /admin/api/v1/dashboard/...        — DashboardSummary / Timeseries JSON
-//   - GET  /admin/api/v1/config/api-keys/reveal?configuration=&name=
-//   - GET  /admin/api/v1/config/configurations[/{name}]
-//   - GET  /admin/api/v1/config/rules[/{name}]
-//   - GET  /admin/api/v1/config/providers[/{name}]
-//   - GET  /admin/api/v1/config/bindings      — flattened binding index
+//   - GET  /admin/                            — SPA index (auto-redirect from /admin)
 //   - All other /admin/* paths                — SPA static + index.html fallback
+//
+// Behind BasicAuth, under /admin/api/v1:
+//   - GET  /auth/me                           — auth probe; 200 + {"username":"admin"}
+//   - GET  /dashboard/{summary,timeseries}    — DashboardSummary / Timeseries JSON
+//   - CRUD for api-keys, configurations, rules, providers, groups and
+//     connectors under /config/<resource>: GET + POST on the collection,
+//     GET + PUT + DELETE on /{name} (api-keys key on /{id} and add
+//     PATCH there, plus GET /config/api-keys/reveal?configuration=&name=)
+//   - GET  /config/bindings                   — flattened binding index
+//   - GET  /config/export/{files,download}    — redacted config export
+//   - GET  /messages/{recent,stream}          — live-messages pane
+//   - GET  /messages/{event_id}/body          — per-event captured body
+//   - GET  /policies                          — resilience + circuit state
 //
 // HTTP Basic auth wraps the /admin/api/v1/* tree. The SPA's static
 // assets are unauthenticated — the SPA itself drives the API calls

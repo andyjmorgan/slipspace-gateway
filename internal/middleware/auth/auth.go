@@ -4,7 +4,7 @@
 //
 // Per-endpoint authorization is implicit, not enforced here: managed mode
 // can only forward to providers that have an entry in
-// Configuration.UpstreamCredentials, and passthrough mode is gated by the
+// Configuration.Credentials, and passthrough mode is gated by the
 // upstream's own auth on the client-supplied BYOK token.
 package auth
 

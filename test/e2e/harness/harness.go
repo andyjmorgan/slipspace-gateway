@@ -472,11 +472,12 @@ func (w *portCollisionWatcher) Write(p []byte) (int, error) {
 	return w.w.Write(p)
 }
 
-// materializeConfig clones the policy + providers YAML from config-dev/ into
-// a tmp dir and rewrites the in-tree mockllm placeholder to point at the
-// harness's dynamically-assigned upstream. Server-level configuration is
-// supplied to the gateway via SLIPSPACE_* env vars (see gatewayEnv); the
-// directory contains only policy.yaml + providers.yaml.
+// materializeConfig clones every *.yaml / *.yml in config-dev/ (today:
+// policy.yaml, providers.yaml, pricing.yaml) into a tmp dir and rewrites the
+// in-tree mockllm placeholder to point at the harness's dynamically-assigned
+// upstream. admin.yaml is deliberately skipped — the harness writes its own.
+// Server-level configuration is supplied to the gateway via SLIPSPACE_* env
+// vars (see gatewayEnv).
 func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 	src := filepath.Join(repoRoot, "config-dev")
 	dst, err := os.MkdirTemp("", "slipspace-e2e-config-*")

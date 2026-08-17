@@ -10,8 +10,9 @@ import "time"
 // always a freshly-allocated slice owned by the Entry.
 type Entry struct {
 	// EventID is a UUID minted at Append time. Stable identifier the
-	// SPA uses as a row key and the eventual /messages/{id} body
-	// endpoint will key off when it lands.
+	// SPA uses as a row key and the key
+	// GET /admin/api/v1/messages/{event_id}/body uses to look the
+	// capture up in the BodyStore LRU.
 	EventID string
 
 	// At is the wall-clock time the request completed.

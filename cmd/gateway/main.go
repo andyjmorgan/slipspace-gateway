@@ -515,6 +515,12 @@ func shutdownPromServer(srv *http.Server) {
 // console is fully off when the feature flag is false: no goroutine is
 // spawned, no port is opened.
 //
+// Passing the enabled check is not sufficient: startAdmin then calls
+// resolved.Admin.Validate() — the only call site in the binary — and
+// refuses to bind the listener (ERROR log, gateway keeps serving proxy
+// traffic) when it fails, e.g. enabled-with-no-password
+// (ErrPasswordRequired) or a malformed bind_addr.
+//
 // The drain budget mirrors the data plane's so a SIGTERM gives in-flight
 // admin requests the same shutdown headroom as proxy requests.
 //

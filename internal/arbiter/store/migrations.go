@@ -9,7 +9,9 @@ type migration struct {
 	// noTx runs the migration's statements with autocommit instead of inside a
 	// single transaction. TimescaleDB forbids creating a continuous aggregate
 	// (CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)) inside a
-	// transaction block, so migration 0007 sets this. noTx SQL is split on `;`
+	// transaction block, so every CAGG-creating migration sets this — currently
+	// 0007 (the four original 1-minute aggregates) and 0019 (cagg_cost_1m).
+	// noTx SQL is split on `;`
 	// and each statement executed in turn, so it MUST NOT contain embedded
 	// semicolons (no dollar-quoted bodies/strings) and every statement MUST be
 	// idempotent (IF NOT EXISTS / if_not_exists) — a mid-batch failure re-runs

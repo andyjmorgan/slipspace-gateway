@@ -27,12 +27,15 @@ import (
 )
 
 // RequestKind enumerates the typed body shapes the middleware knows how to
-// deserialize. The values mirror the strings accepted by
-// contracts/config.Endpoint.RequestKind.
+// deserialize. The kind is supplied per request through the
+// KindFromContextFunc seam passed to HTTPHandler, not from YAML.
 type RequestKind string
 
-// RequestKind values. Keep in sync with the YAML schema accepted by the
-// config loader. New providers add a new kind here plus a case in Capture.
+// RequestKind values. Keep in sync with the mapping in
+// cmd/gateway/pipeline.go::kindFromProtocol, which maps the path-derived
+// protocol onto these values (embeddings and non-generative passthrough
+// families fall to KindPassthrough). New providers add a new kind here plus a
+// case in Capture.
 const (
 	KindPassthrough RequestKind = "passthrough"
 

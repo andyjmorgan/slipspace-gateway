@@ -44,10 +44,10 @@ const (
 	// surfacing as spurious 502s on legitimate long-tail requests.
 	MinUpstreamResponseHeaderTimeoutSeconds = 120
 
-	// DefaultAdminSnapshotInterval is how often the admin console's
-	// metric snapshotter reads the in-process registry. 5 minutes
+	// DefaultAdminSnapshotIntervalMs is how often, in milliseconds, the admin
+	// console's metric snapshotter reads the in-process registry. 5 minutes
 	// gives the 24h dashboard 288 sample points, matching the design's
-	// chart resolution. E2E tests override via SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL.
+	// chart resolution. E2E tests override via SLIPSPACE_ADMIN_SNAPSHOT_INTERVAL_MS.
 	DefaultAdminSnapshotIntervalMs = 300_000
 
 	// DefaultAdminLiveFeedCapacity sizes the in-process ring of completed
