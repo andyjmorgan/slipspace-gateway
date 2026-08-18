@@ -111,8 +111,8 @@ same raw-bytes treatment applies to `Stop` (string or array of strings,
 ## OpenAI — Responses API (`protocols/openai/responses`)
 
 The `/v1/responses` endpoint is OpenAI's newer, stateful surface; it is modelled
-separately from chat completions. `ResponsesRequest` (`responses.go:21-125`) and
-`ResponsesResponse` (`responses.go:140-272`) carry a large, fast-moving field
+separately from chat completions. `ResponsesRequest` (`responses.go:21-126`) and
+`ResponsesResponse` (`responses.go:141-272`) carry a large, fast-moving field
 set; the design leans hard on `DynamicProperties` and `json.RawMessage` for the
 parts of the spec that change most.
 
@@ -367,7 +367,12 @@ rich response metadata:
 ## Models-list surfaces
 
 The three `*/models` packages are flat, non-polymorphic lists, each embedding
-`DynamicProperties` so new descriptor fields round-trip:
+`DynamicProperties` so new descriptor fields round-trip. They are currently
+unwired leaves: nothing outside `protocols/` imports them, `selection.ProtocolForPath`
+carries no models-list route, and the upstream models-list surfaces are served
+through the provider `passthrough` families in `providers.yaml`. Treat what
+follows as the typed wire shapes available for future use, not as the path a
+live models-list request takes:
 
 - **OpenAI** `GET /v1/models` — `ListModelsResponse` + `Model`
   (`protocols/openai/models/models.go:15-52`); `object: "list"`, flat `data`.

@@ -225,7 +225,7 @@ Model patterns reuse the connector-filter matcher: a trailing-`*` is a prefix ma
 
 ## Credential header resolution
 
-[`cmd/gateway/destination.go::resolveCredentialHeaders`](../cmd/gateway/destination.go) is the **single mint site** for the upstream credential header (invariant 6 in `CLAUDE.md`) — both [`buildDestination`](../cmd/gateway/destination.go) and [`buildPassthroughDestination`](../cmd/gateway/pipeline.go) funnel through it. In managed mode it calls the helper [`credentialHeaderFor`](../cmd/gateway/destination.go) to format the `(header, value)` pair. By the time `credentialHeaderFor` runs, selection has already composed the effective auth onto the resolved `Target` (`Target.Auth` = the protocol's `auth`, or `nil`), so there is no per-request endpoint/provider override walk — the helper is a two-branch function:
+[`cmd/gateway/destination.go::resolveCredentialHeaders`](../cmd/gateway/destination.go) is the **single mint site** for the upstream credential header (invariant 6 in `CLAUDE.md`) — both [`buildDestination`](../cmd/gateway/destination.go) and [`buildPassthroughDestination`](../cmd/gateway/pipeline.go) funnel through it. In managed mode it calls the helper [`credentialHeaderFor`](../cmd/gateway/destination.go) to format the `(header, value)` pair. By the time `credentialHeaderFor` runs, selection has already composed the effective auth onto the resolved `Target` (`Target.Auth` = the protocol's `auth`, or `nil`), so there is no per-request endpoint/provider override walk — the helper is a three-branch function:
 
 ```mermaid
 flowchart TB

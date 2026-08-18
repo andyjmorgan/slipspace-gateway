@@ -137,7 +137,7 @@ The admin console exposes a redacted-config export at [`GET /admin/api/v1/config
 | `:9090` | Binds all interfaces on a custom port. |
 | `192.0.2.10:8081` | Binds a specific interface. |
 
-The validator runs `net.SplitHostPort` + numeric-port check in `startAdmin` immediately before binding, so `bind_addr: "garbage"` or `bind_addr: "host:notaport"` refuses the admin listener with `ErrInvalidBindAddr` (ERROR log) — while the gateway continues to serve proxy traffic — rather than panicking at `net.Listen`.
+The host:port / numeric-port check lives in `contracts/admin/admin.go::validateBindAddr`, reached from `Config.Validate()`; `startAdmin` merely calls `Validate()` immediately before binding, so `bind_addr: "garbage"` or `bind_addr: "host:notaport"` refuses the admin listener with `ErrInvalidBindAddr` (ERROR log) — while the gateway continues to serve proxy traffic — rather than panicking at `net.Listen`.
 
 `bind_addr` must not collide with the data-plane `SLIPSPACE_HTTP_BIND`. The OS will surface that as `EADDRINUSE` at `srv.ListenAndServe` time — the admin watcher logs it and the goroutine exits, but the gateway keeps serving traffic.
 

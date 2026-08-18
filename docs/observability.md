@@ -20,7 +20,7 @@ This page is the operator reference for everything the gateway emits: every mete
    - [Errors](#errors)
    - [Crash safety](#crash-safety)
    - [Provider drift](#provider-drift)
-   - [Reserved](#reserved)
+   - [Control path](#control-path)
 4. [Runtime and process collectors](#runtime-and-process-collectors)
 5. [Histogram bucket boundaries](#histogram-bucket-boundaries)
 6. [Snapshotter](#snapshotter)
@@ -195,13 +195,13 @@ Both crash-safety counters surface a panic that the gateway's `recover()` wrappe
 | `gateway.unmapped_fields.total` | counter | `gen_ai.provider.name, slipspace.protocol, slipspace.unmapped_direction (request\|response), slipspace.unmapped_field` | 1 | Provider fields this build does not model, detected on the typed request body and the reconstructed typed response. One increment per `(direction, field path)` at OnComplete (`cmd/gateway/reporter.go::recordUnmappedFields` → `emitUnmappedFields`); the same field set is logged once via a `unmapped provider fields detected` warning. The DynamicProperties safety net round-trips these intact (invariant #1), so a non-zero count is silent today — it is the provider-drift early-warning signal that a `protocols/` contract update is due. `slipspace.unmapped_field` is the dotted JSON path; cardinality is bounded by the provider API surface, not by client input. Reporting stays separate from telemetry: the field paths ride the meter and the log, never the connector record ([invariant #4](../CLAUDE.md)). |
 | `gateway.translation.field_drops.total` | counter | `slipspace.translate_source, slipspace.translate_target, slipspace.translate_field` | 1 | Source features dropped during cross-provider translation (the `translate` rule action) because the target protocol has no equivalent — e.g. `top_k`, `thinking`. One increment per dropped feature, finalised in the forwarder's `ModifyResponse` transform, labelled by source/target protocol and dropped field path. A field's count climbing is the early-warning that a provider shipped a feature the translator does not yet carry — the same drift-detection role as `gateway.unmapped_fields.total`. The flag-gated `X-Slipspace-Translation-Lossy` response header (`SLIPSPACE_TRANSLATE_LOSSY_HEADER`) carries the same per-request list for developers; the counter is always on. Cardinality bounded by the modelled field set. |
 
-### Reserved
+### Control path
 
-One counter exists in the registry but has no production call site yet. It is deliberately reserved so v1.2+ wiring lands without adding an instrument mid-release.
+One counter is fed by the control path rather than the request path.
 
-| Metric | Type | Labels | Unit | Intent |
+| Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|
-| `gateway.config_reload.total` | counter | (none, reserved) | 1 | Configuration reload attempts. Hot reload is a v1.2+ task; the counter is reserved against the eventual `fsnotify`-based reloader. |
+| `gateway.config_reload.total` | counter | (none) | 1 | Live config swaps published through `config.Store.Replace` — the admin write API's only observability signal. Wired in `cmd/gateway/main.go` via `observability.ConfigReloadCounter` subscribed to the store (`internal/observability/configreload.go`); the subscriber's immediate registration call is deliberately not counted. Disk-file hot reload (fsnotify) is still unimplemented, so today every increment comes from an admin write endpoint. |
 
 ---
 
