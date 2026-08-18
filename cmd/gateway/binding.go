@@ -209,10 +209,11 @@ func matchesTagsAll(recTags, want []string) bool {
 // Oversize → either drop (drop_record) or strip bodies and mark
 // omitted (metadata_only, default).
 //
-// The effective cap is the binding's MaxBodyBytes when set (an explicit
-// 0 means no cap — the override that opts a webhook binding out of the
-// protective default), or the connector-type default when unset. A
-// resolved cap of <= 0 means unlimited.
+// The effective cap is the binding's MaxBodyBytes when set, or
+// DefaultMaxBodyBytes for the connector type when unset — which is 0
+// for every type since the 1 MiB webhook default was removed. A
+// resolved cap of <= 0 means no cap; a positive one caps the larger of
+// the captured request and response bodies.
 func applyOversize(rec cc.Record, b contractsconfig.ConnectorBinding, connectorType string) (cc.Record, bool, oversizeOutcome) {
 	maxBytes := contractsconfig.DefaultMaxBodyBytes(connectorType)
 	if b.MaxBodyBytes != nil {

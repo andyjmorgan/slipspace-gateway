@@ -39,9 +39,10 @@ import (
 const (
 	binaryName = "gateway"
 
-	// spoolStopTimeout bounds graceful drain of the spool's compress +
-	// upload workers on SIGTERM. Slightly larger than the request drain
-	// so segments in flight when the listener stops still finish.
+	// spoolStopTimeout bounds graceful drain of the spool's per-track
+	// drain + upload goroutines on SIGTERM. Slightly larger than the
+	// request drain so segments in flight when the listener stops still
+	// finish.
 	spoolStopTimeout = 30 * time.Second
 )
 

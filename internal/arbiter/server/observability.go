@@ -42,10 +42,12 @@ func parseWindow(r *http.Request) (string, time.Duration) {
 	return "1h", time.Hour
 }
 
-// clockSkewMargin pads the window's upper bound. observed_at is assigned by
-// Postgres (now()) while the window's `to` is the service's clock; when the DB
-// runs slightly ahead, a just-arrived event would otherwise fall after `to` and
-// vanish from "recent" views. A small forward margin keeps such events visible.
+// clockSkewMargin pads the window's upper bound. observed_at is the gateway
+// span's start time, assigned on the gateway host (Postgres now() only
+// backstops a zero timestamp), while the window's `to` is this service's clock;
+// when a gateway runs slightly ahead of the Arbiter, a just-arrived event would
+// otherwise fall after `to` and vanish from "recent" views. A small forward
+// margin keeps such events visible.
 const clockSkewMargin = time.Minute
 
 // windowBounds returns the [from, to) the dashboard queries over, applying the

@@ -76,7 +76,7 @@ const (
 	StatusBodyHTML StatusCodeBodyType = "html"
 )
 
-// RuleBehavior controls whether evaluation continues to lower-priority rules
+// RuleBehavior controls whether evaluation continues to subsequent rules
 // after the current rule's actions have fired.
 type RuleBehavior string
 

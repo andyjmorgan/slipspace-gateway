@@ -1,7 +1,9 @@
 // Package bodycapture reads the inbound request body once, deserializes it
-// into the typed provider struct selected by the resolved route's
-// RequestKind, stashes the Captured on context for downstream middleware,
-// and replaces r.Body so the forwarder can resend the original bytes.
+// into the typed provider struct selected by the request's RequestKind
+// (derived from the inbound path's v2 protocol by
+// cmd/gateway/pipeline.go::kindFromProtocol), stashes the Captured on
+// context for downstream middleware, and replaces r.Body so the forwarder
+// can resend the original bytes.
 //
 // The middleware preserves DynamicProperties on the typed value so unknown
 // provider fields survive the round-trip; downstream consumers must
@@ -88,14 +90,13 @@ type Captured struct {
 	Headers map[string][]string
 }
 
-// KindFromContextFunc returns the RequestKind the routing middleware stashed
-// on the request context. ok is false when routing has not run or the
-// matched route did not carry a kind.
+// KindFromContextFunc returns the RequestKind an upstream stage stashed on
+// the request context. ok is false when that stage has not run or the
+// request carries no kind.
 //
 // It exists as a dependency-injection point so bodycapture does not import
-// internal/routing — routing depends on config + contracts and a direct
-// import would create a cycle once routing's tests pull in bodycapture
-// fixtures.
+// cmd/gateway's protocol mapping — cmd/gateway/pipeline.go::kindFromProtocol
+// supplies it, wired in buildDataPlaneHandler.
 type KindFromContextFunc func(ctx context.Context) (RequestKind, bool)
 
 // Capture reads r.Body up to MaxBodyBytes and, when kind is a typed shape,

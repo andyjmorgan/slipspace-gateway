@@ -19,12 +19,17 @@
 //   - Spool — the root lifecycle manager with Start/Stop.
 //   - Track — per-connector ring buffer with rotation, retry, and
 //     circuit-breaker orchestration.
-//   - Options, BackOff, CircuitBreaker — configuration and resilience
-//     policies for individual upload attempts.
+//   - Options, RegisterTrackOptions, RotationOpts, RetryOpts,
+//     BreakerOpts — configuration for the spool, its tracks, and the
+//     retry/circuit-breaker policies applied to individual upload
+//     attempts. The backoff and breaker mechanics themselves are
+//     unexported.
 //
 // Loss policy is best-effort: rotation does an fsync; crash mid-write
 // can lose the current segment's unflushed tail (sub-MB typically).
-// Disk full is the caller's responsibility — Segment.Write surfaces
-// the os error and the caller decides whether to drop oldest, sleep,
-// or panic.
+// Disk full is not the caller's problem to solve — a failed segment
+// write bumps the track's writeErrors counter and the record is lost.
+// Enqueue is fire-and-forget and returns nothing, so there is no
+// drop-oldest/sleep/panic choice to hand back; the request path must
+// never block on the spool.
 package spool

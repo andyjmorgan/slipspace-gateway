@@ -237,10 +237,11 @@ type ServerEnv struct {
 	// matched against inbound header names; any header containing one
 	// of these has its value replaced by "[REDACTED]" before it lands
 	// in the live-messages ring, connector Records, or proxy log
-	// envelopes. The built-in list (auth / api-key / token / cookie /
-	// secret / slipspace-identity) is always active; this slice extends
-	// it for environment-specific headers (internal tracing IDs that
-	// carry tenant identifiers, custom auth schemes, etc.).
+	// envelopes. The built-in list (auth / api-key / apikey / token /
+	// cookie / secret / slipspace-identity / sluice-identity) is always
+	// active; this slice extends it for environment-specific headers
+	// (internal tracing IDs that carry tenant identifiers, custom auth
+	// schemes, etc.).
 	RedactExtraHeaders []string
 
 	// SessionIDHeaders is the operator-supplied addendum to the built-in

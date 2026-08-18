@@ -46,9 +46,11 @@ func newBreaker(opts BreakerOpts, now func() time.Time) *breaker {
 }
 
 // Allow reports whether the breaker permits an upload attempt right
-// now. Closed always allows; halfOpen allows one probe at a time;
-// open allows once HalfOpenAfter has elapsed, transitioning to
-// halfOpen.
+// now. Closed and halfOpen both allow; the breaker does not itself
+// limit concurrent half-open probes — a track has a single uploader
+// goroutine, and attemptUploads returns on the first failure, so at
+// most one probe is in flight in practice. Open allows once
+// HalfOpenAfter has elapsed, transitioning to halfOpen.
 func (b *breaker) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
