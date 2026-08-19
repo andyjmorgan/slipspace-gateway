@@ -249,7 +249,7 @@ func (e *Evaluator) recordError(ctx context.Context, rule *contractsrules.RuleCo
 }
 
 // liveGatewayContext returns a GatewayContext that reflects the
-// post-mutation state — Provider / Endpoint from state, Model from
+// post-mutation state — Provider / Protocol from state, Model from
 // the live body pointer (or state.PathParams for Gemini's path-
 // based model addressing), Headers merged from the inbound set and
 // any SetHeader writes. Called once per rule iteration in Evaluate

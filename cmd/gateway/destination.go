@@ -66,8 +66,11 @@ func singleTargetConfig(t selection.Target) contractsres.ResilienceConfig {
 // providerSwitchActions builds the internal action pair the orchestrator applies
 // per attempt: changeProvider switches state.Provider to the provider (the final
 // handler re-resolves transport from it), and changeModelName rewrites the body
-// model to the alias when one is set. These two action types survive only as
-// internal selection primitives — they are no longer authorable in rules.
+// model to the alias when one is set. The action registry still parses both
+// types, but they are no longer the authorable routing mechanism: a rule-authored
+// changeProvider is overwritten every attempt by buildAttemptState re-applying
+// the target's own providerSwitchActions, so in practice they survive as
+// internal selection primitives.
 func providerSwitchActions(provider, alias string) []contractsrules.Action {
 	acts := []contractsrules.Action{&contractsrules.ChangeProviderAction{NewProvider: provider}}
 	if alias != "" {
@@ -208,15 +211,14 @@ func resolveCredentialHeaders(
 // EXCEPT minted to drops, so an inbound Bearer/x-api-key cannot leak
 // cross-provider while the header we just set survives.
 //
-// The comparison canonicalises both sides. credentialHeaderNames is written in
-// canonical case ("X-Api-Key") while auth.UpstreamCredentialHeader returns the
-// lowercase wire literals ("x-api-key", "x-goog-api-key"), so an exact-string
-// compare never matched for anthropic or gemini and added the just-minted
-// header to its own drop list. That is benign only because the forwarder
-// applies DropHeaders before OutgoingHeaders — an ordering that is
-// load-bearing by accident. Any reordering, or a second consumer of
-// Destination.DropHeaders, would strip the upstream credential and 401 every
-// managed anthropic/gemini request.
+// Both sides are canonicalised with http.CanonicalHeaderKey before comparing,
+// so a candidate matches minted whatever casing the caller supplied:
+// credentialHeaderNames is written in canonical case ("X-Api-Key") while
+// auth.UpstreamCredentialHeader returns the lowercase wire literals
+// ("x-api-key", "x-goog-api-key"). The minted header is therefore never added
+// to its own drop list. The drops must still be applied before the new
+// credential header is set — the forwarder applies DropHeaders ahead of
+// OutgoingHeaders — so a managed→other forward never leaks the inbound token.
 func dropOtherCredentialHeaders(drops []string, minted string) []string {
 	canonical := http.CanonicalHeaderKey(minted)
 	for _, h := range credentialHeaderNames {

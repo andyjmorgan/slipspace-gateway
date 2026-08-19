@@ -16,14 +16,13 @@ type SealedSegment struct {
 	Bytes int64
 
 	// BytesUncompressed is the sum of record byte lengths before zstd.
-	// Used for the manifest's bytes_uncompressed field.
 	BytesUncompressed int64
 
 	// Records is the number of records in the segment.
 	Records int
 
 	// TsMinNs and TsMaxNs are the min/max [Record.TsNs] across records in
-	// the segment. Used by the manifest emitter.
+	// the segment.
 	TsMinNs int64
 
 	TsMaxNs int64
@@ -31,9 +30,9 @@ type SealedSegment struct {
 	// DeliveryID is the sealed segment filename's <unix_ns>-<seq> stem
 	// (derived by deliveryIDFromFilename, dropping the .ndjson.zst
 	// extension). It is monotonic per instance and remains stable across
-	// upload retries. Connectors use it for idempotency headers (e.g.
-	// X-Slipspace-Delivery-Id) and as part of the object key for S3/Azure
-	// destinations.
+	// upload retries. The shipped S3/Azure connectors use it as part of the
+	// object key; a connector may also use it as an idempotency key, though
+	// none currently sends one.
 	DeliveryID string
 
 	// Connector is the name of the connector this segment belongs to.

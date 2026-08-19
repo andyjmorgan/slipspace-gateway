@@ -40,9 +40,11 @@ const (
 	binaryName = "gateway"
 
 	// spoolStopTimeout bounds graceful drain of the spool's per-track
-	// drain + upload goroutines on SIGTERM. Slightly larger than the
-	// request drain so segments in flight when the listener stops still
-	// finish.
+	// drain + upload goroutines on SIGTERM. It is applied only after the
+	// HTTP server's own drain (SLIPSPACE_SHUTDOWN_DRAIN_SECONDS, default
+	// 300s) has returned, so in-flight requests have finished enqueuing
+	// before this deadline starts; it caps how long segment flush + upload
+	// may delay process exit.
 	spoolStopTimeout = 30 * time.Second
 )
 

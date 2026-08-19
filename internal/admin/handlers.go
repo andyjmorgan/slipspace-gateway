@@ -38,8 +38,10 @@ func VersionHandler() http.Handler {
 // DashboardSummaryHandler returns a DashboardSummary derived from the
 // snapshotter's bounded ring. Two windows are read: the requested
 // dashboard window (?window=1h|24h, defaults to dashboardWindow) for
-// totals/rates/quantiles/by-provider/by-model/rules-fired, and a
-// separate 5-minute window for the provider-health card.
+// totals/rates/by-provider/by-protocol/by-configuration/by-model/
+// rules-fired/tags-fired, and a separate 5-minute window for the
+// provider-health card. Latency percentiles live on
+// /dashboard/timeseries, not here.
 //
 // When the snapshotter ring has fewer than two samples (process just
 // started), the handler returns a valid but zero-valued summary —
