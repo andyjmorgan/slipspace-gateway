@@ -28,6 +28,12 @@ struct, the struct is the source of truth — fix the doc.
 | Gemini | `protocols/gemini/content` | `:generateContent` + `:streamGenerateContent` |
 | Gemini | `protocols/gemini/models` | `GET /v1beta/models` |
 
+`embeddings` is a routable protocol (`selection.ProtocolForPath`,
+`internal/selection/protocol.go:38`; `contracts/config.ProtocolEmbeddings`) but has
+no `protocols/` package — embeddings request and response bodies are forwarded
+opaquely and are not parsed into typed models, so the `DynamicProperties`
+round-trip machinery does not apply to them.
+
 ## OpenAI — chat completions (`protocols/openai/chat`)
 
 The request body is `ChatCompletionRequest` (`chat.go:21-136`); the

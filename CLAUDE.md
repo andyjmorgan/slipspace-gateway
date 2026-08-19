@@ -97,6 +97,7 @@ Keep the dep graph small. Approved deps:
 - `go.opentelemetry.io/otel` + exporters — OTel
 - `github.com/prometheus/client_golang` — Prometheus registry the OTel→Prom bridge requires (`otelprom` needs a `prometheus.Registerer`); also supplies the `Go` + `Process` collectors on `/metrics`
 - `github.com/klauspost/compress/zstd` — segment compression in the connector spool (`internal/spool/segment.go`)
+- `github.com/tidwall/gjson` + `github.com/tidwall/sjson` — surgical JSON read/patch for rule-driven body rewrites without full unmarshal/remarshal (`internal/bodypatch/`)
 - `github.com/aws/aws-sdk-go-v2/...` — S3 connector + STS AssumeRole; pulled by `internal/connector/s3/`
 - `github.com/Azure/azure-sdk-for-go/sdk/azblob` + `github.com/Azure/azure-sdk-for-go/sdk/azidentity` — Azure Blob connector; pulled by `internal/connector/azureblob/`
 - `github.com/testcontainers/testcontainers-go` — tests only (SeaweedFS + Azurite + Postgres spin-ups for connector integration tests)
@@ -186,7 +187,7 @@ Unit (internal correctness) and E2E (wire contract through the real binary) are 
 | Layer | Where | How |
 |---|---|---|
 | Unit | `*_test.go` next to code | stdlib `testing`, table-driven `t.Run` |
-| Integration | `test/e2e/` (`e2e` tag — no separate `integration` tag exists) | testcontainers-go (SeaweedFS for S3, Azurite for Azure Blob, Postgres for telemetry) |
+| Integration | `test/e2e/` (`e2e` tag — no separate `integration` tag exists) | testcontainers-go (SeaweedFS for S3, Azurite for Azure Blob, TimescaleDB — `timescale/timescaledb:2.27.2-pg16` — for arbiter telemetry) |
 | E2E | `test/e2e/` (`e2e` tag) | spawn `gateway` + mockllm, per-test tmp spool, `httptest.Server` webhook receivers. `make e2e` |
 | Wire compat | `test/python/` | pytest + official SDKs vs spawned stack. `make py-compat`. Release-blocking. |
 | Smoke | `test/smoke/` | pytest + SDKs vs **live deploy** (`SLIPSPACE_BASE_URL`, `SLIPSPACE_API_KEY`). `make smoke`; `SLIPSPACE_SMOKE_QWEN=true` for cluster qwen redirect tests. |

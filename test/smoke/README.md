@@ -46,13 +46,14 @@ secrets are configured.
 ## What it covers
 
 Routing is model-keyed under v2 — on unprefixed routes the configuration's
-bindings pick the backend from the model name. Route coverage is mixed:
-`test_gemini_generate.py` is parametrized over both the prefixed
-`/gemini/v1beta/models/{model}:generateContent` and the bare
-`/v1beta/models/{model}:generateContent`, proving both are live, while the
-OpenAI-compat cases (`test_anthropic_chat.py`, `test_gemini_chat.py`) point the
-OpenAI SDK at the unprefixed `{base_url}/v1` and let the model-keyed bindings
-land them on the anthropic / gemini OpenAI-compat surfaces.
+bindings pick the backend from the model name. `test_gemini_generate.py` hits
+the bare `/v1beta/models/{model}:generateContent` route, parametrized over the
+two inbound auth header forms — `bearer` (`Authorization: Bearer sk_live_...`)
+and `native-x-goog-api-key` (`x-goog-api-key: sk_live_...`) — for 2 cases per
+smoke run, while the OpenAI-compat cases (`test_anthropic_chat.py`,
+`test_gemini_chat.py`) point the OpenAI SDK at the unprefixed `{base_url}/v1`
+and let the model-keyed bindings land them on the anthropic / gemini
+OpenAI-compat surfaces.
 
 | Test | Endpoint |
 |---|---|

@@ -88,7 +88,7 @@ The data plane (`SLIPSPACE_HTTP_BIND`) is the listener clients hit with `POST /o
 
 ## Connector spool
 
-The connector spool is the disk-backed buffer between OnComplete and durable connector destinations (`s3`, `azure_blob`). Webhooks use a separate bounded real-time pusher and are not recovered from `SLIPSPACE_SPOOL_ROOT`. The record channel is independent of the OTel metric pipeline — see [load-bearing invariant #4](../CLAUDE.md). The spool is constructed lazily, and `SLIPSPACE_SPOOL_ROOT` only takes effect when at least one spool-backed connector (`s3` or `azure_blob`) is configured: `setupSpool` filters webhook connectors out of the spool set ([`cmd/gateway/main.go:351-361`](../cmd/gateway/main.go)), so a `connectors` block containing only webhook destinations logs `no spool-backed connectors configured; spool disabled` and runs with a nil spool.
+The connector spool is the disk-backed buffer between OnComplete and durable connector destinations (`s3`, `azure_blob`). Webhooks use a separate bounded real-time pusher and are not recovered from `SLIPSPACE_SPOOL_ROOT`. The record channel is independent of the OTel metric pipeline — see [load-bearing invariant #4](../CLAUDE.md). The spool is constructed lazily, and `SLIPSPACE_SPOOL_ROOT` only takes effect when at least one spool-backed connector (`s3` or `azure_blob`) is configured: `setupSpool` filters webhook connectors out of the spool set ([`cmd/gateway/main.go:361-372`](../cmd/gateway/main.go)), so a `connectors` block containing only webhook destinations logs `no spool-backed connectors configured; spool disabled` and runs with a nil spool.
 
 | Variable | Default | Type | Effect |
 |---|---|---|---|

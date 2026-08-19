@@ -582,7 +582,7 @@ What this gives the data plane post-load (`internal/config/config_model.go::buil
 - `ConnectorIndex`: connector name → `*Connector`.
 - `PricingTable`: compiled rate card for per-request USD costing.
 
-`SourceFiles` (block name → originating filename, so the admin write path persists a mutated block back to the file it came from) is **not** built here — it is populated during `Load` (`internal/config/config_model.go:160`, `r.SourceFiles = seen`, recorded by `mergeDoc` as each block's origin file).
+`SourceFiles` (block name → originating filename, so the admin write path persists a mutated block back to the file it came from) is **not** built here — it is populated during `Load` (`internal/config/config_model.go:164`, `r.SourceFiles = seen`, recorded by `mergeDoc` as each block's origin file).
 
 There is **no** `RouteIndex` in v2 — routing is not index-based. Each request resolves its destination at request time by `ProtocolForPath` then `Select` against the owning configuration's bindings (`internal/selection`).
 

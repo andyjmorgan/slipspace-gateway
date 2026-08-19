@@ -387,7 +387,7 @@ See [`docs/environment-variables.md`](environment-variables.md) for the full lis
 
 Goal: any request whose model starts with `claude-` should be routed to the `anthropic` provider, regardless of which protocol it landed on.
 
-This is **not** a rule — in v2, model-keyed provider redirect is a *binding* on the Configuration. A rule-authored `changeProvider` is inert: the resilience orchestrator rebuilds the per-attempt state from the binding's own target and overwrites it (`buildAttemptState`, `internal/middleware/resilience/middleware.go:691`).
+This is **not** a rule — in v2, model-keyed provider redirect is a *binding* on the Configuration. A rule-authored `changeProvider` is inert: the resilience orchestrator rebuilds the per-attempt state from the binding's own target and overwrites it (`buildAttemptState`, `internal/middleware/resilience/middleware.go:693`).
 
 ```yaml
 configurations:

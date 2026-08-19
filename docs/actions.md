@@ -611,7 +611,7 @@ Binds the request to a named resilience policy. Non-terminating.
 
 ### What it mutates
 
-- `state.PolicyRef` = `strings.TrimSpace(PolicyName)` (`applyUseResiliencePolicy` in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) line 363).
+- `state.PolicyRef` = `strings.TrimSpace(PolicyName)` (`applyUseResiliencePolicy` in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) line 370).
 
 > **v2 precedence note.** See the **v2 status** note at the top of this section: the binding-derived `ResilienceConfig` on context wins, the data plane wires `PolicyLookup` to `nil`, and the reported `PolicyRef` is the binding's policy name (not `state.PolicyRef`). The `state.PolicyRef` write drives only the name-lookup path used by tests and any future non-binding caller (which would resolve the name against `snap.Groups`); it has no effect in the v2 data plane.
 
