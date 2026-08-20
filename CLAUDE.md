@@ -97,7 +97,7 @@ Keep the dep graph small. Approved deps:
 - `go.opentelemetry.io/otel` + exporters — OTel
 - `github.com/prometheus/client_golang` — Prometheus registry the OTel→Prom bridge requires (`otelprom` needs a `prometheus.Registerer`); also supplies the `Go` + `Process` collectors on `/metrics`
 - `github.com/klauspost/compress/zstd` — segment compression in the connector spool (`internal/spool/segment.go`)
-- `github.com/tidwall/gjson` + `github.com/tidwall/sjson` — surgical JSON read/patch for rule-driven body rewrites without full unmarshal/remarshal (`internal/bodypatch/`)
+- `github.com/tidwall/gjson` + `github.com/tidwall/sjson` — surgical JSON read/patch for rule-driven body rewrites without full unmarshal/remarshal (`internal/bodypatch/`); `gjson` is additionally imported directly by the rules engine's `bodyField` condition evaluator (`internal/middleware/rules/conditions.go`)
 - `github.com/aws/aws-sdk-go-v2/...` — S3 connector + STS AssumeRole; pulled by `internal/connector/s3/`
 - `github.com/Azure/azure-sdk-for-go/sdk/azblob` + `github.com/Azure/azure-sdk-for-go/sdk/azidentity` — Azure Blob connector; pulled by `internal/connector/azureblob/`
 - `github.com/testcontainers/testcontainers-go` — tests only (SeaweedFS + Azurite + Postgres spin-ups for connector integration tests)

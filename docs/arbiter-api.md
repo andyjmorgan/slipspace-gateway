@@ -87,7 +87,7 @@ flowchart TD
 
 Every `/api/v1/dashboard/*`, `/messages*`, `/facets`, `/events*`,
 `/sessions/*`, `/verdict/{id}`, `/findings`, and `/settings` route is wrapped by `Server.basicAuth`
-(`server.go::basicAuth`, lines 159-168). The credentials are the single console
+(`server.go::basicAuth`, lines 161-169). The credentials are the single console
 user from config (`console.username` + `console.password_hash`, a bcrypt hash;
 see [arbiter.md](arbiter.md#configuration)). There is no env
 override and no second account.
@@ -108,7 +108,7 @@ Authorization: Basic base64(username:password)
   that 5-minute window.
 - A rejected request returns a **bare `401` with `text/plain` body
   `unauthorized\n` and deliberately NO `WWW-Authenticate` header** (lines
-  159-168). This mirrors `internal/admin.BasicAuth`: the SPA drives the login
+  161-169). This mirrors `internal/admin.BasicAuth`: the SPA drives the login
   form itself and sends `Authorization` on every fetch, so suppressing the
   challenge header stops browsers from popping their native auth dialog over the
   SPA on each poll. `curl --basic -u user:pass` still works.
@@ -172,8 +172,11 @@ Two distinct window conventions:
 - **Dashboard routes** use a coarse `?window` token — one of `15m`, `1h`, `6h`,
   `24h`, `7d`, `30d`; an unknown or absent token defaults to `1h`
   (`observability.go::parseWindow`, lines 25-43). The upper bound is padded by a
-  one-minute `clockSkewMargin` so an event stamped by a slightly-ahead Postgres
-  `now()` still falls inside the window (lines 40-50).
+  one-minute `clockSkewMargin`: `observed_at` is the gateway span's start time,
+  stamped on the *gateway* host (Postgres `now()` only backstops a zero
+  timestamp), so when a gateway's clock runs slightly ahead of the Arbiter's a
+  just-arrived event would otherwise fall after `to` and vanish from "recent"
+  views (lines 45-51).
 - **Browser routes** (`/messages`, `/events`) use precise `?from` / `?to`
   bounds, each an **RFC3339** timestamp (`query.go::parseWindowBounds`, lines
   206-223). An

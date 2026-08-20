@@ -61,11 +61,15 @@ Every `SLIPSPACE_*` variable the gateway reads, in one table. Defaults are what 
 | `SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS` | `120` (2 min) | int (seconds) | Caps time-to-first-byte from the upstream provider — the wait for response headers after the request body is fully written. Stamped onto every proxy transport as `ResponseHeaderTimeout`. Only bounds the header wait; once headers arrive, streaming bodies are not subject to it. | `>= 120`. Below the floor risks cancelling slow-but-healthy upstreams mid-handshake. | [Upstream forwarding](#upstream-forwarding) |
 | `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE` | _(unset)_ | bool (string `1` / `true`) | **Test-only.** Makes the config-load SSRF host check accept loopback / private / link-local hosts on every webhook connector. (The check is static and config-load-only — it inspects literal IPs in the URL; there is no per-call/dial-time DNS re-resolution.) The e2e harness sets this so its `httptest.Server` (bound to loopback) is reachable. **Never set this in production.** | `1` / `true` enables; anything else (including unset) leaves the check on. | [Connectors → webhook → SSRF guard](connectors.md#ssrf-guard) |
 
-The CLI validator at `cmd/cli/validate.go` prints "N vars resolved" using `config.EnvVarNames()`; the count reflects exactly the entries in `envVarNames` ([`internal/config/env.go`](../internal/config/env.go), 24 server-tuning knobs) — a subset of all `SLIPSPACE_*` vars the gateway consults. Three additional variables are read outside `LoadEnv`:
+The CLI validator at `cmd/cli/validate.go` prints "N vars resolved" using `config.EnvVarNames()`; the count reflects exactly the entries in `envVarNames` ([`internal/config/env.go`](../internal/config/env.go), 24 server-tuning knobs) — a subset of all `SLIPSPACE_*` vars the gateway consults. Within the gateway binary, three additional variables are read outside `LoadEnv`:
 
 - `SLIPSPACE_ADMIN_PASSWORD` is resolved by [`contracts/admin/admin.go::Config.ResolvePassword`](../contracts/admin/admin.go) at admin-block validation time, not by `LoadEnv`.
 - `SLIPSPACE_ENV` is read by [`internal/observability/setup.go`](../internal/observability/setup.go) to populate the OTel `deployment.environment` resource attribute.
 - `SLIPSPACE_WEBHOOK_ALLOW_PRIVATE` is read by [`contracts/config/connectors_validate.go::webhookAllowPrivateNetworks`](../contracts/config/connectors_validate.go) when a webhook connector is validated at config-load, gating the static SSRF host check (literal-IP loopback/private/link-local rejection). There is no runtime/dial-time DNS guard. Test-only.
+
+Outside the gateway binary entirely, the separate `arbiter` binary reads one more:
+
+- `SLIPSPACE_ARBITER_CONFIG` is read by [`cmd/arbiter/main.go`](../cmd/arbiter/main.go) as the default value of its `-config` flag — the gateway's `LoadEnv` never sees it.
 
 Keeping the `LoadEnv` set and the per-package extras separate is what lets the validator print a stable count without claiming ownership of vars it doesn't parse.
 

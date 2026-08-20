@@ -459,7 +459,7 @@ The `And` short-circuits: if the request isn't on `openai`, the header lookup is
 
 ## Cross-references
 
-- [`docs/actions.md`](actions.md) — every action type (`changeProvider`, `changeModelName`, `changeUrl`, `changeApiKey`, `setHeader`, `appendQueryString`, `addTag`, `useResiliencePolicy`, `returnStatusCode`, `llmImpersonation`) with semantics and worked examples.
+- [`docs/actions.md`](actions.md) — every action type (`changeProvider`, `translate`, `changeModelName`, `changeUrl`, `changeApiKey`, `setHeader`, `appendQueryString`, `addTag`, `useResiliencePolicy`, `returnStatusCode`, `llmImpersonation`, `rewriteField`, `removeField`, `appendField`) with semantics and worked examples.
 - [`docs/resilience.md`](resilience.md) — resilience groups and bindings (the v2 replacement for the now-inert `useResiliencePolicy` action), including the pipeline diagram showing rules run **before** the orchestrator.
 - [`docs/pipeline.md`](pipeline.md) — the canonical middleware chain (`selection → rules → resilience → forwarder`) and the body re-marshal contract.
 - [`docs/observability.md`](observability.md) — the rule-engine meters (`gateway.rule.matches.total`, `gateway.rule.errors.total` — whose `error_kind` labels are `group_depth`, `action_apply`, and `body_remarshal`, the last emitted when the typed-body re-marshal middleware fails — and `gateway.rule.evaluation.duration`) and the per-request `RulesFired` shape captured on connector `Record`s and the admin console live-feed.
