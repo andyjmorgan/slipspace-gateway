@@ -35,8 +35,13 @@ type Observer interface {
 
 	// OnUpstreamError fires instead of OnResponseHeaders when the request
 	// cannot reach the upstream or the upstream tears the connection
-	// before headers arrive. The Forwarder will have written 502 to the
-	// client before this fires.
+	// before headers arrive. It fires from the ReverseProxy ErrorHandler
+	// before any response is written; whether the client ever sees a 502
+	// depends on the writer chain. With a BufferingResponseWriter in
+	// place (the resilience orchestrator's wrapper) the Forwarder records
+	// the transport error on the buffer and returns, leaving the
+	// retry-or-fail decision to the orchestrator; without one it writes
+	// 502 directly after this call returns.
 	OnUpstreamError(ctx context.Context, err error)
 
 	// OnComplete fires once, after the response is fully written (or

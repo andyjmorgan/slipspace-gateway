@@ -47,9 +47,10 @@ var (
 //
 // The console is off by default. When Enabled is true, the gateway
 // starts a second http.Server bound to BindAddr (or DefaultBindAddr)
-// serving the embedded SPA at "/" and the control-plane API under
-// "/api/v1/*". HTTP Basic auth protects the API; the SPA's static
-// assets are public.
+// serving the embedded SPA at "/admin/" and the control-plane API
+// under "/admin/api/v1/*" (internal/admin.Prefix). HTTP Basic auth
+// protects the API except GET /admin/api/v1/version; the SPA's
+// static assets are public.
 //
 // Password resolution prefers the EnvPassword env var when set;
 // otherwise it reads the Password field. This lets production

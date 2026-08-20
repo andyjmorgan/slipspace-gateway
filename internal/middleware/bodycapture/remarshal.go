@@ -22,7 +22,7 @@ import (
 // Designed to be called by:
 //   - the rules.BodyRemarshalHandler middleware (after rules mutate
 //     the typed body),
-//   - the v1.2+ resilience orchestrator (per attempt, after a target
+//   - the resilience orchestrator (per attempt, after a target
 //     applies its own destination-mutating actions).
 //
 // Both callers consume the bytes via ApplyBodyBytes.
@@ -37,8 +37,7 @@ func RemarshalTyped(ctx context.Context) ([]byte, error) {
 // ApplyBodyBytes installs body on r as the outgoing request body and
 // updates Content-Length to match. Used by every caller that mutates
 // the body after bodycapture has run — rules.BodyRemarshalHandler
-// today, the resilience orchestrator's per-attempt apply step in
-// v1.2.
+// and the resilience orchestrator's per-attempt apply step.
 //
 // Idempotent: calling with the same bytes twice produces the same
 // observable r state.

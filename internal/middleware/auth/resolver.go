@@ -259,10 +259,13 @@ type managedKeySource struct {
 // the provider-native shapes (x-api-key for Anthropic SDKs, x-goog-api-key
 // for Gemini SDKs). The first header whose value is a known SlipSpace secret
 // wins. A header may be present with a value that is not in SecretIndex
-// (e.g. an OpenAI sk- key supplied by a misconfigured client) — that case
-// short-circuits at the first present header and returns ErrUnauthorized,
-// it does not fall through to the next header so an attacker cannot
-// confuse the resolution by stuffing multiple headers.
+// (e.g. an OpenAI sk- key supplied by a misconfigured client) — that
+// value short-circuits: resolveManaged returns ErrUnauthorized rather
+// than trying the next header, so an attacker cannot confuse resolution
+// by stuffing multiple headers. A malformed Authorization (no parseable
+// `Bearer ` token) is a discovery miss, not a value, and does fall
+// through to x-api-key then x-goog-api-key — see
+// TestResolver_Managed_MalformedAuthorizationFallsThroughToNative.
 func (r *Resolver) discoverManagedKey(headers http.Header) (managedKeySource, bool) {
 	if v := headers.Get(HeaderAuthorization); v != "" {
 		if token, ok := extractBearer(v); ok {

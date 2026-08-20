@@ -33,7 +33,7 @@ const (
 )
 
 // EnumOperator selects the comparison strategy for enum-valued conditions.
-// Only equality is currently meaningful for provider/endpoint matches.
+// Only equality is currently meaningful for provider/protocol/tag matches.
 type EnumOperator string
 
 // EnumEquals is the only currently-supported enum operator.

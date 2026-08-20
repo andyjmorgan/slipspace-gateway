@@ -44,8 +44,11 @@ const (
 // ResilienceConfig is the resilience policy attached to a Configuration.
 // Mode determines which strategy is active; the relevant sub-config must be set.
 type ResilienceConfig struct {
-	// Name is required; the human anchor used by logs, dashboards, and
-	// Configuration.ResilienceName references.
+	// Name is required; the human anchor used by logs, dashboards, and the
+	// `policy` metric label. Under v2 it is the group name for a group
+	// binding, or "binding:<provider>" for the degenerate single-target
+	// config synthesised for a single-provider binding (that form emits no
+	// gateway.resilience.* metrics).
 	Name string `yaml:"name" json:"name"`
 
 	// ID is optional; populated by the control plane when minted via the
