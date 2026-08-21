@@ -172,7 +172,7 @@ Three useful disable configurations:
 - `SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=100 SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0` — metadata-only pane, no body capture. Useful when the gateway is memory-constrained and you only want recent-request visibility.
 - Defaults — both panes work, with the 200 MiB body store budget.
 
-`SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES > 0` is required whenever `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES > 0`. This is the only cross-field rule in `ServerEnv.Validate`; each knob is also validated independently — negative capacities or body sizes, a bind that is not `host:port` with a numeric port, a non-positive drain or snapshot interval, an empty spool root, an out-of-range group depth, and unknown log-level / log-format / OTLP-protocol values are all rejected at startup ([`internal/config/env.go:406-458`](../internal/config/env.go)). The reverse (a non-zero per-body cap with `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`) is accepted — body capture is off and the per-body cap is ignored.
+`SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES > 0` is required whenever `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES > 0`. This is the only cross-field rule in `ServerEnv.Validate`; each knob is also validated independently — negative capacities or body sizes, a bind that is not `host:port` with a numeric port, a non-positive drain or snapshot interval, an empty spool root, an out-of-range group depth, and unknown log-level / log-format / OTLP-protocol values are all rejected at startup ([`internal/config/env.go:407-459`](../internal/config/env.go)). The reverse (a non-zero per-body cap with `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`) is accepted — body capture is off and the per-body cap is ignored.
 
 ---
 
