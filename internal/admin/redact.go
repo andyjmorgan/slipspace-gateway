@@ -8,10 +8,9 @@ type RedactedSecret struct {
 	// Length is the rune count of the original secret, before redaction.
 	Length int `json:"length"`
 
-	// Last4 is the last four runes of the original secret. When the secret
-	// is shorter than four runes the entire value is returned — operator
-	// visibility wins for short tokens, where length already telegraphs
-	// "this is a non-credential placeholder".
+	// Last4 is the last four runes of the original secret. For secrets
+	// shorter than four runes the full value is returned since there are
+	// fewer than four runes to expose.
 	Last4 string `json:"last4"`
 }
 
