@@ -134,10 +134,10 @@ Actions write through a [`rules.MutableState`](../internal/middleware/rules/stat
 
 | Field | Type | Written by | Consumed by the v2 data plane? |
 |---|---|---|---|
-| `Provider` | `string` | `changeProvider` | **No (inert for routing).** `selectionMiddleware` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 202-241) synthesises a `ResilienceConfig` for *every* generative request, and every target it builds carries `providerSwitchActions` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 74), which always includes a `ChangeProviderAction`. The orchestrator's `buildAttemptState` ([`internal/middleware/resilience/middleware.go`](../internal/middleware/resilience/middleware.go) line 691) clones the post-rule baseline and re-applies those per-target actions, so the binding-selected provider always wins. The final handler then reads that provider — never a rule's write. On the passthrough path the destination comes from `pm.Provider` ([`cmd/gateway/handler.go`](../cmd/gateway/handler.go) lines 83-102), which rules cannot reach either — see [`changeProvider`](#changeprovider). |
+| `Provider` | `string` | `changeProvider` | **No (inert for routing).** `selectionMiddleware` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 202-241) synthesises a `ResilienceConfig` for *every* generative request, and every target it builds carries `providerSwitchActions` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 74), which always includes a `ChangeProviderAction`. The orchestrator's `buildAttemptState` ([`internal/middleware/resilience/middleware.go`](../internal/middleware/resilience/middleware.go) line 693) clones the post-rule baseline and re-applies those per-target actions, so the binding-selected provider always wins. The final handler then reads that provider — never a rule's write. On the passthrough path the destination comes from `pm.Provider` ([`cmd/gateway/handler.go`](../cmd/gateway/handler.go) lines 83-102), which rules cannot reach either — see [`changeProvider`](#changeprovider). |
 | `Protocol` | `string` | `translate` | **Yes (wired).** Overwritten with the target protocol; the final handler resolves the upstream endpoint on it — see [`translate`](#translate). |
 | `SourceProtocol` | `string` | `translate` | **Yes (wired).** Records the inbound protocol so the response leg translates back — see [`translate`](#translate). |
-| `MatchedPath` | `string` | no action (read-only) | **Inert in v2.** Set by `selectionMiddleware` to the raw inbound `r.URL.Path` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) -> `rules.NewMutableState`, [`internal/middleware/rules/state.go`](../internal/middleware/rules/state.go) lines 249-262) and cloned per resilience attempt (`state.go` line 200), but never read by the data plane. The destination builder takes its upstream path template from the resolved `selection.Target.Path` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 123), not from `MatchedPath`; v2 has no `accepted_paths` schema and `changeUrl` is itself inert. Retained for diagnostics and rule-condition context only. |
+| `MatchedPath` | `string` | no action (read-only) | **Inert in v2.** Seeded only on the passthrough path; the generative path passes an empty string to `rules.NewMutableState` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) line 213, [`internal/middleware/rules/state.go`](../internal/middleware/rules/state.go) lines 256-269), so under v2 `MatchedPath` is usually `""`. It is cloned per resilience attempt (`state.go` lines 199-243), but never read by the data plane. The destination builder takes its upstream path template from the resolved `selection.Target.Path` — `substitutePlaceholders(target.Path, pathParams)` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 126) — not from `MatchedPath`; v2 has no `accepted_paths` schema and `changeUrl` is itself inert. Retained for diagnostics and rule-condition context only. |
 | `UpstreamURL` | `*url.URL` | `changeUrl` | **No (inert).** `buildDestination` sets `dest.UpstreamURL` from the resolved target; `applyStateOverlays` never reads this field — see [`changeUrl`](#changeurl). |
 | `UpstreamCredentialOverride` | `*string` | `changeApiKey` | **Yes (wired).** Read by `resolveCredentialHeaders` ([`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 172), the single credential mint site, which honours it over the auth mode: a literal key is minted with the post-rule provider's header format, the `useSlipSpaceKey` sentinel (empty string) forwards the inbound `Authorization` verbatim — see [`changeApiKey`](#changeapikey). |
 | `OutgoingHeaders` | `http.Header` | `setHeader` | Yes — layered onto the destination by `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 314-319). |
@@ -162,7 +162,7 @@ Two complementary side channels exist:
 
 Writes `state.Provider`. Non-terminating.
 
-> **v2 status — inert for routing (invariant #7).** `ChangeProviderAction` survives only as the orchestrator's internal per-attempt primitive (`providerSwitchActions`, [`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 74). Authoring it in a rule has no routing effect: `selectionMiddleware` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go)) walks the configuration's bindings to pick the provider (or resilience group) *before* rules run and stashes a synthesised `ResilienceConfig` on context, and the orchestrator's `buildAttemptState` ([`internal/middleware/resilience/middleware.go`](../internal/middleware/resilience/middleware.go) line 691) clones the post-rule baseline and re-applies each target's own provider action — so every attempt overwrites `state.Provider` from the selected binding/target before the final handler reads it. The action still parses, validates, and round-trips (registered in [`contracts/rules/action.go`](../contracts/rules/action.go)). [`test/e2e/providers/changeprovider_redirect_test.go`](../test/e2e/providers/changeprovider_redirect_test.go) proves the **binding**-driven redirect, not a rule-driven one: the harness materialises `config-dev/policy.yaml`, which contains no `changeProvider` rule. To route a model to a different provider, author a binding — see [`docs/providers.md`](providers.md).
+> **v2 status — inert for routing (invariant #7).** `ChangeProviderAction` survives only as the orchestrator's internal per-attempt primitive (`providerSwitchActions`, [`cmd/gateway/destination.go`](../cmd/gateway/destination.go) line 74). Authoring it in a rule has no routing effect: `selectionMiddleware` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go)) walks the configuration's bindings to pick the provider (or resilience group) *before* rules run and stashes a synthesised `ResilienceConfig` on context, and the orchestrator's `buildAttemptState` ([`internal/middleware/resilience/middleware.go`](../internal/middleware/resilience/middleware.go) line 693) clones the post-rule baseline and re-applies each target's own provider action — so every attempt overwrites `state.Provider` from the selected binding/target before the final handler reads it. The action still parses, validates, and round-trips (registered in [`contracts/rules/action.go`](../contracts/rules/action.go)). [`test/e2e/providers/changeprovider_redirect_test.go`](../test/e2e/providers/changeprovider_redirect_test.go) proves the **binding**-driven redirect, not a rule-driven one: the harness materialises `config-dev/policy.yaml`, which contains no `changeProvider` rule. To route a model to a different provider, author a binding — see [`docs/providers.md`](providers.md).
 
 ### YAML
 
@@ -775,10 +775,14 @@ Synthesizes a response and returns it to the client without contacting upstream.
 Returns:
 
 ```go
-Outcome{
+status := a.StatusCode
+if status < 100 || status > 599 {
+    status = 500
+}
+return Outcome{
     Terminate: true,
     Response: &Response{
-        StatusCode: outOfRangeFallback(a.StatusCode, 500),
+        StatusCode: status,
         Body:       []byte(a.Body),
         BodyType:   a.BodyType,
     },
@@ -789,7 +793,7 @@ Outcome{
 
 ### Special behaviour
 
-- **StatusCode outside `[100, 599]` falls back to `500`**. This guarantees a misconfigured rule produces a recognisably-bad response rather than a `panic` in `net/http.WriteHeader`.
+- **StatusCode outside `[100, 599]` falls back to `500`**. `applyReturnStatusCode` ([`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) lines 384-397) coerces the value inline, which guarantees a misconfigured rule produces a recognisably-bad response rather than a `panic` in `net/http.WriteHeader`.
 - `BodyType` selects only the `Content-Type` family; SlipSpace does not validate that `Body` is well-formed JSON when `BodyType: json`. The bytes are written verbatim.
 - Empty `Body` is allowed — `204 No Content` with no body is the obvious use case.
 

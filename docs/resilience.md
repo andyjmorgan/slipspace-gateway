@@ -190,6 +190,12 @@ There is no per-target `name`, `order`, `failure_status_codes`, `circuit_breaker
 
 If both `failure_threshold > 0` and `failure_rate_threshold > 0`, **both** must breach to trip. Combining them is how you avoid false positives at low traffic (`minimum_throughput`) while still tripping promptly on a real outage (`failure_threshold`).
 
+### Validated at load — and what isn't
+
+Group validation at config load is deliberately shallow (`internal/config/config_validate.go:130-145`). The loader checks only three things per group: that it declares at least one target, that every target names a non-empty `provider`, and that each named provider exists in the `providers` block. Protocol-preservation is checked separately, when a binding points at the group (`validateBindings`).
+
+Everything else in the group schema is **not** validated at load: `mode`, target declaration order, `weight` values, `failure_status_codes` ranges, and the whole `circuit_breaker` shape pass through untouched. The `contracts/resilience` `Validate()` helpers exist but the loader never invokes them. Invalid or omitted values are absorbed at runtime by the orchestrator's defaults — `weight: 0` becomes `1`, an empty failure set falls back to `[500, 502, 503, 504]` — so a typo in these fields degrades silently rather than failing the config.
+
 ### Parsed but not wired
 
 `retry:` and `timeout_seconds` are v1 `resilience_policies` fields and are **NOT** part of the v2 group schema. `contracts/config.Group` and `contracts/config.Target` have no such fields, and the YAML loader is non-strict, so these keys are silently ignored under `groups:` — they are neither parsed nor validated and have no effect. Inter-attempt backoff is not implemented; failover retries immediately. Retry is expressed as a resilience group with multiple targets; the orchestrator tries targets in order until one commits. Attempt-level time bounding comes only from the group's `response_header_timeout_seconds`, which overrides the gateway-wide upstream response-header timeout at the forwarder level (`internal/proxy/transport.go`). Do not author `retry:` or `timeout_seconds` in v2 group configurations.

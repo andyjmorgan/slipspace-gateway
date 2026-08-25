@@ -259,7 +259,7 @@ Common behaviour across every write resource:
 - **409** (shape `{error, name}`, with `used_by:[...]` added on referential-integrity refusals) on a duplicate name (POST), a rename attempt (PUT), or a delete blocked by referrers.
 - **422** (shape `{error, detail}`) when `RevalidateAndIndex` rejects the clone (unknown provider/group reference, invalid binding, empty group targets, …).
 - **204** on a successful DELETE; **201** on a successful POST; **200** on a successful PUT/PATCH.
-- **`?dry_run=true`** validates a candidate mutation against a clone and returns a `PreviewResult` (`{valid, error}`) **without** persisting or swapping the live snapshot — the safety floor for the console's diff-preview. Honoured on `POST` (create), `PUT` (replace) and `PATCH` only — `DELETE` handlers ignore the parameter and commit immediately.
+- **`?dry_run=true`** validates a candidate mutation against a clone and returns a `PreviewResult` (`{valid, error}`) **without** persisting or swapping the live snapshot — the safety floor for the console's diff-preview. Supported by the providers, groups, configurations, api-keys and connectors write handlers, on `POST` (create), `PUT` (replace) and `PATCH` only — `DELETE` handlers ignore the parameter and commit immediately. **The rules write handlers (`internal/admin/rules_write.go`) do not implement dry-run at all — a `POST`/`PUT` to `/api/v1/config/rules` commits even when `?dry_run=true` is set.**
 
 | Resource | Mutating methods · Path | Notes |
 |---|---|---|
@@ -338,7 +338,7 @@ The `spa` label covers every `/admin/` URL that doesn't match a `/api/v1/*` patt
 
 | Method · Path | Response shape | Notes |
 |---|---|---|
-| `GET /admin/api/v1/messages/recent?limit=N` | `MessagesRecentResponse` | Up-to-`limit` most recent entries, oldest first. `limit` clamps to `[1, ring capacity]`; defaults to capacity. 503 when the ring is disabled (`SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0`). |
+| `GET /admin/api/v1/messages/recent?limit=N` | `MessagesRecentResponse` | Up-to-`limit` most recent entries, oldest first. `limit` defaults to the ring capacity and is clamped down to it when larger; a value that is not a positive integer is rejected with 400 `limit must be a positive integer` (it is not clamped up to 1). 503 when the ring is disabled (`SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0`). |
 | `GET /admin/api/v1/messages/stream` | SSE | Server-Sent Events stream of appended entries. See [Live messages ring](#live-messages-ring) for frame shapes. 503 when the ring is disabled. |
 | `GET /admin/api/v1/messages/{event_id}/body` | `MessageBodyDetail` | Request + response bodies + per-provider reassembled stream for one event. 503 when body capture is disabled; 404 when the `event_id` has rolled out of the body LRU; 400 on empty `event_id`. |
 
@@ -352,7 +352,7 @@ The `spa` label covers every `/admin/` URL that doesn't match a `/api/v1/*` patt
 
 ## SPA pages
 
-The SPA's router (`web/src/App.tsx`) protects every page behind `<ProtectedRoute>` except `/login`; the sidebar's top-level sections come from `web/src/lib/nav-meta.ts`. A 401 from any backing API call triggers `useUnauthorizedRedirect`, which bounces the user back to `/login`. List pages carry a "New" button into the matching editor; detail pages carry an "Edit" button into the same editor in `edit` mode. The editors POST/PUT the write API and can preview with `?dry_run=true`.
+The SPA's router (`web/src/App.tsx`) protects every page behind `<ProtectedRoute>` except `/login`; the sidebar's top-level sections come from `web/src/lib/nav-meta.ts`. A 401 from any backing API call triggers `useUnauthorizedRedirect`, which bounces the user back to `/login`. List pages carry a "New" button into the matching editor; detail pages carry an "Edit" button into the same editor in `edit` mode. The editors POST/PUT the write API; the provider, group and configuration editors preview with `?dry_run=true` before committing (`previewProvider` / `previewGroup` / `previewConfiguration` in `web/src/lib/config-api.ts`), while the rules editor has no preview step.
 
 | Page | Path(s) | Backing endpoints | Purpose |
 |---|---|---|---|
@@ -439,7 +439,7 @@ The byte-heavy fields are **zstd-compressed** before storage (`compressEnvelope`
 
 - Body capture is **off** when `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`. The live-tail pane still renders metadata; `/messages/{event_id}/body` returns 503.
 - Bodies whose request never reached the bodycapture middleware (transport failure before headers, request cancelled mid-read) leave a zero-byte `Request` field.
-- Header capture is per-(policy, target) opt-in via the middleware wiring — older entries in the LRU may have `nil` header maps.
+- Header capture is unconditional wherever the bodycapture middleware runs — there is no per-(policy, target) opt-in. `RequestHeaders` is nil only when the request never reached that middleware (or the entry predates header capture); `ResponseHeaders` is nil when the upstream returned no headers at all, e.g. a transport failure.
 
 ### Redaction in transit
 

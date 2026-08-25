@@ -77,7 +77,7 @@ flowchart TB
 5. **Each top-level block has a single authoring home.** A block (`providers`, `groups`, `configurations`, `api_keys`, `connectors`, `rules`, `advisors`, `admin`, `telemetry`, `pricing`) set by **two** files aborts the load with `ErrDuplicateKey`, naming both files. This is enforced in `mergeDoc` by a `seen` map of block → filename. A given block may live in any file, but only one.
 6. **Files are processed in alphabetical filename order.** Ordering is deterministic but irrelevant to the result — the single-authoring-home rule means no block is ever set twice, so there are no last-writer-wins merge semantics.
 7. **The legacy `backends:` key is rejected hard.** The block was renamed `providers:` in the Vocabulary Refactor with no back-compat alias; a file carrying `backends:` aborts with `ErrLegacyProvidersKey` rather than silently ignoring it (`internal/config/config_model.go::Load`).
-8. **Trusted contents.** Decoded values pass through verbatim. There is no `${VAR}` substitution, no `env:` syntax — see [Why no `${VAR}` substitution](#why-no-var-substitution).
+8. **Trusted contents.** The loader performs no `${VAR}` expansion and no `env:` substitution — decoded values pass through verbatim. See [Why no `${VAR}` substitution](#why-no-var-substitution).
 
 ### Loader override
 
@@ -275,7 +275,7 @@ bindings:
 |---|---|---|---|
 | `protocol` | string | yes | The generative protocol this binding serves — one of the protocol constants (see [Protocol resolution](#protocol-resolution)). Unknown protocol aborts validation. |
 | `models` | []string | no | Client-requested model patterns this binding matches. Exact string, or a single **trailing-`*`** prefix wildcard (interior or multiple `*` is rejected). An **empty** model set is a **catch-all** for the protocol (default-permissive, invariant #1) — never a default-deny. |
-| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:262-265`, `validateBindings`). |
+| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:264-266`, `validateBindings`). |
 | `group` | string | conditionally | Names a resilience group destination. Mutually exclusive with `provider`. |
 | `alias` | string | no | Rewrites the request body model name for the **single-provider** case (sugar for the binding's implicit target alias). **Ignored when `group` is set** — group targets carry their own aliases. |
 | `query` | map[string]string | no | Single-provider per-use query override. Ignored when `group` is set. |
@@ -284,7 +284,7 @@ bindings:
 
 ### Matching rules
 
-`matchesModelPatterns` (`internal/selection/selection.go:255`):
+`matchesModelPatterns` (`internal/selection/selection.go:258`):
 
 - **Empty `models`** matches every model on the protocol (catch-all).
 - A pattern ending in `*` is a **prefix** match (`gpt-*` matches `gpt-4o`).
@@ -740,11 +740,13 @@ What this gives you: a `chat` request with a `claude-*` model lands on Anthropic
 
 ## Why no `${VAR}` substitution
 
-The loader does not expand `${VAR}` or any `env:` syntax inside the YAML tree. Decoded values pass through verbatim. This is deliberate.
+The loader performs no `${VAR}` expansion and no `env:` substitution — decoded values pass through verbatim. This is deliberate.
 
 - **File contents are trusted by construction.** In production the config directory is mounted from a Kubernetes Secret (or a filesystem-permissioned dir on bare metal); the operator picks the substrate and SlipSpace trusts what's on disk.
 - **One source of truth per secret.** A `${OPENAI_KEY}` literal would make the file meaningless without the env, and the env var becomes the de-facto source of truth — not what the admin console shows, what the bundler exports, or what the validator sees. Literal strings keep the YAML the canonical artefact.
 - **Only file paths are env-overridable.** `SLIPSPACE_CONFIG_DIR` selects the dir; everything inside is read as-is.
+
+The one in-YAML indirection is the connector `secret_ref` field (`env:NAME` or `file:/path`, `contracts/config/connectors.go:123-125`), which is not expanded by the loader — it is resolved by the connector factory when the destination is built.
 
 The two intentional exceptions are `SLIPSPACE_ADMIN_PASSWORD` (kept out of YAML for production hygiene) and the server-level `SLIPSPACE_*` env vars (not in YAML at all). See [environment-variables.md](environment-variables.md).
 

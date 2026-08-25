@@ -138,7 +138,7 @@ Approved deps (`web/package.json` is the allowlist — anything new needs justif
 What we deliberately avoid:
 
 - **State-management libraries** (redux, zustand, jotai) — component state + module-level caches (see `bodyCache` in `@/lib/span-view`, and the `fetchFullSpan`/`peekFullSpan` LRU in `@/lib/session-spans`) cover current needs.
-- **Data-fetching layers** (react-query, swr, axios) — `apiFetch` in `@/lib/api` is the one HTTP path; lazy/LRU semantics live next to their feature (`@/lib/span-view`).
+- **Data-fetching layers** (react-query, swr, axios) — `apiFetch` in `@/lib/api` is the one HTTP path; lazy/LRU semantics live next to their feature (`@/lib/span-view`). One documented exception: the live-messages SSE stream (`@/lib/messages`) uses a raw `fetch` because `EventSource` cannot carry the `Authorization: Basic` header the admin console requires — it must still route through `apiBase` rather than hardcoding the `/admin` prefix.
 - **CSS-in-JS / component-kit creep** — new visuals compose `components/atoms` and the shared card/tab idioms (`telemetry/components/span-inspector-panes.tsx`). One design per concept: if a card/tab/table exists, reuse it — never fork a near-duplicate.
 - **Hand-edited wire types** — `web/src/lib/generated/` comes from `make generate` (tygo, CI-enforced freshness). Contract changes start in `contracts/`, never in TS.
 - **Render impurity** — no `Date.now()` / `Math.random()` / ref reads during render; time bounds resolve at fetch time, reset-on-change derives from keyed state instead of setState-in-effect (the eslint react-hooks rules are the enforcement; the repo carries a small documented baseline of legacy hits — add zero new ones).

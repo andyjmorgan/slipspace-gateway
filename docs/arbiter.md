@@ -75,7 +75,7 @@ flowchart LR
 - **Open probes** — `GET /healthz` (liveness) and `GET /readyz` (readiness; 503 until Postgres is reachable, so a load balancer drains the instance while the store recovers).
 - **Open HMAC Record webhook** — `POST /api/v1/ingest/record`. "Open" in the routing sense only: it carries no Basic auth, because the push **authenticates itself** via its `X-Slipspace-Signature` HMAC. See [arbiter-webhook.md](arbiter-webhook.md).
 - **Open HMAC routing advisor** — `POST /api/v1/advise/route` (present only when the `advise` config block is enabled). Same self-authenticating HMAC convention and the same `gateways[]` registry as the Record webhook, but a distinct channel: control-plane advice for agent-aware routing, neither telemetry nor audit. See [agent-routing.md](agent-routing.md).
-- **Basic-auth console + query API** — `GET /api/v1/dashboard/*`, `/api/v1/messages*`, `/api/v1/events*`, `/api/v1/sessions/{id}`, `/api/v1/facets`, and `GET /api/v1/settings` (`internal/arbiter/server/query.go::registerQueryRoutes`). Every API route is wrapped in `Server.basicAuth` (`server.go:159-168`). The SPA bundle itself is served **unauthenticated** at `GET /` (`server.go:115-117`) — only the API it calls is gated; the SPA drives its own login form. See [arbiter-api.md](arbiter-api.md).
+- **Basic-auth console + query API** — `GET /api/v1/dashboard/*`, `/api/v1/messages*`, `/api/v1/events*`, `/api/v1/sessions/{id}`, `/api/v1/facets`, and `GET /api/v1/settings` (`internal/arbiter/server/query.go::registerQueryRoutes`). Every API route is wrapped in `Server.basicAuth` (`server.go:161-170`). The SPA bundle itself is served **unauthenticated** at `GET /` (`server.go:117-119`) — only the API it calls is gated; the SPA drives its own login form. See [arbiter-api.md](arbiter-api.md).
 
 **OTLP gRPC listener — default `0.0.0.0:8687`** (`config.DefaultOTLPBind`, `config.go:28`). One gRPC server registers **both** OTLP receivers (`internal/arbiter/ingest/grpc.go::NewOTLPServer`):
 
@@ -84,7 +84,7 @@ flowchart LR
 
 Gateways export to `:8687` directly or via an intervening OTel collector.
 
-The two listeners run on independent goroutines bound to the signal context (`safego.Go(ctx, "telemetry.serve.http", …)` and `"telemetry.serve.otlp"`); the first to return an error tears the other down.
+The two listeners run on independent goroutines bound to the signal context (`safego.Go(ctx, "arbiter.serve.http", …)` and `"arbiter.serve.otlp"`); the first to return an error tears the other down.
 
 > The exact ports are **defaults**, applied only when the YAML omits them (`config.applyDefaults`, `config.go:361`). Set `http_bind` / `otlp_bind` to override.
 
@@ -166,6 +166,7 @@ gateways:
 | `console.password_hash` | string | — (**required**) | **bcrypt** hash of the console password | `config.go:317` |
 | `gateways[].id` | string | — (**required**) | Stable gateway identifier echoed on its Record pushes and carried on events for stitching | `config.go:324` |
 | `gateways[].hmac_secret` | string | — (**required**) | Shared secret the gateway signs Record pushes with | `config.go:327` |
+| `advise` | block | — (disabled) | Optional HMAC-trusted agent-aware routing advisor, served at `POST /api/v1/advise/route` and wired via `Server.WithAdvise`; when absent the route is omitted | `config.go:77,85`, `server/server.go:79-82,106-109` |
 
 `content_max_bytes` is modelled as a `*int` so the loader can distinguish "unset" (take the `16384` default) from an explicit `0` (unlimited). `Config.ContentCap` (`config.go:378`) resolves the effective value, which the trace receiver treats as "keep the whole content" when `<= 0`.
 
@@ -224,7 +225,7 @@ Validation (`config.Validate`) rejects, when the scanner is enabled, a malformed
 htpasswd -bnBC 10 "" 'your-console-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'
 ```
 
-Paste the `$2a$...` output as `password_hash`. The username comparison is `subtle.ConstantTimeCompare` and both branches always run (`server.go:194`), so a wrong username and a wrong password cost the same — no timing oracle.
+Paste the `$2a$...` output as `password_hash`. The username comparison is `subtle.ConstantTimeCompare` and both branches always run (`server.go:196`), so a wrong username and a wrong password cost the same — no timing oracle.
 
 > The console deliberately sends a **bare `401`** with **no `WWW-Authenticate` header** (`server.go:151-158` comment; the 401 is written at `server.go:163`). The SPA drives the credential prompt with its own login form and attaches the `Authorization` header on every fetch; emitting the challenge header would make browsers pop their native auth dialog over the SPA on every poll. `curl --basic -u admin:… ` still works.
 
@@ -256,7 +257,7 @@ Shutdown is signal-driven (`SIGINT` / `SIGTERM` via `signal.NotifyContext`):
 - The OTLP gRPC server is stopped with `GracefulStop` (drains in-flight RPCs).
 - The HTTP server is drained with `Shutdown` under a **5-second** budget — `shutdownTimeout` (`main.go:43`). That shutdown context is **deliberately detached** from the cancelled signal context (`//nolint:contextcheck`, `main.go:247`) so the drain budget outlives the `SIGTERM` that triggered it.
 
-If either listener returns a non-`ErrServerClosed` error before a signal arrives, `run` stops the OTLP server and returns the error, exiting non-zero (`main.go:208`).
+If either listener returns a non-`ErrServerClosed` error before a signal arrives, `run` stops the OTLP server and returns the error, exiting non-zero (`main.go:232-237`).
 
 ---
 
