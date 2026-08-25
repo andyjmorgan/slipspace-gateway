@@ -134,10 +134,13 @@ CREATE INDEX IF NOT EXISTS metric_points_name_time ON metric_points (metric_name
 		version: 4,
 		name:    "add_agent_id",
 		// Agent identification rides alongside session bundling: the gateway
-		// resolves an agent id (X-Slipspace-Agent-Id / X-Claude-Code-Agent-Id /
-		// custom) and emits it as gen_ai.agent.id on the span and agent_id on
-		// the Record. Additive columns + a single-column index so the message
-		// browser can drill down by agent, mirroring request_events_session.
+		// resolves an agent id (the authoritative X-Slipspace-Agent-Id, plus any
+		// operator-configured custom headers) and emits it as gen_ai.agent.id on
+		// the span and agent_id on the Record. Additive columns + a single-column
+		// index so the message browser can drill down by agent, mirroring
+		// request_events_session. (Historical note: X-Claude-Code-Agent-Id was
+		// originally resolved here too; migration 9 moved it to the
+		// conversation/thread axis, and DefaultAgentIDHeaders is now empty.)
 		sql: `
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS agent_id        TEXT NOT NULL DEFAULT '';
 ALTER TABLE request_events ADD COLUMN IF NOT EXISTS agent_id_source TEXT NOT NULL DEFAULT '';

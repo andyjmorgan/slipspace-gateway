@@ -345,10 +345,12 @@ func resolveSecretRef(ref string) (string, error) {
 	}
 }
 
-// setupSpool wires the connector spool. Builds the durable spool-backed
-// connectors (s3, azure_blob) via factory.BuildAll, constructs the Spool at
-// env.SpoolRoot, registers one track per connector, and starts the workers.
-// Webhook connectors are skipped — they are real-time pushers wired by
+// setupSpool wires the connector spool. Builds every configured connector
+// except type webhook via factory.BuildAll — selection is by exclusion, not an
+// allowlist, so a new non-webhook type is spooled by default (today the
+// remainder is s3 and azure_blob) — constructs the Spool at env.SpoolRoot,
+// registers one track per connector, and starts the workers. Webhook
+// connectors are excluded here — they are real-time pushers wired by
 // setupPushers and never touch the spool. Returns (nil, noop, nil) when no
 // spool-backed connectors are configured — the reporter then routes only to
 // pushers (or nowhere) and the spool pays nothing.

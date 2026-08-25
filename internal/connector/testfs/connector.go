@@ -144,8 +144,10 @@ func (c *Connector) objectName(seg cc.SealedSegment) string {
 
 // copyFile is a context-honouring file copy. Streams via io.Copy through
 // a ctx-aware reader so cancellation is honoured between chunks. O_EXCL
-// on dst surfaces an existing-file retry as a hard error instead of
-// silently overwriting; the spooler should be deleting on success.
+// on dst refuses to silently overwrite, but Upload wraps the failure in
+// *cc.Retryable, so a re-delivered segment retries on the normal schedule
+// and deadletters after MaxAttempts rather than failing fast as a
+// permanent error; the spooler should be deleting on success.
 func copyFile(ctx context.Context, src, dst string) error {
 	// G304: src is a path the spooler produced; the gosec false positive
 	// is explicit.

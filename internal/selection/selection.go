@@ -1,7 +1,10 @@
 // Package selection resolves a request to its upstream destination under the
 // v2 config model (providers + bindings). It replaces v1's path→(provider,
-// endpoint) route table and the changeProvider/changeUrl/changeApiKey/
-// useResiliencePolicy rule actions: routing is now config data.
+// endpoint) route table and the changeProvider/changeUrl/useResiliencePolicy
+// rule actions: routing is now config data. changeApiKey is unaffected — it
+// remains authorable and is honoured at the single credential mint site
+// (resolveCredentialHeaders, cmd/gateway/destination.go; CLAUDE.md invariant
+// #7).
 //
 // Two surfaces:
 //
@@ -107,8 +110,11 @@ type Group struct {
 	// FailureStatusCodes is the failure set for retry / breaker accounting.
 	FailureStatusCodes []int
 
-	// CircuitBreaker is the group-wide breaker config (breaker state is keyed
-	// per provider downstream).
+	// CircuitBreaker is the group-wide breaker config, applied to every target in
+	// the group. Breaker *state* is keyed per (group, provider) downstream —
+	// internal/middleware/resilience/breaker.go (breakerKey) — so a provider
+	// tripped inside this group keeps taking traffic from any other group that
+	// also lists it.
 	CircuitBreaker *resilience.CircuitBreakerConfig
 
 	// StrictWeights, in load_balance mode, makes the first weighted pick final.

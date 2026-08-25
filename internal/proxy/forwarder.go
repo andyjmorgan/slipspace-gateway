@@ -1,7 +1,7 @@
 // Package proxy is the thin wrapper around net/http/httputil.ReverseProxy
 // that gives SlipSpace gateway-shaped ergonomics: per-destination transport
-// caches, an Observer seam for telemetry and pipeline integration, and
-// structured handling of upstream/transport errors.
+// caches, an Observer seam for telemetry, and structured handling of
+// upstream/transport errors.
 package proxy
 
 import (
@@ -22,8 +22,9 @@ import (
 )
 
 // Forwarder wraps httputil.ReverseProxy with per-destination transports and
-// structured error handling. The pipeline integration is a follow-up: the
-// Observer seam is the bridge.
+// structured error handling. The Observer seam is how telemetry and record
+// capture hook the response lifecycle; the typed-message channel pipeline in
+// internal/pipeline is inert and is not wired through the Forwarder.
 //
 // A single Forwarder is shared across requests. Transports are keyed by
 // upstream base URL so connection pools and HTTP/2 reuse survive across
@@ -165,10 +166,11 @@ func New(opts Options) *Forwarder {
 // alwaysDropHeaders are headers the gateway never forwards upstream.
 //
 // Authorization and X-Slipspace-Configuration carry the gateway's own auth
-// state and must not propagate; the auth middleware re-injects the
-// upstream credential via Destination.OutgoingHeaders for managed mode,
-// and the cmd/gateway destination builder re-adds the inbound
-// Authorization verbatim for passthrough mode.
+// state and must not propagate; the cmd/gateway destination builder
+// (resolveCredentialHeaders, the single mint site) re-injects the
+// upstream credential via Destination.OutgoingHeaders for managed mode
+// and re-adds the inbound Authorization verbatim for passthrough mode;
+// the auth middleware only supplies DropHeaders.
 //
 // Origin, Referer, and Cookie are browser-session state. They have no
 // meaning to upstream LLM APIs and, worse, trigger provider-side

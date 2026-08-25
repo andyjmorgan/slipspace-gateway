@@ -74,8 +74,12 @@ type BodyEnvelope struct {
 	ResponseHeaders map[string][]string
 }
 
-// Bytes returns the total bytes this envelope contributes to the
-// store's byte budget. Used by the LRU to track its capacity.
+// Bytes returns the UNCOMPRESSED size of this envelope (request +
+// response + assembled response + both header maps) for callers and
+// telemetry that want the logical payload size. It is NOT what the
+// LRU charges: Put compresses the envelope first and accounts
+// compressEnvelope(env).bytes() — the compressed size — against the
+// store's capacity.
 func (e *BodyEnvelope) Bytes() int {
 	n := len(e.Request) + len(e.Response) + len(e.ResponseAssembled)
 	n += headerMapBytes(e.RequestHeaders)

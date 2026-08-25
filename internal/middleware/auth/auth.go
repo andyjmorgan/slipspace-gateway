@@ -2,10 +2,12 @@
 // each request, looks up the matching Configuration, and exposes the
 // resolved AuthResult on the request context for downstream middleware.
 //
-// Per-endpoint authorization is implicit, not enforced here: managed mode
-// can only forward to providers that have an entry in
-// Configuration.Credentials, and passthrough mode is gated by the
-// upstream's own auth on the client-supplied BYOK token.
+// Authorization is implicit, not enforced here: managed mode can only
+// forward to providers that have an entry in Configuration.Credentials,
+// and the (provider, protocol) pair a request lands on is chosen
+// downstream by internal/selection from the Configuration's bindings.
+// Passthrough mode is gated by the upstream's own auth on the
+// client-supplied BYOK token.
 package auth
 
 import (

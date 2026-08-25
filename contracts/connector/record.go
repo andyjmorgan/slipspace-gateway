@@ -12,8 +12,14 @@ import "encoding/json"
 // Tokens sub-buckets (Reasoning, CacheCreation5m/1h, InputAudio/
 // OutputAudio) plus ServerToolUse, ServiceTier, and InferenceGeo on the
 // record. v6 added the additive Cost block (the gateway-computed USD
-// estimate + rate-card version). Older consumers reading a newer record
-// simply ignore the new keys; the change requires no migration.
+// estimate + rate-card version). The conversation-hierarchy trio —
+// ConversationID, ConversationIDSource and ParentConversationID
+// (subagent-thread identity; ConversationID is the value emitted as
+// gen_ai.conversation.id) — is additive on the same terms, but landed with
+// the unified thread-identity work rather than at a bump listed above, so
+// do not read its presence off a version number. Older consumers reading a
+// newer record simply ignore the new keys; the change requires no
+// migration.
 const SchemaVersion = 6
 
 // Record is one captured request/response pair as it sits inside an

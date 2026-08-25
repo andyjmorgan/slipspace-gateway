@@ -151,8 +151,10 @@ type Group struct {
 	Mode resilience.ResilienceMode `yaml:"mode" json:"mode"`
 
 	// FailureStatusCodes is the upstream HTTP status set treated as a failure
-	// for retry / circuit-breaker accounting. Empty falls back to "5xx is a
-	// failure".
+	// for retry / circuit-breaker accounting. Empty falls back to the
+	// orchestrator default set [500, 502, 503, 504]
+	// (internal/middleware/resilience/middleware.go
+	// defaultFailureStatusCodes) — not every 5xx.
 	FailureStatusCodes []int `yaml:"failure_status_codes,omitempty" json:"failure_status_codes,omitempty"`
 
 	// CircuitBreaker is the group-wide breaker config, applied to every

@@ -71,7 +71,9 @@ func toMessageBodyDetail(eventID string, env livefeed.BodyEnvelope) adminc.Messa
 // when the live feed is disabled (ring is nil).
 //
 // Query params:
-//   - limit: clamped to [1, ring capacity]; default = capacity
+//   - limit: defaults to the ring capacity and is clamped down to it when
+//     larger; a value that does not parse as an integer >= 1 is rejected
+//     with 400.
 func MessagesRecentHandler(ring *livefeed.Ring) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ring == nil {

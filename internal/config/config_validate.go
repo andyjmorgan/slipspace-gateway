@@ -108,8 +108,10 @@ func (r *ResolvedConfig) validateProviders() error {
 	return nil
 }
 
-// validateAuth enforces the same auth_format invariant as v1: a format string
-// must carry exactly one {key} placeholder, and a format requires a header.
+// validateAuth enforces the auth-block invariant carried over from v1: an
+// auth.format string must contain exactly one {key} placeholder, and a format
+// requires an auth.header at the same level. Applies identically to a provider
+// protocol and to a passthrough family.
 func validateAuth(a *contractsconfig.ProviderAuth) error {
 	if a == nil {
 		return nil

@@ -98,8 +98,9 @@ type ResilienceConfig struct {
 
 	// FailureStatusCodes is the policy-wide retry-trigger set. Per-target
 	// FailureStatusCodes on ResilienceTarget overrides this list for the
-	// target it lives on. Empty falls back to "5xx is a failure" at the
-	// orchestrator.
+	// target it lives on. Empty falls back to the orchestrator's default
+	// retry set [500, 502, 503, 504] (see defaultFailureStatusCodes in
+	// internal/middleware/resilience/middleware.go) — not every 5xx.
 	FailureStatusCodes []int `yaml:"failure_status_codes,omitempty" json:"failure_status_codes,omitempty"`
 }
 
@@ -134,7 +135,8 @@ type ResilienceTarget struct {
 
 	// FailureStatusCodes is the explicit list of upstream HTTP status codes
 	// treated as a failure for retry/circuit-breaker accounting. Empty
-	// defaults to "5xx is a failure".
+	// defers to the parent ResilienceConfig.FailureStatusCodes and then to
+	// the orchestrator default [500, 502, 503, 504] — not every 5xx.
 	FailureStatusCodes []int `yaml:"failure_status_codes,omitempty" json:"failure_status_codes,omitempty"`
 
 	// CircuitBreaker is an optional per-target circuit breaker; when set it

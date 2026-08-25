@@ -48,8 +48,8 @@ const (
 
 // Pre-rename header names, still accepted as a silent fallback for the two
 // passthrough selectors so in-flight clients keep working across the cutover.
-// The current X-Slipspace-* names always win when both are present. Deliberately
-// kept out of user-facing docs — remove once all callers have migrated.
+// The current X-Slipspace-* names always win when both are present. Documented
+// in docs/auth.md; remove once all callers have migrated.
 const (
 	legacyHeaderIdentity      = "X-Sluice-Identity" //nolint:gosec // header name, not a credential
 	legacyHeaderConfiguration = "X-Sluice-Configuration"
@@ -119,10 +119,12 @@ type AuthResult struct {
 	// uses a non-Bearer credential header).
 	DropHeaders []string
 
-	// LegacyConfigurationHeader is true when X-Slipspace-Configuration drove
-	// resolution. The HTTP handler emits a structured deprecation warning
-	// every time this fires so operators can spot un-migrated callers.
-	// Cleared on managed and on X-Slipspace-Identity paths.
+	// LegacyConfigurationHeader is true when X-Slipspace-Configuration (or its
+	// X-Sluice-Configuration twin) was present on a resolved request. The HTTP
+	// handler emits a structured deprecation warning every time this fires so
+	// operators can spot un-migrated callers. Also set when X-Slipspace-Identity
+	// won resolution but the legacy header was present alongside it, so a caller
+	// mid-migration still gets the warning. Cleared on managed.
 	LegacyConfigurationHeader bool
 }
 
@@ -247,8 +249,8 @@ func passthroughDropHeaders() []string {
 // managedKeySource names the inbound header a SlipSpace key was discovered on.
 // The forwarder uses this to add the source header to DropHeaders so the
 // raw SlipSpace secret never leaks upstream — the destination builder will
-// inject the resolved upstream credential under the per-provider /
-// per-endpoint header anyway.
+// inject the resolved upstream credential under the per-(provider,
+// protocol) header anyway.
 type managedKeySource struct {
 	header string
 	token  string
@@ -311,7 +313,7 @@ func (r *Resolver) resolveManaged(snap *config.ResolvedConfig, headers http.Head
 	drops := passthroughDropHeaders()
 	// Always drop whichever native header carried the SlipSpace secret. The
 	// destination builder will mint the correct upstream credential header
-	// for the resolved (provider, endpoint) pair — leaving the inbound
+	// for the resolved (provider, protocol) pair — leaving the inbound
 	// header in place would either leak the SlipSpace secret upstream
 	// (Authorization to OpenAI) or collide with the freshly-injected
 	// upstream credential header (x-api-key to Anthropic).

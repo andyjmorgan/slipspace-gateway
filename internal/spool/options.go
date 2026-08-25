@@ -16,7 +16,6 @@ type RotationOpts struct {
 }
 
 // Defaults sized for the design note: 64 MiB / 60s for cloud connectors.
-// Webhook tracks override at registration time.
 const (
 	DefaultMaxBytes = 64 * 1024 * 1024
 	DefaultMaxAge   = 60 * time.Second

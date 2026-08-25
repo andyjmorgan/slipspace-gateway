@@ -37,14 +37,15 @@ var ErrPathCollision = errors.New("config: route path claimed by multiple endpoi
 // existing errors.Is callers still compile.
 var ErrPrefixRequiredEmpty = errors.New("config: prefix_required is true but prefix is empty")
 
-// ErrInvalidAuthFormat is returned when a provider- or endpoint-level
-// `auth_format` does not contain exactly one `{key}` placeholder.
+// ErrInvalidAuthFormat is returned when a provider protocol's or passthrough
+// family's `auth.format` does not contain exactly one `{key}` placeholder.
 var ErrInvalidAuthFormat = errors.New("config: auth_format must contain {key} exactly once")
 
-// ErrAuthFormatWithoutHeader is returned when `auth_format` is set on a
-// provider or endpoint that does not also set `auth_header`. The format is
-// only consulted when an override header is in effect — set without a header,
-// the format would be silently ignored, which is almost always a mistake.
+// ErrAuthFormatWithoutHeader is returned when `auth.format` is set on a
+// protocol or passthrough family that does not also set `auth.header`. The
+// format is only consulted when an override header is in effect — set without a
+// header, the format would be silently ignored, which is almost always a
+// mistake.
 var ErrAuthFormatWithoutHeader = errors.New("config: auth_format requires auth_header at the same level")
 
 // ErrInvalidBind is returned when a bind env var (SLIPSPACE_HTTP_BIND,
@@ -71,29 +72,37 @@ var ErrDuplicateRuleName = errors.New("config: rule name defined more than once 
 // operators update their config instead of losing the rule.
 var ErrRetiredEndpointCondition = errors.New(`config: rule condition "endpoint" was renamed to "protocol"`)
 
-// ErrDuplicateRuleID is returned when two entries in the top-level rules
-// library share the same ID. Only entries with non-nil ID are compared —
-// nil ID is the default in operator-authored static config.
+// ErrDuplicateRuleID is a retained v1 sentinel and is no longer returned. v2
+// validation checks rule Name uniqueness only (validateLibraries,
+// config_validate.go); rules are addressed by name through RuleIndex, so a
+// duplicate ID is inert. Kept only so existing errors.Is callers still compile.
 var ErrDuplicateRuleID = errors.New("config: rule id defined more than once in the rules library")
 
-// ErrUnknownResilienceName is returned when a Configuration's resilience_name
-// does not resolve to a policy in the top-level resilience_policies library.
+// ErrUnknownResilienceName is a retained v1 sentinel and is no longer returned.
+// The `resilience_policies` library it referenced was replaced by the top-level
+// `groups` block in v2; a binding names a group directly and group existence is
+// checked in validateBindings. Kept only so existing errors.Is callers still
+// compile.
 var ErrUnknownResilienceName = errors.New("config: configuration references unknown resilience policy")
 
-// ErrDuplicateResilienceName is returned when two entries in the top-level
-// resilience_policies library share the same Name.
+// ErrDuplicateResilienceName is a retained v1 sentinel and is no longer
+// returned. It described duplicate Names in the retired `resilience_policies`
+// library, replaced by the top-level `groups` block in v2. Kept only so
+// existing errors.Is callers still compile.
 var ErrDuplicateResilienceName = errors.New("config: resilience policy name defined more than once")
 
-// ErrDuplicateResilienceID is returned when two entries in the top-level
-// resilience_policies library share the same ID. Only entries with non-nil
-// ID are compared.
+// ErrDuplicateResilienceID is a retained v1 sentinel and is no longer returned.
+// It described duplicate IDs in the retired `resilience_policies` library,
+// replaced by the top-level `groups` block in v2. Kept only so existing
+// errors.Is callers still compile.
 var ErrDuplicateResilienceID = errors.New("config: resilience policy id defined more than once")
 
-// ErrTargetProviderMissingCredential is returned when a resilience policy's
-// target references a provider that the referencing Configuration does not
-// have an upstream credential mapping for. Caught at config-load time so
-// the orchestrator never runs into "no credential for this target" at
-// request time.
+// ErrTargetProviderMissingCredential is a retained v1 sentinel and is no longer
+// returned. It described the retired resilience_policies model. Under v2 the
+// check is NOT performed at load time: a binding or group target whose provider
+// has no entry in the configuration's credentials map validates cleanly and
+// fails per-request in selection.resolveTarget instead. Kept only so existing
+// errors.Is callers still compile.
 var ErrTargetProviderMissingCredential = errors.New("config: resilience target provider has no upstream credential in referencing configuration")
 
 // ErrInvalidEnv is returned when a SLIPSPACE_* env var fails to parse as the

@@ -140,7 +140,9 @@ const (
 	// Body-rewrite instruments. applied counts successful field
 	// mutations; dropped counts mutations skipped with a reason
 	// (path_traverses_primitive, append_non_array, template_ref_miss,
-	// apply_error). Labels: action_type, and (dropped only) reason.
+	// apply_error, streaming_response — the last when a response.body.*
+	// rewrite is skipped because the upstream reply is an SSE stream).
+	// Labels: action_type, and (dropped only) reason.
 	MetricRewriteAppliedTotal = "gateway.rewrite.applied.total"
 	MetricRewriteDroppedTotal = "gateway.rewrite.dropped.total"
 

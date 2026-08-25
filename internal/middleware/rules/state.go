@@ -21,8 +21,9 @@ type QueryAddition struct {
 // state. Action implementations call methods on this value (or assign
 // to its fields) to mutate the destination the request will reach.
 // The destination builder consumes the final state after evaluation
-// and renders headers + URL + upstream credential from it; nothing
-// else in the pipeline writes here.
+// and renders headers + upstream credential from it; the upstream URL
+// comes from the post-rule selection.Target, not from this state.
+// Nothing else in the pipeline writes here.
 //
 // The split between MutableState and GatewayContext is deliberate.
 // Conditions only need to read; actions need to write. Two surfaces,
@@ -50,19 +51,24 @@ type MutableState struct {
 	// target equals the source is a no-op the destination builder ignores.
 	SourceProtocol string
 
-	// MatchedPath is the un-prefixed accepted_paths value the router
-	// matched the inbound request to. Used by the destination builder
-	// as the upstream path template when the endpoint declares no
-	// explicit Path — supports folding streaming and non-streaming
-	// variants of the same wire shape into one endpoint. Untouched by
-	// any action; a rule that retargets via ChangeUrlAction bypasses
-	// this field entirely.
+	// MatchedPath is a retained v1 field: under the v1 route table it
+	// held the un-prefixed accepted_paths value the router matched. It
+	// is inert under v2 — the path is the protocol (protocolMiddleware
+	// in cmd/gateway/pipeline.go), and the upstream path comes from the
+	// resolved selection.Target.Path consumed by
+	// cmd/gateway/destination.go. The field is written and cloned but
+	// never read, and no action touches it.
 	MatchedPath string
 
-	// UpstreamURL is the post-rule destination URL the forwarder will
-	// dial. nil means "let the destination builder resolve from
-	// (Provider, Endpoint, PathParams)". ChangeUrlAction sets this to
-	// a verbatim override.
+	// UpstreamURL is the verbatim URL override ChangeUrlAction parses
+	// and stores. It is inert under v2 (CLAUDE.md invariant #7): the
+	// destination builder resolves the upstream URL from the post-rule
+	// selection.Target (selection.ResolveTarget in cmd/gateway/handler.go,
+	// consumed by cmd/gateway/destination.go), and the only post-rule
+	// overlay step — applyStateOverlays in cmd/gateway/pipeline.go —
+	// touches only QueryAdditions and OutgoingHeaders. The field is
+	// written and cloned but never read; to pin a host in v2, set the
+	// provider's base URL in providers.yaml.
 	UpstreamURL *url.URL
 
 	// OutgoingHeaders is the header set the destination builder seeds
@@ -103,10 +109,11 @@ type MutableState struct {
 	// false so the unchanged path costs nothing.
 	BodyMutated bool
 
-	// QueryAdditions accumulates AppendQueryStringAction deltas. The
-	// destination builder applies them after UpstreamURL is resolved
-	// so the action does not depend on the URL being known at rule-
-	// evaluation time. Order is preserved; duplicates are allowed.
+	// QueryAdditions accumulates AppendQueryStringAction deltas.
+	// applyStateOverlays (cmd/gateway/pipeline.go) applies them to the
+	// resolved destination URL after evaluation so the action does not
+	// depend on the URL being known at rule-evaluation time. Order is
+	// preserved; duplicates are allowed.
 	QueryAdditions []QueryAddition
 
 	// Tags is the accumulated set of tags AddTagAction has attached
@@ -132,14 +139,14 @@ type MutableState struct {
 	// applies them to the upstream response body (non-streaming only).
 	ResponseRewrites []bodypatch.Op
 
-	// PolicyRef names the resilience policy the rules engine resolved
-	// for this request. Set by UseResiliencePolicyAction; consumed
-	// post-rules by the v1.2 orchestrator. Empty means "no policy
-	// selected by rules" — the orchestrator may still fall back to the
-	// configuration's default policy in that case. Multiple
-	// useResiliencePolicy actions in a chain follow last-writer-wins
-	// semantics, so a later rule can replace or clear (via empty
-	// PolicyName) an earlier rule's selection.
+	// PolicyRef names the resilience policy selected for this request.
+	// Written by UseResiliencePolicyAction and also by
+	// selectionMiddleware (cmd/gateway/pipeline.go). Under v2 the
+	// rules-authored value is inert: the orchestrator prefers the
+	// binding-derived ResilienceConfig stashed on the request context,
+	// and PolicyLookup is wired to nil (cmd/gateway/handler.go), so the
+	// last-writer-wins semantics of multiple useResiliencePolicy actions
+	// in a chain are bookkeeping only, with no routing effect.
 	PolicyRef string
 }
 

@@ -28,10 +28,12 @@ type Connector interface {
 	// Name returns the operator-configured name (matches YAML).
 	Name() string
 
-	// Type returns the connector type identifier ("s3", "azure_blob",
-	// "testfs"). Used for metric labels and recovery routing. "webhook"
-	// is not among them — it is a real-time pusher, not a spool
-	// destination, and factory.Build rejects it.
+	// Type returns the connector type identifier ("s3", "azure_blob", or
+	// "testfs" — the last is a test-only destination used by the e2e
+	// harness and is not accepted in YAML config). Used for metric labels
+	// and recovery routing. "webhook" is not among them — it is a
+	// real-time pusher, not a spool destination, and factory.Build
+	// rejects it.
 	Type() string
 
 	// Upload ships a single sealed segment. ctx carries the per-attempt

@@ -26,8 +26,9 @@ func Chain(mws ...Middleware) Middleware {
 
 // Pass is a Middleware that forwards every received Message downstream
 // unchanged. It exists as the canonical no-op stage for tests and for
-// slots in the chain that may be wired but currently inert (e.g. the v1.0
-// rules and resilience middlewares).
+// slots in the chain that are wired but carry no behaviour; the channel
+// pipeline as a whole is currently inert and is not attached to the
+// request path.
 //
 // The goroutine exits when the input channel closes or ctx is cancelled,
 // closing the output channel on the way out.
