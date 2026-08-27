@@ -233,7 +233,12 @@ Extended thinking is **load-bearing for round-tripping**, not just informational
   sibling thinking blocks.
 
 The request enables thinking via `MessagesRequest.Thinking *ThinkingConfig`
-(`messages.go:59`; `ThinkingConfig` type + `budget_tokens` at `messages.go:308-317`).
+(`messages.go:59`; `ThinkingConfig` at `messages.go:322-340`: `Type` (`:327`),
+`BudgetTokens` (`:331`), `Display` (`:337`)). `Type` is the thinking mode —
+`"adaptive"` is the primary mode on current models, while `"enabled"` +
+`budget_tokens` is deprecated on Claude 4.6 and rejected with a 400 on 4.7+ (see
+the godoc at `messages.go:323-327`). `Display` selects `"summarized"` vs
+`"omitted"` thinking text and is invalid when `Type == "disabled"`.
 
 ### Response-side fields: context management, containers, cache tiers
 
@@ -253,7 +258,7 @@ carry several beta / accounting structures:
   (`response.go:316-336`) which splits writes into the 5-minute and 1-hour
   ephemeral tiers (`Ephemeral5mInputTokens` / `Ephemeral1hInputTokens`). The
   request marks cacheable spans with `CacheControl` (`type: "ephemeral"`,
-  `messages.go:427-443`, type at `:430`) on system blocks, tools, and content
+  `messages.go:428-436`, `Type` field at `:432`) on system blocks, tools, and content
   blocks.
 - **`Usage.OutputTokensDetails.ThinkingTokens`** (`response.go:340-343`) reports
   output tokens spent inside thinking blocks.

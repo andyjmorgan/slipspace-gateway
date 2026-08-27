@@ -172,8 +172,10 @@ Retry backoff defaults (the `RetryOpts` tunables in [`internal/spool/options.go`
 |---|---|---|
 | `BaseBackoff` | 1 s | First-attempt sleep ceiling. Full jitter applied — actual sleep is a uniform random duration in [0, backoff) (`fullJitter`, `rand.Int64N`). |
 | `MaxBackoff` | 60 s | Per-attempt sleep ceiling after exponential growth. |
-| `Multiplier` | 2.0 | Doubles the ceiling between attempts. |
+| `Multiplier` | 2.0 | Doubles the ceiling between attempts. The default is substituted whenever the configured value is `<= 1.0`, not merely when it is zero — a sub-unity multiplier would make the backoff shrink with each attempt, so it is treated as unset. |
 | `MaxAttempts` | 8 | Total `Upload` calls including the first. After 8 retryable failures, the segment lands in deadletter. |
+
+The other `RetryOpts` fields — like those on `RotationOpts` and `BreakerOpts` — fall back to their defaults on `<= 0` (`withDefaults`, [`internal/spool/options.go`](../internal/spool/options.go)).
 
 Eight attempts means seven sleeps whose ceilings grow 1 s → 2 → 4 → 8 → 16 → 32 → 60 s; with full jitter each actual sleep is uniform in [0, ceiling), so the worst-case wall-clock before a segment deadletters is about 2 minutes (~1 minute typical) — long enough to ride out a brief destination outage, short enough that disk pressure doesn't accumulate during a sustained one.
 

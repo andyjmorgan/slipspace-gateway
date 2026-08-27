@@ -16,8 +16,10 @@ SlipSpace has **two** layered processing stacks, and they are easy to confuse:
    [Typed-message pipeline](#typed-message-pipeline-internalpipeline). Only
    [`internal/middleware/guardrails`](../internal/middleware/guardrails) consumes
    it today, and that stage is not yet attached to the forwarder. The
-   [`Forwarder`](../internal/proxy/forwarder.go) doc comment names the
-   integration as a follow-up; the `Observer` seam is the intended bridge.
+   [`Forwarder`](../internal/proxy/forwarder.go) doc comment says so explicitly
+   — it names the `Observer` seam as how telemetry and record capture hook the
+   response lifecycle, and states that the typed-message channel pipeline in
+   `internal/pipeline` is inert and is not wired through the Forwarder.
 
 This page documents both, the body-mutation re-marshal contract that spans them,
 and the request/response size caps.

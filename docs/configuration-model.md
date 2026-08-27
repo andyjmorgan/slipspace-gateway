@@ -157,7 +157,7 @@ providers:
 
 ### Auth validation
 
-`validateAuth` (`internal/config/config_validate.go:113`) enforces, per `auth` block on a protocol or passthrough family:
+`validateAuth` (`internal/config/config_validate.go:115`) enforces, per `auth` block on a protocol or passthrough family:
 
 - A non-empty `format` requires a non-empty `header` (`ErrAuthFormatWithoutHeader`) — a format with no header would be silently ignored.
 - A non-empty `format` must contain `{key}` **exactly once** (`ErrInvalidAuthFormat`).
@@ -193,12 +193,12 @@ groups:
 |---|---|---|---|
 | `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:15`, values at `:23-29`). |
 | `failure_status_codes` | []int | no | Upstream HTTP status set treated as a failure for retry / circuit-breaker accounting. Empty falls back to "5xx is a failure". |
-| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:158`). |
+| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:160`). |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
 | `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:131`). |
 
-### `Target` fields (`contracts/config/model.go:187`)
+### `Target` fields (`contracts/config/model.go:189`)
 
 The atom a binding or group dispatches to: a provider reference plus per-use overrides that compose over the provider's own values (target wins).
 
@@ -210,13 +210,13 @@ The atom a binding or group dispatches to: a provider reference plus per-use ove
 | `path` | string | no | Overrides the protocol path for this target (e.g. an Azure deployment-specific path on a shared provider connection). |
 | `weight` | int | no | Relative selection weight in `load_balance` mode. Zero is treated as 1 (even weighting); ignored in `failover` mode, where declaration order drives sequencing. |
 
-Validation: a group must declare at least one target, every target must name a `provider`, and that provider must exist (`internal/config/config_validate.go::validateGroups`, provider-existence check at `:137-139` — `if _, ok := r.Providers[t.Provider]; !ok`). The protocol-preserving check happens at the **binding** level — when a binding references a group, every target in that group must serve the binding's protocol (`validateBindings`, `config_validate.go:283`).
+Validation: a group must declare at least one target, every target must name a `provider`, and that provider must exist (`internal/config/config_validate.go::validateGroups`, provider-existence check at `:137-139` — `if _, ok := r.Providers[t.Provider]; !ok`). The protocol-preserving check happens at the **binding** level — when a binding references a group, every target in that group must serve the binding's protocol (`validateBindings`, `config_validate.go:285`).
 
 ---
 
 ## `configurations` block
 
-`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:271`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
+`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:273`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
 
 ```yaml
 configurations:
@@ -238,11 +238,11 @@ configurations:
       tier: production
 ```
 
-### `Configuration` fields (`contracts/config/model.go:271`)
+### `Configuration` fields (`contracts/config/model.go:273`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `credentials` | map[string]string | no | Provider name → upstream credential this configuration holds for it; `{key}` resolves from here. An **empty-string** value means a no-credential provider (strip the credential and forward — useful for ollama-style upstreams). A provider referenced by a binding **must** have an entry here (even if empty); this is **not** checked at load — selection fails at request time with `selection: configuration holds no credential entry for provider <p>`. A credential naming a provider absent from `providers` aborts at load with `ErrValidation` (`configuration <name> credentials reference unknown provider <p>`, `config_validate.go:219-222`) — not `ErrUnknownConfiguration`, which is reserved for an api_key naming an unknown configuration. |
+| `credentials` | map[string]string | no | Provider name → upstream credential this configuration holds for it; `{key}` resolves from here. An **empty-string** value means a no-credential provider (strip the credential and forward — useful for ollama-style upstreams). A provider referenced by a binding **must** have an entry here (even if empty); this is **not** checked at load — selection fails at request time with `selection: configuration holds no credential entry for provider <p>`. A credential naming a provider absent from `providers` aborts at load with `ErrValidation` (`configuration <name> credentials reference unknown provider <p>`, `config_validate.go:223`) — not `ErrUnknownConfiguration`, which is reserved for an api_key naming an unknown configuration. |
 | `bindings` | []Binding | no | The generative routing table: `(protocol, model) → provider or group`. Evaluated in order; first match wins. See [`bindings`](#bindings-inside-a-configuration). |
 | `passthrough_bindings` | []PassthroughBinding | no | Exposes opaque endpoint families on this configuration. See [Passthrough families and bindings](#passthrough-families-and-bindings). |
 | `rule_names` | []string | no | Names of **transform** rules from the top-level `rules:` library this configuration applies (body/header/query rewrites, tags, short-circuits — not routing). Unknown names abort load with `ErrUnknownRuleName`. Evaluation order = list order. |
@@ -254,7 +254,7 @@ configurations:
 
 ## `bindings` (inside a configuration)
 
-A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:216`, doc comment starts `:210`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
+A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:218`, doc comment starts `:212`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
 
 ```yaml
 bindings:
@@ -269,7 +269,7 @@ bindings:
     tags: ["surface:messages"]
 ```
 
-### `Binding` fields (`contracts/config/model.go:216`)
+### `Binding` fields (`contracts/config/model.go:218`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -284,7 +284,7 @@ bindings:
 
 ### Matching rules
 
-`matchesModelPatterns` (`internal/selection/selection.go:258`):
+`matchesModelPatterns` (`internal/selection/selection.go:261`):
 
 - **Empty `models`** matches every model on the protocol (catch-all).
 - A pattern ending in `*` is a **prefix** match (`gpt-*` matches `gpt-4o`).
@@ -350,7 +350,7 @@ configurations:
 | `match` | string | yes | Inbound path pattern, optionally containing `{name}` placeholders (e.g. `/v1/messages/batches/{id}/results`). Captured params are surfaced to the forwarder; a pattern with no placeholders is an exact-string compare. |
 | `methods` | []string | yes | HTTP methods this path accepts. Matched case-insensitively. A claimed path with an unaccepted method yields `ErrMethodNotAllowed`. |
 
-### `PassthroughBinding` fields (`contracts/config/model.go:255`)
+### `PassthroughBinding` fields (`contracts/config/model.go:257`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -398,7 +398,7 @@ Lookups use `SecretIndex` (built post-validate); the slice exists for enumeratio
 
 Each rule must:
 
-- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:153`, enforced in `validateLibraries`).
+- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:155`, enforced in `validateLibraries`).
 - Pass `RuleContract.Validate()` — the per-rule semantic checks.
 
 > **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names against the `groups` block — the action is inert in v2, so an unknown name is simply a no-op at runtime rather than a load error (see [actions.md](actions.md#useresiliencepolicy)).
@@ -411,7 +411,7 @@ Each rule must:
 
 Each connector entry must:
 
-- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:168`, enforced in `validateLibraries`).
+- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:170`, enforced in `validateLibraries`).
 - Pass `Connector.Validate()` — the per-type required-field check (s3 needs `bucket` + `region`, azure_blob needs `account` + `container`, webhook needs `url` + `secret_ref` + `timeout_ms`).
 - Be referenced by a defined `connector_bindings[].connector` name — an unknown reference aborts with `ErrUnknownConnectorReference`.
 
@@ -436,7 +436,7 @@ admin:
 |---|---|---|---|
 | `enabled` | bool | yes | Gates the admin console. `false` = the `/admin/` prefix is never mounted, no admin routes exist anywhere. |
 | `bind_addr` | string | no | The admin listener address (host:port). Empty resolves to the effective default `0.0.0.0:8081` (`EffectiveBindAddr`, `DefaultBindAddr`). Validated as host:port with numeric port. The admin console runs as a dedicated second `http.Server` on this address, distinct from the data-plane listener (`SLIPSPACE_HTTP_BIND`). |
-| `password` | string | no | Operator credential for HTTP Basic auth. Username is hardcoded `admin` (`contracts/admin/admin.go:19`). May be empty in YAML — at runtime `SLIPSPACE_ADMIN_PASSWORD` wins when set; otherwise this field is used. `ResolvePassword` (`admin.go:86-91`) returns the resolved password string — the env var wins over `admin.password`, and it returns `""` when both are empty. With `enabled: true`, **at least one** of the env var or this field must be non-empty: `Config.Validate` (`admin.go:96-107`) returns `ErrPasswordRequired`, and only when the admin block is `Enabled` and `ResolvePassword()` is empty. Both may be set simultaneously — the env var takes precedence; it is not an exclusive-or. Never serialised to JSON. |
+| `password` | string | no | Operator credential for HTTP Basic auth. Username is hardcoded `admin` (`contracts/admin/admin.go:19`). May be empty in YAML — at runtime `SLIPSPACE_ADMIN_PASSWORD` wins when set; otherwise this field is used. `ResolvePassword` (`admin.go:85-91`) returns the resolved password string — the env var wins over `admin.password`, and it returns `""` when both are empty. With `enabled: true`, **at least one** of the env var or this field must be non-empty: `Config.Validate` (`admin.go:96-107`) returns `ErrPasswordRequired`, and only when the admin block is `Enabled` and `ResolvePassword()` is empty. Both may be set simultaneously — the env var takes precedence; it is not an exclusive-or. Never serialised to JSON. |
 
 The console's runtime behaviour (live-feed capacity, body-capture budget, snapshot interval) is configured via `SLIPSPACE_ADMIN_*` env vars, not this block — see [environment-variables.md](environment-variables.md).
 

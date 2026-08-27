@@ -214,8 +214,8 @@ E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`
 ## Local dev
 
 - `make dev` brings up the mock LLM via docker-compose and runs the gateway natively; the spool root defaults to `/var/lib/slipspace/spool` (`SLIPSPACE_SPOOL_ROOT`) — `export SLIPSPACE_SPOOL_ROOT=./tmp/spool` for a repo-local path. docker-compose persists the spool in the named volume `slipspace-spool` mounted at `/var/lib/slipspace/spool`
-- The C# mock LLM at `~/Source/Repos/airia-llmock/` is used pre-v0.1; `cmd/mockllm/` (Go) replaces it
-- `docker-compose.dev.yaml` is gitignored and overlays the local C# mock image until the Go rewrite ships
+- The mock LLM is `cmd/mockllm/` (Go). The C# mock at `~/Source/Repos/airia-llmock/` is historical reference only and is never committed or referenced by any build path (invariant #3).
+- `docker-compose.dev.yaml` is gitignored and is an optional local overlay for the compose stack (copy `docker-compose.dev.yaml.example`); `make dev-with-overlay` applies it on top of `docker-compose.yaml`.
 - For captured-record introspection during dev, `zstd -dc "$SLIPSPACE_SPOOL_ROOT"/records/<connector>/sealed/*.ndjson.zst | jq .` shows the records on disk (default root `/var/lib/slipspace/spool`)
 - `make e2e` runs the e2e matrix against a spawned binary (Docker required for connector integration containers)
 - `make py-compat` runs the wire-compat suite against a spawned stack

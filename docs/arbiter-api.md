@@ -154,10 +154,11 @@ An absent or empty param adds no predicate on that dimension. All present
 predicates are AND-combined. Note the two multi-value semantics: the four
 categorical dimensions (`configuration`/`model`/`provider`/`protocol`) OR
 their values (an event matches any listed value), while `tags` ANDs its values
-(the event must carry all of them). Blank values are dropped everywhere. The
-**dashboard** routes read these dimensions single-valued (the first occurrence)
-— multi-value applies to the browser routes (`/messages`, `/events`,
-`/sessions`, `/tool-calls`).
+(the event must carry all of them). Blank values are dropped everywhere. All
+routes share one filter parser (`filterFromQuery`), so repeating `provider`,
+`model`, `configuration`, `protocol` or `status_code` ORs within that dimension
+on the dashboard routes exactly as it does on the browser routes (`/messages`,
+`/events`, `/sessions`, `/tool-calls`); distinct dimensions AND together.
 
 > **Naming note.** The `protocol` filter and the `protocols` facet are the same
 > `request_events.protocol` column, surfaced on the wire as `protocols`

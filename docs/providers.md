@@ -495,12 +495,10 @@ Validation runs once at load time. There is no hot reload in the current release
 
 - **[`docs/configuration-model.md`](configuration-model.md)** — the full on-disk schema: how `providers`, `groups`, and `configurations` merge, and the binding / passthrough-binding fields that route a request to a provider.
 - **[`docs/resilience.md`](resilience.md)** — `groups` (the v2 resilience unit), how a group dispatches across provider targets, and the per-attempt provider switch the orchestrator drives.
-- **[`docs/pipeline.md`](pipeline.md)** — the typed-message channel the request flows through, stage by stage.
+- **[`docs/pipeline.md`](pipeline.md)** — the HTTP middleware chain the request actually flows through, stage by stage (and the separate, currently inert typed-message channel in `internal/pipeline`).
 - **[`contracts/config/model.go`](../contracts/config/model.go)** — the canonical Go types: `Provider`, `ProviderProtocol`, `ProviderAuth`, `PassthroughFamily`, `PassthroughPath`, `Binding`, `Configuration`.
 - **[`internal/selection/selection.go`](../internal/selection/selection.go)** — `Select` / `ResolveTarget` / `MatchPassthrough`, the engine that turns a `(protocol, model)` pair into a resolved upstream target.
 - **[`internal/selection/protocol.go`](../internal/selection/protocol.go)** — `ProtocolForPath`, the fixed inbound-path → protocol mapping.
 - **[`cmd/gateway/destination.go`](../cmd/gateway/destination.go)** — `buildDestination` and `credentialHeaderFor`, the single credential mint site under v2.
 - **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `UpstreamCredentialHeader`, the per-provider-name default fallback.
 - **[`CLAUDE.md`](../CLAUDE.md)** — load-bearing invariants 6 (credential header lives in one place per provider+protocol) and 7 (the per-attempt provider switch re-resolves transport on the new provider).
-</content>
-</invoke>
