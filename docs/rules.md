@@ -151,7 +151,7 @@ flowchart LR
 
 ## Condition types
 
-Every condition carries a `type` discriminator. The polymorphic decoder dispatches on that field; an unrecognised discriminator falls back to `UnknownCondition` and evaluates to **false** so newer rule kinds authored against a future control plane are inert on an older gateway rather than crashing it.
+Every condition carries a `type` discriminator. The polymorphic decoder dispatches on that field; an unrecognised discriminator falls back to `UnknownCondition` and evaluates to **false** so newer rule kinds authored against a future control plane are inert on an older gateway rather than crashing it. The one exception is the retired `endpoint` discriminator (renamed to `protocol`), which config validation rejects outright at load — see [Unknown conditions](#unknown-conditions).
 
 ### `provider`
 
@@ -352,6 +352,8 @@ Any `type` value the registry does not recognise falls back to `UnknownCondition
 
 This is the forward-compatibility hatch: a control plane that mints a new condition kind can write it to YAML today; older gateways will load + serve the rule without crashing, and the condition simply never matches until the gateway is upgraded.
 
+One discriminator is exempt from that inertness: the retired `endpoint` type, renamed to `protocol`. `internal/config/config_validate.go` walks every rule condition recursively — including `group` children — and fails config load with `ErrRetiredEndpointCondition` (`config: rule condition "endpoint" was renamed to "protocol"`) if it finds one. A config still carrying `type: endpoint` does not decode to an inert `UnknownCondition`; it refuses to load, so the breaking rename fails loud instead of silently disabling the rule.
+
 ---
 
 ## The `not` flag
@@ -387,7 +389,7 @@ See [`docs/environment-variables.md`](environment-variables.md) for the full lis
 
 Goal: any request whose model starts with `claude-` should be routed to the `anthropic` provider, regardless of which protocol it landed on.
 
-This is **not** a rule — in v2, model-keyed provider redirect is a *binding* on the Configuration. A rule-authored `changeProvider` is inert: the resilience orchestrator rebuilds the per-attempt state from the binding's own target and overwrites it (`buildAttemptState`, `internal/middleware/resilience/middleware.go:693`).
+This is **not** a rule — in v2, model-keyed provider redirect is a *binding* on the Configuration. A rule-authored `changeProvider` is inert: the resilience orchestrator rebuilds the per-attempt state from the binding's own target and overwrites it (`buildAttemptState`, `internal/middleware/resilience/middleware.go:702`).
 
 ```yaml
 configurations:

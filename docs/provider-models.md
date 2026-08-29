@@ -36,9 +36,9 @@ round-trip machinery does not apply to them.
 
 ## OpenAI — chat completions (`protocols/openai/chat`)
 
-The request body is `ChatCompletionRequest` (`chat.go:21-136`); the
-non-streaming reply is `ChatCompletionResponse` (`chat.go:152-182`); a streaming
-reply is a sequence of `ChatCompletionChunk` (`chat.go:198-229`) whose
+The request body is `ChatCompletionRequest` (`chat.go:24-139`); the
+non-streaming reply is `ChatCompletionResponse` (`chat.go:155-185`); a streaming
+reply is a sequence of `ChatCompletionChunk` (`chat.go:201-232`) whose
 `ChunkChoice.Delta` fragments the receiver concatenates.
 
 ### Messages — the `role`-discriminated union
@@ -82,37 +82,38 @@ an array of content parts. The raw bytes are retained verbatim, with
 
 ### Audio, refusals, and request extensions
 
-- **Audio** is end-to-end: the request opts in via `Modalities` (`["text","audio"]`)
-  and `Audio *AudioOptions` (voice + format) (`chat.go:92-103`); the assistant's
-  audio reply comes back as `ResponseMessage.Audio` (`chat.go:556`), an
+- **Audio** is end-to-end: the request opts in via `Modalities` (`["text","audio"]`,
+  `chat.go:95-96`) and `Audio *AudioOptions` (voice + format) (`chat.go:126`;
+  `AudioOptions` at `chat.go:533`); the assistant's
+  audio reply comes back as `ResponseMessage.Audio` (`chat.go:612`), an
   `AudioMessage` carrying an `ID` (replayable in a later turn), base64 `Data`,
-  `Transcript`, and `ExpiresAt` (`chat.go:582-595`).
+  `Transcript`, and `ExpiresAt` (`chat.go:638-651`).
 - **Refusals** appear both as a top-level `ResponseMessage.Refusal *string`
-  (`chat.go:537`) and, in array content, as a `RefusalContentPart`.
+  (`chat.go:593`) and, in array content, as a `RefusalContentPart`.
 - **Reasoning models** are served by `ReasoningEffort` on the request
-  (`chat.go:95-97`) and `MaxCompletionTokens` (`chat.go:33-35`);
-  `CompletionTokensDetails.ReasoningTokens` (`chat.go:339-342`) reports the
+  (`chat.go:98-100`) and `MaxCompletionTokens` (`chat.go:36-38`);
+  `CompletionTokensDetails.ReasoningTokens` (`chat.go:366-372`) reports the
   hidden-reasoning spend.
 - **Stored completions** use `Store *bool` + `Metadata map[string]string`
-  (`chat.go:105-110`).
+  (`chat.go:130-133`).
 
 ### ToolChoice polymorphism (raw bytes)
 
 `ChatCompletionRequest.ToolChoice` is OpenAI's string-or-object field — either
 the string `"auto"`/`"none"`/`"required"` or an object pinning a specific tool.
 Rather than model both shapes, it is kept as `json.RawMessage` so the caller
-picks the projection and the field round-trips untouched (`chat.go:81-84`). The
+picks the projection and the field round-trips untouched (`chat.go:84-87`). The
 same raw-bytes treatment applies to `Stop` (string or array of strings,
-`chat.go:53-56`) and the `logprobs` detail on `Choice`/`ChunkChoice`.
+`chat.go:56-59`) and the `logprobs` detail on `Choice`/`ChunkChoice`.
 
 > **`ToolCallFunction.Arguments` is a JSON string, not an object.** OpenAI ships
 > function-call arguments as a stringified JSON document, so `Arguments` is a Go
 > `string`; callers must `json.Unmarshal` it to recover the structured payload
-> (`chat.go:759-769`, `Arguments` at `chat.go:766`). In streaming,
+> (`chat.go:762-772`, `Arguments` at `chat.go:769`). In streaming,
 > `ToolCallFunctionDelta.Arguments` is emitted *without* `omitempty` because
 > OpenAI sends an empty-string delta as the "tool call begins" marker — dropping
-> it would lose the start signal (`chat.go:790-797`, `Arguments` at `chat.go:796`;
-> rationale godoc at `chat.go:786-789`).
+> it would lose the start signal (`chat.go:793-802`, `Arguments` at `chat.go:799`;
+> rationale godoc at `chat.go:789-792`).
 
 ## OpenAI — Responses API (`protocols/openai/responses`)
 

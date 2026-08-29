@@ -223,7 +223,7 @@ Bindings are evaluated in order; the first whose protocol matches the inbound pa
 
 When the matched binding names a group, selection synthesises the group's orchestrator config and stashes it on the request context; the resilience middleware reads it directly. When the binding names a single provider, selection synthesises a degenerate one-target `ModeNone` config that flows through the same path (the `alias`/`query`/`path` sugar on a single-provider binding becomes that one target's overrides).
 
-> **`useResiliencePolicy` is superseded and inert in v2.** The v1 `useResiliencePolicy` rule action still parses (it remains in the rules action vocabulary), but nothing reads what it sets. It writes `state.PolicyRef`, and the v2 orchestrator ignores `state.PolicyRef` entirely: it always prefers the per-request config selection stashed on the context, and the name-keyed policy lookup it would otherwise consult is wired to `nil` (`cmd/gateway/handler.go`). Do not author it — bind to a group instead. See [What changed from v1](#what-changed-from-v1).
+> **`useResiliencePolicy` is superseded and inert in v2.** The v1 `useResiliencePolicy` rule action still parses (it remains in the rules action vocabulary), but nothing reads what it sets. It writes `state.PolicyRef`, and the v2 orchestrator prefers the per-request config stashed on the context and only consults `state.PolicyRef` through the legacy `PolicyLookup` seam (`internal/middleware/resilience/middleware.go:144-151`), which `cmd/gateway` wires to `nil` (`cmd/gateway/handler.go:51`) — so in production nothing reads it. Do not author it — bind to a group instead. See [What changed from v1](#what-changed-from-v1).
 
 ---
 

@@ -48,11 +48,13 @@ Tests reading captured records **sort by `(ts_ns, instance_id, seq)`, never rece
 
 ## The matrix
 
-For each combination of:
+The grid below is the **coverage target**, not an enumerated cross product — the suite samples it (204 e2e test functions today) rather than running every cell:
 
 - `(provider, endpoint)` ∈ {`openai.chat_completions`, `openai.responses`, `openai.models`, `anthropic.messages`, `anthropic.models`, `gemini.generate_content`, `gemini.models`}
 - variant ∈ {`streaming`, `non-streaming`, `success`, `error_4xx`, `error_5xx`, `malformed_response`, `slow_response`, `client_disconnect_mid_stream`}
 - auth ∈ {`managed_valid`, `managed_invalid`, `managed_disabled`, `passthrough_valid`, `passthrough_unknown_config`}
+
+Each variant is covered by a representative case rather than once per `(provider, endpoint)`: `errors/errors_test.go` owns `error_4xx` / `error_5xx` / `malformed_response`, and `streaming/streaming_test.go` owns `slow_response` and `client_disconnect_mid_stream`. `managed_disabled` has **no** black-box case — the config-dev fixture ships no disabled key, so `auth/auth_test.go` approximates it with an absent `Authorization` header and the real disabled-key assertion lives in the in-process `cmd/gateway/gateway_test.go`.
 
 Assert:
 

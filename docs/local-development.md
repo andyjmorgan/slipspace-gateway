@@ -72,7 +72,7 @@ To exercise the production-shaped image (SPA bundled, gateway + admin console be
 
 ## The dev compose topology
 
-`docker-compose.yaml` is the committed baseline. Three services:
+`docker-compose.yaml` is the committed baseline. Two services (`gateway`, `mockllm`) plus the `slipspace-spool` named volume:
 
 ```mermaid
 flowchart TB
@@ -126,7 +126,7 @@ admin:
 
 ### `policy.yaml`
 
-This file is **v2-shaped** (`contracts/config/model.go`): a configuration carries `credentials` (one key per provider), `bindings` (the router as data — `(protocol, models)` → `provider` or `group`), `passthrough_bindings` (path-pattern families), `rule_names`, and `tags`. The v1 `upstream_credentials` / `resilience_name` fields are gone — routing is bindings. Rules can still retarget the request: `changeModelName` and `changeApiKey` are live actions — `changeApiKey` is honoured at the single credential mint site (`cmd/gateway/destination.go::resolveCredentialHeaders`). Three authorable actions are inert in v2: `changeUrl` (`state.UpstreamURL` is written but never read — `applyStateOverlays`, `cmd/gateway/pipeline.go:306`, touches only `QueryAdditions` and `OutgoingHeaders`), `useResiliencePolicy` (superseded by the binding-derived `ResilienceConfig`), and a rule-authored `changeProvider` (overwritten on every attempt by `buildAttemptState`, `internal/middleware/resilience/middleware.go:693`, which re-applies the selected target's own `providerSwitchActions`). Model-keyed redirect is expressed as a binding (`models` pattern -> `provider`) on the Configuration, not as a `changeProvider` rule; `ChangeProviderAction` survives only as the orchestrator's internal per-attempt primitive. See CLAUDE.md load-bearing invariant #7. The remaining rule actions are request/response transforms (tags, header sets, body rewrites). It loads two configurations (`dev`, `production`) plus their api keys and rules:
+This file is **v2-shaped** (`contracts/config/model.go`): a configuration carries `credentials` (one key per provider), `bindings` (the router as data — `(protocol, models)` → `provider` or `group`), `passthrough_bindings` (path-pattern families), `rule_names`, and `tags`. The v1 `upstream_credentials` / `resilience_name` fields are gone — routing is bindings. Rules can still retarget the request: `changeModelName` and `changeApiKey` are live actions — `changeApiKey` is honoured at the single credential mint site (`cmd/gateway/destination.go::resolveCredentialHeaders`). Three authorable actions are inert in v2: `changeUrl` (`state.UpstreamURL` is written but never read — `applyStateOverlays`, `cmd/gateway/pipeline.go:306`, touches only `QueryAdditions` and `OutgoingHeaders`), `useResiliencePolicy` (superseded by the binding-derived `ResilienceConfig`), and a rule-authored `changeProvider` (overwritten on every attempt by `buildAttemptState`, `internal/middleware/resilience/middleware.go:693`, which re-applies the selected target's own `providerSwitchActions`). Model-keyed redirect is expressed as a binding (`models` pattern -> `provider`) on the Configuration, not as a `changeProvider` rule; `ChangeProviderAction` survives only as the orchestrator's internal per-attempt primitive. See CLAUDE.md load-bearing invariant #7. The remaining rule actions are request/response transforms (tags, header sets, body rewrites). It loads two configurations (`dev`, `production`) plus four api keys and ten rules. The excerpt below is **abridged** for readability: the real file defines ten rules (`tag-openai-chat`, `tag-anthropic-messages`, `tag-large-prompt`, `tag-k3s-agentling`, `redact-emails`, `translate-messages-to-chat`, `translate-chat-to-messages`, `gpt-oss-chat`, `gpt-oss-from-messages`, `gpt-oss-from-chat`), the `dev` configuration binds six of them via `rule_names` (`tag-openai-chat`, `tag-anthropic-messages`, `tag-large-prompt`, `redact-emails`, `translate-messages-to-chat`, `translate-chat-to-messages`), and there are four `api_keys` — `sk_dev_local_development_only_not_for_production` plus the replica and `ollama` dev keys:
 
 ```yaml
 configurations:
@@ -149,20 +149,20 @@ configurations:
       - { family: models, provider: openai }
       - { family: models, provider: gemini }
 
-    rule_names:
+    rule_names:            # six in the real file; two shown
       - tag-openai-chat
       - redact-emails
 
     tags:
       tier: dev
 
-api_keys:
+api_keys:                  # four in the real file; one shown
   - secret: sk_dev_local_development_only_not_for_production
     name: "Local dev"
     configuration: dev
     enabled: true
 
-rules:
+rules:                     # ten in the real file; two shown
   # Transform-only: condition on the resolved provider + protocol, attach a tag.
   - name: tag-openai-chat
     condition:
