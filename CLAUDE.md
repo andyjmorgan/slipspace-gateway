@@ -57,7 +57,7 @@ The per-milestone changelog (acceptance criteria, what shipped when) lives in `~
 
 These are the rules that, if broken, silently break customers or destabilize the gateway. Treat them as hard.
 
-1. **Unknown JSON fields round-trip back to the upstream provider intact.** Every provider model type embeds `DynamicProperties`. Polymorphic types have `UnknownX` fallback. Provider APIs evolve constantly — if we drop a field, customer requests subtly break and we won't see it in logs.
+1. **Unknown JSON fields round-trip back to the upstream provider intact.** Every provider model type embeds `DynamicProperties` — the only two exceptions are `MessageContent` (`protocols/openai/chat/content_parts.go:328`) and `ThinkOption` (`protocols/openai/chat/think.go:25`), raw-JSON wrappers that retain the wire bytes verbatim and are therefore lossless without it. Polymorphic types have `UnknownX` fallback. Provider APIs evolve constantly — if we drop a field, customer requests subtly break and we won't see it in logs.
 
 2. **The connector spool never blocks the request path.** `Spool.Enqueue` is non-blocking; if the per-track ring is full, drop on the floor and bump the track's `droppedRing` counter. The drain goroutine writes to disk asynchronously; the upload goroutines ship segments out of band. The client must never wait on connector backpressure — see [docs/spool.md → Loss policy](docs/spool.md#loss-policy). Disk-full on the spool root is equally non-blocking: the write fails, the record is lost, the request continues.
 

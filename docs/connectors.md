@@ -340,7 +340,7 @@ The worker pool and queue use built-in defaults ([`internal/arbiter/pusher/pushe
 
 ### SSRF guard
 
-The webhook URL is validated **once, at config-load** ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) `validateWebhook` → `rejectLocalOrPrivateHost`): the scheme is enforced to `http`/`https`, and a literal-IP host in a loopback, RFC1918-private, link-local, unspecified (`0.0.0.0`), or multicast range aborts the load. The pusher's HTTP client does **no** per-call DNS re-resolution check, so a DNS *name* that resolves to a private IP is not caught at dial time — the config-load guard only inspects literal IPs in the URL.
+The webhook URL is validated **once, at config-load** ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go) `validateWebhook` → `rejectLocalOrPrivateHost`): the scheme is enforced to `http`/`https`, the literal hostname `localhost` (case-insensitive) is rejected by name, and otherwise the host is parsed as a literal IP — a loopback, RFC1918-private, link-local, unspecified (`0.0.0.0`), or multicast address aborts the load. Any other DNS name is accepted at config-load and never re-checked: the pusher's HTTP client does **no** per-call DNS re-resolution check, so a name that resolves to a private IP is still not caught at dial time.
 
 The guard has one escape hatch:
 

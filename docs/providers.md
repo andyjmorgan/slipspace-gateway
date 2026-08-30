@@ -487,7 +487,7 @@ The loader runs `Validate()` ([`internal/config/config_validate.go`](../internal
 
 > The v1 sentinels `ErrPathCollision` and `ErrPrefixRequiredEmpty` are never produced by v2 validation — there is no route table to collide and no prefix to require. (The symbols still exist in [`internal/config/errors.go`](../internal/config/errors.go) with vestigial `errors.Is` branches in [`cmd/cli/validate.go`](../cmd/cli/validate.go) that can never fire; treat them as deprecated/dead.) `ErrAuthFormatWithoutHeader` and `ErrInvalidAuthFormat` carry over unchanged because the auth-format invariant is identical.
 
-Validation runs once at load time. There is no hot reload in the current release, so a malformed `providers.yaml` produces a startup failure with the wrapped sentinel and no live request ever sees the bad config.
+Validation runs at load time and again on every admin config write: the write API clones the live snapshot, mutates it, and calls `RevalidateAndIndex` before persisting and publishing through `config.Store.Replace` ([`internal/admin/rules_write.go::commitClone`](../internal/admin/rules_write.go)), so a rejected provider edit returns 422 and never reaches the data plane. Provider edits made through the admin API therefore apply live, without a restart. What has no hot reload is the *file* path: direct edits to `providers.yaml` on disk are not watched (there is no fsnotify wiring), so those still require a process restart — and a malformed file at startup fails the boot with the wrapped sentinel, so no live request ever sees the bad config.
 
 ---
 

@@ -746,7 +746,7 @@ The loader performs no `${VAR}` expansion and no `env:` substitution — decoded
 - **One source of truth per secret.** A `${OPENAI_KEY}` literal would make the file meaningless without the env, and the env var becomes the de-facto source of truth — not what the admin console shows, what the bundler exports, or what the validator sees. Literal strings keep the YAML the canonical artefact.
 - **Only file paths are env-overridable.** `SLIPSPACE_CONFIG_DIR` selects the dir; everything inside is read as-is.
 
-The one in-YAML indirection is the connector `secret_ref` field (`env:NAME` or `file:/path`, `contracts/config/connectors.go:123-125`), which is not expanded by the loader — it is resolved by the connector factory when the destination is built.
+The in-YAML indirections are the connector `secret_ref` field (`env:NAME` or `file:/path`, `contracts/config/connectors.go:123-125`) and the connector auth `*_ref` fields (`access_key_id_ref`, `secret_access_key_ref`, `external_id_ref`, `sas_token_ref`, `account_key_ref` — `contracts/config/connectors.go:148-171`), all resolved by the connector factory when the destination is built, plus `advisors.<name>.hmac_secret_file` (`contracts/config/advisors.go:45-49`), a file path read once at startup by `cmd/gateway/agentrouting.go:24`. None of them is expanded by the loader.
 
 The two intentional exceptions are `SLIPSPACE_ADMIN_PASSWORD` (kept out of YAML for production hygiene) and the server-level `SLIPSPACE_*` env vars (not in YAML at all). See [environment-variables.md](environment-variables.md).
 
