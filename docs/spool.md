@@ -45,7 +45,8 @@ flowchart LR
     Uploading -- Upload OK --> Done((remove))
     Uploading -- Permanent err --> Dead[deadletter/]
     Uploading -- Retry exhausted --> Dead
-    Uploading -. Retryable err .-> Sealed
+    Uploading -. Retryable err: retry in place .-> Uploading
+    Uploading -. left at crash/SIGTERM<br/>startup Recover .-> Sealed
 ```
 
 ---

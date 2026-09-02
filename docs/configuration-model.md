@@ -162,7 +162,7 @@ providers:
 - A non-empty `format` requires a non-empty `header` (`ErrAuthFormatWithoutHeader`) — a format with no header would be silently ignored.
 - A non-empty `format` must contain `{key}` **exactly once** (`ErrInvalidAuthFormat`).
 
-There is no provider-level `auth_header` / `auth_format` in v2: auth is set per protocol (or per passthrough family), and the effective credential header is minted once at the single mint site in the forwarder from `ProviderAuth` (or the provider-native default when `auth` is `nil`). This preserves invariant #6 — one credential-header format per `(provider, protocol)`.
+There is no provider-level `auth_header` / `auth_format` in v2: auth is set per protocol (or per passthrough family), and the effective credential header is minted once at the single mint site in the destination builder (`cmd/gateway/destination.go::resolveCredentialHeaders`, with `credentialHeaderFor` as the mint helper) from `ProviderAuth` (or the provider-native default when `auth` is `nil`). This preserves invariant #6 — one credential-header format per `(provider, protocol)`.
 
 ---
 
