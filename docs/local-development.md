@@ -58,7 +58,7 @@ flowchart LR
 Send your first request:
 
 ```sh
-curl http://127.0.0.1:8585/openai/v1/chat/completions \
+curl http://127.0.0.1:8585/v1/chat/completions \
   -H "Authorization: Bearer sk_dev_local_development_only_not_for_production" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'

@@ -562,8 +562,8 @@ These are documented intentionally — don't fix them without checking the miles
 **"My group never runs."**
 Check the binding actually selects it. The admin console's live-messages modal shows `policy_ref` per request when a group ran. If `policy_ref` is empty, the matched binding pointed at a single `provider:` (single-shot), not a `group:` — or no binding matched at all (the request 404s). Verify the binding's `protocol` matches the inbound path and its `models` patterns match the request model.
 
-**"My target shows `circuit_state: unknown` on the policies page."**
-The breaker has not observed any traffic on that `(group, provider)` pair yet. The gauge omits never-touched pairs. Send a request through the group and refresh.
+**"My target shows `circuit_state: closed` on the policies page but I've never sent traffic through it."**
+That's expected, not a stale read. `GET /admin/api/v1/policies` reports `closed` for a `(group, provider)` pair the breaker has never observed — the in-memory store returns the closed state for a key it has never created — and a group with no `circuit_breaker` block never creates a breaker at all, so it reads `closed` too. `circuit_state: unknown` appears only when the admin mux is constructed without a breaker-state source, which `cmd/gateway` never does. The surface that genuinely omits never-touched pairs is the `gateway.cb.state` gauge, fed from `BreakerStore.Snapshot()` — it enumerates only breakers that have actually been created.
 
 **"All my attempts come back 5xx and the client sees the upstream's body, not my fallback."**
 The orchestrator writes its 502/503 fallback **only** when every attempt was either a transport error (no headers) or all targets were CB-blocked. When some attempt got headers + a status that was in your retry set, the **last** attempt's status is what the client sees. If you want a custom fallback shape, add a terminating rule with `returnStatusCode`.
