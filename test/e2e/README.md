@@ -14,14 +14,14 @@ func New(t *testing.T) *Harness {
     return NewWithOptions(t, Options{})
 }
 
-// NewWithOptions (harness.go:108) — abridged:
+// NewWithOptions (harness.go:109) — abridged:
 h.startCaptureServer()
 h.startMockLLM(t, repoRoot)
 h.startGateway(t, repoRoot) // allocates the per-test temp spool dir
 t.Cleanup(h.Stop)
 ```
 
-The mock is wired into the gateway by materializing a per-test copy of `config-dev/` into a temp dir (`os.MkdirTemp("", "slipspace-e2e-config-*")`, harness.go:483) and string-replacing the compose alias `mockllm:5555` with the live mock's address (harness.go:521) — there is no `gatewayConfig` struct and no `ProvidersUpstream` field. The harness exposes the running addresses as `h.MockLLMURL` and `h.GatewayURL`.
+The mock is wired into the gateway by materializing a per-test copy of `config-dev/` into a temp dir (`os.MkdirTemp("", "slipspace-e2e-config-*")`, harness.go:484) and string-replacing the compose alias `mockllm:5555` with the live mock's address (harness.go:522) — there is no `gatewayConfig` struct and no `ProvidersUpstream` field. The harness exposes the running addresses as `h.MockLLMURL` and `h.GatewayURL`.
 
 Test helpers:
 
@@ -44,7 +44,7 @@ Process + endpoints (`harness/harness.go`):
 
 The harness runs its own in-process capture server and translates each connector `Record` into an event via `emitRecord` — there is no standalone `WebhookReceiver(t)`, `ReadSealedRecords`, or `ExpectRecord`. Beyond `New(t)`, `NewWithOptions(t, opts)` constructs a harness with non-default `Options`. For session-scoped mockllm staging, `(*Harness).NewSession(t)` returns a `Session` with `Stage`, `Post`, `PostStream`, and `Captured`.
 
-Tests reading captured records **sort by `(ts_ns, instance_id, seq)`, never receive order** — see load-bearing invariant #8 in `CLAUDE.md`.
+Tests reading captured records **sort by `(ts_ns, instance_id, seq)`, never receive order** — see load-bearing invariant #8 in `CLAUDE.md`. Use `harness.SortByRecordOrder(envs)` (`test/e2e/harness/events.go:91`), which sorts stably by `TsNs`, then `InstanceID`, then `Seq`, then `SubSeq`.
 
 ## The matrix
 

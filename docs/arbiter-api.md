@@ -189,7 +189,7 @@ Two distinct window conventions:
 
 `/messages` and `/events` page with a stable keyset cursor, not an offset.
 Ordering is `(observed_at DESC, correlation_id DESC)`
-(`ListEventsFiltered`, `eventquery.go` lines 141-211).
+(`ListEventsFiltered`, `eventquery.go` line 248).
 
 - **Page size** comes from `?limit`. The store default is **100** and the cap is
   **500** (`eventListPageDefault` / `eventListPageMax`, lines 238-239); a
@@ -202,9 +202,13 @@ Ordering is `(observed_at DESC, correlation_id DESC)`
 - The **cursor is opaque**: base64url (`RawURLEncoding`, no padding) of a JSON
   object carrying `{"o": "<observed_at RFC3339Nano>", "c": "<correlation_id>"}`
   for the default `(observed_at DESC, correlation_id DESC)` ordering, plus two
-  `omitempty` fields — `"n"` (the sort column's value at the page boundary) and
-  `"s"` (the sort key) — present only when the request used `?sort`/`?order`
-  (`eventCursor` + `encodeCursor`, lines 213-222). Do not construct it by hand.
+  `omitempty` fields — `"n"` (the *numeric* sort column's value at the page
+  boundary) and `"s"` (the *string* sort column's value at the page boundary) —
+  present only when the request used `?sort`/`?order`. Exactly one of `o`/`n`/`s`
+  carries the value, matching the active sort column's type (see the
+  `eventCursor` doc comment); `c` is the tiebreaker in every case (`eventCursor`
+  + `encodeCursor`, lines 213-223; the `eventSorts` allowlist is at lines
+  198-207). Do not construct it by hand.
 - A malformed/tampered cursor returns `400 {"error":"invalid cursor"}`
   (`store.ErrInvalidCursor`, surfaced in `handleObsMessages` / `handleEvents`).
 

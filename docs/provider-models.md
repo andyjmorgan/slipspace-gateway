@@ -29,7 +29,7 @@ struct, the struct is the source of truth — fix the doc.
 | Gemini | `protocols/gemini/models` | `GET /v1beta/models` |
 
 `embeddings` is a routable protocol (`selection.ProtocolForPath`,
-`internal/selection/protocol.go:38`; `contracts/config.ProtocolEmbeddings`) but has
+`internal/selection/protocol.go:37`; `contracts/config.ProtocolEmbeddings`) but has
 no `protocols/` package — embeddings request and response bodies are forwarded
 opaquely and are not parsed into typed models, so the `DynamicProperties`
 round-trip machinery does not apply to them.
@@ -131,16 +131,16 @@ Request highlights:
   models (`responses.go:48`; `ReasoningOptions` at `responses.go:303-313`, `Effort`
   `:306`, `Summary` `:310` — note `responses.go:328` is the separate
   response-side `ReasoningOutput`); `MaxOutputTokens` caps generated
-  *and* reasoning tokens (`responses.go:42-44`).
+  *and* reasoning tokens (`responses.go:43-45`).
 - **Statefulness:** `PreviousResponseID` chains to a prior stored response
-  server-side (`responses.go:70-72`); `Store` + `Metadata` persist it
-  (`responses.go:60-68`); `Background` runs async and returns a pollable status
-  (`responses.go:78-80`).
+  server-side (`responses.go:71-73`); `Store` + `Metadata` persist it
+  (`responses.go:61-69`); `Background` runs async and returns a pollable status
+  (`responses.go:79-81`).
 - **Caching / safety identity:** `PromptCacheKey`, `PromptCacheRetention`, and
   `SafetyIdentifier` are the supported replacements for the deprecated `User`
-  field (`responses.go:103-113`), all kept; `User` still round-trips.
+  field (`responses.go:104-114`), all kept; `User` still round-trips.
 - **`Text`** (text / structured-output format) is kept raw because its `format`
-  sub-object is polymorphic (`responses.go:119-122`).
+  sub-object is polymorphic (`responses.go:120-123`).
 
 Response highlights:
 
@@ -188,7 +188,7 @@ Two fields accept either a bare string or an array and are kept as
 
 - **`MessagesRequest.System`** — a string or an array of `SystemBlock`. Read with
   `SystemAsString` / `SystemAsBlocks`, write with `SetSystemString` /
-  `SetSystemBlocks` (`messages.go:89-133`). A `SystemBlock` (`messages.go:330-342`)
+  `SetSystemBlocks` (`messages.go:89-133`). A `SystemBlock` (`messages.go:353-365`)
   carries `Text` plus an optional `CacheControl`.
 - **`Message.Content`** — a string or an array of `ContentBlock`. Read with
   `ContentAsString` / `ContentAsBlocks`, write with `SetContentString` /
@@ -197,7 +197,7 @@ Two fields accept either a bare string or an array and are kept as
 
 ### Content blocks — the `type`-discriminated union
 
-Registry at `contentblock.go:597-619` (`blockRegistry`, discriminator field
+Registry at `contentblock.go:599-621` (`blockRegistry`, discriminator field
 `type`; 11 factories including `server_tool_use`, `web_search_tool_result`,
 `web_fetch_tool_result`, `tool_search_tool_result`, `tool_reference`):
 
@@ -212,23 +212,23 @@ Registry at `contentblock.go:597-619` (`blockRegistry`, discriminator field
 | `web_fetch_tool_result` | `WebFetchToolResultBlock` | Server web-fetch result |
 | `tool_search_tool_result` | `ToolSearchToolResultBlock` | Tool-search result (PR #470) |
 | `tool_reference` | `ToolReferenceBlock` | Tool reference (PR #470) |
-| `thinking` | `ThinkingBlock` (`contentblock.go:514`) | See signature echo below |
-| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:547`) | Opaque encrypted `Data` |
-| *(any other)* | `UnknownBlock` (`contentblock.go:577`) | Fallback |
+| `thinking` | `ThinkingBlock` (`contentblock.go:516`) | See signature echo below |
+| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:549`) | Opaque encrypted `Data` |
+| *(any other)* | `UnknownBlock` (`contentblock.go:579`) | Fallback |
 
 ### Thinking blocks and the signature-echo requirement
 
 Extended thinking is **load-bearing for round-tripping**, not just informational:
 
-- `ThinkingBlock.Signature` (`contentblock.go:524`; invariant documented at
-  `contentblock.go:510-513`) is a cryptographic
+- `ThinkingBlock.Signature` (`contentblock.go:526`; invariant documented at
+  `contentblock.go:512-515`) is a cryptographic
   attestation over the thinking trace. The client **MUST echo it back verbatim**
   on the assistant turn or tool use cannot resume — so it must round-trip
   exactly. In streaming it arrives as a terminal `signature_delta` after the
   `thinking_delta` fragments (`stream.go`, `SignatureDelta`).
-- `RedactedThinkingBlock.Data` (`RedactedThinkingBlock` at `contentblock.go:547`,
-  `Data` at `contentblock.go:552`; invariant documented at
-  `contentblock.go:542-546`) is thinking the
+- `RedactedThinkingBlock.Data` (`RedactedThinkingBlock` at `contentblock.go:549`,
+  `Data` at `contentblock.go:554`; invariant documented at
+  `contentblock.go:544-548`) is thinking the
   provider encrypted after tripping a safety classifier. It carries no
   human-readable content but must likewise be echoed back verbatim alongside any
   sibling thinking blocks.

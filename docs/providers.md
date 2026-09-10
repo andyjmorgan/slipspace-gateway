@@ -366,7 +366,7 @@ providers:
           format: "{key}"
 ```
 
-[`ProtocolForPath`](../internal/selection/protocol.go) parses the inbound `/v1beta/models/{model}:{op}` path, captures `model` and `op` (one of `generateContent` / `streamGenerateContent`), and stashes them as path params. The final handler substitutes them back into the upstream path via [`substitutePlaceholders`](../cmd/gateway/handler.go). When a target alias is set the alias becomes the effective `{model}` for the path; body-keyed protocols alias the model in the body-rewrite stage instead.
+[`ProtocolForPath`](../internal/selection/protocol.go) parses the inbound `/v1beta/models/{model}:{op}` path, captures `model` and `op` (one of `generateContent` / `streamGenerateContent`), and stashes them as path params. The final handler substitutes them back into the upstream path via [`substitutePlaceholders`](../cmd/gateway/handler.go). When a target alias is set the alias becomes the effective `{model}` for the path; body-keyed protocols instead have the model rewritten on the typed request body by the orchestrator's per-attempt `changeModelName` action ([`applyChangeModelName`](../internal/middleware/rules/actions.go)), which the body-remarshal stage (`rules.BodyRemarshalHandler`) re-encodes onto the outgoing request. The body-rewrite stage applies only rule-authored bodypatch ops and never carries the alias.
 
 If a placeholder is present in the path but has no captured value, the upstream URL keeps the literal `{model}` segment and the upstream rejects it — surface that as a selection/parse bug, not a routing issue.
 

@@ -303,7 +303,7 @@ Three paths, same precedence as documented in [`docs/admin-console.md`](admin-co
 | **File-backed env via projected Secret** | `SLIPSPACE_ADMIN_PASSWORD` set from a sidecar that reads a projected file (e.g. CSI-mounted from an external vault) | Vault / SOPS / cloud-secret-manager integrations that publish files. |
 | **Literal in `admin.yaml`** | `admin.password: "..."` in a YAML file inside `SLIPSPACE_CONFIG_DIR` | Dev only. The CLAUDE.md placeholder is `slipspace-gateway`; never use this shape in production. |
 
-`SLIPSPACE_ADMIN_PASSWORD` wins over `admin.password` when both are set — the env var is checked first by `Config.ResolvePassword()` ([`contracts/admin/admin.go`](../contracts/admin/admin.go)). If the admin block is `enabled: true` and neither source resolves to a non-empty password, the gateway fails validation at startup with `ErrPasswordRequired`.
+`SLIPSPACE_ADMIN_PASSWORD` wins over `admin.password` when both are set — the env var is checked first by `Config.ResolvePassword()` ([`contracts/admin/admin.go`](../contracts/admin/admin.go)). If the admin block is `enabled: true` and neither source resolves to a non-empty password, the gateway does **not** fail boot — `startAdmin` ([`cmd/gateway/main.go`](../cmd/gateway/main.go)) logs `admin console NOT started: invalid admin config` with `ErrPasswordRequired` and skips the admin listener entirely, while the data plane keeps serving. Watch for that log line rather than expecting a crash loop.
 
 The HTTP Basic username is hardcoded to `admin` (`admin.Username` in [`contracts/admin/admin.go`](../contracts/admin/admin.go)); multi-operator identity is a v1.2+ task. See [`docs/admin-console.md`](admin-console.md) for the full auth surface.
 

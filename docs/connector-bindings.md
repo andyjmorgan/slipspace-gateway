@@ -185,7 +185,12 @@ Per-type defaults applied when `max_body_bytes` is unset:
 | `webhook` | none (no cap) | No default cap; set `max_body_bytes` to a positive value to bound the body. |
 | `s3`, `azure_blob` | none (no cap) | Blob stores ingest large objects out of band, so there is no default cap. |
 
-Bodies are already bounded upstream regardless: the bodycapture middleware reads at most `MaxBodyBytes` (10 MiB) from the inbound request, so a record's bodies never exceed that ceiling even with no binding cap.
+The two body families are bounded upstream by different limits, and neither is a single 10 MiB ceiling on the whole record:
+
+- **Request body** — the bodycapture middleware reads at most `MaxBodyBytes` (10 MiB, [`internal/middleware/bodycapture/bodycapture.go`](../internal/middleware/bodycapture/bodycapture.go)) from the inbound request, so the captured request body never exceeds that ceiling even with no binding cap.
+- **Response body** — comes from the live-feed `ResponseBuffer`, not from bodycapture, so it is bounded by `SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES` (default 8 MiB, [`internal/config/env.go`](../internal/config/env.go)) — which an operator can raise *above* 10 MiB — and is not captured at all when live-feed body capture is disabled (`SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`).
+
+Either way, `response.body_bytes` reports the full observed length, even when the stored body was truncated by one of those limits.
 
 ```yaml
 max_body_bytes: 1048576      # 1 MiB — explicit cap
@@ -235,7 +240,7 @@ configurations:
       - connector: prod-audit-s3
 ```
 
-Defaults across the board: `sampling=1.0`, `sampling_key=correlation_id`, `max_body_bytes` unset → **no cap** (s3 / azure_blob AND webhook all have no default body cap; `DefaultMaxBodyBytes` returns 0 for all types), `oversize_behaviour=metadata_only`, no filter. Bodies are still bounded by the bodycapture middleware's 10 MiB inbound read limit regardless.
+Defaults across the board: `sampling=1.0`, `sampling_key=correlation_id`, `max_body_bytes` unset → **no cap** (s3 / azure_blob AND webhook all have no default body cap; `DefaultMaxBodyBytes` returns 0 for all types), `oversize_behaviour=metadata_only`, no filter. Bodies are still bounded upstream regardless — the request body by bodycapture's 10 MiB read limit, the response body by the live-feed `SLIPSPACE_ADMIN_LIVE_FEED_BODY_MAX_BYTES` (default 8 MiB) — see [Per-record body cap](#per-record-body-cap) above.
 
 ### 5% webhook sampling on errors only
 

@@ -86,7 +86,7 @@ Gateways export to `:8687` directly or via an intervening OTel collector.
 
 The two listeners run on independent goroutines bound to the signal context (`safego.Go(ctx, "arbiter.serve.http", …)` and `"arbiter.serve.otlp"`); the first to return an error tears the other down.
 
-> The exact ports are **defaults**, applied only when the YAML omits them (`config.applyDefaults`, `config.go:361`). Set `http_bind` / `otlp_bind` to override.
+> The exact ports are **defaults**, applied only when the YAML omits them (`config.applyDefaults`, `config.go:396`). Set `http_bind` / `otlp_bind` to override.
 
 ---
 
@@ -114,7 +114,7 @@ The Record feed is the **gateway → service trust boundary**. `RecordHandler.Se
 
 ## Configuration
 
-Unlike the gateway — which scans a whole config **directory** — the Arbiter takes a **single YAML file** (`internal/arbiter/config/config.go::Load`). File contents are trusted (mounted from a k8s Secret or a filesystem-permissioned path); there is **no `${VAR}` / `env:` interpolation** inside the YAML, matching the gateway's "only file paths are env-overridable" rule. The decoder runs with `KnownFields(true)` (`config.go:349`), so a misspelled key is a hard parse error rather than a silently dropped field.
+Unlike the gateway — which scans a whole config **directory** — the Arbiter takes a **single YAML file** (`internal/arbiter/config/config.go::Load`). File contents are trusted (mounted from a k8s Secret or a filesystem-permissioned path); there is **no `${VAR}` / `env:` interpolation** inside the YAML, matching the gateway's "only file paths are env-overridable" rule. The decoder runs with `KnownFields(true)` (`config.go:384`), so a misspelled key is a hard parse error rather than a silently dropped field.
 
 ### Schema and defaults
 
@@ -157,31 +157,33 @@ gateways:
 
 | Key | Type | Default | Meaning | Source |
 |---|---|---|---|---|
-| `http_bind` | string | `0.0.0.0:8686` | Console + HMAC webhook listener | `config.go:27,49,362` |
-| `otlp_bind` | string | `0.0.0.0:8687` | OTLP gRPC listener (traces + metrics) | `config.go:28,51,365` |
+| `http_bind` | string | `0.0.0.0:8686` | Console + HMAC webhook listener | `config.go:27,49,397` |
+| `otlp_bind` | string | `0.0.0.0:8687` | OTLP gRPC listener (traces + metrics) | `config.go:28,51,400` |
 | `content_max_bytes` | int (pointer) | `16384` | Per-request gen_ai content cap from OTLP spans. Unset → default; `0`/negative → unlimited | `config.go` (`DefaultContentMaxBytes`, `ContentCap`) |
 | `span_field_max_bytes` | int (pointer) | `65536` | Per-field content cap the session-spans projection applies to served text/args. Unset → default; `0`/negative → unlimited | `config.go` (`DefaultSpanFieldMaxBytes`, `SpanFieldCap`) |
-| `postgres.dsn` | string | — (**required**) | pgx/libpq connection string | `config.go:307` |
-| `console.username` | string | — (**required**) | HTTP Basic login | `config.go:313` |
-| `console.password_hash` | string | — (**required**) | **bcrypt** hash of the console password | `config.go:317` |
-| `gateways[].id` | string | — (**required**) | Stable gateway identifier echoed on its Record pushes and carried on events for stitching | `config.go:324` |
-| `gateways[].hmac_secret` | string | — (**required**) | Shared secret the gateway signs Record pushes with | `config.go:327` |
+| `postgres.dsn` | string | — (**required**) | pgx/libpq connection string | `config.go:342` |
+| `console.username` | string | — (**required**) | HTTP Basic login | `config.go:348` |
+| `console.password_hash` | string | — (**required**) | **bcrypt** hash of the console password | `config.go:352` |
+| `gateways[].id` | string | — (**required**) | Stable gateway identifier echoed on its Record pushes and carried on events for stitching | `config.go:359` |
+| `gateways[].hmac_secret` | string | — (**required**) | Shared secret the gateway signs Record pushes with | `config.go:362` |
 | `advise` | block | — (disabled) | Optional HMAC-trusted agent-aware routing advisor, served at `POST /api/v1/advise/route` and wired via `Server.WithAdvise`; when absent the route is omitted | `config.go:77,85`, `server/server.go:79-82,106-109` |
 
-`content_max_bytes` is modelled as a `*int` so the loader can distinguish "unset" (take the `16384` default) from an explicit `0` (unlimited). `Config.ContentCap` (`config.go:378`) resolves the effective value, which the trace receiver treats as "keep the whole content" when `<= 0`.
+`content_max_bytes` is modelled as a `*int` so the loader can distinguish "unset" (take the `16384` default) from an explicit `0` (unlimited). `Config.ContentCap` (`config.go:413`) resolves the effective value, which the trace receiver treats as "keep the whole content" when `<= 0`.
 
 When a span's assembled gen_ai content exceeds the effective cap, the service stores **no** content for that request — only a marker `{"truncated": true, "original_bytes": N}` (`internal/arbiter/ingest/content.go`). The bounded content lives under `gen_ai_content` inside the entity's `span_event` blob. So an over-cap request still appears in the console with its metadata intact, but the gen_ai content in the inspector is replaced by that marker. The full bodies are unaffected on the **Record** feed — they land verbatim in the `record` table for audit/replay; the cap only bounds the console's convenience copy taken from OTLP spans.
 
 ### Validation
 
-`Config.Validate` (`config.go:431`) runs after defaults are applied and rejects, with a specific error, any config that would leave the service unable to do its job:
+`Config.Validate` (`config.go:466`) runs after defaults are applied and rejects, with a specific error, any config that would leave the service unable to do its job:
 
 - `postgres.dsn is required` — no store to write to.
 - `console.username is required` / `console.password_hash is required` — no credentials to guard the console.
 - `gateways[i]: id is required` / `gateways[i] (<id>): hmac_secret is required` — a registry entry must be usable.
 - `gateways[i]: duplicate id "<id>"` — gateway ids must be unique, since they key the HMAC-secret map (`registry.New`, `registry/registry.go:34`).
 
-An empty `gateways` list is **valid** — the service then accepts no Record pushes (every webhook 401s as an unknown gateway) but still ingests OTLP and serves the console. Listener binds are *not* validated here; an unbindable address surfaces at `net.Listen` / `ListenAndServe` time.
+An empty `gateways` list is **valid** unless `advise.enabled` is set — the advisor requires at least one registered gateway for its HMAC trust registry (`config.go:547`). With no gateways and the advisor off, the service accepts no Record pushes (every webhook 401s as an unknown gateway) but still ingests OTLP and serves the console. Listener binds are *not* validated here; an unbindable address surfaces at `net.Listen` / `ListenAndServe` time.
+
+Beyond the list above, `Validate` also checks the optional blocks: the `scanner` block when `scanner.enabled` (a non-empty `detectors` list, each with a unique `check_type` and an `endpoint`, a 32-byte base64 `evidence_key`, and well-formed scan filters — see [Scanner scan-scoping](#scanner-scan-scoping-filtering-and-severity)), and the `advise` block (`advise.rubric` is not authorable — it is derived at boot from `prompt_file` or the built-in default; `advise.upstream.protocol` must be `messages` or `responses` whenever set; and when `advise.enabled`, `upstream.base_url`, `upstream.model`, `candidates`, plus `upstream.api_key_file` on the `messages` path, are all required).
 
 ### Scanner scan-scoping, filtering, and severity
 
@@ -227,7 +229,7 @@ htpasswd -bnBC 10 "" 'your-console-password' | tr -d ':\n' | sed 's/^\$2y/\$2a/'
 
 Paste the `$2a$...` output as `password_hash`. The username comparison is `subtle.ConstantTimeCompare` and both branches always run (`server.go:196`), so a wrong username and a wrong password cost the same — no timing oracle.
 
-> The console deliberately sends a **bare `401`** with **no `WWW-Authenticate` header** (`server.go:151-158` comment; the 401 is written at `server.go:163`). The SPA drives the credential prompt with its own login form and attaches the `Authorization` header on every fetch; emitting the challenge header would make browsers pop their native auth dialog over the SPA on every poll. `curl --basic -u admin:… ` still works.
+> The console deliberately sends a **bare `401`** with **no `WWW-Authenticate` header** (`server.go:153-160` comment; the 401 is written at `server.go:165`). The SPA drives the credential prompt with its own login form and attaches the `Authorization` header on every fetch; emitting the challenge header would make browsers pop their native auth dialog over the SPA on every poll. `curl --basic -u admin:… ` still works.
 
 ### Environment
 

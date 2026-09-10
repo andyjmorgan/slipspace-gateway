@@ -114,7 +114,7 @@ Anything else needs justification in the PR description.
 
 - **DI containers** — explicit constructor injection only. Construct a `Server` struct with all its deps at startup; per-request state lives on `context.Context`.
 - **`testify`** — stdlib `testing` is enough.
-- **`init()` for non-trivial work** — registration into a package-level registry is the only acceptable use: cross-provider translator registration (`internal/translate/anthropic_openai.go`, `internal/translate/openai_anthropic.go`). The polymorphic model factories in `protocols/` need no `init()` at all — each registry is a package-level `var` initializer (e.g. `blockRegistry` at `protocols/anthropic/messages/contentblock.go:597`). One further exception exists by exemption: `internal/observability/livefeed/compress.go` builds the zstd encoder/decoder singletons in `init` and panics on failure. Anything else belongs in an explicit constructor.
+- **`init()` for non-trivial work** — registration into a package-level registry is the only acceptable use: cross-provider translator registration (`internal/translate/anthropic_openai.go`, `internal/translate/openai_anthropic.go`). The polymorphic model factories in `protocols/` need no `init()` at all — each registry is a package-level `var` initializer (e.g. `blockRegistry` at `protocols/anthropic/messages/contentblock.go:599`). One further exception exists by exemption: `internal/observability/livefeed/compress.go` builds the zstd encoder/decoder singletons in `init` and panics on failure. Anything else belongs in an explicit constructor.
 - **Global mutable state** — package-level vars must be `const` or read-only after init.
 - **`interface{}` / `any` in public APIs** — strong typing or generic interfaces; `any` is a code smell unless at a serialization boundary.
 - **Reflection in hot paths** — confined to the `models` package: the `DynamicProperties` marshaller (`models/dynamic.go`) and the unmapped-field walker (`models/unmapped.go`, called per-request from `internal/observability/unmapped`). No other hand-written package imports `reflect`; generated code under `gen/` (protobuf runtime, e.g. `gen/slipspace/detect/v1/detect.pb.go`) is exempt.
@@ -160,7 +160,7 @@ Flat layout: public packages at the repo root, private under `internal/` (compil
 
 - **Schemas public, engines private.** Provider model types, rule contracts, configuration types live at the root. The evaluators that *consume* those schemas stay in `internal/`.
 - **`cmd/<name>` produces binary `<name>`.** Default Go behavior. Docker image tags carry the brand; binaries don't.
-- **`internal/` is reversible pre-v1.0-tag.** Once we tag v1.0 and external consumers may import `protocols/`, `models/`, `contracts/`, the public/private boundary becomes SemVer-load-bearing.
+- **`internal/` was reversible pre-v1.0.** v1.0 has shipped (repo is at v2.3.10), so the public/private boundary is now SemVer-load-bearing — moving or breaking anything under `protocols/`, `models/`, `contracts/` is a breaking change; new engine code goes under `internal/`.
 
 ## Configuration model
 
@@ -190,13 +190,13 @@ Unit (internal correctness) and E2E (wire contract through the real binary) are 
 | Integration | `test/e2e/` (`e2e` tag — no separate `integration` tag exists) | testcontainers-go (SeaweedFS for S3, Azurite for Azure Blob, TimescaleDB — `timescale/timescaledb:2.27.2-pg16` — for arbiter telemetry) |
 | E2E | `test/e2e/` (`e2e` tag) | spawn `gateway` + mockllm, per-test tmp spool, `httptest.Server` webhook receivers. `make e2e` |
 | Wire compat | `test/python/` | pytest + official SDKs vs spawned stack. `make py-compat`. Release-blocking. |
-| Smoke | `test/smoke/` | pytest + SDKs vs **live deploy** (`SLIPSPACE_BASE_URL`, `SLIPSPACE_API_KEY`). `make smoke`; `SLIPSPACE_SMOKE_QWEN=true` for cluster qwen redirect tests. |
+| Smoke | `test/smoke/` | pytest + SDKs vs **live deploy** (`SLIPSPACE_BASE_URL`, `SLIPSPACE_API_KEY`). `make smoke`; `SLIPSPACE_SMOKE_QWEN=true` for cluster qwen redirect tests, `SLIPSPACE_SMOKE_GPTOSS=true` for the gpt-oss translate test. |
 
 ### Non-obvious gotchas
 
 - **Never hardcode real model names as negative/no-match probes.** `claude-haiku-4-5` / `gemini-2.0-flash-001` break when the policy library grows a rule matching that prefix (happened twice in v1.0.2). Use synthetic names like `nomatch-internal` / `unmapped-model`.
 - **Tests reading captured records sort by `(ts_ns, instance_id, seq)`, never receive order** — see invariant #8.
-- Stdlib `testing` only — hand-rolled stubs, no `gomock`/`mockery`/`testify`. `-race` everywhere; `goleak.VerifyTestMain` at teardown in packages that own background goroutines (currently `internal/middleware/guardrails`, `internal/pipeline`, `test/e2e/streaming`; `internal/observability` deliberately opts out — the OTLP gRPC exporter's dial goroutines outlive its bounded shutdown deadline, see the comment on `TestSetup_TracerProviderShutdownDrainsBatchProcessor` in `internal/observability/tracing_test.go`) — add it whenever a new package spawns workers. Fuzz every `UnmarshalJSON` + the YAML loader + route detection (corpora in `testdata/fuzz/`). Real-over-mock (testcontainers MinIO beats a fake `S3Putter`).
+- Stdlib `testing` only — hand-rolled stubs, no `gomock`/`mockery`/`testify`. `-race` everywhere; `goleak.VerifyTestMain` at teardown in packages that own background goroutines (currently `internal/middleware/guardrails`, `internal/pipeline`, `test/e2e/streaming`; `internal/observability` deliberately opts out — the OTLP gRPC exporter's dial goroutines outlive its bounded shutdown deadline, see the comment on `TestSetup_TracerProviderShutdownDrainsBatchProcessor` in `internal/observability/tracing_test.go`) — add it whenever a new package spawns workers. Fuzz every `UnmarshalJSON` + the YAML loader (`internal/config/loader_fuzz_test.go::FuzzLoad`) + route detection (`internal/selection/protocol_fuzz_test.go::FuzzProtocolForPath`). Those two carry inline `f.Add` seeds; on-disk seed corpora under `testdata/fuzz/` exist only for `models/` and `protocols/openai/chat/`. Real-over-mock (testcontainers MinIO beats a fake `S3Putter`).
 
 ## Protocol contracts — perpetual maintenance
 
@@ -205,7 +205,7 @@ The `protocols/` packages model the on-the-wire shapes of OpenAI, Anthropic, and
 - **`DynamicProperties` + `UnknownX` safety net is non-negotiable** — every model type embeds `DynamicProperties`; every polymorphic base has an `UnknownX` fallback. A new struct without these is a regression (invariant #1).
 - **Test surface per model type:** golden round-trips are inline table-driven cases in each `protocols/*/*_test.go` (byte-equivalent modulo key order); `test/fixtures/` holds E2E fixtures, not the per-type golden round-trips; fuzz targets on each package's `UnmarshalJSON` entry points — the polymorphic-union decoders and the top-level request/response types — plus `models.FuzzUnmarshalDynamic`, into which the one-line per-type delegating methods funnel ("if it parses, it round-trips") — note CI runs them as ordinary seed-corpus subtests under `go test -race`, with no `-fuzz`/`-fuzztime` budget, so a dedicated long-running fuzz job is a gap, not a shipped control; unknown-discriminator + unknown-field tests via `UnknownX` / `DynamicProperties.Extra`; a `TestX_AllExportedFieldsHaveJSONTag` reflection meta-test enforcing `json` tags.
 - **When touching `protocols/`:** cite the source for any new field (docs link / captured payload / SDK PR), add a fixture if the shape is new, add a fuzz seed for non-trivial value spaces, update the `Unknown*` fallback for new concrete types, run `make py-compat` locally before pushing.
-- **Drift early-warning:** a scheduled Claude cron/skill (`unmapped-field-remediation`, Sun 07:37) discovers the last 7 days' unmapped provider fields from live traffic (the `gateway.unmapped_fields.total` metric / observability data), validates each against the public provider docs, and files a `provider-drift` GitHub issue for genuine drift. This is **not** a GitHub Actions workflow re-running the SDK compat suite — there is no `.github/workflows/fixture-refresh.yaml` in the repo.
+- **Drift early-warning:** a scheduled Claude cron/skill (`unmapped-field-remediation`, daily at 05:07 via `.claude/workflows/run-unmapped-remediation.sh`) discovers the last 24 hours' unmapped provider fields from live traffic (the `gateway.unmapped_fields.total` metric / observability data), validates each against the public provider docs, and files a `provider-drift` GitHub issue for genuine drift. This is **not** a GitHub Actions workflow re-running the SDK compat suite — there is no `.github/workflows/fixture-refresh.yaml` in the repo.
 
 ## E2E requirements
 
@@ -219,7 +219,7 @@ E2E tests are **the spec**, not a nice-to-have. The harness (`test/e2e/harness/`
 - For captured-record introspection during dev, `zstd -dc "$SLIPSPACE_SPOOL_ROOT"/records/<connector>/sealed/*.ndjson.zst | jq .` shows the records on disk (default root `/var/lib/slipspace/spool`)
 - `make e2e` runs the e2e matrix against a spawned binary (Docker required for connector integration containers)
 - `make py-compat` runs the wire-compat suite against a spawned stack
-- `SLIPSPACE_API_KEY=sk_live_... make smoke` runs the post-deploy harness against `slipspace.donkeywork.dev` (or `SLIPSPACE_BASE_URL=...`). Use this after every cluster roll. `SLIPSPACE_SMOKE_QWEN=true` enables the cluster-side qwen redirect tests.
+- `SLIPSPACE_API_KEY=sk_live_... make smoke` runs the post-deploy harness against `slipspace.donkeywork.dev` (or `SLIPSPACE_BASE_URL=...`). Use this after every cluster roll. `SLIPSPACE_SMOKE_QWEN=true` enables the cluster-side qwen redirect tests; `SLIPSPACE_SMOKE_GPTOSS=true` enables `test_gptoss_translate.py`.
 - See the *Local Dev Setup + Mock LLM* note for the full setup
 
 ## PR discipline

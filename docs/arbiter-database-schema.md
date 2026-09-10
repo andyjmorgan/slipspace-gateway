@@ -81,7 +81,7 @@ The single-writer per-request entity. The **OTel span feed is the sole writer**,
 | Column | Type | Default | Projected from | Notes |
 |---|---|---|---|---|
 | `correlation_id` | `TEXT` | — | `slipspace.correlation_id` | **Primary key**; the per-request join key. The only span attribute whose absence makes a span unusable. |
-| `observed_at` | `TIMESTAMPTZ` | `now()` | span START time | The gateway request-start, **not** ingest `now()` — load-bearing for ordering, pagination, and retention. A zero start defaults to server `now()` only as a last resort. |
+| `observed_at` | `TIMESTAMPTZ` | — (NOT NULL) | span START time | The gateway request-start, **not** ingest `now()` — load-bearing for ordering, pagination, and retention. No column default (migration 6 defines it `TIMESTAMPTZ NOT NULL`) — the value is supplied by the ingest upsert as `COALESCE($2, now())` ([`events.go::insertEventSQL`](../internal/arbiter/store/events.go)), so a zero span start falls back to server `now()` only as a last resort. |
 | `session_id` | `TEXT` | `''` | `slipspace.session_id` | Resolved session bundle root (falls back to `gen_ai.conversation.id` for spans predating the attribute). |
 | `conversation_id` | `TEXT` | `''` | `gen_ai.conversation.id` | The per-turn conversation/thread (subagent thread when active, else the session). Added by migration 9. |
 | `parent_conversation_id` | `TEXT` | `''` | `slipspace.parent_conversation_id` | Links a subagent thread toward its session; empty for a main agent. Added by migration 9. |

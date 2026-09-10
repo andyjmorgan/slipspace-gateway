@@ -251,7 +251,7 @@ A back-of-envelope for picking values:
 | Ring depth (per track, default 10 000) | Burst tolerance during a brief drain stall. 10 000 records ≈ 10–20 seconds of high-rate traffic on a single pod. Raise if you see hot-path drops during normal operation. |
 | Rotation size (default 64 MiB uncompressed) | Trade off delivery latency vs upload overhead. 64 MiB takes 5–15 s to fill at moderate rates. |
 | Rotation age (default 60 s) | Floor on delivery latency. 60 s is acceptable for billing/audit; ≤5 s for live monitoring downstream. |
-| `MaxAttempts` × `MaxBackoff` | Outage tolerance. Sum of the seven jittered sleeps (ceilings 1→60 s) ≈ 2 min worst case before deadletter. |
+| `MaxAttempts` × `MaxBackoff` (compile-time constants, not operator knobs) | Outage tolerance. Sum of the seven jittered sleeps (ceilings 1→60 s) ≈ 2 min worst case before deadletter. |
 | Spool root PVC size | (segment size) × (segments parked under sustained outage) × (connectors) × 2 for headroom. See "Disk path: spool full" above. |
 | `FailuresToOpen` | Latency before the breaker stops claiming. Five consecutive failures opens; lower for more sensitive destinations. |
 
@@ -271,7 +271,7 @@ One env var configures the spool. It is read by the gateway's env loader (`inter
 
 `Validate` rejects an empty `SLIPSPACE_SPOOL_ROOT` at startup. Pointing it at a tmpfs is supported for ephemeral-by-design deployments but accepts the loss-on-restart semantics that come with it.
 
-Per-track tuning (ring depth, rotation, retry, breaker) is **not** env-driven. Connector-level overrides land on the YAML entry in `connectors:`; everything else uses the constants from [`internal/spool/options.go`](../internal/spool/options.go). The decision is intentional — these are knobs an operator tunes per destination, not globally per process.
+Per-track tuning (ring depth, rotation, retry, breaker) is **not** env-driven. Only **rotation** is operator-tunable, via `rotation.max_bytes` / `rotation.max_age_seconds` on the connector YAML entry. Ring depth (`QueueSize`), retry (`RetryOpts`), the circuit breaker (`BreakerOpts`), the upload poll interval and the per-attempt upload timeout have no YAML surface at all — [`cmd/gateway/main.go`](../cmd/gateway/main.go) `setupSpool` propagates only `Rotation` into `RegisterTrackOptions`, so every deployed track uses the hardcoded constants in [`internal/spool/options.go`](../internal/spool/options.go) (retry 1 s / 2× / 60 s / 8 attempts, breaker 5 failures / 30 s, poll 5 s, no per-attempt timeout). The loader does not decode strictly, so an unrecognised `retry:` or `breaker:` block on a connector is silently ignored rather than rejected — changing these values requires a code change.
 
 ---
 

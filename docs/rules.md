@@ -76,7 +76,7 @@ Note that provider steering is a binding concern, not a rule action, in v2 — a
 
 | Field | Required | Notes |
 |---|---|---|
-| `id` | no | Optional UUID; populated by the control plane when minted via the management API. Omitted in operator-authored static config — the gateway uses `name` as the telemetry handle. Malformed UUIDs are rejected at load with `ErrInvalidRuleID`. |
+| `id` | no | Optional UUID accepted verbatim from the admin write API payload (`POST`/`PUT /admin/api/v1/config/rules`, `internal/admin/rules_write.go::decodeRuleBody`) — the gateway never mints one. Omitted in operator-authored static config, where `name` is the telemetry handle. Malformed UUIDs are rejected at load with `ErrInvalidRuleID`. |
 | `name` | yes | Human anchor used by logs, the `gateway.rule.matches.total` counter, and `Configuration.rule_names` references. Unique within the rules library; the loader rejects duplicates. |
 | `condition` | yes | The predicate that must match for `actions` to fire. Polymorphic on a `type` discriminator — see [Condition types](#condition-types). |
 | `actions` | yes | Ordered list of polymorphic action objects. A terminating action (`returnStatusCode`, `llmImpersonation`) short-circuits the per-rule action loop — see [`docs/actions.md`](actions.md). |
