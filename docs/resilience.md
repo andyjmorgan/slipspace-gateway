@@ -381,7 +381,7 @@ Every layer of the orchestrator emits signal. Three independent channels. The OT
 | `gateway.cb.state` | observable gauge | `policy, target, pod, state_name` | Callback-driven from `BreakerStore.Snapshot()` — always reflects current state at scrape time. Values: `0=closed`, `1=open`, `2=half_open`. |
 | `gateway.cb.transitions.total` | counter | `policy, target, to_state` | Bumped synchronously from the breaker's `StateListener` on every state change. |
 
-Per-request meters (`slipspace.requests.total`, `gen_ai.client.operation.duration`) fire **once per inbound request**, not once per attempt. Per-attempt meters (`gen_ai.client.operation.time_to_first_chunk`, `gateway.upstream_errors.total`) stay attempt-shaped because those are attempt-shaped phenomena.
+Per-request meters (`slipspace.requests.total`, `gen_ai.client.operation.duration`) fire **once per inbound request**, not once per attempt. One exception: when every target is CB-blocked (`outcome=all_open`) no attempt ever reaches the reporter, so the orchestrator's 503 increments neither meter — that request is visible only through `gateway.resilience.outcome.total{outcome="all_open"}` and the `cb_blocked` attempt counters. Per-attempt meters (`gen_ai.client.operation.time_to_first_chunk`, `gateway.upstream_errors.total`) stay attempt-shaped because those are attempt-shaped phenomena.
 
 ### Multi-attempt record shape
 
