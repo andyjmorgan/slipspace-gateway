@@ -14,7 +14,7 @@ import (
 //
 // One Observer instance is created per Forward call by an ObserverFactory,
 // so implementations may own per-request state as plain struct fields. All
-// four methods are invoked synchronously from the request goroutine — the
+// six methods are invoked synchronously from the request goroutine — the
 // Forwarder does no concurrent fan-out — so no internal locking is required
 // to coordinate writes across the lifecycle.
 type Observer interface {
@@ -22,8 +22,11 @@ type Observer interface {
 	OnRequestStart(ctx context.Context, dest Destination)
 
 	// OnResponseHeaders fires once when the upstream response headers
-	// arrive. streaming is true iff the upstream Content-Type is
-	// text/event-stream (per RFC 6202 / SSE).
+	// arrive. streaming is true when the upstream Content-Type is
+	// text/event-stream (per RFC 6202 / SSE), or — when the upstream sends
+	// no Content-Type at all — when the first bytes of the body sniff as
+	// SSE framing (event:/data:/id:/retry:/`:` prefixes; see
+	// classifyStreaming in forwarder.go, issue #308).
 	OnResponseHeaders(ctx context.Context, statusCode int, headers http.Header, streaming bool)
 
 	// OnResponseChunk fires once per streamed response chunk, at the moment
@@ -63,9 +66,9 @@ type Observer interface {
 
 // ObserverFactory produces a fresh Observer for a single Forward call. The
 // Forwarder invokes the factory at the top of every Forward, then drives
-// the four lifecycle methods on the returned value. Callers use this seam
-// to own per-request state as plain struct fields on the Observer — no
-// shared singleton, no context-value plumbing, no locking.
+// the Observer lifecycle methods on the returned value. Callers use this
+// seam to own per-request state as plain struct fields on the Observer —
+// no shared singleton, no context-value plumbing, no locking.
 //
 // dest is the resolved destination for the call; ctx is the request
 // context (and so carries the per-request logger and correlation ID via

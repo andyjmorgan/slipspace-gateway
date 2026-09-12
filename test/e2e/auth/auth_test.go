@@ -9,7 +9,7 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/test/e2e/harness"
 )
 
-// TestAuth_Matrix walks the six auth modes against one representative
+// TestAuth_Matrix walks the nine auth-header cases against one representative
 // endpoint (openai.chat_completions). Each row sends a single request with
 // the headers the case requires and asserts the status code. The harness is
 // shared so the mockllm registry only needs to be staged once.

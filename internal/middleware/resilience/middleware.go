@@ -52,13 +52,13 @@ var randomIntN = func(n int) int {
 	return rand.IntN(n) //nolint:gosec // weighted selection, not a secret
 }
 
-// PolicyLookup resolves a policy by name. Returns nil when the name
-// is unknown — the middleware treats unknown as "no policy" and
-// degrades to single-shot passthrough rather than failing the
-// request, because the config loader has already cross-validated
-// every rule-action policy reference and the only way to reach an
-// unknown name at runtime is a startup-after-rewrite race operators
-// are not supposed to hit.
+// PolicyLookup resolves a policy by name. It is a legacy v1/test-only
+// seam — cmd/gateway wires it to nil (cmd/gateway/handler.go) and the
+// live policy always arrives via WithResilienceConfig from selection.
+// Returns nil when the name is unknown — the middleware treats unknown
+// as "no policy" and degrades to single-shot passthrough rather than
+// failing the request, because v2 has no policy library behind the
+// name to resolve or validate it against.
 type PolicyLookup func(name string) *contractsres.ResilienceConfig
 
 // defaultFailureStatusCodes is the orchestrator's fall-back retry
@@ -74,9 +74,14 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 // Actions) is re-encoded by BodyRemarshalHandler before the
 // forwarder reads r.Body.
 //
+// The active policy comes from the request context — the
+// binding-derived ResilienceConfig published by selection. The
+// PolicyLookup parameter is a legacy seam for v1/test callers;
+// cmd/gateway wires it to nil.
+//
 // Dispatch on policy mode:
 //
-//   - state.PolicyRef empty / policy unknown / zero targets →
+//   - no context policy and no lookup hit / zero targets →
 //     passthrough (single-shot, today's behaviour).
 //   - ModeFailover → sort targets by Order ascending, attempt each
 //     in turn. A retryable outcome (status in the policy's effective
@@ -97,10 +102,14 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 //
 // Known limitations (documented for v1.2):
 //
-//   - Body-mutating Target.Actions (changeModelName) across multiple
-//     attempts may leak state between attempts because the typed
-//     body is shared. The fix is body restoration via re-parse from
-//     Captured.Raw before each attempt; deferred to a follow-up.
+//   - Every attempt restores the inbound raw body from the
+//     bodycapture snapshot (capturedRawBody + bodycapture.
+//     ApplyBodyBytes) so ReverseProxy's consumption of r.Body on
+//     attempt N does not leave attempt N+1 with an empty body
+//     against the declared ContentLength. The shared typed body is
+//     not restored, so an internal alias/changeModelName rewrite on
+//     one attempt is still visible to the next (see docs/
+//     resilience.md, Known limitations #1).
 //   - Meter granularity is split by design. RequestsTotal and
 //     RequestDuration are emitted once per request with the overall
 //     duration and final status — cmd/gateway/reporter.go installs a
@@ -724,7 +733,8 @@ func sortedFailoverTargets(targets []contractsres.ResilienceTarget) []contractsr
 //
 //  1. Per-target FailureStatusCodes (the target's override).
 //  2. Policy-level FailureStatusCodes.
-//  3. defaultFailureStatusCodes (5xx-class).
+//  3. defaultFailureStatusCodes ([500, 502, 503, 504] — not
+//     every 5xx).
 //
 // Empty list at every level falls through to the default so an
 // operator cannot accidentally produce a "no status ever retries"

@@ -12,10 +12,15 @@ import (
 )
 
 // These tests exercise the v1.0.2 OpenAI-compatible chat completions
-// surface on anthropic + gemini. The destination builder's per-endpoint
-// auth_header / auth_format override (PR #13) is what makes the
-// upstream credential land in Authorization: Bearer rather than the
-// provider-native x-api-key / x-goog-api-key.
+// surface on anthropic + gemini. The provider's per-protocol auth
+// {header, format} block in providers.yaml (anthropic chat and gemini
+// chat both Authorization / "Bearer {key}") rides on the resolved
+// selection.Target, and cmd/gateway/destination.go's
+// resolveCredentialHeaders mints it as the single credential mint site
+// — which is what makes the upstream credential land in
+// Authorization: Bearer rather than the provider-native x-api-key /
+// x-goog-api-key. There is no per-endpoint auth override table in the
+// destination builder (invariant #7).
 
 func TestAnthropic_ChatCompletions_OpenAICompat_NonStreaming(t *testing.T) {
 	t.Parallel()
@@ -95,12 +100,12 @@ func TestAnthropic_ChatCompletions_BarePathNotAccepted(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)
 
-	// The anthropic provider has prefix_required: true, so the bare
-	// /v1/chat/completions inbound path must route to openai
-	// (default provider) rather than anthropic. Asserting via the
-	// upstream credential — openai's stays Bearer sk-dev-mock; if
-	// it ever resolved to anthropic, the upstream would see the
-	// anthropic credential under Authorization: Bearer.
+	// Under the v2 binding model there is no prefix_required flag;
+	// the bare /v1/chat/completions inbound path resolves via the
+	// configuration's chat bindings to openai rather than anthropic.
+	// Asserting via the upstream credential — openai's stays Bearer
+	// sk-dev-mock; if it ever resolved to anthropic, the upstream
+	// would see the anthropic credential under Authorization: Bearer.
 	h.StageMockResponse(harness.CannedResponse{
 		Method: http.MethodPost,
 		Path:   "/v1/chat/completions",

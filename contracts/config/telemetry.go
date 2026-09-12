@@ -22,7 +22,10 @@ const DefaultSystemInstructionsMaxBytes = 32 * 1024
 // are emitted.
 const DefaultToolDefinitionsMaxBytes = 64 * 1024
 
-// Telemetry is the `telemetry:` top-level block in admin.yaml. Carries
+// Telemetry is the `telemetry:` top-level block. Like every top-level
+// key it may be authored in any file in the config directory
+// (admin.yaml by convention); the writer falls back to policy.yaml for
+// a block with no recorded SourceFiles origin. Carries
 // operator-tunable knobs that shape what the gateway emits to its
 // telemetry signals without changing the wire path or the connector
 // spool. Today it only nests ContentCapture; the block exists so future

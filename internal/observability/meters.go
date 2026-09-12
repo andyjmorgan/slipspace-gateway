@@ -281,9 +281,10 @@ type Meters struct {
 	// TagsAppliedTotal counts AddTagAction applications. Labelled
 	// by tag name; cardinality bounded by the configured policy
 	// library (operator-defined, never client-derived). Side-channel
-	// to gateway.requests.total — keeps the request counter's
-	// labelset bounded against the multiplicative blow-up that would
-	// follow from joining tags onto the request series.
+	// to slipspace.requests.total (MetricRequestsTotal) — keeps the
+	// request counter's labelset bounded against the multiplicative
+	// blow-up that would follow from joining tags onto the request
+	// series.
 	TagsAppliedTotal metric.Int64Counter
 
 	UnmappedFieldsTotal metric.Int64Counter
@@ -347,7 +348,7 @@ type Meters struct {
 	GoroutinePanicsTotal metric.Int64Counter
 
 	// RequestPanicsTotal counts panics caught by the request-path
-	// recovery middleware. Labels: provider, endpoint (where
+	// recovery middleware. Labels: provider, protocol (where
 	// resolvable — best-effort from context). A non-zero rate
 	// implies a buggy middleware or handler is leaking panics that
 	// the recovery filter is converting to 500s.
@@ -355,8 +356,9 @@ type Meters struct {
 
 	// AdminRequestsTotal counts requests handled by the management-
 	// console listener. Labels: route (the matched route — e.g.
-	// "/api/v1/auth/me", "static" for SPA assets, "fallback" for
-	// index.html SPA fallbacks), status (HTTP status code).
+	// "/api/v1/auth/me", or "spa" for the SPA catch-all, covering
+	// assets and index.html fallbacks alike), status (HTTP status
+	// code).
 	AdminRequestsTotal metric.Int64Counter
 
 	// ResilienceAttemptsTotal counts every per-attempt outcome the

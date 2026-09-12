@@ -213,9 +213,10 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 
 // reporterRun is the per-request proxy.Observer produced by reporterFactory.
 //
-// All four lifecycle methods (OnRequestStart, OnResponseHeaders,
-// OnUpstreamError, OnComplete) fire from the same goroutine: the request
-// handler invoking proxy.Forwarder.Forward. OnResponseHeaders runs inside
+// All six lifecycle methods (OnRequestStart, OnResponseHeaders,
+// OnResponseChunk, OnUpstreamError, OnRuleMatched, OnComplete) fire from the
+// same goroutine: the request handler invoking proxy.Forwarder.Forward.
+// OnResponseHeaders runs inside
 // httputil.ReverseProxy.ModifyResponse and OnUpstreamError inside
 // ErrorHandler — both are called from rp.ServeHTTP on the same goroutine.
 // No internal locking is required to coordinate writes across the fields

@@ -13,13 +13,14 @@ import (
 // The pointer is swapped atomically. Readers never block, never lock, and
 // never see a torn ResolvedConfig — Replace publishes the new snapshot
 // with a single atomic write and fires subscribers afterwards. Writers
-// (Phase 2: admin write endpoints) clone the current snapshot, mutate the
-// clone, Validate it, and then call Replace.
+// (the admin write endpoints) clone the current snapshot, mutate the
+// clone, call RevalidateAndIndex, persist it with WriteConfig, and only
+// then call Replace — that exact order is CLAUDE.md invariant #9; see
+// internal/admin/rules_write.go::commitClone.
 //
 // Subscribers receive a callback for every successful Replace and for the
 // snapshot in effect at the moment they Subscribe — that's how consumers
-// with pre-derived state (the routing.Router compiles its pattern set
-// once, not per request) keep their derived caches synchronised with the
+// with pre-derived state keep their derived caches synchronised with the
 // active snapshot without a separate init path.
 type Store struct {
 	// current carries the live snapshot. Readers use atomic load; the
@@ -60,8 +61,9 @@ func (s *Store) Snapshot() *ResolvedConfig {
 
 // Subscribe registers fn to fire on every successful Replace and invokes
 // fn immediately with the current snapshot. The immediate call lets
-// subscribers (e.g. routing.Router) initialise their derived state in
-// one place rather than splitting between construction and Subscribe.
+// subscribers (e.g. the gateway's config-reload counter,
+// cmd/gateway/main.go) initialise their derived state in one place rather
+// than splitting between construction and Subscribe.
 //
 // Callbacks are dispatched synchronously from Replace. Subscribers must
 // not block — heavy work goes on its own goroutine.

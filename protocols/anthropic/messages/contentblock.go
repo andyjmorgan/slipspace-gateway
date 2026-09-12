@@ -18,7 +18,9 @@ import (
 
 // ContentBlock is the polymorphic interface implemented by every Anthropic
 // content block type — TextBlock, ImageBlock, ToolUseBlock, ToolResultBlock,
-// ThinkingBlock, RedactedThinkingBlock, and the UnknownBlock fallback.
+// ServerToolUseBlock, WebSearchToolResultBlock, WebFetchToolResultBlock,
+// ToolSearchToolResultBlock, ToolReferenceBlock, ThinkingBlock,
+// RedactedThinkingBlock, and the UnknownBlock fallback.
 //
 // The discriminator is the "type" field. Unknown discriminator values are
 // dispatched to UnknownBlock, which preserves both the type value AND any

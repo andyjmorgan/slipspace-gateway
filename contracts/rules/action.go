@@ -45,8 +45,16 @@ type Response struct {
 	BodyType StatusCodeBodyType
 }
 
-// ChangeProviderAction routes the request to a different provider. The
-// forwarder uses the new provider's upstream credentials and endpoint mapping.
+// ChangeProviderAction switches the upstream provider for the request
+// (state.Provider). Under v2 it is not the authorable routing mechanism:
+// model-keyed redirect is expressed as a binding on the Configuration, and a
+// rule-authored changeProvider is overwritten every attempt by the resilience
+// orchestrator's buildAttemptState re-applying the target's own
+// providerSwitchActions. It survives as an internal selection primitive: after
+// rules run, the handler re-resolves transport from the post-rule provider via
+// selection.ResolveTarget, and the credential is minted at the single mint site
+// (cmd/gateway/destination.go::resolveCredentialHeaders, invariant #6). There
+// is no endpoint mapping table (invariant #7).
 type ChangeProviderAction struct {
 	// Type is the polymorphic discriminator; always "changeProvider".
 	Type string `yaml:"type" json:"type"`
@@ -332,11 +340,12 @@ func (a *LlmImpersonationAction) UnmarshalJSON(data []byte) error {
 func (a LlmImpersonationAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
 // AddTagAction attaches a tag to the request as it flows through the
-// engine. Tags are set-membership values (sorted, deduplicated by the
-// evaluator) — multiple addTag actions across the rule chain accumulate
-// onto the same request. The reporter surfaces them on
-// gateway.request, the live-feed Entry, and a side-channel
-// gateway.tags.applied.total counter.
+// engine. Tags are set-membership values (deduplicated by
+// MutableState.AddTag, kept in first-attach order — never sorted)
+// — multiple addTag actions across the rule chain accumulate onto
+// the same request. The reporter surfaces them on gateway.request,
+// the live-feed Entry, and a side-channel gateway.tags.applied.total
+// counter.
 //
 // Downstream rules can match on accumulated tags via TagCondition,
 // which makes addTag both a side-effect and an input to subsequent

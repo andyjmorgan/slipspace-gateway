@@ -72,9 +72,14 @@ type HistogramSnapshot struct {
 	Sum    float64
 	Count  uint64
 	Bounds []float64
-	// Counts has len(Bounds)+1 entries: the i-th value is the cumulative
-	// number of observations <= Bounds[i], with the final entry counting
-	// the +Inf bucket. Matches OTel's representation.
+	// Counts has len(Bounds)+1 entries: the i-th value is the number of
+	// observations falling in bucket i, i.e. in (Bounds[i-1], Bounds[i]]
+	// (the first entry is (-Inf, Bounds[0]]), with the final entry
+	// counting the +Inf bucket. These are per-bucket counts, not a
+	// running cumulative total — matching OTel's
+	// metricdata.HistogramDataPoint.BucketCounts; consumers that want a
+	// cumulative rank (see internal/admin/dashboard_query.go::quantile)
+	// accumulate them themselves.
 	Counts []uint64
 }
 
@@ -265,9 +270,13 @@ func (s *Snapshotter) Snapshot(ctx context.Context) error {
 					sample.Counters[m.Name][key] = p.Value
 				}
 			case metricdata.Sum[float64]:
-				// Treat float counters as rounded int64 — none
-				// in the current registry, but defensive in case
-				// a future meter uses Float64Counter.
+				// Treat float counters as truncated int64. The
+				// only Float64Counter in the registry today is
+				// slipspace.cost.usd.total, which the admin
+				// dashboard never reads from snapshots, so the
+				// loss is harmless — but any future consumer
+				// reading a float counter through Sample.Counters
+				// must expect whole-unit truncation.
 				for _, p := range data.DataPoints {
 					key := EncodeAttributeSet(p.Attributes)
 					if sample.Counters[m.Name] == nil {

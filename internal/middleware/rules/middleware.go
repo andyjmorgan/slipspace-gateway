@@ -16,8 +16,10 @@ import (
 // MatchFromContextFunc returns the routed (provider, endpoint, path
 // params) the routing middleware stashed on the request context.
 // Injected via the constructor so this package does not import
-// internal/routing (avoids a potential cycle and lets tests stub
-// without a real router).
+// internal/selection (avoids a potential cycle and lets tests stub
+// without a real router). In v2 the selection middleware pre-seeds
+// MutableState, so the production wiring passes nil and this hook is
+// a legacy-test fallback.
 type MatchFromContextFunc func(ctx context.Context) (provider string, endpoint string, matchedPath string, pathParams map[string]string, ok bool)
 
 // HTTPHandler runs the rule engine between bodycapture and the

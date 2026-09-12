@@ -50,9 +50,9 @@ func (s *statusRecorder) Flush() {
 }
 
 // InstrumentRoute wraps next with a counter increment on response. The
-// route label is fixed by the caller (e.g. "/api/v1/auth/me", "static",
-// "fallback") rather than read from the URL, so cardinality stays bounded
-// even when the SPA serves arbitrary asset paths.
+// route label is fixed by the caller (e.g. "/api/v1/auth/me", "spa")
+// rather than read from the URL, so cardinality stays bounded even when
+// the SPA serves arbitrary asset paths.
 //
 // A nil meters bundle is a no-op passthrough; this is the path tests
 // take when they exercise downstream handlers without standing up a

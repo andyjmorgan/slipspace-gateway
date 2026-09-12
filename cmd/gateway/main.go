@@ -118,10 +118,10 @@ func run(ctx context.Context) error {
 	defer spoolCleanup()
 
 	// The Store owns the live ResolvedConfig and brokers swaps via
-	// subscribers. Consumers that pre-derive state (routing.Router)
-	// subscribe; hot-readers (auth.Resolver, rules.Evaluator, admin
-	// handlers, reporter) call Snapshot per operation. Phase 2 adds
-	// the admin write path that calls store.Replace.
+	// subscribers. Consumers that pre-derive state subscribe;
+	// hot-readers (auth.Resolver, rules.Evaluator, admin handlers,
+	// reporter) call Snapshot per operation. The admin write path
+	// calls store.Replace (internal/admin/rules_write.go::commitClone).
 	store := config.NewStore(resolved)
 
 	// gateway.config_reload.total is the admin write API's only

@@ -39,8 +39,10 @@ type MutableState struct {
 	// Protocol is the resolved protocol under Provider (e.g. "chat",
 	// "messages"), or the passthrough family name for opaque requests.
 	// Initialised from selection. TranslateAction overwrites it with the
-	// target (upstream) protocol; other provider changes that need a
-	// different protocol pair with a ChangeUrlAction the rule author writes.
+	// target (upstream) protocol; a provider change that also needs a
+	// different protocol is expressed as a binding (models pattern ->
+	// provider) on the Configuration. ChangeUrlAction is inert under
+	// invariant #7 (see UpstreamURL below).
 	Protocol string
 
 	// SourceProtocol is the inbound protocol the request arrived in,
@@ -48,7 +50,9 @@ type MutableState struct {
 	// the response leg knows what to translate the upstream reply back into.
 	// Empty when no translate action has run. Translation is active only when
 	// SourceProtocol != "" AND SourceProtocol != Protocol — a translate whose
-	// target equals the source is a no-op the destination builder ignores.
+	// target equals the source is a no-op the final handler ignores
+	// (translationActive in cmd/gateway/translate.go, consumed by
+	// buildFinalHandler in cmd/gateway/handler.go).
 	SourceProtocol string
 
 	// MatchedPath is a retained v1 field: under the v1 route table it

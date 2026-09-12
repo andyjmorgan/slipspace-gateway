@@ -256,7 +256,7 @@ func mergeQuery(base, override map[string]string) map[string]string {
 }
 
 // matchesModelPatterns mirrors cmd/gateway/binding.go: empty patterns match
-// everything (the protocol catch-all — default-permissive, invariant #1),
+// everything (the protocol catch-all — default-permissive, not default-deny),
 // trailing-`*` is a prefix match, otherwise exact-equal.
 func matchesModelPatterns(model string, patterns []string) bool {
 	if len(patterns) == 0 {

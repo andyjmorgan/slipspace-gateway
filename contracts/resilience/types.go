@@ -59,8 +59,10 @@ type ResilienceConfig struct {
 	// Mode selects the orchestration strategy. See the ModeX constants.
 	Mode ResilienceMode `yaml:"mode" json:"mode"`
 
-	// TimeoutSeconds bounds the wall-clock duration of a single orchestrated
-	// attempt. Zero means no overall timeout.
+	// TimeoutSeconds is parsed and validated but currently unwired: the
+	// orchestrator derives no context deadline from it (see
+	// internal/middleware/resilience/middleware.go). Only
+	// ResponseHeaderTimeoutSeconds bounds an attempt.
 	TimeoutSeconds int `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 
 	// Targets is the list of upstream destinations the orchestrator may
@@ -71,7 +73,9 @@ type ResilienceConfig struct {
 	// breakers on ResilienceTarget take precedence.
 	CircuitBreaker *CircuitBreakerConfig `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
 
-	// Retry configures retry attempts and backoff. Nil disables retries.
+	// Retry is parsed and validated but currently unwired: the orchestrator
+	// implements no backoff or attempt budget; retry means advancing to the
+	// next target.
 	Retry *RetryConfig `yaml:"retry,omitempty" json:"retry,omitempty"`
 
 	// StrictWeights, when true on a Mode=load_balance policy, disables the
@@ -111,8 +115,12 @@ type ResilienceTarget struct {
 	// ResilienceConfig.Targets list.
 	Name string `yaml:"name" json:"name"`
 
-	// Provider is the provider name (from providers.yaml) the orchestrator
-	// dispatches to when this target is selected.
+	// Provider is the provider name (from providers.yaml) this target names.
+	// It is parsed, validated (ErrEmptyProvider, validate.go) and projected
+	// by the admin /policies view, but the orchestrator never reads it:
+	// per-attempt provider switching happens only through Actions, via a
+	// rules.ChangeProviderAction synthesised from the selected binding
+	// (providerSwitchActions, cmd/gateway/destination.go).
 	Provider string `yaml:"provider" json:"provider"`
 
 	// Order is the failover priority for ModeFailover; lower values are
@@ -124,13 +132,19 @@ type ResilienceTarget struct {
 	// ModeLoadBalanceWithFailover.
 	Weight int `yaml:"weight,omitempty" json:"weight,omitempty"`
 
-	// TimeoutSeconds bounds a single attempt against this target. Overrides
-	// the parent ResilienceConfig.TimeoutSeconds for this target only.
+	// TimeoutSeconds is parsed and validated but currently unwired: the
+	// orchestrator derives no context deadline from it (see
+	// internal/middleware/resilience/middleware.go). Only
+	// ResilienceConfig.ResponseHeaderTimeoutSeconds bounds an attempt.
 	TimeoutSeconds int `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 
-	// ModelRewrite, when non-empty, rewrites the request body's model field
-	// to this value when this target is selected. Enables cross-provider
-	// failover with provider-specific model names.
+	// ModelRewrite is parsed and validated but currently unwired: the
+	// orchestrator never reads it (see
+	// internal/middleware/resilience/middleware.go), and nothing authorable
+	// can set it — contracts/config.Target has no model_rewrite key.
+	// Per-attempt model rewriting happens only through Actions, via a
+	// rules.ChangeModelNameAction synthesised from a v2 group target's
+	// alias (providerSwitchActions, cmd/gateway/destination.go).
 	ModelRewrite string `yaml:"model_rewrite,omitempty" json:"model_rewrite,omitempty"`
 
 	// FailureStatusCodes is the explicit list of upstream HTTP status codes
@@ -149,10 +163,11 @@ type ResilienceTarget struct {
 	// are exactly the same shape a rule may carry, so the orchestrator
 	// dispatches through the existing applyAction machinery.
 	//
-	// Coexists with the legacy scalar fields (Provider, ModelRewrite,
-	// FailureStatusCodes). When both are present, Actions wins for the
-	// fields it covers; the v1.0 schema is preserved so existing YAML
-	// keeps working untouched.
+	// Actions is the sole mechanism the orchestrator honours for
+	// destination mutation; the scalar Provider and ModelRewrite fields are
+	// inert. No v2 YAML block authors a ResilienceTarget directly — groups
+	// are the authorable shape, and targets are machine-synthesised
+	// (cmd/gateway/destination.go).
 	Actions []rules.Action `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 

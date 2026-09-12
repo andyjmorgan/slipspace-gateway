@@ -89,8 +89,9 @@ type Options struct {
 	// Redactor masks credential-bearing headers in the proxy's
 	// debug-level header-trace logs. Nil falls back to a default
 	// Redactor with the built-in substring list (auth / api-key /
-	// token / cookie / secret / slipspace-identity). Operator-supplied
-	// extras flow through here from cmd/gateway at startup.
+	// apikey / token / cookie / secret / slipspace-identity /
+	// sluice-identity). Operator-supplied extras flow through here
+	// from cmd/gateway at startup.
 	Redactor *headers.Redactor
 
 	// ResponseBodyTransform is invoked from ModifyResponse for every
@@ -165,12 +166,12 @@ func New(opts Options) *Forwarder {
 
 // alwaysDropHeaders are headers the gateway never forwards upstream.
 //
-// Authorization and X-Slipspace-Configuration carry the gateway's own auth
-// state and must not propagate; the cmd/gateway destination builder
-// (resolveCredentialHeaders, the single mint site) re-injects the
-// upstream credential via Destination.OutgoingHeaders for managed mode
-// and re-adds the inbound Authorization verbatim for passthrough mode;
-// the auth middleware only supplies DropHeaders.
+// Authorization, X-Slipspace-Configuration and X-Slipspace-Identity carry
+// the gateway's own auth state and must not propagate; the cmd/gateway
+// destination builder (resolveCredentialHeaders, the single mint site)
+// re-injects the upstream credential via Destination.OutgoingHeaders for
+// managed mode and re-adds the inbound Authorization verbatim for
+// passthrough mode; the auth middleware only supplies DropHeaders.
 //
 // Origin, Referer, and Cookie are browser-session state. They have no
 // meaning to upstream LLM APIs and, worse, trigger provider-side
@@ -210,22 +211,27 @@ var alwaysDropHeaders = []string{
 //     error on the buffer via SetTransportError and does NOT write 502.
 //     The orchestrator inspects ShouldRetry post-Forward to decide
 //     whether to retry the next target.
-//   - When w is a bare ResponseWriter (today's single-shot path),
-//     ErrorHandler writes 502 Bad Gateway as before — back-compat for
-//     callers that have no orchestrator wrapping the writer.
+//   - When w is a bare ResponseWriter, ErrorHandler writes 502 Bad
+//     Gateway as before. Every gateway request goes through the
+//     resilience orchestrator, so this branch is the fallback for
+//     direct callers and tests that wrap no orchestrator.
 //
 // A fresh Observer is minted at the top of Forward via the configured
-// ObserverFactory. All four lifecycle hooks fire from this goroutine, so
+// ObserverFactory. All six lifecycle hooks fire from this goroutine, so
 // Observer implementations may hold per-request state as plain struct
 // fields without internal synchronisation:
 //
 //  1. OnRequestStart fires synchronously before the upstream call.
 //  2. OnResponseHeaders fires once the upstream response headers arrive,
 //     inside httputil.ReverseProxy.ModifyResponse.
-//  3. OnUpstreamError fires instead of OnResponseHeaders on transport
+//  3. OnResponseChunk fires once per streamed chunk as it is flushed to
+//     the client (driven by FlushInterval=-1), only for SSE responses.
+//  4. OnUpstreamError fires instead of OnResponseHeaders on transport
 //     failure, inside httputil.ReverseProxy.ErrorHandler.
-//  4. OnComplete fires once after ServeHTTP returns, carrying the captured
+//  5. OnComplete fires once after ServeHTTP returns, carrying the captured
 //     final status (via statusWriter) and total wall-clock duration.
+//  6. OnRuleMatched fires once per matched rule, driven by the rules
+//     middleware; implementations buffer the matches until OnComplete.
 //
 // Two details are load-bearing:
 //

@@ -47,7 +47,8 @@ type Op struct {
 	// Kind selects the mutation.
 	Kind OpKind
 
-	// Path is the sjson/gjson path under request.body.
+	// Path is the sjson/gjson path under the op's scope (request.body
+	// or response.body), already stripped of its scope prefix.
 	Path string
 
 	// Value is the value for OpSet / OpAppend; ignored for OpRemove.

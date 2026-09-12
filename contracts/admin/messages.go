@@ -114,8 +114,10 @@ type MessageEntry struct {
 	PolicyRef string `json:"policy_ref,omitempty"`
 
 	// Attempts is the per-attempt orchestrator record. Populated only
-	// for requests bound to a resilience policy; the SPA renders an
-	// expansion table in the modal when len > 1.
+	// for requests the resilience orchestrator ran multi-target (a
+	// single-shot ModeNone binding installs no attempt buffer, so it
+	// stays empty); the SPA renders the attempt table whenever the
+	// slice is non-empty.
 	Attempts []AttemptHit `json:"attempts,omitempty"`
 }
 

@@ -26,8 +26,8 @@ const (
 // SPAHandler returns an http.Handler that serves the embedded SPA. It
 // resolves real assets (hashed JS/CSS produced by Vite) by relative path
 // and falls back to index.html for any path that doesn't resolve to a
-// file — which is how a SPA router (basename `/`) keeps deep links
-// working on hard reload.
+// file — which is how a SPA router (basename `/admin`, see
+// web/src/main.tsx) keeps deep links working on hard reload.
 //
 // When the real index.html is absent (SPA not built into this binary),
 // every path is served the placeholder.html stub instead.

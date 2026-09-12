@@ -1,5 +1,10 @@
-// Package pipeline defines the typed-message channel pipeline that carries a
-// request and its response through the gateway's middleware chain.
+// Package pipeline defines the vocabulary of the typed-message channel
+// pipeline for carrying a request and its response through the gateway's
+// middleware chain: the sealed Message sum type plus Middleware, Chain,
+// Pass and Source. The pipeline is currently inert — it is not attached to
+// the request path and is not wired through the Forwarder
+// (internal/proxy/forwarder.go). Its only consumer is
+// internal/middleware/guardrails, and that stage is itself unwired.
 package pipeline
 
 import "net/http"

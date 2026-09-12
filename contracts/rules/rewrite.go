@@ -229,7 +229,10 @@ type RewriteFieldAction struct {
 	// Type is the polymorphic discriminator; always "rewriteField".
 	Type string `yaml:"type" json:"type"`
 
-	// Target is the dotted body path to set (request.body.*).
+	// Target is the dotted body path to set, under either the
+	// request.body.* or response.body.* scope — request-scope writes are
+	// applied on the request path, response-scope writes in the response
+	// phase.
 	Target string `yaml:"target" json:"target"`
 
 	// Value is the value written at the target.
@@ -260,7 +263,10 @@ type RemoveFieldAction struct {
 	// Type is the polymorphic discriminator; always "removeField".
 	Type string `yaml:"type" json:"type"`
 
-	// Target is the dotted body path to delete (request.body.*).
+	// Target is the dotted body path to delete, under either the
+	// request.body.* or response.body.* scope — request-scope deletes are
+	// applied on the request path, response-scope deletes in the response
+	// phase.
 	Target string `yaml:"target" json:"target"`
 
 	models.DynamicProperties `yaml:",inline"`
@@ -288,8 +294,10 @@ type AppendFieldAction struct {
 	// Type is the polymorphic discriminator; always "appendField".
 	Type string `yaml:"type" json:"type"`
 
-	// Target is the dotted body path of the array to append to
-	// (request.body.*).
+	// Target is the dotted body path of the array to append to, under
+	// either the request.body.* or response.body.* scope — request-scope
+	// appends are applied on the request path, response-scope appends in
+	// the response phase.
 	Target string `yaml:"target" json:"target"`
 
 	// Value is the element appended to the array.

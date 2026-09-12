@@ -82,8 +82,11 @@ var ErrSegmentClosed = errors.New("spool: segment closed")
 //
 //	<openedAt.UnixNano()>-<seq>.ndjson.zst
 //
-// dir must already exist (the Manager handles that). seq is generated
-// by the caller via the meta/sequence counter.
+// dir must already exist (the Manager handles that). seq is supplied by
+// the caller from its own in-memory per-process counter (track.nextSeq);
+// it is not persisted anywhere, so it restarts at 0 on each process —
+// uniqueness across restarts comes from the openedAt.UnixNano() filename
+// prefix, with O_EXCL as the collision guard.
 func OpenSegment(dir string, seq uint64, openedAt time.Time) (*Segment, error) {
 	name := segmentFilename(openedAt, seq)
 	path := filepath.Join(dir, name)

@@ -104,9 +104,10 @@ func applyChangeProvider(a contractsrules.ChangeProviderAction, state *MutableSt
 // knows what to translate the upstream reply back into, then overwrites
 // Protocol with the target so the destination builder resolves the upstream
 // endpoint under the target protocol. A second translate in the same chain
-// only moves the target; the recorded source is never overwritten. The
-// destination builder treats target == source as a no-op and is the sole site
-// that fails closed when no translator is registered for the pair.
+// only moves the target; the recorded source is never overwritten. The final
+// handler (cmd/gateway/handler.go) treats target == source as a no-op via
+// translationActive and is the sole site that fails closed with 501 when no
+// translator is registered for the pair.
 func applyTranslate(a contractsrules.TranslateAction, state *MutableState) (contractsrules.Outcome, error) {
 	target := strings.TrimSpace(a.TargetProtocol)
 	if target == "" {
@@ -319,11 +320,14 @@ func applyAddTag(a contractsrules.AddTagAction, state *MutableState) (contractsr
 }
 
 // applyRewriteField records a body set/replace operation on state. The
-// target is parsed (validated at config-load, re-parsed here) and the
-// resolved Op is appended to state.BodyRewrites for BodyRewriteHandler
-// to apply against the serialized body after evaluation. The action
-// itself does not touch the body — it queues the mutation so it lands
-// once, on the final bytes, after any typed re-marshal.
+// target is parsed (validated at config-load, re-parsed here) and
+// recordBodyOp queues the resolved Op on the phase-appropriate slot:
+// state.BodyRewrites for request.body.* targets (applied by
+// BodyRewriteHandler against the serialized body after evaluation), or
+// state.ResponseRewrites for response.body.* targets (applied by
+// ApplyResponseRewrites). The action itself does not touch the body —
+// it queues the mutation so it lands once, on the final bytes, after
+// any typed re-marshal.
 func applyRewriteField(a contractsrules.RewriteFieldAction, state *MutableState) (contractsrules.Outcome, error) {
 	return recordBodyOp(state, bodypatch.OpSet, a.ActionType(), a.Target, a.Value)
 }

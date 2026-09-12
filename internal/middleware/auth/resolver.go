@@ -238,19 +238,21 @@ func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfig, configN
 	}, nil
 }
 
-// passthroughDropHeaders returns the constant drop list for any
-// passthrough resolution. Both selector headers go upstream-blacklisted
-// regardless of which one was actually present — they are gateway
-// metadata, never anything the provider should see.
+// passthroughDropHeaders returns the constant selector drop list. Despite
+// the name it seeds both passthrough and managed resolutions (see the
+// managed path below). Both selector headers, and their pre-rebrand
+// aliases, go upstream-blacklisted regardless of which one was actually
+// present — they are gateway metadata, never anything the provider should
+// see.
 func passthroughDropHeaders() []string {
 	return []string{HeaderIdentity, HeaderConfiguration, legacyHeaderIdentity, legacyHeaderConfiguration}
 }
 
 // managedKeySource names the inbound header a SlipSpace key was discovered on.
-// The forwarder uses this to add the source header to DropHeaders so the
-// raw SlipSpace secret never leaks upstream — the destination builder will
-// inject the resolved upstream credential under the per-(provider,
-// protocol) header anyway.
+// resolveManaged appends that source header to AuthResult.DropHeaders so the
+// raw SlipSpace secret never leaks upstream (the forwarder only applies the
+// drop list it is handed) — the destination builder will inject the resolved
+// upstream credential under the per-(provider, protocol) header anyway.
 type managedKeySource struct {
 	header string
 	token  string

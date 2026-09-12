@@ -36,10 +36,11 @@ func TestGemini_GenerateContent_NonStreaming_PrefixRouting(t *testing.T) {
 	}
 }
 
-// TestGemini_GenerateContent_BareRoute_PrefixOptional covers v1.0.6:
-// gemini.generate_content sets prefix_optional: true so a vanilla google-genai
-// client pointed at the gateway root resolves /v1beta/models/{model}:
-// generateContent without the /gemini prefix. The prefixed form is exercised
+// TestGemini_GenerateContent_BareRoute_PrefixOptional covers v1.0.6: a vanilla
+// google-genai client pointed at the gateway root resolves
+// /v1beta/models/{model}:generateContent without the /gemini prefix — the bare
+// path maps to the gemini generate_content protocol and the configuration's
+// bindings pick the provider. The prefixed form is exercised
 // by TestGemini_GenerateContent_NonStreaming_PrefixRouting.
 func TestGemini_GenerateContent_BareRoute_PrefixOptional(t *testing.T) {
 	t.Parallel()
@@ -122,11 +123,12 @@ func TestGemini_GenerateContent_Streaming(t *testing.T) {
 }
 
 // TestGemini_StreamGenerateContent_FoldedEndpoint exercises the
-// path-mirror fold: config-dev's gemini.generate_content lists both
-// :generateContent and :streamGenerateContent in accepted_paths and
-// omits the explicit Path so each matched URL forwards verbatim.
-// Verifies (a) the streaming variant routes through the same endpoint
-// key (so the accumulator dispatches) and (b) the upstream sees
+// path-mirror fold: selection.ProtocolForPath matches both
+// :generateContent and :streamGenerateContent off the same
+// /v1beta/models/{model}:{op} form, so each forwards verbatim on the
+// provider's generate_content protocol path.
+// Verifies (a) the streaming variant routes through the same protocol
+// (so the accumulator dispatches) and (b) the upstream sees
 // :streamGenerateContent (not :generateContent).
 func TestGemini_StreamGenerateContent_FoldedEndpoint(t *testing.T) {
 	t.Parallel()

@@ -222,8 +222,8 @@ type Binding struct {
 
 	// Models is the client-requested model patterns this binding matches.
 	// Trailing-`*` wildcard, reusing the connector-filter matcher. Surface is
-	// default-permissive and opt-in (invariant #1): an empty model set is a
-	// catch-all for the protocol, never a default-deny.
+	// default-permissive: an empty model set is a catch-all for the protocol,
+	// never a default-deny (see internal/selection.matchesModelPatterns).
 	Models []string `yaml:"models,omitempty" json:"models,omitempty"`
 
 	// Provider names the single destination provider. Mutually exclusive with
@@ -290,8 +290,11 @@ type Configuration struct {
 	// short-circuits.
 	RuleNames []string `yaml:"rule_names,omitempty" json:"rule_names,omitempty"`
 
-	// Tags are labels propagated to telemetry for every request under this
-	// configuration.
+	// Tags are operator labels on the configuration itself. They are surfaced
+	// by the admin configuration detail API (internal/admin/config_handlers.go)
+	// only — they are not attached to per-request state, Record.Tags, or
+	// gateway.tags.applied.total; per-request tags come from the addTag action,
+	// binding-level tags, and agent-route tags (cmd/gateway/pipeline.go).
 	Tags map[string]string `yaml:"tags,omitempty" json:"tags,omitempty"`
 
 	// ConnectorBindings attaches connectors with per-binding sampling /

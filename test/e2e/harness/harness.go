@@ -25,9 +25,9 @@ import (
 )
 
 const (
-	// defaultAPIKey matches config-dev/api_keys.yaml; tests use it for the
-	// managed-auth path. Not a credential — it's checked into the repo on
-	// purpose so the E2E harness has a known-good handshake.
+	// defaultAPIKey matches the `api_keys:` block in config-dev/policy.yaml;
+	// tests use it for the managed-auth path. Not a credential — it's checked
+	// into the repo on purpose so the E2E harness has a known-good handshake.
 	defaultAPIKey = "sk_dev_local_development_only_not_for_production" //nolint:gosec // test fixture
 
 	startupTimeout = 60 * time.Second
@@ -41,11 +41,12 @@ const (
 //
 // Architecture: the gateway is configured (via materializeConfig) with
 // a webhook connector pointing at this harness's in-process
-// httptest.Server. Every sealed-segment POST is decompressed,
-// each cc.Record is translated into the legacy Envelope shape, and
-// pushed to eventBuf — ExpectEvent reads from there. SLIPSPACE_WEBHOOK_
-// ALLOW_PRIVATE is set on the gateway process so the loopback target
-// passes the runtime SSRF guard.
+// httptest.Server. Every POST carries one plain-JSON, HMAC-signed
+// cc.Record — not a sealed spool segment, so nothing is decompressed —
+// which the capture handler parses and translates into the legacy
+// Envelope shape before pushing to eventBuf; ExpectEvent reads from
+// there. SLIPSPACE_WEBHOOK_ALLOW_PRIVATE is set on the gateway process
+// so the loopback target passes the config-load SSRF host check.
 type Harness struct {
 	T *testing.T
 
@@ -74,7 +75,7 @@ type Harness struct {
 	spoolRoot string
 
 	// captureServer is the in-process httptest.Server that the
-	// gateway's webhook connector POSTs sealed segments to.
+	// gateway's webhook connector POSTs individual records to.
 	captureServer *httptest.Server
 	captureURL    string
 	captureSecret string
@@ -544,12 +545,13 @@ func (h *Harness) materializeConfig(repoRoot string) (string, error) {
 // adding the binding via a string match keeps the harness independent
 // of how config-dev/policy.yaml evolves field-by-field.
 //
-// The match target is the literal `tags:\n      tier: dev` block —
-// the last meaningful line of the dev configuration in config-dev/.
-// If that pattern changes in config-dev/, the inject silently
-// no-ops and tests will time out on ExpectEvent; the failure is
-// visible enough that "harness inject fell through" is the obvious
-// next-thing-to-check.
+// The match target is the literal `  dev:\n` configuration key, under
+// which the inject inserts `connector_bindings:` as the first subkey, so
+// it works against both config-dev/policy.yaml and any test-supplied
+// Options.PolicyYAML that defines a `dev` configuration.
+// If that key ever changes, the inject silently no-ops and tests will
+// time out on ExpectEvent; the failure is visible enough that "harness
+// inject fell through" is the obvious next-thing-to-check.
 func (h *Harness) injectWebhookConnector(dst string) error {
 	// When the test explicitly disables reporting, skip the inject so
 	// no connector binding fires and tests can assert "silence".
@@ -611,9 +613,10 @@ func (h *Harness) writeAdminYAML(dst string) error {
 }
 
 // gatewayEnv builds the SLIPSPACE_* env block for the spawned gateway process.
-// Options overrides (ReportingEnabled, StashThresholdBytes, DrainTimeoutSeconds)
-// land here instead of in YAML mutation because the gateway sources these
-// inputs from env vars after the three-plane refactor.
+// Options overrides (ReportingEnabled, DrainTimeoutSeconds,
+// UpstreamResponseHeaderTimeoutSeconds, ExternalURL) land here instead of in
+// YAML mutation because the gateway sources these inputs from env vars after
+// the three-plane refactor.
 func (h *Harness) gatewayEnv(configDir string) []string {
 	env := []string{
 		"SLIPSPACE_CONFIG_DIR=" + configDir,
@@ -692,10 +695,11 @@ func oneOf(want ...int) func(int) bool {
 // is package-global, and each e2e package is its own `go test` process, so
 // this builds gateway + mockllm exactly once per package rather than once
 // per harness). Spawning `go run ./cmd/<x>` per test re-runs a compile+link
-// cycle every time; across the full 14-package parallel e2e suite that is
-// 100+ link steps competing for CPU, which is the dominant driver of the
-// startup/readiness flake family (#101/#135/#152/#156). Building once and
-// exec'ing the binary removes that contention.
+// cycle every time; across the full 16-package parallel e2e suite (15
+// sub-suites plus harness; types/ carries no tests) that is 100+ link steps
+// competing for CPU, which is the dominant driver of the startup/readiness
+// flake family (#101/#135/#152/#156). Building once and exec'ing the binary
+// removes that contention.
 var (
 	gatewayBinOnce sync.Once
 	gatewayBinPath string

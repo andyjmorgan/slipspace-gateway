@@ -3,10 +3,13 @@
 //
 // Every exported struct embeds models.DynamicProperties so fields OpenAI ships
 // after this package was built still round-trip when a request or response
-// flows through the gateway. Polymorphic JSON (the messages array, content
-// parts, tool_choice) is dispatched through hand-rolled UnmarshalX helpers
-// rather than json.Unmarshal so unknown discriminator values land in the
-// matching UnknownX fallback type.
+// flows through the gateway. The two exceptions are MessageContent
+// (content_parts.go) and ThinkOption (think.go): each retains its raw JSON
+// bytes verbatim and so is lossless by construction without DynamicProperties.
+// Polymorphic JSON — the messages array and content parts — is dispatched
+// through hand-rolled UnmarshalX helpers rather than json.Unmarshal so unknown
+// discriminator values land in the matching UnknownX fallback type; tool_choice
+// has no UnmarshalX helper and is instead kept as json.RawMessage.
 package chat
 
 import (

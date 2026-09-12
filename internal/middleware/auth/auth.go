@@ -76,9 +76,10 @@ func apiKeyID(ar AuthResult) string {
 	return ar.APIKey.Name
 }
 
-// classifyResult maps a typed auth error onto the audit Result string the
-// design note requires. The disabled-key vs unknown-key distinction is
-// preserved in logs even though the wire response collapses both to 401.
+// classifyResult maps a typed auth error onto the closed four-value audit
+// Result set defined in errors.go (documented in docs/auth.md). The
+// disabled-key vs unknown-key distinction is preserved in logs even though
+// the wire response collapses both to 401.
 func classifyResult(err error, ar AuthResult) Result {
 	switch {
 	case errors.Is(err, ErrUnknownConfiguration):

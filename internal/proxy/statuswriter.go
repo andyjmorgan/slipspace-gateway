@@ -12,7 +12,9 @@ import (
 // final status code so the Forwarder can pass it to Observer.OnComplete.
 // It deliberately implements http.Flusher so httputil.ReverseProxy's
 // streaming flush calls (driven by FlushInterval: -1) reach the underlying
-// writer. The pipeline-aware capture writer is a follow-up wave.
+// writer. Response-lifecycle telemetry leaves through the Observer seam
+// (onChunk / OnComplete); the typed-message pipeline in internal/pipeline
+// is inert and not wired through the Forwarder.
 type statusWriter struct {
 	http.ResponseWriter
 

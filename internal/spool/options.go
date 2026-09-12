@@ -6,12 +6,15 @@ import "time"
 // a new one.
 type RotationOpts struct {
 	// MaxBytes is the uncompressed byte cap. When the active segment
-	// crosses this, it seals and a new one opens. Zero = no byte cap.
+	// crosses this, it seals and a new one opens. Zero means unset and
+	// falls back to DefaultMaxBytes (64 MiB); there is no way to
+	// disable the byte cap.
 	MaxBytes int64
 
-	// MaxAge is the time the active segment may stay open. Zero = no
-	// age cap. Either trigger alone is enough; whichever fires first
-	// rotates.
+	// MaxAge is the time the active segment may stay open. Zero means
+	// unset and falls back to DefaultMaxAge (60s); there is no way to
+	// disable the age cap. Either trigger alone is enough; whichever
+	// fires first rotates.
 	MaxAge time.Duration
 }
 
