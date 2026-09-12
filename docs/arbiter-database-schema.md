@@ -187,9 +187,9 @@ Only number points land here. `PointsFromMetric` ([`ingest/otlp.go`](../internal
 
 `metric_points` is append-only (no primary key), written in batches inside one transaction by `InsertMetricPoints`. Migration 7 turns it into a hypertable on `observed_at` and adds `metric_points_name_labels_time (metric_name, observed_at DESC)`.
 
-### The four continuous aggregates
+### The five continuous aggregates
 
-Migration 7 (run with autocommit — TimescaleDB forbids creating a continuous aggregate inside a transaction) creates `timescaledb` if absent and four 1-minute CAGGs with real-time aggregation (`materialized_only = false`) and a 1-minute refresh policy. CAGG dimensions are projected from the meter `labels` JSONB with `->>` (immutable, so legal in a continuous-aggregate `GROUP BY`). The aggregation is **count/sum only — no percentiles** (MVP runs plain `timescaledb` without the percentile toolkit).
+Migration 7 (run with autocommit — TimescaleDB forbids creating a continuous aggregate inside a transaction) creates `timescaledb` if absent and four 1-minute CAGGs (`cagg_requests_1m`, `cagg_tokens_1m`, `cagg_rules_1m`, `cagg_tags_1m`); migration 19 adds a fifth, `cagg_cost_1m`. All five use real-time aggregation (`materialized_only = false`) and a 1-minute refresh policy. CAGG dimensions are projected from the meter `labels` JSONB with `->>` (immutable, so legal in a continuous-aggregate `GROUP BY`). The aggregation is **count/sum only — no percentiles** (MVP runs plain `timescaledb` without the percentile toolkit).
 
 | CAGG | Source metric(s) | Dimensions | Value | Backs |
 |---|---|---|---|---|
