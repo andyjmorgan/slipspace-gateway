@@ -196,7 +196,7 @@ groups:
 | `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:175`). |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
-| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:131`). |
+| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:132-134`). |
 
 ### `Target` fields (`contracts/config/model.go:189`)
 
@@ -275,7 +275,7 @@ bindings:
 |---|---|---|---|
 | `protocol` | string | yes | The generative protocol this binding serves — one of the protocol constants (see [Protocol resolution](#protocol-resolution)). Unknown protocol aborts validation. |
 | `models` | []string | no | Client-requested model patterns this binding matches. Exact string, or a single **trailing-`*`** prefix wildcard (interior or multiple `*` is rejected). An **empty** model set is a **catch-all** for the protocol (default-permissive, invariant #1) — never a default-deny. |
-| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:264-266`, `validateBindings`). |
+| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:265-267`, `validateBindings`). |
 | `group` | string | conditionally | Names a resilience group destination. Mutually exclusive with `provider`. |
 | `alias` | string | no | Rewrites the request body model name for the **single-provider** case (sugar for the binding's implicit target alias). **Ignored when `group` is set** — group targets carry their own aliases. |
 | `query` | map[string]string | no | Single-provider per-use query override. Ignored when `group` is set. |
@@ -459,7 +459,7 @@ telemetry:
 | YAML state | Behaviour |
 |---|---|
 | key absent | use built-in default (32 KiB / 32 KiB / 64 KiB) |
-| key present, value `N < 0` | treated as unset — use built-in default (`resolveCap`, `contracts/config/telemetry.go:107-109`) |
+| key present, value `N < 0` | treated as unset — use built-in default (`resolveCap`, `contracts/config/telemetry.go:106-113`) |
 | key present, value `0` | unbounded — no truncation, no drop |
 | key present, value `N > 0` | cap at N bytes |
 
@@ -746,7 +746,7 @@ The loader performs no `${VAR}` expansion and no `env:` substitution — decoded
 - **One source of truth per secret.** A `${OPENAI_KEY}` literal would make the file meaningless without the env, and the env var becomes the de-facto source of truth — not what the admin console shows, what the bundler exports, or what the validator sees. Literal strings keep the YAML the canonical artefact.
 - **Only file paths are env-overridable.** `SLIPSPACE_CONFIG_DIR` selects the dir; everything inside is read as-is.
 
-The in-YAML indirections are the connector `secret_ref` field (`env:NAME` or `file:/path`, `contracts/config/connectors.go:123-125`) and the connector auth `*_ref` fields (`access_key_id_ref`, `secret_access_key_ref`, `external_id_ref`, `sas_token_ref`, `account_key_ref` — `contracts/config/connectors.go:148-171`), all resolved by the connector factory when the destination is built, plus `advisors.<name>.hmac_secret_file` (`contracts/config/advisors.go:45-49`), a file path read once at startup by `cmd/gateway/agentrouting.go:24`. None of them is expanded by the loader.
+The in-YAML indirections are the connector `secret_ref` field (`env:NAME` or `file:/path`, `contracts/config/connectors.go:123-125`) and the connector auth `*_ref` fields (`access_key_id_ref`, `secret_access_key_ref`, `external_id_ref`, `sas_token_ref`, `account_key_ref` — `contracts/config/connectors.go:148-174`), all resolved by the connector factory when the destination is built, plus `advisors.<name>.hmac_secret_file` (`contracts/config/advisors.go:45-49`), a file path read once at startup by `cmd/gateway/agentrouting.go:24`. None of them is expanded by the loader.
 
 The two intentional exceptions are `SLIPSPACE_ADMIN_PASSWORD` (kept out of YAML for production hygiene) and the server-level `SLIPSPACE_*` env vars (not in YAML at all). See [environment-variables.md](environment-variables.md).
 
