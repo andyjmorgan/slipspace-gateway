@@ -166,7 +166,7 @@ On each wake, the worker lists `sealed/` (chronological order by filename), and 
 2. Call `Connector.Upload(ctx, SealedSegment{...})`. The struct ([`contracts/connector/sealed.go`](../contracts/connector/sealed.go)) declares eight fields — `Path`, `Bytes`, `BytesUncompressed`, `Records`, `TsMinNs`, `TsMaxNs`, `DeliveryID`, `Connector` — but the uploader populates only `Path`, `DeliveryID`, and `Connector` ([`internal/spool/track.go`](../internal/spool/track.go), `uploadOne`); the size, count, and time-range fields arrive zero, which is why connectors fall back to their upload clock for the `date=` / `hour=` partition ([#440](https://github.com/andyjmorgan/slipspace-gateway/issues/440)).
 3. On success → `Manager.Complete` removes the file from `uploading/`.
 4. On `*cc.Permanent` error → `Manager.Deadletter` moves the file to `deadletter/`.
-5. On `*cc.Retryable` error → sleep with backoff, retry, up to the per-segment cap. On the final failure, move to `deadletter/`.
+5. On any error that is **not** `*cc.Permanent` → sleep with backoff, retry, up to the per-segment cap. On the final failure, move to `deadletter/`. The uploader only calls `cc.IsPermanent` ([`internal/spool/track.go`](../internal/spool/track.go), `uploadOne`) — it never calls `cc.IsRetryable` — so an untyped error from a connector is treated as retryable, matching the `connector.Connector` interface contract ([`internal/connector/connector.go`](../internal/connector/connector.go)).
 
 Retry backoff defaults (the `RetryOpts` tunables in [`internal/spool/options.go`](../internal/spool/options.go); the `fullJitter` / `nextBackoff` algorithm lives in [`internal/spool/backoff.go`](../internal/spool/backoff.go)):
 
