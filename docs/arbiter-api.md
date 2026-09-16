@@ -461,6 +461,18 @@ Handler `handleEventBody` (`query.go`). Returns just the decoded verbatim
 attempts). `404 {"error":"no record"}` when none was pushed (reporting forwarding
 off, or not yet arrived).
 
+#### `GET /api/v1/events/{id}/span`
+
+Handler `handleEventSpan` (`sessionspans.go`, registered at `query.go`). The
+un-scoped single-span lookup: the same `contracts/admin.SessionSpan` element
+`GET /api/v1/sessions/{id}/spans/{cid}` serves — content bodies included, still
+per-field capped at `span_field_max_bytes` — but reached by correlation id
+alone, because the message browser's rows are not guaranteed a session id and
+so cannot route through the session-scoped form. Basic-auth + gzip gated like
+every other query route. `404 {"error":"span not found"}` when the correlation
+id is unknown (a record-only event), so the client can degrade to the Report
+tab.
+
 #### `GET /api/v1/sessions`
 
 Handler `handleSessions`. The session-discovery list — a keyset page of session
