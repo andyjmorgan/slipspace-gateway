@@ -204,7 +204,7 @@ Defaults (see [`internal/spool/options.go`](../internal/spool/options.go) `Break
 
 The breaker is independent of the spool record's `policy_ref` / `attempts` (those are *resilience policies on the upstream request path*, not on connector delivery). Two different abstractions, both called "circuit breaker" — one watches upstream providers per-request, the other watches connector destinations per-segment.
 
-The breaker state is tracked per track in `Spool.Stats()`, but the `Stats` map's value type (`trackStats`) is unexported and the method currently has no caller outside `internal/spool` — there is no admin UI, no `/metrics` gauge, and no operator-readable surface for breaker state today. Reading it requires a code change that exports the per-track stats or bridges them to an OTel meter.
+The breaker state is tracked per track in `Spool.Stats()`, which returns a `Stats` struct whose `Tracks` field is a `map[string]trackStats` — the value type (`trackStats`) is unexported, so external callers can read the map but cannot name or destructure the value, and the method currently has no caller outside `internal/spool` — there is no admin UI, no `/metrics` gauge, and no operator-readable surface for breaker state today. Reading it requires a code change that exports the per-track stats or bridges them to an OTel meter.
 
 ---
 
