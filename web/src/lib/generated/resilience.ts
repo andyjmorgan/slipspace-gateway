@@ -72,8 +72,11 @@ export const BackoffExponential: BackoffType = "exponential";
  */
 export interface ResilienceConfig {
   /**
-   * Name is required; the human anchor used by logs, dashboards, and
-   * Configuration.ResilienceName references.
+   * Name is required; the human anchor used by logs, dashboards, and the
+   * `policy` metric label. Under v2 it is the group name for a group
+   * binding, or "binding:<provider>" for the degenerate single-target
+   * config synthesised for a single-provider binding (that form emits no
+   * gateway.resilience.* metrics).
    */
   name: string;
   /**
@@ -87,8 +90,10 @@ export interface ResilienceConfig {
    */
   mode: ResilienceMode;
   /**
-   * TimeoutSeconds bounds the wall-clock duration of a single orchestrated
-   * attempt. Zero means no overall timeout.
+   * TimeoutSeconds is parsed and validated but currently unwired: the
+   * orchestrator derives no context deadline from it (see
+   * internal/middleware/resilience/middleware.go). Only
+   * ResponseHeaderTimeoutSeconds bounds an attempt.
    */
   timeout_seconds?: number /* int */;
   /**
@@ -102,7 +107,9 @@ export interface ResilienceConfig {
    */
   circuit_breaker?: CircuitBreakerConfig;
   /**
-   * Retry configures retry attempts and backoff. Nil disables retries.
+   * Retry is parsed and validated but currently unwired: the orchestrator
+   * implements no backoff or attempt budget; retry means advancing to the
+   * next target.
    */
   retry?: RetryConfig;
   /**
@@ -131,8 +138,9 @@ export interface ResilienceConfig {
   /**
    * FailureStatusCodes is the policy-wide retry-trigger set. Per-target
    * FailureStatusCodes on ResilienceTarget overrides this list for the
-   * target it lives on. Empty falls back to "5xx is a failure" at the
-   * orchestrator.
+   * target it lives on. Empty falls back to the orchestrator's default
+   * retry set [500, 502, 503, 504] (see defaultFailureStatusCodes in
+   * internal/middleware/resilience/middleware.go) — not every 5xx.
    */
   failure_status_codes?: number /* int */[];
 }
@@ -147,8 +155,12 @@ export interface ResilienceTarget {
    */
   name: string;
   /**
-   * Provider is the provider name (from providers.yaml) the orchestrator
-   * dispatches to when this target is selected.
+   * Provider is the provider name (from providers.yaml) this target names.
+   * It is parsed, validated (ErrEmptyProvider, validate.go) and projected
+   * by the admin /policies view, but the orchestrator never reads it:
+   * per-attempt provider switching happens only through Actions, via a
+   * rules.ChangeProviderAction synthesised from the selected binding
+   * (providerSwitchActions, cmd/gateway/destination.go).
    */
   provider: string;
   /**
@@ -163,20 +175,27 @@ export interface ResilienceTarget {
    */
   weight?: number /* int */;
   /**
-   * TimeoutSeconds bounds a single attempt against this target. Overrides
-   * the parent ResilienceConfig.TimeoutSeconds for this target only.
+   * TimeoutSeconds is parsed and validated but currently unwired: the
+   * orchestrator derives no context deadline from it (see
+   * internal/middleware/resilience/middleware.go). Only
+   * ResilienceConfig.ResponseHeaderTimeoutSeconds bounds an attempt.
    */
   timeout_seconds?: number /* int */;
   /**
-   * ModelRewrite, when non-empty, rewrites the request body's model field
-   * to this value when this target is selected. Enables cross-provider
-   * failover with provider-specific model names.
+   * ModelRewrite is parsed and validated but currently unwired: the
+   * orchestrator never reads it (see
+   * internal/middleware/resilience/middleware.go), and nothing authorable
+   * can set it — contracts/config.Target has no model_rewrite key.
+   * Per-attempt model rewriting happens only through Actions, via a
+   * rules.ChangeModelNameAction synthesised from a v2 group target's
+   * alias (providerSwitchActions, cmd/gateway/destination.go).
    */
   model_rewrite?: string;
   /**
    * FailureStatusCodes is the explicit list of upstream HTTP status codes
    * treated as a failure for retry/circuit-breaker accounting. Empty
-   * defaults to "5xx is a failure".
+   * defers to the parent ResilienceConfig.FailureStatusCodes and then to
+   * the orchestrator default [500, 502, 503, 504] — not every 5xx.
    */
   failure_status_codes?: number /* int */[];
   /**
@@ -190,10 +209,11 @@ export interface ResilienceTarget {
    * Reuses the rules engine's Action vocabulary — a target's actions
    * are exactly the same shape a rule may carry, so the orchestrator
    * dispatches through the existing applyAction machinery.
-   * Coexists with the legacy scalar fields (Provider, ModelRewrite,
-   * FailureStatusCodes). When both are present, Actions wins for the
-   * fields it covers; the v1.0 schema is preserved so existing YAML
-   * keeps working untouched.
+   * Actions is the sole mechanism the orchestrator honours for
+   * destination mutation; the scalar Provider and ModelRewrite fields are
+   * inert. No v2 YAML block authors a ResilienceTarget directly — groups
+   * are the authorable shape, and targets are machine-synthesised
+   * (cmd/gateway/destination.go).
    */
   actions?: Record<string, unknown>[];
 }

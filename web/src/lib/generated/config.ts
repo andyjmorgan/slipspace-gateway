@@ -614,8 +614,10 @@ export interface Group {
   mode: string;
   /**
    * FailureStatusCodes is the upstream HTTP status set treated as a failure
-   * for retry / circuit-breaker accounting. Empty falls back to "5xx is a
-   * failure".
+   * for retry / circuit-breaker accounting. Empty falls back to the
+   * orchestrator default set [500, 502, 503, 504]
+   * (internal/middleware/resilience/middleware.go
+   * defaultFailureStatusCodes) — not every 5xx.
    */
   failure_status_codes?: number /* int */[];
   /**
@@ -698,8 +700,8 @@ export interface Binding {
   /**
    * Models is the client-requested model patterns this binding matches.
    * Trailing-`*` wildcard, reusing the connector-filter matcher. Surface is
-   * default-permissive and opt-in (invariant #1): an empty model set is a
-   * catch-all for the protocol, never a default-deny.
+   * default-permissive: an empty model set is a catch-all for the protocol,
+   * never a default-deny (see internal/selection.matchesModelPatterns).
    */
   models?: string[];
   /**
@@ -784,8 +786,11 @@ export interface Configuration {
    */
   rule_names?: string[];
   /**
-   * Tags are labels propagated to telemetry for every request under this
-   * configuration.
+   * Tags are operator labels on the configuration itself. They are surfaced
+   * by the admin configuration detail API (internal/admin/config_handlers.go)
+   * only — they are not attached to per-request state, Record.Tags, or
+   * gateway.tags.applied.total; per-request tags come from the addTag action,
+   * binding-level tags, and agent-route tags (cmd/gateway/pipeline.go).
    */
   tags?: { [key: string]: string};
   /**
@@ -1004,7 +1009,10 @@ export const DefaultSystemInstructionsMaxBytes = 32 * 1024;
  */
 export const DefaultToolDefinitionsMaxBytes = 64 * 1024;
 /**
- * Telemetry is the `telemetry:` top-level block in admin.yaml. Carries
+ * Telemetry is the `telemetry:` top-level block. Like every top-level
+ * key it may be authored in any file in the config directory
+ * (admin.yaml by convention); the writer falls back to policy.yaml for
+ * a block with no recorded SourceFiles origin. Carries
  * operator-tunable knobs that shape what the gateway emits to its
  * telemetry signals without changing the wire path or the connector
  * spool. Today it only nests ContentCapture; the block exists so future
