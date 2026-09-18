@@ -51,9 +51,9 @@ func buildDataPlaneHandler(
 	h = resiliencemw.HTTPHandler(nil, breakers, meters, h)
 	h = rules.HTTPHandler(evaluator, nil, observerFactory, h)
 	h = selectionMiddleware(store, agentRouter, errs, h)
-	h = bodycapture.HTTPHandler(kindFromProtocol, redactor, h)
-	h = auth.HTTPHandler(resolver, h)
-	h = protocolMiddleware(h)
+	h = bodycapture.HTTPHandler(kindFromProtocol, redactor, completionCheckpoint(h))
+	h = auth.HTTPHandler(resolver, completionCheckpoint(h))
+	h = protocolMiddleware(completionCheckpoint(h))
 	return h
 }
 

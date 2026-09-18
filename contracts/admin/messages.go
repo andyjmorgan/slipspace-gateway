@@ -67,6 +67,12 @@ type MessageEntry struct {
 	// distinguish a model list from a completion at a glance.
 	Method string `json:"method,omitempty"`
 
+	// Path is the inbound URL path, excluding query parameters.
+	Path string `json:"path,omitempty"`
+
+	// GatewayError describes a local rejection, distinct from an upstream failure.
+	GatewayError string `json:"gateway_error,omitempty"`
+
 	// Configuration is the resolved configuration name. Empty for
 	// passthrough requests against an unknown configuration.
 	Configuration string `json:"configuration,omitempty"`

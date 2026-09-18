@@ -33,9 +33,10 @@ export const DefaultBindAddr = "0.0.0.0:8081";
  * Config is the `admin:` top-level block of admin.yaml.
  * The console is off by default. When Enabled is true, the gateway
  * starts a second http.Server bound to BindAddr (or DefaultBindAddr)
- * serving the embedded SPA at "/" and the control-plane API under
- * "/api/v1/*". HTTP Basic auth protects the API; the SPA's static
- * assets are public.
+ * serving the embedded SPA at "/admin/" and the control-plane API
+ * under "/admin/api/v1/*" (internal/admin.Prefix). HTTP Basic auth
+ * protects the API except GET /admin/api/v1/version; the SPA's
+ * static assets are public.
  * Password resolution prefers the EnvPassword env var when set;
  * otherwise it reads the Password field. This lets production
  * deployments keep the secret in a k8s Secret (mounted as env) while
@@ -691,6 +692,14 @@ export interface MessageEntry {
    */
   method?: string;
   /**
+   * Path is the inbound URL path, excluding query parameters.
+   */
+  path?: string;
+  /**
+   * GatewayError describes a local rejection, distinct from an upstream failure.
+   */
+  gateway_error?: string;
+  /**
    * Configuration is the resolved configuration name. Empty for
    * passthrough requests against an unknown configuration.
    */
@@ -745,8 +754,10 @@ export interface MessageEntry {
   policy_ref?: string;
   /**
    * Attempts is the per-attempt orchestrator record. Populated only
-   * for requests bound to a resilience policy; the SPA renders an
-   * expansion table in the modal when len > 1.
+   * for requests the resilience orchestrator ran multi-target (a
+   * single-shot ModeNone binding installs no attempt buffer, so it
+   * stays empty); the SPA renders the attempt table whenever the
+   * slice is non-empty.
    */
   attempts?: AttemptHit[];
 }
@@ -1071,16 +1082,17 @@ export interface PoliciesResponse {
   policies: PolicySummary[];
 }
 /**
- * PolicySummary is one resilience policy's surface — name, mode, the
+ * PolicySummary is one v2 resilience group's surface — name, mode, the
  * list of targets, and per-target breaker state. Fields mirror
  * contracts/resilience.ResilienceConfig but project to a read-friendly
- * shape (no nested action polymorphism, no per-policy CB cfg in this
+ * shape (no nested action polymorphism, no per-group CB cfg in this
  * summary — those are part of the v1.3 detail endpoint).
  */
 export interface PolicySummary {
   /**
-   * Name is the policy identifier used by rules to bind via
-   * useResiliencePolicy.
+   * Name is the group name from the top-level groups block;
+   * configurations reach it through a binding's group field (the
+   * v1 useResiliencePolicy rule action is inert in v2).
    */
   name: string;
   /**
@@ -1137,9 +1149,12 @@ export interface PolicyTarget {
   weight?: number /* int */;
   /**
    * CircuitState is the current breaker state per the in-process
-   * store: "closed", "open", "half_open", or "unknown" when the
-   * store has not observed this (policy, target) pair yet. The
-   * SPA renders this as a coloured badge in the per-target row.
+   * store: "closed", "open", or "half_open". A (policy, target)
+   * pair the store has not observed yet reports "closed" —
+   * BreakerStore.State semantics. "unknown" appears only when the
+   * gateway has no breaker source wired at all (partial boot),
+   * never per-target. The SPA renders this as a coloured badge in
+   * the per-target row.
    */
   circuit_state: string;
 }

@@ -219,6 +219,8 @@ func toMessageEntry(e livefeed.Entry) adminc.MessageEntry {
 		Protocol:             e.Protocol,
 		Model:                e.Model,
 		Method:               e.Method,
+		Path:                 e.Path,
+		GatewayError:         e.GatewayError,
 		Configuration:        e.Configuration,
 		StatusCode:           e.StatusCode,
 		DurationMs:           e.DurationMs,
