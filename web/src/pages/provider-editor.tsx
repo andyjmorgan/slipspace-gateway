@@ -53,6 +53,7 @@ type ProtocolDraft = {
 }
 
 type PassthroughPathDraft = {
+  path: string
   match: string
   methods: string[]
 }
@@ -98,7 +99,7 @@ function formFromDetail(d: ProviderDetail): ProviderFormState {
     passthrough: (d.passthrough ?? []).map((f) => ({
       name: f.name,
       authHeader: f.auth_header ?? "",
-      paths: f.paths.map((pp) => ({ match: pp.match, methods: pp.methods.slice() })),
+      paths: f.paths.map((pp) => ({ match: pp.match, path: pp.path ?? "", methods: pp.methods.slice() })),
     })),
   }
 }
@@ -135,7 +136,7 @@ function toWriteBody(form: ProviderFormState): ProviderWriteBody {
         auth: f.authHeader.trim() ? { header: f.authHeader.trim() } : undefined,
         paths: f.paths
           .filter((pp) => pp.match.trim() !== "")
-          .map((pp) => ({ match: pp.match.trim(), methods: stringsFromList(pp.methods) })),
+          .map((pp) => ({ match: pp.match.trim(), path: pp.path.trim() || undefined, methods: stringsFromList(pp.methods) })),
       }
     }
   }
@@ -486,6 +487,11 @@ function PassthroughCard({
                 copy[i] = { ...copy[i], match: v }
                 onChange({ ...draft, paths: copy })
               }} placeholder="/v1/messages/batches" mono />
+              <TextField label="Upstream path (optional)" value={pp.path} onChange={(v) => {
+                const copy = draft.paths.slice()
+                copy[i] = { ...copy[i], path: v }
+                onChange({ ...draft, paths: copy })
+              }} placeholder="Same as incoming path" mono />
               <StringListEditor
                 label="Methods"
                 values={pp.methods}
@@ -501,7 +507,7 @@ function PassthroughCard({
           ))}
           <button
             type="button"
-            onClick={() => onChange({ ...draft, paths: [...draft.paths, { match: "", methods: [] }] })}
+            onClick={() => onChange({ ...draft, paths: [...draft.paths, { match: "", path: "", methods: [] }] })}
             className="self-start text-[11.5px] text-[color:var(--text-3)] hover:text-[color:var(--text)]"
           >
             + Add path

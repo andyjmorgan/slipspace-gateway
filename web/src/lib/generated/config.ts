@@ -585,6 +585,12 @@ export interface PassthroughFamily {
  */
 export interface PassthroughPath {
   /**
+   * Path optionally replaces the inbound path before appending it to the
+   * provider base URL. Empty preserves the inbound path. Captured placeholders
+   * such as {id} are substituted just like generative protocol paths.
+   */
+  path?: string;
+  /**
    * Match is the inbound path pattern, optionally containing `{name}`
    * placeholders.
    */

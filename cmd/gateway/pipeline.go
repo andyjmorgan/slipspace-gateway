@@ -261,7 +261,11 @@ func buildPassthroughDestination(
 		return proxy.Destination{}, err
 	}
 	upstream := *base
-	upstream.Path = joinPaths(base.Path, inboundPath)
+	path := inboundPath
+	if pm.Path != "" {
+		path = substitutePlaceholders(pm.Path, pm.Params)
+	}
+	upstream.Path = joinPaths(base.Path, path)
 	upstream.RawPath = ""
 
 	q := inboundQuery

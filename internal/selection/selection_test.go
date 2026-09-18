@@ -214,10 +214,16 @@ func TestResolveTarget(t *testing.T) {
 func TestMatchPassthrough_ExactAndParams(t *testing.T) {
 	m := loadGolden(t)
 	cfg := m.Configurations["production"]
+	family := m.Providers["anthropic"].Passthrough["messages_batches"]
+	family.Paths[0].Path = "/mapped/batches"
+	m.Providers["anthropic"].Passthrough["messages_batches"] = family
 
 	pm, err := selection.MatchPassthrough("POST", "/v1/messages/batches", cfg, m.Providers)
 	if err != nil {
 		t.Fatalf("passthrough: %v", err)
+	}
+	if pm.Path != "/mapped/batches" {
+		t.Errorf("mapped path = %q", pm.Path)
 	}
 	if pm.Provider != "anthropic" || pm.Family != "messages_batches" {
 		t.Errorf("match = %+v", pm)

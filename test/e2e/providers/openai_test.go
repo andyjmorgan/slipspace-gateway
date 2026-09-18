@@ -161,3 +161,24 @@ func TestOpenAI_Models_List(t *testing.T) {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
 }
+
+func TestOpenAI_ModelsMappedPath(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+	canned := `{"models":[{"slug":"example"}]}`
+	h.StageMockResponse(harness.CannedResponse{Method: http.MethodGet, Path: "/v1/models", Status: http.StatusOK, Body: canned})
+	headers := http.Header{"X-Slipspace-Configuration": {"dev"}, "Authorization": {"Bearer test-oauth"}, "Chatgpt-Account-Id": {"test-account"}}
+	resp := h.Get("/discovery/models?client_version=0.154.0", headers)
+	if resp.StatusCode != http.StatusOK || string(resp.Body) != canned {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
+	}
+	captured := h.LastCapturedRequest()
+	if captured.Path != "/v1/models" || captured.Query != "client_version=0.154.0" {
+		t.Fatalf("destination path=%q query=%q", captured.Path, captured.Query)
+	}
+	for key, want := range map[string]string{"Authorization": "Bearer test-oauth", "Chatgpt-Account-Id": "test-account"} {
+		if captured.Headers[key] != want {
+			t.Errorf("header %s = %q", key, captured.Headers[key])
+		}
+	}
+}

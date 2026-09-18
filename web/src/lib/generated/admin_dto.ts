@@ -127,6 +127,7 @@ export interface PassthroughFamilyRow {
  * passthrough family.
  */
 export interface PassthroughPathRow {
+  path?: string;
   match: string;
   methods: string[];
 }

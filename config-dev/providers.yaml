@@ -28,6 +28,9 @@ providers:
         paths:
           - match: /v1/models
             methods: [GET]
+          - match: /discovery/models
+            path: /v1/models
+            methods: [GET]
 
   anthropic:
     base_url: http://mockllm:5555

@@ -45,7 +45,7 @@ func fixtureResolved(t *testing.T) *config.ResolvedConfig {
 					"messages_batches": {
 						Auth: &contractsconfig.ProviderAuth{Header: "x-api-key", Format: "{key}"},
 						Paths: []contractsconfig.PassthroughPath{
-							{Match: "/v1/messages/batches", Methods: []string{"POST", "GET"}},
+							{Match: "/v1/messages/batches", Path: "/messages/batches", Methods: []string{"POST", "GET"}},
 						},
 					},
 				},
@@ -362,6 +362,9 @@ func TestProviderDetailHandler_IncludesProtocolsAndPassthrough(t *testing.T) {
 	}
 	if len(got.Passthrough) != 1 || got.Passthrough[0].Name != "messages_batches" {
 		t.Errorf("Passthrough = %+v", got.Passthrough)
+	}
+	if got.Passthrough[0].Paths[0].Path != "/messages/batches" {
+		t.Errorf("lost upstream mapping: %+v", got.Passthrough[0].Paths)
 	}
 }
 
