@@ -216,17 +216,11 @@ func run(ctx context.Context) error {
 	agentRouter := buildAgentRouter(store.Snapshot(), logger)
 	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, observerFactory, store, breakers, agentRouter, obs.Meters, errs, redactor, logger)
 
-	// responseCaptureMiddleware sits between recover and the data
-	// plane so every panic is still logged, but the per-request
-	// response buffer is allocated before any handler runs. Nil-safe
-	// when bodies are disabled — the wrapper degrades to passthrough.
-	captured := responseCaptureMiddleware(env.AdminLiveFeedBodyMaxBytes, bodyStore != nil, redactor, dataPlane)
-
-	// recoverMiddleware sits between correlation (so the captured
-	// log carries the correlation_id) and the data-plane chain, so
-	// any panic in routing/auth/bodycapture/rules/forwarder is
-	// converted to a logged 500 instead of crashing the goroutine.
-	root := correlationMiddleware(logger, sessionResolver, conversationResolver, parentResolver, agentResolver, userResolver, redactor, recoverMiddleware(obs.Meters, errs, captured))
+	// Capture wraps completion + recovery so even locally rejected requests
+	// and recovered panics have a response body available to Live Messages.
+	captured := responseCaptureMiddleware(env.AdminLiveFeedBodyMaxBytes, bodyStore != nil, redactor,
+		reporter.requestCompletionMiddleware(recoverMiddleware(obs.Meters, errs, dataPlane)))
+	root := correlationMiddleware(logger, sessionResolver, conversationResolver, parentResolver, agentResolver, userResolver, redactor, captured)
 
 	srv := server.New(server.Options{
 		Bind:         env.HTTPBind,

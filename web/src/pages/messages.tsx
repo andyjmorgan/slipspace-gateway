@@ -352,7 +352,7 @@ function Row({
               {entry.method}
             </span>
           )}
-          <span className="mono text-[color:var(--text-3)]">{entry.protocol ?? "—"}</span>
+          <span className="mono text-[color:var(--text-3)]">{entry.protocol || entry.path || "—"}</span>
           {entry.streaming && (
             <span className="mono text-[10px] uppercase text-[color:var(--text-4)]">
               sse
@@ -608,6 +608,7 @@ function MessageModal({
         <Field label="Streaming" value={entry.streaming ? "yes" : "no"} />
         <Field label="Provider" value={entry.provider ?? "—"} />
         <Field label="Method" value={entry.method ?? "—"} />
+        <Field label="Path" value={entry.path ?? "—"} />
         <Field label="Protocol" value={entry.protocol ?? "—"} />
         <Field label="Model" value={entry.model ?? "—"} />
         <Field label="Configuration" value={entry.configuration ?? "—"} />
@@ -615,6 +616,12 @@ function MessageModal({
         <Field label="Session source" value={entry.session_id_source ?? "—"} />
         <Field label="At" value={entry.at} />
       </dl>
+      {entry.gateway_error && (
+        <div className="mt-3 flex-none rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
+          <div className="mono text-[11px] uppercase text-[color:var(--err)]">gateway error</div>
+          <div className="mono mt-1 text-[color:var(--text-2)]">{entry.gateway_error}</div>
+        </div>
+      )}
       {entry.upstream_error && (
         <div className="mt-3 flex-none rounded-[var(--radius)] border border-[color:var(--err)] bg-[color:var(--err-bg)] p-2 text-[12.5px]">
           <div className="mono text-[11px] uppercase text-[color:var(--err)]">upstream error</div>

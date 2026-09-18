@@ -377,6 +377,20 @@ The SPA's router (`web/src/App.tsx`) protects every page behind `<ProtectedRoute
 
 ## Live messages ring
 
+Requests rejected before forwarding also appear here: authentication failures,
+malformed bodies, missing routes/model bindings, and recovered handler panics.
+Their entries include the method, URL path (without query parameters), client
+HTTP status, correlation/session IDs, and any metadata resolved before rejection.
+The `gateway_error` field distinguishes local failures from `upstream_error`;
+response bodies remain inspectable when body capture is enabled.
+
+The fallback writes to the local ring/SSE feed and emits a structured
+`request completed` log. Already-reported requests are not duplicated, including
+policy rejections and requests with retries. It does not synthesize GenAI spans
+or connector records for unauthenticated or unroutable requests. Existing error
+counters remain unchanged.
+
+
 `internal/observability/livefeed.Ring` is a bounded in-memory store of completed-request entries plus a fan-out broadcaster for SSE subscribers. Append is non-blocking — under load it takes the write lock briefly to insert and to copy the subscriber set, then sends to each subscriber off-lock with per-subscriber non-blocking sends. A slow consumer increments its own drop counter rather than back-pressuring the writer.
 
 ```mermaid

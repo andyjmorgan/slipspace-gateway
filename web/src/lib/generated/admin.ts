@@ -691,6 +691,14 @@ export interface MessageEntry {
    */
   method?: string;
   /**
+   * Path is the inbound URL path, excluding query parameters.
+   */
+  path?: string;
+  /**
+   * GatewayError describes a local rejection, distinct from an upstream failure.
+   */
+  gateway_error?: string;
+  /**
    * Configuration is the resolved configuration name. Empty for
    * passthrough requests against an unknown configuration.
    */

@@ -64,6 +64,12 @@ type Entry struct {
 	// completion at a glance.
 	Method string
 
+	// Path is the inbound URL path, excluding query parameters.
+	Path string
+
+	// GatewayError describes a failure before upstream reporting began.
+	GatewayError string
+
 	// Configuration is the resolved configuration name the request
 	// ran under. Cardinality is bounded by operator policy.
 	Configuration string

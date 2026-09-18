@@ -196,6 +196,7 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 			method:               labels.Method,
 			configuration:        labels.Configuration,
 			apiKeyName:           apiKeyName,
+			path:                 requestPath(ctx),
 			serverAddress:        serverAddress,
 			serverPort:           serverPort,
 			sessionID:            observability.SessionIDFromContext(ctx),
@@ -222,7 +223,9 @@ func (f *reporterFactory) Factory() proxy.ObserverFactory {
 // No internal locking is required to coordinate writes across the fields
 // below.
 type reporterRun struct {
-	factory *reporterFactory
+	path         string
+	gatewayError string
+	factory      *reporterFactory
 
 	// provider, protocol, model, configuration, apiKeyName are the
 	// routed labels captured at construction time from the request
@@ -553,6 +556,9 @@ func (r *reporterRun) emitUnmappedFields(ctx context.Context, counter metric.Int
 //     resolved configuration declares.
 //  5. Emit the structured request-completed log line.
 func (r *reporterRun) publishTerminalEvent(ctx context.Context, ev events.Request, ttfbMs int64) {
+	if state := completionFromContext(ctx); state != nil {
+		state.published = true
+	}
 	matches := r.drainRuleMatches(ctx, ev.CorrelationID)
 	r.recordRuleFired(ctx, matches)
 	// Reconstruct the streamed response once, here, then hand the same
@@ -907,6 +913,8 @@ func (r *reporterRun) appendLiveFeed(ev events.Request, matches []events.RuleMat
 		Protocol:             ev.Protocol,
 		Model:                ev.Model,
 		Method:               ev.Method,
+		Path:                 r.path,
+		GatewayError:         r.gatewayError,
 		Configuration:        r.configuration,
 		StatusCode:           ev.StatusCode,
 		DurationMs:           ev.DurationMs,
