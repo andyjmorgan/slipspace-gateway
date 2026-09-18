@@ -146,6 +146,7 @@ type PassthroughFamilyRow struct {
 // PassthroughPathRow is one path pattern + its accepted methods within a
 // passthrough family.
 type PassthroughPathRow struct {
+	Path  string `json:"path,omitempty"`
 	Match string `json:"match"`
 
 	Methods []string `json:"methods"`
@@ -317,6 +318,7 @@ func providerDetailFromContract(name string, b contractsconfig.Provider) Provide
 		for _, pp := range f.Paths {
 			fr.Paths = append(fr.Paths, PassthroughPathRow{
 				Match:   pp.Match,
+				Path:    pp.Path,
 				Methods: append([]string(nil), pp.Methods...),
 			})
 		}

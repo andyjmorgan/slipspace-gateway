@@ -286,6 +286,9 @@ func matchesModelPatterns(model string, patterns []string) bool {
 // typed Body is nil. Choosing a passthrough family is not a way to keep a
 // sensitive upstream's payloads out of the record.
 type PassthroughMatch struct {
+	// Path is the optional upstream path template; empty preserves the inbound path.
+	Path string
+
 	// Family is the passthrough family name (telemetry / diagnostics).
 	Family string
 
@@ -348,6 +351,7 @@ func MatchPassthrough(
 			cred := cfg.Credentials[pb.Provider]
 			return PassthroughMatch{
 				Family:          pb.Family,
+				Path:            pp.Path,
 				Provider:        pb.Provider,
 				BaseURL:         be.BaseURL,
 				Auth:            fam.Auth,

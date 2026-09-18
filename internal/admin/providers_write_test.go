@@ -294,3 +294,19 @@ func TestProvidersWrite_Disabled(t *testing.T) {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
 }
+
+func TestProvidersCreate_PassthroughPathPersists(t *testing.T) {
+	store, dir := newProvidersFixture(t)
+	body := `{"name":"discovery","base_url":"https://example.test/backend-api/codex","passthrough":{"models":{"paths":[{"match":"/v1/models","path":"/models","methods":["GET"]}]}}}`
+	rec := do(t, ProvidersCreateHandler(store, dir), http.MethodPost, "/api/v1/config/providers", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	reloaded, err := config.Load(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Providers["discovery"].Passthrough["models"].Paths[0].Path; got != "/models" {
+		t.Fatalf("persisted path=%q", got)
+	}
+}

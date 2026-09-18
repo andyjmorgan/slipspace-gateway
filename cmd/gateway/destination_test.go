@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"testing"
 
 	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
@@ -284,5 +285,30 @@ func TestBuildDestination_ChangeApiKeyOverrideKeepsMintedHeader(t *testing.T) {
 		if http.CanonicalHeaderKey(d) == http.CanonicalHeaderKey("x-api-key") {
 			t.Errorf("DropHeaders = %v contains the just-minted x-api-key", dest.DropHeaders)
 		}
+	}
+}
+
+func TestBuildPassthroughDestination_PathMapping(t *testing.T) {
+	for _, tc := range []struct{ name, path, want string }{
+		{"unchanged", "", "/backend-api/codex/v1/models"},
+		{"mapped", "/models", "/backend-api/codex/models"},
+		{"parameter", "/models/{id}", "/backend-api/codex/models/example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pm := selection.PassthroughMatch{Provider: "openai", BaseURL: "https://example.test/backend-api/codex", Path: tc.path, Params: map[string]string{"id": "example"}}
+			dest, err := buildPassthroughDestination(pm, "/v1/models", url.Values{"client_version": {"0.154.0"}}, auth.ModePassthrough, nil, "Bearer test-oauth", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dest.UpstreamURL.Path != tc.want {
+				t.Fatalf("path = %q, want %q", dest.UpstreamURL.Path, tc.want)
+			}
+			if dest.UpstreamURL.Query().Get("client_version") != "0.154.0" {
+				t.Fatal("lost client version")
+			}
+			if dest.OutgoingHeaders.Get("Authorization") != "Bearer test-oauth" {
+				t.Fatal("lost OAuth authorization")
+			}
+		})
 	}
 }

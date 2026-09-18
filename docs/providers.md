@@ -191,7 +191,7 @@ providers:
 | `auth` | no | Credential convention for the family ([`ProviderAuth`](#providerauth-fields)); `nil` defers to the provider-native default. Resolved through the same mint site as protocol auth. |
 | `paths` | yes | The inbound path patterns this family claims, each with the methods it accepts. A pattern may contain `{name}` placeholders (e.g. `/v1/messages/batches/{id}/results`). See [Passthrough families](#passthrough-families). |
 
-Each `paths[*]` entry is a [`PassthroughPath`](../contracts/config/model.go): `match` (the inbound pattern, required) and `methods` (the accepted HTTP methods, required).
+Each `paths[*]` entry is a [`PassthroughPath`](../contracts/config/model.go): `match` (the inbound pattern, required), `methods` (the accepted HTTP methods, required), and `path` (an optional upstream replacement path).
 
 ---
 
@@ -329,6 +329,12 @@ providers:
           - match: "/v1/messages/batches/{id}/results"
             methods: [GET]
 ```
+
+Each entry in `paths` may also specify an optional `path` to replace the inbound
+path before appending it to `base_url`. For example, `match: /v1/models` with
+`path: /models` forwards discovery to `/models` on the upstream. Omit `path` to
+preserve the inbound path. Captured `{name}` placeholders can be used in the
+replacement, and query parameters and authentication retain their usual behavior.
 
 A family is exposed on a Configuration through a `passthrough_binding`:
 
