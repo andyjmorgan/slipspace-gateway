@@ -16,9 +16,9 @@ import (
 //
 // depth tracks recursive descent into RuleGroup children; maxDepth
 // caps the cap operator-authored pathological YAML can reach. When
-// the cap is hit, the call returns false and signals via the
-// supplied groupDepthExceeded callback so the caller can increment
-// the gateway.rule.errors.total counter.
+// the cap is hit, the call returns false (not inverted by `not:`)
+// and signals via the supplied groupDepthExceeded callback so the
+// caller can increment the gateway.rule.errors.total counter.
 func matchCondition(
 	cond contractsrules.Condition,
 	gc GatewayContext,
@@ -42,7 +42,13 @@ func matchCondition(
 	case *contractsrules.BodyFieldCondition:
 		return invertIf(c.Not, matchBodyField(*c, gc))
 	case *contractsrules.RuleGroup:
-		return invertIf(c.Not, matchGroup(*c, gc, depth, maxDepth, groupDepthExceeded))
+		matched, exceeded := matchGroup(*c, gc, depth, maxDepth, groupDepthExceeded)
+		if exceeded {
+			// Depth-cap is a fail-closed sentinel, not a "no match".
+			// invertIf would turn it into a match when not: is set.
+			return false
+		}
+		return invertIf(c.Not, matched)
 	case *contractsrules.UnknownCondition:
 		return false
 	default:
@@ -193,33 +199,33 @@ func matchGroup(
 	gc GatewayContext,
 	depth, maxDepth int,
 	groupDepthExceeded func(),
-) bool {
+) (matched bool, depthExceeded bool) {
 	if depth >= maxDepth {
 		if groupDepthExceeded != nil {
 			groupDepthExceeded()
 		}
-		return false
+		return false, true
 	}
 	if len(g.Children) == 0 {
-		return false
+		return false, false
 	}
 	switch g.LogicalOperator {
 	case contractsrules.LogicalAnd:
 		for _, child := range g.Children {
 			if !matchCondition(child, gc, depth+1, maxDepth, groupDepthExceeded) {
-				return false
+				return false, false
 			}
 		}
-		return true
+		return true, false
 	case contractsrules.LogicalOr:
 		for _, child := range g.Children {
 			if matchCondition(child, gc, depth+1, maxDepth, groupDepthExceeded) {
-				return true
+				return true, false
 			}
 		}
-		return false
+		return false, false
 	default:
-		return false
+		return false, false
 	}
 }
 
