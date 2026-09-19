@@ -44,6 +44,7 @@ The published images are narrowly scoped — only the binaries that need to run 
 | Binary | Dockerfile | Published image | Notes |
 |---|---|---|---|
 | `gateway` | [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile) | `ghcr.io/andyjmorgan/slipspace-gateway` | Scratch image with the SPA bundle embedded. Exposes `:8585` (data plane) + `:8081` (admin). Runs as `65532:65532`. |
+| `arbiter` | [`deploy/docker/Dockerfile.arbiter`](../deploy/docker/Dockerfile.arbiter) | `ghcr.io/andyjmorgan/slipspace-arbiter` | Scratch image with the telemetry console SPA embedded. Exposes `:8686` (console + Record webhook) + `:8687` (OTLP gRPC). Runs as `65532:65532`, default `CMD ["-config", "/etc/slipspace/arbiter.yaml"]`. |
 | `mockllm` | [`deploy/docker/Dockerfile.mockllm`](../deploy/docker/Dockerfile.mockllm) | `ghcr.io/andyjmorgan/slipspace-mockllm` | Scratch image. Exposes `:5555`. Dev/test only — **never** for production traffic. |
 | `cli` | none | none | Runs locally via `go run ./cmd/cli` or as a `go install`'d binary. No container shape — it's an operator tool. |
 

@@ -48,7 +48,7 @@ Tests reading captured records **sort by `(ts_ns, instance_id, seq)`, never rece
 
 ## The matrix
 
-The grid below is the **coverage target**, not an enumerated cross product — the suite samples it (204 e2e test functions today) rather than running every cell:
+The grid below is the **coverage target**, not an enumerated cross product — the suite samples it (204 e2e test functions today, excluding the two `TestMain` bootstraps) rather than running every cell:
 
 - `(provider, endpoint)` ∈ {`openai.chat_completions`, `openai.responses`, `openai.models`, `anthropic.messages`, `anthropic.models`, `gemini.generate_content`, `gemini.models`}
 - variant ∈ {`streaming`, `non-streaming`, `success`, `error_4xx`, `error_5xx`, `malformed_response`, `slow_response`, `client_disconnect_mid_stream`}
