@@ -472,14 +472,16 @@ func TestBreaker_HalfOpen_AllowsProbesUntilThresholdRecorded(t *testing.T) {
 	}
 	store.RecordFailure("p", "t", cfg)
 	fc.Advance(2 * time.Second)
-	// v1.2 semantics: HalfOpen admits all probes; the
-	// success-counter drives closure. Any failure during HalfOpen
-	// immediately reopens.
+	// Threshold 2: two reserved probes, then the quota is exhausted
+	// until a Record* frees a slot or closes the breaker.
 	if !store.Allow("p", "t", cfg) {
 		t.Error("probe 1 not allowed during HalfOpen")
 	}
 	if !store.Allow("p", "t", cfg) {
 		t.Error("probe 2 not allowed during HalfOpen")
+	}
+	if store.Allow("p", "t", cfg) {
+		t.Error("probe 3 allowed; HalfOpen quota is 2")
 	}
 	store.RecordSuccess("p", "t", cfg)
 	store.RecordSuccess("p", "t", cfg)
@@ -500,34 +502,54 @@ func TestBreaker_HalfOpen_AllowReturnsFalseAfterSuccessThreshold(t *testing.T) {
 	}
 	store.RecordFailure("p", "t", cfg)
 	fc.Advance(2 * time.Second)
-	// First Allow transitions Open → HalfOpen and returns true
-	// (the probe quota check is < threshold, so 0 < 1 → true).
-	// We don't record a success — directly check that the next
-	// Allow with the quota exhausted (still 0 successes but
-	// counter not yet bumped) actually... hmm — the v1.2 design
-	// admits probes; quota check is in the success count, which
-	// is 0, so Allow stays true until we record N successes.
-	//
-	// To exercise the "quota exhausted → block" branch we need
-	// the counter to be at or above threshold without having
-	// transitioned to Closed yet. That only happens if the test
-	// observes the in-between state of "halfOpenSuccesses ==
-	// threshold but state hasn't transitioned." Since the
-	// implementation transitions inside RecordSuccess BEFORE
-	// returning, that observable in-between never exists from a
-	// caller's perspective.
-	//
-	// The code branch `b.halfOpenSuccesses >= threshold` is
-	// therefore defensive — it only fires if Allow is called
-	// after a RecordSuccess that triggered the transition but
-	// before some other accumulator nudged the state out of
-	// HalfOpen. Manual fabrication: drive the breaker by hand.
-	allowed := store.Allow("p", "t", cfg)
-	if !allowed {
+	// First Allow transitions Open → HalfOpen and reserves the
+	// only probe slot. Further Allows must fail closed until that
+	// probe records, even though halfOpenSuccesses is still 0.
+	if !store.Allow("p", "t", cfg) {
 		t.Error("Allow should return true on first HalfOpen probe")
 	}
 	if store.State("p", "t") != StateHalfOpen {
 		t.Fatal("setup: expected HalfOpen")
+	}
+	if store.Allow("p", "t", cfg) {
+		t.Error("Allow should return false while the single probe is in flight")
+	}
+}
+
+func TestBreaker_HalfOpen_ProbeQuotaConcurrent(t *testing.T) {
+	fc := withFakeClock(t)
+	store := NewInMemoryBreakerStore(nil)
+	cfg := &contractsres.CircuitBreakerConfig{
+		Enabled:                  true,
+		FailureThreshold:         1,
+		MinimumThroughput:        1,
+		CooldownSeconds:          1,
+		HalfOpenSuccessThreshold: 1,
+	}
+	store.RecordFailure("p", "t", cfg)
+	fc.Advance(2 * time.Second)
+
+	const n = 200
+	var admitted atomic.Int32
+	var wg sync.WaitGroup
+	wg.Add(n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			if store.Allow("p", "t", cfg) {
+				admitted.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if got := admitted.Load(); got != 1 {
+		t.Errorf("admitted = %d; want 1 (half_open_success_threshold)", got)
+	}
+	if store.State("p", "t") != StateHalfOpen {
+		t.Errorf("state = %v; want HalfOpen", store.State("p", "t"))
 	}
 }
 
