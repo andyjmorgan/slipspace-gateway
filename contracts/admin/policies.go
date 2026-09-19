@@ -42,7 +42,9 @@ type PolicySummary struct {
 	StrictWeights bool `json:"strict_weights,omitempty"`
 
 	// FailureStatusCodes is the policy-level retry set. Empty when
-	// the policy falls back to the orchestrator default 5xx-class.
+	// the policy falls back to the orchestrator default retry set
+	// [500, 502, 503, 504] (defaultFailureStatusCodes in
+	// internal/middleware/resilience/middleware.go) — not every 5xx.
 	FailureStatusCodes []int `json:"failure_status_codes,omitempty"`
 
 	// CircuitBreakerEnabled is true when the policy declares a
@@ -65,12 +67,15 @@ type PolicyTarget struct {
 	// when no per-target Actions override it.
 	Provider string `json:"provider,omitempty"`
 
-	// Order is the failover target order (lower is tried first).
-	// Always zero in load_balance modes.
+	// Order is the target's 1-based declaration position within the
+	// group, populated in every mode. Declaration order is what drives
+	// failover sequencing (lower is tried first); it carries no meaning
+	// in load_balance modes.
 	Order int `json:"order,omitempty"`
 
-	// Weight is the load_balance weighted-random share. Always zero
-	// in failover mode.
+	// Weight is the authored per-target load_balance share, passed
+	// through verbatim in every mode. The orchestrator ignores it in
+	// failover mode.
 	Weight int `json:"weight,omitempty"`
 
 	// CircuitState is the current breaker state per the in-process

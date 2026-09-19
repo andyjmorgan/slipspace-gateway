@@ -108,7 +108,7 @@ func providerSwitchActions(provider, alias string) []contractsrules.Action {
 //
 // pathParams carries the named substitutions for the path template (Gemini's
 // {model}/{op}); the body-model aliasing for the body-keyed protocols is handled
-// by the body-rewrite stage, not here.
+// by the changeModelName rule action plus the body re-marshal stage, not here.
 func buildDestination(
 	target selection.Target,
 	pathParams map[string]string,

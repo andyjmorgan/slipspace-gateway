@@ -149,8 +149,9 @@ func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, e
 			}
 			ctx = withPassthroughMatch(ctx, pm)
 			// Rules condition on the passthrough family name as the
-			// "endpoint" (e.g. messages_batches), since a passthrough request
-			// has no generative protocol.
+			// `protocol` (e.g. messages_batches), since a passthrough request
+			// has no generative protocol. The retired `endpoint` condition
+			// type is rejected at config load.
 			state := rules.NewMutableState(pm.Provider, pm.Family, r.URL.Path, pm.Params, r.Header)
 			for _, t := range pm.Tags {
 				state.AddTag(t)
@@ -244,9 +245,11 @@ func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, e
 }
 
 // buildPassthroughDestination resolves the opaque-proxy destination: the
-// inbound path is forwarded verbatim under the provider base URL, the inbound
-// query is preserved with the provider's default query overlaid, and the family
-// auth convention is applied at the single credential mint site.
+// upstream path is the family path's `path` template (placeholder-substituted
+// from the captured params) when that PassthroughPath sets one, and the
+// verbatim inbound path otherwise; the inbound query is preserved with the
+// provider's default query overlaid, and the family auth convention is applied
+// at the single credential mint site.
 func buildPassthroughDestination(
 	pm selection.PassthroughMatch,
 	inboundPath string,

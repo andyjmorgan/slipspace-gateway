@@ -568,7 +568,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 	return m, nil
 }
 
-// CircuitBreakerStateSource is the read interface NewCircuitBreakerStateGauge
+// CircuitBreakerStateSource is the read interface RegisterCircuitBreakerStateGauge
 // needs to populate the cb.state ObservableGauge at collection time. The
 // resilience BreakerStore implements this; the indirection keeps this
 // package free of the resilience import cycle.
@@ -590,8 +590,8 @@ type CircuitBreakerSnapshot struct {
 	// State is the numeric breaker state (0=closed, 1=open,
 	// 2=half_open).
 	State int64
-	// StateName is the human-readable form for the to_state metric
-	// label / dashboard tooltip.
+	// StateName is the human-readable form emitted as the state_name
+	// attribute on the gateway.cb.state gauge / dashboard tooltip.
 	StateName string
 }
 

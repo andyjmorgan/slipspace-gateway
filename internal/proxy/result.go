@@ -2,12 +2,12 @@ package proxy
 
 import "net/http"
 
-// Result reports the outcome of a single Forward call. The orchestrator
-// in v1.2+ inspects Result to decide whether to commit to the client's
-// response or try the next target; today's single-shot callers can
-// ignore it entirely (the in-flight 502-on-transport-error behaviour is
-// preserved automatically by ErrorHandler when the ResponseWriter is
-// not a BufferingResponseWriter).
+// Result reports the outcome of a single Forward call. The resilience
+// orchestrator inspects it to decide whether to commit to the client's
+// response or try the next target. Every gateway request goes through
+// the orchestrator; direct callers and tests that pass a bare
+// ResponseWriter can ignore Result — ErrorHandler writes the 502 on
+// transport error in that case.
 //
 // Field semantics:
 //

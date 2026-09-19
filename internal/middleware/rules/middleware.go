@@ -208,21 +208,22 @@ func WithMutableState(ctx context.Context, s *MutableState) context.Context {
 	return context.WithValue(ctx, mutableStateKey{}, s)
 }
 
-// withSyntheticOutcome stashes a terminating Result on ctx so the
-// per-request reporter observer can read the rule-derived status
-// code and record it on gateway.request. The middleware writes the
-// outcome here right before the synthetic response goes out so the
-// reporter's OnComplete (invoked from the same goroutine after the
-// write) sees the correct status.
+// withSyntheticOutcome stashes a terminating Result on ctx for
+// diagnostics and tests. It is not how the synthetic status reaches
+// telemetry: driveSyntheticLifecycle passes resp.StatusCode straight
+// to the observer's OnResponseHeaders/OnComplete, so gateway.request
+// already carries the rule-derived status without this handoff.
 func withSyntheticOutcome(ctx context.Context, r Result) context.Context {
 	return context.WithValue(ctx, syntheticOutcomeKey{}, r)
 }
 
 // SyntheticOutcomeFromContext returns the terminating Result the
 // rules middleware wrote, or the zero value when the request was
-// forwarded normally. The reporter uses this to override
-// status_code on the gateway.request event for synthetic
-// responses.
+// forwarded normally. The synthetic status reaches gateway.request
+// directly through driveSyntheticLifecycle, which hands
+// resp.StatusCode to the observer's OnResponseHeaders/OnComplete;
+// this accessor currently has no production consumer and exists for
+// diagnostics and tests.
 func SyntheticOutcomeFromContext(ctx context.Context) (Result, bool) {
 	if ctx == nil {
 		return Result{}, false

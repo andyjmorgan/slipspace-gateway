@@ -9,6 +9,7 @@
 //
 // Per-provider/endpoint dispatch lives in accumulator.go. Each
 // provider-shape implementation lives in its own file (openai_chat.go,
-// anthropic_messages.go, gemini_content.go). Unknown endpoints return
-// an empty Result; the caller falls back to displaying the raw bytes.
+// anthropic_messages.go, gemini_content.go, openai_responses.go).
+// Unknown endpoints return an empty Result; the caller falls back to
+// displaying the raw bytes.
 package accumulator

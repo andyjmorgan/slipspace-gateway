@@ -1,8 +1,9 @@
-// Package server is the Arbiter's HTTP surface: liveness/readiness
-// probes (open), and the operator console behind HTTP Basic auth. T1 serves a
-// placeholder console shell; the DB-backed dashboard + message inspector APIs
-// and the real SPA bundle land in later phases. Webhook ingest and the OTLP
-// listener are separate surfaces wired up alongside their phases.
+// Package server is the Arbiter's HTTP surface: liveness/readiness probes and
+// the SPA catch-all (open), the HMAC-authenticated Record-ingest and routing-
+// advisor endpoints, and the DB-backed dashboard, messages, events, sessions,
+// tool-call and advise query APIs behind HTTP Basic auth. The console SPA is
+// served from the embedded webdist bundle. The OTLP listener is a separate
+// surface wired up alongside it.
 package server
 
 import (

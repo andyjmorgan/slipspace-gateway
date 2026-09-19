@@ -9,8 +9,9 @@ import (
 )
 
 // Observer receives lifecycle signals from the Forwarder. Implementations
-// bridge to telemetry and, in a follow-up wave, to the pipeline channel
-// that publishes typed messages to downstream middleware.
+// bridge the lifecycle to telemetry and record capture — the reporter in
+// cmd/gateway is the production implementation. The typed-message pipeline
+// in internal/pipeline is inert and is not wired through the Forwarder.
 //
 // One Observer instance is created per Forward call by an ObserverFactory,
 // so implementations may own per-request state as plain struct fields. All

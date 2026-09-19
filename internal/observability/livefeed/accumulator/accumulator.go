@@ -28,17 +28,16 @@ type Result struct {
 // accumulatorFn signs every per-protocol implementation.
 type accumulatorFn func(raw []byte) Result
 
-// registry maps endpoint names to accumulator functions. Endpoint names
-// are operator-authored map keys per provider in providers.yaml; the
-// conventional names (`chat_completions`, `messages`, `generate_content`,
-// `responses`) cover the v1.0 surface and the OpenAI-compat endpoints
-// on Anthropic / Gemini that share the OpenAI chunk shape.
+// registry maps protocol names to accumulator functions. The keys are
+// the fixed protocol vocabulary in contracts/config (`chat`, `messages`,
+// `generate_content`, `responses`) — not operator-authored text — plus
+// `chat_completions`, the alias the OpenAI api.type rename produces.
 //
-// Provider isn't part of the key — endpoint name alone is enough
+// Provider isn't part of the key — protocol name alone is enough
 // because Anthropic / Gemini's OpenAI-compat surfaces emit OpenAI
-// chunks under the same `chat_completions` name. If a future provider
-// reuses a name with a different shape, dispatch would need to also
-// switch on provider; today, names are stable per protocol.
+// chunks under the same `chat` / `chat_completions` name. If a future
+// provider reuses a name with a different shape, dispatch would need to
+// also switch on provider; today, names are stable per protocol.
 var registry = map[string]accumulatorFn{
 	"chat_completions": accumulateOpenAIChat,
 	"chat":             accumulateOpenAIChat,

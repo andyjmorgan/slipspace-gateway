@@ -11,6 +11,8 @@
 // JSON, which the harness translates back into the legacy Envelope shape so
 // existing tests don't need to change.
 //
-// Build tag e2e guards the entire package so unit-test builds do not pull
-// in testcontainers.
+// Build tag e2e guards the entire package so the harness and the suites that
+// use it never compile into ordinary `go test ./...` runs. Testcontainers is
+// not imported here — only the connector_s3, connector_azure and arbiter
+// sub-suites pull it in.
 package harness

@@ -56,9 +56,10 @@ type CapturedRequest struct {
 }
 
 // capturedLog is the bounded ring of captured requests. Tests
-// usually only need the latest, but holding the last few covers
-// rare cases that fire multiple upstream calls per test (e.g.
-// resilience retries in v1.2).
+// usually only need the latest, but retaining the most recent 32
+// covers tests that fan out several upstream calls (resilience
+// retries, failover attempts) without growing unboundedly under
+// load.
 type capturedLog struct {
 	mu sync.Mutex
 
