@@ -191,7 +191,7 @@ Sitting above per-segment retry is a per-destination circuit breaker that stops 
 
 | State | Behaviour |
 |---|---|
-| Closed | Normal — every claimed segment runs through Upload. Each success keeps the breaker Closed; each retryable failure increments the consecutive-failure counter. |
+| Closed | Normal — every claimed segment runs through Upload. Each success keeps the breaker Closed; every upload failure increments the consecutive-failure counter, including a `*cc.Permanent` one that was just deadlettered (the segment is gone, but a destination rejecting deliveries outright still counts toward opening the breaker). A lost claim race (ENOENT) counts as neither success nor failure. |
 | Open | The uploader stops claiming segments. Sealed segments accumulate on disk until the breaker probes. |
 | Half-Open | After `HalfOpenAfter`, the breaker allows exactly one probe attempt; success → Closed, failure → Open. |
 

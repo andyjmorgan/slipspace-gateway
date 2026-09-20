@@ -168,7 +168,7 @@ There is no provider-level `auth_header` / `auth_format` in v2: auth is set per 
 
 ## `groups` block
 
-`groups:` is a map from group name to a resilience definition (`contractsconfig.GroupsConfig`, `contracts/config/model.go:142`). A group is a named failover / load-balance unit the orchestrator routes across. Targets are arbitrary providers, so a group cuts across providers — the only constraint is **protocol-preserving**: every target must serve the binding's protocol (no mid-failover translation). Groups replace v1 `resilience_policies`; a binding references a group through `Binding.Group` instead of a configuration carrying a single global `resilience_name`.
+`groups:` is a map from group name to a resilience definition (`contractsconfig.GroupsConfig`, `contracts/config/model.go:147`). A group is a named failover / load-balance unit the orchestrator routes across. Targets are arbitrary providers, so a group cuts across providers — the only constraint is **protocol-preserving**: every target must serve the binding's protocol (no mid-failover translation). Groups replace v1 `resilience_policies`; a binding references a group through `Binding.Group` instead of a configuration carrying a single global `resilience_name`.
 
 ```yaml
 groups:
@@ -187,7 +187,7 @@ groups:
         alias: claude-sonnet-4-5
 ```
 
-### `Group` fields (`contracts/config/model.go:149`)
+### `Group` fields (`contracts/config/model.go:154`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -198,7 +198,7 @@ groups:
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
 | `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:132-134`). |
 
-### `Target` fields (`contracts/config/model.go:189`)
+### `Target` fields (`contracts/config/model.go:194`)
 
 The atom a binding or group dispatches to: a provider reference plus per-use overrides that compose over the provider's own values (target wins).
 
@@ -216,7 +216,7 @@ Validation: a group must declare at least one target, every target must name a `
 
 ## `configurations` block
 
-`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:273`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
+`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:278`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
 
 ```yaml
 configurations:
@@ -238,7 +238,7 @@ configurations:
       tier: production
 ```
 
-### `Configuration` fields (`contracts/config/model.go:273`)
+### `Configuration` fields (`contracts/config/model.go:278`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -254,7 +254,7 @@ configurations:
 
 ## `bindings` (inside a configuration)
 
-A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:218`, doc comment starts `:212`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
+A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:223`, doc comment starts `:218`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
 
 ```yaml
 bindings:
@@ -269,7 +269,7 @@ bindings:
     tags: ["surface:messages"]
 ```
 
-### `Binding` fields (`contracts/config/model.go:218`)
+### `Binding` fields (`contracts/config/model.go:223`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -290,7 +290,7 @@ bindings:
 - A pattern ending in `*` is a **prefix** match (`gpt-*` matches `gpt-4o`).
 - Otherwise the pattern is compared **exactly**.
 
-`Select` walks the configuration's bindings in order and returns the **first** binding whose `protocol` equals the request protocol and whose `models` match the request model. No fallthrough: when no binding matches, selection returns `ErrNoBinding`, which the data plane maps to a 404 with error code `no_binding` (`cmd/gateway/pipeline.go:172-173`) — the model is simply not served on that protocol by this configuration.
+`Select` walks the configuration's bindings in order and returns the **first** binding whose `protocol` equals the request protocol and whose `models` match the request model. No fallthrough: when no binding matches, selection returns `ErrNoBinding`, which the data plane maps to a 404 with error code `no_binding` (`cmd/gateway/pipeline.go:173-174`) — the model is simply not served on that protocol by this configuration.
 
 ### Binding validation (`internal/config/config_validate.go::validateBindings`)
 
@@ -350,7 +350,7 @@ configurations:
 | `match` | string | yes | Inbound path pattern, optionally containing `{name}` placeholders (e.g. `/v1/messages/batches/{id}/results`). Captured params are surfaced to the forwarder; a pattern with no placeholders is an exact-string compare. |
 | `methods` | []string | yes | HTTP methods this path accepts. Matched case-insensitively. A claimed path with an unaccepted method yields `ErrMethodNotAllowed`. |
 
-### `PassthroughBinding` fields (`contracts/config/model.go:257`)
+### `PassthroughBinding` fields (`contracts/config/model.go:262`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -415,7 +415,7 @@ Each connector entry must:
 - Pass `Connector.Validate()` — the per-type required-field check (s3 needs `bucket` + `region`, azure_blob needs `account` + `container`, webhook needs `url` + `secret_ref` + `timeout_ms`).
 - Be referenced by a defined `connector_bindings[].connector` name — an unknown reference aborts with `ErrUnknownConnectorReference`.
 
-`connectors:` may be empty or absent — when there are no connectors, the spool is not constructed (`cmd/gateway/main.go:373-376`) and the reporter emits no records. This is the default for any deployment that does not want persistent capture.
+`connectors:` may be empty or absent — when there are no connectors, the spool is not constructed (`cmd/gateway/main.go:367-370`) and the reporter emits no records. This is the default for any deployment that does not want persistent capture.
 
 ---
 

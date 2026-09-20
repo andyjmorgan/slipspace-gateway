@@ -229,7 +229,7 @@ All routes are mounted under `Prefix = "/admin"`. Every route is wrapped in `Ins
 
 ### Configuration inspector (read)
 
-Read handlers snapshot the store once at the top of the request and project the snapshot onto redacted DTOs (`internal/admin/config_handlers.go`) — every secret (API-key `Secret`, upstream `credentials`) is masked before it leaves the package. All read endpoints return 503 when the `Store` is nil (admin partially wired) rather than a misleading empty `200`.
+Read handlers snapshot the store once at the top of the request and project the snapshot onto redacted DTOs (`internal/admin/config_handlers.go` for configurations, rules, providers, api-keys/reveal and bindings; the groups, connectors and api-keys list/detail handlers live beside their write handlers in `groups_write.go`, `connectors_write.go` and `api_keys_write.go`) — every secret (API-key `Secret`, upstream `credentials`) is masked before it leaves the package. All read endpoints return 503 when the `Store` is nil (admin partially wired) rather than a misleading empty `200`.
 
 | Method · Path | Response shape | Notes |
 |---|---|---|
