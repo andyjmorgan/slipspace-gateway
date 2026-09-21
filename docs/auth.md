@@ -342,6 +342,8 @@ Content-Type: application/json
 
 The upstream sees the user's own Anthropic OAuth token. The gateway still applied every rule in the `code-assistants` Configuration, published a `gateway.request` event with `mode=passthrough`, and surfaced the request on the live-messages pane. The credential lifecycle stays with Claude Code — SlipSpace never sees its refresh, never minted it, never could substitute for it.
 
+One request from Claude Code never reaches auth at all: the CLI fires a bare `HEAD /api/hello` against `ANTHROPIC_BASE_URL` at session start to warm the connection, with no token and no `X-Slipspace-*` header. The gateway answers `GET`/`HEAD /api/hello` locally with Anthropic's `{"message": "hello"}` (`cmd/gateway/hello.go`) ahead of the correlation middleware, so the probe succeeds without a configuration and never appears in logs, records, or the live feed. No other path or method is exempt.
+
 ---
 
 ## Why passthrough exists
