@@ -221,6 +221,9 @@ func run(ctx context.Context) error {
 	captured := responseCaptureMiddleware(env.AdminLiveFeedBodyMaxBytes, bodyStore != nil, redactor,
 		reporter.requestCompletionMiddleware(recoverMiddleware(obs.Meters, errs, dataPlane)))
 	root := correlationMiddleware(logger, sessionResolver, conversationResolver, parentResolver, agentResolver, userResolver, redactor, captured)
+	// Claude Code's credential-free /api/hello preconnect is answered ahead
+	// of correlation so it never lands in logs, records, or the live feed.
+	root = helloMiddleware(root)
 
 	srv := server.New(server.Options{
 		Bind:         env.HTTPBind,
