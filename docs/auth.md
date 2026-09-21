@@ -266,6 +266,7 @@ Content-Type: application/json
    - `Mode = managed`
    - `APIKey.Name = "acme-prod"`
    - `Configuration` = the `production` bundle
+   - `ConfigurationName = "production"` (the name the policy was looked up by — here the key's `configuration:`)
    - `DropHeaders = ["X-Slipspace-Identity", "X-Slipspace-Configuration", "X-Sluice-Identity", "X-Sluice-Configuration", "Authorization"]` (all four selector headers plus the source header)
 
 ### Destination build
@@ -317,6 +318,7 @@ Content-Type: application/json
    - `Mode = passthrough`
    - `APIKey = nil`
    - `Configuration` = the `code-assistants` bundle
+   - `ConfigurationName = "code-assistants"` (the name the policy was looked up by — here the `X-Slipspace-Configuration` value)
    - `DropHeaders = ["X-Slipspace-Identity", "X-Slipspace-Configuration", "X-Sluice-Identity", "X-Sluice-Configuration"]` (all four selector headers, always)
 
 ### Destination build
@@ -391,7 +393,7 @@ For passthrough mode there is no key rotation on the gateway side — the upstre
 - **[`docs/providers.md#per-protocol-auth-x-api-key-vs-bearer`](providers.md#per-protocol-auth-x-api-key-vs-bearer)** — the endpoint → provider → default override stack for the outbound credential header, with worked examples for the OpenAI-compat surfaces on Anthropic and Gemini.
 - **[`docs/admin-console.md`](admin-console.md)** — the API-key reveal endpoint, Basic-auth password resolution, and redaction in the export bundle.
 - **[`docs/actions.md`](actions.md)** — the `setHeader` rule action (which can rewrite outbound headers, including a credential header, via `applyStateOverlays`) and the `changeApiKey` action (which writes `state.UpstreamCredentialOverride`, now read at the single credential mint site to override the upstream credential — literal-key substitution, or `useSlipSpaceKey` to forward the inbound `Authorization`).
-- **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `Resolver`, `AuthResult`, `Mode`, the discovery walk, and `UpstreamCredentialHeader` per-provider defaults.
+- **[`internal/middleware/auth/resolver.go`](../internal/middleware/auth/resolver.go)** — `Resolver`, `AuthResult` (including `ConfigurationName` — the name the policy was looked up by: the `X-Slipspace-Configuration` value on the legacy path, `APIKey.Configuration` on the managed and identity paths; it is populated even when `Configuration` is nil, which is what puts the `configuration` field on the `auth failed` log line and on `observability.RequestLabels`), `Mode`, the discovery walk, and `UpstreamCredentialHeader` per-provider defaults.
 - **[`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go)** — `HTTPHandler`, `classifyResult`, and the typed error → wire status mapping in `writeAuthError`. The `Result` audit-tag type and its four constants (`ResultSuccess`/`ResultUnknownKey`/`ResultDisabledKey`/`ResultUnknownConfiguration`) are defined in [`internal/middleware/auth/errors.go`](../internal/middleware/auth/errors.go) and consumed by `classifyResult`. The set is closed — there is deliberately no separate tag for a missing versus a malformed bearer (see the comment on the const block).
 - **[`cmd/gateway/destination.go`](../cmd/gateway/destination.go)** — `buildDestination`, `resolveCredentialHeaders` (the credential precedence `switch`, including the `changeApiKey` override), and `credentialHeaderFor` (the per-(provider, protocol) mint helper `resolveCredentialHeaders` formats through).
 - **[`cmd/gateway/handler.go`](../cmd/gateway/handler.go)** — the closed `credentialHeaderNames` set (`handler.go:182`), the `authFormatPlaceholder` (`{key}`) constant, and the data-plane handler composition.
