@@ -546,7 +546,7 @@ This pattern lets a single classifier rule fan out into multiple downstream beha
 
 The reporter drains `state.Tags` at request completion onto `Record.Tags` (the captured connector record) and the live-feed `Entry`, and bumps `gateway.tags.applied.total` once per tag.
 
-`state.Tags` is not exclusively rule-driven. Three writers feed it, and all three reach `Record.Tags` and `gateway.tags.applied.total`: the `addTag` action; binding-level `tags:` (`bindings[].tags` and passthrough-binding `tags:`), applied by `selectionMiddleware` at `cmd/gateway/pipeline.go:214-215` and `:155-156`; and agent-route tags (`agent-route:*`) at `cmd/gateway/pipeline.go:218-233`. What does NOT propagate is the configuration-level `configurations[].tags` **map** (`map[string]string`, see [`configuration-model.md`](configuration-model.md#configurations-block)) — it carries as request context for logs and the admin configuration detail page only, and never reaches `Record.Tags` or the counter.
+`state.Tags` is not exclusively rule-driven. Three writers feed it, and all three reach `Record.Tags` and `gateway.tags.applied.total`: the `addTag` action; binding-level `tags:` (`bindings[].tags` and passthrough-binding `tags:`), applied by `selectionMiddleware` at `cmd/gateway/pipeline.go:215-216` and `:156-157`; and agent-route tags (`agent-route:*`) at `cmd/gateway/pipeline.go:219-234`. What does NOT propagate is the configuration-level `configurations[].tags` **map** (`map[string]string`, see [`configuration-model.md`](configuration-model.md#configurations-block)) — it carries as request context for logs and the admin configuration detail page only, and never reaches `Record.Tags` or the counter.
 
 ### Worked example — classify then transform
 
