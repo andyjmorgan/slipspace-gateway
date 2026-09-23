@@ -16,18 +16,22 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
-// recoverMiddleware is the outermost layer in the data-plane handler
-// chain. A panic in any downstream middleware (routing, auth,
-// bodycapture, rules, forwarder) is captured here, logged at error
-// level with the full stack, recorded against
-// gateway.request.panics.total, and converted to a JSON 500 so the
-// client never sees a hijacked connection or a half-written body.
+// recoverMiddleware is the outermost layer of the data-plane handler
+// itself, sitting beneath correlationMiddleware,
+// responseCaptureMiddleware and requestCompletionMiddleware (see the
+// root chain in main.go). A panic in any stage below it (protocol,
+// auth, bodycapture, selection, rules, resilience, forwarder) is
+// captured here, logged at error level with the full stack, recorded
+// against gateway.request.panics.total, and converted to a JSON 500 so
+// the client never sees a hijacked connection or a half-written body.
 //
 // Two assumptions worth preserving across edits:
 //
-//  1. This wraps EVERYTHING below correlationMiddleware so the
-//     captured log entry already carries the correlation_id and the
-//     enriched per-request logger.
+//  1. This runs below correlationMiddleware so the captured log entry
+//     already carries the correlation_id and the enriched per-request
+//     logger. Response capture and request completion wrap it on
+//     purpose, so a recovered panic still surfaces a body to Live
+//     Messages.
 //  2. headersWritten is a best-effort guard. If a downstream handler
 //     panicked AFTER calling WriteHeader, we cannot write a 500 — the
 //     status line is already on the wire. In that case we log + meter

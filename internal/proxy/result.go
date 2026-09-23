@@ -4,20 +4,23 @@ import "net/http"
 
 // Result reports the outcome of a single Forward call. The resilience
 // orchestrator inspects it to decide whether to commit to the client's
-// response or try the next target. Every gateway request goes through
-// the orchestrator; direct callers and tests that pass a bare
-// ResponseWriter can ignore Result — ErrorHandler writes the 502 on
-// transport error in that case.
+// response or try the next target — but only for failover and
+// load-balance attempts, which run behind a BufferingResponseWriter.
+// Passthrough requests and single-target (ModeNone) policies forward
+// through a bare ResponseWriter, where ErrorHandler writes the 502
+// upstream_unavailable body directly on a transport error.
 //
 // Field semantics:
 //
 //   - StatusCode is the upstream's HTTP status as observed by the
-//     forwarder's internal statusWriter. Zero when no response was
-//     observed (transport error, hang). Defaulted to 200 when the
-//     upstream emitted no explicit status — matching net/http's
-//     implicit-200-on-first-Write contract.
+//     forwarder's internal statusWriter. The statusWriter starts at 200
+//     (net/http's implicit-200-on-first-Write contract), so StatusCode
+//     is never zero. After a transport error behind a
+//     BufferingResponseWriter it reads 200 with Committed false and Err
+//     non-nil; with a bare writer it reads 502. Callers must tell "no
+//     response" apart via Err/Committed, never StatusCode == 0.
 //   - Committed is true when WriteHeader (or implicit-WriteHeader via
-//     Write) was observed. Together with StatusCode, this lets the
+//     Write) was observed. Together with Err, this lets the
 //     orchestrator distinguish "upstream responded with N" from "no
 //     response received."
 //   - Err is the transport-level error captured from ReverseProxy's

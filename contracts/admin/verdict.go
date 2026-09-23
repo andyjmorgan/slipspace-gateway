@@ -1,9 +1,10 @@
 package admin
 
 // VerdictResponse is the SlipSpace Arbiter security verdict plus findings for
-// one request, served at GET /api/v1/verdict/{correlation_id} and rendered in
-// the console's Security pane. Verdict is nil when the scan has not reached
-// quiescence yet (no verdict row); Findings is empty for a clean request.
+// one request, served at GET /api/v1/verdict/{id} (the {id} path value is the
+// request correlation id) and rendered in the console's Security pane. Verdict
+// is nil when the scan has not reached quiescence yet (no verdict row);
+// Findings is empty for a clean request.
 type VerdictResponse struct {
 	// CorrelationID is the request this verdict describes.
 	CorrelationID string `json:"correlation_id"`

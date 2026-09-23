@@ -47,7 +47,7 @@ type DashboardSummary struct {
 	ByConfiguration []DashboardConfigurationRow `json:"by_configuration"`
 
 	// ByModel breaks requests down by upstream model (the model
-	// label on gateway.requests.total).
+	// label on slipspace.requests.total).
 	ByModel []DashboardModelRow `json:"by_model"`
 
 	// RulesFired counts matches per rule_name over Window, joined
@@ -178,7 +178,7 @@ type DashboardTagFiredRow struct {
 //
 // Only {Provider, Healthy, ErrorRate5m, Requests5m} are populated by
 // v1.1 because that's what the in-process registry can compute from
-// gateway.requests.total alone. Tail fields (consecutive errors, last
+// slipspace.requests.total alone. Tail fields (consecutive errors, last
 // error message, last success timestamp) require a probe goroutine
 // that doesn't exist yet — they were removed from the contract rather
 // than left at zero-value placeholders the SPA had to defensively

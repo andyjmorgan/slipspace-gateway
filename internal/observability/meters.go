@@ -255,9 +255,11 @@ type Meters struct {
 	RequestsTotal metric.Int64Counter
 
 	// TokenUsage is the gen_ai.client.token.usage histogram. One Record
-	// per direction, tagged gen_ai.token.type=input|output. Replaces the
-	// former input/output counters; per-window totals come from the
-	// histogram sum.
+	// per direction, tagged gen_ai.token.type=input|output. The
+	// TokensInputTotal / TokensOutputTotal counters below mirror it for
+	// the Arbiter, which ingests no histograms; per-window totals in
+	// Grafana come from the histogram sum, in the Arbiter console from
+	// the counters.
 	TokenUsage metric.Int64Histogram
 
 	// TokensInputTotal / TokensOutputTotal mirror the TokenUsage histogram as

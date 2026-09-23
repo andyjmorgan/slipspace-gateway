@@ -216,10 +216,13 @@ type CircuitBreakerConfig struct {
 	MinimumThroughput int `yaml:"minimum_throughput" json:"minimum_throughput"`
 }
 
-// RetryConfig configures retry attempts and inter-attempt backoff.
+// RetryConfig configures retry attempts and inter-attempt backoff. The whole
+// block is parsed and validated but currently unwired: the orchestrator
+// implements no backoff and no attempt budget — "retry" means advancing to
+// the next target (see the note on ResilienceConfig.Retry).
 type RetryConfig struct {
-	// Enabled toggles retries. With Enabled false the orchestrator makes a
-	// single attempt regardless of other fields.
+	// Enabled is recorded but never consulted by the orchestrator; setting it
+	// true produces no retries.
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
 	// MaxAttempts is the total attempt budget including the initial call.

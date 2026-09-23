@@ -1276,12 +1276,15 @@ func (r *reporterRun) emitTrace(ctx context.Context, ev events.Request, matches 
 	// usage / duration) plus the standard server.* and HTTP status, and a
 	// bounded set of slipspace.* gateway facts the Arbiter ingest reads
 	// to populate the gen_ai-owned columns of its request_events view. The
-	// ingest COALESCEs the span feed with the Record feed by correlation_id
-	// (invariant #4) — correlation_id is the join key, and the gateway scalars
-	// below (configuration, protocol, method, api-key, upstream status, tags,
-	// fired-rule names) ride the span so a span-only consumer still renders the
-	// console row. The Record remains the audit-grade carrier with the full
-	// rule chain, bodies, and attempts; the span carries names/scalars only.
+	// span feed is the sole writer of that row — its scalar columns are a
+	// projection of the stored span — while the Record lands as a verbatim blob
+	// in the record table, joined lazily by correlation_id only when an operator
+	// opens the inspector (invariant #4). correlation_id is the join key, and
+	// the gateway scalars below (configuration, protocol, method, api-key,
+	// upstream status, tags, fired-rule names) ride the span so a span-only
+	// consumer still renders the console row. The Record remains the
+	// audit-grade carrier with the full rule chain, bodies, and attempts; the
+	// span carries names/scalars only.
 	attrs := []attribute.KeyValue{
 		attribute.String(observability.AttrGenAIOperationName, op),
 		attribute.String(observability.AttrGenAIProviderName, observability.GenAIProviderName(ev.Provider)),

@@ -7,8 +7,10 @@ package admin
 // in-process store has observed. Targets the breaker has not yet
 // seen report state="closed" — matches BreakerStore.State semantics.
 //
-// The SPA renders this as a read-only policies page in v1.2; v1.3+
-// adds edit-in-place once the control-plane mutators land.
+// The SPA renders this as the policies overview, with the live
+// per-pod breaker state; editing a group is a link out to the group
+// editor backed by the /api/v1/config/groups CRUD endpoints, while
+// the richer live-breaker projection stays here on /api/v1/policies.
 type PoliciesResponse struct {
 	// Pod is the gateway hostname the response originated from.
 	// Multi-pod deployments fetch from each replica to assemble a
@@ -25,7 +27,8 @@ type PoliciesResponse struct {
 // list of targets, and per-target breaker state. Fields mirror
 // contracts/resilience.ResilienceConfig but project to a read-friendly
 // shape (no nested action polymorphism, no per-group CB cfg in this
-// summary — those are part of the v1.3 detail endpoint).
+// summary — those are available from the group CRUD endpoints,
+// /api/v1/config/groups/{name}).
 type PolicySummary struct {
 	// Name is the group name from the top-level groups block;
 	// configurations reach it through a binding's group field (the

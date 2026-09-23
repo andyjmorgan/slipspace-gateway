@@ -416,7 +416,7 @@ func UnmarshalStreamEvent(data []byte) (StreamEvent, error) {
 
 // ContentBlockDelta is the polymorphic interface implemented by every delta
 // variant carried inside a ContentBlockDeltaEvent — TextDelta,
-// InputJSONDelta, ThinkingDelta, SignatureDelta, and the
+// InputJSONDelta, ThinkingDelta, SignatureDelta, CitationsDelta, and the
 // UnknownContentBlockDelta fallback.
 //
 // The discriminator is the "type" field. Unknown discriminator values are

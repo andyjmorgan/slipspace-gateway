@@ -210,11 +210,16 @@ var alwaysDropHeaders = []string{
 //     owns the response decision — ErrorHandler records the transport
 //     error on the buffer via SetTransportError and does NOT write 502.
 //     The orchestrator inspects ShouldRetry post-Forward to decide
-//     whether to retry the next target.
+//     whether to retry the next target. Only the multi-target modes
+//     wrap w: runFailover and runLoadBalance mint the buffer per
+//     attempt.
 //   - When w is a bare ResponseWriter, ErrorHandler writes 502 Bad
-//     Gateway as before. Every gateway request goes through the
-//     resilience orchestrator, so this branch is the fallback for
-//     direct callers and tests that wrap no orchestrator.
+//     Gateway directly. This branch is production-reachable, not just a
+//     fallback for direct callers and tests: passthrough requests carry
+//     no resilience config at all (selectionMiddleware stashes one only
+//     on the generative path), and a generative request on a
+//     single-target policy is forwarded once by runSingleTarget with w
+//     unwrapped.
 //
 // A fresh Observer is minted at the top of Forward via the configured
 // ObserverFactory. All six lifecycle hooks fire from this goroutine, so
@@ -343,12 +348,13 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, req *htt
 				slog.Any("error", err),
 			)
 			// If the writer chain has a BufferingResponseWriter (the
-			// v1.2 orchestrator's wrapper), record the error there
-			// and leave the response decision to the orchestrator —
-			// it will inspect ShouldRetry and either retry the next
+			// orchestrator's per-attempt wrapper, minted only for
+			// the multi-target modes), record the error there and
+			// leave the response decision to the orchestrator — it
+			// will inspect ShouldRetry and either retry the next
 			// target or write the final 502 itself. Without the
-			// buffer (today's single-shot path), preserve the
-			// existing behaviour and write 502 directly.
+			// buffer (single-shot: passthrough, or a single-target
+			// policy), write 502 directly.
 			if buf := unwrapBufferingResponseWriter(rw); buf != nil {
 				buf.SetTransportError(err)
 				return
