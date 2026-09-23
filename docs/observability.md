@@ -203,6 +203,14 @@ One counter is fed by the control path rather than the request path.
 |---|---|---|---|---|
 | `gateway.config_reload.total` | counter | (none) | 1 | Live config swaps published through `config.Store.Replace` — the admin write API's only observability signal. Wired in `cmd/gateway/main.go` via `observability.ConfigReloadCounter` subscribed to the store (`internal/observability/configreload.go`); the subscriber's immediate registration call is deliberately not counted. Disk-file hot reload (fsnotify) is still unimplemented, so today every increment comes from an admin write endpoint. |
 
+### Telemetry delivery
+
+| Metric | Type | Labels | Unit | What it counts |
+|---|---|---|---|---|
+| `gateway.telemetry.push.dropped.total` | counter | `connector, reason` | 1 | Records permanently lost by the real-time `webhook` telemetry pusher (`internal/arbiter/pusher`). `reason` is one of `queue_full`, `encode`, `rejected`, `exhausted`. Incremented from the pusher's `OnDropped` hook wired in `cmd/gateway/main.go`. |
+| `gateway.telemetry.push.failures.total` | counter | `connector, kind` | 1 | Failed record-push attempts that are retried and not yet lost. `kind` is `network` or `status`. Incremented from the pusher's `OnFailure` hook wired in `cmd/gateway/main.go`. |
+| `gateway.otel.export_failures.total` | counter | (none) | 1 | Incremented by the `otel.SetErrorHandler` installed in `internal/observability/setup.go` — in practice OTLP export failures — alongside a warn log. |
+
 ---
 
 ## Runtime and process collectors
