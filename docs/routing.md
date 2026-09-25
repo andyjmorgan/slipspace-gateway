@@ -61,7 +61,7 @@ The real order is **`protocol → auth → bodycapture → selection → rules �
 - **`selection` is where 404/405 can fire**, and it runs *after* auth (which resolves the configuration) and bodycapture (which decodes the model). It is the only stage that picks a provider.
 - **The final handler builds the upstream URL** from the resolved `Target.Path` (provider protocol path ∪ per-target override), not from any endpoint declaration or matched path. See [`buildDestination`](../cmd/gateway/destination.go).
 
-`correlationMiddleware` ([`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go)) wraps the whole chain ahead of `protocolMiddleware`, so every stage shares one correlation ID — see [X-SlipSpace headers](#x-slipspace-headers).
+`correlationMiddleware` ([`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go)) wraps the whole data-plane chain ahead of `protocolMiddleware`, so every stage shares one correlation ID — see [X-SlipSpace headers](#x-slipspace-headers). The only middleware outside it is `helloMiddleware` ([`cmd/gateway/hello.go`](../cmd/gateway/hello.go)), which answers `GET`/`HEAD /api/hello` locally before correlation runs, so that probe carries no correlation ID.
 
 ---
 
