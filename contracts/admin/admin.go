@@ -48,7 +48,8 @@ var (
 // The console is off by default. When Enabled is true, the gateway
 // starts a second http.Server bound to BindAddr (or DefaultBindAddr)
 // serving the embedded SPA at "/admin/" and the control-plane API
-// under "/admin/api/v1/*" (internal/admin.Prefix). HTTP Basic auth
+// under "/admin/api/v1/*", both mounted below internal/admin.Prefix
+// ("/admin"). HTTP Basic auth
 // protects the API except GET /admin/api/v1/version; the SPA's
 // static assets are public.
 //

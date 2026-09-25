@@ -338,8 +338,9 @@ type BodyFieldOperator string
 
 // Body-field operators.
 const (
-	// BodyFieldEquals matches when the read value equals Value (typed
-	// comparison via the parsed JSON).
+	// BodyFieldEquals matches when the gjson string form of the read
+	// value equals Value (string comparison, not typed; quote scalars
+	// uniformly, e.g. "true", "1024").
 	BodyFieldEquals BodyFieldOperator = "Equals"
 
 	// BodyFieldContains matches when the read string value contains

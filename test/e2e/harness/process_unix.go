@@ -11,8 +11,10 @@ func setProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-// signalGroup sends sig to the entire process group, so `go run` and its
-// child compiled binary both go away.
+// signalGroup sends sig to the entire process group of the spawned prebuilt
+// binary (Setpgid), so the process and any children it forks are signalled
+// together; it falls back to signalling the process directly when the group
+// id cannot be read.
 func signalGroup(cmd *exec.Cmd, sig syscall.Signal) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil

@@ -31,9 +31,10 @@ const (
 )
 
 // NewLogger builds a slog.Logger with the requested format and level.
-// An empty format defaults to JSON. An empty or unparseable level
-// defaults to info. Output goes to os.Stdout; use NewLoggerWithWriter for
-// tests that need to inspect the rendered output.
+// An empty format defaults to JSON; an empty level defaults to info; an
+// unknown format or unparseable level returns an error. Output goes to
+// os.Stdout; use NewLoggerWithWriter for tests that need to inspect the
+// rendered output.
 func NewLogger(format, level string) (*slog.Logger, error) {
 	return NewLoggerWithWriter(os.Stdout, format, level)
 }

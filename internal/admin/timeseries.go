@@ -35,8 +35,8 @@ const topNProviders = 5
 // an empty Series array — the SPA can render an "awaiting data" state.
 //
 // ?window=1h|24h slices the ring to samples within that window before
-// computing. Anything outside the allowlist falls back to the full
-// ring contents (effectively 24h at production cadence).
+// computing. Anything outside the allowlist falls back to a 24h window
+// measured back from the latest sample, not to the full ring contents.
 func TimeseriesHandler(snap *observability.Snapshotter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		series := strings.TrimSpace(r.URL.Query().Get("series"))

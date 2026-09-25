@@ -192,7 +192,7 @@ func (h *Harness) startMockLLM(t *testing.T, repoRoot string) {
 	t.Helper()
 
 	// freePort uses listen-on-0 / close, which leaves a TOCTOU window
-	// between us closing the listener and `go run ./cmd/mockllm` binding
+	// between us closing the listener and the prebuilt mockllm binary binding
 	// it. Under parallel e2e packages that race fires often enough to be
 	// a real flake — retry the whole start sequence if mockllm dies before
 	// the readiness probe succeeds.

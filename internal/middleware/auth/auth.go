@@ -6,8 +6,13 @@
 // forward to providers that have an entry in Configuration.Credentials,
 // and the (provider, protocol) pair a request lands on is chosen
 // downstream by internal/selection from the Configuration's bindings.
-// Passthrough mode is gated by the upstream's own auth on the
-// client-supplied BYOK token.
+// Passthrough mode has two variants. Identity passthrough
+// (X-Slipspace-Identity) authenticates the caller by looking the SlipSpace
+// api-key secret up in SecretIndex; an unknown or disabled key fails 401.
+// Legacy passthrough (the deprecated X-Slipspace-Configuration) performs no
+// SlipSpace-side authentication and relies only on the upstream's own auth
+// of the client-supplied BYOK token. In both variants the inbound
+// Authorization is forwarded verbatim.
 package auth
 
 import (
