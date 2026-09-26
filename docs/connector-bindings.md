@@ -83,7 +83,7 @@ Each binding entry's fields:
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `connector` | string | — (required) | Name of an entry in the top-level `connectors:` slice. Unknown name aborts load. |
-| `sampling` | float in `[0, 1]` | `1.0` (everything) | Fraction of records routed to this binding. The validator accepts `[0, 1]` inclusive, but the runtime treats any `sampling <= 0` as `1.0` (sends everything) — `0` does **not** disable the binding. See [Sampling](#sampling). |
+| `sampling` | float in `[0, 1]` (optional) | unset → `1.0` (everything) | Fraction of records routed to this binding. Unset ships everything; an explicit `0` ships **nothing** (mutes the binding without removing it); values outside `[0, 1]` abort the load. See [Sampling](#sampling). |
 | `sampling_key` | enum | `correlation_id` | `correlation_id` (deterministic, retries stay grouped) or `random` (per-record). |
 | `max_body_bytes` | int (optional) | unset → no cap (DefaultMaxBodyBytes returns 0 for all types) | Per-record body cap. Unset applies the connector-type default; explicit `0` means no cap (the override); a positive value caps the larger of request/response body. See [Per-record body cap](#per-record-body-cap). |
 | `oversize_behaviour` | enum | `metadata_only` | What to do when the record's body exceeds the cap: `metadata_only` (strip body, ship metadata) or `drop_record` (skip entirely). |
@@ -105,9 +105,9 @@ A record that survives all three is dispatched according to the connector type: 
 
 ## Sampling
 
-`sampling` controls what fraction of records reach this binding. `1.0` (default) sends every record; `0.5` sends half.
+`sampling` controls what fraction of records reach this binding. Unset sends every record; `0.5` sends half; `0` sends none.
 
-**`0` does not disable the binding — it sends everything.** The runtime treats any `sampling <= 0` as `1.0`: `samplingIncludes` in [`cmd/gateway/binding.go`](../cmd/gateway/binding.go) opens with `if s <= 0 { s = 1.0 }`. Go's zero-value semantics make an explicit `sampling: 0` indistinguishable from an omitted field, and the validator ([`contracts/config/connectors_validate.go`](../contracts/config/connectors_validate.go), `sampling must be in [0, 1]`) accepts `0` rather than rejecting it — so both collapse to "include everything." This is a deliberate footgun trade-off (a custom `UnmarshalYAML` shim to distinguish the two would cost more than it saves; see the `ConnectorBinding.Sampling` godoc in [`contracts/config/connectors.go`](../contracts/config/connectors.go)). To actually stop a binding from shipping, **remove it from `connector_bindings`**, or set a vanishingly small fraction like `0.0001` to keep the destination warm while dropping nearly all traffic.
+**`0` mutes the binding.** `ConnectorBinding.Sampling` is a `*float64` ([`contracts/config/connectors.go`](../contracts/config/connectors.go)) precisely so an omitted key (nil → `1.0`) and an explicit `sampling: 0` are different values after decode; `SamplingRate()` applies the default and `samplingIncludes` in [`cmd/gateway/binding.go`](../cmd/gateway/binding.go) skips every record when the rate is `0`. Muting is the right move for silencing a noisy or expensive destination without deleting the binding — the connector keeps its spool track or pusher and nothing reaches it. Before the pointer field an explicit `0` was indistinguishable from unset and shipped 100% of records ([#561](https://github.com/andyjmorgan/slipspace-gateway/issues/561)).
 
 ```yaml
 sampling: 0.05               # 5%

@@ -583,8 +583,9 @@ type namedFake struct {
 	afterFailures  failureMode
 	failureBackoff time.Duration
 
-	mu    sync.Mutex
-	calls int
+	mu      sync.Mutex
+	calls   int
+	lastSeg cc.SealedSegment
 }
 
 type failureMode int
@@ -602,6 +603,7 @@ func (f *namedFake) Upload(ctx context.Context, seg cc.SealedSegment) error {
 	f.mu.Lock()
 	f.calls++
 	current := f.calls
+	f.lastSeg = seg
 	f.mu.Unlock()
 
 	if f.failureBackoff > 0 {
@@ -629,6 +631,13 @@ func (f *namedFake) Calls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+// LastSeg returns the SealedSegment most recently handed to Upload.
+func (f *namedFake) LastSeg() cc.SealedSegment {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastSeg
 }
 
 // callCounter is unused but kept as a sanity hook the tests can pivot

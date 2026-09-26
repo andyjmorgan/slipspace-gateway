@@ -271,12 +271,15 @@ export interface CircuitBreakerConfig {
   minimum_throughput: number /* int */;
 }
 /**
- * RetryConfig configures retry attempts and inter-attempt backoff.
+ * RetryConfig configures retry attempts and inter-attempt backoff. The whole
+ * block is parsed and validated but currently unwired: the orchestrator
+ * implements no backoff and no attempt budget — "retry" means advancing to
+ * the next target (see the note on ResilienceConfig.Retry).
  */
 export interface RetryConfig {
   /**
-   * Enabled toggles retries. With Enabled false the orchestrator makes a
-   * single attempt regardless of other fields.
+   * Enabled is recorded but never consulted by the orchestrator; setting it
+   * true produces no retries.
    */
   enabled: boolean;
   /**

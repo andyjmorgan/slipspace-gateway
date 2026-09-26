@@ -13,6 +13,7 @@ The source of truth lives in [`internal/spool/`](../internal/spool/). If a value
 1. [Mental model](#mental-model)
 2. [Disk layout](#disk-layout)
 3. [Segment file format](#segment-file-format)
+   - [Segment stats sidecar](#segment-stats-sidecar)
 4. [Lifecycle](#lifecycle)
 5. [Rotation policy](#rotation-policy)
 6. [Upload, retry, and deadletter](#upload-retry-and-deadletter)
@@ -60,13 +61,13 @@ Every connector gets its own subtree under `SLIPSPACE_SPOOL_ROOT` (default `/var
   records/
     <connector-name>/
       active/          currently-appended segments
-      sealed/          rotated, awaiting upload
+      sealed/          rotated, awaiting upload  (+ <segment>.meta.json stats sidecar)
       uploading/       claimed by an upload worker
       deadletter/      upload exhausted; operator decision
       quarantine/      corrupt active segment from a torn crash
 ```
 
-The connector name comes from the `name:` field on the top-level `connectors:` entry. The five state subdirectories are created with mode `0o750` on first construction; existing contents are left in place so a restart picks up exactly where the previous process exited.
+The connector name comes from the `name:` field on the top-level `connectors:` entry. The five state subdirectories are created with mode `0o750` on first construction; existing contents are left in place so a restart picks up exactly where the previous process exited. The root is normalised to an absolute path at construction (`filepath.Abs`), so a relative `SLIPSPACE_SPOOL_ROOT` such as `./tmp/spool` in a dev shell behaves identically to an absolute one. Each sealed segment is accompanied by a `.meta.json` sidecar that moves with it between state directories — see [Segment stats sidecar](#segment-stats-sidecar).
 
 State transitions between subdirectories are `os.Rename` calls within the same filesystem — atomic on Linux. No DB, no manifest file, no torn state. An operator can `ls -la` any subdirectory and reason about lifecycle from filenames alone. See [`internal/spool/manager.go`](../internal/spool/manager.go) for the transition validator that pins each rename to its expected source and destination state.
 
@@ -109,6 +110,23 @@ The Record shape is the wire format every connector sees. Key fields:
 - `policy_ref`, `attempts` — set when a resilience policy orchestrated the request; one entry per attempt with `outcome` in {`success`, `failure_status`, `transport_error`, `cb_blocked`}.
 
 The zstd encoding uses no external/preset dictionary — it is standard streaming zstd (the single streaming encoder builds an internal dictionary across the records in a segment as it writes, which is where most of the compression ratio comes from), so consumers can decompress with any standard zstd library. The format is intentionally **not** msgpack — ndjson lets an operator pipe a sealed segment through `zstd -dc | jq` for ad-hoc inspection without writing code.
+
+### Segment stats sidecar
+
+Next to every sealed segment sits a small JSON sidecar, `<unix_ns>-<seq>.ndjson.zst.meta.json`, holding the counters the drain goroutine accumulated while the segment was open ([`internal/spool/meta.go`](../internal/spool/meta.go)):
+
+```json
+{"records": 412, "bytes_uncompressed": 1873402, "ts_min_ns": 1758868800123456789, "ts_max_ns": 1758868859987654321}
+```
+
+It exists because `Connector.Upload` receives a [`SealedSegment`](../contracts/connector/sealed.go) whose `Records` / `BytesUncompressed` / `TsMinNs` / `TsMaxNs` fields describe the segment — the S3 and Azure connectors partition object keys on `TsMinNs` — but the uploader works from a filename on disk, possibly in a later process, long after the in-memory `Segment` that counted those values is gone. The sidecar is how the stats survive that gap:
+
+- **Written** by `track.sealCurrent` into `active/` immediately before the `Seal` rename, so the two files change state together. The write is best-effort — if it fails the segment still seals (logged at warn) and ships with zero stats.
+- **Carried** by every `Manager` transition (`Seal`, `Claim`, `Deadletter`, and `Recover`'s `uploading/ → sealed/`): the segment rename is the atomic step and the sidecar follows it. `ListSealed` / `ListUploading` / `ListActive` ignore it (the name does not end in `.ndjson.zst`).
+- **Read** by `uploadOne` from `uploading/` to populate the `SealedSegment`; `Bytes` (compressed size) comes from `os.Stat` rather than the sidecar.
+- **Removed** by `Manager.Complete` alongside the segment.
+
+A segment without a sidecar — one sealed by a pre-sidecar binary still sitting in `sealed/`, or an `active/` leftover that startup recovery sealed (no process ever accumulated its stats) — ships exactly as before: the stats fields arrive zero and the connectors fall back to their upload clock for the `date=`/`hour=` partition ([connectors.md → Object key layout](connectors.md#object-key-layout)). A sidecar that is present but undecodable is logged and treated the same way; it never blocks the upload.
 
 ---
 
@@ -163,10 +181,12 @@ The uploader goroutine wakes on two signals:
 On each wake, the worker lists `sealed/` (chronological order by filename), and for each segment:
 
 1. `Manager.Claim` atomically renames `sealed/<file>` to `uploading/<file>`. Concurrent workers serialise here — only one rename succeeds; the rest see `ENOENT` and skip.
-2. Call `Connector.Upload(ctx, SealedSegment{...})`. The struct ([`contracts/connector/sealed.go`](../contracts/connector/sealed.go)) declares eight fields — `Path`, `Bytes`, `BytesUncompressed`, `Records`, `TsMinNs`, `TsMaxNs`, `DeliveryID`, `Connector` — but the uploader populates only `Path`, `DeliveryID`, and `Connector` ([`internal/spool/track.go`](../internal/spool/track.go), `uploadOne`); the size, count, and time-range fields arrive zero, which is why connectors fall back to their upload clock for the `date=` / `hour=` partition ([#440](https://github.com/andyjmorgan/slipspace-gateway/issues/440)).
-3. On success → `Manager.Complete` removes the file from `uploading/`.
+2. Call `Connector.Upload(ctx, SealedSegment{...})`. The struct ([`contracts/connector/sealed.go`](../contracts/connector/sealed.go)) is fully populated ([`internal/spool/track.go`](../internal/spool/track.go), `describeSealed`): `Path`, `DeliveryID`, `Connector`, `Bytes` (compressed size via `os.Stat`), and `Records` / `BytesUncompressed` / `TsMinNs` / `TsMaxNs` from the [stats sidecar](#segment-stats-sidecar). A sidecar-less segment leaves the last four zero, and the connectors fall back to their upload clock for the `date=` / `hour=` partition. Each attempt runs under its own deadline — the connector's `upload_timeout_seconds` (default 60 s, [connectors.md → Common fields](connectors.md#common-fields)) wired through `RegisterTrackOptions.UploadAttemptTimeout` — so a destination that keeps the socket open surfaces as a retryable failure rather than parking the uploader.
+3. On success → `Manager.Complete` removes the file (and its sidecar) from `uploading/`.
 4. On `*cc.Permanent` error → `Manager.Deadletter` moves the file to `deadletter/`.
 5. On any error that is **not** `*cc.Permanent` → sleep with backoff, retry, up to the per-segment cap. On the final failure, move to `deadletter/`. The uploader only calls `cc.IsPermanent` ([`internal/spool/track.go`](../internal/spool/track.go), `uploadOne`) — it never calls `cc.IsRetryable` — so an untyped error from a connector is treated as retryable, matching the `connector.Connector` interface contract ([`internal/connector/connector.go`](../internal/connector/connector.go)).
+
+A deadletter transition is a **handled terminal outcome**, not a transport failure: `uploadOne` returns the `errDeadlettered` sentinel (wrapping the upload error) and `attemptUploads` moves on to the next sealed segment in the same pass rather than aborting the scan, so one poisoned segment never delays the unrelated segments queued behind it. A shutdown that interrupts the backoff sleep returns `errShutdown` — the segment stays in `uploading/` for the next boot's `Recover`, and the breaker is left exactly as the failed attempts left it (an undelivered segment is never reported as a delivery).
 
 Retry backoff defaults (the `RetryOpts` tunables in [`internal/spool/options.go`](../internal/spool/options.go); the `fullJitter` / `nextBackoff` algorithm lives in [`internal/spool/backoff.go`](../internal/spool/backoff.go)):
 
@@ -191,9 +211,9 @@ Sitting above per-segment retry is a per-destination circuit breaker that stops 
 
 | State | Behaviour |
 |---|---|
-| Closed | Normal — every claimed segment runs through Upload. Each success keeps the breaker Closed; every upload failure increments the consecutive-failure counter, including a `*cc.Permanent` one that was just deadlettered (the segment is gone, but a destination rejecting deliveries outright still counts toward opening the breaker). A lost claim race (ENOENT) counts as neither success nor failure. |
+| Closed | Normal — every claimed segment runs through Upload. Accounting is **per `Connector.Upload` attempt**, because that is the unit that actually reaches the destination: each failed attempt (including the `*cc.Permanent` one that sends a segment straight to deadletter) increments the consecutive-failure counter, each delivery resets it. A local `Claim` failure also counts. The deadletter *transition* itself, a lost claim race (ENOENT), and a shutdown or context cancellation mid-attempt count as neither success nor failure. Once the counter reaches `FailuresToOpen` the breaker opens; the segment whose attempt tripped it still runs its own retry budget to completion (so exhaustion-to-deadletter stays reachable), but no further sealed segment is claimed. |
 | Open | The uploader stops claiming segments. Sealed segments accumulate on disk until the breaker probes. |
-| Half-Open | After `HalfOpenAfter`, the breaker allows exactly one probe attempt; success → Closed, failure → Open. |
+| Half-Open | After `HalfOpenAfter`, `Allow` admits exactly one caller as the probe and refuses every other caller until that probe resolves — the reservation is taken under the breaker mutex, so the guarantee holds even with several uploader goroutines sharing one breaker ([`internal/spool/breaker.go`](../internal/spool/breaker.go)). The probe's first `Upload` attempt decides: success → Closed, failure → Open (cooldown restarts). A probe that never reaches `Upload` (lost claim race, empty `sealed/`, early shutdown) hands its slot back via `Release`. |
 
 Defaults (see [`internal/spool/options.go`](../internal/spool/options.go) `BreakerOpts`):
 
@@ -235,7 +255,7 @@ The spool itself does not currently enforce a disk-usage cap; operator-provision
 `spool.Recover(m *Manager)` runs per track on process start (called by `Spool.Start` before the drain or uploader goroutines launch). It walks each track's directories and:
 
 1. **`active/`** — for each file, attempts to read the zstd frames end-to-end. Files that decode cleanly are **sealed** (moved to `sealed/`, counted as `SealedFromActive`) so the uploader ships them — the drain goroutine opens a fresh segment on its first write and never resumes a pre-crash `active/` file, so an unsealed leftover would be stranded forever. Files that hit a torn frame (crash mid-write) move to `quarantine/`.
-2. **`uploading/`** — any file here is an orphan from a worker killed mid-upload. Move back to `sealed/` so the uploader re-attempts.
+2. **`uploading/`** — any file here is an orphan from a worker killed mid-upload. Move back to `sealed/` so the uploader re-attempts; its [stats sidecar](#segment-stats-sidecar) moves with it, so the re-delivery lands in the same record-time partition as the interrupted attempt would have.
 3. **`sealed/`** and **`deadletter/`** — left alone. The uploader will see sealed/ on its first wake.
 
 Recovery is **synchronous before Start** — startup blocks until every track's directories are reconciled. Failing recovery refuses to start the spool; operators see the error in logs at boot rather than silent record loss later.
@@ -271,7 +291,7 @@ One env var configures the spool. It is read by the gateway's env loader (`inter
 
 `Validate` rejects an empty `SLIPSPACE_SPOOL_ROOT` at startup. Pointing it at a tmpfs is supported for ephemeral-by-design deployments but accepts the loss-on-restart semantics that come with it.
 
-Per-track tuning (ring depth, rotation, retry, breaker) is **not** env-driven. Only **rotation** is operator-tunable, via `rotation.max_bytes` / `rotation.max_age_seconds` on the connector YAML entry. Ring depth (`QueueSize`), retry (`RetryOpts`), the circuit breaker (`BreakerOpts`), the upload poll interval and the per-attempt upload timeout have no YAML surface at all — [`cmd/gateway/main.go`](../cmd/gateway/main.go) `setupSpool` propagates only `Rotation` into `RegisterTrackOptions`, so every deployed track uses the hardcoded constants in [`internal/spool/options.go`](../internal/spool/options.go) (retry 1 s / 2× / 60 s / 8 attempts, breaker 5 failures / 30 s, poll 5 s, no per-attempt timeout). The loader does not decode strictly, so an unrecognised `retry:` or `breaker:` block on a connector is silently ignored rather than rejected — changing these values requires a code change.
+Per-track tuning (ring depth, rotation, retry, breaker) is **not** env-driven. Two knobs are operator-tunable on the connector YAML entry: **rotation** (`rotation.max_bytes` / `rotation.max_age_seconds`) and the **per-attempt upload timeout** (`upload_timeout_seconds`, default 60 s — always wired, never unbounded). Ring depth (`QueueSize`), retry (`RetryOpts`), the circuit breaker (`BreakerOpts`) and the upload poll interval have no YAML surface — [`cmd/gateway/main.go`](../cmd/gateway/main.go) `spoolTrackOptions` propagates only `Rotation` and `UploadAttemptTimeout` into `RegisterTrackOptions`, so every deployed track uses the hardcoded constants in [`internal/spool/options.go`](../internal/spool/options.go) for the rest (retry 1 s / 2× / 60 s / 8 attempts, breaker 5 failures / 30 s, poll 5 s). The loader does not decode strictly, so an unrecognised `retry:` or `breaker:` block on a connector is silently ignored rather than rejected — changing those values requires a code change.
 
 ---
 

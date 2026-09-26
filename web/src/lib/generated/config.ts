@@ -199,6 +199,15 @@ export const OversizeMetadataOnly = "metadata_only";
  */
 export const OversizeDropRecord = "drop_record";
 /**
+ * DefaultUploadTimeoutSeconds is the per-attempt Connector.Upload deadline
+ * applied to a spool-backed connector whose upload_timeout_seconds is
+ * unset. Generous enough for a 64 MiB segment on a slow link, short
+ * enough that a destination holding the socket open surfaces as a
+ * retryable failure the circuit breaker can act on instead of parking
+ * the track's single uploader forever.
+ */
+export const DefaultUploadTimeoutSeconds = 60;
+/**
  * Connector is one reusable destination. Many configurations may bind
  * the same connector with different sampling / filter overrides; the
  * connector itself owns rotation policy + auth + transport details.
@@ -229,6 +238,15 @@ export interface Connector {
    * internal/spool's RotationOpts.
    */
   rotation?: ConnectorRotation;
+  /**
+   * UploadTimeoutSeconds bounds one Connector.Upload attempt for a
+   * spool-backed connector. Zero (unset) applies
+   * DefaultUploadTimeoutSeconds; negative is a config error. Each
+   * retry attempt gets its own deadline, so this caps a single
+   * wedged PUT, not the whole retry schedule. Not applicable to
+   * webhook (use timeout_ms there).
+   */
+  upload_timeout_seconds?: number /* int */;
   /**
    * Bucket is the S3 bucket name. Required when Type == s3.
    */
@@ -359,15 +377,19 @@ export interface ConnectorBinding {
    */
   connector: string;
   /**
-   * Sampling is the fraction (0..1] of records routed to this
-   * binding. The validator accepts the full [0, 1] range but the
-   * runtime treats `sampling: 0` and an omitted field identically
-   * (default → 1.0 / include everything). Go's zero-value semantics
-   * make these indistinguishable here and a custom UnmarshalYAML
-   * shim would cost more than the footgun is worth. To disable a
-   * binding, remove it from `connector_bindings` (or use a
-   * vanishingly small value like 0.0001 if you want to keep the
-   * destination warm but drop nearly all traffic).
+   * Sampling is the fraction [0, 1] of records routed to this
+   * binding. A pointer so the unset case is distinguishable from an
+   * explicit zero:
+   *   - nil (unset) → 1.0, ship everything.
+   *   - 0 → ship nothing. The binding stays declared (and its
+   *     connector keeps its spool track / pusher) but no record
+   *     reaches it — the way to mute a destination without deleting
+   *     the binding.
+   *   - (0, 1) → ship that deterministic (or random, per SamplingKey)
+   *     fraction.
+   *   - 1 → ship everything.
+   * Values outside [0, 1] are a config error. Use SamplingRate to
+   * read the effective value.
    */
   sampling?: number /* float64 */;
   /**
