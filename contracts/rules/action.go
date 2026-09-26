@@ -46,16 +46,18 @@ type Response struct {
 }
 
 // ChangeProviderAction switches the upstream provider for the request
-// (state.Provider). Under v2 it is not the authorable routing mechanism:
-// model-keyed redirect is expressed as a binding on the Configuration, and a
-// rule-authored changeProvider is overwritten every attempt by the resilience
-// orchestrator's buildAttemptState re-applying the target's own
-// selection.ProviderSwitchActions (internal/selection/resilience.go). It
-// survives as an internal selection primitive: after
-// rules run, the handler re-resolves transport from the post-rule provider via
-// selection.ResolveTarget, and the credential is minted at the single mint site
-// (cmd/gateway/destination.go::resolveCredentialHeaders, invariant #6). There
-// is no endpoint mapping table (invariant #7).
+// (state.Provider). Under v2 the stable model-keyed redirect is expressed as
+// a binding on the Configuration; a rule-authored changeProvider is the
+// conditional override and takes precedence over the binding: it raises
+// state.ProviderOverridden, and the resilience orchestrator then bypasses the
+// binding-derived group / alias and collapses to one attempt on the rule's
+// provider (selection.RuleOverrideResilienceConfig, internal/selection/
+// resilience.go; GitHub issue #294). The same action type doubles as the
+// orchestrator's internal per-target primitive (selection.ProviderSwitchActions).
+// After rules run, the handler re-resolves transport from the post-rule
+// provider via selection.ResolveTarget, and the credential is minted at the
+// single mint site (cmd/gateway/destination.go::resolveCredentialHeaders,
+// invariant #6). There is no endpoint mapping table (invariant #7).
 type ChangeProviderAction struct {
 	// Type is the polymorphic discriminator; always "changeProvider".
 	Type string `yaml:"type" json:"type"`

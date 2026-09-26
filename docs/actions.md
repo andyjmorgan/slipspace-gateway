@@ -180,20 +180,32 @@ Writes `state.Provider`. Non-terminating.
 
 ### What it mutates
 
-- `state.Provider` = trimmed `NewProvider` (see `applyChangeProvider` in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go) line 93). In the v2 data plane the value is overwritten per attempt by `buildAttemptState` before the final handler reads it, so a rule-authored write never reaches `selection.ResolveTarget`.
+- `state.Provider` = trimmed `NewProvider`, and `state.ProviderOverridden` = `true` (see `applyChangeProvider` in [`internal/middleware/rules/actions.go`](../internal/middleware/rules/actions.go)).
 
-### How v2 resolves the destination instead
+### Precedence over the binding
+
+A rule-authored `changeProvider` **wins over the binding-derived routing** the request was selected with (GitHub [#294](https://github.com/andyjmorgan/slipspace-gateway/issues/294)). The resilience orchestrator reads `state.ProviderOverridden` on entry (`applyRuleOverride`, [`internal/middleware/resilience/middleware.go`](../internal/middleware/resilience/middleware.go)); when set, the binding's policy — a resilience **group** or the degenerate single-target policy carrying the binding's `alias` — is bypassed wholesale:
+
+- the request collapses to **one attempt** on `state.Provider` via `selection.RuleOverrideResilienceConfig` ([`internal/selection/resilience.go`](../internal/selection/resilience.go)), which carries no provider-switch or alias action, so `buildAttemptState` never re-applies the binding's provider over the rule's;
+- the group's targets, `failure_status_codes`, circuit breaker, per-attempt timeouts and retry pacing do **not** apply — the request is no longer under that binding's policy, and no `Attempts[]` are recorded against the group;
+- `state.PolicyRef` becomes `rule:<provider>`, the bypass is logged at debug, and `gateway.resilience.outcome.total{policy=<bypassed policy>, outcome=rule_override}` is bumped so an operator can see the binding was overridden;
+- the final handler then resolves transport from the rule's provider exactly as for any other request (`selection.ResolveTarget`, invariant #7): base URL, protocol path, auth convention and the configuration's credential for that provider.
+
+The rule's provider must still be declared in the configuration's `credentials` (and serve the request's protocol) — otherwise `ResolveTarget` fails and the client sees a 500, unchanged from before. `changeModelName` on its own does **not** raise the flag: a rule that only rewrites the model leaves the group in charge (aliases, failover and load balancing all still apply). Proven end-to-end by [`test/e2e/rules/changeprovider_precedence_test.go`](../test/e2e/rules/changeprovider_precedence_test.go).
+
+### How v2 resolves the destination by default
 
 The destination builder is the single credential and transport mint site in v2 ([`buildDestination` in `cmd/gateway/destination.go`](../cmd/gateway/destination.go)). It reads the provider's base URL, protocol path, per-protocol auth convention, default query, and the configuration's credential straight off the resolved `selection.Target` — there is no provider/endpoint lookup table and no `changeProvider`/`changeUrl` override applied at this stage. The post-rule `changeApiKey` override *is* applied here when set: `resolveCredentialHeaders` (destination.go line 172) honours `state.UpstreamCredentialOverride` over the auth mode, and `credentialHeaderFor` (cmd/gateway/destination.go:238) formats the header once — both at this single mint site, honouring [`CLAUDE.md`](../CLAUDE.md) invariant 6 (one mint site per provider/protocol).
 
-The model-keyed redirect pattern (a `claude-*` model posted to an OpenAI-compat path landing on Anthropic) is expressed as a binding from the OpenAI `chat` protocol to the `anthropic` provider — see [`docs/providers.md`](providers.md) — and is proven by [`test/e2e/providers/changeprovider_redirect_test.go`](../test/e2e/providers/changeprovider_redirect_test.go). The orchestrator's internal `changeProvider`/`changeModelName` pair (`providerSwitchActions` in destination.go line 74) is the primitive the binding/selection layer drives per attempt to land it.
+The model-keyed redirect pattern (a `claude-*` model posted to an OpenAI-compat path landing on Anthropic) is expressed as a binding from the OpenAI `chat` protocol to the `anthropic` provider — see [`docs/providers.md`](providers.md) — and is proven by [`test/e2e/providers/changeprovider_redirect_test.go`](../test/e2e/providers/changeprovider_redirect_test.go). The orchestrator's internal `changeProvider`/`changeModelName` pair (`selection.ProviderSwitchActions`, [`internal/selection/resilience.go`](../internal/selection/resilience.go)) is the primitive the binding/selection layer drives per attempt to land it.
 
-> **Invariant #7 (load-bearing).** [`CLAUDE.md`](../CLAUDE.md) invariant #7 states "`changeProvider` re-resolves the endpoint on the new provider … reads `state.Provider` post-rule and looks up the endpoint on that provider." In v2 that re-resolution happens on **post-rule** state in the *final handler* ([`cmd/gateway/handler.go`](../cmd/gateway/handler.go)), not in `buildDestination`: the handler reads `state.Provider` and calls `selection.ResolveTarget(state.Protocol, provider, …)` — `Protocol` is the first argument, the post-rule provider the second. The provider it reads is the one the orchestrator selected from the binding/target per attempt, not one a rule authored.
+> **Invariant #7 (load-bearing).** [`CLAUDE.md`](../CLAUDE.md) invariant #7: transport is re-resolved on **post-rule** state in the *final handler* ([`cmd/gateway/handler.go`](../cmd/gateway/handler.go)), not in `buildDestination`: the handler reads `state.Provider` and calls `selection.ResolveTarget(state.Protocol, provider, …)` — `Protocol` is the first argument, the post-rule provider the second. The provider it reads is the one the orchestrator selected from the binding/target per attempt, or — when a rule ran `changeProvider` — the rule's provider, untouched.
 
 ### Gotchas
 
-- Redirecting a request to another provider is a binding edit, not a rule; a rule-authored `changeProvider` is inert for routing.
-- Cross-provider failover is configured as a resilience **group** binding (multiple targets), not as a rule pairing `changeProvider` with `changeModelName`. See [resilience.md](resilience.md) for the per-target form.
+- Prefer a binding edit for a stable model → provider mapping; use a rule `changeProvider` when the redirect is conditional on something bindings cannot express (headers, tags, a specific model name inside a wider pattern).
+- A rule `changeProvider` takes the request **out of** its resilience group — no failover, no load balancing, no breaker for that request. Cross-provider failover is configured as a resilience **group** binding (multiple targets), not as a rule pairing `changeProvider` with `changeModelName`. See [resilience.md](resilience.md) for the per-target form. Routing a rule *into* a group (`routeToGroup`) is not yet expressible.
+- The binding's `alias` is not applied after a rule `changeProvider` — pair it with `changeModelName` if the new provider needs a different model name.
 
 ---
 
