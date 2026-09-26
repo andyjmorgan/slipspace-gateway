@@ -17,6 +17,7 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
@@ -243,7 +244,7 @@ func runSingleTarget(
 			slog.String("target", target.Name),
 			slog.Any("error", err),
 		)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		httperr.FromContext(ctx).Write(ctx, w, http.StatusInternalServerError, "resilience", "target_action_failed", "internal error")
 		return
 	}
 	ctx = rules.WithMutableState(ctx, clone)
@@ -371,7 +372,7 @@ func runFailover(
 			)
 			finalStatus = http.StatusInternalServerError
 			orchestratorOutcome = orchestratorOutcomeAllFailed
-			http.Error(w, "internal error", finalStatus)
+			httperr.FromContext(ctx).Write(ctx, w, finalStatus, "resilience", "target_action_failed", "internal error")
 			return
 		}
 
@@ -452,7 +453,7 @@ func runFailover(
 		slog.Int("cb_blocked", totalTargets-attempts),
 		slog.Int("final_status", status),
 	)
-	http.Error(w, http.StatusText(status), status)
+	httperr.FromContext(ctx).Write(ctx, w, status, "resilience", exhaustedErrorCode(orchestratorOutcome), exhaustedErrorMessage(orchestratorOutcome))
 }
 
 // runLoadBalance picks a target via weighted-random selection from
@@ -559,7 +560,7 @@ func runLoadBalance(
 			)
 			finalStatus = http.StatusInternalServerError
 			orchestratorOutcome = orchestratorOutcomeAllFailed
-			http.Error(w, "internal error", finalStatus)
+			httperr.FromContext(ctx).Write(ctx, w, finalStatus, "resilience", "target_action_failed", "internal error")
 			return
 		}
 
@@ -646,7 +647,7 @@ func runLoadBalance(
 		slog.Int("cb_blocked", cbBlocked),
 		slog.Int("final_status", status),
 	)
-	http.Error(w, http.StatusText(status), status)
+	httperr.FromContext(ctx).Write(ctx, w, status, "resilience", exhaustedErrorCode(orchestratorOutcome), exhaustedErrorMessage(orchestratorOutcome))
 }
 
 // emitAttemptCounter bumps gateway.resilience.attempts.total with the
@@ -906,9 +907,10 @@ func effectiveWeight(w int) int {
 	return w
 }
 
-// buildAttemptState clones the baseline state and applies the
-// target's effective actions (Actions plus the scalar ModelRewrite
-// fallback — see effectiveTargetActions) onto the clone. Returns the
+// buildAttemptState clones the baseline state, stamps the target's
+// transport overrides (Path / Query, issue #409) onto the clone, and
+// applies the target's effective actions (Actions plus the scalar
+// ModelRewrite fallback — see effectiveTargetActions). Returns the
 // clone on success or (nil, err) when any action's ApplyAction returns
 // an error — the orchestrator surfaces those as 500 to the client.
 func buildAttemptState(
@@ -917,6 +919,8 @@ func buildAttemptState(
 	target contractsres.ResilienceTarget,
 ) (*rules.MutableState, error) {
 	clone := baseline.Clone()
+	clone.TargetPath = target.Path
+	clone.TargetQuery = target.Query
 	acts := effectiveTargetActions(target)
 	if len(acts) == 0 {
 		return clone, nil

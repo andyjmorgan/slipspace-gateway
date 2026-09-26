@@ -70,7 +70,7 @@ type MutableState struct {
 	// selection.Target (selection.ResolveTarget in cmd/gateway/handler.go,
 	// consumed by cmd/gateway/destination.go), and the only post-rule
 	// overlay step — applyStateOverlays in cmd/gateway/pipeline.go —
-	// touches only QueryAdditions and OutgoingHeaders. The field is
+	// touches only QueryAdditions, OutgoingHeaders and DropHeaders. The field is
 	// written and cloned but never read; to pin a host in v2, set the
 	// provider's base URL in providers.yaml.
 	UpstreamURL *url.URL
@@ -82,6 +82,19 @@ type MutableState struct {
 	// to override the auth header should set it here, not rely on the
 	// builder's defaults.
 	OutgoingHeaders http.Header
+
+	// DropHeaders is the ordered set of inbound header names a setHeader
+	// Remove action asked to strip from the upstream request. Deleting a
+	// key from OutgoingHeaders only cancels a value an earlier rule set;
+	// it cannot touch what the client sent, because the forwarder copies
+	// the inbound request verbatim (issue #564). applyStateOverlays
+	// (cmd/gateway/pipeline.go) appends this set to
+	// proxy.Destination.DropHeaders, which the forwarder applies before
+	// OutgoingHeaders — so a later Set / Append / Prepend of the same
+	// name in the same request still wins on the wire. Those actions
+	// also remove the name from this set, so the recorded intent
+	// matches what is sent. Names are stored in canonical form.
+	DropHeaders []string
 
 	// UpstreamCredentialOverride is the post-rule changeApiKey override
 	// the destination builder reads when minting the upstream credential
@@ -105,6 +118,24 @@ type MutableState struct {
 	// "model" key here so the path template re-renders correctly when
 	// the typed body also gets mutated.
 	PathParams map[string]string
+
+	// TargetPath is the selected binding / group target's upstream path
+	// override for this attempt (contracts/config.Target.Path). The
+	// resilience orchestrator sets it per attempt from
+	// ResilienceTarget.Path (buildAttemptState); the final handler passes
+	// it to selection.ResolveTarget so the override reaches the wire
+	// instead of being lost to a provider-only re-resolution (issue
+	// #409). Empty means "provider protocol default". No rule action
+	// writes it. Skipped when a translate action retargeted the
+	// protocol, since the path was authored for the selected protocol's
+	// endpoint.
+	TargetPath string
+
+	// TargetQuery is the selected target's query-string overrides for
+	// this attempt (contracts/config.Target.Query), set and consumed the
+	// same way as TargetPath and composed over the provider default
+	// query at final resolution. Nil means none.
+	TargetQuery map[string]string
 
 	// BodyMutated is set by any action that writes through the typed
 	// body pointer carried on bodycapture.Captured.Body. The body
@@ -175,6 +206,43 @@ func (s *MutableState) AddTag(t string) bool {
 	return true
 }
 
+// DropHeader records name (canonicalised) in DropHeaders so the forwarder
+// strips the inbound header from the upstream request. Idempotent; a nil
+// receiver or empty name is a no-op.
+func (s *MutableState) DropHeader(name string) {
+	if s == nil {
+		return
+	}
+	canonical := http.CanonicalHeaderKey(name)
+	if canonical == "" {
+		return
+	}
+	for _, existing := range s.DropHeaders {
+		if existing == canonical {
+			return
+		}
+	}
+	s.DropHeaders = append(s.DropHeaders, canonical)
+}
+
+// UndropHeader removes name (canonicalised) from DropHeaders, reversing an
+// earlier DropHeader. Called by the value-writing setHeader ops so a rule
+// that sets a header after another rule removed it does not leave a stale
+// strip request behind. No-op when name was never recorded.
+func (s *MutableState) UndropHeader(name string) {
+	if s == nil || len(s.DropHeaders) == 0 {
+		return
+	}
+	canonical := http.CanonicalHeaderKey(name)
+	kept := s.DropHeaders[:0]
+	for _, existing := range s.DropHeaders {
+		if existing != canonical {
+			kept = append(kept, existing)
+		}
+	}
+	s.DropHeaders = kept
+}
+
 // HasTag reports whether Tags contains t. (TagCondition evaluation reads
 // GatewayContext.Tags, not this method.)
 func (s *MutableState) HasTag(t string) bool {
@@ -222,6 +290,9 @@ func (s *MutableState) Clone() *MutableState {
 	} else {
 		out.OutgoingHeaders = make(http.Header)
 	}
+	if len(s.DropHeaders) > 0 {
+		out.DropHeaders = append([]string(nil), s.DropHeaders...)
+	}
 	if s.UpstreamCredentialOverride != nil {
 		v := *s.UpstreamCredentialOverride
 		out.UpstreamCredentialOverride = &v
@@ -230,6 +301,13 @@ func (s *MutableState) Clone() *MutableState {
 		out.PathParams = make(map[string]string, len(s.PathParams))
 		for k, v := range s.PathParams {
 			out.PathParams[k] = v
+		}
+	}
+	out.TargetPath = s.TargetPath
+	if s.TargetQuery != nil {
+		out.TargetQuery = make(map[string]string, len(s.TargetQuery))
+		for k, v := range s.TargetQuery {
+			out.TargetQuery[k] = v
 		}
 	}
 	if len(s.QueryAdditions) > 0 {

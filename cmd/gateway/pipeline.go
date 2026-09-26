@@ -308,9 +308,17 @@ func buildPassthroughDestination(
 }
 
 // applyStateOverlays layers the post-rule MutableState's authored mutations —
-// SetHeader writes and appendQueryString deltas — onto the resolved
-// destination. Rules win the last word on the wire, mirroring v1.
+// SetHeader writes and removes, and appendQueryString deltas — onto the
+// resolved destination. Rules win the last word on the wire, mirroring v1.
+//
+// state.DropHeaders (setHeader Remove) is appended to dest.DropHeaders so the
+// forwarder strips the inbound client header, not just a value an earlier
+// rule wrote (issue #564). The forwarder applies drops before
+// OutgoingHeaders, so a Set of the same name in the same request still wins.
 func applyStateOverlays(dest *proxy.Destination, state *rules.MutableState) {
+	for _, name := range state.DropHeaders {
+		dest.DropHeaders = appendUnique(dest.DropHeaders, name)
+	}
 	if len(state.QueryAdditions) > 0 && dest.UpstreamURL != nil {
 		q := dest.UpstreamURL.Query()
 		for _, add := range state.QueryAdditions {

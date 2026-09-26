@@ -47,7 +47,7 @@ func TestRequestCompletion_EarlyFailures(t *testing.T) {
 			reporter := newReporterFactory(nil, store, logger, meters, ring, bodyStore, nil, nil, false, testDefaultCaps(), nil)
 			errs := httperr.New(meters.ErrorResponsesTotal, logger)
 			plane := buildDataPlaneHandler(auth.NewResolver(store), proxy.New(proxy.Options{Logger: logger, ObserverFactory: reporter.Factory()}),
-				rules.NewEvaluator(store, 8, meters), reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), nil, meters, errs, nil, logger)
+				rules.NewEvaluator(store, 8, meters), reporter.Factory(), store, resiliencemw.NewInMemoryBreakerStore(nil), nil, meters, errs, nil, "", logger)
 			plane = responseCaptureMiddleware(4096, bodies, nil, reporter.requestCompletionMiddleware(recoverMiddleware(meters, errs, plane)))
 
 			for _, tc := range []struct {

@@ -20,6 +20,12 @@ type resilienceTargetSpec struct {
 	alias          string
 	weight         int
 	timeoutSeconds int
+	// path and query are the target's authored transport overrides,
+	// carried on the ResilienceTarget so buildAttemptState can stamp them
+	// on the per-attempt state for the final handler's ResolveTarget
+	// (issue #409).
+	path  string
+	query map[string]string
 }
 
 // resilienceGroupSpec is the group-wide input the synthesiser needs — the
@@ -62,6 +68,8 @@ func GroupResilienceConfig(name string, g contractsconfig.Group) contractsres.Re
 			alias:          t.Alias,
 			weight:         t.Weight,
 			timeoutSeconds: t.TimeoutSeconds,
+			path:           t.Path,
+			query:          t.Query,
 		})
 	}
 	return synthesiseGroup(resilienceGroupSpec{
@@ -95,6 +103,8 @@ func (g Group) ResilienceConfig() contractsres.ResilienceConfig {
 			alias:          t.Alias,
 			weight:         t.Weight,
 			timeoutSeconds: t.TimeoutSeconds,
+			path:           t.PathOverride,
+			query:          t.QueryOverride,
 		})
 	}
 	return synthesiseGroup(resilienceGroupSpec{
@@ -128,6 +138,8 @@ func synthesiseGroup(g resilienceGroupSpec, specs []resilienceTargetSpec) contra
 			Order:          i + 1,
 			Weight:         weight,
 			TimeoutSeconds: s.timeoutSeconds,
+			Path:           s.path,
+			Query:          s.query,
 			Actions:        ProviderSwitchActions(s.provider, s.alias),
 		})
 	}
@@ -160,6 +172,8 @@ func SingleTargetResilienceConfig(t Target) contractsres.ResilienceConfig {
 			Name:     t.Provider,
 			Provider: t.Provider,
 			Order:    1,
+			Path:     t.PathOverride,
+			Query:    t.QueryOverride,
 			Actions:  ProviderSwitchActions(t.Provider, t.Alias),
 		}},
 	}

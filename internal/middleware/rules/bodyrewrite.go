@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/andyjmorgan/slipspace-gateway/internal/bodypatch"
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
@@ -26,9 +27,15 @@ import (
 // current r.Body, applies the patches via gjson/sjson, and replaces
 // r.Body + Content-Length.
 //
+// externalURL is the gateway's externally reachable base URL
+// (SLIPSPACE_EXTERNAL_URL); it resolves the {external_url} template
+// reference on request.body targets exactly as ApplyResponseRewrites does
+// on the response side (issue #482). Empty leaves the ref unresolved, which
+// drops the op with template_ref_miss.
+//
 // No-op when no rewrites were queued — the common path reads the state,
 // finds an empty slice, and falls through with zero allocation.
-func BodyRewriteHandler(meters *observability.Meters, next http.Handler) http.Handler {
+func BodyRewriteHandler(meters *observability.Meters, externalURL string, next http.Handler) http.Handler {
 	if next == nil {
 		panic("rules: BodyRewriteHandler called with nil next handler")
 	}
@@ -45,14 +52,15 @@ func BodyRewriteHandler(meters *observability.Meters, next http.Handler) http.Ha
 		if err != nil {
 			logger := observability.FromContext(ctx)
 			logger.ErrorContext(ctx, "rules: body rewrite read", "err", err.Error())
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			httperr.FromContext(ctx).Write(ctx, w, http.StatusInternalServerError, "rules", "body_rewrite_failed", "internal error")
 			return
 		}
 
 		refs := bodypatch.Refs{
-			PathParams: state.PathParams,
-			Provider:   state.Provider,
-			Protocol:   state.Protocol,
+			ExternalURL: externalURL,
+			PathParams:  state.PathParams,
+			Provider:    state.Provider,
+			Protocol:    state.Protocol,
 		}
 		patched, results := bodypatch.Apply(body, state.BodyRewrites, refs)
 		recordRewriteResults(ctx, meters, results)
