@@ -658,22 +658,33 @@ func TestInMemoryStore_Snapshot_ReportsPerKeyState(t *testing.T) {
 	}
 }
 
-func TestSplitBreakerKey(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		in     string
-		policy string
-		target string
-	}{
-		{"polA|targetA", "polA", "targetA"},
-		{"a|b|c", "a", "b|c"}, // only the first | is the separator
-		{"bare", "bare", ""},  // no separator collapses safely
-		{"|trailing", "", "trailing"},
+// TestInMemoryStore_Snapshot_NamesRoundTripVerbatim pins the structural
+// key: a policy or target name containing the historical '|' separator
+// (or any other character) comes back from Snapshot exactly as recorded,
+// with the state that pair actually holds. Config validation keeps such
+// names out of authored config, but the store must not depend on it.
+func TestInMemoryStore_Snapshot_NamesRoundTripVerbatim(t *testing.T) {
+	store := NewInMemoryBreakerStore(nil)
+	cfg := standardCBConfig()
+
+	store.RecordSuccess("eu|west", "open|ai", cfg)
+	store.RecordSuccess("eu", "west|open|ai", cfg)
+	for i := 0; i < cfg.FailureThreshold+cfg.MinimumThroughput; i++ {
+		store.RecordFailure("eu|west", "open|ai", cfg)
 	}
-	for _, tc := range cases {
-		p, t1 := splitBreakerKey(tc.in)
-		if p != tc.policy || t1 != tc.target {
-			t.Errorf("splitBreakerKey(%q) = (%q, %q); want (%q, %q)", tc.in, p, t1, tc.policy, tc.target)
-		}
+
+	snap := store.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("Snapshot len = %d; want 2", len(snap))
+	}
+	got := map[[2]string]State{}
+	for _, s := range snap {
+		got[[2]string{s.Policy, s.Target}] = s.State
+	}
+	if st, ok := got[[2]string{"eu|west", "open|ai"}]; !ok || st != StateOpen {
+		t.Errorf("(eu|west, open|ai) = (%v, present=%t); want StateOpen", st, ok)
+	}
+	if st, ok := got[[2]string{"eu", "west|open|ai"}]; !ok || st != StateClosed {
+		t.Errorf("(eu, west|open|ai) = (%v, present=%t); want StateClosed", st, ok)
 	}
 }

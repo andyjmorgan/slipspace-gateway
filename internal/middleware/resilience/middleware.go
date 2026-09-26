@@ -163,9 +163,11 @@ func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, meters *observabili
 			return
 		}
 
-		// Default path (ModeNone, "", unknown future modes):
-		// single-target degenerate. Apply the first target's Actions
-		// if any, then forward once.
+		// Default path (ModeNone or ""): single-target degenerate. Apply
+		// the first target's Actions if any, then forward once. Unknown
+		// modes cannot reach here from config — ResilienceConfig.Validate
+		// rejects them and v2 group validation runs it at load — so the
+		// fall-through is only ever the deliberate none/empty case.
 		runSingleTarget(w, r, pol, pol.Targets[0], state, next)
 	})
 }

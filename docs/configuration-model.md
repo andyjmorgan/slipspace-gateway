@@ -135,6 +135,7 @@ providers:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
+| _map key_ | string | yes | The provider name. Must be an identifier: a leading letter or digit, then letters, digits, `.`, `_` or `-`. It is the `provider` telemetry label and half of the circuit-breaker `(group, provider)` key, so anything else aborts validation. |
 | `base_url` | string | yes | Upstream root URL (e.g. `https://api.openai.com`). A protocol's `path` is appended to this when forwarding. Empty aborts validation. |
 | `required_headers` | map[string]string | no | Headers injected on every forwarded request to this provider (e.g. `anthropic-version: 2023-06-01`). |
 | `query` | map[string]string | no | Default query-string params appended to every request to this provider (e.g. Azure's `api-version`). A binding or group target may add or override entries; the effective set is provider ∪ override, override winning. |
@@ -191,12 +192,13 @@ groups:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:15`, values at `:23-29`). |
+| _map key_ | string | yes | The group name. Must be an identifier: a leading letter or digit, then letters, digits, `.`, `_` or `-`. It is the `policy` telemetry label and half of the circuit-breaker `(group, provider)` key, so anything else aborts validation. |
+| `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:15`, values at `:23-29`). Required; an omitted or unknown value aborts validation (`ErrUnknownMode`) rather than degrading to single-target. |
 | `failure_status_codes` | []int | no | Upstream HTTP status set treated as a failure for retry / circuit-breaker accounting. Empty falls back to "5xx is a failure". |
-| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:175`). |
+| `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, provider)` pair — the breaker key is `group-name|provider-name` — so a provider tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:175`). Validated at load by `CircuitBreakerConfig.Validate`: rate in `[0, 1]`, no negatives, and an enabled breaker needs a trip arm plus `cooldown_seconds > 0`. |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
 | `response_header_timeout_seconds` | int | no | When `> 0`, overrides the gateway-wide upstream response-header timeout for every attempt under this group, so a group can fail over off a slow target faster than the default. |
-| `targets` | []Target | yes | The providers this group routes across. Must have at least one (`internal/config/config_validate.go:132-134`). |
+| `targets` | []Target | yes | The providers this group routes across. Must have at least one, and a provider may appear only once per group (`internal/config/config_validate.go::validateGroups`). |
 
 ### `Target` fields (`contracts/config/model.go:194`)
 
@@ -204,13 +206,13 @@ The atom a binding or group dispatches to: a provider reference plus per-use ove
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `provider` | string | yes | Names a provider in the top-level `providers` block. Unknown provider aborts validation. |
+| `provider` | string | yes | Names a provider in the top-level `providers` block. Unknown provider aborts validation; so does listing the same provider twice in one group. |
 | `alias` | string | no | When non-empty, rewrites the request body's model field to this value when this target is selected (the model-name rewrite — placing it on the target lets a group send one logical model under a different upstream id per provider). |
 | `query` | map[string]string | no | Adds or overrides query-string params for this target, composed over the provider's `query`. |
 | `path` | string | no | Overrides the protocol path for this target (e.g. an Azure deployment-specific path on a shared provider connection). |
 | `weight` | int | no | Relative selection weight in `load_balance` mode. Zero is treated as 1 (even weighting); ignored in `failover` mode, where declaration order drives sequencing. |
 
-Validation: a group must declare at least one target, every target must name a `provider`, and that provider must exist (`internal/config/config_validate.go::validateGroups`, provider-existence check at `:139-141` — `if _, ok := r.Providers[t.Provider]; !ok`). The protocol-preserving check happens at the **binding** level — when a binding references a group, every target in that group must serve the binding's protocol (`validateBindings`, `config_validate.go:285`).
+Validation (`internal/config/config_validate.go::validateGroups`): the group name is an identifier; `mode` is set; the group declares at least one target; every target names a `provider` that exists, and no provider is listed twice. The group is then synthesised into the orchestrator's `ResilienceConfig` (`selection.GroupResilienceConfig`, `internal/selection/resilience.go`) and `contracts/resilience` `ResilienceConfig.Validate()` runs over it — closed-set `mode`, 4xx/5xx `failure_status_codes`, non-negative `response_header_timeout_seconds`, and the full `circuit_breaker` rule set (rate in `[0, 1]`, no negatives, enabled breaker needs a trip arm and `cooldown_seconds > 0`). Rejections wrap `ErrValidation` and the originating `contracts/resilience` sentinel. See [`resilience.md` → Validated at load](resilience.md#validated-at-load). The protocol-preserving check happens at the **binding** level — when a binding references a group, every target in that group must serve the binding's protocol (`validateBindings`, `config_validate.go:285`).
 
 ---
 
@@ -772,8 +774,8 @@ The invariants the loader enforces, and the sentinel each violation wraps (`inte
 | `ErrUnknownConnectorReference` | A `connector_bindings[].connector` names a connector not in the `connectors` block. |
 | `ErrAuthFormatWithoutHeader` | An `auth.format` is set without an `auth.header` at the same level. |
 | `ErrInvalidAuthFormat` | An `auth.format` does not contain `{key}` exactly once. |
-| `ErrValidation` (provider) | `base_url` missing; provider declares no `protocols` and no `passthrough`; unknown protocol name; passthrough path missing `match`/`methods`. |
-| `ErrValidation` (group) | Group has no `targets`; a target has no `provider`; a target names an unknown provider. |
+| `ErrValidation` (provider) | Provider name is not an identifier (leading letter/digit, then letters, digits, `.`, `_`, `-`); `base_url` missing; provider declares no `protocols` and no `passthrough`; unknown protocol name; passthrough path missing `match`/`methods`. |
+| `ErrValidation` (group) | Group name is not an identifier; `mode` missing; group has no `targets`; a target has no `provider`; a target names an unknown provider; a provider listed twice; or the synthesised `ResilienceConfig` fails `contracts/resilience` validation — the error also wraps that sentinel (`ErrUnknownMode`, `ErrInvalidCircuitBreakerConfig`, `ErrInvalidFailureStatusCode`, `ErrInvalidThreshold`). |
 | `ErrValidation` (configuration) | A `credentials` key names an unknown provider; an `api_keys[]` secret is empty or duplicated; a duplicate API-key `id`; a `passthrough_bindings[]` names an unknown provider or family. |
 | `ErrValidation` (binding) | Unknown protocol; not exactly one of `provider`/`group`; unknown provider/group; destination does not serve the protocol (protocol-preserving); malformed model pattern (non-trailing or multiple `*`); two catch-all bindings on one protocol; a duplicate exact model on one protocol. |
 

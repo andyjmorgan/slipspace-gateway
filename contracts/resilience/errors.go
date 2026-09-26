@@ -54,6 +54,13 @@ var ErrFailoverNeedsOrder = errors.New("resilience: failover target requires ord
 // (the cumulative-sum selector would divide by zero).
 var ErrLoadBalanceNeedsWeight = errors.New("resilience: load_balance target requires weight > 0")
 
+// ErrTerminatingTargetAction is returned when a ResilienceTarget.Actions list
+// carries a terminating rule action (returnStatusCode, llmImpersonation). The
+// orchestrator applies target actions per attempt and discards their Outcome,
+// so a terminating action on a target could never surface its synthetic
+// response; refusing it at validation beats a silent no-op.
+var ErrTerminatingTargetAction = errors.New("resilience: terminating action not allowed on a target")
+
 // ErrEmptyResilienceName is returned when a ResilienceConfig carries no Name.
 // Name is the canonical handle referenced from Configuration.ResilienceName and
 // is required at the schema level.

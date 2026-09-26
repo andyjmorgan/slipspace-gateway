@@ -34,7 +34,8 @@ export const DefaultBindAddr = "0.0.0.0:8081";
  * The console is off by default. When Enabled is true, the gateway
  * starts a second http.Server bound to BindAddr (or DefaultBindAddr)
  * serving the embedded SPA at "/admin/" and the control-plane API
- * under "/admin/api/v1/*" (internal/admin.Prefix). HTTP Basic auth
+ * under "/admin/api/v1/*", both mounted below internal/admin.Prefix
+ * ("/admin"). HTTP Basic auth
  * protects the API except GET /admin/api/v1/version; the SPA's
  * static assets are public.
  * Password resolution prefers the EnvPassword env var when set;
@@ -313,7 +314,7 @@ export interface DashboardSummary {
   by_configuration: DashboardConfigurationRow[];
   /**
    * ByModel breaks requests down by upstream model (the model
-   * label on gateway.requests.total).
+   * label on slipspace.requests.total).
    */
   by_model: DashboardModelRow[];
   /**
@@ -454,7 +455,7 @@ export interface DashboardTagFiredRow {
  * DashboardProviderHealth is one row of ProviderHealth.
  * Only {Provider, Healthy, ErrorRate5m, Requests5m} are populated by
  * v1.1 because that's what the in-process registry can compute from
- * gateway.requests.total alone. Tail fields (consecutive errors, last
+ * slipspace.requests.total alone. Tail fields (consecutive errors, last
  * error message, last success timestamp) require a probe goroutine
  * that doesn't exist yet — they were removed from the contract rather
  * than left at zero-value placeholders the SPA had to defensively
@@ -1064,8 +1065,10 @@ export interface MessageBodyDetail {
  * per-pod circuit-breaker state for each (policy, target) pair the
  * in-process store has observed. Targets the breaker has not yet
  * seen report state="closed" — matches BreakerStore.State semantics.
- * The SPA renders this as a read-only policies page in v1.2; v1.3+
- * adds edit-in-place once the control-plane mutators land.
+ * The SPA renders this as the policies overview, with the live
+ * per-pod breaker state; editing a group is a link out to the group
+ * editor backed by the /api/v1/config/groups CRUD endpoints, while
+ * the richer live-breaker projection stays here on /api/v1/policies.
  */
 export interface PoliciesResponse {
   /**
@@ -1086,7 +1089,8 @@ export interface PoliciesResponse {
  * list of targets, and per-target breaker state. Fields mirror
  * contracts/resilience.ResilienceConfig but project to a read-friendly
  * shape (no nested action polymorphism, no per-group CB cfg in this
- * summary — those are part of the v1.3 detail endpoint).
+ * summary — those are available from the group CRUD endpoints,
+ * /api/v1/config/groups/{name}).
  */
 export interface PolicySummary {
   /**
@@ -1108,7 +1112,9 @@ export interface PolicySummary {
   strict_weights?: boolean;
   /**
    * FailureStatusCodes is the policy-level retry set. Empty when
-   * the policy falls back to the orchestrator default 5xx-class.
+   * the policy falls back to the orchestrator default retry set
+   * [500, 502, 503, 504] (defaultFailureStatusCodes in
+   * internal/middleware/resilience/middleware.go) — not every 5xx.
    */
   failure_status_codes?: number /* int */[];
   /**
@@ -1138,13 +1144,16 @@ export interface PolicyTarget {
    */
   provider?: string;
   /**
-   * Order is the failover target order (lower is tried first).
-   * Always zero in load_balance modes.
+   * Order is the target's 1-based declaration position within the
+   * group, populated in every mode. Declaration order is what drives
+   * failover sequencing (lower is tried first); it carries no meaning
+   * in load_balance modes.
    */
   order?: number /* int */;
   /**
-   * Weight is the load_balance weighted-random share. Always zero
-   * in failover mode.
+   * Weight is the authored per-target load_balance share, passed
+   * through verbatim in every mode. The orchestrator ignores it in
+   * failover mode.
    */
   weight?: number /* int */;
   /**
@@ -1494,9 +1503,10 @@ export interface ToolCallEntry {
 
 /**
  * VerdictResponse is the SlipSpace Arbiter security verdict plus findings for
- * one request, served at GET /api/v1/verdict/{correlation_id} and rendered in
- * the console's Security pane. Verdict is nil when the scan has not reached
- * quiescence yet (no verdict row); Findings is empty for a clean request.
+ * one request, served at GET /api/v1/verdict/{id} (the {id} path value is the
+ * request correlation id) and rendered in the console's Security pane. Verdict
+ * is nil when the scan has not reached quiescence yet (no verdict row);
+ * Findings is empty for a clean request.
  */
 export interface VerdictResponse {
   /**

@@ -18,7 +18,7 @@ import (
 //
 // The redirect is binding-driven, not rule-driven: config-dev/policy.yaml
 // carries no changeProvider rule. state.Provider is set by the
-// orchestrator's internal providerSwitchActions derived from the selected
+// orchestrator's internal selection.ProviderSwitchActions derived from the selected
 // binding, and the credential is minted once in the destination builder.
 
 func TestRule_ChangeProvider_ClaudeRedirectsToAnthropic(t *testing.T) {
