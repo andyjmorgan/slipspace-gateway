@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/google/uuid"
@@ -161,13 +162,21 @@ func validateAuth(a *contractsconfig.ProviderAuth) error {
 
 // validateGroups checks every entry of the groups block. The shape checks
 // (identifier name, explicit mode, at least one target, every target names a
-// known provider, no provider listed twice) run first with group-scoped
-// messages; then the group is synthesised into the exact ResilienceConfig the
-// orchestrator will run (selection.GroupResilienceConfig) and that config's own
-// Validate runs, which closes the contracts/resilience rule set — unknown mode,
-// circuit-breaker ranges, enabled-breaker cooldown, per-mode order/weight — over
-// the authored group. A group that passes here therefore cannot degrade at
-// runtime: the orchestrator sees precisely what was validated.
+// known provider, no two targets that are the same use of one provider) run
+// first with group-scoped messages; then the group is synthesised into the
+// exact ResilienceConfig the orchestrator will run
+// (selection.GroupResilienceConfig) and that config's own Validate runs, which
+// closes the contracts/resilience rule set — unknown mode, circuit-breaker
+// ranges, enabled-breaker cooldown, per-mode order/weight, retry ranges,
+// distinct target names — over the authored group. A group that passes here
+// therefore cannot degrade at runtime: the orchestrator sees precisely what
+// was validated.
+//
+// A provider may be listed more than once when the entries differ in alias,
+// path or query — a weighted alias canary on one provider is a legal group,
+// and Group.TargetNames gives each arm its own breaker key and `target`
+// label. Two entries that agree on all of those are indistinguishable at
+// runtime (the same upstream call under the same identity) and are rejected.
 //
 // Mode is required here even though ResilienceConfig.Validate treats "" as
 // ModeNone: an omitted mode is far more often a typo'd key than a deliberate
@@ -183,7 +192,6 @@ func (r *ResolvedConfig) validateGroups() error {
 		if len(g.Targets) == 0 {
 			return fmt.Errorf("%w: group %q: declares no targets", ErrValidation, name)
 		}
-		seen := make(map[string]int, len(g.Targets))
 		for i, t := range g.Targets {
 			if t.Provider == "" {
 				return fmt.Errorf("%w: group %q targets[%d]: provider is required", ErrValidation, name, i)
@@ -191,10 +199,11 @@ func (r *ResolvedConfig) validateGroups() error {
 			if _, ok := r.Providers[t.Provider]; !ok {
 				return fmt.Errorf("%w: group %q targets[%d]: unknown provider %q", ErrValidation, name, i, t.Provider)
 			}
-			if prev, dup := seen[t.Provider]; dup {
-				return fmt.Errorf("%w: group %q targets[%d]: provider %q already listed at targets[%d] (breaker state and telemetry are keyed per (group, provider))", ErrValidation, name, i, t.Provider, prev)
+			for prev := 0; prev < i; prev++ {
+				if sameTargetUse(g.Targets[prev], t) {
+					return fmt.Errorf("%w: group %q targets[%d]: provider %q with the same alias, path and query is already listed at targets[%d] (the two arms would be indistinguishable; give one a different alias, path or query)", ErrValidation, name, i, t.Provider, prev)
+				}
 			}
-			seen[t.Provider] = i
 		}
 		rc := selection.GroupResilienceConfig(name, g)
 		if err := rc.Validate(); err != nil {
@@ -202,6 +211,14 @@ func (r *ResolvedConfig) validateGroups() error {
 		}
 	}
 	return nil
+}
+
+// sameTargetUse reports whether two group targets are the same use of one
+// provider — identical provider, alias, path and query. Weight and timeout are
+// deliberately not compared: they tune an arm without changing what it calls,
+// so two such entries would still be one indistinguishable upstream identity.
+func sameTargetUse(a, b contractsconfig.Target) bool {
+	return a.Provider == b.Provider && a.Alias == b.Alias && a.Path == b.Path && maps.Equal(a.Query, b.Query)
 }
 
 // knownModesList renders the closed ResilienceMode set for error messages.

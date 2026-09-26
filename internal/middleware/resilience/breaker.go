@@ -135,27 +135,41 @@ type inMemoryStore struct {
 }
 
 // breakerKey identifies one breaker: the resilience policy (group) name and
-// the target (provider) name. It is a two-field struct rather than a joined
-// string so the pair round-trips through the map without any delimiter — a
-// name containing '|' (or anything else) can neither collide with nor be
-// mis-split from another pair. Config validation additionally restricts
-// group and provider names to identifiers, but the store does not depend on
-// that.
+// the target name. It is a two-field struct rather than a joined string so
+// the pair round-trips through the map without any delimiter — a name
+// containing '|' (or anything else) can neither collide with nor be mis-split
+// from another pair. Config validation additionally restricts group and
+// provider names to identifiers, but the store does not depend on that: a
+// target name may carry the '#' disambiguator a group with the same provider
+// listed twice produces (contractsconfig.Group.TargetNames).
 type breakerKey struct {
 	policy string
 	target string
 }
 
+// getOrCreate returns the breaker for (policy, target), creating it with a
+// bucket ring sized to cfg's sampling window on first sight. An existing
+// breaker whose ring length no longer matches the window (the operator
+// changed sampling_duration_seconds through the live admin write path) has
+// its ring rebuilt in place so the new window takes effect without a restart.
+// The rebuild discards the in-window success/failure history — acceptable,
+// and arguably correct, on a policy change: counts gathered under the old
+// window would be evaluated against thresholds tuned for the new one. The
+// lifecycle state (Open / HalfOpen / Closed) and openedAt survive the resize.
 func (s *inMemoryStore) getOrCreate(policy, target string, cfg *contractsres.CircuitBreakerConfig) *breaker {
 	key := breakerKey{policy: policy, target: target}
+	window := effectiveWindow(cfg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b, ok := s.breakers[key]; ok {
+		b.mu.Lock()
+		if len(b.buckets) != window {
+			b.buckets = make([]bucket, window)
+			b.bucketIdx = 0
+			b.lastRotate = clock()
+		}
+		b.mu.Unlock()
 		return b
-	}
-	window := cfg.SamplingDurationSeconds
-	if window <= 0 {
-		window = 60
 	}
 	b := &breaker{
 		buckets:    make([]bucket, window),
@@ -163,6 +177,15 @@ func (s *inMemoryStore) getOrCreate(policy, target string, cfg *contractsres.Cir
 	}
 	s.breakers[key] = b
 	return b
+}
+
+// effectiveWindow is the bucket-ring length for cfg: one bucket per second
+// of SamplingDurationSeconds, defaulting to 60 when unset or non-positive.
+func effectiveWindow(cfg *contractsres.CircuitBreakerConfig) int {
+	if cfg.SamplingDurationSeconds <= 0 {
+		return 60
+	}
+	return cfg.SamplingDurationSeconds
 }
 
 func (s *inMemoryStore) Allow(policy, target string, cfg *contractsres.CircuitBreakerConfig) bool {
