@@ -85,6 +85,29 @@ type Outcome struct {
 
 `Terminate=true` short-circuits the pipeline. `Response`, when non-nil, is the synthetic response the rules middleware writes to the client in lieu of forwarding upstream. Non-terminating actions return a zero `Outcome`.
 
+### Load-time validation
+
+Every action type implements the contract package's `validate()` hook, which `RuleContract.Validate()` runs for each action at config load and on every admin write (`internal/admin/rules_write.go::commitClone` → `RevalidateAndIndex`, surfaced as **422**). The hooks reject the mistakes that would otherwise fail on every matching request:
+
+| Action | Rejected at load |
+|---|---|
+| `changeProvider` | empty `newProvider` |
+| `translate` | empty `targetProtocol` (`ErrEmptyTranslateTarget`) |
+| `changeModelName` | empty `newModelName` |
+| `changeUrl` | empty or unparsable `newUrl` |
+| `changeApiKey` | empty `apiKey` unless `useSlipSpaceKey: true` |
+| `setHeader` | empty `headerName`; `headerAction` outside `Set` / `Append` / `Prepend` / `Remove` (case-sensitive) |
+| `appendQueryString` | empty `key` (an empty `value` is fine) |
+| `addTag` | empty `tag` |
+| `useResiliencePolicy` | empty `policyName` |
+| `rewriteField` / `removeField` / `appendField` | invalid `target` (`ErrInvalidTarget`) |
+| `returnStatusCode` | `statusCode` outside `100`–`599` (including an omitted key) |
+| `llmImpersonation` | empty `message` |
+
+Empty required strings return `rules.ErrEmptyActionField`; present-but-malformed values return `rules.ErrInvalidActionField`. Both are wrapped as `rule "<name>": actions[<i>]: <type>: <field>: ...` so the startup log or 422 body names the exact key.
+
+**Behaviour change (v2.3.11):** before this, only `translate` and the three body-rewrite actions had a hook. A rule with an empty `tag:`, `headerName:`, `message:`, etc. loaded clean and then failed per request with `rules: required value is empty`. Such a config now fails to load — check the startup error, fix the field, and restart. The runtime keeps its own `errEmptyValue` check as belt-and-braces for actions constructed in code. Unknown action discriminators are unaffected and still load as inert `UnknownAction`s.
+
 ---
 
 ## Terminating vs non-terminating
@@ -176,7 +199,7 @@ Writes `state.Provider`. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `changeProvider`. |
-| `NewProvider` | `newProvider` | `new_provider` | yes | Provider name. Trimmed; empty rejected at evaluate time. |
+| `NewProvider` | `newProvider` | `new_provider` | yes | Provider name. Trimmed; empty rejected at config load (and again at evaluate time). |
 
 ### What it mutates
 
@@ -252,7 +275,7 @@ Rewrites the model name in the typed request body. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `changeModelName`. |
-| `NewModelName` | `newModelName` | `new_model_name` | yes | Replacement model identifier. Trimmed; empty rejected at evaluate time. |
+| `NewModelName` | `newModelName` | `new_model_name` | yes | Replacement model identifier. Trimmed; empty rejected at config load (and again at evaluate time). |
 
 ### What it mutates
 
@@ -318,7 +341,7 @@ Writes `state.UpstreamURL`. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `changeUrl`. |
-| `NewURL` | `newUrl` | `new_url` | yes | Replacement URL. Parsed via `url.Parse`; parse failure returns an error at evaluate time. |
+| `NewURL` | `newUrl` | `new_url` | yes | Replacement URL. Parsed via `url.Parse`; empty or unparsable values are rejected at config load (and parse failure again at evaluate time). |
 
 ### What it mutates
 
@@ -407,18 +430,18 @@ Mutates an outgoing HTTP header on the upstream request. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `setHeader`. |
-| `HeaderName` | `headerName` | `header_name` | yes | Header to modify. Trimmed; empty rejected. |
-| `HeaderAction` | `headerAction` | `header_action` | yes | One of `Set`, `Append`, `Prepend`, `Remove`. |
+| `HeaderName` | `headerName` | `header_name` | yes | Header to modify. Trimmed; empty rejected at config load. |
+| `HeaderAction` | `headerAction` | `header_action` | yes | One of `Set`, `Append`, `Prepend`, `Remove` (case-sensitive); anything else is rejected at config load. |
 | `HeaderValue` | `headerValue` | `header_value` | conditional | Required for `Set`, `Append`, `Prepend`. Ignored for `Remove`. |
 
 ### What it mutates
 
-- `state.OutgoingHeaders[HeaderName]` per `HeaderAction`:
+- `state.OutgoingHeaders[HeaderName]` per `HeaderAction`, plus `state.DropHeaders` for `Remove`:
 
 | Op | Behaviour when header is missing | Behaviour when header is present |
 |---|---|---|
 | `Set` | Sets to `HeaderValue`. | Replaces existing value with `HeaderValue`. |
-| `Remove` | No-op. | Deletes the header entirely. |
+| `Remove` | Records the name on `state.DropHeaders` so the forwarder strips it if the **client** sent it; otherwise a no-op. | Deletes the rule-written value **and** records the name on `state.DropHeaders`, so the inbound client header is stripped from the upstream request too. |
 | `Append` | Sets to `HeaderValue` (symmetric with `Set`). | Sets to `existing + ", " + HeaderValue`. |
 | `Prepend` | Sets to `HeaderValue` (symmetric with `Set`). | Sets to `HeaderValue + ", " + existing`. |
 
@@ -426,6 +449,7 @@ Mutates an outgoing HTTP header on the upstream request. Non-terminating.
 
 - **Multi-value concatenation uses `", "` (comma + space).** RFC 7230 §3.2.2 specifies comma as the list separator for multi-value headers when serialised to the wire. The .NET predecessor concatenated without a separator (so `"a" + "b" = "ab"`), which is a deliberate divergence — the comma form is the standards-compliant one.
 - **Append/Prepend create the header when missing.** The .NET behaviour of "silently no-op on Append-to-missing" was a footgun; SlipSpace creates the header instead so the action's intent always lands.
+- **`Remove` strips inbound client headers.** `applyStateOverlays` appends `state.DropHeaders` to `proxy.Destination.DropHeaders`, which the forwarder applies *before* `OutgoingHeaders`. So `Remove` reaches the header the client sent, not just a value an earlier rule wrote — and a later `Set` / `Append` / `Prepend` of the same name in the same request un-records the removal and wins on the wire.
 - **Rules win the last word on the wire.** `buildDestination` seeds the destination's headers first — the provider's required headers (e.g. `anthropic-version`) and the resolved credential header — and `applyStateOverlays` ([`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) lines 321-326) then overlays `state.OutgoingHeaders` last, deleting and re-adding each named header. A `setHeader` therefore overrides a provider-required header (or even the credential header) of the same name. Use that deliberately; an accidental `setHeader Authorization: …` will clobber the minted credential for the request.
 
 ### Worked example — propagate a tenant tier downstream
@@ -450,8 +474,8 @@ The upstream provider (or an intermediate proxy) sees `X-Upstream-Priority: high
 
 ### Gotchas
 
-- An unknown `HeaderAction` value (typo, future operator) returns an error at evaluate time — case matters: the constants are `Set`, `Append`, `Prepend`, `Remove`, not lowercase.
-- `Remove` on a missing header is a no-op rather than an error; this is deliberate — a rule that defensively strips a header shouldn't fail when the header wasn't there to begin with.
+- An unknown `HeaderAction` value (typo, future operator) is rejected at config load — case matters: the constants are `Set`, `Append`, `Prepend`, `Remove`, not lowercase.
+- `Remove` on a header that neither the client sent nor an earlier rule set is a no-op rather than an error; this is deliberate — a rule that defensively strips a header shouldn't fail when the header wasn't there to begin with.
 
 ---
 
@@ -527,7 +551,7 @@ Attaches a tag to the in-flight request. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `addTag`. |
-| `Tag` | `tag` | `tag` | yes | Tag string. Trimmed; empty rejected at evaluate time. |
+| `Tag` | `tag` | `tag` | yes | Tag string. Trimmed; empty rejected at config load (and again at evaluate time). |
 
 ### What it mutates
 

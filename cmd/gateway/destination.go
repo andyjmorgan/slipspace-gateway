@@ -16,8 +16,9 @@ import (
 // a selected v2 group. The orchestrator is reused unchanged: each v2 target
 // becomes a ResilienceTarget whose per-attempt Actions switch the provider
 // (state.Provider, re-resolved by the final handler) and rewrite the body model
-// to the per-target alias. Order is preserved for failover; load_balance
-// ignores it.
+// to the per-target alias, and whose Path / Query carry the target's authored
+// transport overrides so the final handler's re-resolution honours them
+// (issue #409). Order is preserved for failover; load_balance ignores it.
 func groupToResilienceConfig(name string, g selection.Group) contractsres.ResilienceConfig {
 	targets := make([]contractsres.ResilienceTarget, 0, len(g.Targets))
 	for i, t := range g.Targets {
@@ -30,6 +31,8 @@ func groupToResilienceConfig(name string, g selection.Group) contractsres.Resili
 			Provider: t.Provider,
 			Order:    i + 1,
 			Weight:   weight,
+			Path:     t.PathOverride,
+			Query:    t.QueryOverride,
 			Actions:  providerSwitchActions(t.Provider, t.Alias),
 		})
 	}
@@ -58,6 +61,8 @@ func singleTargetConfig(t selection.Target) contractsres.ResilienceConfig {
 			Name:     t.Provider,
 			Provider: t.Provider,
 			Order:    1,
+			Path:     t.PathOverride,
+			Query:    t.QueryOverride,
 			Actions:  providerSwitchActions(t.Provider, t.Alias),
 		}},
 	}

@@ -114,7 +114,7 @@ configurations:
       - tag-internal-requests   # runs third, sees state from rules 1 and 2
 ```
 
-The loader resolves each name once at config-load time and the engine walks the pre-resolved, declaration-ordered slice per-request — there's no per-request name lookup. Unknown rule names fail at load with `ErrUnknownRuleName`; you do not get a runtime miss.
+The loader resolves each name once at config-load time and the engine walks the pre-resolved, declaration-ordered slice per-request — there's no per-request name lookup. Unknown rule names fail at load with `ErrUnknownRuleName`; you do not get a runtime miss. Each rule's actions are also validated at load — an empty required field (`tag`, `headerName`, `message`, ...) or a malformed value fails startup and the admin write API (422) rather than every matching request; see [actions.md → Load-time validation](actions.md#load-time-validation).
 
 ### What happens when a condition doesn't match
 

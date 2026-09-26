@@ -240,7 +240,7 @@ func TestBodyRewriteHandler(t *testing.T) {
 				}
 			})
 
-			h := BodyRewriteHandler(testMeters(t), next)
+			h := BodyRewriteHandler(testMeters(t), "", next)
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 			if !tt.setNoBody {
@@ -269,7 +269,7 @@ func TestBodyRewriteHandler_NilMeters(t *testing.T) {
 		{Kind: bodypatch.OpSet, Path: "a", Value: lit("1"), ActionType: "rewriteField"},
 	}}
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
-	h := BodyRewriteHandler(nil, next)
+	h := BodyRewriteHandler(nil, "", next)
 	req := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(stringReader(`{}`)))
 	req = req.WithContext(WithMutableState(req.Context(), state))
 	h.ServeHTTP(httptest.NewRecorder(), req) // must not panic
@@ -281,7 +281,7 @@ func TestBodyRewriteHandler_NilNextPanics(t *testing.T) {
 			t.Error("expected panic on nil next")
 		}
 	}()
-	BodyRewriteHandler(nil, nil)
+	BodyRewriteHandler(nil, "", nil)
 }
 
 func TestBodyRewriteHandler_ReadError(t *testing.T) {
@@ -290,7 +290,7 @@ func TestBodyRewriteHandler_ReadError(t *testing.T) {
 	}}
 	nextCalled := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true })
-	h := BodyRewriteHandler(testMeters(t), next)
+	h := BodyRewriteHandler(testMeters(t), "", next)
 
 	req := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(errReader{}))
 	req = req.WithContext(WithMutableState(req.Context(), state))

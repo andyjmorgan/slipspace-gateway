@@ -25,7 +25,7 @@ var builtinSensitiveSubstrings = []string{
 	"cookie",
 	"secret",
 	"slipspace-identity",
-	// The pre-rename compat header (auth.legacyHeaderIdentity,
+	// The pre-rename compat header (auth.LegacyHeaderIdentity,
 	// "X-Sluice-Identity") carries the same live api-key secret as its
 	// current-name twin and is still an accepted passthrough selector, so
 	// it needs the same masking. Matched as its own substring rather than

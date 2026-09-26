@@ -96,6 +96,18 @@ type Target struct {
 
 	// Weight is the relative load-balance selection weight (0 = even).
 	Weight int
+
+	// PathOverride is the authored per-target path override (binding `path`
+	// or group target `path`) that produced Path, retained verbatim so the
+	// orchestrator bridge can carry it through the per-attempt state and the
+	// final handler can re-apply it via ResolveTarget (issue #409). Empty
+	// when the target inherits the provider's protocol path.
+	PathOverride string
+
+	// QueryOverride is the authored per-target query override that was
+	// merged into Query, retained for the same reason as PathOverride. Nil
+	// when the target declares none.
+	QueryOverride map[string]string
 }
 
 // Group is a resolved resilience group: the orchestration policy plus the
@@ -186,17 +198,23 @@ func Select(
 	return Destination{}, ErrNoBinding
 }
 
-// ResolveTarget resolves a single provider into a fully resolved Target for the
-// protocol, using the configuration's credentials and the given model alias.
-// The request pipeline calls it to (re)resolve the destination for a chosen
-// provider — including per-attempt during group orchestration, where the
-// orchestrator picks the provider and the pipeline re-resolves its transport.
+// ResolveTarget resolves tgt — a provider reference plus its authored
+// per-target overrides (Alias, Path, Query) — into a fully resolved Target for
+// the protocol, using the configuration's credentials. The request pipeline
+// calls it to (re)resolve the destination on post-rule state: the final
+// handler passes the post-rule provider together with the Path / Query
+// overrides the orchestrator carried from the selected binding or group
+// target, so a binding `path` or `query` reaches the wire instead of being
+// lost to a provider-only re-resolution (issue #409). Resolution stays here,
+// in selection, rather than in an endpoint map on the destination builder
+// (CLAUDE.md invariant #7).
 func ResolveTarget(
-	protocol, provider, alias string,
+	protocol string,
+	tgt contractsconfig.Target,
 	cfg contractsconfig.Configuration,
 	providers contractsconfig.ProvidersConfig,
 ) (Target, error) {
-	return resolveTarget(protocol, cfg, providers, contractsconfig.Target{Provider: provider, Alias: alias})
+	return resolveTarget(protocol, cfg, providers, tgt)
 }
 
 // resolveTarget composes a contracts Target against its provider and the
@@ -236,6 +254,8 @@ func resolveTarget(
 		Credential:      cred,
 		Alias:           tgt.Alias,
 		Weight:          tgt.Weight,
+		PathOverride:    tgt.Path,
+		QueryOverride:   tgt.Query,
 	}, nil
 }
 

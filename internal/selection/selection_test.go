@@ -199,14 +199,14 @@ func TestResolveTarget(t *testing.T) {
 	m := loadGolden(t)
 	cfg := m.Configurations["production"]
 	// Per-attempt re-resolution of a group provider with its alias.
-	tgt, err := selection.ResolveTarget("chat", "qwen-standalone", "qwen-coder", cfg, m.Providers)
+	tgt, err := selection.ResolveTarget("chat", contractsconfig.Target{Provider: "qwen-standalone", Alias: "qwen-coder"}, cfg, m.Providers)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 	if tgt.BaseURL != "http://192.168.69.21:11434" || tgt.Alias != "qwen-coder" {
 		t.Errorf("resolved = %+v", tgt)
 	}
-	if _, err := selection.ResolveTarget("chat", "ghost", "", cfg, m.Providers); err == nil {
+	if _, err := selection.ResolveTarget("chat", contractsconfig.Target{Provider: "ghost"}, cfg, m.Providers); err == nil {
 		t.Fatal("unknown provider: want error")
 	}
 }
