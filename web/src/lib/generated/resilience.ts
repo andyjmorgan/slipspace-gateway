@@ -21,33 +21,45 @@ export type ResilienceMode = string;
 /**
  * Resilience modes accepted in YAML. Every mode dispatches at runtime:
  * ModeFailover runs the ordered walk, ModeLoadBalance and
- * ModeLoadBalanceWithFailover run the weighted pick, and ModeNone (or an
- * unrecognised future mode) degenerates to a single attempt against the first
- * target. See internal/middleware/resilience/middleware.go.
+ * ModeLoadBalanceWithFailover run the weighted pick, and ModeNone degenerates
+ * to a single attempt against the first target. See
+ * internal/middleware/resilience/middleware.go. The set is closed: Validate
+ * rejects any other value with ErrUnknownMode, and v2 config validation runs
+ * it over every group at load (internal/config/config_validate.go), so a
+ * misspelt mode fails the load instead of silently degrading to ModeNone.
  */
 export const ModeNone: ResilienceMode = "none";
 /**
  * Resilience modes accepted in YAML. Every mode dispatches at runtime:
  * ModeFailover runs the ordered walk, ModeLoadBalance and
- * ModeLoadBalanceWithFailover run the weighted pick, and ModeNone (or an
- * unrecognised future mode) degenerates to a single attempt against the first
- * target. See internal/middleware/resilience/middleware.go.
+ * ModeLoadBalanceWithFailover run the weighted pick, and ModeNone degenerates
+ * to a single attempt against the first target. See
+ * internal/middleware/resilience/middleware.go. The set is closed: Validate
+ * rejects any other value with ErrUnknownMode, and v2 config validation runs
+ * it over every group at load (internal/config/config_validate.go), so a
+ * misspelt mode fails the load instead of silently degrading to ModeNone.
  */
 export const ModeFailover: ResilienceMode = "failover";
 /**
  * Resilience modes accepted in YAML. Every mode dispatches at runtime:
  * ModeFailover runs the ordered walk, ModeLoadBalance and
- * ModeLoadBalanceWithFailover run the weighted pick, and ModeNone (or an
- * unrecognised future mode) degenerates to a single attempt against the first
- * target. See internal/middleware/resilience/middleware.go.
+ * ModeLoadBalanceWithFailover run the weighted pick, and ModeNone degenerates
+ * to a single attempt against the first target. See
+ * internal/middleware/resilience/middleware.go. The set is closed: Validate
+ * rejects any other value with ErrUnknownMode, and v2 config validation runs
+ * it over every group at load (internal/config/config_validate.go), so a
+ * misspelt mode fails the load instead of silently degrading to ModeNone.
  */
 export const ModeLoadBalance: ResilienceMode = "load_balance";
 /**
  * Resilience modes accepted in YAML. Every mode dispatches at runtime:
  * ModeFailover runs the ordered walk, ModeLoadBalance and
- * ModeLoadBalanceWithFailover run the weighted pick, and ModeNone (or an
- * unrecognised future mode) degenerates to a single attempt against the first
- * target. See internal/middleware/resilience/middleware.go.
+ * ModeLoadBalanceWithFailover run the weighted pick, and ModeNone degenerates
+ * to a single attempt against the first target. See
+ * internal/middleware/resilience/middleware.go. The set is closed: Validate
+ * rejects any other value with ErrUnknownMode, and v2 config validation runs
+ * it over every group at load (internal/config/config_validate.go), so a
+ * misspelt mode fails the load instead of silently degrading to ModeNone.
  */
 export const ModeLoadBalanceWithFailover: ResilienceMode = "load_balance_with_failover";
 /**
@@ -86,7 +98,9 @@ export interface ResilienceConfig {
    */
   id?: string;
   /**
-   * Mode selects the orchestration strategy. See the ModeX constants.
+   * Mode selects the orchestration strategy. See the ModeX constants. An
+   * empty Mode validates as ModeNone here; the v2 group validator requires
+   * it to be set explicitly.
    */
   mode: ResilienceMode;
   /**
@@ -160,7 +174,7 @@ export interface ResilienceTarget {
    * by the admin /policies view, but the orchestrator never reads it:
    * per-attempt provider switching happens only through Actions, via a
    * rules.ChangeProviderAction synthesised from the selected binding
-   * (providerSwitchActions, cmd/gateway/destination.go).
+   * (selection.ProviderSwitchActions, internal/selection/resilience.go).
    */
   provider: string;
   /**
@@ -188,7 +202,7 @@ export interface ResilienceTarget {
    * can set it — contracts/config.Target has no model_rewrite key.
    * Per-attempt model rewriting happens only through Actions, via a
    * rules.ChangeModelNameAction synthesised from a v2 group target's
-   * alias (providerSwitchActions, cmd/gateway/destination.go).
+   * alias (selection.ProviderSwitchActions, internal/selection/resilience.go).
    */
   model_rewrite?: string;
   /**
@@ -213,7 +227,10 @@ export interface ResilienceTarget {
    * destination mutation; the scalar Provider and ModelRewrite fields are
    * inert. No v2 YAML block authors a ResilienceTarget directly — groups
    * are the authorable shape, and targets are machine-synthesised
-   * (cmd/gateway/destination.go).
+   * (selection.GroupResilienceConfig, internal/selection/resilience.go).
+   * Terminating actions (returnStatusCode, llmImpersonation) are rejected
+   * by Validate: the orchestrator discards a target action's Outcome, so
+   * they could never take effect.
    */
   actions?: Record<string, unknown>[];
 }
@@ -255,7 +272,9 @@ export interface CircuitBreakerConfig {
   sampling_duration_seconds: number /* int */;
   /**
    * CooldownSeconds is how long the breaker stays Open before transitioning
-   * to HalfOpen to probe the upstream.
+   * to HalfOpen to probe the upstream. Required (> 0) when Enabled: the
+   * state machine only leaves Open once the cooldown elapses, so Validate
+   * rejects an enabled breaker without one rather than let it wedge Open.
    */
   cooldown_seconds: number /* int */;
   /**
@@ -271,12 +290,15 @@ export interface CircuitBreakerConfig {
   minimum_throughput: number /* int */;
 }
 /**
- * RetryConfig configures retry attempts and inter-attempt backoff.
+ * RetryConfig configures retry attempts and inter-attempt backoff. The whole
+ * block is parsed and validated but currently unwired: the orchestrator
+ * implements no backoff and no attempt budget — "retry" means advancing to
+ * the next target (see the note on ResilienceConfig.Retry).
  */
 export interface RetryConfig {
   /**
-   * Enabled toggles retries. With Enabled false the orchestrator makes a
-   * single attempt regardless of other fields.
+   * Enabled is recorded but never consulted by the orchestrator; setting it
+   * true produces no retries.
    */
   enabled: boolean;
   /**

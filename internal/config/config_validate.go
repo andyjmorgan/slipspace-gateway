@@ -7,7 +7,9 @@ import (
 	"github.com/google/uuid"
 
 	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
+	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 	rulescontract "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
 
 // knownProtocols is the set of generative protocol names a provider may serve
@@ -72,8 +74,38 @@ func (r *ResolvedConfig) validateAdvisors() error {
 	return nil
 }
 
+// validIdentifier reports whether name is an operator-authored identifier the
+// gateway can use verbatim as a telemetry label and as one half of the
+// circuit-breaker (group, provider) key: non-empty, starting with a letter or
+// digit, and otherwise drawn from letters, digits, '.', '_' and '-'. The
+// breaker store keys on the pair structurally, so the charset is not a
+// delimiter-safety requirement — it keeps names sane in metric labels, admin
+// URLs (/api/v1/config/{groups,providers}/{name}) and YAML written back by the
+// admin API.
+func validIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case i > 0 && (r == '.' || r == '_' || r == '-'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// identifierRule is the operator-facing description of validIdentifier, used
+// verbatim in every name-rejection message.
+const identifierRule = "must start with a letter or digit and contain only letters, digits, '.', '_' or '-'"
+
 func (r *ResolvedConfig) validateProviders() error {
 	for name, be := range r.Providers {
+		if !validIdentifier(name) {
+			return fmt.Errorf("%w: provider %q: name %s", ErrValidation, name, identifierRule)
+		}
 		if be.BaseURL == "" {
 			return fmt.Errorf("%w: provider %q: base_url is required", ErrValidation, name)
 		}
@@ -127,11 +159,31 @@ func validateAuth(a *contractsconfig.ProviderAuth) error {
 	return nil
 }
 
+// validateGroups checks every entry of the groups block. The shape checks
+// (identifier name, explicit mode, at least one target, every target names a
+// known provider, no provider listed twice) run first with group-scoped
+// messages; then the group is synthesised into the exact ResilienceConfig the
+// orchestrator will run (selection.GroupResilienceConfig) and that config's own
+// Validate runs, which closes the contracts/resilience rule set — unknown mode,
+// circuit-breaker ranges, enabled-breaker cooldown, per-mode order/weight — over
+// the authored group. A group that passes here therefore cannot degrade at
+// runtime: the orchestrator sees precisely what was validated.
+//
+// Mode is required here even though ResilienceConfig.Validate treats "" as
+// ModeNone: an omitted mode is far more often a typo'd key than a deliberate
+// single-target group, and the silent fallback was the failure mode of #474.
 func (r *ResolvedConfig) validateGroups() error {
 	for name, g := range r.Groups {
+		if !validIdentifier(name) {
+			return fmt.Errorf("%w: group %q: name %s", ErrValidation, name, identifierRule)
+		}
+		if g.Mode == "" {
+			return fmt.Errorf("%w: group %q: mode is required (one of %s)", ErrValidation, name, knownModesList())
+		}
 		if len(g.Targets) == 0 {
 			return fmt.Errorf("%w: group %q: declares no targets", ErrValidation, name)
 		}
+		seen := make(map[string]int, len(g.Targets))
 		for i, t := range g.Targets {
 			if t.Provider == "" {
 				return fmt.Errorf("%w: group %q targets[%d]: provider is required", ErrValidation, name, i)
@@ -139,9 +191,27 @@ func (r *ResolvedConfig) validateGroups() error {
 			if _, ok := r.Providers[t.Provider]; !ok {
 				return fmt.Errorf("%w: group %q targets[%d]: unknown provider %q", ErrValidation, name, i, t.Provider)
 			}
+			if prev, dup := seen[t.Provider]; dup {
+				return fmt.Errorf("%w: group %q targets[%d]: provider %q already listed at targets[%d] (breaker state and telemetry are keyed per (group, provider))", ErrValidation, name, i, t.Provider, prev)
+			}
+			seen[t.Provider] = i
+		}
+		rc := selection.GroupResilienceConfig(name, g)
+		if err := rc.Validate(); err != nil {
+			return fmt.Errorf("%w: group %q: %w", ErrValidation, name, err)
 		}
 	}
 	return nil
+}
+
+// knownModesList renders the closed ResilienceMode set for error messages.
+func knownModesList() string {
+	return strings.Join([]string{
+		string(contractsres.ModeFailover),
+		string(contractsres.ModeLoadBalance),
+		string(contractsres.ModeLoadBalanceWithFailover),
+		string(contractsres.ModeNone),
+	}, ", ")
 }
 
 // validateLibraries enforces rule and connector library uniqueness and runs

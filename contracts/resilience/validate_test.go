@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	"github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
 
 func TestResilienceConfig_Validate(t *testing.T) {
@@ -337,6 +338,41 @@ func TestResilienceTarget_Validate(t *testing.T) {
 				CircuitBreaker: &resilience.CircuitBreakerConfig{
 					Enabled:              true,
 					FailureRateThreshold: 0.5,
+					CooldownSeconds:      30,
+				},
+			},
+		},
+		{
+			name: "terminating returnStatusCode action",
+			target: resilience.ResilienceTarget{
+				Name:     "primary",
+				Provider: "openai",
+				Actions: []rules.Action{
+					&rules.ChangeProviderAction{NewProvider: "openai"},
+					&rules.ReturnStatusCodeAction{StatusCode: 503},
+				},
+			},
+			wantErr: resilience.ErrTerminatingTargetAction,
+		},
+		{
+			name: "terminating llmImpersonation action by value",
+			target: resilience.ResilienceTarget{
+				Name:     "primary",
+				Provider: "openai",
+				Actions:  []rules.Action{rules.LlmImpersonationAction{Message: "no"}},
+			},
+			wantErr: resilience.ErrTerminatingTargetAction,
+		},
+		{
+			name: "non-terminating actions and nil entry ok",
+			target: resilience.ResilienceTarget{
+				Name:     "primary",
+				Provider: "openai",
+				Actions: []rules.Action{
+					nil,
+					&rules.ChangeProviderAction{NewProvider: "openai"},
+					&rules.ChangeModelNameAction{NewModelName: "alias"},
+					&rules.AddTagAction{Tag: "t"},
 				},
 			},
 		},
@@ -416,12 +452,30 @@ func TestCircuitBreakerConfig_Validate(t *testing.T) {
 			cb: resilience.CircuitBreakerConfig{
 				Enabled:              true,
 				FailureRateThreshold: 0.5,
+				CooldownSeconds:      30,
 			},
 		},
 		{
 			name: "enabled with failure threshold only",
 			cb: resilience.CircuitBreakerConfig{
 				Enabled:          true,
+				FailureThreshold: 5,
+				CooldownSeconds:  30,
+			},
+		},
+		{
+			// An Open breaker only re-arms once the cooldown elapses; with
+			// no cooldown it would stay Open for the life of the process.
+			name: "enabled without cooldown",
+			cb: resilience.CircuitBreakerConfig{
+				Enabled:          true,
+				FailureThreshold: 5,
+			},
+			wantErr: resilience.ErrInvalidCircuitBreakerConfig,
+		},
+		{
+			name: "disabled without cooldown is fine",
+			cb: resilience.CircuitBreakerConfig{
 				FailureThreshold: 5,
 			},
 		},
