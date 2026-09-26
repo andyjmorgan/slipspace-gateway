@@ -90,12 +90,16 @@ func applyAction(
 	}
 }
 
+// applyChangeProvider switches state.Provider and raises ProviderOverridden so
+// the resilience orchestrator knows a rule chose the provider explicitly and
+// steps aside from the binding-derived policy (MutableState.ProviderOverridden).
 func applyChangeProvider(a contractsrules.ChangeProviderAction, state *MutableState) (contractsrules.Outcome, error) {
 	v := strings.TrimSpace(a.NewProvider)
 	if v == "" {
 		return contractsrules.Outcome{}, fmt.Errorf("rules: changeProvider: %w", errEmptyValue)
 	}
 	state.Provider = v
+	state.ProviderOverridden = true
 	return contractsrules.Outcome{}, nil
 }
 

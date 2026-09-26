@@ -386,7 +386,10 @@ type Meters struct {
 	// each request: success when one attempt committed, all_failed
 	// when every attempt errored or returned a retryable status,
 	// all_open when every target was filtered by the circuit
-	// breaker before any attempt ran. Labels: policy, outcome.
+	// breaker before any attempt ran, rule_override when a rule
+	// changeProvider bypassed the binding-derived policy before any
+	// of its targets ran (bumped against the bypassed policy's name).
+	// Labels: policy, outcome.
 	ResilienceOutcomeTotal metric.Int64Counter
 
 	// CircuitBreakerTransitionTotal counts state transitions on each
@@ -467,7 +470,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricRequestPanicsTotal, "Panics caught by the request-path recovery middleware (client got 500, process kept alive).", "1", &m.RequestPanicsTotal},
 		{MetricAdminRequestsTotal, "Requests handled by the management-console listener (separate from data-plane requests).", "1", &m.AdminRequestsTotal},
 		{MetricResilienceAttemptsTotal, "Per-attempt outcomes recorded by the resilience orchestrator (success, failure_status, transport_error, cb_blocked).", "1", &m.ResilienceAttemptsTotal},
-		{MetricResilienceOutcomeTotal, "Per-request orchestrator outcome (success, all_failed, all_open). Bumped once per inbound request that ran through a resilience policy.", "1", &m.ResilienceOutcomeTotal},
+		{MetricResilienceOutcomeTotal, "Per-request orchestrator outcome (success, all_failed, all_open, rule_override). Bumped once per inbound request that ran through — or, for rule_override, was routed away from — a resilience policy.", "1", &m.ResilienceOutcomeTotal},
 		{MetricCircuitBreakerTransitionTotal, "Circuit-breaker state transitions per (policy, target, to_state). One increment per state change.", "1", &m.CircuitBreakerTransitionTotal},
 		{MetricAdminConfigExportsTotal, "Redacted-config bundle downloads served by the admin export endpoint.", "1", &m.AdminConfigExportsTotal},
 		{MetricTelemetryPushDroppedTotal, "Records permanently lost by the real-time telemetry pusher, by connector and reason (queue_full, encode, rejected, exhausted).", "1", &m.TelemetryPushDroppedTotal},

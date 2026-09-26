@@ -21,6 +21,7 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
+	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
 
 // Attempt-outcome strings carried in events.AttemptRecord.Outcome and
@@ -40,6 +41,11 @@ const (
 	orchestratorOutcomeSuccess   = "success"
 	orchestratorOutcomeAllFailed = "all_failed"
 	orchestratorOutcomeAllOpen   = "all_open"
+	// orchestratorOutcomeRuleOverride is bumped against the binding-derived
+	// policy's name when a rule changeProvider bypassed it: the policy was
+	// selected for the request but none of its targets ran. It is the
+	// operator's signal that a rule, not the binding, chose the upstream.
+	orchestratorOutcomeRuleOverride = "rule_override"
 )
 
 // randomIntN is the package-level RNG hook the weighted load-balance
@@ -107,6 +113,15 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 // binding-derived ResilienceConfig published by selection. The
 // PolicyLookup parameter is a legacy seam for v1/test callers;
 // cmd/gateway wires it to nil.
+//
+// Rule precedence: when the rules engine ran a changeProvider
+// (state.ProviderOverridden), the binding-derived policy is bypassed
+// wholesale and replaced by selection.RuleOverrideResilienceConfig — one
+// attempt on the rule's state.Provider with no provider-switch action —
+// so the rule's choice survives to the final handler. The bypass is
+// logged and counted as a rule_override outcome against the bypassed
+// policy's name (GitHub issue #294). A rule that only rewrites the model
+// (changeModelName) leaves the flag clear and runs the policy as normal.
 //
 // Dispatch on policy mode:
 //
@@ -198,6 +213,9 @@ func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, meters *observabili
 			next.ServeHTTP(w, r)
 			return
 		}
+		if state.ProviderOverridden && state.Provider != "" {
+			pol = applyRuleOverride(ctx, meters, pol, state)
+		}
 
 		switch pol.Mode {
 		case contractsres.ModeFailover:
@@ -215,6 +233,37 @@ func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, meters *observabili
 		// fall-through is only ever the deliberate none/empty case.
 		runSingleTarget(w, r, pol, pol.Targets[0], state, next)
 	})
+}
+
+// applyRuleOverride replaces the binding-derived policy with the collapsed
+// single-attempt policy on the provider a rule's changeProvider chose, so the
+// orchestrator never re-applies the binding's own provider switch over it. It
+// rewrites state.PolicyRef to the collapsed handle, logs the bypass, and bumps
+// gateway.resilience.outcome.total{outcome=rule_override} against the bypassed
+// policy's name — the group's targets, breaker, failure codes and retry pacing
+// all stand down for this request. Returns the policy to dispatch on.
+func applyRuleOverride(
+	ctx context.Context,
+	meters *observability.Meters,
+	seeded *contractsres.ResilienceConfig,
+	state *rules.MutableState,
+) *contractsres.ResilienceConfig {
+	collapsed := selection.RuleOverrideResilienceConfig(state.Provider)
+	logger := observability.FromContext(ctx)
+	logger.DebugContext(ctx, "resilience: rule changeProvider bypasses binding-derived policy",
+		slog.String("policy", seeded.Name),
+		slog.String("mode", string(seeded.Mode)),
+		slog.String("provider", state.Provider),
+		slog.String("collapsed_policy", collapsed.Name),
+	)
+	if meters != nil && meters.ResilienceOutcomeTotal != nil {
+		meters.ResilienceOutcomeTotal.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("policy", seeded.Name),
+			attribute.String("outcome", orchestratorOutcomeRuleOverride),
+		))
+	}
+	state.PolicyRef = collapsed.Name
+	return &collapsed
 }
 
 // runSingleTarget applies one target's actions and forwards exactly

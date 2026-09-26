@@ -165,14 +165,42 @@ func SingleTargetResilienceConfig(t Target) contractsres.ResilienceConfig {
 	}
 }
 
+// RuleOverridePolicyPrefix prefixes the telemetry handle of the policy the
+// orchestrator synthesises when a rule changeProvider bypasses the
+// binding-derived policy — "rule:<provider>", the counterpart of the
+// "binding:<provider>" handle SingleTargetResilienceConfig mints. Never
+// authored and never validated as a group name.
+const RuleOverridePolicyPrefix = "rule:"
+
+// RuleOverrideResilienceConfig synthesises the degenerate ModeNone policy the
+// orchestrator runs when a rule's changeProvider has explicitly chosen the
+// provider (MutableState.ProviderOverridden): one attempt on provider with NO
+// provider-switch or alias action, so the rule's state.Provider reaches
+// selection.ResolveTarget in the final handler untouched. The binding-derived
+// group (or single-target alias) is bypassed wholesale — its targets, failure
+// codes, breaker and retry pacing do not apply, because the request is no
+// longer under that binding's policy. See GitHub issue #294.
+func RuleOverrideResilienceConfig(provider string) contractsres.ResilienceConfig {
+	return contractsres.ResilienceConfig{
+		Name: RuleOverridePolicyPrefix + provider,
+		Mode: contractsres.ModeNone,
+		Targets: []contractsres.ResilienceTarget{{
+			Name:     provider,
+			Provider: provider,
+			Order:    1,
+		}},
+	}
+}
+
 // ProviderSwitchActions builds the internal action pair the orchestrator applies
 // per attempt: changeProvider switches state.Provider to the provider (the final
 // handler re-resolves transport from it), and changeModelName rewrites the body
-// model to the alias when one is set. The action registry still parses both
-// types, but they are no longer the authorable routing mechanism: a rule-authored
-// changeProvider is overwritten every attempt by buildAttemptState re-applying
-// the target's own ProviderSwitchActions, so in practice they survive as
-// internal selection primitives.
+// model to the alias when one is set. The action registry parses both types for
+// rules too, but binding-driven routing is the primary mechanism: these are the
+// selection primitives buildAttemptState applies per attempt. A rule-authored
+// changeProvider takes precedence over them — the orchestrator detects
+// MutableState.ProviderOverridden and collapses to RuleOverrideResilienceConfig
+// instead of running the binding's targets (GitHub issue #294).
 func ProviderSwitchActions(provider, alias string) []contractsrules.Action {
 	acts := []contractsrules.Action{&contractsrules.ChangeProviderAction{NewProvider: provider}}
 	if alias != "" {

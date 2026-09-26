@@ -123,6 +123,24 @@ func TestSingleTargetResilienceConfig(t *testing.T) {
 	}
 }
 
+func TestRuleOverrideResilienceConfig(t *testing.T) {
+	rc := selection.RuleOverrideResilienceConfig("gemini")
+	if rc.Name != selection.RuleOverridePolicyPrefix+"gemini" || rc.Mode != contractsres.ModeNone {
+		t.Fatalf("name/mode = %q/%q", rc.Name, rc.Mode)
+	}
+	if len(rc.Targets) != 1 || rc.Targets[0].Provider != "gemini" || rc.Targets[0].Name != "gemini" || rc.Targets[0].Order != 1 {
+		t.Fatalf("targets = %+v", rc.Targets)
+	}
+	// No provider switch and no alias: the rule's state.Provider must reach
+	// the final handler untouched (issue #294).
+	if len(rc.Targets[0].Actions) != 0 || rc.Targets[0].ModelRewrite != "" {
+		t.Errorf("actions = %v / model_rewrite = %q, want none", actionTypes(rc.Targets[0].Actions), rc.Targets[0].ModelRewrite)
+	}
+	if err := rc.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestProviderSwitchActions(t *testing.T) {
 	plain := selection.ProviderSwitchActions("openai", "")
 	if len(plain) != 1 {

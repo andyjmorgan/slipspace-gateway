@@ -31,10 +31,27 @@ type QueryAddition struct {
 // accidentally mutating destination state.
 type MutableState struct {
 	// Provider is the upstream provider the request will be sent to.
-	// Initialised from routing; ChangeProviderAction overwrites it.
-	// Re-resolution of UpstreamCredential against the new provider
-	// happens in the destination builder, not here.
+	// Seeded by selection — the binding's provider for a single-provider
+	// binding, empty for a group binding (the orchestrator picks the
+	// target per attempt) — and overwritten by ChangeProviderAction,
+	// which also raises ProviderOverridden. Re-resolution of the
+	// upstream credential against the new provider happens in the
+	// destination builder, not here.
 	Provider string
+
+	// ProviderOverridden records that a changeProvider action wrote
+	// Provider after selection seeded it. The resilience orchestrator
+	// reads it on entry: when a rule has explicitly chosen the provider,
+	// the binding-derived policy (group or single-target) is bypassed and
+	// the request collapses to one attempt on Provider, so the rule's
+	// choice survives to selection.ResolveTarget in the final handler
+	// (GitHub issue #294 — before this flag existed buildAttemptState
+	// re-applied the binding's own provider switch every attempt and
+	// silently reverted the rule). The orchestrator's internal per-target
+	// switch goes through the same action and so raises the flag on the
+	// per-attempt clone too; nothing downstream of the orchestrator reads
+	// it, so that is inert.
+	ProviderOverridden bool
 
 	// Protocol is the resolved protocol under Provider (e.g. "chat",
 	// "messages"), or the passthrough family name for opaque requests.
@@ -145,12 +162,14 @@ type MutableState struct {
 
 	// PolicyRef names the resilience policy selected for this request.
 	// Written by UseResiliencePolicyAction and also by
-	// selectionMiddleware (cmd/gateway/pipeline.go). Under v2 the
-	// rules-authored value is inert: the orchestrator prefers the
-	// binding-derived ResilienceConfig stashed on the request context,
-	// and PolicyLookup is wired to nil (cmd/gateway/handler.go), so the
-	// last-writer-wins semantics of multiple useResiliencePolicy actions
-	// in a chain are bookkeeping only, with no routing effect.
+	// selectionMiddleware (cmd/gateway/pipeline.go); the resilience
+	// orchestrator rewrites it to the collapsed "rule:<provider>" handle
+	// when a rule changeProvider bypasses the binding-derived policy.
+	// Under v2 the rules-authored value is inert: the orchestrator
+	// prefers the binding-derived ResilienceConfig stashed on the request
+	// context, and PolicyLookup is wired to nil (cmd/gateway/handler.go),
+	// so the last-writer-wins semantics of multiple useResiliencePolicy
+	// actions in a chain are bookkeeping only, with no routing effect.
 	PolicyRef string
 }
 
@@ -206,12 +225,13 @@ func (s *MutableState) Clone() *MutableState {
 		return nil
 	}
 	out := &MutableState{
-		Provider:       s.Provider,
-		Protocol:       s.Protocol,
-		SourceProtocol: s.SourceProtocol,
-		MatchedPath:    s.MatchedPath,
-		BodyMutated:    s.BodyMutated,
-		PolicyRef:      s.PolicyRef,
+		Provider:           s.Provider,
+		ProviderOverridden: s.ProviderOverridden,
+		Protocol:           s.Protocol,
+		SourceProtocol:     s.SourceProtocol,
+		MatchedPath:        s.MatchedPath,
+		BodyMutated:        s.BodyMutated,
+		PolicyRef:          s.PolicyRef,
 	}
 	if s.UpstreamURL != nil {
 		u := *s.UpstreamURL
