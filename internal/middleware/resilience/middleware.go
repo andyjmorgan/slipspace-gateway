@@ -2,7 +2,10 @@ package resilience
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"sort"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
 	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/rules"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
@@ -51,6 +55,31 @@ var randomIntN = func(n int) int {
 	// security boundary; crypto/rand would be overkill and slower.
 	return rand.IntN(n) //nolint:gosec // weighted selection, not a secret
 }
+
+// sleepWithContext is the package-level inter-attempt delay hook the retry
+// backoff calls between failover / re-roll attempts. Stubbed at test time
+// (serially, like clock and randomIntN) so backoff tests assert the computed
+// delays without real sleeping. Returns ctx.Err() when the request context
+// ends before the delay elapses — the client has gone, so the orchestrator
+// stops walking targets instead of retrying into the void.
+var sleepWithContext = func(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// maxExponentialShift bounds the exponential backoff doubling so the shift
+// can never overflow a time.Duration before MaxDelayMs (or ctx cancellation)
+// gets a chance to cap it. 2^30 × a millisecond-scale base is already days.
+const maxExponentialShift = 30
 
 // PolicyLookup resolves a policy by name. It is a legacy v1/test-only
 // seam — cmd/gateway wires it to nil (cmd/gateway/handler.go) and the
@@ -121,8 +150,24 @@ var defaultFailureStatusCodes = []int{500, 502, 503, 504}
 //     under the policy (see withPolicyResponseHeaderTimeout) — the
 //     orchestrator stamps it on the attempt context and the forwarder
 //     keys a per-timeout transport off it. Per-target overrides of the
-//     header timeout are not modelled; ResilienceTarget.TimeoutSeconds
-//     (a whole-attempt wall-clock bound) remains unwired.
+//     header timeout are not modelled.
+//
+// Per-attempt bounds and pacing:
+//
+//   - ResilienceTarget.TimeoutSeconds (falling back to
+//     Policy.TimeoutSeconds) is a whole-attempt wall-clock bound: the
+//     orchestrator derives a context deadline for the attempt
+//     (withAttemptTimeout). An attempt that overruns it before
+//     committing is a transport-error failure for failover and
+//     circuit-breaker purposes; one that overruns after committing is
+//     aborted mid-stream, exactly as a client disconnect would be.
+//   - Policy.Retry, when enabled, paces the walk: retryDelay computes the
+//     constant / linear / exponential inter-attempt delay from
+//     DelayMilliseconds (capped by MaxDelayMs, jittered when UseJitter)
+//     and the orchestrator sleeps it before every attempt after the
+//     first, and stops walking once MaxAttempts (> 0) attempts have run.
+//     A nil or disabled Retry keeps the historical behaviour — the next
+//     target is tried immediately and every target may be attempted.
 func HTTPHandler(lookup PolicyLookup, breakers BreakerStore, meters *observability.Meters, next http.Handler) http.Handler {
 	if next == nil {
 		panic("resilience: HTTPHandler called with nil next handler")
@@ -184,7 +229,9 @@ func runSingleTarget(
 	next http.Handler,
 ) {
 	ctx := withPolicyResponseHeaderTimeout(r.Context(), pol)
-	if len(target.Actions) == 0 {
+	ctx, cancelAttempt := withAttemptTimeout(ctx, effectiveAttemptTimeout(pol, target))
+	defer cancelAttempt()
+	if len(effectiveTargetActions(target)) == 0 {
 		next.ServeHTTP(w, r.WithContext(ctx))
 		return
 	}
@@ -224,6 +271,13 @@ func runSingleTarget(
 //     Otherwise the response has already reached the client (commit
 //     path) or the orchestrator writes a fallback status (all
 //     attempts retryable but list exhausted).
+//  5. Policy.Retry, when enabled, paces the walk: before every attempt
+//     after the first the orchestrator sleeps retryDelay (respecting
+//     ctx cancellation — a departed client ends the walk), and the
+//     walk stops once MaxAttempts attempts have run even if targets
+//     remain. Each attempt is additionally bounded by the target's
+//     effective TimeoutSeconds via a context deadline; a timed-out
+//     attempt fails over like a transport error.
 func runFailover(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -272,6 +326,14 @@ func runFailover(
 	rawBody := capturedRawBody(ctx)
 
 	for i, target := range targets {
+		if retryBudgetExhausted(pol.Retry, attempts) {
+			logger.InfoContext(ctx, "resilience: retry budget exhausted, stopping failover walk",
+				slog.String("policy", pol.Name),
+				slog.Int("attempts", attempts),
+				slog.Int("max_attempts", pol.Retry.MaxAttempts),
+			)
+			break
+		}
 		cb := effectiveCircuitBreaker(pol, target)
 		if !breakers.Allow(pol.Name, target.Name, cb) {
 			logger.InfoContext(ctx, "resilience: circuit breaker open, skipping target",
@@ -286,6 +348,17 @@ func runFailover(
 			})
 			emitAttemptCounter(ctx, meters, pol.Name, target.Name, attemptOutcomeCBBlocked)
 			continue
+		}
+
+		if attempts > 0 {
+			if err := backoffBeforeAttempt(ctx, pol.Retry, attempts); err != nil {
+				logger.InfoContext(ctx, "resilience: request ended during retry backoff",
+					slog.String("policy", pol.Name),
+					slog.Int("attempts", attempts),
+					slog.Any("error", err),
+				)
+				break
+			}
 		}
 
 		clone, err := buildAttemptState(ctx, state, target)
@@ -309,7 +382,8 @@ func runFailover(
 		retrySet := effectiveFailureStatusCodes(pol, target)
 		buf := proxy.NewBufferingResponseWriter(w, retrySet)
 
-		attemptCtx := rules.WithMutableState(ctx, clone)
+		timeout := effectiveAttemptTimeout(pol, target)
+		attemptCtx, cancelAttempt := withAttemptTimeout(rules.WithMutableState(ctx, clone), timeout)
 		attempts++
 		realAttempts = attempts
 		attemptStart := time.Now()
@@ -318,9 +392,12 @@ func runFailover(
 			slog.String("target", target.Name),
 			slog.Int("attempt", attempts),
 			slog.Int("of", len(targets)),
+			slog.Duration("attempt_timeout", timeout),
 		)
 
 		next.ServeHTTP(buf, r.WithContext(attemptCtx))
+		markAttemptTimeout(ctx, attemptCtx, buf, timeout)
+		cancelAttempt()
 
 		record := newAttemptRecord(target.Name, attemptStart, buf)
 		emitAttemptDuration(ctx, meters, pol.Name, target.Name, record.DurationMs)
@@ -447,6 +524,24 @@ func runLoadBalance(
 	attempt := 0
 
 	for len(pool) > 0 {
+		if retryBudgetExhausted(pol.Retry, attempt) {
+			logger.InfoContext(ctx, "resilience: retry budget exhausted, stopping load_balance re-roll",
+				slog.String("policy", pol.Name),
+				slog.Int("attempts", attempt),
+				slog.Int("max_attempts", pol.Retry.MaxAttempts),
+			)
+			break
+		}
+		if attempt > 0 {
+			if err := backoffBeforeAttempt(ctx, pol.Retry, attempt); err != nil {
+				logger.InfoContext(ctx, "resilience: request ended during retry backoff",
+					slog.String("policy", pol.Name),
+					slog.Int("attempts", attempt),
+					slog.Any("error", err),
+				)
+				break
+			}
+		}
 		attempt++
 		// weightedSelect only returns -1 for an empty pool, which the
 		// loop guard already excludes, so idx is always a valid index.
@@ -475,7 +570,8 @@ func runLoadBalance(
 		retrySet := effectiveFailureStatusCodes(pol, target)
 		buf := proxy.NewBufferingResponseWriter(w, retrySet)
 
-		attemptCtx := rules.WithMutableState(ctx, clone)
+		timeout := effectiveAttemptTimeout(pol, target)
+		attemptCtx, cancelAttempt := withAttemptTimeout(rules.WithMutableState(ctx, clone), timeout)
 		attemptStart := time.Now()
 		logger.DebugContext(ctx, "resilience: load_balance attempt",
 			slog.String("policy", pol.Name),
@@ -484,9 +580,12 @@ func runLoadBalance(
 			slog.Int("attempt", attempt),
 			slog.Int("pool_size", len(pool)),
 			slog.Bool("strict_weights", pol.StrictWeights),
+			slog.Duration("attempt_timeout", timeout),
 		)
 
 		next.ServeHTTP(buf, r.WithContext(attemptCtx))
+		markAttemptTimeout(ctx, attemptCtx, buf, timeout)
+		cancelAttempt()
 
 		record := newAttemptRecord(target.Name, attemptStart, buf)
 		emitAttemptDuration(ctx, meters, pol.Name, target.Name, record.DurationMs)
@@ -636,6 +735,116 @@ func withPolicyResponseHeaderTimeout(ctx context.Context, pol *contractsres.Resi
 	return ctx
 }
 
+// effectiveAttemptTimeout resolves the whole-attempt wall-clock bound for
+// one target: the target's TimeoutSeconds when set (> 0), else the policy's,
+// else zero meaning "no attempt deadline" (only the header timeout applies).
+func effectiveAttemptTimeout(pol *contractsres.ResilienceConfig, target contractsres.ResilienceTarget) time.Duration {
+	if target.TimeoutSeconds > 0 {
+		return time.Duration(target.TimeoutSeconds) * time.Second
+	}
+	if pol.TimeoutSeconds > 0 {
+		return time.Duration(pol.TimeoutSeconds) * time.Second
+	}
+	return 0
+}
+
+// withAttemptTimeout derives the attempt context: ctx with a deadline of d
+// from now when d > 0, or ctx unchanged (with a no-op cancel) otherwise. The
+// caller cancels it as soon as the attempt returns so a committed attempt's
+// deadline timer does not outlive the attempt.
+func withAttemptTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if d <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
+}
+
+// markAttemptTimeout makes an attempt that overran its own deadline count as
+// a transport-error failure even when nothing downstream recorded one. The
+// forwarder normally does (ReverseProxy's ErrorHandler sees
+// context.DeadlineExceeded and calls SetTransportError), but a downstream
+// that returns quietly on ctx.Done() would otherwise leave an uncommitted
+// buffer with no status, which ShouldRetry reads as "nothing to retry" and
+// the orchestrator would commit as success. Only the attempt's own deadline
+// counts: when the parent request context has ended too, the client has gone
+// and the attempt is left as it is.
+func markAttemptTimeout(parent, attemptCtx context.Context, buf *proxy.BufferingResponseWriter, timeout time.Duration) {
+	if timeout <= 0 || parent.Err() != nil || !errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+		return
+	}
+	if buf.Committed() || buf.TransportError() != nil {
+		return
+	}
+	buf.SetTransportError(fmt.Errorf("resilience: attempt exceeded timeout %s: %w", timeout, context.DeadlineExceeded))
+}
+
+// retryBudgetExhausted reports whether the policy's Retry block caps the
+// attempt count and completed attempts have reached it. A nil or disabled
+// Retry, or MaxAttempts <= 0, never exhausts — every target may be tried.
+func retryBudgetExhausted(retry *contractsres.RetryConfig, completed int) bool {
+	return retry != nil && retry.Enabled && retry.MaxAttempts > 0 && completed >= retry.MaxAttempts
+}
+
+// backoffBeforeAttempt sleeps the inter-attempt delay retryDelay computes for
+// the given number of completed attempts, honouring ctx cancellation. A zero
+// delay returns immediately without consulting ctx so a nil Retry keeps the
+// historical no-delay behaviour byte for byte.
+func backoffBeforeAttempt(ctx context.Context, retry *contractsres.RetryConfig, completed int) error {
+	d := retryDelay(retry, completed)
+	if d <= 0 {
+		return nil
+	}
+	return sleepWithContext(ctx, d)
+}
+
+// retryDelay computes the delay to wait before the next attempt when
+// completed attempts have already run (completed >= 1). Zero when the policy
+// has no enabled Retry, no positive DelayMilliseconds, or nothing has run yet.
+//
+// Curves, with base = DelayMilliseconds:
+//
+//   - constant (and an unset BackoffType): base every time.
+//   - linear: base × completed.
+//   - exponential: base × 2^(completed-1), the doubling bounded by
+//     maxExponentialShift so the arithmetic cannot overflow.
+//
+// MaxDelayMs (> 0) caps the curve. UseJitter then draws uniformly from
+// [delay/2, delay] via the randomIntN hook — half-jitter keeps a floor on the
+// pause while spreading synchronised retries.
+func retryDelay(retry *contractsres.RetryConfig, completed int) time.Duration {
+	if retry == nil || !retry.Enabled || retry.DelayMilliseconds <= 0 || completed <= 0 {
+		return 0
+	}
+	base := time.Duration(retry.DelayMilliseconds) * time.Millisecond
+	var d time.Duration
+	switch retry.BackoffType {
+	case contractsres.BackoffLinear:
+		d = base * time.Duration(completed)
+	case contractsres.BackoffExponential:
+		shift := completed - 1
+		if shift > maxExponentialShift {
+			shift = maxExponentialShift
+		}
+		if base > time.Duration(math.MaxInt64>>shift) {
+			d = time.Duration(math.MaxInt64)
+		} else {
+			d = base << shift
+		}
+	default:
+		d = base
+	}
+	if retry.MaxDelayMs > 0 {
+		if capped := time.Duration(retry.MaxDelayMs) * time.Millisecond; d > capped {
+			d = capped
+		}
+	}
+	if retry.UseJitter {
+		half := d / 2
+		d = half + time.Duration(randomIntN(int(half)+1))
+	}
+	return d
+}
+
 // effectiveCircuitBreaker resolves the breaker config for one target.
 // Per-target CircuitBreaker (when set) overrides policy-level. nil
 // from both levels means "no circuit breaker" — the in-memory store
@@ -698,25 +907,57 @@ func effectiveWeight(w int) int {
 }
 
 // buildAttemptState clones the baseline state and applies the
-// target's Actions onto the clone. Returns the clone on success or
-// (nil, err) when any action's ApplyAction returns an error — the
-// orchestrator surfaces those as 500 to the client.
+// target's effective actions (Actions plus the scalar ModelRewrite
+// fallback — see effectiveTargetActions) onto the clone. Returns the
+// clone on success or (nil, err) when any action's ApplyAction returns
+// an error — the orchestrator surfaces those as 500 to the client.
 func buildAttemptState(
 	ctx context.Context,
 	baseline *rules.MutableState,
 	target contractsres.ResilienceTarget,
 ) (*rules.MutableState, error) {
 	clone := baseline.Clone()
-	if len(target.Actions) == 0 {
+	acts := effectiveTargetActions(target)
+	if len(acts) == 0 {
 		return clone, nil
 	}
 	body := typedBodyFromContext(ctx)
-	for _, act := range target.Actions {
+	for _, act := range acts {
 		if _, err := rules.ApplyAction(act, clone, body); err != nil {
 			return nil, err
 		}
 	}
 	return clone, nil
+}
+
+// effectiveTargetActions returns the action list the orchestrator applies for
+// one attempt against target: its Actions, plus a synthesised changeModelName
+// carrying the scalar ModelRewrite when that field is set and no Actions entry
+// already rewrites the model. This is the "Actions wins for the fields it
+// covers" precedence the contract documents — an explicit changeModelName in
+// Actions takes priority, otherwise the legacy scalar still rewrites the body
+// model. The input slice is never mutated.
+func effectiveTargetActions(target contractsres.ResilienceTarget) []contractsrules.Action {
+	if target.ModelRewrite == "" || hasChangeModelName(target.Actions) {
+		return target.Actions
+	}
+	acts := make([]contractsrules.Action, 0, len(target.Actions)+1)
+	acts = append(acts, target.Actions...)
+	return append(acts, &contractsrules.ChangeModelNameAction{
+		Type:         "changeModelName",
+		NewModelName: target.ModelRewrite,
+	})
+}
+
+// hasChangeModelName reports whether acts already carries a changeModelName
+// action, so the scalar ModelRewrite fallback knows to stand down.
+func hasChangeModelName(acts []contractsrules.Action) bool {
+	for _, a := range acts {
+		if _, ok := a.(*contractsrules.ChangeModelNameAction); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // sortedFailoverTargets returns a copy of targets sorted by Order

@@ -21,10 +21,11 @@ packages:
   output_path: "web/src/lib/generated/config.ts"
   fallback_type: "unknown"
   frontmatter: |
-    import type { CircuitBreakerConfig } from "./resilience";
+    import type { CircuitBreakerConfig, RetryConfig } from "./resilience";
   type_mappings:
     <<: *m
     "resilience.CircuitBreakerConfig": "CircuitBreakerConfig"
+    "resilience.RetryConfig": "RetryConfig"
 - path: "github.com/andyjmorgan/slipspace-gateway/contracts/admin"
   output_path: "web/src/lib/generated/admin.ts"
   fallback_type: "unknown"

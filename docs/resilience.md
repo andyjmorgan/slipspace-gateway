@@ -136,7 +136,15 @@ groups:
     strict_weights: false                 # default; only meaningful for load_balance modes
     failure_status_codes: [502, 503, 504]  # group-wide; empty falls back to default 5xx set
     response_header_timeout_seconds: 20    # optional; overrides the gateway-wide time-to-first-byte cap for this group
-    circuit_breaker:                       # optional; group-wide (one breaker per target-provider)
+    timeout_seconds: 60                    # optional; whole-attempt wall-clock bound for every attempt (per-target override below)
+    retry:                                 # optional; paces the failover / re-roll walk and caps the attempt budget
+      enabled: true
+      max_attempts: 3                      # total attempts including the first; 0 = every target may be tried
+      backoff_type: exponential            # constant | linear | exponential
+      delay_ms: 200                        # base inter-attempt delay
+      max_delay_ms: 2000                   # cap on the curve; 0 = uncapped
+      use_jitter: true                     # draw each delay from [delay/2, delay]
+    circuit_breaker:                       # optional; group-wide (one breaker per target)
       enabled: true
       failure_threshold: 5
       failure_rate_threshold: 0.5
@@ -150,6 +158,7 @@ groups:
         weight: 50                          # load_balance share; ignored in failover
         path: /custom/upstream/path         # optional per-target protocol-path override
         query: { api-version: "2024-02-01" } # optional per-target query params (composed over provider query)
+        timeout_seconds: 10                 # optional; whole-attempt bound for this target only (overrides the group value)
 ```
 
 ### Group fields
@@ -161,20 +170,23 @@ groups:
 | `strict_weights` | no | Default `false`. Only meaningful in `load_balance` modes — see [strict_weights](#canary-mirroring-with-strict_weights). |
 | `failure_status_codes` | no | Group-wide list of HTTP status codes that count as retryable. Empty falls back to default `[500, 502, 503, 504]`. There is no per-target override in the v2 group schema. |
 | `response_header_timeout_seconds` | no | Per-group override of the gateway-wide time-to-first-byte cap (`SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this group; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance groups usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
-| `circuit_breaker` | no | Group-wide breaker config; one breaker instance per `(group, target-provider)`. Omit for no breaker. The v2 group schema has no per-target breaker override. Validated at load — see [Circuit-breaker fields](#circuit-breaker-fields). |
-| `targets` | yes | At least one target. Validation rejects an empty target list, and rejects the same provider listed twice (breaker state and telemetry are keyed per `(group, provider)`, so a second entry could never be told apart from the first). |
+| `timeout_seconds` | no | Whole-attempt wall-clock bound applied to every attempt under this group as a context deadline on the attempt (connect + headers + body). An attempt that overruns it before committing is abandoned and counted as a `transport_error` failure for failover and circuit-breaker accounting; one that overruns after committing is aborted mid-stream, exactly as a client disconnect would be — so size it for the slowest legitimate response, not the slowest first byte. A target's own `timeout_seconds` overrides it. Zero leaves attempts unbounded beyond `response_header_timeout_seconds`. See [Attempt timeout and retry backoff](#attempt-timeout-and-retry-backoff). |
+| `retry` | no | Paces the failover / re-roll walk and caps the attempt budget — see [Attempt timeout and retry backoff](#attempt-timeout-and-retry-backoff). Omitted or `enabled: false` keeps the default: the next target is tried immediately and every target may be attempted. |
+| `circuit_breaker` | no | Group-wide breaker config; one breaker instance per `(group, target name)`. Omit for no breaker. The v2 group schema has no per-target breaker override. Validated at load — see [Circuit-breaker fields](#circuit-breaker-fields). |
+| `targets` | yes | At least one target. Validation rejects an empty target list, and rejects two entries that are the *same use* of one provider (identical `provider`, `alias`, `path` and `query` — indistinguishable at runtime). The same provider may appear more than once when the entries differ in alias, path or query (a weighted alias canary on one provider); each arm then gets its own target name — see [Target fields](#target-fields). |
 
 ### Target fields
 
 | Field | Required | Notes |
 |---|---|---|
-| `provider` | yes | Must match a provider declared in `providers.yaml`, and that provider must serve the binding's protocol (protocol-preserving; enforced at config-load). Each provider may appear at most once per group. |
+| `provider` | yes | Must match a provider declared in `providers.yaml`, and that provider must serve the binding's protocol (protocol-preserving; enforced at config-load). A provider may appear more than once in a group as long as the entries differ in `alias`, `path` or `query`. |
 | `alias` | no | Model-name rewrite: when this target is selected the request body's model field is rewritten to this value. This is the v2 replacement for the v1 `model_rewrite` scalar. Placing it on the target lets one group send a single logical model under a different upstream id per provider. |
 | `weight` | load_balance only | Relative selection share. `0` is treated as `1` (even weighting) by the orchestrator. Ignored in `failover` mode, where **declaration order** drives sequencing. |
 | `path` | no | Overrides the protocol's upstream path for this target only (e.g. an Azure deployment-specific path on a shared provider connection). |
 | `query` | no | Per-target query-string params, composed over the provider's default query (target wins). |
+| `timeout_seconds` | no | Whole-attempt wall-clock bound for this target only; overrides the group's `timeout_seconds`. Zero inherits the group value. |
 
-There is no per-target `name`, `order`, `failure_status_codes`, `circuit_breaker`, or `actions` in the v2 group schema. Failover order is the declaration order of `targets`; the telemetry target label is the **provider name**.
+There is no per-target `name`, `order`, `failure_status_codes`, `circuit_breaker`, or `actions` in the v2 group schema. Failover order is the declaration order of `targets`. The **target name** — the circuit-breaker key and the `target` metric / record label — is derived (`contractsconfig.Group.TargetNames`): a provider listed once keeps its plain **provider name** (the historical label, so dashboards do not move); a provider listed more than once is disambiguated as `provider#alias`, or `provider#<1-based position>` when the entry has no alias or the alias form still collides. The admin `/api/v1/policies` view reports the same names.
 
 ### Circuit-breaker fields
 
@@ -196,21 +208,35 @@ Every group is validated when the config is loaded and again on every admin writ
 
 - the group name is an identifier (letters, digits, `.`, `_`, `-`; leading letter or digit) — it is the `policy` metric label and half of the breaker key;
 - `mode` is present;
-- at least one target; every target names a `provider` that exists in `providers`; no provider appears twice.
+- at least one target; every target names a `provider` that exists in `providers`; no two targets are the same use of one provider (identical `provider`, `alias`, `path` and `query`).
 
 It then synthesises the group into the exact `ResilienceConfig` the orchestrator will run (`selection.GroupResilienceConfig`, `internal/selection/resilience.go` — the same function the request path uses) and runs `contracts/resilience` `ResilienceConfig.Validate()` over it. That closes the rest of the rule set over authored config:
 
 - `mode` must be one of `failover`, `load_balance`, `load_balance_with_failover`, `none` (`ErrUnknownMode`);
 - `failure_status_codes` entries must be 4xx/5xx; `response_header_timeout_seconds` must not be negative;
-- `circuit_breaker`: `failure_rate_threshold` in `[0, 1]`, no negative counts or durations, and when `enabled: true` at least one of `failure_threshold` / `failure_rate_threshold` **and** a positive `cooldown_seconds` (`ErrInvalidCircuitBreakerConfig`).
+- `circuit_breaker`: `failure_rate_threshold` in `[0, 1]`, no negative counts or durations, and when `enabled: true` at least one of `failure_threshold` / `failure_rate_threshold` **and** a positive `cooldown_seconds` (`ErrInvalidCircuitBreakerConfig`);
+- `timeout_seconds` (group and target) must not be negative; `retry`: known `backoff_type`, no negative values, `delay_ms` not above `max_delay_ms`, and `max_attempts > 0` when `enabled: true` (`ErrInvalidRetryConfig`, `ErrUnknownBackoffType`);
+- target names are distinct (`ErrDuplicateTargetName`) — guaranteed by the naming rule above once the same-use check has passed.
 
 A rejection wraps both `config.ErrValidation` and the `contracts/resilience` sentinel that produced it, e.g. `config: v2 validation: group "ha": resilience: mode "failver": resilience: unknown mode`. Through the admin API the same failure is a `422` with the message in `detail`.
 
 What still is **not** checked: protocol-preservation is a binding-level check (it runs when a binding points at the group, `validateBindings`), and `weight: 0` is not an error — the synthesiser reads it as `1` (even weighting). Provider names are validated as identifiers by the same rule as group names.
 
-### Parsed but not wired
+### Attempt timeout and retry backoff
 
-`retry:` and `timeout_seconds` are v1 `resilience_policies` fields and are **NOT** part of the v2 group schema. `contracts/config.Group` and `contracts/config.Target` have no such fields, and the YAML loader is non-strict, so these keys are silently ignored under `groups:` — they are neither parsed nor validated and have no effect. Inter-attempt backoff is not implemented; failover retries immediately. Retry is expressed as a resilience group with multiple targets; the orchestrator tries targets in order until one commits. Attempt-level time bounding comes only from the group's `response_header_timeout_seconds`, which overrides the gateway-wide upstream response-header timeout at the forwarder level (`internal/proxy/transport.go`). Do not author `retry:` or `timeout_seconds` in v2 group configurations.
+Two knobs shape *how* the orchestrator walks a group's targets; neither changes *which* targets it walks.
+
+**`timeout_seconds` — whole-attempt wall-clock bound.** The group value applies to every attempt; a target's own `timeout_seconds` overrides it for that target. The orchestrator derives a `context.WithTimeout` deadline for the attempt (`effectiveAttemptTimeout` / `withAttemptTimeout`, `internal/middleware/resilience/middleware.go`), so the bound covers connect, headers **and** body — unlike `response_header_timeout_seconds`, which caps time-to-first-byte only. An attempt that overruns before committing is abandoned, recorded as `outcome=transport_error` (the record's `error` names the deadline), counted against the circuit breaker, and the walk moves to the next target. An attempt that overruns after its status line has committed to the client is aborted mid-stream, exactly as a client disconnect would be — nothing can be retried once bytes have reached the client. Size it for the slowest legitimate *complete* response. Zero (the default) leaves attempts unbounded beyond the header timeout.
+
+**`retry` — pacing and budget.** With `enabled: true` the orchestrator sleeps before every attempt after the first (never before the first) and stops walking once `max_attempts` attempts have run, even if targets remain — the client then sees the exhausted-path status ([failover](#failover)). The delay before attempt *n+1*, with `n` attempts completed and `base = delay_ms`:
+
+| `backoff_type` | delay |
+|---|---|
+| `constant` (or unset) | `base` |
+| `linear` | `base × n` |
+| `exponential` | `base × 2^(n−1)` |
+
+`max_delay_ms` (> 0) caps the curve; `use_jitter` then draws uniformly from `[delay/2, delay]`. The sleep honours request-context cancellation: a client that disconnects mid-backoff ends the walk immediately. "Retry" still means *advancing to the next target* — the same target is never re-tried; a group with one target has nothing to pace. `retry` omitted, or `enabled: false`, is byte-for-byte the historical behaviour: next target immediately, every target attempted. Circuit-breaker-blocked targets are skipped without a sleep.
 
 ---
 
@@ -249,6 +275,9 @@ A retryable outcome is one of:
 
 1. Upstream HTTP status in the resolved `failure_status_codes` set.
 2. Transport-level error (no headers received — connection refused, EOF mid-headers, timeout before status line).
+3. The attempt overran its effective `timeout_seconds` before committing (recorded as a transport error — see [Attempt timeout and retry backoff](#attempt-timeout-and-retry-backoff)).
+
+With `retry.enabled: true` the orchestrator sleeps the configured backoff before each attempt after the first and stops once `max_attempts` attempts have run.
 
 If every target fails:
 
@@ -380,7 +409,7 @@ If every target is blocked, the orchestrator returns **503 Service Unavailable**
 
 ## Observability
 
-Every layer of the orchestrator emits signal. Three independent channels. The OTel attribute keys are still `policy` and `target` — under v2, `policy` carries the **group name** — single-provider bindings synthesise a ModeNone config named `binding:<provider>`, but that path emits no `gateway.resilience.*` metrics at all, so the `binding:` form never appears as a metric label — and `target` carries the **provider name**.
+Every layer of the orchestrator emits signal. Three independent channels. The OTel attribute keys are still `policy` and `target` — under v2, `policy` carries the **group name** — single-provider bindings synthesise a ModeNone config named `binding:<provider>`, but that path emits no `gateway.resilience.*` metrics at all, so the `binding:` form never appears as a metric label — and `target` carries the **target name**: the provider name, unless the group lists that provider more than once, in which case `provider#alias` / `provider#<position>` (see [Target fields](#target-fields)).
 
 ### OTel metrics (Prometheus scrape + OTLP push)
 
@@ -428,7 +457,7 @@ Each request emits one [`Record`](../contracts/connector/record.go) per matched 
 
 Per-attempt fields ([`contracts/connector/record.go`](../contracts/connector/record.go) `Attempt`):
 
-- `target` — the target's provider name.
+- `target` — the target name: the provider name, or `provider#alias` / `provider#<position>` when the group lists that provider more than once.
 - `started_at_ns` — the attempt's wall-clock start as an **int64 of nanoseconds since the Unix epoch** (same encoding as the record's `ts_ns`), not an RFC3339 string.
 - `duration_ms` — orchestrator-measured wall-clock duration in milliseconds; zero for `cb_blocked` entries.
 - `status_code` — the upstream-reported HTTP status; omitted (zero) on a transport error or a `cb_blocked` skip.
@@ -547,9 +576,9 @@ If you are migrating policy YAML authored against the v1 schema, these are the l
 | Top-level `resilience_policies:` (a list) | Top-level `groups:` (a map keyed by name) |
 | Policy `name:` field | Group name is the map key |
 | A rule fires `useResiliencePolicy` to bind a policy | A Configuration binding names a `group:` — selection routes; rules no longer bind resilience |
-| Targets carry `name`, `order`, per-target `failure_status_codes`, per-target `circuit_breaker`, an `actions:` block, `model_rewrite`, `timeout_seconds` | Targets carry `provider`, `alias`, `weight`, `path`, `query` only. Failover order is declaration order; the target's telemetry label is its provider name |
+| Targets carry `name`, `order`, per-target `failure_status_codes`, per-target `circuit_breaker`, an `actions:` block, `model_rewrite`, `timeout_seconds` | Targets carry `provider`, `alias`, `weight`, `path`, `query`, `timeout_seconds`. Failover order is declaration order; the target's telemetry label is derived from its provider name (disambiguated only when a provider is listed twice) |
 | Per-target `actions:` (`changeProvider`, `changeModelName`, …) authored in YAML | No authorable target actions. Provider switch + alias rewrite are synthesised internally; `model_rewrite` is replaced by `alias` |
-| `timeout_seconds`, `retry:` blocks parsed (inert) on the policy/target | Not part of the v2 group schema — these keys are not recognised under `groups:` and have no effect |
+| `timeout_seconds`, `retry:` blocks parsed (inert) on the policy/target | Wired: group / target `timeout_seconds` is a whole-attempt deadline and `retry:` paces the walk and caps attempts — see [Attempt timeout and retry backoff](#attempt-timeout-and-retry-backoff) |
 
 The `useResiliencePolicy`, `changeProvider`, and `changeUrl` actions still exist in the rules action vocabulary for backward-compatible parsing, but routing is config data now: `changeProvider` / `changeModelName` survive only as internal selection primitives, and `useResiliencePolicy` is inert (its `state.PolicyRef` write is never read — see [Binding a request to a group](#binding-a-request-to-a-group)). `changeApiKey` is the exception — it is now functional, overriding the upstream credential at the single mint site, and its `state.UpstreamCredentialOverride` is carried across resilience attempts via the per-attempt state clone. Author bindings for routing, not routing rules.
 
@@ -561,7 +590,7 @@ These are documented intentionally — don't fix them without checking the miles
 
 1. **Body-mutating per-attempt rewrites across multiple attempts may leak state.** The typed body is shared between attempts; if attempt 1's internal `alias` rewrite (`changeModelName`) mutates it, attempt 2 sees the mutation. Restoration via re-parse from `Captured.Raw` is deferred.
 
-2. **`response_header_timeout_seconds` is honoured at the group level only.** When a group sets it, every attempt under that group uses it as the time-to-first-byte cap (the forwarder keys a per-timeout transport off the attempt context). A per-target header-timeout override and a whole-attempt wall-clock cap are not part of the v2 group schema.
+2. **`response_header_timeout_seconds` is honoured at the group level only.** When a group sets it, every attempt under that group uses it as the time-to-first-byte cap (the forwarder keys a per-timeout transport off the attempt context). A per-target header-timeout override is not part of the v2 group schema; for a per-target bound use `timeout_seconds`, which caps the whole attempt (including a committed streaming body) rather than time-to-first-byte.
 
 3. **"200 then die mid-stream" is invisible to the CB.** The breaker records an attempt as success at status-line commit. A stream that dies after headers will not trip the breaker.
 

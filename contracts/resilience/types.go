@@ -64,10 +64,15 @@ type ResilienceConfig struct {
 	// it to be set explicitly.
 	Mode ResilienceMode `yaml:"mode" json:"mode"`
 
-	// TimeoutSeconds is parsed and validated but currently unwired: the
-	// orchestrator derives no context deadline from it (see
-	// internal/middleware/resilience/middleware.go). Only
-	// ResponseHeaderTimeoutSeconds bounds an attempt.
+	// TimeoutSeconds, when > 0, is the whole-attempt wall-clock bound the
+	// orchestrator places on every attempt under this policy: a context
+	// deadline on the attempt (internal/middleware/resilience/middleware.go,
+	// withAttemptTimeout) covering connect, headers and body. An attempt
+	// that overruns it before committing counts as a transport-error failure
+	// for failover and circuit-breaker accounting; one that overruns after
+	// committing is aborted mid-stream. ResilienceTarget.TimeoutSeconds
+	// overrides it per target. Zero means no attempt deadline — only
+	// ResponseHeaderTimeoutSeconds bounds the attempt.
 	TimeoutSeconds int `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 
 	// Targets is the list of upstream destinations the orchestrator may
@@ -78,9 +83,13 @@ type ResilienceConfig struct {
 	// breakers on ResilienceTarget take precedence.
 	CircuitBreaker *CircuitBreakerConfig `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
 
-	// Retry is parsed and validated but currently unwired: the orchestrator
-	// implements no backoff or attempt budget; retry means advancing to the
-	// next target.
+	// Retry, when set and Enabled, paces the failover / load-balance walk: the
+	// orchestrator sleeps the RetryConfig backoff delay before every attempt
+	// after the first (respecting request-context cancellation) and stops
+	// walking once MaxAttempts (> 0) attempts have run. "Retry" still means
+	// advancing to the next target — the same target is never re-tried. Nil
+	// or disabled keeps the default: the next target is tried immediately and
+	// every target may be attempted.
 	Retry *RetryConfig `yaml:"retry,omitempty" json:"retry,omitempty"`
 
 	// StrictWeights, when true on a Mode=load_balance policy, disables the
@@ -137,19 +146,24 @@ type ResilienceTarget struct {
 	// ModeLoadBalanceWithFailover.
 	Weight int `yaml:"weight,omitempty" json:"weight,omitempty"`
 
-	// TimeoutSeconds is parsed and validated but currently unwired: the
-	// orchestrator derives no context deadline from it (see
-	// internal/middleware/resilience/middleware.go). Only
-	// ResilienceConfig.ResponseHeaderTimeoutSeconds bounds an attempt.
+	// TimeoutSeconds bounds a single attempt against this target as a
+	// whole-attempt wall-clock deadline (a context deadline the orchestrator
+	// derives per attempt — internal/middleware/resilience/middleware.go,
+	// effectiveAttemptTimeout). Overrides the parent
+	// ResilienceConfig.TimeoutSeconds for this target only; zero inherits it.
+	// A timed-out attempt fails over like a transport error. Authorable in v2
+	// as the group target's timeout_seconds (contracts/config.Target).
 	TimeoutSeconds int `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 
-	// ModelRewrite is parsed and validated but currently unwired: the
-	// orchestrator never reads it (see
-	// internal/middleware/resilience/middleware.go), and nothing authorable
-	// can set it — contracts/config.Target has no model_rewrite key.
-	// Per-attempt model rewriting happens only through Actions, via a
-	// rules.ChangeModelNameAction synthesised from a v2 group target's
-	// alias (selection.ProviderSwitchActions, internal/selection/resilience.go).
+	// ModelRewrite, when non-empty, rewrites the request body's model field
+	// to this value when this target is selected. It is the legacy scalar
+	// form of a changeModelName action: the orchestrator synthesises that
+	// action from it unless Actions already carries a changeModelName, in
+	// which case Actions wins (effectiveTargetActions,
+	// internal/middleware/resilience/middleware.go). Nothing in the v2 group
+	// schema sets it — contracts/config.Target expresses the rewrite as
+	// alias, which the synthesiser emits as an Actions entry
+	// (selection.ProviderSwitchActions, internal/selection/resilience.go).
 	ModelRewrite string `yaml:"model_rewrite,omitempty" json:"model_rewrite,omitempty"`
 
 	// FailureStatusCodes is the explicit list of upstream HTTP status codes
@@ -168,10 +182,12 @@ type ResilienceTarget struct {
 	// are exactly the same shape a rule may carry, so the orchestrator
 	// dispatches through the existing applyAction machinery.
 	//
-	// Actions is the sole mechanism the orchestrator honours for
-	// destination mutation; the scalar Provider and ModelRewrite fields are
-	// inert. No v2 YAML block authors a ResilienceTarget directly — groups
-	// are the authorable shape, and targets are machine-synthesised
+	// Actions coexists with the legacy scalar fields. Provider is inert for
+	// destination mutation (the provider switch is an Actions entry the
+	// synthesiser emits); ModelRewrite is honoured as a fallback — when both
+	// are present, Actions wins for the model rewrite it covers. No v2 YAML
+	// block authors a ResilienceTarget directly — groups are the authorable
+	// shape, and targets are machine-synthesised
 	// (selection.GroupResilienceConfig, internal/selection/resilience.go).
 	// Terminating actions (returnStatusCode, llmImpersonation) are rejected
 	// by Validate: the orchestrator discards a target action's Outcome, so
@@ -226,32 +242,38 @@ type CircuitBreakerConfig struct {
 	MinimumThroughput int `yaml:"minimum_throughput" json:"minimum_throughput"`
 }
 
-// RetryConfig configures retry attempts and inter-attempt backoff. The whole
-// block is parsed and validated but currently unwired: the orchestrator
-// implements no backoff and no attempt budget — "retry" means advancing to
-// the next target (see the note on ResilienceConfig.Retry).
+// RetryConfig configures the attempt budget and inter-attempt backoff the
+// orchestrator applies while walking a policy's targets (retryDelay and
+// retryBudgetExhausted, internal/middleware/resilience/middleware.go).
+// "Retry" means advancing to the next target — the same target is never
+// re-tried; this block only paces and caps that walk (see the note on
+// ResilienceConfig.Retry).
 type RetryConfig struct {
-	// Enabled is recorded but never consulted by the orchestrator; setting it
-	// true produces no retries.
+	// Enabled gates the whole block: when false the orchestrator applies no
+	// delay and no attempt cap, exactly as if Retry were nil.
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
-	// MaxAttempts is the total attempt budget including the initial call.
-	// Must be > 0 when Enabled is true.
+	// MaxAttempts is the total attempt budget including the initial call;
+	// once that many attempts have run the walk stops even if targets
+	// remain, and the client sees the exhausted-path status. Zero means no
+	// cap. Must be > 0 when Enabled is true (Validate).
 	MaxAttempts int `yaml:"max_attempts" json:"max_attempts"`
 
 	// BackoffType selects the inter-attempt delay curve. See the BackoffX
-	// constants.
+	// constants; unset behaves as BackoffConstant.
 	BackoffType BackoffType `yaml:"backoff_type" json:"backoff_type"`
 
 	// DelayMilliseconds is the base delay between attempts; the BackoffType
-	// curve scales subsequent delays.
+	// curve scales subsequent delays (linear: base × attempts so far;
+	// exponential: base × 2^(attempts so far − 1)). Zero disables the delay
+	// while leaving MaxAttempts in force.
 	DelayMilliseconds int `yaml:"delay_ms" json:"delay_ms"`
 
 	// MaxDelayMs caps the per-attempt delay so exponential backoff cannot
 	// stretch beyond a reasonable bound. Zero means uncapped.
 	MaxDelayMs int `yaml:"max_delay_ms" json:"max_delay_ms"`
 
-	// UseJitter adds random jitter to each delay so synchronised clients
-	// don't retry in lockstep ("thundering herd").
+	// UseJitter draws each delay uniformly from [delay/2, delay] so
+	// synchronised clients don't retry in lockstep ("thundering herd").
 	UseJitter bool `yaml:"use_jitter" json:"use_jitter"`
 }
