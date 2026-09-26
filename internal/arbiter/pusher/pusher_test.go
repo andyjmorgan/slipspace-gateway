@@ -533,3 +533,32 @@ func TestPusher_CloseSkipsBackoff(t *testing.T) {
 		t.Errorf("lost = %d, want 1 (exhausted during drain)", p.Lost())
 	}
 }
+
+// TestPusher_EnqueueAfterCloseDropsInsteadOfPanicking pins the live
+// connector-swap contract: the reporter may hold a pusher the reconciler
+// has just closed. A select's send case on a closed channel panics, so
+// pre-fix this took the request path down; now it is a counted drop with
+// reason DropClosed.
+func TestPusher_EnqueueAfterCloseDropsInsteadOfPanicking(t *testing.T) {
+	hooks := &hookLog{}
+	p := New(Options{
+		Endpoint: "http://x", Secret: "s", Workers: 1,
+		Logger: discard(), OnDropped: hooks.onDropped,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	p.Close(ctx)
+
+	if p.Enqueue(sampleRecord()) {
+		t.Fatal("Enqueue after Close returned true")
+	}
+	if p.Dropped() != 1 {
+		t.Fatalf("Dropped() = %d, want 1", p.Dropped())
+	}
+	drops, _ := hooks.snapshot()
+	if len(drops) != 1 || drops[0] != DropClosed {
+		t.Fatalf("drop reasons = %v, want [%s]", drops, DropClosed)
+	}
+	// Close is idempotent.
+	p.Close(ctx)
+}
