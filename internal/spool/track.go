@@ -16,17 +16,34 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/internal/safego"
 )
 
-// trackStats is a per-track counter snapshot exposed via Spool.Stats.
-type trackStats struct {
-	Enqueued        uint64
-	DroppedRing     uint64
-	Written         uint64
-	WriteErrors     uint64
-	SegmentsSealed  uint64
-	UploadsOK       uint64
-	UploadsRetried  uint64
-	UploadsDLQ      uint64
-	BreakerState    breakerState
+// TrackStats is a per-track counter snapshot exposed via Spool.Stats. The
+// gateway bridges it to the gateway.spool.* OTel instruments
+// (cmd/gateway/spool_metrics.go) so the drop / DLQ / breaker signals reach
+// an operator; see docs/spool.md "Observability".
+type TrackStats struct {
+	// Enqueued counts records accepted onto the ring by Enqueue.
+	Enqueued uint64
+	// DroppedRing counts records Enqueue dropped because the ring was
+	// full — the loss counter invariant #2 leans on.
+	DroppedRing uint64
+	// Written counts records the drain goroutine wrote to a segment.
+	Written uint64
+	// WriteErrors counts records lost because the segment write failed
+	// (disk full, unwritable spool root).
+	WriteErrors uint64
+	// SegmentsSealed counts non-empty segments moved to sealed/.
+	SegmentsSealed uint64
+	// UploadsOK counts segments Connector.Upload delivered.
+	UploadsOK uint64
+	// UploadsRetried counts retryable Upload attempt failures.
+	UploadsRetried uint64
+	// UploadsDLQ counts segments moved to deadletter/.
+	UploadsDLQ uint64
+	// BreakerState is the per-destination circuit breaker's current
+	// state.
+	BreakerState BreakerState
+	// PendingSegments is the number of sealed segments awaiting upload
+	// at snapshot time (a readdir of sealed/).
 	PendingSegments int
 }
 
@@ -56,6 +73,13 @@ type track struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
+
+	// cancel aborts the per-track context start derived from the
+	// spool's. stop's graceful path never touches it; abort calls it so
+	// an Upload attempt wedged past UnregisterTrack's deadline is cut
+	// off (the segment stays in uploading/ for Recover).
+	cancelMu sync.Mutex
+	cancel   context.CancelFunc
 
 	uploadKick chan struct{}
 
@@ -103,7 +127,20 @@ func (t *track) enqueue(rec cc.Record) {
 
 // start spawns the drain + uploader goroutines via safego so panics
 // are recovered with a logged error rather than crashing the process.
+// The goroutines run on a child of ctx so abort can cancel this track
+// alone without touching its siblings.
 func (t *track) start(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	t.cancelMu.Lock()
+	t.cancel = cancel
+	t.cancelMu.Unlock()
+	// Kick the uploader once so a backlog Recover just returned to
+	// sealed/ — after a restart, or from the predecessor of a live
+	// re-registered track — ships now instead of at the first poll tick.
+	select {
+	case t.uploadKick <- struct{}{}:
+	default:
+	}
 	t.wg.Add(2)
 	safego.Go(ctx, "spool.track.drain", t.opts.logger, nil, func() {
 		defer t.wg.Done()
@@ -130,6 +167,19 @@ func (t *track) stop(timeout time.Duration) bool {
 		return true
 	case <-time.After(timeout):
 		return false
+	}
+}
+
+// abort cancels the track's context so a goroutine blocked inside
+// Connector.Upload or a retry backoff exits now rather than at the
+// attempt deadline. Only UnregisterTrack calls it, and only after the
+// graceful stop has already missed its deadline. No-op before start.
+func (t *track) abort() {
+	t.cancelMu.Lock()
+	cancel := t.cancel
+	t.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -508,9 +558,9 @@ func (t *track) describeSealed(uploading string) cc.SealedSegment {
 	return seg
 }
 
-func (t *track) stats() trackStats {
+func (t *track) stats() TrackStats {
 	sealed, _ := t.manager.ListSealed()
-	return trackStats{
+	return TrackStats{
 		Enqueued:        t.enqueued.Load(),
 		DroppedRing:     t.droppedRing.Load(),
 		Written:         t.written.Load(),

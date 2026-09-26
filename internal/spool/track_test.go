@@ -266,7 +266,7 @@ func TestAttemptUploads_DeadletterContinuesScan(t *testing.T) {
 	}
 	// One failed attempt then two successes: the successes closed the
 	// breaker and reset the counter — nothing was double-counted.
-	if tr.breaker.State() != breakerClosed {
+	if tr.breaker.State() != BreakerClosed {
 		t.Errorf("breaker = %v, want closed", tr.breaker.State())
 	}
 }
@@ -318,7 +318,7 @@ func TestUploadOne_BreakerCountsPerAttempt(t *testing.T) {
 	if c.Calls() != 4 {
 		t.Errorf("Upload calls = %d, want the full MaxAttempts=4 even after the breaker opened", c.Calls())
 	}
-	if tr.breaker.State() != breakerOpen {
+	if tr.breaker.State() != BreakerOpen {
 		t.Errorf("breaker = %v, want open after 4 consecutive failed attempts (threshold 2)", tr.breaker.State())
 	}
 }
@@ -337,7 +337,7 @@ func TestAttemptUploads_HalfOpenEmptyScanReleasesProbe(t *testing.T) {
 	tick = tick.Add(time.Hour) // cooldown elapsed
 
 	tr.attemptUploads(context.Background()) // nothing sealed
-	if tr.breaker.State() != breakerHalfOpen {
+	if tr.breaker.State() != BreakerHalfOpen {
 		t.Fatalf("breaker = %v, want half-open after cooldown", tr.breaker.State())
 	}
 	if !tr.breaker.Allow() {
@@ -476,7 +476,7 @@ func TestAttemptUploads_StopsClaimingOnceBreakerOpens(t *testing.T) {
 	if c.Calls() != 1 {
 		t.Errorf("Upload calls = %d, want 1 — the second segment must wait for the probe", c.Calls())
 	}
-	if tr.breaker.State() != breakerOpen {
+	if tr.breaker.State() != BreakerOpen {
 		t.Errorf("breaker = %v, want open", tr.breaker.State())
 	}
 	if sealed, _ := tr.manager.ListSealed(); len(sealed) != 1 {
@@ -550,7 +550,7 @@ func TestAttemptUploads_ContextCancelledMidAttemptIsNotAFailure(t *testing.T) {
 	if c.Calls() != 1 {
 		t.Errorf("Upload calls = %d, want 1 (scan stops on ctx)", c.Calls())
 	}
-	if tr.breaker.State() != breakerClosed {
+	if tr.breaker.State() != BreakerClosed {
 		t.Errorf("breaker = %v, want closed — a cancelled attempt is not a destination failure", tr.breaker.State())
 	}
 	if uploading, _ := tr.manager.ListUploading(); len(uploading) != 1 {
@@ -899,7 +899,7 @@ func TestAttemptUploads_ClaimFailureOpensBreaker(t *testing.T) {
 	tr.attemptUploads(context.Background())
 	tr.attemptUploads(context.Background())
 
-	if got := tr.breaker.State(); got == breakerClosed {
+	if got := tr.breaker.State(); got == BreakerClosed {
 		t.Error("breaker still closed after repeated Claim failures — " +
 			"a failed claim is being recorded as a successful upload")
 	}

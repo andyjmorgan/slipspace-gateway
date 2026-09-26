@@ -17,6 +17,17 @@ import (
 // defaultQueueSize is the per-track ring depth before drops kick in.
 const defaultQueueSize = 10000
 
+// ErrUnknownTrack is returned by UnregisterTrack when no track of that
+// name is registered.
+var ErrUnknownTrack = errors.New("spool: unknown track")
+
+// ErrTrackStopTimeout is returned by UnregisterTrack when the track's
+// goroutines did not exit within the caller's deadline even after the
+// hard abort. The track is already unrouted (Enqueue no longer reaches
+// it) and its on-disk segments are intact; only the goroutine join is
+// outstanding.
+var ErrTrackStopTimeout = errors.New("spool: track did not stop before deadline")
+
 // Options configures a Spool.
 type Options struct {
 	// Root is the on-disk directory under which every track's
@@ -63,18 +74,28 @@ type RegisterTrackOptions struct {
 	UploadAttemptTimeout time.Duration
 }
 
-// Stats is a point-in-time snapshot of one Spool's per-track counters.
+// Stats is a point-in-time snapshot of one Spool's counters.
 type Stats struct {
-	// Tracks maps connector.Name() to its trackStats.
-	Tracks map[string]trackStats
+	// Tracks maps connector.Name() to its TrackStats for every
+	// registered track.
+	Tracks map[string]TrackStats
+
+	// Unrouted counts records Enqueue was asked to route to a connector
+	// name with no registered track, keyed by that name. Each is a
+	// record lost before any ring existed to drop it from — a binding
+	// that references a connector whose track never registered (build
+	// failure, or a live-added connector before its track came up).
+	Unrouted map[string]uint64
 }
 
 // Spool is the disk-backed buffer that sits between the data plane's
 // body-capture middleware and the upload workers shipping records to
 // connector destinations. Construct with New, register destinations
-// with RegisterTrack, then Start. Enqueue is non-blocking and drops
-// at full per-track-queue capacity — the request path must never
-// stall on reporting backpressure.
+// with RegisterTrack, then Start. Tracks may also be registered and
+// unregistered after Start — that is how the gateway applies connector
+// edits made through the admin write API without a restart. Enqueue is
+// non-blocking and drops at full per-track-queue capacity — the request
+// path must never stall on reporting backpressure.
 type Spool struct {
 	root   string
 	logger *slog.Logger
@@ -85,9 +106,17 @@ type Spool struct {
 
 	started bool
 	ctx     context.Context
+
+	// unroutedMu guards unrouted. Separate from mu because Enqueue holds
+	// mu's read side while it counts a miss, and the miss path is rare
+	// enough that a second lock beats promoting every Enqueue to a write
+	// lock.
+	unroutedMu sync.Mutex
+	unrouted   map[string]uint64
 }
 
-// New constructs a Spool. It does not start any goroutines.
+// New constructs a Spool. It does not start any goroutines and touches
+// no disk — the per-track directories are created by RegisterTrack.
 func New(opts Options) (*Spool, error) {
 	if opts.Root == "" {
 		return nil, errors.New("spool: Options.Root is required")
@@ -101,16 +130,24 @@ func New(opts Options) (*Spool, error) {
 		now = time.Now
 	}
 	return &Spool{
-		root:   opts.Root,
-		logger: logger,
-		now:    now,
-		tracks: make(map[string]*track),
+		root:     opts.Root,
+		logger:   logger,
+		now:      now,
+		tracks:   make(map[string]*track),
+		unrouted: make(map[string]uint64),
 	}, nil
 }
 
-// RegisterTrack adds a destination. Must be called before Start.
-// Names must be unique within a Spool — re-registering an existing
-// name returns an error.
+// RegisterTrack adds a destination. Names must be unique within a
+// Spool — re-registering an existing name returns an error; unregister
+// it first (UnregisterTrack) to replace a track's settings.
+//
+// Before Start the track is merely recorded; Start recovers its
+// directories and launches its goroutines with every other track. After
+// Start the track is recovered and started here, synchronously, so a
+// record enqueued once RegisterTrack returns is routed. Recovery and
+// construction run outside the spool lock — a large sealed/ backlog must
+// not stall concurrent Enqueue calls on the request path.
 func (s *Spool) RegisterTrack(opts RegisterTrackOptions) error {
 	if opts.Connector == nil {
 		return errors.New("spool: RegisterTrackOptions.Connector is required")
@@ -120,12 +157,11 @@ func (s *Spool) RegisterTrack(opts RegisterTrackOptions) error {
 		return errors.New("spool: connector Name() is empty")
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.started {
-		return errors.New("spool: RegisterTrack after Start")
-	}
-	if _, exists := s.tracks[name]; exists {
+	s.mu.RLock()
+	_, exists := s.tracks[name]
+	started, ctx := s.started, s.ctx
+	s.mu.RUnlock()
+	if exists {
 		return fmt.Errorf("spool: track %q already registered", name)
 	}
 
@@ -154,13 +190,92 @@ func (s *Spool) RegisterTrack(opts RegisterTrackOptions) error {
 			return context.WithTimeout(parent, timeout)
 		}
 	}
+	t := newTrack(name, manager, tOpts)
 
-	s.tracks[name] = newTrack(name, manager, tOpts)
+	if started {
+		// Live registration: the directory reconcile that Start would
+		// have run for this track runs now, before the goroutines see
+		// it. Same fail-closed rule — an unrecoverable directory is an
+		// error, not a silently stranded backlog.
+		if err := s.recoverTrack(ctx, t); err != nil {
+			return err
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.tracks[name]; exists {
+		return fmt.Errorf("spool: track %q already registered", name)
+	}
+	s.tracks[name] = t
+	if s.started {
+		t.start(s.ctx)
+	}
+	return nil
+}
+
+// UnregisterTrack removes the named track: Enqueue stops routing to it
+// immediately, then its drain goroutine flushes the ring into the active
+// segment, seals it, and both goroutines exit. Waits up to timeout for
+// the graceful stop; if that elapses the track's context is cancelled so
+// an in-flight Upload aborts, and the join is retried for a further
+// timeout before ErrTrackStopTimeout is returned.
+//
+// Nothing on disk is deleted. Sealed segments (and any segment left in
+// uploading/ by an aborted upload) stay under records/<name>/ and are
+// picked up by Recover the next time a track of that name registers —
+// on a later RegisterTrack or on the next process start. This is the
+// mechanism behind a live connector edit: unregister the old settings,
+// register the new, and the backlog follows the name.
+func (s *Spool) UnregisterTrack(name string, timeout time.Duration) error {
+	s.mu.Lock()
+	t, ok := s.tracks[name]
+	if ok {
+		delete(s.tracks, name)
+	}
+	started := s.started
+	s.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w: %q", ErrUnknownTrack, name)
+	}
+	if !started {
+		// Never started, so no goroutines to join.
+		return nil
+	}
+	if t.stop(timeout) {
+		return nil
+	}
+	t.abort()
+	if t.stop(timeout) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q", ErrTrackStopTimeout, name)
+}
+
+// recoverTrack runs the startup directory reconcile for one track and
+// logs the report when it did anything. See docs/spool.md "Recovery on
+// startup".
+func (s *Spool) recoverTrack(ctx context.Context, t *track) error {
+	rep, err := Recover(t.manager)
+	if err != nil {
+		return fmt.Errorf("spool: recover track %q: %w", t.name, err)
+	}
+	if rep != (RecoveryReport{}) {
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "spool: track recovered after restart",
+			slog.String("track", t.name),
+			slog.Int("uploading_to_sealed", rep.RecoveredFromUploading),
+			slog.Int("active_sealed", rep.SealedFromActive),
+			slog.Int("active_quarantined", rep.QuarantinedFromActive),
+		)
+	}
 	return nil
 }
 
 // Start spawns the drain + uploader goroutines for every registered
-// track. Returns an error if Start is called twice or with zero tracks.
+// track. Returns an error if Start is called twice. Starting with zero
+// tracks is allowed: the spool then idles until a track is registered
+// live, which is the state of a gateway booted with no spool-backed
+// connector that later gains one through the admin write API.
 //
 // ctx is the parent context for all goroutines; cancellation triggers a
 // best-effort drain and exit. Use Stop to wait on graceful shutdown
@@ -171,27 +286,15 @@ func (s *Spool) Start(ctx context.Context) error {
 	if s.started {
 		return errors.New("spool: already started")
 	}
-	if len(s.tracks) == 0 {
-		return errors.New("spool: no tracks registered")
-	}
 	// Reconcile each track's on-disk state before any goroutine runs:
 	// fish uploading/ orphans back to sealed/, seal cleanly-decoding
 	// active/ leftovers so they upload, quarantine torn ones. Synchronous
 	// and fail-closed — a spool that can't reconcile its directories must
 	// not start, because silently stranding audit/billing records is worse
 	// than refusing to boot. See docs/spool.md "Recovery on startup".
-	for name, t := range s.tracks {
-		rep, err := Recover(t.manager)
-		if err != nil {
-			return fmt.Errorf("spool: recover track %q: %w", name, err)
-		}
-		if rep != (RecoveryReport{}) {
-			s.logger.LogAttrs(ctx, slog.LevelInfo, "spool: track recovered after restart",
-				slog.String("track", name),
-				slog.Int("uploading_to_sealed", rep.RecoveredFromUploading),
-				slog.Int("active_sealed", rep.SealedFromActive),
-				slog.Int("active_quarantined", rep.QuarantinedFromActive),
-			)
+	for _, t := range s.tracks {
+		if err := s.recoverTrack(ctx, t); err != nil {
+			return err
 		}
 	}
 	s.started = true
@@ -227,11 +330,12 @@ func (s *Spool) Stop(timeout time.Duration) bool {
 	return allOK
 }
 
-// Enqueue routes rec to every named track that's registered. Names
-// that aren't registered are silently ignored — the caller decided to
-// not bind them, so dropping is the correct behaviour. The send is
-// non-blocking; full track queues drop the record and increment that
-// track's droppedRing counter.
+// Enqueue routes rec to every named track that's registered. A name
+// with no registered track drops the record and bumps that name's
+// Stats.Unrouted counter — the loss is counted, never silent, because
+// the caller only names connectors its configuration is bound to. The
+// send is non-blocking; full track queues drop the record and increment
+// that track's DroppedRing counter.
 func (s *Spool) Enqueue(rec cc.Record, connectors ...string) {
 	if len(connectors) == 0 {
 		return
@@ -241,20 +345,30 @@ func (s *Spool) Enqueue(rec cc.Record, connectors ...string) {
 	for _, name := range connectors {
 		if t, ok := s.tracks[name]; ok {
 			t.enqueue(rec)
+			continue
 		}
+		s.unroutedMu.Lock()
+		s.unrouted[name]++
+		s.unroutedMu.Unlock()
 	}
 }
 
-// Stats returns a snapshot of per-track counters. Safe to call
-// concurrently with Enqueue.
+// Stats returns a snapshot of per-track counters plus the per-name
+// unrouted-drop counts. Safe to call concurrently with Enqueue.
 func (s *Spool) Stats() Stats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make(map[string]trackStats, len(s.tracks))
+	out := make(map[string]TrackStats, len(s.tracks))
 	for name, t := range s.tracks {
 		out[name] = t.stats()
 	}
-	return Stats{Tracks: out}
+	s.unroutedMu.Lock()
+	unrouted := make(map[string]uint64, len(s.unrouted))
+	for name, n := range s.unrouted {
+		unrouted[name] = n
+	}
+	s.unroutedMu.Unlock()
+	return Stats{Tracks: out, Unrouted: unrouted}
 }
 
 // TrackNames returns the registered track names in lexical order.
