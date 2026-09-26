@@ -31,6 +31,9 @@ func TestApplyChangeProvider(t *testing.T) {
 	if s.Provider != "anthropic" {
 		t.Errorf("Provider = %q, want anthropic", s.Provider)
 	}
+	if !s.ProviderOverridden {
+		t.Error("ProviderOverridden = false; changeProvider must flag the explicit override for the orchestrator")
+	}
 }
 
 func TestApplyChangeProvider_EmptyName(t *testing.T) {
