@@ -45,7 +45,7 @@ func TestEvaluateBinding_SamplingOutSkips(t *testing.T) {
 	// the current FNV-1a 64 hash. Computed at runtime so a change to
 	// the hash mixing doesn't silently flip the test from "sampling
 	// reliably drops" to "sampling reliably includes".
-	b := contractsconfig.ConnectorBinding{Connector: "x", Sampling: 0.0001}
+	b := contractsconfig.ConnectorBinding{Connector: "x", Sampling: floatPtr(0.0001)}
 	rec := makeRec()
 	for i := 0; i < 10_000; i++ {
 		rec.CorrelationID = "outbucket-" + intToString(i)
@@ -119,16 +119,41 @@ func TestEvaluateBinding_OversizeDropRecordSkips(t *testing.T) {
 func TestSamplingIncludes_Defaults(t *testing.T) {
 	rec := makeRec()
 	if !samplingIncludes(rec, contractsconfig.ConnectorBinding{}) {
-		t.Error("zero sampling means default 1.0 → always include")
+		t.Error("unset sampling means default 1.0 → always include")
 	}
-	if !samplingIncludes(rec, contractsconfig.ConnectorBinding{Sampling: 1.0}) {
+	if !samplingIncludes(rec, contractsconfig.ConnectorBinding{Sampling: floatPtr(1.0)}) {
 		t.Error("explicit 1.0 → always include")
+	}
+}
+
+// TestSamplingIncludes_ExplicitZeroShipsNothing pins #561: `sampling: 0`
+// mutes the binding. Before the pointer field, 0 was indistinguishable
+// from unset and shipped 100% of records — the opposite of the intent.
+func TestSamplingIncludes_ExplicitZeroShipsNothing(t *testing.T) {
+	zero := contractsconfig.ConnectorBinding{Connector: "x", Sampling: floatPtr(0)}
+	for i := 0; i < 1000; i++ {
+		rec := makeRec()
+		rec.CorrelationID = "any-" + intToString(i)
+		if samplingIncludes(rec, zero) {
+			t.Fatalf("sampling: 0 shipped correlation_id %q", rec.CorrelationID)
+		}
+	}
+	// Same under random mode, and regardless of what the RNG returns.
+	orig := sampleRandFloat64
+	t.Cleanup(func() { sampleRandFloat64 = orig })
+	sampleRandFloat64 = func() float64 { return 0 }
+	zero.SamplingKey = contractsconfig.SamplingKeyRandom
+	if samplingIncludes(makeRec(), zero) {
+		t.Error("sampling: 0 in random mode shipped a record with rng=0")
+	}
+	if _, ship, _ := evaluateBinding(makeRec(), zero, contractsconfig.ConnectorTypeS3); ship {
+		t.Error("evaluateBinding shipped a record through a sampling: 0 binding")
 	}
 }
 
 func TestSamplingIncludes_CorrelationIDIsDeterministic(t *testing.T) {
 	rec := makeRec()
-	b := contractsconfig.ConnectorBinding{Sampling: 0.5}
+	b := contractsconfig.ConnectorBinding{Sampling: floatPtr(0.5)}
 	first := samplingIncludes(rec, b)
 	for i := 0; i < 100; i++ {
 		if samplingIncludes(rec, b) != first {
@@ -145,7 +170,7 @@ func TestSamplingIncludes_DifferentCorrelationIDsSplit(t *testing.T) {
 	for i := 0; i < total; i++ {
 		rec := makeRec()
 		rec.CorrelationID = "corr-" + intToString(i)
-		if samplingIncludes(rec, contractsconfig.ConnectorBinding{Sampling: 0.5}) {
+		if samplingIncludes(rec, contractsconfig.ConnectorBinding{Sampling: floatPtr(0.5)}) {
 			in++
 		}
 	}
@@ -164,7 +189,7 @@ func TestSamplingIncludes_RandomMode(t *testing.T) {
 
 	rec := makeRec()
 	b := contractsconfig.ConnectorBinding{
-		Sampling:    0.5,
+		Sampling:    floatPtr(0.5),
 		SamplingKey: contractsconfig.SamplingKeyRandom,
 	}
 	sampleRandFloat64 = func() float64 { return 0.49 }
@@ -370,6 +395,8 @@ func TestApplyOversize_S3HasNoDefaultCap(t *testing.T) {
 // ---------- helpers ----------
 
 func intPtr(i int) *int { return &i }
+
+func floatPtr(f float64) *float64 { return &f }
 
 func intToString(i int) string {
 	// Tiny stdlib-free int→string to keep the test focused. The hash

@@ -252,6 +252,62 @@ func TestReporting_Disabled_NoEvent(t *testing.T) {
 	h.ExpectNoEvent("gateway.request", 1500*time.Millisecond)
 }
 
+// TestReporting_SamplingZero_NoEvent is the sampling arm of the no-record
+// contract (#573): a binding with `sampling: 0` must ship nothing through
+// the real binary. It doubles as the wire-level proof for #561, where an
+// explicit 0 used to be indistinguishable from unset and shipped 100%.
+func TestReporting_SamplingZero_NoEvent(t *testing.T) {
+	t.Parallel()
+	h := harness.NewWithOptions(t, harness.Options{
+		WebhookSampling: harness.FloatPtr(0),
+	})
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"x","object":"chat.completion"}`,
+	})
+
+	// Several requests: with correlation_id-keyed sampling a single request
+	// could land on either side of a fractional threshold, but 0 must drop
+	// every one of them.
+	for i := 0; i < 3; i++ {
+		resp := h.PostJSON("/v1/chat/completions",
+			map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("gateway status=%d", resp.StatusCode)
+		}
+	}
+
+	h.ExpectNoEvent("gateway.request", 1500*time.Millisecond)
+}
+
+// TestReporting_SamplingOne_EventEmitted is the positive control for the
+// case above: the same injected binding with an explicit `sampling: 1`
+// ships every record, proving the harness knob reaches the binary and the
+// silence in TestReporting_SamplingZero_NoEvent is the sampling drop, not
+// a broken inject.
+func TestReporting_SamplingOne_EventEmitted(t *testing.T) {
+	t.Parallel()
+	h := harness.NewWithOptions(t, harness.Options{
+		WebhookSampling: harness.FloatPtr(1),
+	})
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Body:   `{"id":"x","object":"chat.completion"}`,
+	})
+
+	resp := h.PostJSON("/v1/chat/completions",
+		map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": "."}}}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("gateway status=%d", resp.StatusCode)
+	}
+
+	h.ExpectEvent("gateway.request", 5*time.Second)
+}
+
 // TestReporting_Streaming_EventEmitted asserts a streaming request also
 // produces a gateway.request envelope once the stream terminates, and that
 // the Streaming bit is set on the RequestEvent payload.

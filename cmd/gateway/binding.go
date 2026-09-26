@@ -63,13 +63,14 @@ type oversizeOutcome struct {
 }
 
 // samplingIncludes decides whether rec is in the sampled set for b.
-// Defaults: Sampling 0 → 1.0 (everything in). SamplingKey "" →
-// correlation_id (deterministic) so retries / tool-call follow-ups
-// stay grouped.
+// Defaults: Sampling unset → 1.0 (everything in); an explicit
+// `sampling: 0` ships nothing (the binding is muted, not removed).
+// SamplingKey "" → correlation_id (deterministic) so retries /
+// tool-call follow-ups stay grouped.
 func samplingIncludes(rec cc.Record, b contractsconfig.ConnectorBinding) bool {
-	s := b.Sampling
+	s := b.SamplingRate()
 	if s <= 0 {
-		s = 1.0
+		return false
 	}
 	if s >= 1.0 {
 		return true

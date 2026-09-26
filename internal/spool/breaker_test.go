@@ -1,6 +1,8 @@
 package spool
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -116,6 +118,128 @@ func TestBreaker_DoubleOpenIsNoop(t *testing.T) {
 	b.RecordFailure() // still open, no-op
 	if b.State() != state1 {
 		t.Errorf("state changed after no-op open failure")
+	}
+}
+
+// TestBreaker_HalfOpenAdmitsExactlyOneProbe pins #545: while the probe is
+// outstanding every further Allow is refused; the probe's outcome — or an
+// explicit Release — is what frees the gate.
+func TestBreaker_HalfOpenAdmitsExactlyOneProbe(t *testing.T) {
+	tick := time.Now()
+	clock := func() time.Time { return tick }
+	b := newBreaker(BreakerOpts{FailuresToOpen: 1, HalfOpenAfter: time.Millisecond}, clock)
+	b.RecordFailure()
+	tick = tick.Add(time.Hour)
+
+	if !b.Allow() {
+		t.Fatal("first caller after cooldown should be admitted as the probe")
+	}
+	if b.State() != breakerHalfOpen {
+		t.Fatalf("state = %v, want half-open", b.State())
+	}
+	for i := 0; i < 5; i++ {
+		if b.Allow() {
+			t.Fatalf("caller %d admitted while the probe is still in flight", i+2)
+		}
+	}
+
+	// Probe fails → open; nothing admitted until the cooldown elapses
+	// again, then exactly one more probe.
+	b.RecordFailure()
+	if b.State() != breakerOpen || b.Allow() {
+		t.Fatal("failed probe should reopen and refuse before cooldown")
+	}
+	tick = tick.Add(time.Hour)
+	if !b.Allow() || b.Allow() {
+		t.Fatal("second cooldown should admit exactly one probe")
+	}
+
+	// Probe succeeds → closed → everyone admitted.
+	b.RecordSuccess()
+	for i := 0; i < 3; i++ {
+		if !b.Allow() {
+			t.Fatalf("closed breaker refused caller %d", i)
+		}
+	}
+}
+
+func TestBreaker_ReleaseFreesHalfOpenProbe(t *testing.T) {
+	tick := time.Now()
+	clock := func() time.Time { return tick }
+	b := newBreaker(BreakerOpts{FailuresToOpen: 1, HalfOpenAfter: time.Millisecond}, clock)
+	b.RecordFailure()
+	tick = tick.Add(time.Hour)
+
+	if !b.Allow() || b.Allow() {
+		t.Fatal("expected exactly one probe admitted")
+	}
+	b.Release() // the probe never reached Upload (lost claim race)
+	if b.State() != breakerHalfOpen {
+		t.Errorf("Release must not change state, got %v", b.State())
+	}
+	if !b.Allow() {
+		t.Error("Release should hand the probe slot back")
+	}
+
+	// Release outside half-open is a no-op.
+	b.RecordSuccess()
+	b.Release()
+	if b.State() != breakerClosed || !b.Allow() {
+		t.Error("Release on a closed breaker should change nothing")
+	}
+}
+
+// TestBreaker_HalfOpenConcurrentAllow drives N goroutines at a half-open
+// breaker and checks that exactly one is admitted. Run under -race this
+// also proves the reservation is taken under the mutex, not a
+// check-then-set.
+func TestBreaker_HalfOpenConcurrentAllow(t *testing.T) {
+	tick := time.Now()
+	clock := func() time.Time { return tick }
+	b := newBreaker(BreakerOpts{FailuresToOpen: 1, HalfOpenAfter: time.Millisecond}, clock)
+	b.RecordFailure()
+	tick = tick.Add(time.Hour)
+
+	const callers = 64
+	var (
+		start    = make(chan struct{})
+		wg       sync.WaitGroup
+		admitted atomic.Int32
+	)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if b.Allow() {
+				admitted.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if got := admitted.Load(); got != 1 {
+		t.Fatalf("half-open admitted %d concurrent callers, want exactly 1", got)
+	}
+	// Resolve the probe and the gate reopens for exactly one more.
+	b.RecordFailure()
+	tick = tick.Add(time.Hour)
+	admitted.Store(0)
+	start = make(chan struct{})
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if b.Allow() {
+				admitted.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if got := admitted.Load(); got != 1 {
+		t.Fatalf("second half-open window admitted %d, want exactly 1", got)
 	}
 }
 

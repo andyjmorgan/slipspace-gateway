@@ -164,9 +164,444 @@ func TestTrack_UploadOneStopChCancelsRetrySleep(t *testing.T) {
 		close(tr.stopCh)
 	}()
 	start := time.Now()
-	_ = tr.uploadOne(context.Background(), dummy)
+	err := tr.uploadOne(context.Background(), dummy)
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("uploadOne did not honour stopCh during retry sleep; took %v", elapsed)
+	}
+	// #553: the segment was not delivered, so the stop arm must not
+	// look like one. Pre-fix it returned nil and the caller recorded a
+	// breaker success for a segment still sitting in uploading/.
+	if !errors.Is(err, errShutdown) {
+		t.Errorf("uploadOne on stopCh = %v, want errShutdown", err)
+	}
+	if tr.uploadsOK.Load() != 0 {
+		t.Errorf("uploadsOK = %d, want 0", tr.uploadsOK.Load())
+	}
+	uploading, _ := tr.manager.ListUploading()
+	if len(uploading) != 1 {
+		t.Errorf("segment should stay claimed in uploading/ for Recover, got %v", uploading)
+	}
+}
+
+// TestAttemptUploads_ShutdownDoesNotResetBreaker is the breaker-side half
+// of #553: a shutdown mid-backoff leaves the accumulated failure signal
+// intact instead of erasing it with a spurious RecordSuccess.
+func TestAttemptUploads_ShutdownDoesNotResetBreaker(t *testing.T) {
+	c := &namedFake{
+		name:          "always-retry",
+		failWith:      &cc.Retryable{Err: errors.New("transient")},
+		afterFailures: keepFailing,
+	}
+	tr := newTestTrack(t, trackOptions{
+		conn:    c,
+		breaker: BreakerOpts{FailuresToOpen: 100, HalfOpenAfter: time.Hour},
+		retry: RetryOpts{
+			BaseBackoff: 10 * time.Second,
+			MaxBackoff:  10 * time.Second,
+			MaxAttempts: 5,
+			Multiplier:  2.0,
+		},
+	})
+	// Three prior destination failures on the books.
+	for i := 0; i < 3; i++ {
+		tr.breaker.RecordFailure()
+	}
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("s", 1))
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		close(tr.stopCh)
+	}()
+	tr.attemptUploads(context.Background())
+
+	// 3 prior + exactly 1 attempt before the backoff was interrupted.
+	// A reset to 0 is the bug.
+	tr.breaker.mu.Lock()
+	fails := tr.breaker.consecutiveFails
+	tr.breaker.mu.Unlock()
+	if fails != 4 {
+		t.Errorf("consecutiveFails after shutdown = %d, want 4 (3 prior + 1 attempt)", fails)
+	}
+}
+
+// TestAttemptUploads_DeadletterContinuesScan pins #412: one segment
+// quarantined into deadletter/ must not stop the scan — the sealed
+// segments behind it ship in the same pass — and the transition itself is
+// not a breaker failure on top of the attempts that caused it.
+func TestAttemptUploads_DeadletterContinuesScan(t *testing.T) {
+	// First Upload call → Permanent (→ DLQ); every later call succeeds.
+	c := &namedFake{
+		name:      "perm-once",
+		failTimes: 1,
+		failWith:  &cc.Permanent{Err: errors.New("403 forbidden")},
+	}
+	tr := newTestTrack(t, trackOptions{
+		conn:    c,
+		breaker: BreakerOpts{FailuresToOpen: 5, HalfOpenAfter: time.Hour},
+	})
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1))
+	seedSegment(t, tr.manager.SealedDir(), 2, makeTestRecord("b", 2))
+	seedSegment(t, tr.manager.SealedDir(), 3, makeTestRecord("c", 3))
+
+	tr.attemptUploads(context.Background())
+
+	if got := c.Calls(); got != 3 {
+		t.Errorf("Upload calls = %d, want 3 (scan must continue past the DLQ)", got)
+	}
+	dl, _ := os.ReadDir(tr.manager.DeadletterDir())
+	dlSegments := 0
+	for _, e := range dl {
+		if filepath.Ext(e.Name()) == ".zst" {
+			dlSegments++
+		}
+	}
+	if dlSegments != 1 {
+		t.Errorf("deadletter segments = %d, want 1", dlSegments)
+	}
+	if sealed, _ := tr.manager.ListSealed(); len(sealed) != 0 {
+		t.Errorf("sealed/ should be drained in one pass, still has %v", sealed)
+	}
+	if tr.uploadsOK.Load() != 2 || tr.uploadsDLQ.Load() != 1 {
+		t.Errorf("uploadsOK=%d uploadsDLQ=%d, want 2/1", tr.uploadsOK.Load(), tr.uploadsDLQ.Load())
+	}
+	// One failed attempt then two successes: the successes closed the
+	// breaker and reset the counter — nothing was double-counted.
+	if tr.breaker.State() != breakerClosed {
+		t.Errorf("breaker = %v, want closed", tr.breaker.State())
+	}
+}
+
+// TestUploadOne_DeadletterReturnsTypedSentinel checks the sentinel wraps
+// the cause so callers can still classify the upload error.
+func TestUploadOne_DeadletterReturnsTypedSentinel(t *testing.T) {
+	c := &namedFake{name: "perm", failWith: &cc.Permanent{Err: errors.New("bad auth")}}
+	tr := newTestTrack(t, trackOptions{conn: c})
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1))
+	sealed, _ := tr.manager.ListSealed()
+
+	err := tr.uploadOne(context.Background(), sealed[0])
+	if !errors.Is(err, errDeadlettered) {
+		t.Fatalf("uploadOne after DLQ = %v, want errDeadlettered", err)
+	}
+	if !cc.IsPermanent(err) {
+		t.Errorf("errDeadlettered should wrap the Permanent cause: %v", err)
+	}
+}
+
+// TestUploadOne_BreakerCountsPerAttempt: destination failures are recorded
+// where they happen — per Upload call — so a retry schedule that exhausts
+// into deadletter still opens the breaker, and the segment's own budget
+// still runs to completion after it does.
+func TestUploadOne_BreakerCountsPerAttempt(t *testing.T) {
+	c := &namedFake{
+		name:          "always-retry",
+		failWith:      &cc.Retryable{Err: errors.New("503")},
+		afterFailures: keepFailing,
+	}
+	tr := newTestTrack(t, trackOptions{
+		conn:    c,
+		breaker: BreakerOpts{FailuresToOpen: 2, HalfOpenAfter: time.Hour},
+		retry: RetryOpts{
+			BaseBackoff: time.Microsecond,
+			MaxBackoff:  time.Microsecond,
+			MaxAttempts: 4,
+			Multiplier:  2.0,
+		},
+	})
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1))
+	sealed, _ := tr.manager.ListSealed()
+
+	err := tr.uploadOne(context.Background(), sealed[0])
+	if !errors.Is(err, errDeadlettered) {
+		t.Fatalf("expected DLQ after exhausting retries, got %v", err)
+	}
+	if c.Calls() != 4 {
+		t.Errorf("Upload calls = %d, want the full MaxAttempts=4 even after the breaker opened", c.Calls())
+	}
+	if tr.breaker.State() != breakerOpen {
+		t.Errorf("breaker = %v, want open after 4 consecutive failed attempts (threshold 2)", tr.breaker.State())
+	}
+}
+
+// TestAttemptUploads_HalfOpenEmptyScanReleasesProbe guards the reservation
+// Allow hands out: a wake with nothing in sealed/ must give it back, or the
+// breaker would refuse every later probe forever.
+func TestAttemptUploads_HalfOpenEmptyScanReleasesProbe(t *testing.T) {
+	tick := time.Now()
+	tr := newTestTrack(t, trackOptions{
+		conn:    &namedFake{name: "x"},
+		breaker: BreakerOpts{FailuresToOpen: 1, HalfOpenAfter: time.Millisecond},
+		now:     func() time.Time { return tick },
+	})
+	tr.breaker.RecordFailure() // open
+	tick = tick.Add(time.Hour) // cooldown elapsed
+
+	tr.attemptUploads(context.Background()) // nothing sealed
+	if tr.breaker.State() != breakerHalfOpen {
+		t.Fatalf("breaker = %v, want half-open after cooldown", tr.breaker.State())
+	}
+	if !tr.breaker.Allow() {
+		t.Error("probe reservation leaked: Allow refused after an empty scan")
+	}
+}
+
+// TestUploadOne_PopulatesSealedSegmentFromSidecar pins #440: the
+// SealedSegment handed to Connector.Upload carries the stats the segment
+// accumulated before it sealed, read back from the on-disk sidecar.
+func TestUploadOne_PopulatesSealedSegmentFromSidecar(t *testing.T) {
+	c := &namedFake{name: "capture"}
+	tr := newTestTrack(t, trackOptions{conn: c})
+
+	r1 := makeTestRecord("a", 1)
+	r1.TsNs = 1_700_000_000_000_000_000
+	r2 := makeTestRecord("b", 2)
+	r2.TsNs = 1_700_000_005_000_000_000
+	if err := tr.writeRecord(r1); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.writeRecord(r2); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.sealCurrent(); err != nil {
+		t.Fatalf("sealCurrent: %v", err)
+	}
+	sealed, _ := tr.manager.ListSealed()
+	if len(sealed) != 1 {
+		t.Fatalf("sealed = %v, want one segment", sealed)
+	}
+	if _, err := os.Stat(metaPath(sealed[0])); err != nil {
+		t.Fatalf("sidecar should sit next to the sealed segment: %v", err)
+	}
+	// Bytes is the compressed size on disk — capture it before Complete
+	// removes the file.
+	info, err := os.Stat(sealed[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.uploadOne(context.Background(), sealed[0]); err != nil {
+		t.Fatalf("uploadOne: %v", err)
+	}
+	seg := c.LastSeg()
+	if seg.Records != 2 {
+		t.Errorf("Records = %d, want 2", seg.Records)
+	}
+	if seg.TsMinNs != r1.TsNs || seg.TsMaxNs != r2.TsNs {
+		t.Errorf("Ts range = [%d, %d], want [%d, %d]", seg.TsMinNs, seg.TsMaxNs, r1.TsNs, r2.TsNs)
+	}
+	if seg.BytesUncompressed <= 0 {
+		t.Errorf("BytesUncompressed = %d, want > 0", seg.BytesUncompressed)
+	}
+	if seg.Bytes != info.Size() {
+		t.Errorf("Bytes = %d, want compressed file size %d", seg.Bytes, info.Size())
+	}
+	if seg.DeliveryID != deliveryIDFromFilename(filepath.Base(sealed[0])) {
+		t.Errorf("DeliveryID = %q", seg.DeliveryID)
+	}
+	// Complete cleaned up both files.
+	if entries, _ := os.ReadDir(tr.manager.UploadingDir()); len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("uploading/ should be empty after Complete, got %v", names)
+	}
+}
+
+// TestUploadOne_MissingSidecarFallsBackToZero covers segments sealed by a
+// pre-sidecar binary (or Recover-sealed active/ leftovers): they still
+// ship, with the time-range fields zero so connectors use their clock.
+func TestUploadOne_MissingSidecarFallsBackToZero(t *testing.T) {
+	c := &namedFake{name: "capture"}
+	tr := newTestTrack(t, trackOptions{conn: c})
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1)) // no sidecar
+	sealed, _ := tr.manager.ListSealed()
+
+	if err := tr.uploadOne(context.Background(), sealed[0]); err != nil {
+		t.Fatalf("uploadOne: %v", err)
+	}
+	seg := c.LastSeg()
+	if seg.TsMinNs != 0 || seg.TsMaxNs != 0 || seg.Records != 0 || seg.BytesUncompressed != 0 {
+		t.Errorf("no sidecar should leave stats zero, got %+v", seg)
+	}
+	if seg.Bytes <= 0 {
+		t.Errorf("Bytes should still come from os.Stat, got %d", seg.Bytes)
+	}
+}
+
+// TestUploadOne_CorruptSidecarIsLoggedNotFatal: a sidecar that fails to
+// decode must not stop the segment shipping.
+func TestUploadOne_CorruptSidecarIsLoggedNotFatal(t *testing.T) {
+	c := &namedFake{name: "capture"}
+	tr := newTestTrack(t, trackOptions{conn: c})
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1))
+	sealed, _ := tr.manager.ListSealed()
+	if err := os.WriteFile(metaPath(sealed[0]), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.uploadOne(context.Background(), sealed[0]); err != nil {
+		t.Fatalf("uploadOne: %v", err)
+	}
+	if c.Calls() != 1 {
+		t.Errorf("Upload calls = %d, want 1", c.Calls())
+	}
+	if seg := c.LastSeg(); seg.Records != 0 {
+		t.Errorf("corrupt sidecar should be ignored, got %+v", seg)
+	}
+	if _, err := os.Stat(metaPath(filepath.Join(tr.manager.UploadingDir(), filepath.Base(sealed[0])))); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("corrupt sidecar should be removed by Complete, stat err = %v", err)
+	}
+}
+
+// TestAttemptUploads_StopsClaimingOnceBreakerOpens: per-attempt accounting
+// opens the breaker mid-scan, and the Allow check between segments then
+// leaves the rest of the backlog in sealed/ for the half-open probe.
+func TestAttemptUploads_StopsClaimingOnceBreakerOpens(t *testing.T) {
+	c := &namedFake{
+		name:          "down",
+		failWith:      &cc.Retryable{Err: errors.New("503")},
+		afterFailures: keepFailing,
+	}
+	tr := newTestTrack(t, trackOptions{
+		conn:    c,
+		breaker: BreakerOpts{FailuresToOpen: 1, HalfOpenAfter: time.Hour},
+		retry:   RetryOpts{BaseBackoff: time.Microsecond, MaxBackoff: time.Microsecond, MaxAttempts: 1, Multiplier: 2},
+	})
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1))
+	seedSegment(t, tr.manager.SealedDir(), 2, makeTestRecord("b", 2))
+
+	tr.attemptUploads(context.Background())
+
+	if c.Calls() != 1 {
+		t.Errorf("Upload calls = %d, want 1 — the second segment must wait for the probe", c.Calls())
+	}
+	if tr.breaker.State() != breakerOpen {
+		t.Errorf("breaker = %v, want open", tr.breaker.State())
+	}
+	if sealed, _ := tr.manager.ListSealed(); len(sealed) != 1 {
+		t.Errorf("one segment should remain sealed, got %v", sealed)
+	}
+	if tr.uploadsDLQ.Load() != 1 {
+		t.Errorf("uploadsDLQ = %d, want 1", tr.uploadsDLQ.Load())
+	}
+}
+
+// TestAttemptUploads_StoppedBeforeLoopMakesNoAttempt covers the early
+// ctx / stopCh exits: nothing is claimed and any probe slot is released.
+func TestAttemptUploads_StoppedBeforeLoopMakesNoAttempt(t *testing.T) {
+	for _, mode := range []string{"ctx", "stopCh"} {
+		t.Run(mode, func(t *testing.T) {
+			c := &namedFake{name: "x"}
+			tick := time.Now()
+			tr := newTestTrack(t, trackOptions{
+				conn:    c,
+				breaker: BreakerOpts{FailuresToOpen: 1, HalfOpenAfter: time.Millisecond},
+				now:     func() time.Time { return tick },
+			})
+			tr.breaker.RecordFailure()
+			tick = tick.Add(time.Hour) // next Allow → half-open probe
+			seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1))
+
+			ctx := context.Background()
+			if mode == "ctx" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			} else {
+				close(tr.stopCh)
+			}
+			tr.attemptUploads(ctx)
+
+			if c.Calls() != 0 {
+				t.Errorf("Upload calls = %d, want 0", c.Calls())
+			}
+			if sealed, _ := tr.manager.ListSealed(); len(sealed) != 1 {
+				t.Errorf("segment should stay sealed, got %v", sealed)
+			}
+			if !tr.breaker.Allow() {
+				t.Error("probe reservation leaked on early exit")
+			}
+		})
+	}
+}
+
+// TestAttemptUploads_ContextCancelledMidAttemptIsNotAFailure: an attempt
+// that dies with the worker's context is shutdown, not destination
+// evidence — the breaker is left alone and the scan stops.
+func TestAttemptUploads_ContextCancelledMidAttemptIsNotAFailure(t *testing.T) {
+	c := &namedFake{
+		name:           "slow",
+		failWith:       &cc.Retryable{Err: errors.New("transient")},
+		afterFailures:  keepFailing,
+		failureBackoff: time.Second, // Upload blocks until ctx fires
+	}
+	tr := newTestTrack(t, trackOptions{
+		conn:    c,
+		breaker: BreakerOpts{FailuresToOpen: 1, HalfOpenAfter: time.Hour},
+	})
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1))
+	seedSegment(t, tr.manager.SealedDir(), 2, makeTestRecord("b", 2))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	tr.attemptUploads(ctx)
+
+	if c.Calls() != 1 {
+		t.Errorf("Upload calls = %d, want 1 (scan stops on ctx)", c.Calls())
+	}
+	if tr.breaker.State() != breakerClosed {
+		t.Errorf("breaker = %v, want closed — a cancelled attempt is not a destination failure", tr.breaker.State())
+	}
+	if uploading, _ := tr.manager.ListUploading(); len(uploading) != 1 {
+		t.Errorf("the interrupted segment should stay claimed for Recover, got %v", uploading)
+	}
+}
+
+// TestUploadOne_DeadletterTransitionFailureIsLogged: when the DLQ rename
+// itself fails the outcome is still reported as deadlettered (the counter
+// bumps, the error is logged) rather than turning into a breaker failure.
+func TestUploadOne_DeadletterTransitionFailureIsLogged(t *testing.T) {
+	c := &namedFake{name: "perm", failWith: &cc.Permanent{Err: errors.New("bad auth")}}
+	tr := newTestTrack(t, trackOptions{conn: c})
+	seedSegment(t, tr.manager.SealedDir(), 1, makeTestRecord("a", 1))
+	sealed, _ := tr.manager.ListSealed()
+	if err := os.RemoveAll(tr.manager.DeadletterDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	err := tr.uploadOne(context.Background(), sealed[0])
+	if !errors.Is(err, errDeadlettered) {
+		t.Fatalf("uploadOne = %v, want errDeadlettered even when the rename fails", err)
+	}
+	if tr.uploadsDLQ.Load() != 1 {
+		t.Errorf("uploadsDLQ = %d, want 1", tr.uploadsDLQ.Load())
+	}
+	if uploading, _ := tr.manager.ListUploading(); len(uploading) != 1 {
+		t.Errorf("segment should remain in uploading/ when the DLQ rename fails, got %v", uploading)
+	}
+}
+
+// TestTrack_SealCurrentSidecarWriteFailureIsNonFatal: the sidecar is
+// best-effort — losing it degrades to wall-clock partitioning, it must
+// never cost the segment.
+func TestTrack_SealCurrentSidecarWriteFailureIsNonFatal(t *testing.T) {
+	tr := newTestTrack(t, trackOptions{conn: &namedFake{name: "x"}})
+	if err := tr.writeRecord(makeTestRecord("a", 1)); err != nil {
+		t.Fatal(err)
+	}
+	// Occupy the sidecar's path with a directory so WriteFile fails.
+	tr.segMu.Lock()
+	segPath := tr.segment.Path()
+	tr.segMu.Unlock()
+	if err := os.Mkdir(metaPath(segPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.sealCurrent(); err != nil {
+		t.Fatalf("sealCurrent should succeed without the sidecar: %v", err)
+	}
+	if sealed, _ := tr.manager.ListSealed(); len(sealed) != 1 {
+		t.Errorf("segment should still seal, got %v", sealed)
 	}
 }
 

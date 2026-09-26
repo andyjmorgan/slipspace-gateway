@@ -233,6 +233,18 @@ func (t *track) sealCurrent() error {
 		_ = os.Remove(seg.Path())
 		return nil
 	}
+	// Persist the counters next to the file before the rename so Seal
+	// carries both into sealed/ together. The in-memory Segment is gone
+	// by the time uploadOne runs — possibly in a later process — and the
+	// sidecar is how SealedSegment.TsMinNs/Records/... survive that gap.
+	// Best-effort: a segment without a sidecar still ships, partitioned
+	// by upload clock, which is the pre-sidecar behaviour.
+	if err := writeSegmentMeta(seg.Path(), stats); err != nil {
+		t.opts.logger.Warn("spool: segment meta not written; upload will fall back to wall clock",
+			slog.String("track", t.name),
+			slog.String("path", seg.Path()),
+			slog.String("err", err.Error()))
+	}
 	if _, err := t.manager.Seal(seg.Path()); err != nil {
 		return fmt.Errorf("seal rename: %w", err)
 	}
@@ -278,38 +290,70 @@ func (t *track) runUploader(ctx context.Context) {
 }
 
 // attemptUploads iterates sealed segments and ships each via the
-// connector. Honours the per-destination circuit breaker.
+// connector. Honours the per-destination circuit breaker: Allow gates
+// every segment, so once uploadOne's per-attempt accounting has opened
+// the breaker the scan stops and the remaining backlog waits for the
+// half-open probe.
+//
+// Outcomes from uploadOne:
+//
+//   - nil — delivered; the breaker already saw the success.
+//   - errClaimRaceLost — a sibling owns the segment; skip. Nothing was
+//     attempted, so any half-open reservation Allow handed out is
+//     released rather than left dangling.
+//   - errDeadlettered — the segment is quarantined; the failed attempts
+//     that got it there were recorded one by one, so the transition
+//     itself is not a further failure and the scan continues to the next
+//     sealed segment (#412).
+//   - errShutdown / a context error — the worker is stopping; the
+//     segment stays claimed for the next boot's Recover. Neither a
+//     delivery nor a failure (#553).
+//   - anything else — a local failure (Claim) that never reached the
+//     destination; counted against the breaker and the scan stops.
 func (t *track) attemptUploads(ctx context.Context) {
 	if !t.breaker.Allow() {
 		return
 	}
 	sealed, err := t.manager.ListSealed()
 	if err != nil {
+		t.breaker.Release()
 		t.opts.logger.Error("spool: list sealed", slog.String("track", t.name), slog.String("err", err.Error()))
 		return
 	}
-	for _, path := range sealed {
-		if !t.breaker.Allow() {
+	if len(sealed) == 0 {
+		// Nothing to probe with; hand back any half-open reservation so
+		// the next wake can take it.
+		t.breaker.Release()
+		return
+	}
+	for i, path := range sealed {
+		// The first Allow (above) covers the first segment; re-checking
+		// it here would be refused in half-open by our own reservation.
+		if i > 0 && !t.breaker.Allow() {
 			return
 		}
 		select {
 		case <-ctx.Done():
+			t.breaker.Release()
 			return
 		case <-t.stopCh:
+			t.breaker.Release()
 			return
 		default:
 		}
-		if err := t.uploadOne(ctx, path); err != nil {
-			// A lost claim race is neither a delivery nor a failure: a
-			// sibling worker owns that segment now, so recording either
-			// outcome would attribute its result to this worker.
-			if errors.Is(err, errClaimRaceLost) {
-				continue
-			}
+		err := t.uploadOne(ctx, path)
+		switch {
+		case err == nil, errors.Is(err, errDeadlettered):
+			continue
+		case errors.Is(err, errClaimRaceLost):
+			t.breaker.Release()
+			continue
+		case errors.Is(err, errShutdown), ctx.Err() != nil:
+			return
+		default:
 			t.breaker.RecordFailure()
 			return
 		}
-		t.breaker.RecordSuccess()
 	}
 }
 
@@ -319,12 +363,37 @@ func (t *track) attemptUploads(ctx context.Context) {
 // without touching the circuit breaker.
 var errClaimRaceLost = errors.New("spool: sealed segment claimed by another worker")
 
+// errShutdown reports that uploadOne was interrupted by track.stop while
+// waiting out a retry backoff. The segment was not delivered — it stays
+// in uploading/ for the next boot's Recover to return to sealed/ — so it
+// must never be reported as nil: pre-#553 the stop arm returned nil and
+// the caller recorded a spurious breaker success for an undelivered
+// segment.
+var errShutdown = errors.New("spool: upload interrupted by shutdown")
+
+// errDeadlettered reports that uploadOne moved the segment to
+// deadletter/ — after a *cc.Permanent error or an exhausted retry
+// budget — and wraps the upload error that caused it. It is a handled
+// terminal outcome: the segment is quarantined and the destination
+// failures were already recorded against the breaker per attempt, so
+// attemptUploads neither records it again nor stops the sealed scan.
+var errDeadlettered = errors.New("spool: segment deadlettered")
+
 // uploadOne claims one sealed segment, calls Connector.Upload with the
 // retry schedule, and either Completes, deadletters, or leaves the
-// segment in sealed/ depending on the outcome.
+// segment in uploading/ (shutdown) depending on the outcome.
 //
-// Returns errClaimRaceLost when a sibling worker won the claim; any other
-// error is a real local failure the caller records against the breaker.
+// Breaker accounting is per Upload attempt, because that is the unit
+// that actually reaches the destination: each failed attempt is a
+// RecordFailure, a delivery is a RecordSuccess. The retry loop keeps
+// going after the breaker opens — the segment's own budget decides when
+// it deadletters — while attemptUploads' Allow check stops new segments
+// being claimed until the half-open probe.
+//
+// Returns nil on delivery, errClaimRaceLost when a sibling worker won the
+// claim, errDeadlettered (wrapping the cause) after a DLQ transition,
+// errShutdown or ctx.Err() when interrupted, and any other error for a
+// local failure that never reached the destination.
 func (t *track) uploadOne(ctx context.Context, sealedPath string) error {
 	uploading, err := t.manager.Claim(sealedPath)
 	if err != nil {
@@ -343,11 +412,7 @@ func (t *track) uploadOne(ctx context.Context, sealedPath string) error {
 			slog.String("err", err.Error()))
 		return fmt.Errorf("spool: claim %q: %w", sealedPath, err)
 	}
-	seg := cc.SealedSegment{
-		Path:       uploading,
-		DeliveryID: deliveryIDFromFilename(filepath.Base(uploading)),
-		Connector:  t.name,
-	}
+	seg := t.describeSealed(uploading)
 
 	backoff := t.opts.retry.BaseBackoff
 	for attempt := 1; attempt <= t.opts.retry.MaxAttempts; attempt++ {
@@ -361,39 +426,86 @@ func (t *track) uploadOne(ctx context.Context, sealedPath string) error {
 			cancel()
 		}
 		if err == nil {
+			t.breaker.RecordSuccess()
 			if cerr := t.manager.Complete(uploading); cerr != nil {
 				t.opts.logger.Error("spool: complete after upload", slog.String("err", cerr.Error()))
 			}
 			t.uploadsOK.Add(1)
 			return nil
 		}
+		if ctx.Err() != nil {
+			// The attempt died with the worker's context, not the
+			// destination: neither a failure nor a success for the
+			// breaker, and the segment stays claimed for Recover.
+			t.breaker.Release()
+			return ctx.Err()
+		}
+		t.breaker.RecordFailure()
 		if cc.IsPermanent(err) {
-			if _, dErr := t.manager.Deadletter(uploading); dErr != nil {
-				t.opts.logger.Error("spool: deadletter", slog.String("err", dErr.Error()))
-			}
-			t.uploadsDLQ.Add(1)
-			return err
+			return t.deadletter(uploading, err)
 		}
 		// Retryable.
 		t.uploadsRetried.Add(1)
 		if attempt >= t.opts.retry.MaxAttempts {
-			if _, dErr := t.manager.Deadletter(uploading); dErr != nil {
-				t.opts.logger.Error("spool: deadletter", slog.String("err", dErr.Error()))
-			}
-			t.uploadsDLQ.Add(1)
-			return err
+			return t.deadletter(uploading, err)
 		}
 		sleep := fullJitter(backoff)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-t.stopCh:
-			return nil
+			return errShutdown
 		case <-time.After(sleep):
 		}
 		backoff = nextBackoff(backoff, t.opts.retry.Multiplier, t.opts.retry.MaxBackoff)
 	}
-	return nil
+	// Unreachable: the final iteration always returns from the
+	// attempt-cap branch above. Kept so the compiler sees a return.
+	return errShutdown
+}
+
+// deadletter moves a claimed segment to deadletter/, bumps the DLQ
+// counter, and returns errDeadlettered wrapping cause so the caller can
+// distinguish a handled quarantine from a transport failure.
+func (t *track) deadletter(uploading string, cause error) error {
+	if _, dErr := t.manager.Deadletter(uploading); dErr != nil {
+		t.opts.logger.Error("spool: deadletter", slog.String("err", dErr.Error()))
+	}
+	t.uploadsDLQ.Add(1)
+	return fmt.Errorf("%w: %w", errDeadlettered, cause)
+}
+
+// describeSealed builds the SealedSegment handed to Connector.Upload for
+// the claimed file at uploading. The per-delivery stats come from the
+// sidecar written at seal time (records, uncompressed bytes, ts range)
+// plus os.Stat for the compressed size; a segment without a sidecar — one
+// sealed by a pre-sidecar binary, or an active/ leftover Recover sealed —
+// leaves them zero, and the connectors fall back to their upload clock
+// for the date=/hour= partition exactly as before (#440).
+func (t *track) describeSealed(uploading string) cc.SealedSegment {
+	seg := cc.SealedSegment{
+		Path:       uploading,
+		DeliveryID: deliveryIDFromFilename(filepath.Base(uploading)),
+		Connector:  t.name,
+	}
+	if info, err := os.Stat(uploading); err == nil {
+		seg.Bytes = info.Size()
+	}
+	meta, ok, err := readSegmentMeta(uploading)
+	if err != nil {
+		t.opts.logger.Warn("spool: segment meta unreadable; partitioning by upload clock",
+			slog.String("track", t.name),
+			slog.String("path", uploading),
+			slog.String("err", err.Error()))
+		return seg
+	}
+	if ok {
+		seg.Records = meta.Records
+		seg.BytesUncompressed = meta.BytesUncompressed
+		seg.TsMinNs = meta.TsMinNs
+		seg.TsMaxNs = meta.TsMaxNs
+	}
+	return seg
 }
 
 func (t *track) stats() trackStats {

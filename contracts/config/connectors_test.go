@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestConnector_Validate_S3HappyPath(t *testing.T) {
@@ -138,6 +140,15 @@ func TestConnector_Validate_Rejections(t *testing.T) {
 		{"webhook has bucket", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://x", SecretRef: "env:s", TimeoutMS: 1000, Bucket: "b"}, "cloud-storage fields"},
 		{"webhook with auth block", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://x", SecretRef: "env:s", TimeoutMS: 1000,
 			Auth: &ConnectorAuth{Mode: AuthModeWorkloadIdentity}}, "auth block"},
+		// rotation: is a spool concept; a webhook never batches into a
+		// segment, so a stray block is the same misconfiguration footgun
+		// the auth / cloud-storage rejections exist to catch (#439).
+		{"webhook with rotation block", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://x", SecretRef: "env:s", TimeoutMS: 1000,
+			Rotation: &ConnectorRotation{MaxAgeSeconds: 30}}, "rotation block"},
+		{"webhook with upload timeout", Connector{Name: "x", Type: ConnectorTypeWebhook, URL: "https://x", SecretRef: "env:s", TimeoutMS: 1000,
+			UploadTimeoutSeconds: 30}, "upload_timeout_seconds"},
+		{"s3 negative upload timeout", Connector{Name: "x", Type: "s3", Bucket: "b", Region: "r", UploadTimeoutSeconds: -1}, "upload_timeout_seconds"},
+		{"azure negative upload timeout", Connector{Name: "x", Type: ConnectorTypeAzureBlob, Account: "a", Container: "c", UploadTimeoutSeconds: -5}, "upload_timeout_seconds"},
 
 		// SSRF rejection at config-load. The runtime guard is the
 		// second line of defence; these stop typo'd / explicit
@@ -222,7 +233,7 @@ func TestValidateSecretRef(t *testing.T) {
 func TestConnectorBinding_Validate_Happy(t *testing.T) {
 	b := &ConnectorBinding{
 		Connector:         "x",
-		Sampling:          0.5,
+		Sampling:          ptrFloat(0.5),
 		SamplingKey:       SamplingKeyCorrelationID,
 		MaxBodyBytes:      ptrInt(1024),
 		OversizeBehaviour: OversizeMetadataOnly,
@@ -245,8 +256,8 @@ func TestConnectorBinding_Validate_Rejections(t *testing.T) {
 		substr string
 	}{
 		{"missing connector", ConnectorBinding{}, "connector is required"},
-		{"sampling below 0", ConnectorBinding{Connector: "x", Sampling: -0.1}, "sampling"},
-		{"sampling above 1", ConnectorBinding{Connector: "x", Sampling: 1.5}, "sampling"},
+		{"sampling below 0", ConnectorBinding{Connector: "x", Sampling: ptrFloat(-0.1)}, "sampling"},
+		{"sampling above 1", ConnectorBinding{Connector: "x", Sampling: ptrFloat(1.5)}, "sampling"},
 		{"bad sampling key", ConnectorBinding{Connector: "x", SamplingKey: "uuid"}, "sampling_key"},
 		{"bad oversize", ConnectorBinding{Connector: "x", OversizeBehaviour: "truncate"}, "oversize_behaviour"},
 		{"negative max body", ConnectorBinding{Connector: "x", MaxBodyBytes: ptrInt(-1)}, "max_body_bytes"},
@@ -436,6 +447,87 @@ func TestDefaultMaxBodyBytes(t *testing.T) {
 }
 
 func ptrInt(i int) *int { return &i }
+
+func ptrFloat(f float64) *float64 { return &f }
+
+// TestConnectorBinding_Validate_SamplingZeroAccepted pins the #561
+// contract: an explicit `sampling: 0` is legal — it means "ship nothing"
+// — and is distinguishable from an omitted field via SamplingRate.
+func TestConnectorBinding_Validate_SamplingZeroAccepted(t *testing.T) {
+	b := &ConnectorBinding{Connector: "x", Sampling: ptrFloat(0)}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("sampling: 0 must validate, got %v", err)
+	}
+	if got := b.SamplingRate(); got != 0 {
+		t.Errorf("SamplingRate() with explicit 0 = %v, want 0", got)
+	}
+	unset := &ConnectorBinding{Connector: "x"}
+	if got := unset.SamplingRate(); got != 1.0 {
+		t.Errorf("SamplingRate() unset = %v, want 1.0", got)
+	}
+	var nilB *ConnectorBinding
+	if got := nilB.SamplingRate(); got != 1.0 {
+		t.Errorf("SamplingRate() on nil = %v, want 1.0", got)
+	}
+}
+
+// TestConnectorBinding_Sampling_YAMLRoundTrip proves the pointer survives
+// the wire: an omitted key decodes to nil, an explicit 0 decodes to a
+// non-nil zero, and marshalling keeps the two shapes distinct.
+func TestConnectorBinding_Sampling_YAMLRoundTrip(t *testing.T) {
+	var unset ConnectorBinding
+	if err := yaml.Unmarshal([]byte("connector: x\n"), &unset); err != nil {
+		t.Fatal(err)
+	}
+	if unset.Sampling != nil {
+		t.Errorf("omitted sampling decoded to %v, want nil", *unset.Sampling)
+	}
+	var zero ConnectorBinding
+	if err := yaml.Unmarshal([]byte("connector: x\nsampling: 0\n"), &zero); err != nil {
+		t.Fatal(err)
+	}
+	if zero.Sampling == nil || *zero.Sampling != 0 {
+		t.Fatalf("explicit sampling: 0 decoded to %v, want non-nil 0", zero.Sampling)
+	}
+	out, err := yaml.Marshal(zero)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "sampling: 0") {
+		t.Errorf("explicit 0 dropped on marshal: %s", out)
+	}
+	out, err = yaml.Marshal(unset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "sampling") {
+		t.Errorf("unset sampling emitted on marshal: %s", out)
+	}
+}
+
+func TestConnector_EffectiveUploadTimeoutSeconds(t *testing.T) {
+	cases := []struct {
+		name string
+		c    *Connector
+		want int
+	}{
+		{"nil", nil, DefaultUploadTimeoutSeconds},
+		{"unset", &Connector{}, DefaultUploadTimeoutSeconds},
+		{"explicit", &Connector{UploadTimeoutSeconds: 15}, 15},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.c.EffectiveUploadTimeoutSeconds(); got != tc.want {
+				t.Errorf("EffectiveUploadTimeoutSeconds() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+	// A positive value on a spool-backed connector validates.
+	c := &Connector{Name: "x", Type: "s3", Bucket: "b", Region: "r", UploadTimeoutSeconds: 15}
+	if err := c.Validate(); err != nil {
+		t.Errorf("positive upload_timeout_seconds on s3 should validate: %v", err)
+	}
+}
 
 func TestHasAnyRef(t *testing.T) {
 	if hasAnyRef("", "", "") {
