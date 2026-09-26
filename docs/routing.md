@@ -50,11 +50,13 @@ flowchart TB
     BC --> SEL[selection<br/>bindings → provider / group]
     SEL --> RU[rules<br/>transforms only]
     RU --> RE[resilience<br/>orchestrator]
-    RE --> F[final handler<br/>buildDestination + forward]
+    RE --> BRM[BodyRemarshal<br/>re-encode typed body]
+    BRM --> BRW[BodyRewrite<br/>surgical body patches]
+    BRW --> F[final handler<br/>buildDestination + forward]
     F --> U[upstream provider]
 ```
 
-The real order is **`protocol → auth → bodycapture → selection → rules → resilience → final`**. A few facts that the v1 doc got wrong and are load-bearing here:
+The real order is **`protocol → auth → bodycapture → selection → rules → resilience → body-remarshal → body-rewrite → final`**. A few facts that the v1 doc got wrong and are load-bearing here:
 
 - **`protocolMiddleware` is first, and it always succeeds.** It only maps the path to a protocol and stashes a `protocolInfo` on the context; an unrecognised path is marked non-generative (`generative: false`) and falls through to passthrough matching downstream. There is no 404/405 at this stage — the protocol choice is never a routing failure.
 - **Bodycapture's typed kind comes from the protocol, not from routing.** [`kindFromProtocol`](../cmd/gateway/pipeline.go) maps the stashed protocol to a `bodycapture.RequestKind`. There is no `request_kind` field in the v2 YAML.
