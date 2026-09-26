@@ -67,7 +67,11 @@ func buildPoliciesResponse(resolved *config.ResolvedConfig, cb CircuitBreakerSta
 
 // summariseGroup projects a v2 resilience group onto the policy DTO. Group
 // targets are providers (with an optional model alias); per-attempt circuit
-// state is keyed by (group, provider).
+// state is keyed by (group, target name), where the target name is the
+// provider name unless the group lists that provider more than once
+// (contractsconfig.Group.TargetNames — the same naming the orchestrator's
+// synthesiser uses, so the breaker lookup here hits the key the data plane
+// writes).
 func summariseGroup(name string, g contractsconfig.Group, cb CircuitBreakerStateSource) adminc.PolicySummary {
 	summary := adminc.PolicySummary{
 		Name:               name,
@@ -78,22 +82,23 @@ func summariseGroup(name string, g contractsconfig.Group, cb CircuitBreakerState
 	if g.CircuitBreaker != nil && g.CircuitBreaker.Enabled {
 		summary.CircuitBreakerEnabled = true
 	}
+	names := g.TargetNames()
 	for i, t := range g.Targets {
-		summary.Targets = append(summary.Targets, summariseGroupTarget(name, i+1, t, cb))
+		summary.Targets = append(summary.Targets, summariseGroupTarget(name, names[i], i+1, t, cb))
 	}
 	return summary
 }
 
-func summariseGroupTarget(group string, order int, t contractsconfig.Target, cb CircuitBreakerStateSource) adminc.PolicyTarget {
+func summariseGroupTarget(group, targetName string, order int, t contractsconfig.Target, cb CircuitBreakerStateSource) adminc.PolicyTarget {
 	tgt := adminc.PolicyTarget{
-		Name:         t.Provider,
+		Name:         targetName,
 		Provider:     t.Provider,
 		Order:        order,
 		Weight:       t.Weight,
 		CircuitState: "unknown",
 	}
 	if cb != nil {
-		tgt.CircuitState = cb.State(group, t.Provider)
+		tgt.CircuitState = cb.State(group, targetName)
 	}
 	return tgt
 }

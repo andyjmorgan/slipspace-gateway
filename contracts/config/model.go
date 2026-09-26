@@ -1,6 +1,10 @@
 package config
 
-import "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+import (
+	"strconv"
+
+	"github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
+)
 
 // This file defines the v2 configuration model (providers + bindings), added
 // alongside the v1 model (Provider/Endpoint + Configuration.UpstreamCredentials
@@ -181,9 +185,59 @@ type Group struct {
 	// so a group can fail over off a slow target faster than the default.
 	ResponseHeaderTimeoutSeconds int `yaml:"response_header_timeout_seconds,omitempty" json:"response_header_timeout_seconds,omitempty"`
 
+	// TimeoutSeconds, when > 0, is the whole-attempt wall-clock bound the
+	// orchestrator places on every attempt under this group (a context
+	// deadline on the attempt, covering connect, headers and body). An attempt
+	// that overruns it is abandoned and counted as a transport-error failure
+	// for failover / circuit-breaker accounting. Target.TimeoutSeconds
+	// overrides it per target. Zero leaves attempts unbounded beyond
+	// ResponseHeaderTimeoutSeconds. Unlike the header timeout this also caps a
+	// committed streaming body, so size it for the slowest legitimate response.
+	TimeoutSeconds int `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+
+	// Retry, when set and enabled, adds an inter-attempt backoff delay before
+	// each failover / re-roll attempt after the first, and caps the total
+	// attempt budget at MaxAttempts (> 0). Nil or disabled keeps the default:
+	// the next target is tried immediately and every target may be attempted.
+	Retry *resilience.RetryConfig `yaml:"retry,omitempty" json:"retry,omitempty"`
+
 	// Targets is the providers this group routes across, each with its own
 	// optional per-target overrides (model alias, query, path, weight).
 	Targets []Target `yaml:"targets" json:"targets"`
+}
+
+// TargetNames returns the orchestrator / telemetry identity of every target in
+// declaration order. The name is what keys circuit-breaker state and labels
+// the gateway.resilience.* `target` dimension, so it must be distinct within
+// the group even when two targets share a provider (a weighted alias canary
+// on one provider is a legal group). A provider listed once keeps its plain
+// provider name — the common case and the historical label — so existing
+// dashboards do not move; a provider listed more than once is disambiguated
+// as provider#alias, or provider#<1-based position> when the target has no
+// alias or the alias form still collides.
+func (g Group) TargetNames() []string {
+	counts := make(map[string]int, len(g.Targets))
+	for _, t := range g.Targets {
+		counts[t.Provider]++
+	}
+	names := make([]string, len(g.Targets))
+	used := make(map[string]bool, len(g.Targets))
+	for i, t := range g.Targets {
+		name := t.Provider
+		if counts[t.Provider] > 1 {
+			if t.Alias != "" {
+				name = t.Provider + "#" + t.Alias
+			} else {
+				name = t.Provider + "#" + strconv.Itoa(i+1)
+			}
+		}
+		if used[name] {
+			name = t.Provider + "#" + strconv.Itoa(i+1)
+		}
+		used[name] = true
+		names[i] = name
+	}
+	return names
 }
 
 // Target is the atom a binding (or group) dispatches to: a provider reference
@@ -212,6 +266,11 @@ type Target struct {
 	// treated as 1 (even weighting) by the orchestrator synthesiser; ignored
 	// in failover mode, where Order (declaration order) drives sequencing.
 	Weight int `yaml:"weight,omitempty" json:"weight,omitempty"`
+
+	// TimeoutSeconds, when > 0, bounds a single attempt against this target
+	// as a whole-attempt wall-clock deadline, overriding Group.TimeoutSeconds
+	// for this target only. Zero inherits the group value.
+	TimeoutSeconds int `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 }
 
 // Binding maps a generative (protocol, model) pair to a destination — a single

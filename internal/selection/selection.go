@@ -65,8 +65,16 @@ type Destination struct {
 // credential the configuration holds for the provider. Everything the forwarder
 // needs to mint the request, with no further config lookups.
 type Target struct {
-	// Provider is the provider name (telemetry label / diagnostics).
+	// Provider is the provider name (transport resolution / diagnostics).
 	Provider string
+
+	// Name is the target's orchestrator identity — the circuit-breaker key
+	// and the gateway.resilience.* `target` label. It equals Provider for a
+	// single binding or a provider listed once in a group; a provider listed
+	// more than once in a group is disambiguated per
+	// contractsconfig.Group.TargetNames so the arms keep separate breaker
+	// state and telemetry.
+	Name string
 
 	// BaseURL is the provider connection root.
 	BaseURL string
@@ -96,6 +104,10 @@ type Target struct {
 
 	// Weight is the relative load-balance selection weight (0 = even).
 	Weight int
+
+	// TimeoutSeconds is the per-target whole-attempt wall-clock bound (0 =
+	// inherit Group.TimeoutSeconds).
+	TimeoutSeconds int
 }
 
 // Group is a resolved resilience group: the orchestration policy plus the
@@ -123,6 +135,13 @@ type Group struct {
 	// ResponseHeaderTimeoutSeconds overrides the gateway-wide upstream
 	// response-header timeout for every attempt under this group (0 = default).
 	ResponseHeaderTimeoutSeconds int
+
+	// TimeoutSeconds is the group-wide whole-attempt wall-clock bound every
+	// attempt inherits unless its target overrides it (0 = unbounded).
+	TimeoutSeconds int
+
+	// Retry is the inter-attempt backoff + attempt budget (nil = none).
+	Retry *resilience.RetryConfig
 
 	// Targets is the resolved targets the orchestrator dispatches across.
 	Targets []Target
@@ -159,13 +178,17 @@ func Select(
 				CircuitBreaker:               grp.CircuitBreaker,
 				StrictWeights:                grp.StrictWeights,
 				ResponseHeaderTimeoutSeconds: grp.ResponseHeaderTimeoutSeconds,
+				TimeoutSeconds:               grp.TimeoutSeconds,
+				Retry:                        grp.Retry,
 				Targets:                      make([]Target, 0, len(grp.Targets)),
 			}
-			for _, gt := range grp.Targets {
+			names := grp.TargetNames()
+			for i, gt := range grp.Targets {
 				t, err := resolveTarget(protocol, cfg, providers, gt)
 				if err != nil {
 					return Destination{}, err
 				}
+				t.Name = names[i]
 				resolved.Targets = append(resolved.Targets, t)
 			}
 			return Destination{Protocol: protocol, Tags: b.Tags, Group: &resolved}, nil
@@ -228,6 +251,7 @@ func resolveTarget(
 
 	return Target{
 		Provider:        tgt.Provider,
+		Name:            tgt.Provider,
 		BaseURL:         be.BaseURL,
 		Path:            path,
 		Auth:            proto.Auth,
@@ -236,6 +260,7 @@ func resolveTarget(
 		Credential:      cred,
 		Alias:           tgt.Alias,
 		Weight:          tgt.Weight,
+		TimeoutSeconds:  tgt.TimeoutSeconds,
 	}, nil
 }
 
