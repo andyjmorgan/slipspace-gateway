@@ -139,10 +139,10 @@ type Request struct {
 	Tags []string `json:"tags,omitempty"`
 
 	// PolicyRef is the name of the resilience policy this request
-	// was orchestrated against, when the rules engine bound one via
-	// the useResiliencePolicy action. Empty for single-shot requests
-	// — i.e. requests where no resilience policy was selected, which
-	// is the path most v1.1 traffic still takes.
+	// was orchestrated against: the group name for a group binding,
+	// synthesised by selection from the Configuration's binding (the
+	// useResiliencePolicy rule action is inert in v2). Empty for
+	// single-shot requests that bypassed the multi-target orchestrator.
 	PolicyRef string `json:"policy_ref,omitempty"`
 
 	// Attempts is the orchestrator's per-attempt outcome record,

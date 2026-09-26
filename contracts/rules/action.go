@@ -154,7 +154,11 @@ func (a *ChangeModelNameAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a ChangeModelNameAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
-// ChangeUrlAction overrides the upstream base URL for this request.
+// ChangeUrlAction records an upstream base-URL override in
+// MutableState.UpstreamURL. Inert under v2: the data plane never reads that
+// field. Transport is re-resolved from post-rule state via
+// selection.ResolveTarget, so this action has no effect on where the request
+// is forwarded.
 type ChangeUrlAction struct {
 	// Type is the polymorphic discriminator; always "changeUrl".
 	Type string `yaml:"type" json:"type"`

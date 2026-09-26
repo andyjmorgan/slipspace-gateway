@@ -256,9 +256,11 @@ func (e *Evaluator) recordError(ctx context.Context, rule *contractsrules.RuleCo
 // so each Condition sees the result of every prior rule's actions.
 //
 // ConfigurationName is never mutated; it propagates from the
-// entry-time gc verbatim. Body propagates the live pointer so
-// content-based conditions (none today, but conceivable for v1.2+)
-// observe rule-driven body mutations without a deep copy.
+// entry-time gc verbatim. Body propagates the live typed-body
+// pointer without a deep copy. The one content-based condition,
+// bodyField, reads the captured inbound bytes (BodyRaw), not Body,
+// so it does not observe rule-driven body mutations such as
+// changeModelName.
 //
 // The merge order on Headers is inbound first, then OutgoingHeaders
 // — a SetHeader/HeaderSet overwrites the inbound value, mirroring

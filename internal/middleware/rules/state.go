@@ -175,7 +175,8 @@ func (s *MutableState) AddTag(t string) bool {
 	return true
 }
 
-// HasTag reports whether Tags contains t. Used by TagCondition.
+// HasTag reports whether Tags contains t. (TagCondition evaluation reads
+// GatewayContext.Tags, not this method.)
 func (s *MutableState) HasTag(t string) bool {
 	if s == nil {
 		return false
