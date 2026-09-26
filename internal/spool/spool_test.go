@@ -63,20 +63,15 @@ func TestRegisterTrack_RejectsDuplicates(t *testing.T) {
 	}
 }
 
-func TestRegisterTrack_RejectsAfterStart(t *testing.T) {
+func TestRegisterTrack_RejectsDuplicateAfterStart(t *testing.T) {
 	s := newTestSpool(t)
 	if err := s.RegisterTrack(RegisterTrackOptions{Connector: newTestfs(t, "a", t.TempDir())}); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := s.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Stop(2 * time.Second) })
-	err := s.RegisterTrack(RegisterTrackOptions{Connector: newTestfs(t, "b", t.TempDir())})
+	startStop(t, s)
+	err := s.RegisterTrack(RegisterTrackOptions{Connector: newTestfs(t, "a", t.TempDir())})
 	if err == nil {
-		t.Error("RegisterTrack after Start should error")
+		t.Error("duplicate RegisterTrack after Start should error")
 	}
 }
 
@@ -90,11 +85,17 @@ func TestRegisterTrack_RejectsEmptyName(t *testing.T) {
 
 // ---------- Start / Stop ----------
 
-func TestStart_RejectsWithoutTracks(t *testing.T) {
+// TestStart_AllowsZeroTracks pins the live-connector contract: a gateway
+// booted with no spool-backed connector still starts its spool so a
+// connector added later through the admin write API can register a track
+// into a running spool (#567).
+func TestStart_AllowsZeroTracks(t *testing.T) {
 	s := newTestSpool(t)
-	err := s.Start(context.Background())
-	if err == nil {
-		t.Error("expected error starting without tracks")
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start with zero tracks: %v", err)
+	}
+	if !s.Stop(time.Second) {
+		t.Error("Stop with zero tracks should return true")
 	}
 }
 
@@ -214,13 +215,27 @@ func TestSpool_RecordsLandInTestfsDestination(t *testing.T) {
 	}
 }
 
-func TestSpool_UnknownConnectorNameIsIgnored(t *testing.T) {
+// TestSpool_UnknownConnectorNameIsCounted: a name with no track drops the
+// record without blocking or panicking, and the drop is counted per name
+// in Stats.Unrouted so it is distinguishable from a healthy spool (#567 —
+// pre-fix the drop was silent).
+func TestSpool_UnknownConnectorNameIsCounted(t *testing.T) {
 	s := mustSpool(t, Options{Root: t.TempDir(), Logger: discardLogger()})
 	mustRegister(t, s, RegisterTrackOptions{Connector: newTestfs(t, "real", t.TempDir())})
 	startStop(t, s)
 
-	// Should not panic or leak — just silently drop.
 	s.Enqueue(makeTestRecord("x", 1), "does-not-exist")
+	s.Enqueue(makeTestRecord("y", 2), "does-not-exist", "real")
+	st := s.Stats()
+	if got := st.Unrouted["does-not-exist"]; got != 2 {
+		t.Errorf("Unrouted[does-not-exist] = %d, want 2", got)
+	}
+	if got := st.Tracks["real"].Enqueued; got != 1 {
+		t.Errorf("real.Enqueued = %d, want 1 (the routed sibling still lands)", got)
+	}
+	if _, present := st.Tracks["does-not-exist"]; present {
+		t.Error("an unrouted name must not appear as a track")
+	}
 }
 
 func TestSpool_EnqueueWithNoConnectorsIsNoop(t *testing.T) {

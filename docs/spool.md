@@ -15,15 +15,17 @@ The source of truth lives in [`internal/spool/`](../internal/spool/). If a value
 3. [Segment file format](#segment-file-format)
    - [Segment stats sidecar](#segment-stats-sidecar)
 4. [Lifecycle](#lifecycle)
+   - [Live track registration and removal](#live-track-registration-and-removal)
 5. [Rotation policy](#rotation-policy)
 6. [Upload, retry, and deadletter](#upload-retry-and-deadletter)
 7. [Per-destination circuit breaker](#per-destination-circuit-breaker)
 8. [Loss policy](#loss-policy)
-9. [Recovery on startup](#recovery-on-startup)
-10. [Sizing the spool](#sizing-the-spool)
-11. [Environment variables](#environment-variables)
-12. [Payload backref contract](#payload-backref-contract)
-13. [Cross-references](#cross-references)
+9. [Observability](#observability)
+10. [Recovery on startup](#recovery-on-startup)
+11. [Sizing the spool](#sizing-the-spool)
+12. [Environment variables](#environment-variables)
+13. [Payload backref contract](#payload-backref-contract)
+14. [Cross-references](#cross-references)
 
 ---
 
@@ -152,6 +154,16 @@ Two states exist outside the normal flow:
 
 The atomic-rename design means **every state transition is crash-safe**: the rename either completed or it didn't. There's no "half-renamed" segment.
 
+### Live track registration and removal
+
+Tracks are not fixed at boot. The gateway starts its spool even when no spool-backed connector is configured (zero tracks, no goroutines, no disk touched), and `Spool.RegisterTrack` / `Spool.UnregisterTrack` may be called while it runs. This is how a connector created, edited or deleted through the admin write API takes effect without a restart — the sink reconciler in `cmd/gateway/sinks.go` subscribes to `config.Store`, diffs the connector list on every swap, and drives these two calls:
+
+- **Register (create).** `RegisterTrack` after `Start` runs the same directory [recovery](#recovery-on-startup) `Start` would have, then launches the track's drain + uploader goroutines before returning. A record enqueued once the admin write has returned is routed. Recovery and construction happen outside the spool lock so a large `sealed/` backlog never stalls a concurrent `Enqueue`.
+- **Unregister (delete).** `UnregisterTrack(name, timeout)` removes the track from routing immediately, then the drain goroutine flushes the ring into the active segment, seals it, and both goroutines exit. If the graceful stop misses `timeout` (an `Upload` wedged past its deadline), the track's context is cancelled — the in-flight attempt aborts and the segment stays in `uploading/` — and the join is retried once more. **Nothing on disk is deleted.** Sealed segments and any aborted `uploading/` segment stay under `records/<name>/` and are recovered the next time a track of that name registers, live or at the next process start. A deleted connector's backlog therefore survives until an operator removes the directory, and a re-created connector of the same name inherits it.
+- **Edit (same name, different settings)** is realised as unregister-then-register. The old track stops, the new one recovers the directory — including whatever the old one had sealed or was mid-upload on — and ships it with the new settings. Records enqueued for the name during the swap window (microseconds, under the reconciler's lock) are counted as `no_track` drops, never silently lost.
+
+A name that receives records with no registered track — a live-added connector whose build failed (bad credentials, unreachable secret_ref), or a binding that outlived its connector — is counted per name in `Stats.Unrouted` and exported as `gateway.spool.dropped.total{reason="no_track"}`; see [Observability](#observability).
+
 ---
 
 ## Rotation policy
@@ -224,19 +236,19 @@ Defaults (see [`internal/spool/options.go`](../internal/spool/options.go) `Break
 
 The breaker is independent of the spool record's `policy_ref` / `attempts` (those are *resilience policies on the upstream request path*, not on connector delivery). Two different abstractions, both called "circuit breaker" — one watches upstream providers per-request, the other watches connector destinations per-segment.
 
-The breaker state is tracked per track in `Spool.Stats()`, which returns a `Stats` struct whose `Tracks` field is a `map[string]trackStats` — the value type (`trackStats`) is unexported, so external callers can read the map but cannot name or destructure the value, and the method currently has no caller outside `internal/spool` — there is no admin UI, no `/metrics` gauge, and no operator-readable surface for breaker state today. Reading it requires a code change that exports the per-track stats or bridges them to an OTel meter.
+The breaker state is tracked per track on `Spool.Stats().Tracks[name].BreakerState` (an exported `spool.BreakerState`: `BreakerClosed` = 0, `BreakerHalfOpen` = 1, `BreakerOpen` = 2, with a `String()` of `closed` / `half_open` / `open`) and exported as the `gateway.spool.breaker.state` gauge — see [Observability](#observability). It is a different breaker from `gateway.cb.state`, which watches upstream providers on the request path.
 
 ---
 
 ## Loss policy
 
-The spool is **best-effort by design**. Records are dropped silently rather than blocking the request path or filling unbounded memory. Two places drop:
+The spool is **best-effort by design**. Records are dropped — counted, never blocking — rather than stalling the request path or filling unbounded memory. Every drop increments a per-track counter that is exported as a `gateway.spool.*` metric ([Observability](#observability)), so loss is distinguishable from a healthy spool. Three places drop:
 
 ### Hot path: ring full
 
-When `Enqueue` finds the per-connector ring (default 10 000 entries) full, the record is dropped on the floor and `droppedRing` increments for that track. The drop is non-blocking — `Enqueue` returns immediately. The next record might land if the drain goroutine catches up.
+When `Enqueue` finds the per-connector ring (default 10 000 entries) full, the record is dropped on the floor and `DroppedRing` increments for that track (`gateway.spool.dropped.total{reason="ring_full"}`). The drop is non-blocking — `Enqueue` returns immediately. The next record might land if the drain goroutine catches up.
 
-A non-zero `droppedRing` rate on a track means **drain is slower than ingest**. Causes, in rough order of likelihood:
+A non-zero `ring_full` rate on a track means **drain is slower than ingest**. Causes, in rough order of likelihood:
 
 1. The destination's circuit breaker is Open — sealed segments are accumulating but the uploader is sleeping. Fix: investigate the destination.
 2. Upload latency is high — `Connector.Upload` takes longer than rotation lets sealed/ drain. Fix: tune rotation to smaller segments or raise the destination's throughput.
@@ -244,15 +256,38 @@ A non-zero `droppedRing` rate on a track means **drain is slower than ingest**. 
 
 ### Disk path: spool full
 
-The spool itself does not currently enforce a disk-usage cap; operator-provisioned PVC size and filesystem behaviour set the ceiling. When the filesystem refuses writes (ENOSPC), `Segment.Write` returns an error, `writeErrors` increments, and the record is lost. The drain goroutine continues and the next write will most likely also fail; the breaker on the destination will stay Closed because the failure is local (disk), not transport.
+The spool itself does not currently enforce a disk-usage cap; operator-provisioned PVC size and filesystem behaviour set the ceiling. When the filesystem refuses writes (ENOSPC), `Segment.Write` returns an error, `WriteErrors` increments (`gateway.spool.write_errors.total`), and the record is lost. The drain goroutine continues and the next write will most likely also fail; the breaker on the destination will stay Closed because the failure is local (disk), not transport.
+
+### No track for the bound connector
+
+When `Enqueue` is handed a connector name with no registered track, the record is dropped and `Stats.Unrouted[name]` increments (`gateway.spool.dropped.total{reason="no_track"}`). This is the live-connector failure mode: a connector created through the admin API whose connector could not be built (the reconciler logs the cause at error level), or the microsecond window of a live edit. Before the sink reconciler existed this drop was silent and unconditional for every runtime-added connector (#567).
 
 > **Sizing guidance.** Pick a PVC large enough to hold one full `MaxBackoff` window's worth of failed uploads plus comfortable headroom. With 64 MiB segments rotating every 60 s and an 8-attempt retry over ~5 minutes, a sustained destination outage can park ~5 segments × 64 MiB = ~320 MiB per connector before the breaker opens and the segments stop being claimed. Multiply by `len(connectors)`, double for headroom, add per-pod safety. 10 GiB per pod is conservatively generous.
 
 ---
 
+## Observability
+
+Every per-track counter the spool keeps is exported through OTel, alongside the other `gateway.*` meters, so the drop / DLQ / breaker signals reach `/metrics` and the OTLP push. The instruments are **observable**: one callback per collection calls `Spool.Stats()` and emits a point per track, so the spool's hot path (`Enqueue`, drain, upload) touches no meter — invariant #2 holds for observability too. Registration lives in `internal/observability/spool_metrics.go` (`RegisterSpoolInstruments`), adapted from `spool.Stats` by `cmd/gateway/spool_metrics.go`.
+
+| Metric | Type | Labels | What it reports |
+|---|---|---|---|
+| `gateway.spool.enqueued.total` | observable counter | `connector` | Records accepted onto the track's ring. |
+| `gateway.spool.dropped.total` | observable counter | `connector, reason` | Records lost before disk. `reason` is `ring_full` (ring at capacity) or `no_track` (no registered track for the name — see [Loss policy](#loss-policy)). Any non-zero rate is audit-record loss. |
+| `gateway.spool.written.total` | observable counter | `connector` | Records the drain wrote into a segment. |
+| `gateway.spool.write_errors.total` | observable counter | `connector` | Records lost to a failed segment write (disk full, unwritable root). |
+| `gateway.spool.segments_sealed.total` | observable counter | `connector` | Non-empty segments moved to `sealed/`. |
+| `gateway.spool.uploads.total` | observable counter | `connector, outcome` | Upload outcomes: `ok` (delivered), `retried` (retryable attempt failure — degradation, not yet loss), `dlq` (segment deadlettered — loss until replayed). |
+| `gateway.spool.breaker.state` | observable gauge | `connector, pod, state_name` | Per-destination breaker: `0` = closed, `1` = half_open, `2` = open. |
+| `gateway.spool.pending_segments` | observable gauge | `connector, pod` | Sealed segments awaiting upload — the on-disk backlog. Climbing steadily is the early warning before `write_errors`. |
+
+On the Prometheus scrape the names read `gateway_spool_enqueued_total`, `gateway_spool_dropped_total`, …, `gateway_spool_breaker_state`, `gateway_spool_pending_segments`. A `no_track` series appears only for names that actually received unrouted records; every other series appears for every registered track from the moment it registers. The same counters are readable in-process as `spool.TrackStats` (exported) via `Spool.Stats()`.
+
+---
+
 ## Recovery on startup
 
-`spool.Recover(m *Manager)` runs per track on process start (called by `Spool.Start` before the drain or uploader goroutines launch). It walks each track's directories and:
+`spool.Recover(m *Manager)` runs per track on process start (called by `Spool.Start` before the drain or uploader goroutines launch) and again for a track registered live (`RegisterTrack` after `Start`, see [Live track registration](#live-track-registration-and-removal)). It walks each track's directories and:
 
 1. **`active/`** — for each file, attempts to read the zstd frames end-to-end. Files that decode cleanly are **sealed** (moved to `sealed/`, counted as `SealedFromActive`) so the uploader ships them — the drain goroutine opens a fresh segment on its first write and never resumes a pre-crash `active/` file, so an unsealed leftover would be stranded forever. Files that hit a torn frame (crash mid-write) move to `quarantine/`.
 2. **`uploading/`** — any file here is an orphan from a worker killed mid-upload. Move back to `sealed/` so the uploader re-attempts; its [stats sidecar](#segment-stats-sidecar) moves with it, so the re-delivery lands in the same record-time partition as the interrupted attempt would have.
@@ -317,7 +352,7 @@ Resilience does not complicate this. The captured payload mirrors the **client-v
 
 - [connectors.md](connectors.md) — the destination types, including the spool-backed `s3` / `azure_blob` split from real-time `webhook`.
 - [connector-bindings.md](connector-bindings.md) — the per-configuration sampling / filter / size-cap knobs that decide which records reach each connector.
-- [observability.md](observability.md) — `/metrics` exposes Go runtime and process collectors; per-track spool counters exist in-process on `Spool.Stats()` only (unexported value type, no caller) and are not yet surfaced anywhere.
+- [observability.md](observability.md) — the full meter catalogue, including the `gateway.spool.*` instruments summarised in [Observability](#observability) above.
 - [environment-variables.md](environment-variables.md) — the full SLIPSPACE_* reference.
 - [deployment.md](deployment.md) — PVC mount for the spool root, K8s topology with destinations.
 - [`internal/spool/`](../internal/spool/) — implementation. `spool.go` is the entry point; `track.go` is the per-connector runtime; `manager.go` is the directory abstraction.

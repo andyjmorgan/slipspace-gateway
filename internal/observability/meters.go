@@ -470,7 +470,7 @@ func NewMeters(meter metric.Meter) (*Meters, error) {
 		{MetricResilienceOutcomeTotal, "Per-request orchestrator outcome (success, all_failed, all_open). Bumped once per inbound request that ran through a resilience policy.", "1", &m.ResilienceOutcomeTotal},
 		{MetricCircuitBreakerTransitionTotal, "Circuit-breaker state transitions per (policy, target, to_state). One increment per state change.", "1", &m.CircuitBreakerTransitionTotal},
 		{MetricAdminConfigExportsTotal, "Redacted-config bundle downloads served by the admin export endpoint.", "1", &m.AdminConfigExportsTotal},
-		{MetricTelemetryPushDroppedTotal, "Records permanently lost by the real-time telemetry pusher, by connector and reason (queue_full, encode, rejected, exhausted).", "1", &m.TelemetryPushDroppedTotal},
+		{MetricTelemetryPushDroppedTotal, "Records permanently lost by the real-time telemetry pusher, by connector and reason (queue_full, encode, rejected, exhausted, closed, no_sink).", "1", &m.TelemetryPushDroppedTotal},
 		{MetricTelemetryPushFailuresTotal, "Failed record-push attempts (retried, not yet loss), by connector and kind (network, status).", "1", &m.TelemetryPushFailuresTotal},
 		{MetricOTelExportFailuresTotal, "Errors reported to the OTel SDK global error handler, in practice OTLP export failures.", "1", &m.OTelExportFailuresTotal},
 	} {

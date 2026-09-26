@@ -5,17 +5,37 @@ import (
 	"time"
 )
 
-// breakerState is the per-track circuit-breaker FSM. Backed by an int so a
-// snapshot can be carried on trackStats.BreakerState; the spool publishes no
-// breaker gauge of its own (gateway.cb.state is the resilience middleware's
-// breaker, a different subsystem).
-type breakerState int
+// BreakerState is the per-track circuit-breaker FSM. Backed by an int so a
+// snapshot can be carried on TrackStats.BreakerState and observed as the
+// gateway.spool.breaker.state gauge (0=closed, 1=half_open, 2=open).
+// Distinct from the resilience middleware's gateway.cb.state, which
+// watches upstream providers on the request path.
+type BreakerState int
 
 const (
-	breakerClosed breakerState = iota
-	breakerHalfOpen
-	breakerOpen
+	// BreakerClosed is the normal state: every claimed segment uploads.
+	BreakerClosed BreakerState = iota
+	// BreakerHalfOpen admits exactly one probe upload after HalfOpenAfter.
+	BreakerHalfOpen
+	// BreakerOpen refuses every upload until HalfOpenAfter elapses.
+	BreakerOpen
 )
+
+// String returns the lower-case label used as the state_name metric
+// attribute: closed, half_open, open. Unknown values stringify as
+// "unknown" rather than panicking.
+func (s BreakerState) String() string {
+	switch s {
+	case BreakerClosed:
+		return "closed"
+	case BreakerHalfOpen:
+		return "half_open"
+	case BreakerOpen:
+		return "open"
+	default:
+		return "unknown"
+	}
+}
 
 // breaker is a per-track circuit-breaker. closed → open on N consecutive
 // Upload failures; open → halfOpen once halfOpenAfter has elapsed (decided
@@ -24,7 +44,7 @@ const (
 // straight to halfOpen.
 type breaker struct {
 	mu               sync.Mutex
-	state            breakerState
+	state            BreakerState
 	failuresToOpen   int
 	halfOpenAfter    time.Duration
 	consecutiveFails int
@@ -45,7 +65,7 @@ func newBreaker(opts BreakerOpts, now func() time.Time) *breaker {
 		now = time.Now
 	}
 	return &breaker{
-		state:          breakerClosed,
+		state:          BreakerClosed,
 		failuresToOpen: opts.FailuresToOpen,
 		halfOpenAfter:  opts.HalfOpenAfter,
 		now:            now,
@@ -63,17 +83,17 @@ func (b *breaker) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	switch b.state {
-	case breakerClosed:
+	case BreakerClosed:
 		return true
-	case breakerHalfOpen:
+	case BreakerHalfOpen:
 		if b.probeInFlight {
 			return false
 		}
 		b.probeInFlight = true
 		return true
-	case breakerOpen:
+	case BreakerOpen:
 		if b.now().Sub(b.openedAt) >= b.halfOpenAfter {
-			b.state = breakerHalfOpen
+			b.state = BreakerHalfOpen
 			b.probeInFlight = true
 			return true
 		}
@@ -90,7 +110,7 @@ func (b *breaker) Allow() bool {
 func (b *breaker) Release() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.state == breakerHalfOpen {
+	if b.state == BreakerHalfOpen {
 		b.probeInFlight = false
 	}
 }
@@ -100,7 +120,7 @@ func (b *breaker) Release() {
 func (b *breaker) RecordSuccess() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.state = breakerClosed
+	b.state = BreakerClosed
 	b.consecutiveFails = 0
 	b.probeInFlight = false
 }
@@ -113,23 +133,23 @@ func (b *breaker) RecordFailure() {
 	defer b.mu.Unlock()
 	b.probeInFlight = false
 	switch b.state {
-	case breakerClosed:
+	case BreakerClosed:
 		b.consecutiveFails++
 		if b.consecutiveFails >= b.failuresToOpen {
-			b.state = breakerOpen
+			b.state = BreakerOpen
 			b.openedAt = b.now()
 		}
-	case breakerHalfOpen:
+	case BreakerHalfOpen:
 		// Probe failed — back to open.
-		b.state = breakerOpen
+		b.state = BreakerOpen
 		b.openedAt = b.now()
-	case breakerOpen:
+	case BreakerOpen:
 		// Already open; no-op.
 	}
 }
 
 // State returns the current breaker state. Useful for metrics.
-func (b *breaker) State() breakerState {
+func (b *breaker) State() BreakerState {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.state
