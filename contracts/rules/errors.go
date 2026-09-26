@@ -27,6 +27,21 @@ var ErrNoActions = errors.New("rules: rule must have at least one action")
 // it, so the rule is rejected at config load rather than failing per-request.
 var ErrEmptyTranslateTarget = errors.New("rules: translate target protocol required")
 
+// ErrEmptyActionField is returned at config load when an action's required
+// string field is empty after trimming (an addTag with no tag, a setHeader
+// with no headerName, ...). It is wrapped with the action type and field
+// name. The runtime keeps its own errEmptyValue check as belt-and-braces;
+// this sentinel is what makes an authoring mistake a startup / admin-write
+// (422) failure instead of a per-request one (issue #527).
+var ErrEmptyActionField = errors.New("rules: required action field is empty")
+
+// ErrInvalidActionField is returned at config load when an action field is
+// present but malformed: a changeUrl newUrl that does not parse, a
+// returnStatusCode statusCode outside [100, 599], or a setHeader
+// headerAction outside the Set / Append / Prepend / Remove set. Wrapped with
+// the action type and field name.
+var ErrInvalidActionField = errors.New("rules: invalid action field")
+
 // ErrUnknownConditionType is reserved for future strict-mode validation that
 // rejects an unknown condition discriminator instead of falling back to
 // UnknownCondition.

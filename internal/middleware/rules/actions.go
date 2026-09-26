@@ -206,6 +206,12 @@ func applyChangeApiKey(a contractsrules.ChangeApiKeyAction, state *MutableState)
 // Prepend create the header when missing so they're symmetric with
 // Set; the .NET behaviour of "silently no-op on Append-to-missing"
 // was a footgun.
+//
+// Remove does two things: it deletes any value an earlier rule wrote to
+// OutgoingHeaders, and it records the name on state.DropHeaders so the
+// forwarder also strips the header the client sent (issue #564). The
+// value-writing ops un-record the name, so Remove-then-Set in one request
+// nets out to "set".
 func applySetHeader(a contractsrules.SetHeaderAction, state *MutableState) (contractsrules.Outcome, error) {
 	name := strings.TrimSpace(a.HeaderName)
 	if name == "" {
@@ -217,10 +223,13 @@ func applySetHeader(a contractsrules.SetHeaderAction, state *MutableState) (cont
 
 	switch a.HeaderAction {
 	case contractsrules.HeaderSet:
+		state.UndropHeader(name)
 		state.OutgoingHeaders.Set(name, a.HeaderValue)
 	case contractsrules.HeaderRemove:
 		state.OutgoingHeaders.Del(name)
+		state.DropHeader(name)
 	case contractsrules.HeaderAppend:
+		state.UndropHeader(name)
 		existing := state.OutgoingHeaders.Get(name)
 		if existing == "" {
 			state.OutgoingHeaders.Set(name, a.HeaderValue)
@@ -228,6 +237,7 @@ func applySetHeader(a contractsrules.SetHeaderAction, state *MutableState) (cont
 			state.OutgoingHeaders.Set(name, existing+", "+a.HeaderValue)
 		}
 	case contractsrules.HeaderPrepend:
+		state.UndropHeader(name)
 		existing := state.OutgoingHeaders.Get(name)
 		if existing == "" {
 			state.OutgoingHeaders.Set(name, a.HeaderValue)
@@ -261,13 +271,13 @@ func applyAppendQueryString(a contractsrules.AppendQueryStringAction, state *Mut
 // errEmptyValue is the common sentinel for "the rule arrived with a
 // required string field empty".
 //
-// This is the only check for most actions, not a second line of defence.
-// Only the translate and body-rewrite actions implement the contract
-// package's optional validate() hook, so a rule with an empty tag,
-// header name, provider, api-key, query key, or impersonation message
-// loads clean and fails here — per request, on every match — rather
-// than at config load. Widening load-time validation is tracked
-// separately; until then an authoring mistake surfaces at request time.
+// It is a second line of defence: every action type now implements the
+// contract package's validate() hook (contracts/rules/action.go), so an
+// empty tag, header name, provider, api-key, query key, or impersonation
+// message is rejected at config load and by the admin write API (422,
+// ErrEmptyActionField) before it can reach a request. This check only
+// fires for actions constructed in code that bypassed RuleContract.Validate
+// — the orchestrator's internal providerSwitchActions, or a test.
 var errEmptyValue = errors.New("rules: required value is empty")
 
 // applyLlmImpersonation is TERMINATING. v1.0.1 ships a stub
@@ -285,9 +295,8 @@ var errEmptyValue = errors.New("rules: required value is empty")
 // obvious in monitoring and keeps SDK round-tripping from masking
 // the deferral with subtly-wrong output.
 //
-// Empty Message returns errEmptyValue. Nothing rejects it earlier —
-// LlmImpersonationAction implements no load-time validate() hook — so
-// this is the sole enforcement point and it fires per request.
+// Empty Message returns errEmptyValue as belt-and-braces;
+// LlmImpersonationAction.validate rejects it at config load first.
 func applyLlmImpersonation(a contractsrules.LlmImpersonationAction) (contractsrules.Outcome, error) {
 	msg := strings.TrimSpace(a.Message)
 	if msg == "" {
@@ -306,10 +315,8 @@ func applyLlmImpersonation(a contractsrules.LlmImpersonationAction) (contractsru
 // applyAddTag attaches a.Tag to state's tag set. Idempotent — adding
 // a tag that's already present is a no-op (set semantics). Empty
 // Tag returns errEmptyValue so a misconfigured rule fails loudly
-// at evaluate time rather than silently doing nothing. Nothing rejects
-// it earlier — AddTagAction implements no load-time validate() hook —
-// so this is the sole enforcement point and it fires per request (see
-// errEmptyValue).
+// rather than silently doing nothing; AddTagAction.validate rejects it
+// at config load first (see errEmptyValue).
 func applyAddTag(a contractsrules.AddTagAction, state *MutableState) (contractsrules.Outcome, error) {
 	t := strings.TrimSpace(a.Tag)
 	if t == "" {

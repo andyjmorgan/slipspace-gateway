@@ -50,9 +50,20 @@ const (
 // passthrough selectors so in-flight clients keep working across the cutover.
 // The current X-Slipspace-* names always win when both are present. Documented
 // in docs/auth.md; remove once all callers have migrated.
+//
+// Exported because the forwarder's unconditional drop list
+// (internal/proxy/forwarder.go, alwaysDropHeaders) names them too: a selector
+// header — under either spelling — must never reach an upstream provider, and
+// that guarantee cannot rest on this package having seeded
+// Destination.DropHeaders (issue #558). Remove both sites together.
 const (
-	legacyHeaderIdentity      = "X-Sluice-Identity" //nolint:gosec // header name, not a credential
-	legacyHeaderConfiguration = "X-Sluice-Configuration"
+	// LegacyHeaderIdentity is the pre-rename spelling of HeaderIdentity. It
+	// carries the same live api-key secret and is still an accepted selector.
+	LegacyHeaderIdentity = "X-Sluice-Identity" //nolint:gosec // header name, not a credential
+
+	// LegacyHeaderConfiguration is the pre-rename spelling of
+	// HeaderConfiguration.
+	LegacyHeaderConfiguration = "X-Sluice-Configuration"
 )
 
 // firstHeader returns the trimmed value of the first present header in names,
@@ -169,8 +180,8 @@ func (r *Resolver) Resolve(headers http.Header) (AuthResult, error) {
 		return AuthResult{}, ErrUnknownConfiguration
 	}
 
-	identityToken := firstHeader(headers, HeaderIdentity, legacyHeaderIdentity)
-	legacyConfigName := firstHeader(headers, HeaderConfiguration, legacyHeaderConfiguration)
+	identityToken := firstHeader(headers, HeaderIdentity, LegacyHeaderIdentity)
+	legacyConfigName := firstHeader(headers, HeaderConfiguration, LegacyHeaderConfiguration)
 	legacyPresent := legacyConfigName != ""
 
 	if identityToken != "" {
@@ -245,7 +256,7 @@ func (r *Resolver) resolveLegacyPassthrough(snap *config.ResolvedConfig, configN
 // present — they are gateway metadata, never anything the provider should
 // see.
 func passthroughDropHeaders() []string {
-	return []string{HeaderIdentity, HeaderConfiguration, legacyHeaderIdentity, legacyHeaderConfiguration}
+	return []string{HeaderIdentity, HeaderConfiguration, LegacyHeaderIdentity, LegacyHeaderConfiguration}
 }
 
 // managedKeySource names the inbound header a SlipSpace key was discovered on.

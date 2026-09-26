@@ -242,7 +242,7 @@ func TestResolver_LegacyHeaders_Compat(t *testing.T) {
 	t.Run("legacy identity header resolves", func(t *testing.T) {
 		r := NewResolver(config.NewStore(fixtureConfig()))
 		headers := http.Header{}
-		headers.Set(legacyHeaderIdentity, "sk_live_enabled")
+		headers.Set(LegacyHeaderIdentity, "sk_live_enabled")
 		headers.Set(HeaderAuthorization, "Bearer client-byok-anthropic-token")
 
 		ar, err := r.Resolve(headers)
@@ -252,7 +252,7 @@ func TestResolver_LegacyHeaders_Compat(t *testing.T) {
 		if ar.Mode != ModePassthrough || ar.APIKey == nil || ar.APIKey.Name != "enabled-key" {
 			t.Fatalf("legacy identity did not route to the key, got mode=%q key=%+v", ar.Mode, ar.APIKey)
 		}
-		if !sliceContains(ar.DropHeaders, legacyHeaderIdentity) {
+		if !sliceContains(ar.DropHeaders, LegacyHeaderIdentity) {
 			t.Fatalf("legacy identity header must be stripped before forwarding, got %v", ar.DropHeaders)
 		}
 	})
@@ -260,7 +260,7 @@ func TestResolver_LegacyHeaders_Compat(t *testing.T) {
 	t.Run("legacy configuration header resolves", func(t *testing.T) {
 		r := NewResolver(config.NewStore(fixtureConfig()))
 		headers := http.Header{}
-		headers.Set(legacyHeaderConfiguration, "prod")
+		headers.Set(LegacyHeaderConfiguration, "prod")
 
 		ar, err := r.Resolve(headers)
 		if err != nil {
@@ -269,7 +269,7 @@ func TestResolver_LegacyHeaders_Compat(t *testing.T) {
 		if ar.Mode != ModePassthrough || ar.ConfigurationName != "prod" {
 			t.Fatalf("legacy configuration did not route, got mode=%q name=%q", ar.Mode, ar.ConfigurationName)
 		}
-		if !sliceContains(ar.DropHeaders, legacyHeaderConfiguration) {
+		if !sliceContains(ar.DropHeaders, LegacyHeaderConfiguration) {
 			t.Fatalf("legacy configuration header must be stripped before forwarding, got %v", ar.DropHeaders)
 		}
 	})
@@ -278,7 +278,7 @@ func TestResolver_LegacyHeaders_Compat(t *testing.T) {
 		r := NewResolver(config.NewStore(fixtureConfig()))
 		headers := http.Header{}
 		headers.Set(HeaderIdentity, "sk_live_enabled")
-		headers.Set(legacyHeaderIdentity, "sk_live_does_not_exist")
+		headers.Set(LegacyHeaderIdentity, "sk_live_does_not_exist")
 		headers.Set(HeaderAuthorization, "Bearer client-byok-anthropic-token")
 
 		ar, err := r.Resolve(headers)

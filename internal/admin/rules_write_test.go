@@ -48,9 +48,9 @@ func writableFixture(t *testing.T) (string, *config.Store) {
 func newRuleJSON(name string) []byte {
 	return []byte(`{
 		"name": "` + name + `",
-		"condition": {"type": "provider", "operator": "Equals", "expectedProvider": "openai"},
+		"condition": {"type": "provider", "operator": "Equals", "expected_provider": "openai"},
 		"actions": [
-			{"type": "setHeader", "headerName": "X-Test-` + name + `", "headerAction": "Set", "headerValue": "ok"}
+			{"type": "setHeader", "header_name": "X-Test-` + name + `", "header_action": "Set", "header_value": "ok"}
 		],
 		"behavior": "continue"
 	}`)
@@ -127,7 +127,7 @@ func TestRulesCreate_MissingName_Returns400(t *testing.T) {
 	t.Parallel()
 	dir, store := writableFixture(t)
 	h := admin.RulesCreateHandler(store, dir)
-	rec := do(t, h, "POST", "/api/v1/config/rules", []byte(`{"condition":{"type":"provider","operator":"Equals","expectedProvider":"openai"},"actions":[]}`))
+	rec := do(t, h, "POST", "/api/v1/config/rules", []byte(`{"condition":{"type":"provider","operator":"Equals","expected_provider":"openai"},"actions":[]}`))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -161,7 +161,7 @@ func TestRulesReplace_HappyPath(t *testing.T) {
 		"name": "tag-openai-chat",
 		"condition": {"type": "protocol", "operator": "Equals", "expectedProtocol": "chat_completions"},
 		"actions": [
-			{"type": "setHeader", "headerName": "X-Replaced", "headerAction": "Set", "headerValue": "yes"}
+			{"type": "setHeader", "header_name": "X-Replaced", "header_action": "Set", "header_value": "yes"}
 		],
 		"behavior": "continue"
 	}`)
@@ -209,8 +209,8 @@ func TestRulesReplace_EmptyBodyName_UsesURLName(t *testing.T) {
 	h := admin.RulesReplaceHandler(store, dir)
 
 	body := []byte(`{
-		"condition": {"type": "provider", "operator": "Equals", "expectedProvider": "openai"},
-		"actions": [{"type": "setHeader", "headerName": "X-Bodyless-Name", "headerAction": "Set", "headerValue": "ok"}],
+		"condition": {"type": "provider", "operator": "Equals", "expected_provider": "openai"},
+		"actions": [{"type": "setHeader", "header_name": "X-Bodyless-Name", "header_action": "Set", "header_value": "ok"}],
 		"behavior": "continue"
 	}`)
 	rec := do(t, h, "PUT", "/api/v1/config/rules/tag-openai-chat", body)
@@ -297,7 +297,7 @@ func TestRulesCreate_ValidationFailure_Returns422(t *testing.T) {
 	body := []byte(`{
 		"name": "validation-broken",
 		"actions": [
-			{"type": "setHeader", "headerName": "X-Broken", "headerAction": "Set", "headerValue": "x"}
+			{"type": "setHeader", "header_name": "X-Broken", "header_action": "Set", "header_value": "x"}
 		],
 		"behavior": "continue"
 	}`)

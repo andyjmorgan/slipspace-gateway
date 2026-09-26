@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -45,6 +46,17 @@ type Response struct {
 	BodyType StatusCodeBodyType
 }
 
+// requireNonEmpty is the shared load-time check behind every action's
+// validate() hook: field must be non-empty after trimming, else
+// ErrEmptyActionField wrapped with the action type and field name so the
+// loader's error points at the exact key to fix.
+func requireNonEmpty(actionType, field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s: %s: %w", actionType, field, ErrEmptyActionField)
+	}
+	return nil
+}
+
 // ChangeProviderAction switches the upstream provider for the request
 // (state.Provider). Under v2 it is not the authorable routing mechanism:
 // model-keyed redirect is expressed as a binding on the Configuration, and a
@@ -77,6 +89,12 @@ func (a *ChangeProviderAction) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a ChangeProviderAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
+// validate rejects an empty newProvider at config load. Whether the provider
+// exists is a cross-reference the config validator owns.
+func (a *ChangeProviderAction) validate() error {
+	return requireNonEmpty(a.ActionType(), "newProvider", a.NewProvider)
+}
 
 // TranslateAction marks the request for cross-provider protocol translation:
 // the inbound request (in its source protocol) is rewritten to TargetProtocol
@@ -154,6 +172,11 @@ func (a *ChangeModelNameAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a ChangeModelNameAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
+// validate rejects an empty newModelName at config load.
+func (a *ChangeModelNameAction) validate() error {
+	return requireNonEmpty(a.ActionType(), "newModelName", a.NewModelName)
+}
+
 // ChangeUrlAction records an upstream base-URL override in
 // MutableState.UpstreamURL. Inert under v2: the data plane never reads that
 // field. Transport is re-resolved from post-rule state via
@@ -182,6 +205,19 @@ func (a *ChangeUrlAction) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a ChangeUrlAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
+// validate rejects an empty or unparsable newUrl at config load. The action
+// is inert under v2, but a malformed value is still an authoring mistake
+// the runtime would otherwise report on every match.
+func (a *ChangeUrlAction) validate() error {
+	if err := requireNonEmpty(a.ActionType(), "newUrl", a.NewURL); err != nil {
+		return err
+	}
+	if _, err := url.Parse(strings.TrimSpace(a.NewURL)); err != nil {
+		return fmt.Errorf("%s: newUrl: %w: %v", a.ActionType(), ErrInvalidActionField, err)
+	}
+	return nil
+}
 
 // ChangeApiKeyAction overrides the upstream API key for this request. When
 // UseSlipSpaceKey is true the inbound SlipSpace key is forwarded instead, for
@@ -215,6 +251,15 @@ func (a *ChangeApiKeyAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a ChangeApiKeyAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
+// validate rejects an empty apiKey at config load unless useSlipSpaceKey is
+// set, in which case the literal key is ignored and may be omitted.
+func (a *ChangeApiKeyAction) validate() error {
+	if a.UseSlipSpaceKey {
+		return nil
+	}
+	return requireNonEmpty(a.ActionType(), "apiKey", a.APIKey)
+}
+
 // SetHeaderAction modifies an HTTP header on the outgoing request.
 type SetHeaderAction struct {
 	// Type is the polymorphic discriminator; always "setHeader".
@@ -247,6 +292,21 @@ func (a *SetHeaderAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a SetHeaderAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
+// validate rejects an empty headerName and a headerAction outside the
+// HeaderOp set at config load. headerValue is not required: Remove ignores
+// it, and an intentionally empty Set is a legitimate way to blank a header.
+func (a *SetHeaderAction) validate() error {
+	if err := requireNonEmpty(a.ActionType(), "headerName", a.HeaderName); err != nil {
+		return err
+	}
+	switch a.HeaderAction {
+	case HeaderSet, HeaderAppend, HeaderPrepend, HeaderRemove:
+		return nil
+	default:
+		return fmt.Errorf("%s: headerAction: %w: %q", a.ActionType(), ErrInvalidActionField, a.HeaderAction)
+	}
+}
+
 // AppendQueryStringAction appends a query-string parameter to the outgoing
 // URL.
 type AppendQueryStringAction struct {
@@ -274,6 +334,12 @@ func (a *AppendQueryStringAction) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a AppendQueryStringAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
+// validate rejects an empty key at config load. An empty value is allowed
+// (?flag= is a valid query parameter).
+func (a *AppendQueryStringAction) validate() error {
+	return requireNonEmpty(a.ActionType(), "key", a.Key)
+}
 
 // ReturnStatusCodeAction is a TERMINATING action that short-circuits the
 // pipeline and returns a synthetic response to the client.
@@ -305,6 +371,16 @@ func (a *ReturnStatusCodeAction) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a ReturnStatusCodeAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
+// validate rejects a statusCode outside [100, 599] — including the zero
+// value of an omitted key — at config load. The runtime still coerces an
+// out-of-band code to 500 as belt-and-braces.
+func (a *ReturnStatusCodeAction) validate() error {
+	if a.StatusCode < 100 || a.StatusCode > 599 {
+		return fmt.Errorf("%s: statusCode: %w: %d (want 100-599)", a.ActionType(), ErrInvalidActionField, a.StatusCode)
+	}
+	return nil
+}
 
 // LlmImpersonationAction is a TERMINATING action that answers the client
 // directly, without contacting upstream. Useful for blocked-content
@@ -343,6 +419,11 @@ func (a *LlmImpersonationAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a LlmImpersonationAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
+// validate rejects an empty message at config load.
+func (a *LlmImpersonationAction) validate() error {
+	return requireNonEmpty(a.ActionType(), "message", a.Message)
+}
+
 // AddTagAction attaches a tag to the request as it flows through the
 // engine. Tags are set-membership values (deduplicated by
 // MutableState.AddTag, kept in first-attach order — never sorted)
@@ -361,8 +442,9 @@ type AddTagAction struct {
 	Type string `yaml:"type" json:"type"`
 
 	// Tag is the tag string to attach. Trimmed and required —
-	// empty values are rejected at evaluate time so misconfigured
-	// rules do not silently no-op. Convention: free-form strings;
+	// empty values are rejected at config load (validate) and again at
+	// evaluate time so misconfigured rules do not silently no-op.
+	// Convention: free-form strings;
 	// operators often use a `prefix:value` form (e.g. "tier:gold",
 	// "audit:pii") to namespace.
 	Tag string `yaml:"tag" json:"tag"`
@@ -383,6 +465,11 @@ func (a *AddTagAction) UnmarshalJSON(data []byte) error {
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a AddTagAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
 
+// validate rejects an empty tag at config load.
+func (a *AddTagAction) validate() error {
+	return requireNonEmpty(a.ActionType(), "tag", a.Tag)
+}
+
 // UseResiliencePolicyAction is INERT under v2 and retained only so
 // existing YAML keeps parsing. It writes state.PolicyRef, but nothing
 // reads it: v2 resolves resilience from the Configuration's binding —
@@ -399,11 +486,11 @@ type UseResiliencePolicyAction struct {
 	// Type is the polymorphic discriminator; always "useResiliencePolicy".
 	Type string `yaml:"type" json:"type"`
 
-	// PolicyName is the v1 policy name. Nothing validates it — there is
-	// no cross-reference check at config load, because there is no v2
-	// library to check it against — and nothing reads the state it
-	// writes, so any value (including an unknown one) loads clean and is
-	// a runtime no-op.
+	// PolicyName is the v1 policy name. Only emptiness is rejected at
+	// config load (validate); there is no cross-reference check, because
+	// there is no v2 library to check it against, and nothing reads the
+	// state it writes, so any non-empty value (including an unknown one)
+	// loads clean and is a runtime no-op.
 	PolicyName string `yaml:"policyName" json:"policy_name"`
 
 	models.DynamicProperties `yaml:",inline"`
@@ -421,6 +508,12 @@ func (a *UseResiliencePolicyAction) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON merges DynamicProperties.Extra back into the wire payload.
 func (a UseResiliencePolicyAction) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(a) }
+
+// validate rejects an empty policyName at config load. The action is inert
+// under v2, but its single field is still required by the schema.
+func (a *UseResiliencePolicyAction) validate() error {
+	return requireNonEmpty(a.ActionType(), "policyName", a.PolicyName)
+}
 
 // UnknownAction is the catch-all fallback for any action discriminator the
 // registry does not recognise. Type carries the unknown discriminator value
