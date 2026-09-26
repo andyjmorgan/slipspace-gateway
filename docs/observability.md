@@ -162,7 +162,22 @@ Covered alongside the orchestrator in [docs/resilience.md → Observability](res
 - `gateway.cb.state` (observable gauge, labels: `policy, target, pod, state_name`)
 - `gateway.cb.transitions.total` (counter, labels: `policy, target, to_state`)
 
-`gateway.cb.state` is the one ObservableGauge in the registry — it does not push, it pulls. Each collection invokes the callback registered by `RegisterCircuitBreakerStateGauge`, which iterates `BreakerStore.Snapshot()` and emits one observation per known `(policy, target)` pair. The `pod` label disambiguates multi-pod deployments since CB state is per-pod and in-memory.
+`gateway.cb.state` is an ObservableGauge — it does not push, it pulls. Each collection invokes the callback registered by `RegisterCircuitBreakerStateGauge`, which iterates `BreakerStore.Snapshot()` and emits one observation per known `(policy, target)` pair. The `pod` label disambiguates multi-pod deployments since CB state is per-pod and in-memory. The connector spool's instruments below follow the same pull model.
+
+### Connector spool
+
+The disk spool that buffers records for the `s3` / `azure_blob` connectors exports its per-track counters as observable instruments — one callback per collection reads `Spool.Stats()`, so the spool's hot path touches no meter (invariant #2). Registered by `RegisterSpoolInstruments` (`internal/observability/spool_metrics.go`), adapted from the spool by `cmd/gateway/spool_metrics.go`. Full semantics in [docs/spool.md → Observability](spool.md#observability).
+
+| Metric | Type | Labels | Unit | What it counts |
+|---|---|---|---|---|
+| `gateway.spool.enqueued.total` | observable counter | `connector` | 1 | Records accepted onto the track's ring by `Spool.Enqueue`. |
+| `gateway.spool.dropped.total` | observable counter | `connector, reason` | 1 | Records lost before they reached disk. `reason` is `ring_full` (the per-track ring was at capacity) or `no_track` (the binding named a connector with no registered track — a live-created connector whose build failed, or a stale binding). Any non-zero rate is audit-record loss. |
+| `gateway.spool.written.total` | observable counter | `connector` | 1 | Records the drain goroutine wrote into a segment. |
+| `gateway.spool.write_errors.total` | observable counter | `connector` | 1 | Records lost because the segment write failed (disk full, unwritable spool root). |
+| `gateway.spool.segments_sealed.total` | observable counter | `connector` | 1 | Non-empty segments moved to `sealed/` and handed to the uploader. |
+| `gateway.spool.uploads.total` | observable counter | `connector, outcome` | 1 | Upload outcomes: `ok` (delivered), `retried` (retryable attempt failure), `dlq` (segment deadlettered). |
+| `gateway.spool.breaker.state` | observable gauge | `connector, pod, state_name` | — | Per-destination spool circuit breaker: `0` = closed, `1` = half_open, `2` = open. Distinct from `gateway.cb.state`. No unit, so the Prometheus name is `gateway_spool_breaker_state` (a unit-`1` gauge would export as `_ratio`). |
+| `gateway.spool.pending_segments` | observable gauge | `connector, pod` | — | Sealed segments awaiting upload — the on-disk backlog. No unit, for the same reason. |
 
 ### Admin
 
@@ -207,7 +222,7 @@ One counter is fed by the control path rather than the request path.
 
 | Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|
-| `gateway.telemetry.push.dropped.total` | counter | `connector, reason` | 1 | Records permanently lost by the real-time `webhook` telemetry pusher (`internal/arbiter/pusher`). `reason` is one of `queue_full`, `encode`, `rejected`, `exhausted`. Incremented from the pusher's `OnDropped` hook wired in `cmd/gateway/main.go`. |
+| `gateway.telemetry.push.dropped.total` | counter | `connector, reason` | 1 | Records permanently lost by the real-time `webhook` telemetry pusher (`internal/arbiter/pusher`). `reason` is one of `queue_full`, `encode`, `rejected`, `exhausted`, `closed` (a record raced the live removal or edit of its connector and reached a pusher already closed by the sink reconciler), or `no_sink` (the binding named a webhook connector with no pusher — the connector was created live but its `secret_ref` did not resolve, or the binding outlived the connector; emitted by the reporter's `dispatchRecord` in `cmd/gateway/reporter.go`). The pusher reasons are incremented from its `OnDropped` hook wired in `cmd/gateway/main.go`. |
 | `gateway.telemetry.push.failures.total` | counter | `connector, kind` | 1 | Failed record-push attempts that are retried and not yet lost. `kind` is `network` or `status`. Incremented from the pusher's `OnFailure` hook wired in `cmd/gateway/main.go`. |
 | `gateway.otel.export_failures.total` | counter | (none) | 1 | Incremented by the `otel.SetErrorHandler` installed in `internal/observability/setup.go` — in practice OTLP export failures — alongside a warn log. |
 

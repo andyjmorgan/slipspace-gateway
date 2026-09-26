@@ -154,6 +154,35 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("gateway: webhook pusher setup: %w", err)
 	}
 	defer pushCleanup()
+
+	// Connector edits made through the admin write API must reach the
+	// runtime sinks, not just the snapshot: a created connector needs a
+	// spool track or a pusher, a deleted one needs its sink torn down, an
+	// edited one needs both (#567). The reconciler owns that, driven by
+	// the same Store subscription every other live-config consumer uses.
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "local"
+	}
+	reconciler := &sinkReconciler{
+		ctx:     ctx,
+		logger:  logger,
+		spool:   spoolInst,
+		pushers: pushers,
+		buildConnector: func(ctx context.Context, cfg contractsconfig.Connector) (connector.Connector, error) {
+			return factory.Build(ctx, cfg, factory.Options{InstanceID: hostname})
+		},
+		buildPusher: func(cfg contractsconfig.Connector) (*pusher.Pusher, error) { //nolint:contextcheck // pusher workers bind to the channel lifecycle, not a request ctx — same rationale as setupPushers
+			return newWebhookPusher(cfg, logger, obs.Meters)
+		},
+		unregisterTimeout: trackUnregisterTimeout,
+		last:              resolved.Connectors,
+	}
+	store.Subscribe(reconciler.onSnapshot)
+
+	if err := registerSpoolInstruments(obs, spoolInst); err != nil {
+		return fmt.Errorf("gateway: register spool instruments: %w", err)
+	}
 	reporter := newReporterFactory(spoolInst, store, logger, obs.Meters, liveFeed, bodyStore, obs.Tracer(), obs.EventLogger(), env.OTelCaptureContent, contentCaps, pushers)
 	observerFactory := reporter.Factory()
 	// One Redactor for the whole process — the built-in substring
@@ -276,46 +305,55 @@ const pushStopTimeout = 5 * time.Second
 // dropped record or a failing push is a dashboard signal, not just a debug
 // log line — record loss was invisible to monitoring in the June 2026
 // incident.
-func setupPushers(connectors []contractsconfig.Connector, logger *slog.Logger, meters *observability.Meters) (map[string]*pusher.Pusher, func(), error) {
-	noop := func() {}
+func setupPushers(connectors []contractsconfig.Connector, logger *slog.Logger, meters *observability.Meters) (*pusherSet, func(), error) {
 	pushers := map[string]*pusher.Pusher{}
 	for _, c := range connectors {
 		if c.Type != contractsconfig.ConnectorTypeWebhook {
 			continue
 		}
-		secret, err := resolveSecretRef(c.SecretRef)
+		p, err := newWebhookPusher(c, logger, meters)
 		if err != nil {
-			return nil, noop, fmt.Errorf("webhook connector %q: resolve secret_ref: %w", c.Name, err)
+			return nil, func() {}, fmt.Errorf("webhook connector %q: %w", c.Name, err)
 		}
-		connectorAttr := attribute.String("connector", c.Name)
-		pushers[c.Name] = pusher.New(pusher.Options{
-			Endpoint:  c.URL,
-			GatewayID: c.GatewayID,
-			Secret:    secret,
-			Timeout:   time.Duration(c.TimeoutMS) * time.Millisecond,
-			Logger:    logger,
-			OnDropped: func(reason string) {
-				meters.TelemetryPushDroppedTotal.Add(context.Background(), 1,
-					metric.WithAttributes(connectorAttr, attribute.String("reason", reason)))
-			},
-			OnFailure: func(kind string) {
-				meters.TelemetryPushFailuresTotal.Add(context.Background(), 1,
-					metric.WithAttributes(connectorAttr, attribute.String("kind", kind)))
-			},
-		})
+		pushers[c.Name] = p
 		logger.Info("webhook connector enabled", "connector", c.Name, "url", c.URL, "gateway_id", c.GatewayID)
 	}
-	if len(pushers) == 0 {
-		return pushers, noop, nil
+	set := newPusherSet(pushers)
+	// closeAll drains whatever the set holds at shutdown — including
+	// pushers the sink reconciler added after boot.
+	return set, func() { set.closeAll(pushStopTimeout) }, nil
+}
+
+// newWebhookPusher builds the real-time pusher for one webhook connector
+// entry: resolves its HMAC secret_ref and wires its loss hooks to the
+// telemetry-delivery meters. Shared by boot (setupPushers) and the live
+// sink reconciler so a connector created through the admin API gets the
+// identical pusher a YAML-declared one gets. meters may be nil (tests);
+// the hooks then no-op.
+func newWebhookPusher(c contractsconfig.Connector, logger *slog.Logger, meters *observability.Meters) (*pusher.Pusher, error) {
+	secret, err := resolveSecretRef(c.SecretRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve secret_ref: %w", err)
 	}
-	cleanup := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), pushStopTimeout)
-		defer cancel()
-		for _, p := range pushers {
-			p.Close(ctx)
+	connectorAttr := attribute.String("connector", c.Name)
+	opts := pusher.Options{
+		Endpoint:  c.URL,
+		GatewayID: c.GatewayID,
+		Secret:    secret,
+		Timeout:   time.Duration(c.TimeoutMS) * time.Millisecond,
+		Logger:    logger,
+	}
+	if meters != nil {
+		opts.OnDropped = func(reason string) {
+			meters.TelemetryPushDroppedTotal.Add(context.Background(), 1,
+				metric.WithAttributes(connectorAttr, attribute.String("reason", reason)))
+		}
+		opts.OnFailure = func(kind string) {
+			meters.TelemetryPushFailuresTotal.Add(context.Background(), 1,
+				metric.WithAttributes(connectorAttr, attribute.String("kind", kind)))
 		}
 	}
-	return pushers, cleanup, nil
+	return pusher.New(opts), nil
 }
 
 // resolveSecretRef resolves the env:NAME / file:/path indirection used by
@@ -373,9 +411,14 @@ func spoolTrackOptions(cfg contractsconfig.Connector, c connector.Connector) spo
 // remainder is s3 and azure_blob) — constructs the Spool at env.SpoolRoot,
 // registers one track per connector, and starts the workers. Webhook
 // connectors are excluded here — they are real-time pushers wired by
-// setupPushers and never touch the spool. Returns (nil, noop, nil) when no
-// spool-backed connectors are configured — the reporter then routes only to
-// pushers (or nowhere) and the spool pays nothing.
+// setupPushers and never touch the spool.
+//
+// The spool is constructed and started even when no spool-backed connector
+// is configured: with zero tracks it owns no goroutines and touches no
+// disk, and it is the instance the sink reconciler registers a track into
+// when a connector is created later through the admin write API (#567).
+// The reporter routes to it only for bound spool connectors, so an idle
+// spool costs nothing on the request path.
 //
 // Per design note "Connector + Spool Architecture": startup recovery
 // (uploading/ → sealed/, clean active/ → sealed/, torn active/ →
@@ -391,10 +434,6 @@ func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.Res
 		if c.Type != contractsconfig.ConnectorTypeWebhook {
 			spoolCfgs = append(spoolCfgs, c)
 		}
-	}
-	if len(spoolCfgs) == 0 {
-		logger.InfoContext(ctx, "no spool-backed connectors configured; spool disabled")
-		return nil, noop, nil
 	}
 
 	hostname, _ := os.Hostname()
@@ -426,10 +465,15 @@ func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.Res
 	if err := s.Start(ctx); err != nil {
 		return nil, noop, fmt.Errorf("spool start: %w", err)
 	}
-	logger.InfoContext(ctx, "spool started",
-		"root", env.SpoolRoot,
-		"tracks", len(conns),
-	)
+	if len(conns) == 0 {
+		logger.InfoContext(ctx, "no spool-backed connectors configured; spool idle until one is added",
+			"root", env.SpoolRoot)
+	} else {
+		logger.InfoContext(ctx, "spool started",
+			"root", env.SpoolRoot,
+			"tracks", len(conns),
+		)
+	}
 
 	cleanup := func() { //nolint:contextcheck // spool.Stop's join goroutine uses context.Background intentionally — shutdown must not race the parent ctx cancel
 		if ok := s.Stop(spoolStopTimeout); !ok {
