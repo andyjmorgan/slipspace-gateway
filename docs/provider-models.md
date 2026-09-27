@@ -272,7 +272,7 @@ carry several beta / accounting structures:
   `DynamicProperties`.
 
 The request also exposes `OutputConfig.Effort` (reasoning-effort hint,
-`messages.go:356-369`, `Effort` at `messages.go:359`) and `ServiceTier`
+`messages.go:374-392`, `Effort` at `messages.go:382`) and `ServiceTier`
 (`messages.go:62`).
 
 ### Messages streaming events

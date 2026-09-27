@@ -1,6 +1,6 @@
 # Local Development
 
-This page is the developer's reference for running slipspace-gateway against a local mock LLM, navigating the `make` target surface, and understanding how the five test layers (unit, integration, e2e, wire-compat, smoke) compose. Anything you need to know to take a freshly cloned checkout and either iterate on Go code, drive the SPA in dev mode, or reproduce a CI failure locally is on this page.
+This page is the developer's reference for running slipspace-gateway against a local mock LLM, navigating the `make` target surface, and understanding how the four test layers (unit, e2e, wire-compat, smoke; testcontainers-backed integration tests run inside the e2e layer under the `e2e` build tag) compose. Anything you need to know to take a freshly cloned checkout and either iterate on Go code, drive the SPA in dev mode, or reproduce a CI failure locally is on this page.
 
 The shape of production is documented in [`deployment.md`](./deployment.md); this page is its peer for the inner loop.
 
