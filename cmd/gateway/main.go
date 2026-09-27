@@ -21,6 +21,7 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/internal/admin"
 	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/pusher"
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
+	"github.com/andyjmorgan/slipspace-gateway/internal/connector"
 	"github.com/andyjmorgan/slipspace-gateway/internal/connector/factory"
 	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
 	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
@@ -342,6 +343,30 @@ func resolveSecretRef(ref string) (string, error) {
 	}
 }
 
+// spoolTrackOptions maps one spool-backed connector's YAML entry onto its
+// track's runtime options. Rotation and the per-attempt upload timeout are
+// operator-tunable; retry, breaker and queue depth stay at the
+// internal/spool defaults because they have no YAML surface yet.
+//
+// The upload timeout is always set (DefaultUploadTimeoutSeconds when the
+// entry omits it): every Connector.Upload attempt gets its own deadline so
+// a destination that keeps the socket alive surfaces as a retryable
+// failure the circuit breaker can act on, instead of parking the track's
+// single uploader goroutine indefinitely (#523).
+func spoolTrackOptions(cfg contractsconfig.Connector, c connector.Connector) spool.RegisterTrackOptions {
+	opts := spool.RegisterTrackOptions{
+		Connector:            c,
+		UploadAttemptTimeout: time.Duration(cfg.EffectiveUploadTimeoutSeconds()) * time.Second,
+	}
+	if cfg.Rotation != nil {
+		opts.Rotation = spool.RotationOpts{
+			MaxBytes: cfg.Rotation.MaxBytes,
+			MaxAge:   time.Duration(cfg.Rotation.MaxAgeSeconds) * time.Second,
+		}
+	}
+	return opts
+}
+
 // setupSpool wires the connector spool. Builds every configured connector
 // except type webhook via factory.BuildAll — selection is by exclusion, not an
 // allowlist, so a new non-webhook type is spooled by default (today the
@@ -393,15 +418,7 @@ func setupSpool(ctx context.Context, env *config.ServerEnv, resolved *config.Res
 	}
 
 	for i, c := range conns {
-		cfg := spoolCfgs[i]
-		opts := spool.RegisterTrackOptions{Connector: c}
-		if cfg.Rotation != nil {
-			opts.Rotation = spool.RotationOpts{
-				MaxBytes: cfg.Rotation.MaxBytes,
-				MaxAge:   time.Duration(cfg.Rotation.MaxAgeSeconds) * time.Second,
-			}
-		}
-		if err := s.RegisterTrack(opts); err != nil {
+		if err := s.RegisterTrack(spoolTrackOptions(spoolCfgs[i], c)); err != nil {
 			return nil, noop, fmt.Errorf("register track %q: %w", c.Name(), err)
 		}
 	}

@@ -36,9 +36,18 @@ type Manager struct {
 // NewManager constructs a Manager rooted at root. The state subdirs are
 // created with 0o750 if missing. Existing contents are left in place —
 // recovery is the caller's job (via Recover).
+//
+// root is normalised to an absolute path: assertUnder compares the
+// absolute form of every segment path against <root>/<state>, so a
+// relative root (a dev `./spool`) would create and write segments but
+// fail every Seal/Claim/Complete transition (#410).
 func NewManager(root string) (*Manager, error) {
 	if root == "" {
 		return nil, errors.New("spool: Manager root is required")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("spool: abs %q: %w", root, err)
 	}
 	for _, sub := range []string{stateActive, stateSealed, stateUploading, stateDeadletter, stateQuarantine} {
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o750); err != nil {
@@ -82,9 +91,10 @@ func (m *Manager) Claim(sealedPath string) (string, error) {
 	return m.transition(sealedPath, stateSealed, stateUploading)
 }
 
-// Complete removes a segment from the uploading directory after a
-// successful Upload. Idempotent: if the file is already gone, returns
-// nil. uploadingPath must live under UploadingDir.
+// Complete removes a segment — and its stats sidecar, when present —
+// from the uploading directory after a successful Upload. Idempotent: if
+// the files are already gone, returns nil. uploadingPath must live under
+// UploadingDir.
 func (m *Manager) Complete(uploadingPath string) error {
 	if err := m.assertUnder(uploadingPath, stateUploading); err != nil {
 		return err
@@ -92,7 +102,7 @@ func (m *Manager) Complete(uploadingPath string) error {
 	if err := os.Remove(uploadingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("spool: remove %q: %w", uploadingPath, err)
 	}
-	return nil
+	return removeSegmentMeta(uploadingPath)
 }
 
 // Deadletter moves an uploading segment to the deadletter directory
@@ -152,7 +162,11 @@ func (m *Manager) listSegments(dir string) ([]string, error) {
 
 // transition is the workhorse for state moves. Validates the source
 // lives under the expected state subdir, then renames into the
-// destination state's directory under the same filename.
+// destination state's directory under the same filename. The segment's
+// stats sidecar (<name>.meta.json), when present, follows it so
+// uploadOne can read it from whichever state directory the segment is
+// in after a restart; the segment rename is the atomic step, the sidecar
+// is carried best-effort behind it.
 func (m *Manager) transition(src, fromState, toState string) (string, error) {
 	if err := m.assertUnder(src, fromState); err != nil {
 		return "", err
@@ -160,6 +174,9 @@ func (m *Manager) transition(src, fromState, toState string) (string, error) {
 	dst := filepath.Join(m.root, toState, filepath.Base(src))
 	if err := os.Rename(src, dst); err != nil {
 		return "", fmt.Errorf("spool: rename %q -> %q: %w", src, dst, err)
+	}
+	if err := moveSegmentMeta(src, dst); err != nil {
+		return dst, err
 	}
 	return dst, nil
 }

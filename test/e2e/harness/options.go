@@ -66,7 +66,17 @@ type Options struct {
 	// the no-default-cap policy means bodies ship intact. Ignored when
 	// reporting is disabled.
 	WebhookMaxBodyBytes int
+
+	// WebhookSampling, when non-nil, sets `sampling:` on the injected
+	// harness-webhook connector binding so a test can prove the sampling
+	// drop travels through the real binary (an explicit 0 mutes the
+	// binding; nil leaves the key unset → ship everything). Ignored when
+	// reporting is disabled.
+	WebhookSampling *float64
 }
+
+// FloatPtr returns a pointer to f. Convenience for Options.WebhookSampling.
+func FloatPtr(f float64) *float64 { return &f }
 
 // BoolPtr returns a pointer to b. Convenience for the Options.ReportingEnabled
 // field so tests can write `ReportingEnabled: harness.BoolPtr(false)`.

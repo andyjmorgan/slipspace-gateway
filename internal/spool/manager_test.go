@@ -1,6 +1,7 @@
 package spool
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,6 +235,167 @@ func TestManager_RenameFailureSurfaces(t *testing.T) {
 }
 
 // --- helpers ---
+
+// TestNewManager_RelativeRootIsNormalised pins #410: a relative root
+// (`./spool` in a dev shell) must complete every state transition.
+// assertUnder compares the absolute segment path against <root>/<state>,
+// so an un-normalised relative root created segments fine and then failed
+// every Seal/Claim/Complete.
+func TestNewManager_RelativeRootIsNormalised(t *testing.T) {
+	base := t.TempDir()
+	t.Chdir(base)
+
+	m, err := NewManager("./spool-rel")
+	if err != nil {
+		t.Fatalf("NewManager(relative): %v", err)
+	}
+	if !filepath.IsAbs(m.Root()) {
+		t.Fatalf("Root() = %q, want absolute", m.Root())
+	}
+	if want := filepath.Join(base, "spool-rel"); m.Root() != want {
+		// macOS TempDir symlinks would break this exact compare; Linux CI
+		// is what we run, and EvalSymlinks keeps it honest elsewhere.
+		if resolved, rerr := filepath.EvalSymlinks(m.Root()); rerr != nil || resolved != want {
+			t.Errorf("Root() = %q, want %q", m.Root(), want)
+		}
+	}
+
+	active := writeSegmentFile(t, m.ActiveDir(), "1-1.ndjson.zst", "body")
+	sealed, err := m.Seal(active)
+	if err != nil {
+		t.Fatalf("Seal under relative root: %v", err)
+	}
+	uploading, err := m.Claim(sealed)
+	if err != nil {
+		t.Fatalf("Claim under relative root: %v", err)
+	}
+	if err := m.Complete(uploading); err != nil {
+		t.Fatalf("Complete under relative root: %v", err)
+	}
+	// A relative *segment* path is also resolved against cwd, matching
+	// the now-absolute root.
+	rel := writeSegmentFile(t, "spool-rel/active", "1-2.ndjson.zst", "body")
+	if _, err := m.Seal(rel); err != nil {
+		t.Fatalf("Seal with a relative segment path: %v", err)
+	}
+}
+
+// TestManager_SidecarFollowsTransitions: the stats sidecar rides with its
+// segment through every state change and is removed on Complete, so a
+// restart in any state still finds it next to the segment.
+func TestManager_SidecarFollowsTransitions(t *testing.T) {
+	m := mustManager(t)
+	active := writeSegmentFile(t, m.ActiveDir(), "1-1.ndjson.zst", "body")
+	if err := writeSegmentMeta(active, SegmentStats{Records: 3, TsMinNs: 10, TsMaxNs: 20}); err != nil {
+		t.Fatal(err)
+	}
+
+	sealed, err := m.Seal(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := readSegmentMeta(sealed); !ok {
+		t.Fatal("sidecar did not follow Seal")
+	}
+	if _, err := os.Stat(metaPath(active)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("sidecar left behind in active/: %v", err)
+	}
+
+	uploading, err := m.Claim(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := readSegmentMeta(uploading); !ok {
+		t.Fatal("sidecar did not follow Claim")
+	}
+
+	// Recover's uploading → sealed path uses the same transition.
+	back, err := m.transition(uploading, stateUploading, stateSealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := readSegmentMeta(back); !ok {
+		t.Fatal("sidecar did not follow the recovery transition")
+	}
+	uploading, err = m.Claim(back)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dead, err := m.Deadletter(uploading)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := readSegmentMeta(dead)
+	if err != nil || !ok {
+		t.Fatalf("sidecar did not follow Deadletter: (%v, %v)", ok, err)
+	}
+	if got.Records != 3 || got.TsMinNs != 10 || got.TsMaxNs != 20 {
+		t.Errorf("sidecar contents changed in transit: %+v", got)
+	}
+
+	// Complete removes both files.
+	active2 := writeSegmentFile(t, m.ActiveDir(), "1-2.ndjson.zst", "body")
+	if err := writeSegmentMeta(active2, SegmentStats{Records: 1}); err != nil {
+		t.Fatal(err)
+	}
+	sealed2, _ := m.Seal(active2)
+	uploading2, _ := m.Claim(sealed2)
+	if err := m.Complete(uploading2); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	entries, _ := os.ReadDir(m.UploadingDir())
+	if len(entries) != 0 {
+		t.Errorf("uploading/ not empty after Complete: %d entries", len(entries))
+	}
+
+	// A segment with no sidecar (pre-sidecar binary) still transitions.
+	plain := writeSegmentFile(t, m.ActiveDir(), "1-3.ndjson.zst", "body")
+	if _, err := m.Seal(plain); err != nil {
+		t.Errorf("Seal without sidecar: %v", err)
+	}
+}
+
+func TestManager_CompleteSidecarRemoveFailureSurfaces(t *testing.T) {
+	m := mustManager(t)
+	up := writeSegmentFile(t, m.UploadingDir(), "1-1.ndjson.zst", "body")
+	// A non-empty directory at the sidecar path defeats os.Remove.
+	if err := os.MkdirAll(filepath.Join(metaPath(up), "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Complete(up); err == nil {
+		t.Error("Complete should surface a sidecar removal failure")
+	}
+}
+
+func TestManager_TransitionSidecarMoveFailureSurfaces(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions do not deny rename")
+	}
+	m := mustManager(t)
+	active := writeSegmentFile(t, m.ActiveDir(), "1-1.ndjson.zst", "body")
+	// Make the sidecar a directory and pre-occupy its destination with a
+	// non-empty directory: the segment rename succeeds, then
+	// rename(dir → non-empty dir) fails with ENOTEMPTY — a sidecar move
+	// failure that is not ENOENT.
+	if err := os.Mkdir(metaPath(active), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(m.SealedDir(), "1-1.ndjson.zst")
+	if err := os.MkdirAll(filepath.Join(metaPath(dst), "occupied"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.Seal(active)
+	if err == nil {
+		t.Fatal("expected sidecar move failure to surface")
+	}
+	if got != dst {
+		t.Errorf("segment path should still be returned on sidecar failure, got %q", got)
+	}
+	if _, serr := os.Stat(dst); serr != nil {
+		t.Errorf("segment itself should have moved: %v", serr)
+	}
+}
 
 func mustManager(t *testing.T) *Manager {
 	t.Helper()

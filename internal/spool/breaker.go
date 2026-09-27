@@ -30,6 +30,13 @@ type breaker struct {
 	consecutiveFails int
 	openedAt         time.Time
 	now              func() time.Time
+
+	// probeInFlight is the half-open reservation: set when Allow admits
+	// the one probe, cleared when RecordSuccess / RecordFailure resolves
+	// it or Release abandons it. While set, every other Allow in
+	// halfOpen is refused — that is what stops a sealed/ backlog
+	// stampeding a destination that has only just come back (#545).
+	probeInFlight bool
 }
 
 func newBreaker(opts BreakerOpts, now func() time.Time) *breaker {
@@ -46,20 +53,28 @@ func newBreaker(opts BreakerOpts, now func() time.Time) *breaker {
 }
 
 // Allow reports whether the breaker permits an upload attempt right
-// now. Closed and halfOpen both allow; the breaker does not itself
-// limit concurrent half-open probes — a track has a single uploader
-// goroutine, and attemptUploads returns on the first failure, so at
-// most one probe is in flight in practice. Open allows once
-// HalfOpenAfter has elapsed, transitioning to halfOpen.
+// now. Closed always allows. Open allows once HalfOpenAfter has
+// elapsed, transitioning to halfOpen and reserving that caller as the
+// single probe. HalfOpen refuses every further caller until the probe
+// resolves via RecordSuccess / RecordFailure (or is abandoned via
+// Release) — exactly one probe is in flight at a time, regardless of
+// how many uploader goroutines share the breaker.
 func (b *breaker) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	switch b.state {
-	case breakerClosed, breakerHalfOpen:
+	case breakerClosed:
+		return true
+	case breakerHalfOpen:
+		if b.probeInFlight {
+			return false
+		}
+		b.probeInFlight = true
 		return true
 	case breakerOpen:
 		if b.now().Sub(b.openedAt) >= b.halfOpenAfter {
 			b.state = breakerHalfOpen
+			b.probeInFlight = true
 			return true
 		}
 		return false
@@ -67,20 +82,36 @@ func (b *breaker) Allow() bool {
 	return false
 }
 
-// RecordSuccess transitions any non-closed state back to closed and
-// resets the failure counter.
+// Release abandons a half-open probe reservation without recording an
+// outcome — for the caller that was admitted by Allow but never reached
+// Connector.Upload (a lost claim race, shutdown before the first
+// attempt). Without it the reservation would leak and the breaker would
+// refuse every subsequent probe forever. A no-op outside halfOpen.
+func (b *breaker) Release() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.state == breakerHalfOpen {
+		b.probeInFlight = false
+	}
+}
+
+// RecordSuccess transitions any non-closed state back to closed,
+// resets the failure counter, and resolves any in-flight probe.
 func (b *breaker) RecordSuccess() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.state = breakerClosed
 	b.consecutiveFails = 0
+	b.probeInFlight = false
 }
 
 // RecordFailure increments the failure counter; the breaker opens
-// when failuresToOpen is reached.
+// when failuresToOpen is reached. In halfOpen it resolves the probe as
+// failed and reopens.
 func (b *breaker) RecordFailure() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.probeInFlight = false
 	switch b.state {
 	case breakerClosed:
 		b.consecutiveFails++

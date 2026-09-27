@@ -52,6 +52,23 @@ const (
 	OversizeDropRecord   = "drop_record"
 )
 
+// DefaultUploadTimeoutSeconds is the per-attempt Connector.Upload deadline
+// applied to a spool-backed connector whose upload_timeout_seconds is
+// unset. Generous enough for a 64 MiB segment on a slow link, short
+// enough that a destination holding the socket open surfaces as a
+// retryable failure the circuit breaker can act on instead of parking
+// the track's single uploader forever.
+const DefaultUploadTimeoutSeconds = 60
+
+// EffectiveUploadTimeoutSeconds returns upload_timeout_seconds with the
+// default applied when unset.
+func (c *Connector) EffectiveUploadTimeoutSeconds() int {
+	if c == nil || c.UploadTimeoutSeconds <= 0 {
+		return DefaultUploadTimeoutSeconds
+	}
+	return c.UploadTimeoutSeconds
+}
+
 // Connector is one reusable destination. Many configurations may bind
 // the same connector with different sampling / filter overrides; the
 // connector itself owns rotation policy + auth + transport details.
@@ -79,6 +96,14 @@ type Connector struct {
 	// Optional — zero values fall back to defaults documented in
 	// internal/spool's RotationOpts.
 	Rotation *ConnectorRotation `yaml:"rotation,omitempty" json:"rotation,omitempty"`
+
+	// UploadTimeoutSeconds bounds one Connector.Upload attempt for a
+	// spool-backed connector. Zero (unset) applies
+	// DefaultUploadTimeoutSeconds; negative is a config error. Each
+	// retry attempt gets its own deadline, so this caps a single
+	// wedged PUT, not the whole retry schedule. Not applicable to
+	// webhook (use timeout_ms there).
+	UploadTimeoutSeconds int `yaml:"upload_timeout_seconds,omitempty" json:"upload_timeout_seconds,omitempty"`
 
 	// --- s3 specifics ---
 
@@ -194,16 +219,22 @@ type ConnectorBinding struct {
 	// `connectors:` slice. Required.
 	Connector string `yaml:"connector" json:"connector"`
 
-	// Sampling is the fraction (0..1] of records routed to this
-	// binding. The validator accepts the full [0, 1] range but the
-	// runtime treats `sampling: 0` and an omitted field identically
-	// (default → 1.0 / include everything). Go's zero-value semantics
-	// make these indistinguishable here and a custom UnmarshalYAML
-	// shim would cost more than the footgun is worth. To disable a
-	// binding, remove it from `connector_bindings` (or use a
-	// vanishingly small value like 0.0001 if you want to keep the
-	// destination warm but drop nearly all traffic).
-	Sampling float64 `yaml:"sampling,omitempty" json:"sampling,omitempty"`
+	// Sampling is the fraction [0, 1] of records routed to this
+	// binding. A pointer so the unset case is distinguishable from an
+	// explicit zero:
+	//
+	//   - nil (unset) → 1.0, ship everything.
+	//   - 0 → ship nothing. The binding stays declared (and its
+	//     connector keeps its spool track / pusher) but no record
+	//     reaches it — the way to mute a destination without deleting
+	//     the binding.
+	//   - (0, 1) → ship that deterministic (or random, per SamplingKey)
+	//     fraction.
+	//   - 1 → ship everything.
+	//
+	// Values outside [0, 1] are a config error. Use SamplingRate to
+	// read the effective value.
+	Sampling *float64 `yaml:"sampling,omitempty" json:"sampling,omitempty"`
 
 	// SamplingKey is "correlation_id" (default — deterministic, all
 	// records for one request in or out together) or "random".
@@ -232,6 +263,16 @@ type ConnectorBinding struct {
 	// Filter narrows which records this binding receives. Empty filter
 	// (all-empty lists) includes everything.
 	Filter *ConnectorFilter `yaml:"filter,omitempty" json:"filter,omitempty"`
+}
+
+// SamplingRate returns the effective sampling fraction: 1.0 when
+// Sampling is unset, otherwise the configured value (including an
+// explicit 0, which means ship nothing).
+func (b *ConnectorBinding) SamplingRate() float64 {
+	if b == nil || b.Sampling == nil {
+		return 1.0
+	}
+	return *b.Sampling
 }
 
 // ConnectorFilter narrows the records a ConnectorBinding receives.

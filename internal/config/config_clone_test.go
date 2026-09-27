@@ -45,7 +45,7 @@ func v2Fixture() *ResolvedConfig {
 				PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Provider: "openai"}},
 				RuleNames:           []string{"r1"},
 				Tags:                map[string]string{"tier": "dev"},
-				ConnectorBindings:   []contractsconfig.ConnectorBinding{{Connector: "artifacts", Sampling: 1.0}},
+				ConnectorBindings:   []contractsconfig.ConnectorBinding{{Connector: "artifacts", Sampling: func() *float64 { f := 1.0; return &f }()}},
 			},
 		},
 		Connectors: contractsconfig.ConnectorsConfig{

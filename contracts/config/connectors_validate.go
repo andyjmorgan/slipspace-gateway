@@ -69,7 +69,21 @@ func (c *Connector) validateS3() error {
 			return c.errf("endpoint_url is not a valid URL: %v", err)
 		}
 	}
+	if err := c.validateUploadTimeout(); err != nil {
+		return err
+	}
 	return c.validateS3Auth()
+}
+
+// validateUploadTimeout rejects a negative upload_timeout_seconds on a
+// spool-backed connector. Zero is "unset" and takes
+// DefaultUploadTimeoutSeconds at wiring time.
+func (c *Connector) validateUploadTimeout() error {
+	if c.UploadTimeoutSeconds < 0 {
+		return c.errf("upload_timeout_seconds must be >= 0 (0 = default %ds), got %d",
+			DefaultUploadTimeoutSeconds, c.UploadTimeoutSeconds)
+	}
+	return nil
 }
 
 func (c *Connector) validateAzureBlob() error {
@@ -84,6 +98,9 @@ func (c *Connector) validateAzureBlob() error {
 	}
 	if c.URL != "" || c.SecretRef != "" || c.TimeoutMS != 0 || c.GatewayID != "" {
 		return c.errf("url/secret_ref/gateway_id/timeout_ms are webhook fields, not azure_blob")
+	}
+	if err := c.validateUploadTimeout(); err != nil {
+		return err
 	}
 	return c.validateAzureAuth()
 }
@@ -119,6 +136,12 @@ func (c *Connector) validateWebhook() error {
 	}
 	if c.Auth != nil {
 		return c.errf("auth block does not apply to webhook (use secret_ref)")
+	}
+	if c.Rotation != nil {
+		return c.errf("rotation block does not apply to webhook (records are pushed, not spooled)")
+	}
+	if c.UploadTimeoutSeconds != 0 {
+		return c.errf("upload_timeout_seconds does not apply to webhook (use timeout_ms)")
 	}
 	return nil
 }
@@ -282,9 +305,9 @@ func (b *ConnectorBinding) Validate() error {
 	if b.Connector == "" {
 		return fmt.Errorf("%w: binding.connector is required", ErrConnectorValidation)
 	}
-	if b.Sampling < 0 || b.Sampling > 1 {
+	if b.Sampling != nil && (*b.Sampling < 0 || *b.Sampling > 1) {
 		return fmt.Errorf("%w: binding %q: sampling must be in [0, 1], got %v",
-			ErrConnectorValidation, b.Connector, b.Sampling)
+			ErrConnectorValidation, b.Connector, *b.Sampling)
 	}
 	switch b.SamplingKey {
 	case "", SamplingKeyCorrelationID, SamplingKeyRandom:

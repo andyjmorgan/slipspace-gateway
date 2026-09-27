@@ -578,6 +578,11 @@ func (h *Harness) injectWebhookConnector(dst string) error {
 	if h.opts.WebhookMaxBodyBytes > 0 {
 		binding += fmt.Sprintf("        max_body_bytes: %d\n", h.opts.WebhookMaxBodyBytes)
 	}
+	if h.opts.WebhookSampling != nil {
+		// %v keeps an explicit 0 as `0` (not `0e+00`) so the YAML reads
+		// the way an operator would write it.
+		binding += fmt.Sprintf("        sampling: %v\n", *h.opts.WebhookSampling)
+	}
 	content = strings.Replace(content, devKey, binding, 1)
 
 	// The webhook connector is a real-time, non-spooled pusher: it POSTs one
