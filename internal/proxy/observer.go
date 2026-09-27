@@ -49,8 +49,13 @@ type Observer interface {
 	OnUpstreamError(ctx context.Context, err error)
 
 	// OnComplete fires once, after the response is fully written (or
-	// aborted). statusCode reflects whatever the client actually saw —
-	// the upstream status on success, 502 on transport failure.
+	// aborted). statusCode is the status the Forwarder's status recorder
+	// saw: the upstream status on success, or 502 on a transport failure
+	// written by the Forwarder itself. When a BufferingResponseWriter is
+	// in the writer chain, a transport error is recorded on the buffer
+	// (SetTransportError) and nothing is written, so statusCode stays 200
+	// and the caller (e.g. the resilience orchestrator) decides the final
+	// client status.
 	OnComplete(ctx context.Context, statusCode int, durationMs int64)
 
 	// OnRuleMatched fires once per rule that matched on this request,
