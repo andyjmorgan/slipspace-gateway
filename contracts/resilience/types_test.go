@@ -2,6 +2,7 @@ package resilience_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -180,5 +181,50 @@ func TestResilienceConfig_JSONRoundTrip(t *testing.T) {
 	}
 	if back.Retry == nil || back.Retry.BackoffType != resilience.BackoffConstant {
 		t.Errorf("retry diverged: %+v", back.Retry)
+	}
+}
+
+// TestRetryConfig_JSONKeysMatchYAML pins the wire names of the two duration
+// fields: yaml and json must agree (delay_ms / max_delay_ms) so a value
+// authored in YAML survives a read-modify-write through the admin API's JSON
+// round-trip (#515).
+func TestRetryConfig_JSONKeysMatchYAML(t *testing.T) {
+	in := resilience.RetryConfig{Enabled: true, MaxAttempts: 3, DelayMilliseconds: 5, MaxDelayMs: 10}
+
+	js, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("json marshal: %v", err)
+	}
+	for _, want := range []string{`"delay_ms":5`, `"max_delay_ms":10`} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("json %s lacks %s", js, want)
+		}
+	}
+	for _, stale := range []string{"delay_milliseconds", "max_delay_milliseconds"} {
+		if strings.Contains(string(js), stale) {
+			t.Errorf("json %s still carries retired key %s", js, stale)
+		}
+	}
+
+	ym, err := yaml.Marshal(in)
+	if err != nil {
+		t.Fatalf("yaml marshal: %v", err)
+	}
+	for _, want := range []string{"delay_ms: 5", "max_delay_ms: 10"} {
+		if !strings.Contains(string(ym), want) {
+			t.Errorf("yaml %s lacks %s", ym, want)
+		}
+	}
+
+	var fromJSON resilience.RetryConfig
+	if err := json.Unmarshal([]byte(`{"delay_ms":7,"max_delay_ms":9}`), &fromJSON); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	var fromYAML resilience.RetryConfig
+	if err := yaml.Unmarshal([]byte("delay_ms: 7\nmax_delay_ms: 9\n"), &fromYAML); err != nil {
+		t.Fatalf("yaml unmarshal: %v", err)
+	}
+	if fromJSON != fromYAML || fromJSON.DelayMilliseconds != 7 || fromJSON.MaxDelayMs != 9 {
+		t.Errorf("json %+v and yaml %+v decoded differently", fromJSON, fromYAML)
 	}
 }

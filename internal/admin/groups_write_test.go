@@ -133,6 +133,26 @@ func TestGroupsCreate_BadAndInvalid(t *testing.T) {
 	if rec := do(t, h, http.MethodPost, "/api/v1/config/groups", `{"name":"ghosttarget","mode":"failover","targets":[{"provider":"nope"}]}`); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("unknown target provider = %d, want 422", rec.Code)
 	}
+	// The contracts/resilience rules run through the same RevalidateAndIndex
+	// path, so the admin API rejects what the loader rejects.
+	invalid := map[string]string{
+		"missing mode":             `{"name":"nomode","targets":[{"provider":"openai"}]}`,
+		"misspelt mode":            `{"name":"typo","mode":"failver","targets":[{"provider":"openai"}]}`,
+		"name not identifier":      `{"name":"eu|west","mode":"failover","targets":[{"provider":"openai"}]}`,
+		"provider listed twice":    `{"name":"dup","mode":"load_balance","targets":[{"provider":"openai"},{"provider":"openai"}]}`,
+		"breaker rate above one":   `{"name":"cb1","mode":"failover","targets":[{"provider":"openai"}],"circuit_breaker":{"enabled":true,"failure_rate_threshold":90,"cooldown_seconds":30}}`,
+		"breaker without cooldown": `{"name":"cb2","mode":"failover","targets":[{"provider":"openai"}],"circuit_breaker":{"enabled":true,"failure_threshold":3}}`,
+		"breaker no thresholds":    `{"name":"cb3","mode":"failover","targets":[{"provider":"openai"}],"circuit_breaker":{"enabled":true,"cooldown_seconds":30}}`,
+	}
+	for name, body := range invalid {
+		rec := do(t, h, http.MethodPost, "/api/v1/config/groups", body)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s = %d, want 422 (body=%s)", name, rec.Code, rec.Body)
+		}
+	}
+	if _, leaked := store.Snapshot().Groups["cb2"]; leaked {
+		t.Errorf("rejected group reached the live snapshot")
+	}
 }
 
 func TestGroupsCreate_DryRun(t *testing.T) {

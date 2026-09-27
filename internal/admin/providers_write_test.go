@@ -135,6 +135,16 @@ func TestProvidersCreate_Invalid422(t *testing.T) {
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422 (body=%s)", rec.Code, rec.Body)
 	}
+	// Provider names are identifiers: the name is a telemetry label and one
+	// half of the circuit-breaker key, so '|' and friends are rejected.
+	rec = do(t, h, http.MethodPost, "/api/v1/config/providers",
+		`{"name":"open|ai","base_url":"https://x","protocols":{"chat":{}}}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("bad name status = %d, want 422 (body=%s)", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "name must start with a letter or digit") {
+		t.Errorf("bad name body = %s, want identifier rule", rec.Body)
+	}
 }
 
 func TestProvidersCreate_DryRun(t *testing.T) {

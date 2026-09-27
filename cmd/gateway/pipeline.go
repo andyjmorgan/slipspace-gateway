@@ -205,9 +205,9 @@ func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, e
 			provider string
 		)
 		if dest.Group != nil {
-			rc = groupToResilienceConfig(dest.Group.Name, *dest.Group)
+			rc = dest.Group.ResilienceConfig()
 		} else {
-			rc = singleTargetConfig(*dest.Single)
+			rc = selection.SingleTargetResilienceConfig(*dest.Single)
 			provider = dest.Single.Provider
 		}
 

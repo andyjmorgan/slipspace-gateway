@@ -156,19 +156,19 @@ groups:
 
 | Field | Required | Notes |
 |---|---|---|
-| _map key_ | yes | The group name. Referenced by a binding's `group:`. Unique across the `groups:` block (duplicate top-level keys are a load error). |
-| `mode` | yes | See [Modes](#modes). |
+| _map key_ | yes | The group name. Referenced by a binding's `group:`. Unique across the `groups:` block (duplicate top-level keys are a load error). Must be an identifier — start with a letter or digit, then letters, digits, `.`, `_` or `-` — because it is used verbatim as the `policy` metric label and as half of the circuit-breaker `(group, provider)` key. |
+| `mode` | yes | See [Modes](#modes). Required and closed-set: an omitted mode or any value outside `failover` / `load_balance` / `load_balance_with_failover` / `none` fails config load (`ErrUnknownMode`) instead of silently degrading to single-target. |
 | `strict_weights` | no | Default `false`. Only meaningful in `load_balance` modes — see [strict_weights](#canary-mirroring-with-strict_weights). |
 | `failure_status_codes` | no | Group-wide list of HTTP status codes that count as retryable. Empty falls back to default `[500, 502, 503, 504]`. There is no per-target override in the v2 group schema. |
 | `response_header_timeout_seconds` | no | Per-group override of the gateway-wide time-to-first-byte cap (`SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this group; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance groups usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
-| `circuit_breaker` | no | Group-wide breaker config; one breaker instance per `(group, target-provider)`. Omit for no breaker. The v2 group schema has no per-target breaker override. |
-| `targets` | yes | At least one target. Validation rejects an empty target list. |
+| `circuit_breaker` | no | Group-wide breaker config; one breaker instance per `(group, target-provider)`. Omit for no breaker. The v2 group schema has no per-target breaker override. Validated at load — see [Circuit-breaker fields](#circuit-breaker-fields). |
+| `targets` | yes | At least one target. Validation rejects an empty target list, and rejects the same provider listed twice (breaker state and telemetry are keyed per `(group, provider)`, so a second entry could never be told apart from the first). |
 
 ### Target fields
 
 | Field | Required | Notes |
 |---|---|---|
-| `provider` | yes | Must match a provider declared in `providers.yaml`, and that provider must serve the binding's protocol (protocol-preserving; enforced at config-load). |
+| `provider` | yes | Must match a provider declared in `providers.yaml`, and that provider must serve the binding's protocol (protocol-preserving; enforced at config-load). Each provider may appear at most once per group. |
 | `alias` | no | Model-name rewrite: when this target is selected the request body's model field is rewritten to this value. This is the v2 replacement for the v1 `model_rewrite` scalar. Placing it on the target lets one group send a single logical model under a different upstream id per provider. |
 | `weight` | load_balance only | Relative selection share. `0` is treated as `1` (even weighting) by the orchestrator. Ignored in `failover` mode, where **declaration order** drives sequencing. |
 | `path` | no | Overrides the protocol's upstream path for this target only (e.g. an Azure deployment-specific path on a shared provider connection). |
@@ -185,16 +185,28 @@ There is no per-target `name`, `order`, `failure_status_codes`, `circuit_breaker
 | `failure_rate_threshold` | 0 | Proportional failure rate (0.0–1.0) required to trip. `0` means "absolute-only". |
 | `sampling_duration_seconds` | 60 | Sliding window. Older buckets roll off. |
 | `minimum_throughput` | 0 | Samples in window below this never trip. Guards against cold-start flapping. |
-| `cooldown_seconds` | 0 | How long Open stays Open before probing HalfOpen. `0` means "always Open once tripped" (don't do this). |
+| `cooldown_seconds` | — | How long Open stays Open before probing HalfOpen. **Required (`> 0`) when `enabled: true`** — the state machine only leaves Open once the cooldown elapses, so an enabled breaker with `cooldown_seconds` `0` or omitted is rejected at config load rather than left to wedge Open for the life of the pod. |
 | `half_open_success_threshold` | 1 | Consecutive successes in HalfOpen needed to close. Any single failure reopens. |
 
 If both `failure_threshold > 0` and `failure_rate_threshold > 0`, **both** must breach to trip. Combining them is how you avoid false positives at low traffic (`minimum_throughput`) while still tripping promptly on a real outage (`failure_threshold`).
 
-### Validated at load — and what isn't
+### Validated at load
 
-Group validation at config load is deliberately shallow (`internal/config/config_validate.go:130-145`). The loader checks only three things per group: that it declares at least one target, that every target names a non-empty `provider`, and that each named provider exists in the `providers` block. Protocol-preservation is checked separately, when a binding points at the group (`validateBindings`).
+Every group is validated when the config is loaded and again on every admin write (`RevalidateAndIndex`), so a group that would misbehave at runtime is refused before it can take traffic. `validateGroups` (`internal/config/config_validate.go`) checks the authored shape first, with group-scoped messages:
 
-Everything else in the group schema is **not** validated at load: `mode`, target declaration order, `weight` values, `failure_status_codes` ranges, and the whole `circuit_breaker` shape pass through untouched. The `contracts/resilience` `Validate()` helpers exist but the loader never invokes them. Invalid or omitted values are absorbed at runtime by the orchestrator's defaults — `weight: 0` becomes `1`, an empty failure set falls back to `[500, 502, 503, 504]` — so a typo in these fields degrades silently rather than failing the config.
+- the group name is an identifier (letters, digits, `.`, `_`, `-`; leading letter or digit) — it is the `policy` metric label and half of the breaker key;
+- `mode` is present;
+- at least one target; every target names a `provider` that exists in `providers`; no provider appears twice.
+
+It then synthesises the group into the exact `ResilienceConfig` the orchestrator will run (`selection.GroupResilienceConfig`, `internal/selection/resilience.go` — the same function the request path uses) and runs `contracts/resilience` `ResilienceConfig.Validate()` over it. That closes the rest of the rule set over authored config:
+
+- `mode` must be one of `failover`, `load_balance`, `load_balance_with_failover`, `none` (`ErrUnknownMode`);
+- `failure_status_codes` entries must be 4xx/5xx; `response_header_timeout_seconds` must not be negative;
+- `circuit_breaker`: `failure_rate_threshold` in `[0, 1]`, no negative counts or durations, and when `enabled: true` at least one of `failure_threshold` / `failure_rate_threshold` **and** a positive `cooldown_seconds` (`ErrInvalidCircuitBreakerConfig`).
+
+A rejection wraps both `config.ErrValidation` and the `contracts/resilience` sentinel that produced it, e.g. `config: v2 validation: group "ha": resilience: mode "failver": resilience: unknown mode`. Through the admin API the same failure is a `422` with the message in `detail`.
+
+What still is **not** checked: protocol-preservation is a binding-level check (it runs when a binding points at the group, `validateBindings`), and `weight: 0` is not an error — the synthesiser reads it as `1` (even weighting). Provider names are validated as identifiers by the same rule as group names.
 
 ### Parsed but not wired
 
@@ -302,7 +314,7 @@ A v2 target is a provider reference plus a small set of per-use overrides that c
 | `query` | Adds or overrides query-string params, composed over the provider's default query. |
 | `weight` | Relative load-balance share (ignored in failover). |
 
-There is no authorable per-target action block in v2. Internally, the orchestrator still applies the same per-attempt machinery the v1.2 engine used: selection synthesises an internal `changeProvider` (+ `changeModelName` when an `alias` is set) per target, clones the post-selection state once per attempt, and applies those internal actions to the clone — so different attempts cannot stack their mutations. `changeProvider` is no longer the *supported* authoring surface for routing — model-keyed redirect is expressed as a binding (models pattern → provider) on the Configuration, per CLAUDE.md invariant 7. The action type remains registered (contracts/rules/action.go) because resilience targets decode actions through the same factory, so a hand-authored `changeProvider` rule still parses and validates — it is unsupported, not rejected. It has no routing effect, though: selection synthesises a `ResilienceConfig` for every generative request (a single-provider binding gets a degenerate `ModeNone` one via `singleTargetConfig`, `cmd/gateway/destination.go`), and every target it builds carries `providerSwitchActions`, so `buildAttemptState` overwrites `state.Provider` from the binding on every attempt before the final handler reads it. Inside the orchestrator, `changeProvider` / `changeModelName` are used as its internal per-attempt synthesis primitives (`providerSwitchActions`, cmd/gateway/destination.go). A `changeProvider` left in a rule's baseline state is overwritten per attempt by `buildAttemptState`.
+There is no authorable per-target action block in v2. Internally, the orchestrator still applies the same per-attempt machinery the v1.2 engine used: selection synthesises an internal `changeProvider` (+ `changeModelName` when an `alias` is set) per target (`selection.GroupResilienceConfig`, `internal/selection/resilience.go`), clones the post-selection state once per attempt, and applies those internal actions to the clone — so different attempts cannot stack their mutations. `changeProvider` is no longer the *supported* authoring surface for routing — model-keyed redirect is expressed as a binding (models pattern → provider) on the Configuration, per CLAUDE.md invariant 7. The action type remains registered (contracts/rules/action.go) because resilience targets decode actions through the same factory, so a hand-authored `changeProvider` rule still parses and validates — it is unsupported, not rejected. It has no routing effect, though: selection synthesises a `ResilienceConfig` for every generative request (a single-provider binding gets a degenerate `ModeNone` one via `singleTargetConfig`, `cmd/gateway/destination.go`), and every target it builds carries `providerSwitchActions`, so `buildAttemptState` overwrites `state.Provider` from the binding on every attempt before the final handler reads it. Inside the orchestrator, `changeProvider` / `changeModelName` are used as its internal per-attempt synthesis primitives (`providerSwitchActions`, cmd/gateway/destination.go). A `changeProvider` left in a rule's baseline state is overwritten per attempt by `buildAttemptState`.
 
 **Why this matters for failover:** the destination of attempt N is *not* a fixed URL baked at config-load. Switching `state.Provider` triggers the final handler to re-resolve the endpoint, base URL, credential, and auth-header convention on the *new* provider (invariant 7). This is what lets a single group send the same logical model to providers with different credential conventions — e.g. OpenAI's `Authorization: Bearer` primary and Anthropic's OpenAI-compat `chat` surface as the backup, each authenticating correctly (invariant 6).
 

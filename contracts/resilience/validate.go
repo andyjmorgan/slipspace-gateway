@@ -4,7 +4,21 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
+	"github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 )
+
+// terminatingActionTypes is the closed set of rule action discriminators that
+// short-circuit the pipeline with a synthetic response. They are legal in a
+// rule but not on a ResilienceTarget: the orchestrator applies target actions
+// per attempt and discards their Outcome (buildAttemptState,
+// internal/middleware/resilience/middleware.go), so a terminating action there
+// would be a silent no-op. Keyed by ActionType so the check is independent of
+// whether the decoder handed back a pointer or a value.
+var terminatingActionTypes = map[string]struct{}{
+	rules.ReturnStatusCodeAction{}.ActionType(): {},
+	rules.LlmImpersonationAction{}.ActionType(): {},
+}
 
 // Validate enforces mode-specific invariants on a ResilienceConfig. An empty
 // Mode is treated as ModeNone downstream and validates as such. Name is
@@ -106,7 +120,9 @@ func validateModeShape(c *ResilienceConfig) error {
 
 // Validate enforces the per-target invariants. Name and Provider are
 // required; numeric fields must be non-negative; failure_status_codes
-// are restricted to 4xx/5xx; nested CircuitBreaker must itself validate.
+// are restricted to 4xx/5xx; nested CircuitBreaker must itself validate;
+// Actions must not contain a terminating action (returnStatusCode,
+// llmImpersonation) — see ErrTerminatingTargetAction.
 //
 // Mode-specific Order/Weight requirements (failover needs Order > 0,
 // load_balance needs Weight > 0) are enforced at the parent
@@ -137,11 +153,25 @@ func (t *ResilienceTarget) Validate() error {
 			return err
 		}
 	}
+	for i, act := range t.Actions {
+		if act == nil {
+			continue
+		}
+		if _, terminating := terminatingActionTypes[act.ActionType()]; terminating {
+			return fmt.Errorf("actions[%d] %q: %w", i, act.ActionType(), ErrTerminatingTargetAction)
+		}
+	}
 	return nil
 }
 
 // Validate enforces numeric ranges on CircuitBreakerConfig. A disabled breaker
-// is permitted to carry zero values; an enabled breaker requires sane bounds.
+// is permitted to carry zero values; an enabled breaker requires sane bounds:
+// at least one trip arm (failure_threshold or failure_rate_threshold) and a
+// positive cooldown_seconds. The cooldown rule exists because the state
+// machine only leaves Open once the cooldown elapses
+// (internal/middleware/resilience/breaker.go advance) — with cooldown 0 a
+// tripped breaker would stay Open for the life of the process, so the config is
+// rejected rather than silently wedging.
 func (c *CircuitBreakerConfig) Validate() error {
 	if c.FailureRateThreshold < 0 || c.FailureRateThreshold > 1 {
 		return fmt.Errorf("%w: failure_rate_threshold %f out of [0,1]", ErrInvalidCircuitBreakerConfig, c.FailureRateThreshold)
@@ -166,6 +196,9 @@ func (c *CircuitBreakerConfig) Validate() error {
 	}
 	if c.FailureThreshold == 0 && c.FailureRateThreshold == 0 {
 		return fmt.Errorf("%w: enabled breaker needs failure_threshold or failure_rate_threshold", ErrInvalidCircuitBreakerConfig)
+	}
+	if c.CooldownSeconds == 0 {
+		return fmt.Errorf("%w: enabled breaker needs cooldown_seconds > 0 (a tripped breaker never leaves Open without one)", ErrInvalidCircuitBreakerConfig)
 	}
 	return nil
 }

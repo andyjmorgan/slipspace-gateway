@@ -121,7 +121,7 @@ func NewInMemoryBreakerStore(listener StateListener) BreakerStore {
 		listener = func(string, string, State, State, string) {}
 	}
 	return &inMemoryStore{
-		breakers: make(map[string]*breaker),
+		breakers: make(map[breakerKey]*breaker),
 		listener: listener,
 	}
 }
@@ -129,13 +129,25 @@ func NewInMemoryBreakerStore(listener StateListener) BreakerStore {
 type inMemoryStore struct {
 	mu sync.Mutex
 
-	breakers map[string]*breaker
+	breakers map[breakerKey]*breaker
 
 	listener StateListener
 }
 
+// breakerKey identifies one breaker: the resilience policy (group) name and
+// the target (provider) name. It is a two-field struct rather than a joined
+// string so the pair round-trips through the map without any delimiter — a
+// name containing '|' (or anything else) can neither collide with nor be
+// mis-split from another pair. Config validation additionally restricts
+// group and provider names to identifiers, but the store does not depend on
+// that.
+type breakerKey struct {
+	policy string
+	target string
+}
+
 func (s *inMemoryStore) getOrCreate(policy, target string, cfg *contractsres.CircuitBreakerConfig) *breaker {
-	key := breakerKey(policy, target)
+	key := breakerKey{policy: policy, target: target}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b, ok := s.breakers[key]; ok {
@@ -151,10 +163,6 @@ func (s *inMemoryStore) getOrCreate(policy, target string, cfg *contractsres.Cir
 	}
 	s.breakers[key] = b
 	return b
-}
-
-func breakerKey(policy, target string) string {
-	return policy + "|" + target
 }
 
 func (s *inMemoryStore) Allow(policy, target string, cfg *contractsres.CircuitBreakerConfig) bool {
@@ -220,7 +228,7 @@ func (s *inMemoryStore) RecordFailure(policy, target string, cfg *contractsres.C
 
 func (s *inMemoryStore) State(policy, target string) State {
 	s.mu.Lock()
-	b, ok := s.breakers[breakerKey(policy, target)]
+	b, ok := s.breakers[breakerKey{policy: policy, target: target}]
 	s.mu.Unlock()
 	if !ok {
 		return StateClosed
@@ -232,13 +240,13 @@ func (s *inMemoryStore) State(policy, target string) State {
 
 // Snapshot collects a copy of every (policy, target) → State row.
 // The outer store mutex protects the map read; per-breaker mu
-// protects each state load. The breakerKey is split on '|' (the
-// canonical encoding from breakerKey) — operators cannot construct
-// keys that legitimately contain '|' because policy/target names are
-// validated as identifiers at config-load time.
+// protects each state load. Keys are breakerKey structs, so the
+// policy and target names come back exactly as they were recorded —
+// there is no string encoding to decode and nothing an unusual name
+// could fool.
 func (s *inMemoryStore) Snapshot() []BreakerSnapshot {
 	s.mu.Lock()
-	keys := make([]string, 0, len(s.breakers))
+	keys := make([]breakerKey, 0, len(s.breakers))
 	for k := range s.breakers {
 		keys = append(keys, k)
 	}
@@ -246,26 +254,13 @@ func (s *inMemoryStore) Snapshot() []BreakerSnapshot {
 
 	out := make([]BreakerSnapshot, 0, len(keys))
 	for _, k := range keys {
-		policy, target := splitBreakerKey(k)
 		out = append(out, BreakerSnapshot{
-			Policy: policy,
-			Target: target,
-			State:  s.State(policy, target),
+			Policy: k.policy,
+			Target: k.target,
+			State:  s.State(k.policy, k.target),
 		})
 	}
 	return out
-}
-
-// splitBreakerKey reverses breakerKey's "policy|target" encoding.
-// A missing separator collapses to (k, "") so the gauge always
-// emits something rather than dropping the row.
-func splitBreakerKey(k string) (policy, target string) {
-	for i := 0; i < len(k); i++ {
-		if k[i] == '|' {
-			return k[:i], k[i+1:]
-		}
-	}
-	return k, ""
 }
 
 // breaker is the per-(policy, target) state. Its own mu protects

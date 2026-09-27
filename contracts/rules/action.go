@@ -50,7 +50,8 @@ type Response struct {
 // model-keyed redirect is expressed as a binding on the Configuration, and a
 // rule-authored changeProvider is overwritten every attempt by the resilience
 // orchestrator's buildAttemptState re-applying the target's own
-// providerSwitchActions. It survives as an internal selection primitive: after
+// selection.ProviderSwitchActions (internal/selection/resilience.go). It
+// survives as an internal selection primitive: after
 // rules run, the handler re-resolves transport from the post-rule provider via
 // selection.ResolveTarget, and the credential is minted at the single mint site
 // (cmd/gateway/destination.go::resolveCredentialHeaders, invariant #6). There

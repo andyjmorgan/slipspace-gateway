@@ -16,9 +16,12 @@ type ResilienceMode string
 
 // Resilience modes accepted in YAML. Every mode dispatches at runtime:
 // ModeFailover runs the ordered walk, ModeLoadBalance and
-// ModeLoadBalanceWithFailover run the weighted pick, and ModeNone (or an
-// unrecognised future mode) degenerates to a single attempt against the first
-// target. See internal/middleware/resilience/middleware.go.
+// ModeLoadBalanceWithFailover run the weighted pick, and ModeNone degenerates
+// to a single attempt against the first target. See
+// internal/middleware/resilience/middleware.go. The set is closed: Validate
+// rejects any other value with ErrUnknownMode, and v2 config validation runs
+// it over every group at load (internal/config/config_validate.go), so a
+// misspelt mode fails the load instead of silently degrading to ModeNone.
 const (
 	ModeNone ResilienceMode = "none"
 
@@ -56,7 +59,9 @@ type ResilienceConfig struct {
 	// emits a stable telemetry handle via Name in that case.
 	ID *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 
-	// Mode selects the orchestration strategy. See the ModeX constants.
+	// Mode selects the orchestration strategy. See the ModeX constants. An
+	// empty Mode validates as ModeNone here; the v2 group validator requires
+	// it to be set explicitly.
 	Mode ResilienceMode `yaml:"mode" json:"mode"`
 
 	// TimeoutSeconds is parsed and validated but currently unwired: the
@@ -120,7 +125,7 @@ type ResilienceTarget struct {
 	// by the admin /policies view, but the orchestrator never reads it:
 	// per-attempt provider switching happens only through Actions, via a
 	// rules.ChangeProviderAction synthesised from the selected binding
-	// (providerSwitchActions, cmd/gateway/destination.go).
+	// (selection.ProviderSwitchActions, internal/selection/resilience.go).
 	Provider string `yaml:"provider" json:"provider"`
 
 	// Order is the failover priority for ModeFailover; lower values are
@@ -144,7 +149,7 @@ type ResilienceTarget struct {
 	// can set it — contracts/config.Target has no model_rewrite key.
 	// Per-attempt model rewriting happens only through Actions, via a
 	// rules.ChangeModelNameAction synthesised from a v2 group target's
-	// alias (providerSwitchActions, cmd/gateway/destination.go).
+	// alias (selection.ProviderSwitchActions, internal/selection/resilience.go).
 	ModelRewrite string `yaml:"model_rewrite,omitempty" json:"model_rewrite,omitempty"`
 
 	// FailureStatusCodes is the explicit list of upstream HTTP status codes
@@ -167,7 +172,10 @@ type ResilienceTarget struct {
 	// destination mutation; the scalar Provider and ModelRewrite fields are
 	// inert. No v2 YAML block authors a ResilienceTarget directly — groups
 	// are the authorable shape, and targets are machine-synthesised
-	// (cmd/gateway/destination.go).
+	// (selection.GroupResilienceConfig, internal/selection/resilience.go).
+	// Terminating actions (returnStatusCode, llmImpersonation) are rejected
+	// by Validate: the orchestrator discards a target action's Outcome, so
+	// they could never take effect.
 	Actions []rules.Action `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
@@ -203,7 +211,9 @@ type CircuitBreakerConfig struct {
 	SamplingDurationSeconds int `yaml:"sampling_duration_seconds" json:"sampling_duration_seconds"`
 
 	// CooldownSeconds is how long the breaker stays Open before transitioning
-	// to HalfOpen to probe the upstream.
+	// to HalfOpen to probe the upstream. Required (> 0) when Enabled: the
+	// state machine only leaves Open once the cooldown elapses, so Validate
+	// rejects an enabled breaker without one rather than let it wedge Open.
 	CooldownSeconds int `yaml:"cooldown_seconds" json:"cooldown_seconds"`
 
 	// HalfOpenSuccessThreshold is the number of consecutive HalfOpen
@@ -235,11 +245,11 @@ type RetryConfig struct {
 
 	// DelayMilliseconds is the base delay between attempts; the BackoffType
 	// curve scales subsequent delays.
-	DelayMilliseconds int `yaml:"delay_ms" json:"delay_milliseconds"`
+	DelayMilliseconds int `yaml:"delay_ms" json:"delay_ms"`
 
 	// MaxDelayMs caps the per-attempt delay so exponential backoff cannot
 	// stretch beyond a reasonable bound. Zero means uncapped.
-	MaxDelayMs int `yaml:"max_delay_ms" json:"max_delay_milliseconds"`
+	MaxDelayMs int `yaml:"max_delay_ms" json:"max_delay_ms"`
 
 	// UseJitter adds random jitter to each delay so synchronised clients
 	// don't retry in lockstep ("thundering herd").

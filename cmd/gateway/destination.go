@@ -5,79 +5,10 @@ import (
 	"net/url"
 	"strings"
 
-	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
-	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/slipspace-gateway/internal/proxy"
 	"github.com/andyjmorgan/slipspace-gateway/internal/selection"
 )
-
-// groupToResilienceConfig synthesises the resilience orchestrator's input from
-// a selected v2 group. The orchestrator is reused unchanged: each v2 target
-// becomes a ResilienceTarget whose per-attempt Actions switch the provider
-// (state.Provider, re-resolved by the final handler) and rewrite the body model
-// to the per-target alias. Order is preserved for failover; load_balance
-// ignores it.
-func groupToResilienceConfig(name string, g selection.Group) contractsres.ResilienceConfig {
-	targets := make([]contractsres.ResilienceTarget, 0, len(g.Targets))
-	for i, t := range g.Targets {
-		weight := t.Weight
-		if weight == 0 {
-			weight = 1 // even weighting when unset
-		}
-		targets = append(targets, contractsres.ResilienceTarget{
-			Name:     t.Provider,
-			Provider: t.Provider,
-			Order:    i + 1,
-			Weight:   weight,
-			Actions:  providerSwitchActions(t.Provider, t.Alias),
-		})
-	}
-	return contractsres.ResilienceConfig{
-		Name:                         name,
-		Mode:                         g.Mode,
-		FailureStatusCodes:           g.FailureStatusCodes,
-		CircuitBreaker:               g.CircuitBreaker,
-		StrictWeights:                g.StrictWeights,
-		ResponseHeaderTimeoutSeconds: g.ResponseHeaderTimeoutSeconds,
-		Targets:                      targets,
-	}
-}
-
-// singleTargetConfig synthesises a degenerate ModeNone policy carrying one
-// target, so a single-provider binding flows through the same orchestrator path
-// as a group: the provider switch + body alias are applied once, before the
-// body re-marshal step, and the final handler re-resolves the provider. This is
-// what lets a single binding carry a model alias (e.g. foundry-model → the
-// upstream deployment name) without a bespoke pre-forward rewrite stage.
-func singleTargetConfig(t selection.Target) contractsres.ResilienceConfig {
-	return contractsres.ResilienceConfig{
-		Name: "binding:" + t.Provider,
-		Mode: contractsres.ModeNone,
-		Targets: []contractsres.ResilienceTarget{{
-			Name:     t.Provider,
-			Provider: t.Provider,
-			Order:    1,
-			Actions:  providerSwitchActions(t.Provider, t.Alias),
-		}},
-	}
-}
-
-// providerSwitchActions builds the internal action pair the orchestrator applies
-// per attempt: changeProvider switches state.Provider to the provider (the final
-// handler re-resolves transport from it), and changeModelName rewrites the body
-// model to the alias when one is set. The action registry still parses both
-// types, but they are no longer the authorable routing mechanism: a rule-authored
-// changeProvider is overwritten every attempt by buildAttemptState re-applying
-// the target's own providerSwitchActions, so in practice they survive as
-// internal selection primitives.
-func providerSwitchActions(provider, alias string) []contractsrules.Action {
-	acts := []contractsrules.Action{&contractsrules.ChangeProviderAction{NewProvider: provider}}
-	if alias != "" {
-		acts = append(acts, &contractsrules.ChangeModelNameAction{NewModelName: alias})
-	}
-	return acts
-}
 
 // buildDestination resolves the upstream destination for a v2 request from
 // the selected target plus the auth decision. It is the single credential mint

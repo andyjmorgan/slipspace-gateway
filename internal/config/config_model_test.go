@@ -341,6 +341,53 @@ func TestValidate_Failures(t *testing.T) {
 		{"group target empty provider", func(r *ResolvedConfig) {
 			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: ""}}}
 		}, "provider is required"},
+		{"group name not an identifier", func(r *ResolvedConfig) {
+			r.Groups["eu|west"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}}}
+		}, `group "eu|west": name must start with a letter or digit`},
+		{"group name leading dash", func(r *ResolvedConfig) {
+			r.Groups["-lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}}}
+		}, `group "-lb": name must start`},
+		{"provider name not an identifier", func(r *ResolvedConfig) {
+			r.Providers["open|ai"] = contractsconfig.Provider{BaseURL: "http://o", Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Path: "/c"}}}
+		}, `provider "open|ai": name must start with a letter or digit`},
+		{"provider name with space", func(r *ResolvedConfig) {
+			r.Providers["open ai"] = contractsconfig.Provider{BaseURL: "http://o", Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Path: "/c"}}}
+		}, `provider "open ai": name must start`},
+		{"group mode missing", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Targets: []contractsconfig.Target{{Provider: "openai"}}}
+		}, `group "lb": mode is required (one of failover, load_balance, load_balance_with_failover, none)`},
+		{"group mode misspelt", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: "failver", Targets: []contractsconfig.Target{{Provider: "openai"}}}
+		}, `group "lb": resilience: mode "failver": resilience: unknown mode`},
+		{"group provider listed twice", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: "openai"}, {Provider: "openai", Alias: "other"}}}
+		}, `group "lb" targets[1]: provider "openai" already listed at targets[0]`},
+		{"group breaker rate threshold above one", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
+				CircuitBreaker: &resilience.CircuitBreakerConfig{Enabled: true, FailureRateThreshold: 90, CooldownSeconds: 30}}
+		}, "failure_rate_threshold 90.000000 out of [0,1]"},
+		{"group breaker enabled without thresholds", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
+				CircuitBreaker: &resilience.CircuitBreakerConfig{Enabled: true, CooldownSeconds: 30}}
+		}, "enabled breaker needs failure_threshold or failure_rate_threshold"},
+		{"group breaker enabled without cooldown", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
+				CircuitBreaker: &resilience.CircuitBreakerConfig{Enabled: true, FailureThreshold: 5}}
+		}, "enabled breaker needs cooldown_seconds > 0"},
+		{"group breaker negative cooldown", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
+				CircuitBreaker: &resilience.CircuitBreakerConfig{CooldownSeconds: -1}}
+		}, "cooldown_seconds -1"},
+		{"group breaker negative sampling duration", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
+				CircuitBreaker: &resilience.CircuitBreakerConfig{SamplingDurationSeconds: -5}}
+		}, "sampling_duration_seconds -5"},
+		{"group negative response header timeout", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}}, ResponseHeaderTimeoutSeconds: -1}
+		}, "response_header_timeout_seconds -1"},
+		{"group failure status code out of range", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}}, FailureStatusCodes: []int{200}}
+		}, "failure_status_codes[0] 200"},
 		{"connector validate error", func(r *ResolvedConfig) {
 			r.Connectors = contractsconfig.ConnectorsConfig{{Name: "c", Type: "webhook"}}
 		}, "url is required"},
@@ -361,5 +408,57 @@ func TestValidate_Failures(t *testing.T) {
 				t.Fatalf("error %q does not contain %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+// TestValidate_GroupsAccepted is the positive half of the group rules: every
+// closed-set mode, an enabled breaker with both arms and a cooldown, unset
+// weights, and identifier names using every permitted character all pass.
+func TestValidate_GroupsAccepted(t *testing.T) {
+	cb := &resilience.CircuitBreakerConfig{Enabled: true, FailureThreshold: 3, FailureRateThreshold: 0.5, SamplingDurationSeconds: 60, CooldownSeconds: 30, MinimumThroughput: 10}
+	cases := []struct {
+		name  string
+		group string
+		g     contractsconfig.Group
+	}{
+		{"failover", "ha", contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}, {Provider: "openai2", Alias: "m"}}, CircuitBreaker: cb}},
+		{"load_balance", "lb", contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: "openai", Weight: 70}, {Provider: "openai2"}}, StrictWeights: true}},
+		{"load_balance_with_failover", "lbwf", contractsconfig.Group{Mode: resilience.ModeLoadBalanceWithFailover, Targets: []contractsconfig.Target{{Provider: "openai"}, {Provider: "openai2"}}, FailureStatusCodes: []int{502, 503}, ResponseHeaderTimeoutSeconds: 20}},
+		{"none", "single", contractsconfig.Group{Mode: resilience.ModeNone, Targets: []contractsconfig.Target{{Provider: "openai"}}}},
+		{"identifier charset", "EU-west_1.v2", contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}}}},
+		{"leading digit", "1st", contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := validBase()
+			r.Providers["openai2"] = contractsconfig.Provider{BaseURL: "http://o2", Protocols: map[string]contractsconfig.ProviderProtocol{"chat": {Path: "/c"}}}
+			r.Groups[tc.group] = tc.g
+			if err := r.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidate_GroupErrorChain pins that a group rejection wraps both the
+// config-level ErrValidation and the contracts/resilience sentinel that
+// produced it, so callers can branch on either.
+func TestValidate_GroupErrorChain(t *testing.T) {
+	r := validBase()
+	r.Groups["lb"] = contractsconfig.Group{Mode: "roundrobin", Targets: []contractsconfig.Target{{Provider: "openai"}}}
+	err := r.Validate()
+	if !errors.Is(err, ErrValidation) {
+		t.Errorf("err %v does not wrap ErrValidation", err)
+	}
+	if !errors.Is(err, resilience.ErrUnknownMode) {
+		t.Errorf("err %v does not wrap resilience.ErrUnknownMode", err)
+	}
+
+	r = validBase()
+	r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
+		CircuitBreaker: &resilience.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1}}
+	err = r.Validate()
+	if !errors.Is(err, ErrValidation) || !errors.Is(err, resilience.ErrInvalidCircuitBreakerConfig) {
+		t.Errorf("err %v does not wrap ErrValidation + ErrInvalidCircuitBreakerConfig", err)
 	}
 }
