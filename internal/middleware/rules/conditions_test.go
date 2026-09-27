@@ -417,6 +417,47 @@ func TestMatchGroup(t *testing.T) {
 			t.Error("groupDepthExceeded callback should have fired at least once")
 		}
 	})
+
+	t.Run("depth cap is not inverted by not", func(t *testing.T) {
+		t.Parallel()
+		called := 0
+		// Inner group is the one that hits the cap. not:true used to
+		// invert the sentinel false into a match, so the rule fired
+		// even though the condition was never evaluated.
+		inner := &contractsrules.RuleGroup{
+			LogicalOperator: contractsrules.LogicalAnd,
+			Children:        []contractsrules.Condition{provOpenAI},
+			Not:             true,
+		}
+		outer := &contractsrules.RuleGroup{
+			LogicalOperator: contractsrules.LogicalAnd,
+			Children:        []contractsrules.Condition{inner},
+		}
+		got := matchCondition(outer, ctxWith("openai", "", "", nil), 0, 1, func() { called++ })
+		if got {
+			t.Error("depth-capped group with not:true must still fail closed")
+		}
+		if called == 0 {
+			t.Error("groupDepthExceeded callback should have fired at least once")
+		}
+	})
+
+	t.Run("depth cap on the group itself is not inverted by not", func(t *testing.T) {
+		t.Parallel()
+		called := 0
+		g := &contractsrules.RuleGroup{
+			LogicalOperator: contractsrules.LogicalAnd,
+			Children:        []contractsrules.Condition{provOpenAI},
+			Not:             true,
+		}
+		got := matchCondition(g, ctxWith("openai", "", "", nil), 1, 1, func() { called++ })
+		if got {
+			t.Error("a group already at the depth cap must return false even with not:true")
+		}
+		if called == 0 {
+			t.Error("groupDepthExceeded callback should have fired")
+		}
+	})
 }
 
 func TestMatchCondition_NilAndUnknown(t *testing.T) {
