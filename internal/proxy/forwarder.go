@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
+	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
 
@@ -164,14 +165,20 @@ func New(opts Options) *Forwarder {
 	}
 }
 
-// alwaysDropHeaders are headers the gateway never forwards upstream.
+// alwaysDropHeaders are headers the gateway never forwards upstream,
+// independently of whatever an upstream stage put in Destination.DropHeaders.
 //
-// Authorization, X-Slipspace-Configuration and X-Slipspace-Identity carry
-// the gateway's own auth state and must not propagate; the cmd/gateway
-// destination builder (resolveCredentialHeaders, the single mint site)
-// re-injects the upstream credential via Destination.OutgoingHeaders for
-// managed mode and re-adds the inbound Authorization verbatim for
-// passthrough mode; the auth middleware only supplies DropHeaders.
+// Authorization and the four selector spellings (X-Slipspace-Identity /
+// X-Slipspace-Configuration and their pre-rename X-Sluice-* twins, all
+// accepted by internal/middleware/auth) carry the gateway's own auth state —
+// the identity header is a live sk_live_... secret — and must not propagate;
+// the cmd/gateway destination builder (resolveCredentialHeaders, the single
+// mint site) re-injects the upstream credential via Destination.OutgoingHeaders
+// for managed mode and re-adds the inbound Authorization verbatim for
+// passthrough mode. The auth middleware also lists the selectors in
+// DropHeaders, but this list is the backstop that holds when it does not
+// (issue #558). The legacy pair leaves this list together with the compat
+// shim in auth (LegacyHeaderIdentity / LegacyHeaderConfiguration).
 //
 // Origin, Referer, and Cookie are browser-session state. They have no
 // meaning to upstream LLM APIs and, worse, trigger provider-side
@@ -188,9 +195,11 @@ func New(opts Options) *Forwarder {
 // without per-hop decompression logic. The .NET predecessor stripped
 // Accept-Encoding for the same reason.
 var alwaysDropHeaders = []string{
-	"X-Slipspace-Configuration",
-	"X-Slipspace-Identity",
-	"Authorization",
+	auth.HeaderConfiguration,
+	auth.HeaderIdentity,
+	auth.LegacyHeaderConfiguration,
+	auth.LegacyHeaderIdentity,
+	auth.HeaderAuthorization,
 	"Origin",
 	"Referer",
 	"Cookie",

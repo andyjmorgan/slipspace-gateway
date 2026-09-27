@@ -7,6 +7,7 @@ import (
 	"time"
 
 	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
@@ -63,13 +64,13 @@ func HTTPHandler(eval *Evaluator, matchFrom MatchFromContextFunc, observerFactor
 		if state == nil {
 			if matchFrom == nil {
 				logger.ErrorContext(ctx, "rules: no state and no matchFrom on context")
-				http.Error(w, "internal error", http.StatusInternalServerError)
+				httperr.FromContext(ctx).Write(ctx, w, http.StatusInternalServerError, "rules", "internal", "internal error")
 				return
 			}
 			provider, endpoint, matchedPath, params, ok := matchFrom(ctx)
 			if !ok {
 				logger.ErrorContext(ctx, "rules: no route on context")
-				http.Error(w, "internal error", http.StatusInternalServerError)
+				httperr.FromContext(ctx).Write(ctx, w, http.StatusInternalServerError, "rules", "internal", "internal error")
 				return
 			}
 			state = NewMutableState(provider, endpoint, matchedPath, params, r.Header)

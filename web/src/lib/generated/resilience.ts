@@ -192,6 +192,23 @@ export interface ResilienceTarget {
    */
   model_rewrite?: string;
   /**
+   * Path is the selected v2 target's upstream path override
+   * (contracts/config.Target.Path), carried per attempt so the final
+   * handler re-resolves transport with it instead of the provider's
+   * protocol default (issue #409). Like Actions, it is populated only by
+   * the selection synthesiser (cmd/gateway/destination.go) and copied onto
+   * the attempt state by the orchestrator (buildAttemptState); it is not
+   * an authorable resilience field. Empty means "provider default path".
+   */
+  path?: string;
+  /**
+   * Query is the selected v2 target's query-string overrides
+   * (contracts/config.Target.Query), carried per attempt for the same
+   * reason as Path. Composed over the provider's default query at final
+   * resolution (target wins). Nil means "no per-target overrides".
+   */
+  query?: { [key: string]: string};
+  /**
    * FailureStatusCodes is the explicit list of upstream HTTP status codes
    * treated as a failure for retry/circuit-breaker accounting. Empty
    * defers to the parent ResilienceConfig.FailureStatusCodes and then to

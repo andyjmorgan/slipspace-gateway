@@ -214,7 +214,7 @@ func run(ctx context.Context) error {
 	// middleware treats nil as feature-off. Advisor endpoints bind at startup;
 	// per-configuration agent_routing policy reads live from each snapshot.
 	agentRouter := buildAgentRouter(store.Snapshot(), logger)
-	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, observerFactory, store, breakers, agentRouter, obs.Meters, errs, redactor, logger)
+	dataPlane := buildDataPlaneHandler(resolver, forwarder, evaluator, observerFactory, store, breakers, agentRouter, obs.Meters, errs, redactor, env.ExternalURL, logger)
 
 	// Capture wraps completion + recovery so even locally rejected requests
 	// and recovered panics have a response body available to Live Messages.
