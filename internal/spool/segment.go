@@ -64,8 +64,9 @@ type Segment struct {
 
 	// bytesUncompressed sums the byte lengths of every record (json + \n)
 	// before zstd. Reported via Segment.Stats as
-	// SegmentStats.BytesUncompressed. No manifest sidecar is written — the
-	// design note's manifest.json was never implemented.
+	// SegmentStats.BytesUncompressed, and persisted at seal time into the
+	// <segment>.meta.json stats sidecar (meta.go) that the uploader reads
+	// into SealedSegment.BytesUncompressed.
 	bytesUncompressed int64
 
 	// tsMinNs and tsMaxNs track the per-segment range of Record.TsNs.
