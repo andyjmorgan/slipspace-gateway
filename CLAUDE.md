@@ -26,7 +26,7 @@ Fetch via:
 The notes you'll reference most often:
 
 - **Module Layout** — directory tree, rationale
-- **Configuration Schema** — full YAML shape for `gateway.yaml`, `providers.yaml`, `configurations.yaml`, `api_keys.yaml`
+- **Configuration Schema** — full YAML shape of the top-level blocks (`providers`, `groups`, `configurations`, `api_keys`, `rules`, `connectors`, `admin`, `telemetry`, `pricing`, `advisors`); the loader merges any `*.yaml` in the config dir (conventionally `providers.yaml` / `policy.yaml` / `admin.yaml`)
 - **Pipeline + Middleware** — the typed-message channel pattern
 - **Provider Models + DynamicProperties (load-bearing)** — unknown-field preservation, polymorphic content
 - **Rule Schema** — conditions, actions, evaluator algorithm
