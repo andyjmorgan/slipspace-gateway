@@ -180,7 +180,11 @@ func (s *inMemoryStore) Allow(policy, target string, cfg *contractsres.CircuitBr
 	case StateOpen:
 		return false
 	case StateHalfOpen:
-		if b.halfOpenSuccesses < halfOpenThreshold(cfg) {
+		// Reserve the probe slot under b.mu. halfOpenSuccesses only
+		// bumps after the attempt completes, so gating on it alone
+		// admits every concurrent caller until the first Record*.
+		if b.halfOpenSuccesses+b.halfOpenInFlight < halfOpenThreshold(cfg) {
+			b.halfOpenInFlight++
 			return true
 		}
 		return false
@@ -199,6 +203,9 @@ func (s *inMemoryStore) RecordSuccess(policy, target string, cfg *contractsres.C
 	b.advance(now, cfg, policy, target, s.listener)
 	b.buckets[b.bucketIdx].successes++
 	if b.state == StateHalfOpen {
+		if b.halfOpenInFlight > 0 {
+			b.halfOpenInFlight--
+		}
 		b.halfOpenSuccesses++
 		if b.halfOpenSuccesses >= halfOpenThreshold(cfg) {
 			b.transition(StateClosed, now, "halfopen_success_threshold", policy, target, s.listener)
@@ -222,6 +229,9 @@ func (s *inMemoryStore) RecordFailure(policy, target string, cfg *contractsres.C
 			b.transition(StateOpen, now, "trip", policy, target, s.listener)
 		}
 	case StateHalfOpen:
+		if b.halfOpenInFlight > 0 {
+			b.halfOpenInFlight--
+		}
 		b.transition(StateOpen, now, "halfopen_failure", policy, target, s.listener)
 	}
 }
@@ -291,6 +301,11 @@ type breaker struct {
 	// HalfOpen probe window. Reset on entering HalfOpen and on
 	// closing.
 	halfOpenSuccesses int
+
+	// halfOpenInFlight is the number of probes Allow has admitted
+	// that have not yet RecordSuccess / RecordFailure. Together
+	// with halfOpenSuccesses it is the HalfOpen probe quota.
+	halfOpenInFlight int
 }
 
 type bucket struct {
@@ -387,10 +402,13 @@ func (b *breaker) transition(to State, now time.Time, reason, policy, target str
 	switch to {
 	case StateOpen:
 		b.openedAt = now
+		b.halfOpenInFlight = 0
 	case StateHalfOpen:
 		b.halfOpenSuccesses = 0
+		b.halfOpenInFlight = 0
 	case StateClosed:
 		b.halfOpenSuccesses = 0
+		b.halfOpenInFlight = 0
 		// Clear the window on close so the new healthy span starts
 		// fresh — otherwise old failures linger and a single new
 		// failure could re-trip the breaker.
