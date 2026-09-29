@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router"
 import { Eye, EyeOff, LayoutDashboard, ListTree, LogOut, Menu, Moon, MessagesSquare, Settings2, ShieldAlert, Sun, Waypoints, Wrench } from "lucide-react"
 import { auth } from "@/lib/auth"
+import { LOGIN_PATH, loginRedirectState, redirectTarget } from "@/lib/login-redirect"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -62,11 +63,14 @@ function LifecycleAlias() {
   return <Navigate to={`/sessions/${encodeURIComponent(id)}${hash}`} replace />
 }
 
-// Guard redirects to /login when no Basic credentials are cached. The pages
-// themselves still handle a live 401 (rejected creds) by routing back here.
+// Guard redirects to /login when no Basic credentials are cached, carrying the
+// full intended location (path + query + #span= hash) so sign-in returns to the
+// deep link. The pages themselves still handle a live 401 (rejected creds) by
+// routing back here via useLoginRedirect.
 function Guard() {
+  const loc = useLocation()
   if (!auth.isLoggedIn()) {
-    return <Navigate to="/login" replace />
+    return <Navigate to={LOGIN_PATH} state={loginRedirectState(loc)} replace />
   }
   return <Outlet />
 }
@@ -258,6 +262,7 @@ function TelemetryTopbar({ onMenuToggle }: { onMenuToggle: () => void }) {
 // empty submit locally.
 function LoginPage() {
   const nav = useNavigate()
+  const loc = useLocation()
   const [theme, , toggleTheme] = useTheme()
 
   const [username, setUsername] = useState("")
@@ -273,7 +278,7 @@ function LoginPage() {
       return
     }
     auth.store(username, password)
-    nav("/", { replace: true })
+    nav(redirectTarget(loc.state, "/"), { replace: true })
   }
 
   return (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -33,7 +33,7 @@ export function SettingsPage() {
   const [state, setState] = useState<FetchState>({ status: "loading" })
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
 
   useEffect(() => {
     let cancelled = false
@@ -61,9 +61,9 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (state.status === "unauthorized") {
-      nav("/login", { replace: true })
+      toLogin()
     }
-  }, [state, nav])
+  }, [state, toLogin])
 
   const handleDownload = useCallback(async () => {
     setDownloading(true)
@@ -75,7 +75,7 @@ export function SettingsPage() {
       const res = await fetch("/admin/api/v1/config/export/download", { headers })
       if (res.status === 401) {
         auth.clear()
-        nav("/login", { replace: true })
+        toLogin()
         return
       }
       if (!res.ok) {
@@ -90,7 +90,7 @@ export function SettingsPage() {
     } finally {
       setDownloading(false)
     }
-  }, [nav])
+  }, [toLogin])
 
   return (
     <div className="flex flex-col gap-5">

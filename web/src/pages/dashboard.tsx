@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { KPI } from "@/components/atoms/kpi"
@@ -28,13 +28,13 @@ import {
 export function DashboardPage() {
   const [range, setRange] = useState<DashboardWindow>("24h")
   const { state, refetch } = useDashboardSummary(range)
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
 
   useEffect(() => {
     if (state.status === "unauthorized") {
-      nav("/login", { replace: true })
+      toLogin()
     }
-  }, [state, nav])
+  }, [state, toLogin])
 
   const refreshing = state.status === "loading"
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard } from "@/components/atoms/card"
@@ -17,7 +17,7 @@ type ViewFormat = "json" | "yaml"
 // gateway HMAC secrets, evidence key, and DSN password come back as "***"), so
 // this surface only renders; it never edits and never sees a credential.
 export function SettingsPage() {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   const [format, setFormat] = useState<ViewFormat>("yaml")
   const [reloadNonce, setReloadNonce] = useState(0)
 
@@ -39,7 +39,7 @@ export function SettingsPage() {
       .catch((e) => {
         if (cancelled) return
         if (e instanceof UnauthorizedError) {
-          nav("/login", { replace: true })
+          toLogin()
           return
         }
         setFetched({ key: reloadNonce, config: null, err: e instanceof Error ? e.message : String(e) })
@@ -47,7 +47,7 @@ export function SettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [reloadNonce, nav])
+  }, [reloadNonce, toLogin])
 
   // The rendered text derives purely from config + format — no setState in an
   // effect, so the toggle is instant and re-render-safe.

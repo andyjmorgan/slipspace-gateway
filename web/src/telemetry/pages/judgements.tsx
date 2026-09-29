@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
@@ -24,7 +24,7 @@ function verdictBadge(e: AdviseAuditItem): { label: string; color: string } {
 // pages are fetched on demand and appended. Read-only over the arbiter's
 // advise_audit table.
 export function JudgementsPage() {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   const audit = useAdviseAudit()
 
   // Older judgement pages, appended below the polled head page.
@@ -33,8 +33,8 @@ export function JudgementsPage() {
   const [exhausted, setExhausted] = useState(false)
 
   useEffect(() => {
-    if (audit.state.status === "unauthorized") nav("/login", { replace: true })
-  }, [audit.state, nav])
+    if (audit.state.status === "unauthorized") toLogin()
+  }, [audit.state, toLogin])
 
   const head: AdviseAuditItem[] = audit.state.status === "ok" ? (audit.state.data.items ?? []) : []
   // Drop any overlap between the polled head and previously-loaded older pages

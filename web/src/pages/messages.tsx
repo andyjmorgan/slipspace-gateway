@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { ChevronDown, ChevronRight, Layers, Pause, Play, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -46,7 +46,7 @@ export function MessagesPage() {
   const pausedRef = useRef(paused)
   pausedRef.current = paused
   const pendingRef = useRef<MessageEntry[]>([])
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
 
   const handleNewEntry = useCallback((e: MessageEntry) => {
     if (pausedRef.current) {
@@ -77,7 +77,7 @@ export function MessagesPage() {
       .catch((err) => {
         if (cancelled) return
         if (err instanceof UnauthorizedError) {
-          nav("/login", { replace: true })
+          toLogin()
           return
         }
         // 503 means the live feed is disabled via SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0.
@@ -91,7 +91,7 @@ export function MessagesPage() {
     return () => {
       cancelled = true
     }
-  }, [nav])
+  }, [toLogin])
 
   useEffect(() => {
     if (feed.status !== "ok") return

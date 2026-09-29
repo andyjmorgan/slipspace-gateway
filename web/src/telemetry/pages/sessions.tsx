@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -47,6 +48,7 @@ export function SessionsPage() {
 // a live feed — Refresh re-fetches the current page + facets.
 function SessionsList() {
   const nav = useNavigate()
+  const toLogin = useLoginRedirect()
 
   // Jump-to-id box (direct lookup, bypasses the list).
   const [jumpInput, setJumpInput] = useState("")
@@ -113,7 +115,7 @@ function SessionsList() {
       .catch((e) => {
         if (cancelled) return
         if (e instanceof UnauthorizedError) {
-          nav("/login", { replace: true })
+          toLogin()
           return
         }
         setErr(e instanceof Error ? e.message : String(e))
@@ -122,7 +124,7 @@ function SessionsList() {
     return () => {
       cancelled = true
     }
-  }, [configurations, providers, models, protocols, tags, timeRange, sort, pageIndex, limit, reloadNonce, nav])
+  }, [configurations, providers, models, protocols, tags, timeRange, sort, pageIndex, limit, reloadNonce, toLogin])
 
   // Facets back the dropdowns (cached server-side per window, cheap to
   // re-fetch on Refresh). Window-scoped to the same range as the list, so the

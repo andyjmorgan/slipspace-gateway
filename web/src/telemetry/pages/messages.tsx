@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -48,7 +48,7 @@ const EMPTY_FACETS: Facets = { providers: [], models: [], configurations: [], pr
 // does not poll — it's a deliberate browse surface; Refresh re-fetches the
 // current page and the dropdown facets. Rows open the per-request inspector.
 export function MessagesPage() {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
 
   // Filter inputs. Dropdowns/segments apply immediately; the id boxes debounce.
   const [corrInput, setCorrInput] = useState("")
@@ -109,7 +109,7 @@ export function MessagesPage() {
       return { from: range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined }
     },
     windowKey: timeRange,
-    onUnauthorized: () => nav("/login", { replace: true }),
+    onUnauthorized: toLogin,
   })
 
   // The inspector selection is tagged with the page it points into, so a new

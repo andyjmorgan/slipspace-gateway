@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { RefreshCw, ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -61,7 +61,7 @@ function statusTag(status: string) {
 // Next/Prev (the endpoint reports no total). It does not poll — a deliberate
 // browse surface; Refresh re-fetches the page and the dropdown facets.
 export function ToolCallsPage() {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
 
   // Categorical dimensions are multi-select: many values OR within the
   // dimension. The header funnel menus (Tool/Provider columns) and the filter
@@ -119,7 +119,7 @@ export function ToolCallsPage() {
       return { from: range && range.ms > 0 ? new Date(Date.now() - range.ms).toISOString() : undefined }
     },
     windowKey: timeRange,
-    onUnauthorized: () => nav("/login", { replace: true }),
+    onUnauthorized: toLogin,
   })
 
   // Selection is tagged with the page it indexes into, so a new page derives it

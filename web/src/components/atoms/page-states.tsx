@@ -4,7 +4,8 @@
 // these helpers so the shapes stay identical across every page.
 
 import { useEffect } from "react"
-import { Link, useLocation, useNavigate } from "react-router"
+import { Link, useLocation } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { Plus } from "lucide-react"
 import type { ConfigFetchState } from "@/lib/config-api"
 import { navMetaForPath } from "@/lib/nav-meta"
@@ -113,10 +114,10 @@ export function EmptyPanel({ message }: { message: string }) {
 // same thing on 401 — drift between pages would surface as inconsistent
 // session-expiry behaviour.
 export function useUnauthorizedRedirect(state: ConfigFetchState<unknown>) {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   useEffect(() => {
     if (state.status === "unauthorized") {
-      nav("/login", { replace: true })
+      toLogin()
     }
-  }, [state.status, nav])
+  }, [state.status, toLogin])
 }

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { auth } from "@/lib/auth"
+import { redirectTarget } from "@/lib/login-redirect"
 import { fetchVersion, validateSession } from "@/lib/api"
 import { useTheme } from "@/lib/theme"
 
@@ -34,7 +35,8 @@ export function LoginPage() {
     }
   }, [])
 
-  const from = (loc.state as { from?: string } | null)?.from ?? "/dashboard"
+  // Return to the deep link the gate recorded (sanitised: same-origin paths only).
+  const from = redirectTarget(loc.state, "/dashboard")
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
