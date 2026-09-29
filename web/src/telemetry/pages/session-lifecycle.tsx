@@ -2,6 +2,7 @@ import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useSta
 import type { ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate, useParams } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { ChevronLeft, ChevronRight, RotateCcw, X } from "lucide-react"
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { Button } from "@/components/ui/button"
@@ -396,7 +397,7 @@ function LifecycleBreadcrumb({
 }
 
 function LifecycleBody({ sessionId }: { sessionId: string }) {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   const [spans, setSpans] = useState<SessionSpan[]>([])
   const [source, setSource] = useState<"api" | "fixture">("api")
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading")
@@ -428,7 +429,7 @@ function LifecycleBody({ sessionId }: { sessionId: string }) {
       .catch((e) => {
         if (cancelled) return
         if (e instanceof UnauthorizedError) {
-          nav("/login", { replace: true })
+          toLogin()
           return
         }
         setErr(e instanceof Error ? e.message : String(e))
@@ -437,7 +438,7 @@ function LifecycleBody({ sessionId }: { sessionId: string }) {
     return () => {
       cancelled = true
     }
-  }, [sessionId, nav])
+  }, [sessionId, toLogin])
 
   const vm = useMemo(() => (status === "ok" ? buildViewModel(spans) : null), [status, spans])
 
@@ -1820,7 +1821,7 @@ function SessionMessagesPanel({
   focusedConv: string | null
   dispName: (conv: string) => string
 }) {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   const debounced = useDebounced(slice, 300)
   const d0 = debounced?.d0 ?? 0
   const d1 = debounced?.d1 ?? vm.dur
@@ -1890,7 +1891,7 @@ function SessionMessagesPanel({
     filters,
     limit,
     enabled: !isFixture,
-    onUnauthorized: () => nav("/login", { replace: true }),
+    onUnauthorized: toLogin,
   })
 
   // Fixture path: rows derived client-side from the loaded spans (newest
@@ -2098,6 +2099,7 @@ function SessionSecurityPanel({
   // resetting via setState-in-effect; the effect only setStates in callbacks.
   const [res, setRes] = useState<{ sid: string; rows: FindingRow[] | null; err: string | null } | null>(null)
   const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   // A fixture session has no findings endpoint — short-circuit to an empty list
   // during render (not via setState-in-effect) so the table shows its empty state.
   const isFixture = source !== "api"
@@ -2112,7 +2114,7 @@ function SessionSecurityPanel({
       .catch((e) => {
         if (cancelled) return
         if (e instanceof UnauthorizedError) {
-          nav("/login", { replace: true })
+          toLogin()
           return
         }
         setRes({ sid, rows: null, err: e instanceof Error ? e.message : String(e) })
@@ -2120,7 +2122,7 @@ function SessionSecurityPanel({
     return () => {
       cancelled = true
     }
-  }, [sid, isFixture, nav])
+  }, [sid, isFixture, toLogin])
 
   const ready = isFixture
     ? { sid, rows: [] as FindingRow[], err: null }

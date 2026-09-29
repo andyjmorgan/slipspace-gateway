@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
@@ -23,13 +23,13 @@ function reasonTone(reason: string): "warn" | "err" {
 // count — a dedicated triage surface, not a home-page panel. Sibling of the
 // Findings page under the Security section. Empty window = detectors healthy.
 export function SecurityAuditPage() {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   const [window, setWindow] = useState<DashboardWindow>("24h")
   const { state, refetch } = useDashboardSecurityAudit(window)
 
   useEffect(() => {
-    if (state.status === "unauthorized") nav("/login", { replace: true })
-  }, [state, nav])
+    if (state.status === "unauthorized") toLogin()
+  }, [state, toLogin])
 
   const items: ScanAuditEntry[] = state.status === "ok" ? (state.data.items ?? []) : []
   const refreshing = state.status === "loading"

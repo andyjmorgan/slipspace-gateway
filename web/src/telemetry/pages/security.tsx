@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard } from "@/components/atoms/card"
@@ -40,6 +41,7 @@ const SKELETON_ROWS = 12
 // source request in that same shared inspector, landing on the Security tab.
 export function SecurityPage() {
   const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   const [timeRange, setTimeRange] = useState<TimeRange>(DEFAULT_RANGE)
   const [reloadNonce, setReloadNonce] = useState(0)
 
@@ -65,7 +67,7 @@ export function SecurityPage() {
       .catch((e) => {
         if (cancelled) return
         if (e instanceof UnauthorizedError) {
-          nav("/login", { replace: true })
+          toLogin()
           return
         }
         setFetched({ key, rows: null, err: e instanceof Error ? e.message : String(e) })
@@ -73,7 +75,7 @@ export function SecurityPage() {
     return () => {
       cancelled = true
     }
-  }, [timeRange, key, nav])
+  }, [timeRange, key, toLogin])
 
   // The inspector opens on a fetched MessageEntry (the shared modal needs the
   // full request facts, which a finding row doesn't carry). entry undefined =
@@ -89,7 +91,7 @@ export function SecurityPage() {
         setSelected((cur) => (cur && cur.cid === cid ? { cid, entry } : cur))
       })
       .catch((e) => {
-        if (e instanceof UnauthorizedError) nav("/login", { replace: true })
+        if (e instanceof UnauthorizedError) toLogin()
         // leave entry null -> the inspector shows nothing to open; close it
         setSelected((cur) => (cur && cur.cid === cid ? null : cur))
       })

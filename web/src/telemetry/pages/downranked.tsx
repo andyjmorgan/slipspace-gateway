@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLoginRedirect } from "@/lib/use-login-redirect"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PanelCard, PanelHead } from "@/components/atoms/card"
@@ -25,13 +25,13 @@ const WINDOWS: { value: DashboardWindow; label: string }[] = [
 // to the owning session. Read-only over the arbiter's advise_audit +
 // request_events tables.
 export function DownrankedPage() {
-  const nav = useNavigate()
+  const toLogin = useLoginRedirect()
   const [window, setWindow] = useState<DashboardWindow>("24h")
   const savings = useAdviseSavings(window)
 
   useEffect(() => {
-    if (savings.state.status === "unauthorized") nav("/login", { replace: true })
-  }, [savings.state, nav])
+    if (savings.state.status === "unauthorized") toLogin()
+  }, [savings.state, toLogin])
 
   const refreshing = savings.state.status === "loading"
 

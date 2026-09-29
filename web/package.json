@@ -9,7 +9,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "dev:telemetry": "vite --config vite.telemetry.config.ts",
-    "build:telemetry": "tsc -b && vite build --config vite.telemetry.config.ts"
+    "build:telemetry": "tsc -b && vite build --config vite.telemetry.config.ts",
+    "test": "node --test test/*.test.ts",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e/*.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",
@@ -41,6 +43,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "playwright": "1.60.0",
     "tailwindcss": "^4.3.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
