@@ -24,7 +24,6 @@ import (
 	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 	cc "github.com/andyjmorgan/slipspace-gateway/contracts/connector"
 	"github.com/andyjmorgan/slipspace-gateway/contracts/events"
-	"github.com/andyjmorgan/slipspace-gateway/internal/arbiter/pusher"
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 	"github.com/andyjmorgan/slipspace-gateway/internal/contentredact"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/auth"
@@ -91,9 +90,11 @@ type reporterFactory struct {
 	// pushers holds one real-time pusher per webhook connector, keyed by
 	// connector name. A webhook binding routes its evaluated record to the
 	// matching pusher (channel 3: per-record HMAC POST, non-spooled,
-	// drop-on-full) instead of the disk spool. Empty when no webhook
+	// drop-on-full) instead of the disk spool. The set is swapped live by
+	// the sink reconciler as connectors are created / edited / deleted
+	// through the admin write API. Empty (or nil) when no webhook
 	// connectors are configured.
-	pushers map[string]*pusher.Pusher
+	pushers *pusherSet
 
 	// tracer emits the per-request span at completion. May be nil (no
 	// OTLP endpoint configured, or test contexts); emitTrace no-ops then.
@@ -121,7 +122,7 @@ type reporterFactory struct {
 	seq        atomic.Uint64
 }
 
-func newReporterFactory(s *spool.Spool, store *config.Store, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool, caps contractsconfig.ResolvedContentCaps, pushers map[string]*pusher.Pusher) *reporterFactory {
+func newReporterFactory(s *spool.Spool, store *config.Store, logger *slog.Logger, meters *observability.Meters, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, tracer trace.Tracer, eventLogger otellog.Logger, captureContent bool, caps contractsconfig.ResolvedContentCaps, pushers *pusherSet) *reporterFactory {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -619,19 +620,34 @@ func (r *reporterRun) enqueueRecord(ctx context.Context, ev events.Request, matc
 		if !ship {
 			continue
 		}
-		r.dispatchRecord(modified, b.Connector, connectorType)
+		r.dispatchRecord(ctx, modified, b.Connector, connectorType)
 	}
 }
+
+// pushDropReasonNoSink is the gateway.telemetry.push.dropped.total reason
+// for a webhook-bound record that found no pusher for its connector: the
+// connector was created live and its pusher failed to build (secret_ref
+// unresolvable), or the binding outlived the connector. Sits beside the
+// pusher's own reasons (queue_full, encode, rejected, exhausted).
+const pushDropReasonNoSink = "no_sink"
 
 // dispatchRecord routes one evaluated record to its connector's sink: the
 // webhook type to its real-time pusher (non-blocking, drop-on-full — a full
 // queue is telemetry loss, never a request-path stall, invariant #2), every
 // other (s3 / azure_blob) to the durable disk spool. A binding whose sink is
-// absent (spool disabled, or no pusher built for the connector) is a no-op.
-func (r *reporterRun) dispatchRecord(rec cc.Record, connector, connectorType string) {
+// absent drops the record and counts it — gateway.telemetry.push.dropped.total
+// reason=no_sink for webhook, the spool's own no_track counter otherwise —
+// so a connector with no runtime sink is never a silent loss (#567).
+func (r *reporterRun) dispatchRecord(ctx context.Context, rec cc.Record, connector, connectorType string) {
 	if connectorType == contractsconfig.ConnectorTypeWebhook {
-		if p := r.factory.pushers[connector]; p != nil {
+		if p := r.factory.pushers.get(connector); p != nil {
 			p.Enqueue(rec)
+			return
+		}
+		if r.factory.meters != nil && r.factory.meters.TelemetryPushDroppedTotal != nil {
+			r.factory.meters.TelemetryPushDroppedTotal.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("connector", connector),
+				attribute.String("reason", pushDropReasonNoSink)))
 		}
 		return
 	}

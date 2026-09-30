@@ -251,7 +251,7 @@ The gateway additionally wires the pusher's loss hooks
 ([cmd/gateway/main.go](../cmd/gateway/main.go) `setupPushers`) to two OTel counters so the
 loss is a dashboard signal, not a debug log line:
 `gateway.telemetry.push.dropped.total` (labels: `connector`, `reason` =
-`queue_full|encode|rejected|exhausted` — any non-zero rate is audit-record loss) and
+`queue_full|encode|rejected|exhausted|closed|no_sink` — any non-zero rate is audit-record loss) and
 `gateway.telemetry.push.failures.total` (labels: `connector`, `kind` = `network|status`).
 
 ## Webhook connector config
