@@ -20,9 +20,11 @@ const (
 )
 
 // ConfigurationsListHandler returns the sorted summary list of every
-// configuration loaded from policy.yaml. A nil Store (admin disabled in
-// test or partial wiring) returns 503 rather than 200 with an empty body
-// so the SPA can distinguish "no configs" from "feature unavailable".
+// configuration in the current store snapshot (the configurations block
+// may live in any *.yaml file in the config dir). A nil Store (admin
+// disabled in test or partial wiring) returns 503 rather than 200 with an
+// empty body so the SPA can distinguish "no configs" from "feature
+// unavailable".
 //
 // Each handler snapshots the store once at the top of the request and
 // reads through that snapshot for the rest of the call, so a config

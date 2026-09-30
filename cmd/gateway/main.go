@@ -544,9 +544,11 @@ func shutdownPromServer(srv *http.Server) {
 // admin requests the same shutdown headroom as proxy requests.
 //
 // The non-mutating snapshot fields read here (Admin, Providers names,
-// RuleNames, AddTag actions, BindAddr) are sampled at startup. The
-// admin write path (Phase 2) does not allow editing the Admin block
-// nor the provider list, so caching these at boot is safe; the
+// RuleNames, AddTag actions, BindAddr) are sampled once at startup.
+// Only the Admin block is non-editable at runtime; the admin write API
+// can create, replace and delete providers, rules and configurations,
+// so these boot-time MuxOptions lists (dashboard provider list, rule
+// and tag attachments) go stale after such writes until restart. The
 // per-request reads happen through opts.Store inside the handlers.
 func startAdmin(ctx context.Context, store *config.Store, obs *observability.Provider, logger *slog.Logger, drain time.Duration, startedAt time.Time, liveFeed *livefeed.Ring, bodyStore *livefeed.BodyStore, breakerStates admin.CircuitBreakerStateSource, configDir string) {
 	resolved := store.Snapshot()
