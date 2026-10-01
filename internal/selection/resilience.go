@@ -7,13 +7,33 @@ import (
 )
 
 // resilienceTargetSpec is the per-target input the synthesiser needs: the
-// three authored fields that survive into a ResilienceTarget. Both the authored
-// (contractsconfig.Target) and the resolved (Target) shapes project onto it so
-// config validation and the request path synthesise through one function.
+// authored fields that survive into a ResilienceTarget plus the target's
+// resolved name. Both the authored (contractsconfig.Target) and the resolved
+// (Target) shapes project onto it so config validation and the request path
+// synthesise through one function.
 type resilienceTargetSpec struct {
-	provider string
-	alias    string
-	weight   int
+	// name is the orchestrator identity (breaker key + `target` metric
+	// label) — contractsconfig.Group.TargetNames output, so two targets on
+	// one provider stay distinct.
+	name           string
+	provider       string
+	alias          string
+	weight         int
+	timeoutSeconds int
+}
+
+// resilienceGroupSpec is the group-wide input the synthesiser needs — the
+// orchestration fields both the authored and the resolved Group carry
+// verbatim.
+type resilienceGroupSpec struct {
+	name                         string
+	mode                         contractsres.ResilienceMode
+	failureStatusCodes           []int
+	cb                           *contractsres.CircuitBreakerConfig
+	strictWeights                bool
+	responseHeaderTimeoutSeconds int
+	timeoutSeconds               int
+	retry                        *contractsres.RetryConfig
 }
 
 // GroupResilienceConfig synthesises the resilience orchestrator's input from
@@ -24,44 +44,78 @@ type resilienceTargetSpec struct {
 // run for a request bound to the group. The request path reaches the same
 // function through Group.ResilienceConfig.
 //
-// Each target becomes a ResilienceTarget named after its provider (the
-// telemetry label and breaker key), ordered by declaration position for
-// failover, with Weight defaulting to 1 when unset (even weighting) and
-// per-attempt Actions that switch the provider and rewrite the body model to
-// the target alias.
+// Each target becomes a ResilienceTarget named per Group.TargetNames — the
+// plain provider name unless the group lists that provider more than once,
+// in which case the arms are disambiguated so their breaker keys and
+// `target` labels stay distinct — ordered by declaration position for
+// failover, with Weight defaulting to 1 when unset (even weighting),
+// the target's own timeout_seconds, and per-attempt Actions that switch the
+// provider and rewrite the body model to the target alias. The group's
+// timeout_seconds and retry block are carried through verbatim.
 func GroupResilienceConfig(name string, g contractsconfig.Group) contractsres.ResilienceConfig {
+	names := g.TargetNames()
 	specs := make([]resilienceTargetSpec, 0, len(g.Targets))
-	for _, t := range g.Targets {
-		specs = append(specs, resilienceTargetSpec{provider: t.Provider, alias: t.Alias, weight: t.Weight})
+	for i, t := range g.Targets {
+		specs = append(specs, resilienceTargetSpec{
+			name:           names[i],
+			provider:       t.Provider,
+			alias:          t.Alias,
+			weight:         t.Weight,
+			timeoutSeconds: t.TimeoutSeconds,
+		})
 	}
-	return synthesiseGroup(name, g.Mode, g.FailureStatusCodes, g.CircuitBreaker, g.StrictWeights, g.ResponseHeaderTimeoutSeconds, specs)
+	return synthesiseGroup(resilienceGroupSpec{
+		name:                         name,
+		mode:                         g.Mode,
+		failureStatusCodes:           g.FailureStatusCodes,
+		cb:                           g.CircuitBreaker,
+		strictWeights:                g.StrictWeights,
+		responseHeaderTimeoutSeconds: g.ResponseHeaderTimeoutSeconds,
+		timeoutSeconds:               g.TimeoutSeconds,
+		retry:                        g.Retry,
+	}, specs)
 }
 
 // ResilienceConfig synthesises the orchestrator's input from a resolved group
 // at request time. It produces the same ResilienceConfig that
 // GroupResilienceConfig validated at load — the resolved Group carries the
-// authored orchestration fields verbatim and the per-target provider / alias /
-// weight the synthesiser reads.
+// authored orchestration fields verbatim and the per-target name / provider /
+// alias / weight / timeout the synthesiser reads. A resolved Target with an
+// empty Name (a hand-built Group in tests) falls back to its provider name.
 func (g Group) ResilienceConfig() contractsres.ResilienceConfig {
 	specs := make([]resilienceTargetSpec, 0, len(g.Targets))
 	for _, t := range g.Targets {
-		specs = append(specs, resilienceTargetSpec{provider: t.Provider, alias: t.Alias, weight: t.Weight})
+		name := t.Name
+		if name == "" {
+			name = t.Provider
+		}
+		specs = append(specs, resilienceTargetSpec{
+			name:           name,
+			provider:       t.Provider,
+			alias:          t.Alias,
+			weight:         t.Weight,
+			timeoutSeconds: t.TimeoutSeconds,
+		})
 	}
-	return synthesiseGroup(g.Name, g.Mode, g.FailureStatusCodes, g.CircuitBreaker, g.StrictWeights, g.ResponseHeaderTimeoutSeconds, specs)
+	return synthesiseGroup(resilienceGroupSpec{
+		name:                         g.Name,
+		mode:                         g.Mode,
+		failureStatusCodes:           g.FailureStatusCodes,
+		cb:                           g.CircuitBreaker,
+		strictWeights:                g.StrictWeights,
+		responseHeaderTimeoutSeconds: g.ResponseHeaderTimeoutSeconds,
+		timeoutSeconds:               g.TimeoutSeconds,
+		retry:                        g.Retry,
+	}, specs)
 }
 
 // synthesiseGroup is the one place a group becomes a ResilienceConfig. Order is
 // the 1-based declaration position (failover walks it ascending; load_balance
 // ignores it); a zero Weight becomes 1 so an unweighted group balances evenly.
-func synthesiseGroup(
-	name string,
-	mode contractsres.ResilienceMode,
-	failureStatusCodes []int,
-	cb *contractsres.CircuitBreakerConfig,
-	strictWeights bool,
-	responseHeaderTimeoutSeconds int,
-	specs []resilienceTargetSpec,
-) contractsres.ResilienceConfig {
+// Provider always remains the real provider name — it is what the final
+// handler re-resolves transport from — while Name carries the (possibly
+// disambiguated) telemetry identity.
+func synthesiseGroup(g resilienceGroupSpec, specs []resilienceTargetSpec) contractsres.ResilienceConfig {
 	targets := make([]contractsres.ResilienceTarget, 0, len(specs))
 	for i, s := range specs {
 		weight := s.weight
@@ -69,20 +123,23 @@ func synthesiseGroup(
 			weight = 1
 		}
 		targets = append(targets, contractsres.ResilienceTarget{
-			Name:     s.provider,
-			Provider: s.provider,
-			Order:    i + 1,
-			Weight:   weight,
-			Actions:  ProviderSwitchActions(s.provider, s.alias),
+			Name:           s.name,
+			Provider:       s.provider,
+			Order:          i + 1,
+			Weight:         weight,
+			TimeoutSeconds: s.timeoutSeconds,
+			Actions:        ProviderSwitchActions(s.provider, s.alias),
 		})
 	}
 	return contractsres.ResilienceConfig{
-		Name:                         name,
-		Mode:                         mode,
-		FailureStatusCodes:           failureStatusCodes,
-		CircuitBreaker:               cb,
-		StrictWeights:                strictWeights,
-		ResponseHeaderTimeoutSeconds: responseHeaderTimeoutSeconds,
+		Name:                         g.name,
+		Mode:                         g.mode,
+		FailureStatusCodes:           g.failureStatusCodes,
+		CircuitBreaker:               g.cb,
+		StrictWeights:                g.strictWeights,
+		ResponseHeaderTimeoutSeconds: g.responseHeaderTimeoutSeconds,
+		TimeoutSeconds:               g.timeoutSeconds,
+		Retry:                        g.retry,
 		Targets:                      targets,
 	}
 }
