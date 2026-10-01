@@ -197,7 +197,7 @@ cmd/
 internal/       compiler-enforced private engines
 protocols/      public — on-the-wire models per provider protocol
 models/         public — shared multimodal types + DynamicProperties
-contracts/      public — control-plane schemas (rules, resilience, config, connector)
+contracts/      public — control-plane schemas (config, rules, resilience, connector, admin, advise, events)
 deploy/         dockerfiles, compose stacks, quickstart bundle
 test/
   e2e/          black-box matrix against the real binary

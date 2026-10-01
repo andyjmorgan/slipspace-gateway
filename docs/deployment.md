@@ -289,7 +289,7 @@ spec:
 
 ### Restart-to-apply (non-admin paths only)
 
-Config edits via the admin write API apply live — `config.Store.Replace` swaps the snapshot atomically and the next request evaluates against the new config. Live write APIs cover rules, providers, groups, configurations, api_keys, and connectors (each clones the snapshot, validates, persists back to the block's source file, then publishes through `config.Store.Replace` — no restart). **Direct YAML edits on disk** (e.g. updating the source ConfigMap, editing the PVC contents from a sidecar, manual `kubectl cp`) still require a process restart — the in-binary `fsnotify` watcher is a v1.2+ task. To apply a direct edit, roll the Deployment (`kubectl rollout restart deployment/slipspace-gateway`). The `admin` and `telemetry` blocks have no write API; changes to those also require a restart.
+Config edits via the admin write API apply live — `config.Store.Replace` swaps the snapshot atomically and the next request evaluates against the new config. Live write APIs cover rules, providers, groups, configurations, api_keys, and connectors (each clones the snapshot, validates, persists back to the block's source file, then publishes through `config.Store.Replace` — no restart). **Direct YAML edits on disk** (e.g. updating the source ConfigMap, editing the PVC contents from a sidecar, manual `kubectl cp`) still require a process restart — the in-binary `fsnotify` watcher is a v1.2+ task. To apply a direct edit, roll the Deployment (`kubectl rollout restart deployment/slipspace-gateway`). The `admin`, `telemetry`, `pricing` and `advisors` blocks have no write API; changes to those also require a restart.
 
 ---
 
