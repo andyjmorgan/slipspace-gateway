@@ -252,8 +252,8 @@ A retryable outcome is one of:
 
 If every target fails:
 
-- If some attempt returned a non-zero status, the client sees the **last attempt's status**.
-- If every attempt was a transport error (no status ever received), the client sees **`502 Bad Gateway`**.
+- The client sees the status of the **last attempt that actually ran**.
+- If that last attempt was a transport error (no status), the client sees **`502 Bad Gateway`** — even when earlier attempts returned a status.
 - If every target was filtered by the circuit breaker before any attempt ran, the client sees **`503 Service Unavailable`** ("no healthy provider").
 
 ```mermaid
@@ -578,7 +578,7 @@ Check the binding actually selects it. The connector `Record` carries `policy_re
 That's expected, not a stale read. `GET /admin/api/v1/policies` reports `closed` for a `(group, provider)` pair the breaker has never observed — the in-memory store returns the closed state for a key it has never created — and a group with no `circuit_breaker` block never creates a breaker at all, so it reads `closed` too. `circuit_state: unknown` appears only when the admin mux is constructed without a breaker-state source, which `cmd/gateway` never does. The surface that genuinely omits never-touched pairs is the `gateway.cb.state` gauge, fed from `BreakerStore.Snapshot()` — it enumerates only breakers that have actually been created.
 
 **"All my attempts come back 5xx and the client sees the upstream's body, not my fallback."**
-The orchestrator writes its 502/503 fallback **only** when every attempt was either a transport error (no headers) or all targets were CB-blocked. When some attempt got headers + a status that was in your retry set, the **last** attempt's status is what the client sees. If you want a custom fallback shape, add a terminating rule with `returnStatusCode`.
+The orchestrator writes its 502/503 fallback **only** when the last attempt that ran was a transport error (no headers) or all targets were CB-blocked. When the last attempt that ran got headers + a status that was in your retry set, that attempt's status is what the client sees. If you want a custom fallback shape, add a terminating rule with `returnStatusCode`.
 
 **"My `slipspace.requests.total` counter doubled."**
 Check whether you've inadvertently created two events. Multi-attempt requests should emit exactly one `slipspace.request` event (and one `slipspace_requests_total` increment). If you're seeing two, suspect a misconfigured upstream proxy retrying — the gateway's own retry is internal and never produces a second event.
