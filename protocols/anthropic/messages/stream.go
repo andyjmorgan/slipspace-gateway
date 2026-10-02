@@ -124,8 +124,8 @@ type contentBlockStartRaw struct {
 
 // ContentBlockDeltaEvent carries an incremental update to the content block
 // at Index. The Delta itself is polymorphic — TextDelta, InputJSONDelta,
-// ThinkingDelta, SignatureDelta, or UnknownContentBlockDelta. Unknown fields
-// round-trip via the embedded DynamicProperties.
+// ThinkingDelta, SignatureDelta, CitationsDelta, or UnknownContentBlockDelta.
+// Unknown fields round-trip via the embedded DynamicProperties.
 type ContentBlockDeltaEvent struct {
 	// Type is the wire "type" discriminator, always
 	// "content_block_delta".

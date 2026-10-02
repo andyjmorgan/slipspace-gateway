@@ -85,8 +85,9 @@ var ErrSegmentClosed = errors.New("spool: segment closed")
 //
 // dir must already exist (the Manager handles that). seq is supplied by
 // the caller from its own in-memory per-process counter (track.nextSeq);
-// it is not persisted anywhere, so it restarts at 0 on each process —
-// uniqueness across restarts comes from the openedAt.UnixNano() filename
+// it is not persisted anywhere, so it restarts on each process (the
+// counter starts at 0 and track.nextSeq pre-increments, so the first
+// segment's seq is 1) — uniqueness across restarts comes from the openedAt.UnixNano() filename
 // prefix, with O_EXCL as the collision guard.
 func OpenSegment(dir string, seq uint64, openedAt time.Time) (*Segment, error) {
 	name := segmentFilename(openedAt, seq)
