@@ -7,9 +7,10 @@ import (
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 )
 
-// ErrUnauthorized covers every managed-mode failure where we refuse to reveal
-// whether a key exists: missing bearer, malformed bearer, unknown secret,
-// disabled key.
+// ErrUnauthorized covers every failure where we refuse to reveal whether a key
+// exists: in managed mode a missing, malformed or unknown bearer or a disabled
+// key, and in identity passthrough (X-Slipspace-Identity) an unknown or
+// disabled api-key secret.
 var ErrUnauthorized = errors.New("auth: unauthorized")
 
 // ErrUnknownConfiguration is returned when a referenced configuration name does

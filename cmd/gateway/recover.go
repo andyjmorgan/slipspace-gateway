@@ -36,7 +36,7 @@ import (
 //     panicked AFTER calling WriteHeader, we cannot write a 500 — the
 //     status line is already on the wire. In that case we log + meter
 //     and rely on the client seeing a truncated response. The
-//     errResponseWriter wrapper tracks the state.
+//     recordingResponseWriter wrapper tracks the state.
 //
 // Standing project posture (per ADR-002): any panic is wrapped; the
 // service stays up. This middleware is what enforces that for the
