@@ -49,9 +49,9 @@ func mustJSONDecode[T any](t *testing.T, body io.Reader) T {
 func newRuleBodyE2E(name string) []byte {
 	return []byte(`{
 		"name": "` + name + `",
-		"condition": {"type": "provider", "operator": "Equals", "expectedProvider": "openai"},
+		"condition": {"type": "provider", "operator": "Equals", "expected_provider": "openai"},
 		"actions": [
-			{"type": "setHeader", "headerName": "X-E2E-` + name + `", "headerAction": "Set", "headerValue": "ok"}
+			{"type": "setHeader", "header_name": "X-E2E-` + name + `", "header_action": "Set", "header_value": "ok"}
 		],
 		"behavior": "continue"
 	}`)
@@ -97,7 +97,7 @@ func TestAdmin_Rules_FullLifecycle(t *testing.T) {
 	updated := []byte(`{
 		"name": "` + name + `",
 		"condition": {"type": "protocol", "operator": "Equals", "expectedProtocol": "chat_completions"},
-		"actions": [{"type": "setHeader", "headerName": "X-E2E-Updated", "headerAction": "Set", "headerValue": "yes"}],
+		"actions": [{"type": "setHeader", "header_name": "X-E2E-Updated", "header_action": "Set", "header_value": "yes"}],
 		"behavior": "continue"
 	}`)
 	resp = authedJSON(t, h, "PUT", "/api/v1/config/rules/"+name, updated)

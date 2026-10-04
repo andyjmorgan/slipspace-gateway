@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	contractsconfig "github.com/andyjmorgan/slipspace-gateway/contracts/config"
 	"github.com/andyjmorgan/slipspace-gateway/internal/agentroute"
 	"github.com/andyjmorgan/slipspace-gateway/internal/config"
 	"github.com/andyjmorgan/slipspace-gateway/internal/headers"
@@ -32,6 +33,10 @@ import (
 //
 // The store is read per request inside selection + final via store.Snapshot,
 // so an admin write that lands mid-request still produces a consistent answer.
+//
+// externalURL is SLIPSPACE_EXTERNAL_URL, threaded into the request-phase body
+// rewriter so {external_url} resolves on request.body targets as well as on
+// the response side (newResponseBodyTransform, cmd/gateway/translate.go).
 func buildDataPlaneHandler(
 	resolver *auth.Resolver,
 	forwarder *proxy.Forwarder,
@@ -43,10 +48,11 @@ func buildDataPlaneHandler(
 	meters *observability.Meters,
 	errs *httperr.Writer,
 	redactor *headers.Redactor,
+	externalURL string,
 	_ *slog.Logger,
 ) http.Handler {
 	h := buildFinalHandler(store, forwarder, errs)
-	h = rules.BodyRewriteHandler(meters, h)
+	h = rules.BodyRewriteHandler(meters, externalURL, h)
 	h = rules.BodyRemarshalHandler(meters, h)
 	h = resiliencemw.HTTPHandler(nil, breakers, meters, h)
 	h = rules.HTTPHandler(evaluator, nil, observerFactory, h)
@@ -54,6 +60,11 @@ func buildDataPlaneHandler(
 	h = bodycapture.HTTPHandler(kindFromProtocol, redactor, completionCheckpoint(h))
 	h = auth.HTTPHandler(resolver, completionCheckpoint(h))
 	h = protocolMiddleware(completionCheckpoint(h))
+	// Outermost: put the instrumented error writer on every request's
+	// context so the rules and resilience stages — which are constructed
+	// without it — reject through the same JSON shape and error counter as
+	// the stages that hold errs directly (issue #554).
+	h = httperr.Handler(errs, h)
 	return h
 }
 
@@ -145,7 +156,19 @@ func buildFinalHandler(store *config.Store, forwarder *proxy.Forwarder, errs *ht
 		// Resolve the endpoint on the post-rule protocol so a translate action
 		// lands on the target protocol's endpoint (invariant #7's spirit:
 		// re-resolve on post-rule state). Equals pi.protocol when no translate.
-		target, err := selection.ResolveTarget(state.Protocol, provider, "", *authResult.Configuration, snap.Providers)
+		//
+		// The selected binding / group target's path and query overrides
+		// travel on the per-attempt state (buildAttemptState stamps them from
+		// the ResilienceTarget) and are re-applied here so they are not lost
+		// to a provider-only re-resolution (issue #409). The path override is
+		// bound to the protocol it was authored for, so it is dropped when a
+		// translate action moved the request to another protocol; the query
+		// override (api-version and the like) is protocol-agnostic and kept.
+		resolveAs := contractsconfig.Target{Provider: provider, Query: state.TargetQuery}
+		if !translationActive(state) {
+			resolveAs.Path = state.TargetPath
+		}
+		target, err := selection.ResolveTarget(state.Protocol, resolveAs, *authResult.Configuration, snap.Providers)
 		if err != nil {
 			log.ErrorContext(ctx, "forwarder: resolve target", "provider", provider, "protocol", state.Protocol, "err", err.Error())
 			errs.Write(ctx, w, http.StatusInternalServerError, "handler", "internal", "internal error")

@@ -7,6 +7,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/andyjmorgan/slipspace-gateway/internal/httperr"
 	"github.com/andyjmorgan/slipspace-gateway/internal/middleware/bodycapture"
 	"github.com/andyjmorgan/slipspace-gateway/internal/observability"
 )
@@ -22,7 +23,9 @@ import (
 // can reuse the same primitives per attempt without duplicating the
 // content-length and reader-replacement logic.
 //
-// Marshal failures surface as a 500 response and increment
+// Marshal failures surface as a 500 JSON error (layer "rules", code
+// "body_remarshal_failed", written through the request's httperr.Writer so
+// the gateway error counter fires) and increment
 // gateway.rule.errors.total{error_kind="body_remarshal"}; the typed
 // body's MarshalJSON is responsible for preserving DynamicProperties
 // (the providers/* packages already do).
@@ -44,7 +47,7 @@ func BodyRemarshalHandler(meters *observability.Meters, next http.Handler) http.
 			recordRemarshalError(ctx, meters)
 			logger := observability.FromContext(ctx)
 			logger.ErrorContext(ctx, "rules: body remarshal", "err", err.Error())
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			httperr.FromContext(ctx).Write(ctx, w, http.StatusInternalServerError, "rules", "body_remarshal_failed", "internal error")
 			return
 		}
 		if newBytes == nil {
