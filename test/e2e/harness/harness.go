@@ -132,6 +132,15 @@ func NewWithOptions(t *testing.T, opts Options) *Harness {
 	return h
 }
 
+// CaptureURL returns the URL of the harness's in-process webhook capture
+// server. Tests that create a webhook connector through the admin write
+// API (rather than via the boot-time inject) point it here so ExpectEvent
+// sees the records; the gateway signs with HARNESS_WEBHOOK_SECRET, which
+// the harness already exports to the gateway process.
+func (h *Harness) CaptureURL() string {
+	return h.captureURL
+}
+
 // PromURL returns the base URL of the gateway's Prometheus scrape endpoint.
 // Tests that assert metric labels survive end-to-end issue a GET against
 // "<PromURL>/metrics" after a request and parse the resulting text exposition.

@@ -65,6 +65,11 @@ const (
 	DropRejected = "rejected"
 	// DropExhausted: every retry attempt failed; the record is lost.
 	DropExhausted = "exhausted"
+	// DropClosed: Enqueue was called after Close. Reachable when a
+	// record for a webhook connector that was just deleted or edited
+	// live races the reconciler's swap; the replacement pusher (if any)
+	// did not see it.
+	DropClosed = "closed"
 )
 
 // Failure kinds reported through Options.OnFailure, one per failed send
@@ -146,6 +151,15 @@ type Pusher struct {
 	// instead of sleeping out the schedule — keeping Close fast and bounded.
 	draining  chan struct{}
 	closeOnce sync.Once
+
+	// closeMu serialises Enqueue against Close. A select's send case on a
+	// closed channel panics rather than falling through to default, so
+	// Close must not close ch while an Enqueue holds the read side; the
+	// closed flag turns a late Enqueue into a counted drop instead. This
+	// matters now that pushers are closed while the process keeps
+	// serving (live connector edits), not only at shutdown.
+	closeMu sync.RWMutex
+	closed  bool
 }
 
 const (
@@ -220,8 +234,16 @@ func New(opts Options) *Pusher {
 
 // Enqueue offers a record to the worker pool without blocking. If the queue is
 // full it drops the record and bumps the dropped counter — the request path
-// never waits. Returns true if the record was accepted.
+// never waits. After Close it drops with reason DropClosed. Returns true if
+// the record was accepted.
 func (p *Pusher) Enqueue(rec cc.Record) bool {
+	p.closeMu.RLock()
+	defer p.closeMu.RUnlock()
+	if p.closed {
+		p.dropped.Add(1)
+		p.dropHook(DropClosed)
+		return false
+	}
 	select {
 	case p.ch <- rec:
 		return true
@@ -254,8 +276,11 @@ func (p *Pusher) Lost() int64 { return p.lost.Load() }
 // so the drain cost is bounded by attempts × HTTP timeout, not the schedule.
 func (p *Pusher) Close(ctx context.Context) {
 	p.closeOnce.Do(func() {
+		p.closeMu.Lock()
+		p.closed = true
 		close(p.draining)
 		close(p.ch)
+		p.closeMu.Unlock()
 	})
 	done := make(chan struct{})
 	safego.Go(ctx, "telemetry.pusher.close_wait", p.log, nil, func() { p.wg.Wait(); close(done) })

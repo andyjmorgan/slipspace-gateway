@@ -140,3 +140,23 @@ func TestAgentContext_IDWithoutSource(t *testing.T) {
 		t.Errorf("source = %q, want empty", got)
 	}
 }
+
+// TestContextGetters_NilContext pins the nil-ctx guard on every
+// correlation-id getter: each must return "" rather than panic.
+func TestContextGetters_NilContext(t *testing.T) {
+	t.Parallel()
+	var ctx context.Context // deliberately nil
+	getters := map[string]func(context.Context) string{
+		"AgentIDFromContext":         observability.AgentIDFromContext,
+		"AgentIDSourceFromContext":   observability.AgentIDSourceFromContext,
+		"SessionIDFromContext":       observability.SessionIDFromContext,
+		"SessionIDSourceFromContext": observability.SessionIDSourceFromContext,
+		"UserIDFromContext":          observability.UserIDFromContext,
+		"UserIDSourceFromContext":    observability.UserIDSourceFromContext,
+	}
+	for name, get := range getters {
+		if got := get(ctx); got != "" {
+			t.Errorf("%s(nil) = %q, want empty", name, got)
+		}
+	}
+}

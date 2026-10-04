@@ -25,7 +25,7 @@ func TestBreaker_ClosedAllowsAndIgnoresSuccess(t *testing.T) {
 		}
 	}
 	b.RecordSuccess()
-	if b.State() != breakerClosed {
+	if b.State() != BreakerClosed {
 		t.Errorf("state after success = %v, want closed", b.State())
 	}
 }
@@ -34,11 +34,11 @@ func TestBreaker_OpensAfterConsecutiveFailures(t *testing.T) {
 	b := newBreaker(BreakerOpts{FailuresToOpen: 3, HalfOpenAfter: time.Hour}, fixedClock())
 	b.RecordFailure()
 	b.RecordFailure()
-	if b.State() != breakerClosed {
+	if b.State() != BreakerClosed {
 		t.Errorf("state after 2 failures = %v, want still closed", b.State())
 	}
 	b.RecordFailure()
-	if b.State() != breakerOpen {
+	if b.State() != BreakerOpen {
 		t.Errorf("state after 3 failures = %v, want open", b.State())
 	}
 	if b.Allow() {
@@ -53,7 +53,7 @@ func TestBreaker_SuccessResetsFailureCount(t *testing.T) {
 	b.RecordSuccess()
 	b.RecordFailure()
 	b.RecordFailure()
-	if b.State() != breakerClosed {
+	if b.State() != BreakerClosed {
 		t.Errorf("state should still be closed after intervening success, got %v", b.State())
 	}
 }
@@ -66,7 +66,7 @@ func TestBreaker_HalfOpenOnCooldown(t *testing.T) {
 	b := newBreaker(BreakerOpts{FailuresToOpen: 2, HalfOpenAfter: 100 * time.Millisecond}, clock)
 	b.RecordFailure()
 	b.RecordFailure()
-	if b.State() != breakerOpen {
+	if b.State() != BreakerOpen {
 		t.Fatal("expected open")
 	}
 	if b.Allow() {
@@ -76,7 +76,7 @@ func TestBreaker_HalfOpenOnCooldown(t *testing.T) {
 	if !b.Allow() {
 		t.Error("expected probe allowed after cooldown")
 	}
-	if b.State() != breakerHalfOpen {
+	if b.State() != BreakerHalfOpen {
 		t.Errorf("state = %v, want half-open after probe Allow", b.State())
 	}
 }
@@ -92,7 +92,7 @@ func TestBreaker_HalfOpenFailureReopens(t *testing.T) {
 		t.Fatal("expected probe allowed")
 	}
 	b.RecordFailure()
-	if b.State() != breakerOpen {
+	if b.State() != BreakerOpen {
 		t.Errorf("state = %v, want open after probe failure", b.State())
 	}
 }
@@ -106,7 +106,7 @@ func TestBreaker_HalfOpenSuccessCloses(t *testing.T) {
 	tick = tick.Add(time.Hour)
 	_ = b.Allow()
 	b.RecordSuccess()
-	if b.State() != breakerClosed {
+	if b.State() != BreakerClosed {
 		t.Errorf("state = %v, want closed after probe success", b.State())
 	}
 }
@@ -134,7 +134,7 @@ func TestBreaker_HalfOpenAdmitsExactlyOneProbe(t *testing.T) {
 	if !b.Allow() {
 		t.Fatal("first caller after cooldown should be admitted as the probe")
 	}
-	if b.State() != breakerHalfOpen {
+	if b.State() != BreakerHalfOpen {
 		t.Fatalf("state = %v, want half-open", b.State())
 	}
 	for i := 0; i < 5; i++ {
@@ -146,7 +146,7 @@ func TestBreaker_HalfOpenAdmitsExactlyOneProbe(t *testing.T) {
 	// Probe fails → open; nothing admitted until the cooldown elapses
 	// again, then exactly one more probe.
 	b.RecordFailure()
-	if b.State() != breakerOpen || b.Allow() {
+	if b.State() != BreakerOpen || b.Allow() {
 		t.Fatal("failed probe should reopen and refuse before cooldown")
 	}
 	tick = tick.Add(time.Hour)
@@ -174,7 +174,7 @@ func TestBreaker_ReleaseFreesHalfOpenProbe(t *testing.T) {
 		t.Fatal("expected exactly one probe admitted")
 	}
 	b.Release() // the probe never reached Upload (lost claim race)
-	if b.State() != breakerHalfOpen {
+	if b.State() != BreakerHalfOpen {
 		t.Errorf("Release must not change state, got %v", b.State())
 	}
 	if !b.Allow() {
@@ -184,7 +184,7 @@ func TestBreaker_ReleaseFreesHalfOpenProbe(t *testing.T) {
 	// Release outside half-open is a no-op.
 	b.RecordSuccess()
 	b.Release()
-	if b.State() != breakerClosed || !b.Allow() {
+	if b.State() != BreakerClosed || !b.Allow() {
 		t.Error("Release on a closed breaker should change nothing")
 	}
 }
