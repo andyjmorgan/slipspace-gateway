@@ -143,7 +143,8 @@ func Capture(r *http.Request, kind RequestKind, redactor *headers.Redactor) (Cap
 // identical content.
 //
 // On ErrBodyTooLarge the handler writes 413; on ErrParse it writes 400 and
-// logs at warn level; on missing route or unknown kind it writes 500 —
+// logs at warn level; when no request kind is on the context (kindFrom
+// returns ok=false) or the kind is unknown (ErrUnknownKind) it writes 500 —
 // those are wiring bugs that should not reach clients silently.
 func HTTPHandler(kindFrom KindFromContextFunc, redactor *headers.Redactor, next http.Handler) http.Handler {
 	if kindFrom == nil {
