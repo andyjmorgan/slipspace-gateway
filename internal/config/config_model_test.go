@@ -359,9 +359,23 @@ func TestValidate_Failures(t *testing.T) {
 		{"group mode misspelt", func(r *ResolvedConfig) {
 			r.Groups["lb"] = contractsconfig.Group{Mode: "failver", Targets: []contractsconfig.Target{{Provider: "openai"}}}
 		}, `group "lb": resilience: mode "failver": resilience: unknown mode`},
-		{"group provider listed twice", func(r *ResolvedConfig) {
-			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: "openai"}, {Provider: "openai", Alias: "other"}}}
-		}, `group "lb" targets[1]: provider "openai" already listed at targets[0]`},
+		{"group provider listed twice with identical use", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: "openai", Alias: "same"}, {Provider: "openai", Alias: "same", Weight: 3}}}
+		}, `group "lb" targets[1]: provider "openai" with the same alias, path and query is already listed at targets[0]`},
+		{"group timeout negative", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, TimeoutSeconds: -1, Targets: []contractsconfig.Target{{Provider: "openai"}}}
+		}, `group "lb": resilience: timeout_seconds -1`},
+		{"group target timeout negative", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai", TimeoutSeconds: -5}}}
+		}, `group "lb": resilience: targets[0]: timeout_seconds -5`},
+		{"group retry enabled without max_attempts", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
+				Retry: &resilience.RetryConfig{Enabled: true, DelayMilliseconds: 100}}
+		}, "enabled retry needs max_attempts > 0"},
+		{"group retry unknown backoff", func(r *ResolvedConfig) {
+			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
+				Retry: &resilience.RetryConfig{Enabled: true, MaxAttempts: 2, BackoffType: "fibonacci"}}
+		}, `backoff "fibonacci"`},
 		{"group breaker rate threshold above one", func(r *ResolvedConfig) {
 			r.Groups["lb"] = contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}},
 				CircuitBreaker: &resilience.CircuitBreakerConfig{Enabled: true, FailureRateThreshold: 90, CooldownSeconds: 30}}
@@ -427,6 +441,16 @@ func TestValidate_GroupsAccepted(t *testing.T) {
 		{"none", "single", contractsconfig.Group{Mode: resilience.ModeNone, Targets: []contractsconfig.Target{{Provider: "openai"}}}},
 		{"identifier charset", "EU-west_1.v2", contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}}}},
 		{"leading digit", "1st", contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai"}}}},
+		// The same provider more than once is legal when the arms differ in
+		// alias, path or query: Group.TargetNames gives each its own breaker
+		// key and telemetry label, so the synthesised targets pass the
+		// contracts ErrDuplicateTargetName check.
+		{"same provider, different alias", "canary", contractsconfig.Group{Mode: resilience.ModeLoadBalance, Targets: []contractsconfig.Target{{Provider: "openai", Alias: "gpt-4o", Weight: 90}, {Provider: "openai", Alias: "gpt-4o-canary", Weight: 10}}}},
+		{"same provider, different path", "paths", contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai", Path: "/a"}, {Provider: "openai", Path: "/b"}}}},
+		{"same provider, different query", "queries", contractsconfig.Group{Mode: resilience.ModeFailover, Targets: []contractsconfig.Target{{Provider: "openai", Query: map[string]string{"v": "1"}}, {Provider: "openai", Query: map[string]string{"v": "2"}}}}},
+		{"timeouts and retry", "paced", contractsconfig.Group{Mode: resilience.ModeFailover, TimeoutSeconds: 30,
+			Retry:   &resilience.RetryConfig{Enabled: true, MaxAttempts: 2, BackoffType: resilience.BackoffExponential, DelayMilliseconds: 100, MaxDelayMs: 500, UseJitter: true},
+			Targets: []contractsconfig.Target{{Provider: "openai", TimeoutSeconds: 5}, {Provider: "openai2"}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
