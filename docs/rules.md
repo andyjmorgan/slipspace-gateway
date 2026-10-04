@@ -39,7 +39,7 @@ The rule engine sits between auth/body-capture and the forwarder. Its only job i
 
 Three flavours of mutation, in increasing reach:
 
-- **Steer.** `changeModelName` and `changeApiKey` rewrite where the request is going. (`changeUrl`, `useResiliencePolicy`, and a rule-authored `changeProvider` still parse and validate but are **inert** in v2 — the data plane never reads the state they write. `changeProvider` survives only as the resilience orchestrator's internal per-attempt primitive, and `buildAttemptState` overwrites any rule-authored value every attempt. Route to a different provider, URL, or resilience group with a binding edit instead. See [actions.md → `changeProvider`](actions.md#changeprovider) and [actions.md → `changeUrl`](actions.md#changeurl).)
+- **Steer.** `changeModelName`, `changeApiKey` and `changeProvider` rewrite where the request is going. A rule `changeProvider` takes precedence over the binding-derived routing: it bypasses the resilience group (or single-target alias) the model was bound to and sends the request, once, to the rule's provider (GitHub #294 — see [actions.md → `changeProvider`](actions.md#changeprovider)). (`changeUrl` and `useResiliencePolicy` still parse and validate but are **inert** in v2 — the data plane never reads the state they write. Route to a different URL or resilience group with a binding edit instead; see [actions.md → `changeUrl`](actions.md#changeurl).)
 - **Annotate.** `setHeader`, `appendQueryString`, `addTag` decorate the outbound request or the in-process state.
 - **Short-circuit.** `returnStatusCode`, `llmImpersonation` end the pipeline with a synthetic response — the forwarder never runs.
 
@@ -72,7 +72,7 @@ rules:
     behavior: continue
 ```
 
-Note that provider steering is a binding concern, not a rule action, in v2 — a rule-authored `changeProvider` is inert (see [Steer](#mental-model) above and [actions.md → `changeProvider`](actions.md#changeprovider)).
+Note that the stable model → provider mapping is a binding concern in v2; a rule-authored `changeProvider` is for the conditional case and, when it fires, beats the binding (see [Steer](#mental-model) above and [actions.md → `changeProvider`](actions.md#changeprovider)).
 
 | Field | Required | Notes |
 |---|---|---|
@@ -389,7 +389,7 @@ See [`docs/environment-variables.md`](environment-variables.md) for the full lis
 
 Goal: any request whose model starts with `claude-` should be routed to the `anthropic` provider, regardless of which protocol it landed on.
 
-This is **not** a rule — in v2, model-keyed provider redirect is a *binding* on the Configuration. A rule-authored `changeProvider` is inert: the resilience orchestrator rebuilds the per-attempt state from the binding's own target and overwrites it (`buildAttemptState`, `internal/middleware/resilience/middleware.go:702`).
+This is **not** a rule — in v2, the stable model-keyed provider redirect is a *binding* on the Configuration. A rule-authored `changeProvider` is the conditional alternative: when it fires, the resilience orchestrator bypasses the binding-derived group / alias and collapses to one attempt on the rule's provider (`applyRuleOverride`, `internal/middleware/resilience/middleware.go`; GitHub #294), so it is never overwritten by the binding's own target.
 
 ```yaml
 configurations:

@@ -34,6 +34,7 @@ func TestMutableState_Clone_DeepCopiesAllFields(t *testing.T) {
 	cred := "sk-test"
 	s := &rules.MutableState{
 		Provider:                   "openai",
+		ProviderOverridden:         true,
 		Protocol:                   "chat_completions",
 		SourceProtocol:             "messages",
 		UpstreamURL:                u,
@@ -53,6 +54,11 @@ func TestMutableState_Clone_DeepCopiesAllFields(t *testing.T) {
 	// from Clone when first added).
 	if clone.SourceProtocol != "messages" {
 		t.Errorf("clone.SourceProtocol = %q; want messages", clone.SourceProtocol)
+	}
+	// ProviderOverridden must survive too — the orchestrator reads it off
+	// the baseline, and the final handler's state is a per-attempt clone.
+	if !clone.ProviderOverridden {
+		t.Error("clone.ProviderOverridden = false; want true")
 	}
 
 	// Mutate the clone and prove the original is untouched.

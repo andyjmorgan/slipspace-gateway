@@ -166,7 +166,7 @@ groups:
 | Field | Required | Notes |
 |---|---|---|
 | _map key_ | yes | The group name. Referenced by a binding's `group:`. Unique across the `groups:` block (duplicate top-level keys are a load error). Must be an identifier — start with a letter or digit, then letters, digits, `.`, `_` or `-` — because it is used verbatim as the `policy` metric label and as half of the circuit-breaker `(group, provider)` key. |
-| `mode` | yes | See [Modes](#modes). Required and closed-set: an omitted mode fails config load with `config.ErrValidation` (`group "x": mode is required (one of failover, load_balance, load_balance_with_failover, none)`), and a present but unrecognised value fails with the wrapped resilience `ErrUnknownMode` — neither silently degrades to single-target. |
+| `mode` | yes | See [Modes](#modes). Required and closed-set: an omitted mode or any value outside `failover` / `load_balance` / `load_balance_with_failover` / `none` fails config load (`ErrUnknownMode`) instead of silently degrading to single-target. |
 | `strict_weights` | no | Default `false`. Only meaningful in `load_balance` modes — see [strict_weights](#canary-mirroring-with-strict_weights). |
 | `failure_status_codes` | no | Group-wide list of HTTP status codes that count as retryable. Empty falls back to default `[500, 502, 503, 504]`. There is no per-target override in the v2 group schema. |
 | `response_header_timeout_seconds` | no | Per-group override of the gateway-wide time-to-first-byte cap (`SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this group; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance groups usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
@@ -212,7 +212,7 @@ Every group is validated when the config is loaded and again on every admin writ
 
 It then synthesises the group into the exact `ResilienceConfig` the orchestrator will run (`selection.GroupResilienceConfig`, `internal/selection/resilience.go` — the same function the request path uses) and runs `contracts/resilience` `ResilienceConfig.Validate()` over it. That closes the rest of the rule set over authored config:
 
-- `mode` must be one of `failover`, `load_balance`, `load_balance_with_failover`, `none` (omitted → `config.ErrValidation` `mode is required`; present but unrecognised → wrapped `ErrUnknownMode`);
+- `mode` must be one of `failover`, `load_balance`, `load_balance_with_failover`, `none` (`ErrUnknownMode`);
 - `failure_status_codes` entries must be 4xx/5xx; `response_header_timeout_seconds` must not be negative;
 - `circuit_breaker`: `failure_rate_threshold` in `[0, 1]`, no negative counts or durations, and when `enabled: true` at least one of `failure_threshold` / `failure_rate_threshold` **and** a positive `cooldown_seconds` (`ErrInvalidCircuitBreakerConfig`);
 - `timeout_seconds` (group and target) must not be negative; `retry`: known `backoff_type`, no negative values, `delay_ms` not above `max_delay_ms`, and `max_attempts > 0` when `enabled: true` (`ErrInvalidRetryConfig`, `ErrUnknownBackoffType`);
@@ -281,8 +281,8 @@ With `retry.enabled: true` the orchestrator sleeps the configured backoff before
 
 If every target fails:
 
-- The client sees the status of the **last attempt that actually ran**.
-- If that last attempt was a transport error (no status), the client sees **`502 Bad Gateway`** — even when earlier attempts returned a status.
+- If some attempt returned a non-zero status, the client sees the **last attempt's status**.
+- If every attempt was a transport error (no status ever received), the client sees **`502 Bad Gateway`**.
 - If every target was filtered by the circuit breaker before any attempt ran, the client sees **`503 Service Unavailable`** ("no healthy provider").
 
 ```mermaid
@@ -343,7 +343,9 @@ A v2 target is a provider reference plus a small set of per-use overrides that c
 | `query` | Adds or overrides query-string params, composed over the provider's default query. |
 | `weight` | Relative load-balance share (ignored in failover). |
 
-There is no authorable per-target action block in v2. Internally, the orchestrator still applies the same per-attempt machinery the v1.2 engine used: selection synthesises an internal `changeProvider` (+ `changeModelName` when an `alias` is set) per target (`selection.GroupResilienceConfig`, `internal/selection/resilience.go`), clones the post-selection state once per attempt, and applies those internal actions to the clone — so different attempts cannot stack their mutations. `changeProvider` is no longer the *supported* authoring surface for routing — model-keyed redirect is expressed as a binding (models pattern → provider) on the Configuration, per CLAUDE.md invariant 7. The action type remains registered (contracts/rules/action.go) because resilience targets decode actions through the same factory, so a hand-authored `changeProvider` rule still parses and validates — it is unsupported, not rejected. It has no routing effect, though: selection synthesises a `ResilienceConfig` for every generative request (a single-provider binding gets a degenerate `ModeNone` one via `selection.SingleTargetResilienceConfig`, `internal/selection/resilience.go`), and every target it builds carries `selection.ProviderSwitchActions`, so `buildAttemptState` overwrites `state.Provider` from the binding on every attempt before the final handler reads it. Inside the orchestrator, `changeProvider` / `changeModelName` are used as its internal per-attempt synthesis primitives (`selection.ProviderSwitchActions`, `internal/selection/resilience.go`). A `changeProvider` left in a rule's baseline state is overwritten per attempt by `buildAttemptState`.
+There is no authorable per-target action block in v2. Internally, the orchestrator still applies the same per-attempt machinery the v1.2 engine used: selection synthesises an internal `changeProvider` (+ `changeModelName` when an `alias` is set) per target (`selection.GroupResilienceConfig` / `selection.ProviderSwitchActions`, `internal/selection/resilience.go`), clones the post-selection state once per attempt, and applies those internal actions to the clone — so different attempts cannot stack their mutations. Selection synthesises a `ResilienceConfig` for every generative request (a single-provider binding gets a degenerate `ModeNone` one via `selection.SingleTargetResilienceConfig`), so every binding — group or not — runs through this path. Model-keyed redirect is primarily expressed as a binding (models pattern → provider) on the Configuration, per CLAUDE.md invariant 7.
+
+**A rule-authored `changeProvider` takes precedence over the group** (GitHub [#294](https://github.com/andyjmorgan/slipspace-gateway/issues/294)). It raises `state.ProviderOverridden`; the orchestrator checks the flag before dispatching on mode (`applyRuleOverride`, `internal/middleware/resilience/middleware.go`) and, when set, replaces the binding-derived policy with `selection.RuleOverrideResilienceConfig` — `ModeNone`, one target on the rule's provider, **no** provider-switch or alias action — so `buildAttemptState` has nothing to clobber the rule with. For that request the group stands down entirely: no failover, no load-balance pick, no breaker consultation, no `failure_status_codes` retry, no `Attempts[]` recorded against the group; `PolicyRef` becomes `rule:<provider>` and `gateway.resilience.outcome.total{policy=<group>, outcome=rule_override}` is bumped so the bypass is visible. A rule that only runs `changeModelName` leaves the flag clear and the group runs as normal. Routing a rule *into* a different group (`routeToGroup`) is not yet expressible — see [actions.md → `changeProvider`](actions.md#changeprovider).
 
 **Why this matters for failover:** the destination of attempt N is *not* a fixed URL baked at config-load. Switching `state.Provider` triggers the final handler to re-resolve the endpoint, base URL, credential, and auth-header convention on the *new* provider (invariant 7). This is what lets a single group send the same logical model to providers with different credential conventions — e.g. OpenAI's `Authorization: Bearer` primary and Anthropic's OpenAI-compat `chat` surface as the backup, each authenticating correctly (invariant 6).
 
@@ -364,7 +366,7 @@ Status codes outside the configured set always commit. A `4xx` from a provider i
 
 ## Circuit breaker
 
-The breaker is a per-`(group, target-provider)` state machine that protects a provider from a stampede when it's clearly unhealthy. The breaker store keys state by a `(policy, target)` struct (group name, provider name), so the same provider tracked under two different groups has two independent breakers. State lives **per-pod**, in-memory; a Redis-backed implementation behind the same `BreakerStore` interface is a later task.
+The breaker is a per-`(group, target-provider)` state machine that protects a provider from a stampede when it's clearly unhealthy. The breaker store keys state by `group-name | provider-name`, so the same provider tracked under two different groups has two independent breakers. State lives **per-pod**, in-memory; a Redis-backed implementation behind the same `BreakerStore` interface is a later task.
 
 ```mermaid
 stateDiagram-v2
@@ -418,7 +420,7 @@ Every layer of the orchestrator emits signal. Three independent channels. The OT
 | `gateway.resilience.attempts.total` | counter | `policy, target, outcome` | One per `AttemptRecord`. Outcomes: `success`, `failure_status`, `transport_error`, `cb_blocked`. |
 | `gateway.resilience.attempt.duration` | histogram | `policy, target` | Per-attempt wall-clock duration in seconds. `cb_blocked` does not record. |
 | `gateway.resilience.attempts_per_request` | histogram | `policy` | Recorded once per request at end-of-run. Buckets: `1, 2, 3, 5, 10`. |
-| `gateway.resilience.outcome.total` | counter | `policy, outcome` | Per-request orchestrator outcome: `success`, `all_failed`, `all_open`. |
+| `gateway.resilience.outcome.total` | counter | `policy, outcome` | Per-request orchestrator outcome: `success`, `all_failed`, `all_open`, or `rule_override` when a rule `changeProvider` bypassed the policy before any target ran (bumped against the bypassed policy's name; no attempt meters fire for it). |
 | `gateway.cb.state` | observable gauge | `policy, target, pod, state_name` | Callback-driven from `BreakerStore.Snapshot()` — always reflects current state at scrape time. Values: `0=closed`, `1=open`, `2=half_open`. |
 | `gateway.cb.transitions.total` | counter | `policy, target, to_state` | Bumped synchronously from the breaker's `StateListener` on every state change. |
 
@@ -607,7 +609,7 @@ Check the binding actually selects it. The connector `Record` carries `policy_re
 That's expected, not a stale read. `GET /admin/api/v1/policies` reports `closed` for a `(group, provider)` pair the breaker has never observed — the in-memory store returns the closed state for a key it has never created — and a group with no `circuit_breaker` block never creates a breaker at all, so it reads `closed` too. `circuit_state: unknown` appears only when the admin mux is constructed without a breaker-state source, which `cmd/gateway` never does. The surface that genuinely omits never-touched pairs is the `gateway.cb.state` gauge, fed from `BreakerStore.Snapshot()` — it enumerates only breakers that have actually been created.
 
 **"All my attempts come back 5xx and the client sees the upstream's body, not my fallback."**
-The orchestrator writes its 502/503 fallback **only** when the last attempt that ran was a transport error (no headers) or all targets were CB-blocked. When the last attempt that ran got headers + a status that was in your retry set, that attempt's status is what the client sees. If you want a custom fallback shape, add a terminating rule with `returnStatusCode`.
+The orchestrator writes its 502/503 fallback **only** when every attempt was either a transport error (no headers) or all targets were CB-blocked. When some attempt got headers + a status that was in your retry set, the **last** attempt's status is what the client sees. If you want a custom fallback shape, add a terminating rule with `returnStatusCode`.
 
 **"My `slipspace.requests.total` counter doubled."**
 Check whether you've inadvertently created two events. Multi-attempt requests should emit exactly one `slipspace.request` event (and one `slipspace_requests_total` increment). If you're seeing two, suspect a misconfigured upstream proxy retrying — the gateway's own retry is internal and never produces a second event.

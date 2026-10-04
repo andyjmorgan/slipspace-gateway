@@ -16,14 +16,17 @@ config expressed in the current model.
 > `changeProvider`/`changeUrl`/`useResiliencePolicy` actions are
 > **not gone** — they still parse, validate, round-trip, and apply to
 > `MutableState` (registered in `contracts/rules/action.go`) — but the v2 data
-> plane no longer consults the state they write, so they are **inert for
+> plane no longer consults the state two of them write, so they are **inert for
 > routing**: `changeUrl` (`state.UpstreamURL`) is
 > written but never read;
 > `useResiliencePolicy` (`state.PolicyRef`) is ignored because the binding-derived
 > `ResilienceConfig` stashed on context wins and the data plane wires the name
-> lookup to `nil`; `changeProvider` (`state.Provider`) is overwritten per attempt
-> by the orchestrator's binding-derived provider switch before the final handler
-> reads it. Treat those three as no-ops and route via `bindings`/`groups` instead.
+> lookup to `nil`. Treat those two as no-ops and route via `bindings`/`groups`
+> instead. `changeProvider` **is wired** and takes precedence over the binding:
+> it raises `state.ProviderOverridden`, the orchestrator bypasses the
+> binding-derived group / alias and collapses to one attempt on the rule's
+> provider, and the final handler re-resolves transport from it (GitHub #294;
+> see [actions.md → `changeProvider`](actions.md#changeprovider)).
 > (`changeApiKey` is **wired**: `state.UpstreamCredentialOverride` is read at the
 > single credential mint site, so the action overrides the upstream credential —
 > a literal `apiKey` is minted with the post-rule provider's header format, and
