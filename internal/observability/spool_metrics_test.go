@@ -213,3 +213,50 @@ func TestRegisterSpoolInstruments_RegisterErrorsAreWrapped(t *testing.T) {
 		})
 	}
 }
+
+// failByNameMeter fails exactly one observable instrument registration,
+// selected by name, so every per-instrument error return in
+// RegisterSpoolInstruments is exercised, not only the first of each kind.
+type failByNameMeter struct {
+	noop.Meter
+	fail string
+}
+
+func (m failByNameMeter) Int64ObservableCounter(name string, opts ...metric.Int64ObservableCounterOption) (metric.Int64ObservableCounter, error) {
+	if name == m.fail {
+		return nil, errors.New("synthetic counter failure")
+	}
+	return m.Meter.Int64ObservableCounter(name, opts...)
+}
+
+func (m failByNameMeter) Int64ObservableGauge(name string, opts ...metric.Int64ObservableGaugeOption) (metric.Int64ObservableGauge, error) {
+	if name == m.fail {
+		return nil, errors.New("synthetic gauge failure")
+	}
+	return m.Meter.Int64ObservableGauge(name, opts...)
+}
+
+func TestRegisterSpoolInstruments_EachInstrumentErrorIsWrapped(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		observability.MetricSpoolEnqueuedTotal,
+		observability.MetricSpoolDroppedTotal,
+		observability.MetricSpoolWrittenTotal,
+		observability.MetricSpoolWriteErrorsTotal,
+		observability.MetricSpoolSegmentsSealedTotal,
+		observability.MetricSpoolUploadsTotal,
+		observability.MetricSpoolBreakerState,
+		observability.MetricSpoolPendingSegments,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := observability.RegisterSpoolInstruments(failByNameMeter{fail: name}, stubSpoolSource{}, "pod")
+			if err == nil {
+				t.Fatalf("expected error when %s fails to register", name)
+			}
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("error %q should mention %q", err.Error(), name)
+			}
+		})
+	}
+}
