@@ -47,13 +47,14 @@ inside-out, so the source reads in **reverse** execution order; the function's
 own doc comment states the real order:
 
 ```
-protocol → auth → bodycapture → selection → rules → resilience →
+httperr → protocol → auth → bodycapture → selection → rules → resilience →
     body-remarshal → body-rewrite → final-forward
 ```
 
 ```mermaid
 flowchart TB
-    C[Client request] --> P[protocolMiddleware<br/>path → protocol]
+    C[Client request] --> HE[httperr.Handler<br/>error writer on context]
+    HE --> P[protocolMiddleware<br/>path → protocol]
     P --> AU[auth.HTTPHandler<br/>resolve configuration]
     AU --> BC[bodycapture.HTTPHandler<br/>read + decode typed body]
     BC --> SEL[selectionMiddleware<br/>bindings → provider / group]
@@ -69,6 +70,7 @@ Each stage and its role:
 
 | Stage | Source | Responsibility |
 |---|---|---|
+| `httperr.Handler` | [`internal/httperr`](../internal/httperr) | Outermost data-plane stage: put the instrumented error writer on the request context so the rules and resilience stages (constructed without it) reject through the same JSON shape and error counter as the stages that hold it directly (issue #554). |
 | `protocolMiddleware` | [`cmd/gateway/pipeline.go`](../cmd/gateway/pipeline.go) | Map the inbound path to a v2 protocol; stash `protocolInfo`. Always succeeds. |
 | `auth.HTTPHandler` | [`internal/middleware/auth`](../internal/middleware/auth) | Resolve the owning configuration from headers; pick managed vs passthrough mode. |
 | `bodycapture.HTTPHandler` | [`internal/middleware/bodycapture`](../internal/middleware/bodycapture/bodycapture.go) | Buffer the body once, decode the typed request, replace `r.Body`. |
@@ -93,8 +95,11 @@ Two placement facts are load-bearing:
   onto the wire later, downstream of the orchestrator.
 
 `correlationMiddleware` ([`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go))
-wraps the whole chain ahead of `protocolMiddleware` so every stage shares one
-correlation ID.
+wraps the whole chain ahead of `httperr.Handler` so every stage shares one
+correlation ID. Between `correlationMiddleware` and the data plane the root
+chain ([`cmd/gateway/main.go`](../cmd/gateway/main.go)) runs
+`responseCaptureMiddleware` (only when the body store is enabled),
+`requestCompletionMiddleware` and `recoverMiddleware`, in that order.
 
 ---
 

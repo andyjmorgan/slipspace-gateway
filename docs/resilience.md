@@ -166,7 +166,7 @@ groups:
 | Field | Required | Notes |
 |---|---|---|
 | _map key_ | yes | The group name. Referenced by a binding's `group:`. Unique across the `groups:` block (duplicate top-level keys are a load error). Must be an identifier — start with a letter or digit, then letters, digits, `.`, `_` or `-` — because it is used verbatim as the `policy` metric label and as half of the circuit-breaker `(group, provider)` key. |
-| `mode` | yes | See [Modes](#modes). Required and closed-set: an omitted mode or any value outside `failover` / `load_balance` / `load_balance_with_failover` / `none` fails config load (`ErrUnknownMode`) instead of silently degrading to single-target. |
+| `mode` | yes | See [Modes](#modes). Required and closed-set: an omitted mode fails config load with `ErrValidation` (`mode is required`), and any value outside `failover` / `load_balance` / `load_balance_with_failover` / `none` fails with `ErrUnknownMode` — never silently degrading to single-target. |
 | `strict_weights` | no | Default `false`. Only meaningful in `load_balance` modes — see [strict_weights](#canary-mirroring-with-strict_weights). |
 | `failure_status_codes` | no | Group-wide list of HTTP status codes that count as retryable. Empty falls back to default `[500, 502, 503, 504]`. There is no per-target override in the v2 group schema. |
 | `response_header_timeout_seconds` | no | Per-group override of the gateway-wide time-to-first-byte cap (`SLIPSPACE_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS`, default 120s). When set (> 0) it replaces the default for every attempt under this group; the orchestrator stamps it on the attempt and the forwarder keys a per-timeout transport off it. Deliberately **not** floored — failover/load-balance groups usually want a *shorter* budget so a slow target is abandoned fast and a healthy one is tried. Zero leaves the default in force. Bounds time-to-first-byte only; committed streaming bodies are not capped. |
@@ -261,7 +261,7 @@ Bindings are evaluated in order; the first whose protocol matches the inbound pa
 
 When the matched binding names a group, selection synthesises the group's orchestrator config and stashes it on the request context; the resilience middleware reads it directly. When the binding names a single provider, selection synthesises a degenerate one-target `ModeNone` config that flows through the same path (the `alias`/`query`/`path` sugar on a single-provider binding becomes that one target's overrides).
 
-> **`useResiliencePolicy` is superseded and inert in v2.** The v1 `useResiliencePolicy` rule action still parses (it remains in the rules action vocabulary), but nothing reads what it sets. It writes `state.PolicyRef`, and the v2 orchestrator prefers the per-request config stashed on the context and only consults `state.PolicyRef` through the legacy `PolicyLookup` seam (`internal/middleware/resilience/middleware.go:55-62`), which `cmd/gateway` wires to `nil` (`cmd/gateway/handler.go:51`) — so in production nothing reads it. Do not author it — bind to a group instead. See [What changed from v1](#what-changed-from-v1).
+> **`useResiliencePolicy` is superseded and inert in v2.** The v1 `useResiliencePolicy` rule action still parses (it remains in the rules action vocabulary), but nothing reads what it sets. It writes `state.PolicyRef`, and the v2 orchestrator prefers the per-request config stashed on the context and only consults `state.PolicyRef` through the legacy `PolicyLookup` seam (`internal/middleware/resilience/middleware.go:91-98`), which `cmd/gateway` wires to `nil` (`cmd/gateway/handler.go:57`) — so in production nothing reads it. Do not author it — bind to a group instead. See [What changed from v1](#what-changed-from-v1).
 
 ---
 
@@ -309,7 +309,7 @@ The two mode names are aliases at the YAML level. The behaviour split is governe
 
 - **Default (`strict_weights: false`) — LBWF semantics.** On a retryable failure the orchestrator removes the failed target from the pool and re-rolls from what remains. The walk continues until a target commits or the pool is empty (same terminal handling as failover).
 
-- **`strict_weights: true` — canary mirroring.** The first selection wins or fails. No re-roll. The client sees the first attempt's **status code**; the upstream body is not passed through — once the status is discarded the BufferingResponseWriter silently absorbs the attempt's subsequent body writes, and the orchestrator writes the generic `http.StatusText` body for that status. The point is that the under-weighted target's failures surface as failures rather than being masked by a re-roll. Used when you *want* the under-weighted target's failure rate to surface — e.g. a 95/5 canary where suppressing the 5% pool's errors would defeat the purpose.
+- **`strict_weights: true` — canary mirroring.** The first selection wins or fails. No re-roll. The client sees the first attempt's **status code** (502 on a transport error); the upstream body is not passed through — once the status is discarded the BufferingResponseWriter silently absorbs the attempt's subsequent body writes, and the orchestrator writes the standard `httperr` JSON error body `{"error":"all_failed","message":"all upstream targets failed"}` (component `resilience`) with that status. The point is that the under-weighted target's failures surface as failures rather than being masked by a re-roll. Used when you *want* the under-weighted target's failure rate to surface — e.g. a 95/5 canary where suppressing the 5% pool's errors would defeat the purpose.
 
 ```mermaid
 flowchart TB
@@ -366,7 +366,7 @@ Status codes outside the configured set always commit. A `4xx` from a provider i
 
 ## Circuit breaker
 
-The breaker is a per-`(group, target-provider)` state machine that protects a provider from a stampede when it's clearly unhealthy. The breaker store keys state by `group-name | provider-name`, so the same provider tracked under two different groups has two independent breakers. State lives **per-pod**, in-memory; a Redis-backed implementation behind the same `BreakerStore` interface is a later task.
+The breaker is a per-`(group, target name)` state machine that protects a provider from a stampede when it's clearly unhealthy. The breaker store keys state by a `breakerKey{policy, target}` struct: the group name plus the target name from `Group.TargetNames` — the plain provider name, or `provider#alias` / `provider#<position>` when a provider is listed more than once. So the same provider under two groups, or listed twice in one group, gets independent breakers. State lives **per-pod**, in-memory; a Redis-backed implementation behind the same `BreakerStore` interface is a later task.
 
 ```mermaid
 stateDiagram-v2

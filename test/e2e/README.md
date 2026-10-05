@@ -21,7 +21,7 @@ h.startGateway(t, repoRoot) // allocates the per-test temp spool dir
 t.Cleanup(h.Stop)
 ```
 
-The mock is wired into the gateway by materializing a per-test copy of `config-dev/` into a temp dir (`os.MkdirTemp("", "slipspace-e2e-config-*")`, harness.go:484) and string-replacing the compose alias `mockllm:5555` with the live mock's address (harness.go:522) — there is no `gatewayConfig` struct and no `ProvidersUpstream` field. The harness exposes the running addresses as `h.MockLLMURL` and `h.GatewayURL`.
+The mock is wired into the gateway by materializing a per-test copy of `config-dev/` into a temp dir (`os.MkdirTemp("", "slipspace-e2e-config-*")`, harness.go:493) and string-replacing the compose alias `mockllm:5555` with the live mock's address (harness.go:531) — there is no `gatewayConfig` struct and no `ProvidersUpstream` field. The harness exposes the running addresses as `h.MockLLMURL` and `h.GatewayURL`.
 
 Test helpers:
 
@@ -48,7 +48,7 @@ Tests reading captured records **sort by `(ts_ns, instance_id, seq)`, never rece
 
 ## The matrix
 
-The grid below is the **coverage target**, not an enumerated cross product — the suite samples it (206 e2e test functions today, excluding the two `TestMain` bootstraps) rather than running every cell:
+The grid below is the **coverage target**, not an enumerated cross product — the suite samples it (220 e2e test functions today, excluding the two `TestMain` bootstraps) rather than running every cell:
 
 - `(provider, endpoint)` ∈ {`openai.chat_completions`, `openai.responses`, `openai.models`, `anthropic.messages`, `anthropic.models`, `gemini.generate_content`, `gemini.models`}
 - variant ∈ {`streaming`, `non-streaming`, `success`, `error_4xx`, `error_5xx`, `malformed_response`, `slow_response`, `client_disconnect_mid_stream`}
