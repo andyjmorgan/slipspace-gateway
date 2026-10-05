@@ -135,10 +135,11 @@ type Group struct {
 	FailureStatusCodes []int
 
 	// CircuitBreaker is the group-wide breaker config, applied to every target in
-	// the group. Breaker *state* is keyed per (group, provider) downstream —
-	// internal/middleware/resilience/breaker.go (breakerKey) — so a provider
-	// tripped inside this group keeps taking traffic from any other group that
-	// also lists it.
+	// the group. Breaker *state* is keyed per (group, target name) downstream —
+	// internal/middleware/resilience/breaker.go (breakerKey). The target name is
+	// the provider name, or provider#alias / provider#<position> when a provider
+	// is listed more than once. So a provider tripped inside this group keeps
+	// taking traffic from any other group that also lists it.
 	CircuitBreaker *resilience.CircuitBreakerConfig
 
 	// StrictWeights, in load_balance mode, makes the first weighted pick final.

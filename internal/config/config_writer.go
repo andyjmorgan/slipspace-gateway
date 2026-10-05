@@ -26,9 +26,10 @@ var writableBlockOrder = []string{
 
 // editableBlocks is the set of top-level blocks the admin write surface owns.
 // A file is only ever rewritten when it holds one of these — a file containing
-// nothing but admin/telemetry is left on disk untouched (comments and layout
-// preserved). admin/telemetry are still re-emitted when they share a file with
-// an editable block, so a rewrite never drops them.
+// nothing but non-editable blocks (admin, telemetry, pricing, advisors) is left
+// on disk untouched (comments and layout preserved). Those blocks are still
+// re-emitted when they share a file with an editable block, so a rewrite never
+// drops them.
 var editableBlocks = map[string]bool{
 	keyProviders:      true,
 	keyGroups:         true,

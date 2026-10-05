@@ -199,7 +199,8 @@ const (
 	//
 	// MetricTelemetryPushDroppedTotal counts Records permanently lost by the
 	// real-time telemetry pusher, labelled connector + reason (queue_full,
-	// encode, rejected, exhausted). Any non-zero rate is audit-record loss.
+	// encode, rejected, exhausted, closed, no_sink). Any non-zero rate is
+	// audit-record loss.
 	MetricTelemetryPushDroppedTotal = "gateway.telemetry.push.dropped.total"
 
 	// MetricTelemetryPushFailuresTotal counts failed record-push attempts,
