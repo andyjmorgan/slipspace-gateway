@@ -67,7 +67,7 @@ flowchart LR
     Snap --> Admin[Admin dashboard handlers<br/>/api/v1/dashboard/summary, /api/v1/dashboard/timeseries]
 ```
 
-`Provider.Shutdown` collapses every exporter shutdown and the MeterProvider shutdown into a single idempotent `once.Do` so graceful termination handlers can call it multiple times without double-flushing.
+`Provider.Shutdown` is `flushThenShutdown` ([`setup.go`](../internal/observability/setup.go)): it force-flushes the meter, tracer and logger providers first, then shuts each one down, joining the errors. The whole sequence is idempotent through `sync.Once`, so graceful termination handlers can call it multiple times without double-flushing. The OTLP metric reader's own `Shutdown` is deliberately not registered separately: the MeterProvider shutdown already closes it, and registering it too would produce a spurious `ErrReaderShutdown`.
 
 Resource attributes stamped on every metric series:
 

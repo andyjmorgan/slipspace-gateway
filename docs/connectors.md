@@ -62,7 +62,7 @@ connectors:
 
 `connectors:` is a flat slice. Each entry must declare a unique `name:` (validation rejects duplicates) and a `type:` from the recognised set. Per-type required fields are enforced by `Connector.Validate()`; cross-type field mixing is a config-load error.
 
-The slice may be empty or absent — operators who don't need persistent capture run with no connectors and the spool is not constructed.
+The slice may be empty or absent — operators who don't need persistent capture can run with no connectors. The spool is still constructed and started with zero tracks: it owns no goroutines and touches no disk, and the sink reconciler (`cmd/gateway/sinks.go`) registers a track into it when a connector is created later through the admin write API.
 
 ---
 
