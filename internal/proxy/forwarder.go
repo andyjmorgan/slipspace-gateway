@@ -231,9 +231,10 @@ var alwaysDropHeaders = []string{
 //     unwrapped.
 //
 // A fresh Observer is minted at the top of Forward via the configured
-// ObserverFactory. All six lifecycle hooks fire from this goroutine, so
-// Observer implementations may hold per-request state as plain struct
-// fields without internal synchronisation:
+// ObserverFactory. Forward fires the five transport hooks (1-5 below)
+// on that Observer from this goroutine, so Observer implementations may
+// hold per-request state as plain struct fields without internal
+// synchronisation:
 //
 //  1. OnRequestStart fires synchronously before the upstream call.
 //  2. OnResponseHeaders fires once the upstream response headers arrive,
@@ -244,8 +245,10 @@ var alwaysDropHeaders = []string{
 //     failure, inside httputil.ReverseProxy.ErrorHandler.
 //  5. OnComplete fires once after ServeHTTP returns, carrying the captured
 //     final status (via statusWriter) and total wall-clock duration.
-//  6. OnRuleMatched fires once per matched rule, driven by the rules
-//     middleware; implementations buffer the matches until OnComplete.
+//
+// Forward never calls OnRuleMatched: the rules middleware
+// (rules.HTTPHandler) drives it once per matched rule, on an Observer
+// it mints itself from its own observer factory.
 //
 // Two details are load-bearing:
 //

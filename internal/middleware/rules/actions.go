@@ -378,9 +378,10 @@ func recordBodyOp(state *MutableState, kind bodypatch.OpKind, actionType, target
 // The write is INERT under v2: selection stashes the binding-derived
 // ResilienceConfig on the request context and the orchestrator prefers
 // that over state.PolicyRef, while the gateway wires the by-name
-// PolicyLookup to nil. Nothing validates PolicyName either — v2 has no
-// `resilience_policies:` library to cross-check it against — so an
-// unknown name is a silent no-op rather than a startup error. Trimming
+// PolicyLookup to nil. Config load rejects only an empty policyName
+// (UseResiliencePolicyAction.validate); the name is never cross-checked
+// against a policy library — v2 has none — so an unknown name is a
+// silent no-op rather than a startup error. Trimming
 // is permissive for that reason: there is no real policy to resolve.
 func applyUseResiliencePolicy(a contractsrules.UseResiliencePolicyAction, state *MutableState) (contractsrules.Outcome, error) {
 	state.PolicyRef = strings.TrimSpace(a.PolicyName)

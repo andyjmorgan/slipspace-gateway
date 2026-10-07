@@ -94,9 +94,9 @@ const (
 // fires in sequence; terminating actions short-circuit the pipeline.
 // Behavior controls whether evaluation continues after this rule.
 type RuleContract struct {
-	// ID is optional; populated by the control plane when minted via the
-	// management API. Empty in operator-authored static config — the gateway
-	// emits a stable telemetry handle via Name in that case.
+	// ID is optional and operator-supplied (YAML `id:` or the admin rules
+	// write-API body); nothing mints it automatically. When absent, the
+	// gateway uses Name as the stable telemetry handle.
 	ID *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 
 	// Name is required; the human anchor used by logs, dashboards, and

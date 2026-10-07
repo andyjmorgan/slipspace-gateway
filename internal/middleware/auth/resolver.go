@@ -122,9 +122,11 @@ type AuthResult struct {
 	ConfigurationName string
 
 	// DropHeaders names inbound headers the forwarder must strip before
-	// sending upstream. Auth always emits both passthrough selector
-	// headers here — they are policy-routing metadata, not credentials.
-	// The destination builder layers additional drops on top based on the
+	// sending upstream. Auth always emits all four passthrough selector
+	// headers here (X-Slipspace-Identity, X-Slipspace-Configuration and
+	// their legacy X-Sluice-* twins); managed mode also adds the header
+	// that carried the SlipSpace secret. The selector headers are
+	// policy-routing metadata, not credentials. The destination builder layers additional drops on top based on the
 	// post-rule provider + credential decision (e.g. dropping the inbound
 	// Authorization when managed mode is forwarding to a provider that
 	// uses a non-Bearer credential header).
@@ -140,8 +142,9 @@ type AuthResult struct {
 }
 
 // Resolver decides the auth outcome for a request from the inbound headers
-// alone: it identifies the Configuration and returns an AuthResult plus the
-// header swap to apply, or a typed sentinel error. It makes no routing
+// alone: it identifies the Configuration and returns an AuthResult (whose
+// DropHeaders carries the selector and credential headers to strip
+// upstream), or a typed sentinel error. It makes no routing
 // decision — provider, protocol, and upstream target are resolved downstream
 // by internal/selection from the Configuration's bindings (CLAUDE.md
 // invariant 7), so the resolver runs upstream of routing, not after it.
@@ -166,8 +169,9 @@ func NewResolver(store *config.Store) *Resolver {
 	return &Resolver{store: store}
 }
 
-// Resolve decides the auth mode and returns the resulting AuthResult plus
-// the header swap to apply when forwarding upstream. Either passthrough
+// Resolve decides the auth mode and returns the resulting AuthResult, whose
+// DropHeaders field carries the selector and credential headers to strip
+// when forwarding upstream, or a typed sentinel error. Either passthrough
 // selector header takes precedence over any bearer token on the same
 // request — when present, resolution is always passthrough. Between the
 // two, X-Slipspace-Identity wins over the deprecated X-Slipspace-Configuration.

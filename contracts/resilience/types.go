@@ -51,7 +51,9 @@ type ResilienceConfig struct {
 	// `policy` metric label. Under v2 it is the group name for a group
 	// binding, or "binding:<provider>" for the degenerate single-target
 	// config synthesised for a single-provider binding (that form emits no
-	// gateway.resilience.* metrics).
+	// gateway.resilience.* attempt metrics; the only series it can appear on
+	// is gateway.resilience.outcome.total{outcome=rule_override}, bumped when
+	// a rule changeProvider overrides the binding).
 	Name string `yaml:"name" json:"name"`
 
 	// ID is optional; populated by the control plane when minted via the
