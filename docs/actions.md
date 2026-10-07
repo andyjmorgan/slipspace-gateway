@@ -643,7 +643,7 @@ Binds the request to a named resilience policy. Non-terminating.
 | Field | YAML | JSON | Required | Notes |
 |---|---|---|---|---|
 | `Type` | `type` | `type` | yes | Discriminator; must be `useResiliencePolicy`. |
-| `PolicyName` | `policyName` | `policy_name` | conditional | Name of a resilience **group** in the top-level `groups:` block (`snap.Groups`; there is no `resilience_policies:` block in v2). `PolicyRef` resolves against `snap.Groups` only on the name-lookup path, which the v2 data plane does not wire — see the v2-status note below. Empty string explicitly clears any prior `PolicyRef`. |
+| `PolicyName` | `policyName` | `policy_name` | yes | Name of a resilience **group** in the top-level `groups:` block (`snap.Groups`; there is no `resilience_policies:` block in v2). `PolicyRef` resolves against `snap.Groups` only on the name-lookup path, which the v2 data plane does not wire — see the v2-status note below. An empty (after trim) `policyName` is rejected at config load with `rules.ErrEmptyActionField`. |
 
 ### What it mutates
 
@@ -657,7 +657,7 @@ Binds the request to a named resilience policy. Non-terminating.
 
 ### Last-writer-wins
 
-Multiple `useResiliencePolicy` actions in a rule chain follow last-writer-wins semantics — the evaluator processes actions in declaration order, so a later rule replaces an earlier rule's binding. Setting `PolicyName: ""` explicitly clears the binding; the orchestrator falls back to single-shot when `PolicyRef` is empty.
+Multiple `useResiliencePolicy` actions in a rule chain follow last-writer-wins semantics — the evaluator processes actions in declaration order, so a later rule replaces an earlier rule's binding.
 
 ### Validation
 

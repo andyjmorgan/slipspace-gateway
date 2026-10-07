@@ -141,7 +141,10 @@ Failure mapping inside `HTTPHandler`:
 |---|---|---|
 | Body over the cap | `ErrBodyTooLarge` | 413 |
 | Malformed JSON | `ErrParse` | 400 |
-| Unmodelled kind / no kind on context | `ErrUnknownKind` | 500 (wiring bug) |
+| Unmodelled kind | `ErrUnknownKind` (`unknown request kind`) | 500 (wiring bug) |
+| No kind on context | none: rejected before `Capture` runs (`no request kind on context`) | 500 (wiring bug) |
+
+`ErrMissingRoute` is kept only for compatibility and is never returned.
 
 For test wiring,
 [`bodycapture.WithCaptured`](../internal/middleware/bodycapture/context.go)

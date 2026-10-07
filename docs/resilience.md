@@ -411,7 +411,7 @@ If every target is blocked, the orchestrator returns **503 Service Unavailable**
 
 ## Observability
 
-Every layer of the orchestrator emits signal. Three independent channels. The OTel attribute keys are still `policy` and `target` — under v2, `policy` carries the **group name** — single-provider bindings synthesise a ModeNone config named `binding:<provider>`, but that path emits no `gateway.resilience.*` metrics at all, so the `binding:` form never appears as a metric label — and `target` carries the **target name**: the provider name, unless the group lists that provider more than once, in which case `provider#alias` / `provider#<position>` (see [Target fields](#target-fields)).
+Every layer of the orchestrator emits signal. Three independent channels. The OTel attribute keys are still `policy` and `target` — under v2, `policy` carries the **group name** — single-provider bindings synthesise a ModeNone config named `binding:<provider>`, and that path emits no attempt or per-request `gateway.resilience.*` metrics, with one exception: when a rule-authored `changeProvider` overrides the binding, `gateway.resilience.outcome.total{policy=binding:<provider>, outcome=rule_override}` is bumped, so the `binding:` form appears only on that series — and `target` carries the **target name**: the provider name, unless the group lists that provider more than once, in which case `provider#alias` / `provider#<position>` (see [Target fields](#target-fields)).
 
 ### OTel metrics (Prometheus scrape + OTLP push)
 

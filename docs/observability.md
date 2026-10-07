@@ -130,7 +130,7 @@ Token capture is gated on the live-feed response buffer being attached to contex
 
 ### Rules
 
-The rules engine instruments. Labels are bounded by the configured policy library — `rule_name` and `rule_id` come from operator YAML (or the control plane mint path), never from client input.
+The rules engine instruments. Labels are bounded by the configured policy library — `rule_name` and `rule_id` come from operator-authored config (YAML or the admin write API), never from client input.
 
 | Metric | Type | Labels | Unit | What it counts |
 |---|---|---|---|---|
@@ -141,7 +141,7 @@ The rules engine instruments. Labels are bounded by the configured policy librar
 | `gateway.rewrite.applied.total` | counter | `action_type` | 1 | Body-field mutations that actually changed a request or response body. `action_type` is one of `rewriteField`, `removeField`, `appendField`. Bumped from the body-rewrite path (`internal/middleware/rules/bodyrewrite.go`), one increment per applied op. |
 | `gateway.rewrite.dropped.total` | counter | `action_type, reason` | 1 | Body-field mutations skipped without changing the body. `reason` is the fixed taxonomy from [`internal/bodypatch`](../internal/bodypatch/bodypatch.go): `path_traverses_primitive`, `append_non_array`, `template_ref_miss`, `streaming_response` (a response-side op on a streamed response), `apply_error`. The reason is always operator/taxonomy-derived, never client input. |
 
-`rule_id` is the UUID minted by the control plane on author; static YAML-authored rules leave it empty and `rule_name` is the stable handle.
+`rule_id` is the optional UUID carried on the rule's `id` field. Nothing mints it automatically (the fleet control plane that was meant to was removed). It is set only when the operator supplies `id:` in YAML or in the admin rules write-API body. Rules without one leave it empty, and `rule_name` is the stable handle.
 
 ### Tags
 

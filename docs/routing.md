@@ -121,6 +121,8 @@ Each target is composed by `resolveTarget` (the unexported worker behind both `S
 
 | `Target` field | Source |
 |---|---|
+| `Provider` | the target's provider name |
+| `Name` | the orchestrator identity (circuit-breaker key, `target` label); the provider name, disambiguated when a group lists a provider more than once |
 | `BaseURL` | `provider.base_url` |
 | `Path` | the protocol's `path`, overridden by the target's `path` if set |
 | `Auth` | the protocol's `auth` (nil = provider-native default, resolved at the single mint site) |
@@ -129,6 +131,11 @@ Each target is composed by `resolveTarget` (the unexported worker behind both `S
 | `Credential` | `cfg.credentials[provider]` — the configuration holds the key, not the provider |
 | `Alias` | the binding's / target's model-rewrite alias (empty = no rewrite) |
 | `Weight` | the target's load-balance weight |
+| `TimeoutSeconds` | the target's per-attempt wall-clock bound (0 = inherit the group's) |
+| `PathOverride` | the target's raw `path` override, kept verbatim (empty = inherits the protocol path) |
+| `QueryOverride` | the target's raw `query` override, kept verbatim |
+
+`PathOverride` and `QueryOverride` keep the raw target overrides so the orchestrator can carry them on the per-attempt state and the final handler can re-apply them through `ResolveTarget` (#409).
 
 `resolveTarget` errors (unknown provider, provider does not serve the protocol, configuration holds no credential entry for the provider) are validation-class faults — config validation rejects them before runtime, and they surface as HTTP 500 if they ever reach the request path.
 
