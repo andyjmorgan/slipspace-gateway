@@ -246,9 +246,9 @@ var alwaysDropHeaders = []string{
 //  5. OnComplete fires once after ServeHTTP returns, carrying the captured
 //     final status (via statusWriter) and total wall-clock duration.
 //
-// Forward never calls OnRuleMatched: the rules middleware
-// (rules.HTTPHandler) drives it once per matched rule, on an Observer
-// it mints itself from its own observer factory.
+// Forward never calls OnRuleMatched. The rules evaluator records each
+// matched rule in the request's MatchBuffer (rules.WithMatchBuffer), and
+// the reporter drains that buffer at completion (drainRuleMatches).
 //
 // Two details are load-bearing:
 //

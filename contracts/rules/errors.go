@@ -4,7 +4,8 @@ import "errors"
 
 // ErrEmptyRuleID is returned when a RuleContract carries no ID and ID is
 // required by the caller's validation policy. ID is otherwise nullable on the
-// type — only the control plane mints IDs; static config leaves it nil.
+// type: ID is optional and operator-supplied (YAML or the admin API); nothing
+// mints it automatically, and it stays nil when omitted.
 var ErrEmptyRuleID = errors.New("rules: rule id required")
 
 // ErrEmptyRuleName is returned when a RuleContract carries no Name. Name is
