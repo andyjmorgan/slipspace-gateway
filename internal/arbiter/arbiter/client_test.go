@@ -99,4 +99,30 @@ func TestDetectorClient_ReadError(t *testing.T) {
 	}
 }
 
+// TestDetectorClient_NoConnectionReuse pins the keep-alive fix: the default
+// detector client must open a fresh connection per call rather than pooling.
+// Detectors run uvicorn with a 5 s keep-alive, so a pooled connection reused
+// after an idle gap is one uvicorn has already closed, and the POST fails with
+// EOF. Distinct client remote addresses across two calls prove no reuse.
+func TestDetectorClient_NoConnectionReuse(t *testing.T) {
+	remotes := make(chan string, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remotes <- r.RemoteAddr
+		_, _ = w.Write([]byte(`{"status":"STATUS_OK","findings":[]}`))
+	}))
+	defer srv.Close()
+
+	c := newDetectorClient(nil)
+	for i := 0; i < 2; i++ {
+		if _, err := c.Detect(context.Background(), srv.URL, &detectv1.DetectRequest{}); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	close(remotes)
+	first, second := <-remotes, <-remotes
+	if first == second {
+		t.Errorf("connection reused (remote %s on both calls); keep-alives must be disabled", first)
+	}
+}
+
 var errIO = errors.New("io boom")
