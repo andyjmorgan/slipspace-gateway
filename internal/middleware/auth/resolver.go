@@ -94,8 +94,9 @@ const (
 )
 
 // AuthResult is the resolved auth decision for a single request, stashed
-// on the request context by HTTPHandler and read by downstream middleware
-// (bodycapture, forwarder).
+// on the request context by HTTPHandler and read downstream via FromContext
+// (the selection and rules middleware, the final-forward handler, request
+// completion and the reporter).
 type AuthResult struct {
 	// Mode is which auth scheme matched: ModeManaged when a SlipSpace-issued
 	// bearer was presented in a credential header, ModePassthrough when

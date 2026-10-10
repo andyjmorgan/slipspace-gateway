@@ -58,11 +58,14 @@ type Observer interface {
 	// client status.
 	OnComplete(ctx context.Context, statusCode int, durationMs int64)
 
-	// OnRuleMatched fires once per rule that matched on this request,
-	// driven by the rules middleware between bodycapture and the
-	// forwarder. Implementations should buffer the match and flush all
-	// buffered matches in OnComplete so the bus sees one batch per
-	// request rather than mid-pipeline bursts.
+	// OnRuleMatched receives one rule that matched on this request.
+	// Nothing in the current request path calls it: the rules evaluator
+	// records matches into the per-request MatchBuffer
+	// (rules.WithMatchBuffer), and the reporter drains that buffer at
+	// completion (drainRuleMatches). The method stays on the interface
+	// for implementations that buffer matches and flush them all in
+	// OnComplete, so the bus sees one batch per request rather than
+	// mid-pipeline bursts.
 	//
 	// The supplied event has CorrelationID empty by convention — the
 	// rules middleware does not depend on observability plumbing.

@@ -217,8 +217,10 @@ type RequestPart struct {
 	// with BodyRef and BodyOmitted.
 	Body json.RawMessage `json:"body,omitempty"`
 
-	// BodyRef is a URL to an out-of-line blob (used by S3 / Azure
-	// destinations when body exceeds the inline threshold). Mutually
+	// BodyRef is reserved for an out-of-line blob URL. No current code
+	// path sets it: the S3 and Azure destinations upload whole segment
+	// files, and oversized bodies are handled by the binding's
+	// max_body_bytes/oversize_behaviour (BodyOmitted). Mutually
 	// exclusive with Body and BodyOmitted.
 	BodyRef string `json:"body_ref,omitempty"`
 

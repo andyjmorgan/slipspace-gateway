@@ -5,8 +5,9 @@ import "fmt"
 // Validate enforces the minimum invariants on a RuleContract: Name is set,
 // Condition is non-nil, at least one Action is present, and Behavior is one
 // of the BehaviorX constants (empty is treated as BehaviorContinue downstream).
-// ID is nullable — only the control plane mints IDs — but when set must be
-// a non-nil pointer (uuid.Parse already enforced UUID shape on unmarshal).
+// ID is optional and never minted by the gateway (accepted verbatim from YAML
+// or the admin write payload); when set, uuid.Parse already enforced UUID
+// shape on unmarshal.
 func (r *RuleContract) Validate() error {
 	if r.Name == "" {
 		return ErrEmptyRuleName
