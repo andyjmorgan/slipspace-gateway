@@ -19,7 +19,10 @@ that:
 | `CollectUnmapped` | `models/unmapped.go` | Surface, for telemetry, every field that landed in a `DynamicProperties.Extra` |
 
 Together they guarantee: *if a payload parses, it round-trips* — the property the
-fuzz suite asserts on every `UnmarshalJSON` in `protocols/` (see the
+fuzz suite asserts on each package's `UnmarshalJSON` entry points (the
+polymorphic-union decoders and the top-level request/response types) plus
+`models.FuzzUnmarshalDynamic`, into which the one-line per-type delegating
+methods funnel (see the
 [Testing Strategy](../CLAUDE.md#protocol-contracts--perpetual-maintenance)).
 
 The concrete provider types that embed these primitives are documented in
