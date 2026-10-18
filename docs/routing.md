@@ -44,7 +44,8 @@ The data-plane chain is composed in [`cmd/gateway/handler.go::buildDataPlaneHand
 
 ```mermaid
 flowchart TB
-    A[Client request] --> P[protocolMiddleware<br/>path → protocol]
+    A[Client request] --> HE[httperr.Handler<br/>error writer on context]
+    HE --> P[protocolMiddleware<br/>path → protocol]
     P --> AU[auth<br/>resolve configuration]
     AU --> BC[bodycapture<br/>kindFromProtocol → typed body]
     BC --> SEL[selection<br/>bindings → provider / group]
@@ -56,14 +57,14 @@ flowchart TB
     F --> U[upstream provider]
 ```
 
-The real order is **`protocol → auth → bodycapture → selection → rules → resilience → body-remarshal → body-rewrite → final`**. A few facts that the v1 doc got wrong and are load-bearing here:
+The real order is **`httperr → protocol → auth → bodycapture → selection → rules → resilience → body-remarshal → body-rewrite → final`**. A few facts that the v1 doc got wrong and are load-bearing here:
 
-- **`protocolMiddleware` is first, and it always succeeds.** It only maps the path to a protocol and stashes a `protocolInfo` on the context; an unrecognised path is marked non-generative (`generative: false`) and falls through to passthrough matching downstream. There is no 404/405 at this stage — the protocol choice is never a routing failure.
+- **`protocolMiddleware` is the first routing stage (right after `httperr.Handler`), and it always succeeds.** It only maps the path to a protocol and stashes a `protocolInfo` on the context; an unrecognised path is marked non-generative (`generative: false`) and falls through to passthrough matching downstream. There is no 404/405 at this stage — the protocol choice is never a routing failure.
 - **Bodycapture's typed kind comes from the protocol, not from routing.** [`kindFromProtocol`](../cmd/gateway/pipeline.go) maps the stashed protocol to a `bodycapture.RequestKind`. There is no `request_kind` field in the v2 YAML.
 - **`selection` is where 404/405 can fire**, and it runs *after* auth (which resolves the configuration) and bodycapture (which decodes the model). It is the only stage that picks a provider.
 - **The final handler builds the upstream URL** from the resolved `Target.Path` (provider protocol path ∪ per-target override), not from any endpoint declaration or matched path. See [`buildDestination`](../cmd/gateway/destination.go).
 
-`correlationMiddleware` ([`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go)) wraps the whole data-plane chain ahead of `protocolMiddleware`, so every stage shares one correlation ID — see [X-SlipSpace headers](#x-slipspace-headers). The only middleware outside it is `helloMiddleware` ([`cmd/gateway/hello.go`](../cmd/gateway/hello.go)), which answers `GET`/`HEAD /api/hello` locally before correlation runs, so that probe carries no correlation ID.
+`correlationMiddleware` ([`cmd/gateway/correlation.go`](../cmd/gateway/correlation.go)) wraps the whole data-plane chain ahead of `httperr.Handler`, with `responseCaptureMiddleware` (only when the body store is enabled), `requestCompletionMiddleware` and `recoverMiddleware` between them ([`cmd/gateway/main.go`](../cmd/gateway/main.go)), so every stage shares one correlation ID — see [X-SlipSpace headers](#x-slipspace-headers). The only middleware outside it is `helloMiddleware` ([`cmd/gateway/hello.go`](../cmd/gateway/hello.go)), which answers `GET`/`HEAD /api/hello` locally before correlation runs, so that probe carries no correlation ID.
 
 ---
 
