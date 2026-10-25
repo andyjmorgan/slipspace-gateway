@@ -34,8 +34,10 @@ type Connector interface {
 	// accepted in YAML config). Informational today: no production
 	// caller reads it — dispatch to a sink reads the YAML `type` field
 	// via config.ConnectorIndex (cmd/gateway/reporter.go dispatchRecord),
-	// construction switches on cfg.Type in factory.Build, and the spool
-	// emits no metrics of its own. "webhook" is not among them — it is a
+	// construction switches on cfg.Type in factory.Build, and the
+	// gateway.spool.* meters (bridged from Spool.Stats in
+	// cmd/gateway/spool_metrics.go) are labelled by connector name, not
+	// type. "webhook" is not among them — it is a
 	// real-time pusher, not a spool destination, and factory.Build
 	// rejects it.
 	Type() string

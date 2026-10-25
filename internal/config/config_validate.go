@@ -76,9 +76,11 @@ func (r *ResolvedConfig) validateAdvisors() error {
 }
 
 // validIdentifier reports whether name is an operator-authored identifier the
-// gateway can use verbatim as a telemetry label and as one half of the
-// circuit-breaker (group, provider) key: non-empty, starting with a letter or
-// digit, and otherwise drawn from letters, digits, '.', '_' and '-'. The
+// gateway can use verbatim as a telemetry label and in the circuit-breaker
+// (group, target name) key, where the target name is the provider name or
+// provider#alias / provider#<position> from Group.TargetNames: non-empty,
+// starting with a letter or digit, and otherwise drawn from letters, digits,
+// '.', '_' and '-'. The
 // breaker store keys on the pair structurally, so the charset is not a
 // delimiter-safety requirement — it keeps names sane in metric labels, admin
 // URLs (/api/v1/config/{groups,providers}/{name}) and YAML written back by the

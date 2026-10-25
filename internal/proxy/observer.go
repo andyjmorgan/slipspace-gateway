@@ -14,10 +14,12 @@ import (
 // in internal/pipeline is inert and is not wired through the Forwarder.
 //
 // One Observer instance is created per Forward call by an ObserverFactory,
-// so implementations may own per-request state as plain struct fields. All
-// six methods are invoked synchronously from the request goroutine — the
-// Forwarder does no concurrent fan-out — so no internal locking is required
-// to coordinate writes across the lifecycle.
+// so implementations may own per-request state as plain struct fields. The
+// five lifecycle methods Forward calls (OnRequestStart, OnResponseHeaders,
+// OnResponseChunk, OnUpstreamError, OnComplete) are invoked synchronously
+// from the request goroutine; OnRuleMatched is not called on the current
+// request path. The Forwarder does no concurrent fan-out, so no internal
+// locking is required to coordinate writes across the lifecycle.
 type Observer interface {
 	// OnRequestStart fires once, before the upstream HTTP call is issued.
 	OnRequestStart(ctx context.Context, dest Destination)

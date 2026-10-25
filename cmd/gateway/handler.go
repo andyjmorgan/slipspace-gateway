@@ -21,10 +21,11 @@ import (
 
 // buildDataPlaneHandler composes the v2 request chain:
 //
-//	protocol → auth → bodycapture → selection → rules → resilience →
-//	    body-remarshal → body-rewrite → final-forward
+//	httperr → protocol → auth → bodycapture → selection → rules →
+//	    resilience → body-remarshal → body-rewrite → final-forward
 //
-// protocol maps the inbound path to a wire shape; auth identifies the
+// httperr is outermost and puts the instrumented error writer on the request
+// context (issue #554); protocol maps the inbound path to a wire shape; auth identifies the
 // configuration from headers alone; selection walks that configuration's
 // bindings to pick the provider/group and seeds the per-request state; the
 // resilience orchestrator (reused unchanged) dispatches single-target or group

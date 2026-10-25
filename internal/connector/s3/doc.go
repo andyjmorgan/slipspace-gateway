@@ -1,9 +1,13 @@
 // Package s3 implements a Connector backed by AWS S3 or any S3-compatible
 // provider (MinIO, SeaweedFS, Garage, Ceph RGW).
 //
-// Object layout mirrors the design note:
+// Object layout mirrors the design note (the optional configured prefix is
+// prepended when set):
 //
-//	records/instance=<id>/date=YYYY-MM-DD/hour=HH/<unix_ns>-<seq>-<delivery_id>.ndjson.zst
+//	[<prefix>/]records/instance=<id>/date=YYYY-MM-DD/hour=HH/<unix_ns>-<seq>-<delivery_id>.ndjson.zst
+//
+// The spool sets delivery_id to the segment filename stem, so the stem
+// appears twice in production keys.
 //
 // Auth modes (per the validated contracts/config.ConnectorAuth):
 //   - workload_identity (default): the SDK's default credential chain
