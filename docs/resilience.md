@@ -261,7 +261,7 @@ Bindings are evaluated in order; the first whose protocol matches the inbound pa
 
 When the matched binding names a group, selection synthesises the group's orchestrator config and stashes it on the request context; the resilience middleware reads it directly. When the binding names a single provider, selection synthesises a degenerate one-target `ModeNone` config that flows through the same path (the `alias`/`query`/`path` sugar on a single-provider binding becomes that one target's overrides).
 
-> **`useResiliencePolicy` is superseded and inert in v2.** The v1 `useResiliencePolicy` rule action still parses (it remains in the rules action vocabulary), but nothing reads what it sets. It writes `state.PolicyRef`, and the v2 orchestrator prefers the per-request config stashed on the context and only consults `state.PolicyRef` through the legacy `PolicyLookup` seam (`internal/middleware/resilience/middleware.go:91-98`), which `cmd/gateway` wires to `nil` (`cmd/gateway/handler.go:57`) — so in production nothing reads it. Do not author it — bind to a group instead. See [What changed from v1](#what-changed-from-v1).
+> **`useResiliencePolicy` is superseded and inert in v2.** The v1 `useResiliencePolicy` rule action still parses (it remains in the rules action vocabulary), but nothing reads what it sets. It writes `state.PolicyRef`, and the v2 orchestrator prefers the per-request config stashed on the context and only consults `state.PolicyRef` through the legacy `PolicyLookup` seam (`internal/middleware/resilience/middleware.go:91-98`), which `cmd/gateway` wires to `nil` (`cmd/gateway/handler.go:58`) — so in production nothing reads it. Do not author it — bind to a group instead. See [What changed from v1](#what-changed-from-v1).
 
 ---
 
@@ -461,7 +461,7 @@ Per-attempt fields ([`contracts/connector/record.go`](../contracts/connector/rec
 
 - `target` — the target name: the provider name, or `provider#alias` / `provider#<position>` when the group lists that provider more than once.
 - `started_at_ns` — the attempt's wall-clock start as an **int64 of nanoseconds since the Unix epoch** (same encoding as the record's `ts_ns`), not an RFC3339 string.
-- `duration_ms` — orchestrator-measured wall-clock duration in milliseconds; zero for `cb_blocked` entries.
+- `duration_ms` — orchestrator-measured wall-clock duration in milliseconds; omitted (`omitempty`) for `cb_blocked` entries, which have a zero duration.
 - `status_code` — the upstream-reported HTTP status; omitted (zero) on a transport error or a `cb_blocked` skip.
 - `error` — the transport-level error string, set (and emitted) only when the attempt failed before headers; omitted on the success and `failure_status` paths.
 - `outcome` — one of `success`, `failure_status`, `transport_error`, `cb_blocked`.

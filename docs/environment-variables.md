@@ -168,7 +168,7 @@ The body store (`*_BODY_BYTES`) is a separate LRU that holds the captured reques
 
 Three useful disable configurations:
 
-- `SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0` — no live-tail pane at all. `GET /admin/api/v1/messages/recent` and `/messages/stream` return 503; `GET /messages/{event_id}/body` returns 503 (`body capture disabled`) too, since body capture is gated on `LiveFeedEnabled() && BODY_BYTES > 0` ([`internal/config/env.go:316`](../internal/config/env.go)) — exactly as it does with `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`. A 404 (`not found`) only happens when the body store exists and the `event_id` is unknown or already evicted.
+- `SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=0` — no live-tail pane at all. `GET /admin/api/v1/messages/recent` and `/messages/stream` return 503; `GET /messages/{event_id}/body` returns 503 (`body capture disabled`) too, since body capture is gated on `LiveFeedEnabled() && BODY_BYTES > 0` ([`internal/config/env.go:317`](../internal/config/env.go)) — exactly as it does with `SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0`. A 404 (`not found`) only happens when the body store exists and the `event_id` is unknown or already evicted.
 - `SLIPSPACE_ADMIN_LIVE_FEED_CAPACITY=100 SLIPSPACE_ADMIN_LIVE_FEED_BODY_BYTES=0` — metadata-only pane, no body capture. Useful when the gateway is memory-constrained and you only want recent-request visibility.
 - Defaults — both panes work, with the 200 MiB body store budget.
 

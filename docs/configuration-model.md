@@ -131,7 +131,7 @@ providers:
           format: "Bearer {key}"
 ```
 
-### `Provider` fields (`contracts/config/model.go:50`)
+### `Provider` fields (`contracts/config/model.go:54`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -158,7 +158,7 @@ providers:
 
 ### Auth validation
 
-`validateAuth` (`internal/config/config_validate.go:148`) enforces, per `auth` block on a protocol or passthrough family:
+`validateAuth` (`internal/config/config_validate.go:150`) enforces, per `auth` block on a protocol or passthrough family:
 
 - A non-empty `format` requires a non-empty `header` (`ErrAuthFormatWithoutHeader`) — a format with no header would be silently ignored.
 - A non-empty `format` must contain `{key}` **exactly once** (`ErrInvalidAuthFormat`).
@@ -193,7 +193,7 @@ groups:
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | _map key_ | string | yes | The group name. Must be an identifier: a leading letter or digit, then letters, digits, `.`, `_` or `-`. It is the `policy` telemetry label and half of the circuit-breaker `(group, target name)` key, so anything else aborts validation. |
-| `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:14`, values at `:25-33`). Required; an omitted value aborts validation with `ErrValidation` (`group <name>: mode is required (one of ...)`, `internal/config/config_validate.go:190`), and an unknown value aborts with `ErrUnknownMode`, raised by the `contracts/resilience` validator that `validateGroups` runs at load — neither degrades to single-target. |
+| `mode` | resilience.ResilienceMode | yes | Orchestration strategy: `failover`, `load_balance`, `load_balance_with_failover`, or `none` (`contracts/resilience/types.go:14`, values at `:25-33`). Required; an omitted value aborts validation with `ErrValidation` (`group <name>: mode is required (one of ...)`, `internal/config/config_validate.go:192`), and an unknown value aborts with `ErrUnknownMode`, raised by the `contracts/resilience` validator that `validateGroups` runs at load — neither degrades to single-target. |
 | `failure_status_codes` | []int | no | Upstream HTTP status set treated as a failure for retry / circuit-breaker accounting. Empty falls back to "5xx is a failure". |
 | `circuit_breaker` | *CircuitBreakerConfig | no | Group-wide breaker. State is tracked per `(group, target name)` pair — a two-field struct `breakerKey{policy, target}` in `internal/middleware/resilience/breaker.go`, not a delimited string, where `target` is the name from `Group.TargetNames()`: the plain provider name when the provider appears once in the group, otherwise `provider#alias` or `provider#<1-based position>`. Two targets on the same provider in one group therefore have independent breakers, and a target tripped in one group is isolated to that group and is not automatically skipped by other groups that include the same provider. Fields: `enabled`, `failure_threshold`, `failure_rate_threshold`, `sampling_duration_seconds`, `cooldown_seconds`, `half_open_success_threshold`, `minimum_throughput` (`contracts/resilience/types.go:175`). Validated at load by `CircuitBreakerConfig.Validate`: rate in `[0, 1]`, no negatives, and an enabled breaker needs a trip arm plus `cooldown_seconds > 0`. |
 | `strict_weights` | bool | no | In `load_balance` mode, makes the first weighted-random pick final — no re-roll onto another target on a retryable failure. Used for canary mirroring where the under-weighted target's failures must surface to the client. Ignored in `failover` mode. |
@@ -249,7 +249,7 @@ configurations:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `credentials` | map[string]string | no | Provider name → upstream credential this configuration holds for it; `{key}` resolves from here. An **empty-string** value means a no-credential provider (strip the credential and forward — useful for ollama-style upstreams). A provider referenced by a binding **must** have an entry here (even if empty); this is **not** checked at load — selection fails at request time with `selection: configuration holds no credential entry for provider <p>`. A credential naming a provider absent from `providers` aborts at load with `ErrValidation` (`configuration <name> credentials reference unknown provider <p>`, `config_validate.go:310`) — not `ErrUnknownConfiguration`, which is reserved for an api_key naming an unknown configuration. |
+| `credentials` | map[string]string | no | Provider name → upstream credential this configuration holds for it; `{key}` resolves from here. An **empty-string** value means a no-credential provider (strip the credential and forward — useful for ollama-style upstreams). A provider referenced by a binding **must** have an entry here (even if empty); this is **not** checked at load — selection fails at request time with `selection: configuration holds no credential entry for provider <p>`. A credential naming a provider absent from `providers` aborts at load with `ErrValidation` (`configuration <name> credentials reference unknown provider <p>`, `config_validate.go:312`) — not `ErrUnknownConfiguration`, which is reserved for an api_key naming an unknown configuration. |
 | `bindings` | []Binding | no | The generative routing table: `(protocol, model) → provider or group`. Evaluated in order; first match wins. See [`bindings`](#bindings-inside-a-configuration). |
 | `passthrough_bindings` | []PassthroughBinding | no | Exposes opaque endpoint families on this configuration. See [Passthrough families and bindings](#passthrough-families-and-bindings). |
 | `rule_names` | []string | no | Names of **transform** rules from the top-level `rules:` library this configuration applies (body/header/query rewrites, tags, short-circuits — not routing). Unknown names abort load with `ErrUnknownRuleName`. Evaluation order = list order. |
@@ -282,7 +282,7 @@ bindings:
 |---|---|---|---|
 | `protocol` | string | yes | The generative protocol this binding serves — one of the protocol constants (see [Protocol resolution](#protocol-resolution)). Unknown protocol aborts validation. |
 | `models` | []string | no | Client-requested model patterns this binding matches. Exact string, or a single **trailing-`*`** prefix wildcard (interior or multiple `*` is rejected). An **empty** model set is a **catch-all** for the protocol (default-permissive, invariant #1) — never a default-deny. |
-| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:354`, `validateBindings` :344-414). |
+| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:356`, `validateBindings` :346-401). |
 | `group` | string | conditionally | Names a resilience group destination. Mutually exclusive with `provider`. |
 | `alias` | string | no | Rewrites the request body model name for the **single-provider** case (sugar for the binding's implicit target alias). **Ignored when `group` is set** — group targets carry their own aliases. |
 | `query` | map[string]string | no | Single-provider per-use query override. Ignored when `group` is set. |
@@ -405,7 +405,7 @@ Lookups use `SecretIndex` (built post-validate); the slice exists for enumeratio
 
 Each rule must:
 
-- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:242`, enforced in `validateLibraries`).
+- Have a unique `name` across the library (`ErrDuplicateRuleName`, `internal/config/config_validate.go:244`, enforced in `validateLibraries`).
 - Pass `RuleContract.Validate()` — the per-rule semantic checks.
 
 > **Note:** v2 validation does **not** check rule `id` uniqueness (the `ErrDuplicateRuleID` sentinel is defined but no longer wired into the validator) and there is no longer any cross-check of `useResiliencePolicy` action names against the `groups` block — the action is inert in v2, so an unknown name is simply a no-op at runtime rather than a load error (see [actions.md](actions.md#useresiliencepolicy)).
@@ -418,7 +418,7 @@ Each rule must:
 
 Each connector entry must:
 
-- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:257`, enforced in `validateLibraries`).
+- Have a unique `name` across the slice (`ErrDuplicateConnectorName`, `config_validate.go:259`, enforced in `validateLibraries`).
 - Pass `Connector.Validate()` — the per-type required-field check (s3 needs `bucket` + `region`, azure_blob needs `account` + `container`, webhook needs `url` + `secret_ref` + `timeout_ms`).
 - Be referenced by a defined `connector_bindings[].connector` name — an unknown reference aborts with `ErrUnknownConnectorReference`.
 
@@ -534,9 +534,9 @@ A request's **protocol** is fixed by its inbound path — there is one canonical
 | `/v1/embeddings`, `/embeddings` | `ProtocolEmbeddings` | `embeddings` |
 | `/v1beta/models/{model}:generateContent` (or `:streamGenerateContent`) | `ProtocolGenerateContent` | `generate_content` |
 
-The protocol constants live in `contracts/config/model.go:18` and are re-exported from `internal/selection`. When `ProtocolForPath` does not recognise a path, the data plane falls back to per-configuration **passthrough** matching (`MatchPassthrough`) before returning a 404.
+The protocol constants live in `contracts/config/model.go:22` and are re-exported from `internal/selection`. When `ProtocolForPath` does not recognise a path, the data plane falls back to per-configuration **passthrough** matching (`MatchPassthrough`) before returning a 404.
 
-These protocol names are the same strings a provider's `protocols:` map and a binding's `protocol:` field must use — `validateProviders` and `validateBindings` reject any unknown protocol against the `knownProtocols` set (`internal/config/config_validate.go:17`).
+These protocol names are the same strings a provider's `protocols:` map and a binding's `protocol:` field must use — `validateProviders` and `validateBindings` reject any unknown protocol against the `knownProtocols` set (`internal/config/config_validate.go:18`).
 
 ---
 
