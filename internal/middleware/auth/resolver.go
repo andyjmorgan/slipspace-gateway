@@ -20,7 +20,10 @@ const (
 )
 
 // Inbound header names. Passthrough mode is selected by either of two headers,
-// checked in this order:
+// each also accepted under its legacy X-Sluice-* spelling (X-Sluice-Identity,
+// X-Sluice-Configuration) for pre-rebrand clients, checked in this order:
+// X-Slipspace-Identity (then X-Sluice-Identity), then
+// X-Slipspace-Configuration (then X-Sluice-Configuration):
 //
 //  1. X-Slipspace-Identity carries a SlipSpace api-key secret; the matching key's
 //     Configuration is used. The api-key is unguessable, which is the whole
