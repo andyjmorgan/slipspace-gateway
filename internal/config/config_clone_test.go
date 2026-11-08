@@ -35,6 +35,7 @@ func v2Fixture() *ResolvedConfig {
 				Mode:               contractsres.ModeFailover,
 				FailureStatusCodes: []int{503},
 				CircuitBreaker:     &contractsres.CircuitBreakerConfig{Enabled: true, FailureThreshold: 3, SamplingDurationSeconds: 30, CooldownSeconds: 60, HalfOpenSuccessThreshold: 2},
+				Retry:              &contractsres.RetryConfig{Enabled: true, MaxAttempts: 3, DelayMilliseconds: 100},
 				Targets:            []contractsconfig.Target{{Provider: "openai", Query: map[string]string{"q": "1"}}},
 			},
 		},
@@ -91,6 +92,17 @@ func TestResolvedConfig_CloneIndependence(t *testing.T) {
 	be.Protocols["chat"].Auth.Header = "X-Changed"
 	if orig.Providers["openai"].Protocols["chat"].Auth.Header != "Authorization" {
 		t.Errorf("orig provider auth mutated")
+	}
+	// Group deep copy: the pointer-typed CircuitBreaker and Retry blocks must
+	// be independent copies, not shared with the live snapshot (#616).
+	ha := clone.Groups["ha"]
+	ha.CircuitBreaker.FailureThreshold = 99
+	ha.Retry.MaxAttempts = 99
+	if got := orig.Groups["ha"].CircuitBreaker.FailureThreshold; got != 3 {
+		t.Errorf("orig group CircuitBreaker mutated: FailureThreshold = %d", got)
+	}
+	if got := orig.Groups["ha"].Retry.MaxAttempts; got != 3 {
+		t.Errorf("orig group Retry mutated: MaxAttempts = %d", got)
 	}
 }
 

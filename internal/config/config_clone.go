@@ -109,6 +109,10 @@ func cloneGroup(in contractsconfig.Group) contractsconfig.Group {
 		cb := *in.CircuitBreaker
 		out.CircuitBreaker = &cb
 	}
+	if in.Retry != nil {
+		rt := *in.Retry
+		out.Retry = &rt
+	}
 	if in.Targets != nil {
 		out.Targets = make([]contractsconfig.Target, len(in.Targets))
 		for i, t := range in.Targets {
