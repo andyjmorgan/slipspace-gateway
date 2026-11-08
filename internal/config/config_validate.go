@@ -329,9 +329,17 @@ func (r *ResolvedConfig) validateConfigurations() error {
 				return fmt.Errorf("%w: configuration %q references rule %q", ErrUnknownRuleName, name, ruleName)
 			}
 		}
-		for i, cb := range cfg.ConnectorBindings {
+		for i := range cfg.ConnectorBindings {
+			cb := &cfg.ConnectorBindings[i]
 			if !connectorDefined(r.Connectors, cb.Connector) {
 				return fmt.Errorf("%w: configuration %q connector_bindings[%d] references %q", ErrUnknownConnectorReference, name, i, cb.Connector)
+			}
+			// Shape validation (sampling range, sampling_key, oversize_behaviour,
+			// max_body_bytes, filter) lives on the contract type; the loader is
+			// its only production caller, so skipping it here let invalid
+			// bindings load clean and be persisted by the admin write path (#610).
+			if err := cb.Validate(); err != nil {
+				return fmt.Errorf("%w: configuration %q connector_bindings[%d]: %w", ErrValidation, name, i, err)
 			}
 		}
 	}
