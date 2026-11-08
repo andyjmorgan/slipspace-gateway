@@ -190,6 +190,26 @@ func TestMatchModelName(t *testing.T) {
 			false,
 		},
 		{
+			// #620: folding the pattern turned \D into \d, so this matched
+			// "gpt-4o" (a digit) instead of a non-digit.
+			"case insensitive regex keeps uppercase escape classes",
+			contractsrules.ModelNameCondition{Operator: contractsrules.StringRegex, ExpectedModelName: `^gpt-\D`, CaseInsensitive: true},
+			ctxWith("", "", "gpt-4o", nil),
+			false,
+		},
+		{
+			"case insensitive regex folds the subject via (?i)",
+			contractsrules.ModelNameCondition{Operator: contractsrules.StringRegex, ExpectedModelName: `^GPT-\d`, CaseInsensitive: true},
+			ctxWith("", "", "gpt-4o", nil),
+			true,
+		},
+		{
+			"case insensitive regex matches non-digit as written",
+			contractsrules.ModelNameCondition{Operator: contractsrules.StringRegex, ExpectedModelName: `^GPT-\D`, CaseInsensitive: true},
+			ctxWith("", "", "gpt-oss", nil),
+			true,
+		},
+		{
 			"Not inverts match",
 			contractsrules.ModelNameCondition{Operator: contractsrules.StringStartsWith, ExpectedModelName: "claude-", Not: true},
 			ctxWith("", "", "claude-haiku-4-5", nil),
