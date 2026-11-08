@@ -126,8 +126,26 @@ func TestApply_Remove(t *testing.T) {
 			applied: true,
 		},
 		{
-			name:    "remove missing key is a no-op success",
+			// #613: Applied means "the body changed"; a missing path is a
+			// drop with its own reason, not a success.
+			name:    "remove missing key is not applied",
 			body:    `{"a":1}`,
+			op:      Op{Kind: OpRemove, Path: "user", ActionType: "removeField"},
+			want:    `{"a":1}`,
+			applied: false,
+			reason:  ReasonPathMissing,
+		},
+		{
+			name:    "remove missing nested key is not applied",
+			body:    `{"a":{"b":1}}`,
+			op:      Op{Kind: OpRemove, Path: "a.c", ActionType: "removeField"},
+			want:    `{"a":{"b":1}}`,
+			applied: false,
+			reason:  ReasonPathMissing,
+		},
+		{
+			name:    "remove key holding null is applied",
+			body:    `{"a":1,"user":null}`,
 			op:      Op{Kind: OpRemove, Path: "user", ActionType: "removeField"},
 			want:    `{"a":1}`,
 			applied: true,

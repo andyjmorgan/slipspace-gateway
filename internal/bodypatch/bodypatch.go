@@ -112,6 +112,10 @@ const (
 	// response is server-sent events (not a single JSON document).
 	ReasonStreamingResponse = "streaming_response"
 	ReasonApplyError        = "apply_error"
+	// ReasonPathMissing is reported by OpRemove when the target path is
+	// absent: sjson.Delete succeeds without touching the body, so without
+	// this check the no-op counted as an applied rewrite (#613).
+	ReasonPathMissing = "path_missing"
 )
 
 // Result reports the outcome of one Op for telemetry and the rule-
@@ -150,6 +154,11 @@ func Apply(body []byte, ops []Op, refs Refs) ([]byte, []Result) {
 		res := Result{ActionType: op.ActionType, Path: op.Path}
 		switch op.Kind {
 		case OpRemove:
+			if op.Path != "" && !gjson.Get(working, op.Path).Exists() {
+				res.Reason = ReasonPathMissing
+				results = append(results, res)
+				continue
+			}
 			next, err := sjson.Delete(working, op.Path)
 			if err != nil {
 				res.Reason = ReasonApplyError

@@ -704,6 +704,8 @@ Reference scoping follows the phase. On a **request.body** target, `{request.bod
 
 `removeField` deletes the key entirely (no key on the wire). `rewriteField` with `value: null` emits the key with a JSON `null`. These are distinct on the wire and some upstreams treat them differently.
 
+`removeField` against a path that is absent from the body is a no-op recorded as a `path_missing` drop, not an applied rewrite — `gateway.rewrite.applied.total` counts only mutations that changed the body.
+
 ### `appendField`
 
 Pushes the value onto the array at the target, creating the array if absent. The target addresses the array **container**, not an element. Appending to a target that exists but is **not** an array is a no-op with an `append_non_array` drop (e.g. an Anthropic `system` field that arrived as a bare string — handle the string case with a `rewriteField` template concat gated on a `bodyField` type check).
@@ -715,7 +717,7 @@ Each action appends a `bodypatch.Op` to one of two slots on `state`, partitioned
 ### Telemetry
 
 - `gateway.rewrite.applied.total{action_type}` — mutations that applied successfully (the op ran and was not dropped; a `removeField` against an absent path or a `rewriteField` writing an identical value still counts as applied).
-- `gateway.rewrite.dropped.total{action_type, reason}` — skipped mutations; `reason` ∈ `path_traverses_primitive`, `append_non_array`, `template_ref_miss`, `apply_error`, `streaming_response` (the last emitted when a `response.body.*` op is dropped because the upstream reply was streamed).
+- `gateway.rewrite.dropped.total{action_type, reason}` — skipped mutations; `reason` ∈ `path_traverses_primitive`, `append_non_array`, `template_ref_miss`, `path_missing` (a `removeField` whose target is absent), `apply_error`, `streaming_response` (the last emitted when a `response.body.*` op is dropped because the upstream reply was streamed).
 
 ### Worked examples
 
