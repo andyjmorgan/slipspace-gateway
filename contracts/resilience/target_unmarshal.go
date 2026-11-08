@@ -25,6 +25,10 @@ type targetWire struct {
 
 	ModelRewrite string `json:"model_rewrite,omitempty"`
 
+	Path string `json:"path,omitempty"`
+
+	Query map[string]string `json:"query,omitempty"`
+
 	FailureStatusCodes []int `json:"failure_status_codes,omitempty"`
 
 	CircuitBreaker *CircuitBreakerConfig `json:"circuit_breaker,omitempty"`
@@ -47,6 +51,8 @@ func (t *ResilienceTarget) UnmarshalJSON(data []byte) error {
 	t.Weight = w.Weight
 	t.TimeoutSeconds = w.TimeoutSeconds
 	t.ModelRewrite = w.ModelRewrite
+	t.Path = w.Path
+	t.Query = w.Query
 	t.FailureStatusCodes = w.FailureStatusCodes
 	t.CircuitBreaker = w.CircuitBreaker
 
@@ -80,6 +86,8 @@ func (t *ResilienceTarget) UnmarshalYAML(value *yaml.Node) error {
 		Weight             int                   `yaml:"weight,omitempty"`
 		TimeoutSeconds     int                   `yaml:"timeout_seconds,omitempty"`
 		ModelRewrite       string                `yaml:"model_rewrite,omitempty"`
+		Path               string                `yaml:"path,omitempty"`
+		Query              map[string]string     `yaml:"query,omitempty"`
 		FailureStatusCodes []int                 `yaml:"failure_status_codes,omitempty"`
 		CircuitBreaker     *CircuitBreakerConfig `yaml:"circuit_breaker,omitempty"`
 	}
@@ -93,6 +101,8 @@ func (t *ResilienceTarget) UnmarshalYAML(value *yaml.Node) error {
 	t.Weight = s.Weight
 	t.TimeoutSeconds = s.TimeoutSeconds
 	t.ModelRewrite = s.ModelRewrite
+	t.Path = s.Path
+	t.Query = s.Query
 	t.FailureStatusCodes = s.FailureStatusCodes
 	t.CircuitBreaker = s.CircuitBreaker
 

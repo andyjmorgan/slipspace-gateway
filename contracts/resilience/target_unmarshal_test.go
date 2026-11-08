@@ -239,3 +239,52 @@ func TestResilienceTarget_JSON_MarshalRoundTrip(t *testing.T) {
 		t.Errorf("round-trip lost changeModelName type: %T", roundTripped.Actions[1])
 	}
 }
+
+// TestResilienceTarget_PathQueryRoundTrip pins #621: the per-attempt
+// transport overrides Path and Query are part of the public contract and
+// must survive both custom decoders, not just the default marshaller.
+func TestResilienceTarget_PathQueryRoundTrip(t *testing.T) {
+	t.Parallel()
+	want := resilience.ResilienceTarget{
+		Name:     "with-overrides",
+		Provider: "openai",
+		Path:     "/openai/deployments/x/chat/completions",
+		Query:    map[string]string{"api-version": "2024-10-21"},
+	}
+
+	t.Run("json", func(t *testing.T) {
+		t.Parallel()
+		raw, err := json.Marshal(&want)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var got resilience.ResilienceTarget
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.Path != want.Path {
+			t.Errorf("Path = %q, want %q", got.Path, want.Path)
+		}
+		if got.Query["api-version"] != want.Query["api-version"] {
+			t.Errorf("Query = %v, want %v", got.Query, want.Query)
+		}
+	})
+
+	t.Run("yaml", func(t *testing.T) {
+		t.Parallel()
+		raw, err := yaml.Marshal(&want)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var got resilience.ResilienceTarget
+		if err := yaml.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.Path != want.Path {
+			t.Errorf("Path = %q, want %q", got.Path, want.Path)
+		}
+		if got.Query["api-version"] != want.Query["api-version"] {
+			t.Errorf("Query = %v, want %v", got.Query, want.Query)
+		}
+	})
+}
