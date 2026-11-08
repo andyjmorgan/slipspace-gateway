@@ -250,3 +250,67 @@ func TestChat_ResponseMessageReasoningRoundTrip(t *testing.T) {
 		t.Fatalf("legacy drift\n in: %s\nout: %s", legacy, lout)
 	}
 }
+
+// TestChat_PromptTokensDetails_CacheWriteTokensRoundTrips pins
+// usage.prompt_tokens_details.cache_write_tokens (GitHub #511) — the
+// cache-write counter OpenAI added to CompletionUsage alongside cached_tokens.
+// It must decode into the typed pointer (not Extra) and a provider-reported 0
+// must survive the rollup re-marshal rather than collapsing under omitempty.
+func TestChat_PromptTokensDetails_CacheWriteTokensRoundTrips(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want int
+	}{
+		{
+			name: "non-zero write",
+			json: `{"completion_tokens":4,"prompt_tokens":7000,"prompt_tokens_details":{"cache_write_tokens":5000,"cached_tokens":1920},"total_tokens":7004}`,
+			want: 5000,
+		},
+		{
+			name: "explicit zero survives",
+			json: `{"completion_tokens":4,"prompt_tokens":7,"prompt_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"total_tokens":11}`,
+			want: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var u Usage
+			if err := json.Unmarshal([]byte(tc.json), &u); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			d := u.PromptTokensDetails
+			if d == nil || d.CacheWriteTokens == nil || *d.CacheWriteTokens != tc.want {
+				t.Fatalf("cache_write_tokens not typed: %+v", d)
+			}
+			if _, inExtra := d.Extra["cache_write_tokens"]; inExtra {
+				t.Fatalf("cache_write_tokens landed in Extra instead of the typed field")
+			}
+			out, err := json.Marshal(u)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !jsonValueEqual(t, []byte(tc.json), out) {
+				t.Fatalf("drift\n in: %s\nout: %s", tc.json, out)
+			}
+		})
+	}
+
+	t.Run("absent stays absent", func(t *testing.T) {
+		in := []byte(`{"completion_tokens":1,"prompt_tokens":2,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":3}`)
+		var u Usage
+		if err := json.Unmarshal(in, &u); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if u.PromptTokensDetails.CacheWriteTokens != nil {
+			t.Fatalf("CacheWriteTokens = %v, want nil", *u.PromptTokensDetails.CacheWriteTokens)
+		}
+		out, err := json.Marshal(u)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !jsonValueEqual(t, in, out) {
+			t.Fatalf("drift\n in: %s\nout: %s", in, out)
+		}
+	})
+}

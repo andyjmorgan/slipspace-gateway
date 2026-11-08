@@ -592,3 +592,122 @@ func jsonValueEqual(t *testing.T, a, b []byte) bool {
 	}
 	return reflect.DeepEqual(av, bv)
 }
+
+// TestChatCompletionResponse_InBandError pins the OpenAI-compat in-band error
+// shape (GitHub #511): `error` at the root of a chat.completion envelope as a
+// sibling of choices/usage, as Ollama / OpenRouter emit when the upstream
+// fails after a 200 has been committed. The object must decode into the typed
+// Error field (not DynamicProperties.Extra), reuse ErrorObject's own
+// unknown-field capture, and round-trip byte-equivalent modulo key order.
+func TestChatCompletionResponse_InBandError(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+	}{
+		{
+			name: "error with empty choices (OpenRouter non-stream late failure)",
+			json: `{"choices":[],"created":1700000000,"error":{"code":502,"message":"upstream disconnected","param":null,"type":"api_error"},"id":"chatcmpl-err","model":"gemma4","object":"chat.completion"}`,
+		},
+		{
+			name: "error alongside usage and a stop choice",
+			json: `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"","role":"assistant"}}],"created":1700000000,"error":{"code":null,"message":"context length exceeded","param":"messages","type":"invalid_request_error"},"id":"chatcmpl-err2","model":"gemma4","object":"chat.completion","usage":{"completion_tokens":0,"prompt_tokens":9000,"total_tokens":9000}}`,
+		},
+		{
+			name: "unknown field inside error object (OpenRouter metadata)",
+			json: `{"choices":[],"created":1700000000,"error":{"code":429,"message":"rate limited","metadata":{"error_type":"rate_limit_exceeded","provider_code":"429"},"param":null,"type":"rate_limit_error"},"id":"chatcmpl-err3","model":"gemma4","object":"chat.completion"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var resp ChatCompletionResponse
+			if err := json.Unmarshal([]byte(tc.json), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if resp.Error == nil {
+				t.Fatalf("Error not typed: %+v", resp)
+			}
+			if resp.Error.Message == "" || resp.Error.Type == "" {
+				t.Fatalf("error object fields not decoded: %+v", resp.Error)
+			}
+			if _, inExtra := resp.Extra["error"]; inExtra {
+				t.Fatalf("error landed in DynamicProperties.Extra instead of the typed field")
+			}
+			roundTripJSON(t, []byte(tc.json), &resp)
+		})
+	}
+
+	t.Run("metadata rides ErrorObject.Extra", func(t *testing.T) {
+		var resp ChatCompletionResponse
+		if err := json.Unmarshal([]byte(cases[2].json), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if string(resp.Error.Code) != `429` {
+			t.Fatalf("code raw = %s", resp.Error.Code)
+		}
+		if _, ok := resp.Error.Extra["metadata"]; !ok {
+			t.Fatalf("metadata not preserved on error object: %v", resp.Error.Extra)
+		}
+	})
+
+	t.Run("absent on success", func(t *testing.T) {
+		var resp ChatCompletionResponse
+		in := `{"choices":[],"created":1,"id":"x","model":"m","object":"chat.completion"}`
+		if err := json.Unmarshal([]byte(in), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if resp.Error != nil {
+			t.Fatalf("Error = %+v, want nil", resp.Error)
+		}
+		roundTripJSON(t, []byte(in), &resp)
+	})
+}
+
+// TestChatCompletionChunk_MidStreamError pins the mid-stream in-band error
+// chunk (GitHub #511): `error` at the root of a chat.completion.chunk
+// alongside a choice whose finish_reason is "error" — the shape OpenRouter
+// documents as MidStreamError and Ollama reproduces. Distinct from the
+// standalone `data: {"error":{...}}` frame modelled by ErrorResponse.
+func TestChatCompletionChunk_MidStreamError(t *testing.T) {
+	in := []byte(`{` +
+		`"choices":[{"delta":{"content":""},"finish_reason":"error","index":0}],` +
+		`"created":1700000000,` +
+		`"error":{"code":429,"message":"Provider returned error","metadata":{"error_type":"rate_limit_exceeded"},"param":null,"type":"rate_limit_error"},` +
+		`"id":"chatcmpl-mid",` +
+		`"model":"gemma4",` +
+		`"object":"chat.completion.chunk"` +
+		`}`)
+	var chunk ChatCompletionChunk
+	if err := json.Unmarshal(in, &chunk); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if chunk.Error == nil {
+		t.Fatalf("Error not typed: %+v", chunk)
+	}
+	if chunk.Error.Message != "Provider returned error" || chunk.Error.Type != "rate_limit_error" {
+		t.Fatalf("error object: %+v", chunk.Error)
+	}
+	if string(chunk.Error.Code) != `429` {
+		t.Fatalf("code raw = %s", chunk.Error.Code)
+	}
+	if _, inExtra := chunk.Extra["error"]; inExtra {
+		t.Fatalf("error landed in DynamicProperties.Extra instead of the typed field")
+	}
+	if _, ok := chunk.Error.Extra["metadata"]; !ok {
+		t.Fatalf("metadata not preserved on error object: %v", chunk.Error.Extra)
+	}
+	if fr := chunk.Choices[0].FinishReason; fr == nil || *fr != "error" {
+		t.Fatalf("finish_reason = %v", fr)
+	}
+	roundTripJSON(t, in, &chunk)
+
+	// A normal chunk must not grow an error key on re-marshal.
+	normal := []byte(`{"choices":[{"delta":{"content":"hi"},"finish_reason":null,"index":0}],"created":1,"id":"x","model":"m","object":"chat.completion.chunk"}`)
+	var ok ChatCompletionChunk
+	if err := json.Unmarshal(normal, &ok); err != nil {
+		t.Fatalf("unmarshal normal: %v", err)
+	}
+	if ok.Error != nil {
+		t.Fatalf("Error = %+v on a normal chunk", ok.Error)
+	}
+	roundTripJSON(t, normal, &ok)
+}

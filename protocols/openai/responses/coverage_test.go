@@ -63,6 +63,63 @@ func TestResponses_UsageZeroSubCounterRoundTrips(t *testing.T) {
 	}
 }
 
+// TestResponses_InputTokensDetails_CacheWriteTokensRoundTrips pins
+// usage.input_tokens_details.cache_write_tokens (GitHub #511), the surface
+// OpenAI documents the counter on (ResponseUsage requires it alongside
+// cached_tokens). The typed pointer must carry both a non-zero value and an
+// explicit 0, and the not-yet-typed per-lifetime breakdown
+// (cache_write_tokens_details) must keep riding along in Extra.
+func TestResponses_InputTokensDetails_CacheWriteTokensRoundTrips(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want int
+	}{
+		{
+			name: "prompt-caching guide example with lifetime breakdown",
+			json: `{"input_tokens":12000,"input_tokens_details":{"cache_write_tokens":7000,"cache_write_tokens_details":{"ttl_12h_tokens":4000,"ttl_30m_tokens":3000},"cached_tokens":4000},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":12005}`,
+			want: 7000,
+		},
+		{
+			name: "explicit zero survives",
+			json: `{"input_tokens":37,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48}`,
+			want: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var u Usage
+			if err := json.Unmarshal([]byte(tc.json), &u); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			d := u.InputTokensDetails
+			if d == nil || d.CacheWriteTokens == nil || *d.CacheWriteTokens != tc.want {
+				t.Fatalf("cache_write_tokens not typed: %+v", d)
+			}
+			if _, inExtra := d.Extra["cache_write_tokens"]; inExtra {
+				t.Fatalf("cache_write_tokens landed in Extra instead of the typed field")
+			}
+			out, err := json.Marshal(u)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !jsonValueEqual(t, []byte(tc.json), out) {
+				t.Fatalf("drift\n in: %s\nout: %s", tc.json, out)
+			}
+		})
+	}
+
+	t.Run("lifetime breakdown rides Extra", func(t *testing.T) {
+		var u Usage
+		if err := json.Unmarshal([]byte(cases[0].json), &u); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if _, ok := u.InputTokensDetails.Extra["cache_write_tokens_details"]; !ok {
+			t.Fatalf("cache_write_tokens_details dropped: %v", u.InputTokensDetails.Extra)
+		}
+	})
+}
+
 func TestResponses_OutputItemFunctionCall(t *testing.T) {
 	in := []byte(`{` +
 		`"arguments":"{\"q\":\"x\"}",` +

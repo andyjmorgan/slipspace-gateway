@@ -97,6 +97,30 @@ an array of content parts. The raw bytes are retained verbatim, with
 - **Stored completions** use `Store *bool` + `Metadata map[string]string`
   (`chat.go:130-133`).
 
+### Usage sub-counters and in-band errors
+
+- **`Usage`** (`chat.go:340`) breaks `prompt_tokens` down via
+  `PromptTokensDetails` (`chat.go:372`): `CachedTokens`, `AudioTokens`, and
+  `CacheWriteTokens` (`chat.go:393`) — the prompt tokens written to the cache on
+  this request, which OpenAI's `CompletionUsage.prompt_tokens_details` schema
+  declares alongside `cached_tokens` ([openai-openapi](https://github.com/openai/openai-openapi))
+  and which GPT-5.6+ bill at a cache-write rate rather than the uncached input
+  rate ([prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)).
+  Every sub-counter is a `*int` so a provider-reported `0` survives the
+  streaming rollup's re-marshal instead of collapsing under `omitempty`.
+- **In-band `error`** — `ChatCompletionResponse.Error` (`chat.go:198`) and
+  `ChatCompletionChunk.Error` (`chat.go:261`) are both `*ErrorObject`
+  (`error.go:44`), the same nested object the standalone 4xx/5xx
+  `ErrorResponse` envelope (`error.go:21`) carries. They cover the
+  OpenAI-compatible late-failure form where the server has already committed a
+  `200` and reports the upstream failure *inside* a `chat.completion` /
+  `chat.completion.chunk` envelope as a sibling of `choices` / `usage`
+  (streaming: alongside a choice with `finish_reason: "error"`). OpenAI's own
+  spec declares no `error` property on either envelope; the shape is documented
+  by [OpenRouter](https://openrouter.ai/docs/api_reference/errors-and-debugging)
+  and observed on live Ollama traffic (#511). `nil` on every successful
+  response, so the field never appears on re-marshal unless it was on the wire.
+
 ### ToolChoice polymorphism (raw bytes)
 
 `ChatCompletionRequest.ToolChoice` is OpenAI's string-or-object field — either
@@ -159,7 +183,14 @@ Response highlights:
   `prompt`/`completion`), so it is a **distinct local type** from the chat
   package's `Usage` (`responses.go:380-399`); `OutputTokensDetails.ReasoningTokens`
   reports reasoning spend (`OutputTokensDetails` at `responses.go:433-441`,
-  `ReasoningTokens` at `responses.go:439`).
+  `ReasoningTokens` at `responses.go:439`). `InputTokensDetails`
+  (`responses.go:411`) carries `CachedTokens` and `CacheWriteTokens`
+  (`responses.go:430`) — both required by OpenAI's `ResponseUsage` schema
+  ([openai-openapi](https://github.com/openai/openai-openapi)); this is the
+  surface the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
+  documents the cache-write counter on. The per-lifetime breakdown
+  (`cache_write_tokens_details.ttl_30m_tokens` / `ttl_12h_tokens`) is not yet
+  typed and rides along in `Extra`.
 - Many echoed scalars (`MaxToolCalls`, `PromptCacheKey`, `SafetyIdentifier`,
   `User`, `Moderation`, `Instructions`, `Tools`, `ToolChoice`) are kept raw
   precisely because OpenAI emits them as `null` when unset and the gateway must
