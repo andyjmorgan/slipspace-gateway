@@ -208,6 +208,33 @@ func TestUnmarshalStreamEvent_MessageDelta(t *testing.T) {
 	})
 }
 
+// TestUnmarshalStreamEvent_MessageDeltaContainer pins the code-execution
+// container Anthropic delivers inside the terminal message_delta.delta
+// (anthropic-sdk-python types/raw_message_delta_event.py, Delta.container).
+// It must decode onto the typed field — not DynamicProperties.Extra — so the
+// streaming rollup can fold it onto the assembled message (issue #607).
+func TestUnmarshalStreamEvent_MessageDeltaContainer(t *testing.T) {
+	in := []byte(`{"delta":{"container":{"expires_at":"2026-05-15T00:00:00Z","id":"container_01","skills":[{"type":"anthropic","skill_id":"xlsx","version":"latest"}]},"stop_reason":"end_turn","stop_sequence":null},"type":"message_delta","usage":{"input_tokens":0,"output_tokens":42}}`)
+	streamRoundTrip(t, in, "message_delta", func(ev StreamEvent) {
+		md, ok := ev.(*MessageDeltaEvent)
+		if !ok {
+			t.Fatalf("got %T", ev)
+		}
+		if md.Delta.Container == nil {
+			t.Fatalf("delta.container not decoded onto the typed field")
+		}
+		if md.Delta.Container.ID != "container_01" || md.Delta.Container.ExpiresAt != "2026-05-15T00:00:00Z" {
+			t.Fatalf("container = %+v", md.Delta.Container)
+		}
+		if _, leaked := md.Delta.Extra["container"]; leaked {
+			t.Fatalf("container leaked into Delta.Extra instead of the typed field")
+		}
+		if _, ok := md.Delta.Container.Extra["skills"]; !ok {
+			t.Fatalf("unmodeled container.skills must round-trip via DynamicProperties")
+		}
+	})
+}
+
 func TestUnmarshalStreamEvent_MessageStop(t *testing.T) {
 	in := []byte(`{"type":"message_stop"}`)
 	streamRoundTrip(t, in, "message_stop", func(ev StreamEvent) {

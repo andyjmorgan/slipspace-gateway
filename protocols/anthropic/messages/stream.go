@@ -257,6 +257,22 @@ type MessageDelta struct {
 	// "stop_sequence".
 	StopSequence *string `json:"stop_sequence"`
 
+	// Container describes the code-execution container the request ran
+	// tools against; non-null only when a container tool (e.g. code
+	// execution) was used. Anthropic delivers it on the terminal
+	// message_delta rather than message_start, so the streaming rollup
+	// must fold it onto the assembled message to match a non-streaming
+	// MessagesResponse. Source: anthropic-sdk-python
+	// types/raw_message_delta_event.py (Delta.container: Optional[Container],
+	// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/raw_message_delta_event.py)
+	// and lib/streaming/_beta_messages.py (accumulate_event assigns
+	// event.delta.container onto the snapshot when non-null,
+	// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/lib/streaming/_beta_messages.py).
+	// The public streaming reference
+	// (https://platform.claude.com/docs/en/build-with-claude/streaming)
+	// shows only stop_reason / stop_sequence in its message_delta examples.
+	Container *Container `json:"container,omitempty"`
+
 	models.DynamicProperties
 }
 
