@@ -78,6 +78,17 @@ type BreakerStore interface {
 	// immediately.
 	RecordFailure(policy, target string, cfg *contractsres.CircuitBreakerConfig)
 
+	// Release returns a HalfOpen probe reservation that Allow handed
+	// out but no attempt will consume — the orchestrator admitted the
+	// target and then never called it (another target won the roll,
+	// the walk broke on the retry budget or a backoff cancel, or the
+	// per-attempt state failed to build). Without this the slot leaks
+	// and, at the default threshold of 1, Allow returns false forever:
+	// advance() only moves breakers out of Open, so the target wedges
+	// in HalfOpen until the pod restarts (#619). No-op unless the
+	// breaker is HalfOpen with a reservation outstanding.
+	Release(policy, target string, cfg *contractsres.CircuitBreakerConfig)
+
 	// State reports the current lifecycle position for telemetry.
 	// Returns StateClosed for unknown keys so a never-observed
 	// (policy, target) pair reads as healthy.
@@ -256,6 +267,18 @@ func (s *inMemoryStore) RecordFailure(policy, target string, cfg *contractsres.C
 			b.halfOpenInFlight--
 		}
 		b.transition(StateOpen, now, "halfopen_failure", policy, target, s.listener)
+	}
+}
+
+func (s *inMemoryStore) Release(policy, target string, cfg *contractsres.CircuitBreakerConfig) {
+	if cfg == nil || !cfg.Enabled {
+		return
+	}
+	b := s.getOrCreate(policy, target, cfg)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.state == StateHalfOpen && b.halfOpenInFlight > 0 {
+		b.halfOpenInFlight--
 	}
 }
 
@@ -460,6 +483,11 @@ func (noopBreakerStore) RecordSuccess(string, string, *contractsres.CircuitBreak
 }
 
 func (noopBreakerStore) RecordFailure(string, string, *contractsres.CircuitBreakerConfig) {
+	// no-op
+	_ = "noop"
+}
+
+func (noopBreakerStore) Release(string, string, *contractsres.CircuitBreakerConfig) {
 	// no-op
 	_ = "noop"
 }

@@ -407,6 +407,8 @@ func runFailover(
 					slog.Int("attempts", attempts),
 					slog.Any("error", err),
 				)
+				// Allow admitted this target but no attempt follows (#619).
+				breakers.Release(pol.Name, target.Name, cb)
 				break
 			}
 		}
@@ -419,6 +421,7 @@ func runFailover(
 				slog.Int("attempt", attempts+1),
 				slog.Any("error", err),
 			)
+			breakers.Release(pol.Name, target.Name, cb)
 			finalStatus = http.StatusInternalServerError
 			orchestratorOutcome = orchestratorOutcomeAllFailed
 			httperr.FromContext(ctx).Write(ctx, w, finalStatus, "resilience", "target_action_failed", "internal error")
@@ -552,6 +555,19 @@ func runLoadBalance(
 	// the breaker decision the same way failover does.
 	pool := make([]contractsres.ResilienceTarget, 0, len(pol.Targets))
 	cbBlocked := 0
+	// Allow reserves a HalfOpen probe slot for every target it admits
+	// into the pool, but only the targets actually attempted ever
+	// Record* against it. Release the rest on every exit path, or a
+	// HalfOpen target that lost the roll stays reserved forever and
+	// drops out of rotation until the pod restarts (#619).
+	attempted := make(map[string]bool, len(pol.Targets))
+	defer func() {
+		for _, t := range pool {
+			if !attempted[t.Name] {
+				breakers.Release(pol.Name, t.Name, effectiveCircuitBreaker(pol, t))
+			}
+		}
+	}()
 	for _, t := range pol.Targets {
 		cb := effectiveCircuitBreaker(pol, t)
 		if !breakers.Allow(pol.Name, t.Name, cb) {
@@ -641,6 +657,7 @@ func runLoadBalance(
 		emitAttemptDuration(ctx, meters, pol.Name, target.Name, record.DurationMs)
 		realAttempts = attempt
 
+		attempted[target.Name] = true
 		if !buf.ShouldRetry() {
 			breakers.RecordSuccess(pol.Name, target.Name, cb)
 			record.Outcome = attemptOutcomeSuccess

@@ -710,3 +710,84 @@ func TestInMemoryStore_Snapshot_NamesRoundTripVerbatim(t *testing.T) {
 		t.Errorf("(eu, west|open|ai) = (%v, present=%t); want StateClosed", st, ok)
 	}
 }
+
+// TestBreaker_Release_ReturnsUnconsumedProbe pins #619 at the store level:
+// a HalfOpen probe slot handed out by Allow and never followed by a
+// Record* must be returnable, or the next Allow is refused forever at
+// the default threshold of 1.
+func TestBreaker_Release_ReturnsUnconsumedProbe(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	prev := clock
+	clock = func() time.Time { return base }
+	t.Cleanup(func() { clock = prev })
+
+	cfg := &contractsres.CircuitBreakerConfig{
+		Enabled:           true,
+		FailureThreshold:  1,
+		MinimumThroughput: 1,
+		CooldownSeconds:   10,
+	}
+	store := NewInMemoryBreakerStore(nil)
+	store.RecordFailure("p", "t", cfg)
+	if got := store.State("p", "t"); got != StateOpen {
+		t.Fatalf("state after trip = %v, want Open", got)
+	}
+
+	clock = func() time.Time { return base.Add(11 * time.Second) }
+	if !store.Allow("p", "t", cfg) {
+		t.Fatal("first probe after cooldown refused")
+	}
+	if store.Allow("p", "t", cfg) {
+		t.Fatal("second concurrent probe admitted; threshold 1 should reserve exactly one slot")
+	}
+
+	// The admitted caller never attempts: without Release this is the
+	// wedge the issue describes.
+	store.Release("p", "t", cfg)
+	if !store.Allow("p", "t", cfg) {
+		t.Fatal("probe slot not returned by Release; target wedged in HalfOpen")
+	}
+	if got := store.State("p", "t"); got != StateHalfOpen {
+		t.Fatalf("state = %v, want HalfOpen", got)
+	}
+}
+
+// TestBreaker_Release_NoOpOutsideHalfOpen guards the tolerant contract:
+// releasing a Closed breaker, or a HalfOpen one with nothing in flight,
+// must not underflow or admit an extra probe.
+func TestBreaker_Release_NoOpOutsideHalfOpen(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	prev := clock
+	clock = func() time.Time { return base }
+	t.Cleanup(func() { clock = prev })
+
+	cfg := &contractsres.CircuitBreakerConfig{
+		Enabled:           true,
+		FailureThreshold:  1,
+		MinimumThroughput: 1,
+		CooldownSeconds:   10,
+	}
+	store := NewInMemoryBreakerStore(nil)
+
+	// Closed: Release is a no-op and Allow stays unconditional.
+	store.Release("p", "t", cfg)
+	if !store.Allow("p", "t", cfg) {
+		t.Fatal("Closed breaker refused after a stray Release")
+	}
+
+	// HalfOpen with nothing reserved: a stray Release must not let two
+	// probes through.
+	store.RecordFailure("p", "t", cfg)
+	clock = func() time.Time { return base.Add(11 * time.Second) }
+	store.Release("p", "t", cfg)
+	if !store.Allow("p", "t", cfg) {
+		t.Fatal("first probe refused")
+	}
+	if store.Allow("p", "t", cfg) {
+		t.Fatal("stray Release underflowed the reservation and admitted a second probe")
+	}
+
+	// Disabled / nil config: never touches a breaker.
+	store.Release("p", "t", nil)
+	store.Release("p", "t", &contractsres.CircuitBreakerConfig{})
+}
