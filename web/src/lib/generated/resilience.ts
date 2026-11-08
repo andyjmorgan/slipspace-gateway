@@ -88,7 +88,9 @@ export interface ResilienceConfig {
    * `policy` metric label. Under v2 it is the group name for a group
    * binding, or "binding:<provider>" for the degenerate single-target
    * config synthesised for a single-provider binding (that form emits no
-   * gateway.resilience.* metrics).
+   * gateway.resilience.* attempt metrics; the only series it can appear on
+   * is gateway.resilience.outcome.total{outcome=rule_override}, bumped when
+   * a rule changeProvider overrides the binding).
    */
   name: string;
   /**
@@ -224,7 +226,8 @@ export interface ResilienceTarget {
    * (contracts/config.Target.Path), carried per attempt so the final
    * handler re-resolves transport with it instead of the provider's
    * protocol default (issue #409). Like Actions, it is populated only by
-   * the selection synthesiser (cmd/gateway/destination.go) and copied onto
+   * the selection synthesiser (internal/selection/resilience.go —
+   * GroupResilienceConfig / SingleTargetResilienceConfig) and copied onto
    * the attempt state by the orchestrator (buildAttemptState); it is not
    * an authorable resilience field. Empty means "provider default path".
    */
