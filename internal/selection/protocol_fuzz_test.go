@@ -49,12 +49,23 @@ func FuzzProtocolForPath(f *testing.F) {
 		"/embeddings",
 		"/v1beta/models/gemini-2.0-flash:generateContent",
 		"/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+		// google-genai 3.0.0 default: the stable v1 surface (issue #631).
+		"/v1/models/gemini-2.0-flash:generateContent",
+		"/v1/models/gemini-2.0-flash:streamGenerateContent",
 		// Near-misses that must NOT match.
 		"/v1beta/models/:generateContent",             // empty model
 		"/v1beta/models/a/b:generateContent",          // model spans segments
 		"/v1beta/models/gemini:countTokens",           // unrecognised op
 		"/v1beta/models/gemini-2.0-flash",             // no colon
 		"/v1beta/models/gemini:generateContent:extra", // op carries a colon
+		"/v1/models/:generateContent",                 // empty model, v1
+		"/v1/models/gemini:countTokens",               // unrecognised op, v1
+		"/v1/models",                                  // catalogue listing, not generative
+		"/v1/models/",                                 // listing with trailing slash
+		"/v2/models/gemini:generateContent",           // unknown API version
+		"/v1alpha/models/gemini:generateContent",      // unknown API version
+		"/V1BETA/models/gemini:generateContent",       // version is case-sensitive
+		"/models/gemini:generateContent",              // no version segment
 		"/V1/CHAT/COMPLETIONS",                        // case sensitivity
 		"/v1/chat/completions/",                       // trailing slash
 		"//v1/chat/completions",                       // doubled separator
@@ -86,7 +97,8 @@ func FuzzProtocolForPath(f *testing.F) {
 		if protocol == selection.ProtocolGenerateContent {
 			model, hasModel := params["model"]
 			op, hasOp := params["op"]
-			if !hasModel || !hasOp {
+			version, hasVersion := params["version"]
+			if !hasModel || !hasOp || !hasVersion {
 				t.Fatalf("generate_content missing params: %v (path %q)", params, path)
 			}
 			if model == "" {
@@ -97,6 +109,14 @@ func FuzzProtocolForPath(f *testing.F) {
 			}
 			if op != "generateContent" && op != "streamGenerateContent" {
 				t.Fatalf("generate_content matched unrecognised op %q (path %q)", op, path)
+			}
+			if version != "v1" && version != "v1beta" {
+				t.Fatalf("generate_content matched unrecognised API version %q (path %q)", version, path)
+			}
+			// The params must reconstruct the inbound path exactly: the
+			// upstream template "/{version}/models/{model}:{op}" relies on it.
+			if rebuilt := "/" + version + "/models/" + model + ":" + op; rebuilt != path {
+				t.Fatalf("params %v rebuild to %q, not the inbound path %q", params, rebuilt, path)
 			}
 		} else if params != nil {
 			t.Fatalf("protocol %q returned params %v; only generate_content carries any (path %q)",

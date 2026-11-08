@@ -134,7 +134,7 @@ func selectionMiddleware(store *config.Store, agentRouter *agentroute.Service, e
 		cfg := *ar.Configuration
 
 		if !pi.generative {
-			pm, err := selection.MatchPassthrough(r.Method, r.URL.Path, cfg, snap.Providers)
+			pm, err := selection.MatchPassthrough(r.Method, r.URL.Path, r.Header, cfg, snap.Providers)
 			switch {
 			case errors.Is(err, selection.ErrNoPassthrough):
 				errs.Write(ctx, w, http.StatusNotFound, "selection", "no_route", "no route for path")

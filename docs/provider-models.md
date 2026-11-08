@@ -26,7 +26,7 @@ struct, the struct is the source of truth — fix the doc.
 | Anthropic | `protocols/anthropic/messages` | `POST /v1/messages` |
 | Anthropic | `protocols/anthropic/models` | `GET /v1/models` |
 | Gemini | `protocols/gemini/content` | `:generateContent` + `:streamGenerateContent` |
-| Gemini | `protocols/gemini/models` | `GET /v1beta/models` |
+| Gemini | `protocols/gemini/models` | `GET /v1beta/models` (also `GET /v1/models`) |
 
 `embeddings` is a routable protocol (`selection.ProtocolForPath`,
 `internal/selection/protocol.go:37`; `contracts/config.ProtocolEmbeddings`) but has
@@ -513,7 +513,7 @@ live models-list request takes:
 - **Anthropic** `GET /v1/models` — `ListModelsResponse` + `Model`
   (`protocols/anthropic/models/models.go:16-61`); cursor-paged via
   `HasMore`/`FirstID`/`LastID`.
-- **Gemini** `GET /v1beta/models` — `ListModelsResponse` + `Model`
+- **Gemini** `GET /v1beta/models` (also `GET /v1/models`) — `ListModelsResponse` + `Model`
   (`protocols/gemini/models/models.go:16-82`); page-token paged, rich
   per-model capability fields (`SupportedGenerationMethods`, token limits,
   default sampling params).

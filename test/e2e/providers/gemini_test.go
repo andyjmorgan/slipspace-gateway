@@ -237,3 +237,126 @@ func TestGemini_Models_PrefixRouting(t *testing.T) {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
 }
+
+// TestGemini_GenerateContent_V1Path_PreservesVersion covers issue #631:
+// google-genai 3.0.0 defaults to the stable v1 API, so a vanilla client sends
+// POST /v1/models/{model}:generateContent. The path must resolve to the
+// generate_content protocol exactly like the v1beta form, and — because the
+// dev provider template is "/{version}/models/{model}:{op}" — the upstream
+// must see the client's v1, not a silent rewrite to v1beta. The canned
+// response is staged on the v1 path only, so a rewrite would 404 at the mock.
+func TestGemini_GenerateContent_V1Path_PreservesVersion(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	for _, op := range []string{"generateContent", "streamGenerateContent"} {
+		t.Run(op, func(t *testing.T) {
+			upstreamPath := "/v1/models/gemini-1.5-flash:" + op
+			canned := harness.CannedResponse{
+				Method: http.MethodPost,
+				Path:   upstreamPath,
+				Body:   `{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP"}]}`,
+			}
+			if op == "streamGenerateContent" {
+				canned.Body = ""
+				canned.Streaming = true
+				canned.Headers = map[string]string{"Content-Type": "text/event-stream"}
+				canned.StreamChunks = []harness.CannedStreamChunk{
+					{Data: `{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}]}`},
+					{Data: `{"candidates":[{"content":{"parts":[{"text":"!"}],"role":"model"},"finishReason":"STOP"}]}`},
+				}
+			}
+			h.StageMockResponse(canned)
+
+			body := map[string]any{
+				"contents": []map[string]any{
+					{"role": "user", "parts": []map[string]string{{"text": "hi"}}},
+				},
+			}
+			if op == "streamGenerateContent" {
+				stream := h.PostStream(upstreamPath, body, nil)
+				if got := len(stream.CollectAll(5 * time.Second)); got != 2 {
+					t.Fatalf("chunks=%d want 2", got)
+				}
+			} else {
+				resp := h.PostJSON(upstreamPath, body, nil)
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
+				}
+				if !strings.Contains(string(resp.Body), `"candidates"`) {
+					t.Errorf("body missing candidates: %s", resp.Body)
+				}
+			}
+
+			captured := h.LastCapturedRequest()
+			if captured == nil {
+				t.Fatal("no upstream request captured")
+			}
+			if captured.Path != upstreamPath {
+				t.Errorf("upstream path = %q, want %q (client's API version must be preserved)", captured.Path, upstreamPath)
+			}
+			if got := captured.Headers["X-Goog-Api-Key"]; got != "dev-mock" {
+				t.Errorf("upstream x-goog-api-key = %q, want the dev gemini credential (v1 path must still mint on the gemini provider)", got)
+			}
+		})
+	}
+}
+
+// TestGemini_Models_V1Listing_DisambiguatedByHeader covers the other half of
+// #631: google-genai 3.0.0 lists the catalogue at GET /v1/models — the OpenAI
+// listing path. The dev configuration binds the `models` family on openai
+// first and gemini second, so binding order alone would send the Gemini SDK's
+// listing to OpenAI. The SDK's x-goog-api-key header must steer it to the
+// gemini family (its credential is minted upstream), while a plain
+// Authorization bearer keeps the OpenAI family.
+func TestGemini_Models_V1Listing_DisambiguatedByHeader(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodGet,
+		Path:   "/v1/models",
+		Body:   `{"models":[{"name":"models/gemini-1.5-flash"}]}`,
+	})
+
+	list := func(t *testing.T, header, value string) *harness.CapturedRequest {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/v1/models", http.NoBody)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set(header, value)
+		resp, err := h.HTTP.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d", resp.StatusCode)
+		}
+		captured := h.LastCapturedRequest()
+		if captured == nil {
+			t.Fatal("no upstream request captured")
+		}
+		if captured.Path != "/v1/models" {
+			t.Errorf("upstream path = %q, want /v1/models", captured.Path)
+		}
+		return captured
+	}
+
+	gem := list(t, "x-goog-api-key", h.APIKey)
+	if got := gem.Headers["X-Goog-Api-Key"]; got != "dev-mock" {
+		t.Errorf("gemini SDK listing minted x-goog-api-key=%q, want dev gemini credential", got)
+	}
+	if got := gem.Headers["Authorization"]; got != "" {
+		t.Errorf("gemini SDK listing leaked Authorization=%q upstream", got)
+	}
+
+	oai := list(t, "Authorization", "Bearer "+h.APIKey)
+	if got := oai.Headers["Authorization"]; got != "Bearer sk-dev-mock" {
+		t.Errorf("openai SDK listing minted Authorization=%q, want dev openai credential", got)
+	}
+	if got := oai.Headers["X-Goog-Api-Key"]; got != "" {
+		t.Errorf("openai SDK listing minted x-goog-api-key=%q; openai family must win on Authorization", got)
+	}
+}

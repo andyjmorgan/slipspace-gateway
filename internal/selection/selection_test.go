@@ -2,6 +2,7 @@ package selection_test
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -218,7 +219,7 @@ func TestMatchPassthrough_ExactAndParams(t *testing.T) {
 	family.Paths[0].Path = "/mapped/batches"
 	m.Providers["anthropic"].Passthrough["messages_batches"] = family
 
-	pm, err := selection.MatchPassthrough("POST", "/v1/messages/batches", cfg, m.Providers)
+	pm, err := selection.MatchPassthrough("POST", "/v1/messages/batches", nil, cfg, m.Providers)
 	if err != nil {
 		t.Fatalf("passthrough: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestMatchPassthrough_ExactAndParams(t *testing.T) {
 		t.Errorf("auth/cred = %+v %q", pm.Auth, pm.Credential)
 	}
 
-	pm, err = selection.MatchPassthrough("GET", "/v1/messages/batches/batch_123/results", cfg, m.Providers)
+	pm, err = selection.MatchPassthrough("GET", "/v1/messages/batches/batch_123/results", nil, cfg, m.Providers)
 	if err != nil {
 		t.Fatalf("passthrough params: %v", err)
 	}
@@ -304,11 +305,11 @@ func TestMatchPassthrough_ResolutionErrors(t *testing.T) {
 		}},
 	}
 	cfgUnknownProvider := contractsconfig.Configuration{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "batches", Provider: "ghost"}}}
-	if _, err := selection.MatchPassthrough("GET", "/b", cfgUnknownProvider, providers); err == nil || !strings.Contains(err.Error(), "unknown provider") {
+	if _, err := selection.MatchPassthrough("GET", "/b", nil, cfgUnknownProvider, providers); err == nil || !strings.Contains(err.Error(), "unknown provider") {
 		t.Fatalf("unknown provider: %v", err)
 	}
 	cfgUnknownFamily := contractsconfig.Configuration{PassthroughBindings: []contractsconfig.PassthroughBinding{{Family: "ghost", Provider: "anthropic"}}}
-	if _, err := selection.MatchPassthrough("GET", "/b", cfgUnknownFamily, providers); err == nil || !strings.Contains(err.Error(), "no passthrough family") {
+	if _, err := selection.MatchPassthrough("GET", "/b", nil, cfgUnknownFamily, providers); err == nil || !strings.Contains(err.Error(), "no passthrough family") {
 		t.Fatalf("unknown family: %v", err)
 	}
 }
@@ -318,13 +319,117 @@ func TestMatchPassthrough_MethodAndMiss(t *testing.T) {
 	cfg := m.Configurations["production"]
 
 	// results path is GET-only.
-	_, err := selection.MatchPassthrough("POST", "/v1/messages/batches/b1/results", cfg, m.Providers)
+	_, err := selection.MatchPassthrough("POST", "/v1/messages/batches/b1/results", nil, cfg, m.Providers)
 	if !errors.Is(err, selection.ErrMethodNotAllowed) {
 		t.Fatalf("want ErrMethodNotAllowed, got %v", err)
 	}
 	// unknown path.
-	_, err = selection.MatchPassthrough("GET", "/v1/files", cfg, m.Providers)
+	_, err = selection.MatchPassthrough("GET", "/v1/files", nil, cfg, m.Providers)
 	if !errors.Is(err, selection.ErrNoPassthrough) {
 		t.Fatalf("want ErrNoPassthrough, got %v", err)
+	}
+}
+
+// catalogueCollision is a config in which the OpenAI and Gemini `models`
+// families both claim GET /v1/models — the shape google-genai 3.0.0 produces
+// (issue #631). openai is bound first so plain binding order would always pick
+// it; the inbound credential header is what has to break the tie.
+const catalogueCollision = `
+providers:
+  openai:
+    base_url: https://api.openai.com
+    protocols:
+      chat: { path: /v1/chat/completions, auth: { header: Authorization, format: "Bearer {key}" } }
+    passthrough:
+      models:
+        auth: { header: Authorization, format: "Bearer {key}" }
+        paths:
+          - { match: /v1/models, methods: [GET] }
+  gemini:
+    base_url: https://generativelanguage.googleapis.com
+    protocols:
+      generate_content: { path: "/{version}/models/{model}:{op}", auth: { header: x-goog-api-key, format: "{key}" } }
+    passthrough:
+      models:
+        auth: { header: x-goog-api-key, format: "{key}" }
+        paths:
+          - { match: /v1beta/models, methods: [GET] }
+          - { match: /v1/models, methods: [GET] }
+  noauth:
+    base_url: https://noauth.example
+    protocols:
+      chat: { path: /v1/chat/completions }
+    passthrough:
+      models:
+        paths:
+          - { match: /v1/models, methods: [GET] }
+
+configurations:
+  both:
+    credentials: { openai: sk-openai, gemini: sk-gemini, noauth: "" }
+    passthrough_bindings:
+      - { family: models, provider: openai }
+      - { family: models, provider: gemini }
+  noauth-first:
+    credentials: { openai: sk-openai, gemini: sk-gemini, noauth: "" }
+    passthrough_bindings:
+      - { family: models, provider: noauth }
+      - { family: models, provider: gemini }
+  gemini-only:
+    credentials: { gemini: sk-gemini }
+    passthrough_bindings:
+      - { family: models, provider: gemini }
+`
+
+func TestMatchPassthrough_HeaderBreaksCatalogueTie(t *testing.T) {
+	var m contractsconfig.Model
+	if err := yaml.Unmarshal([]byte(catalogueCollision), &m); err != nil {
+		t.Fatalf("load fixture: %v", err)
+	}
+	hdr := func(kv ...string) http.Header {
+		h := http.Header{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			h.Set(kv[i], kv[i+1])
+		}
+		return h
+	}
+	cases := []struct {
+		name     string
+		cfg      string
+		path     string
+		header   http.Header
+		provider string
+	}{
+		{"gemini sdk header wins over binding order", "both", "/v1/models", hdr("x-goog-api-key", "sk_live_x"), "gemini"},
+		{"openai sdk header keeps openai", "both", "/v1/models", hdr("Authorization", "Bearer sk_live_x"), "openai"},
+		{"header match is case-insensitive", "both", "/v1/models", hdr("X-Goog-Api-Key", "sk_live_x"), "gemini"},
+		{"both headers present falls back to binding order", "both", "/v1/models", hdr("Authorization", "Bearer a", "x-goog-api-key", "b"), "openai"},
+		{"no credential header falls back to binding order", "both", "/v1/models", hdr("X-Slipspace-Configuration", "dev"), "openai"},
+		{"nil header falls back to binding order", "both", "/v1/models", nil, "openai"},
+		{"unambiguous path ignores headers", "both", "/v1beta/models", hdr("Authorization", "Bearer a"), "gemini"},
+		{"nil-auth family only wins by order", "noauth-first", "/v1/models", hdr("x-goog-api-key", "k"), "gemini"},
+		{"nil-auth family wins when nothing else matches a header", "noauth-first", "/v1/models", hdr("Authorization", "Bearer a"), "noauth"},
+		{"single binding needs no tie-break", "gemini-only", "/v1/models", nil, "gemini"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pm, err := selection.MatchPassthrough("GET", tc.path, tc.header, m.Configurations[tc.cfg], m.Providers)
+			if err != nil {
+				t.Fatalf("match: %v", err)
+			}
+			if pm.Provider != tc.provider {
+				t.Fatalf("provider = %q, want %q", pm.Provider, tc.provider)
+			}
+			if pm.Credential != m.Configurations[tc.cfg].Credentials[tc.provider] {
+				t.Errorf("credential = %q does not belong to %q", pm.Credential, tc.provider)
+			}
+		})
+	}
+
+	// The tie-break never rescues a method miss: POST /v1/models is claimed by
+	// both families for GET only, so it stays a 405 whatever the headers say.
+	_, err := selection.MatchPassthrough("POST", "/v1/models", hdr("x-goog-api-key", "k"), m.Configurations["both"], m.Providers)
+	if !errors.Is(err, selection.ErrMethodNotAllowed) {
+		t.Fatalf("want ErrMethodNotAllowed, got %v", err)
 	}
 }
