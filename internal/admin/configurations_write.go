@@ -15,8 +15,11 @@ import (
 // Credentials is map[provider]*secret with write-back-if-delivered semantics: a
 // nil value (JSON null, the form for an unchanged masked secret) keeps the
 // stored credential for that provider; a non-nil value sets it, including "" for
-// a no-credential provider. A provider absent from the map is dropped (full
-// replace of which providers carry a credential).
+// a no-credential provider. When the map is delivered, a provider absent from
+// it is dropped (full replace of which providers carry a credential). When the
+// `credentials` key is omitted altogether, the stored map is kept unchanged —
+// omitted means unchanged, the same convention mergeSecret applies per value
+// (#566).
 //
 // There is deliberately no api_keys field — keys are managed solely through the
 // dedicated /api-keys endpoints and are never accepted in a configuration
@@ -58,11 +61,30 @@ func buildConfiguration(body configurationWriteBody, existing contractsconfig.Co
 		// create, existing is the zero Configuration, so this is nil.
 		AgentRouting: existing.AgentRouting,
 	}
-	if len(body.Credentials) > 0 {
-		out.Credentials = make(map[string]string, len(body.Credentials))
-		for provider, incoming := range body.Credentials {
-			out.Credentials[provider] = mergeSecret(incoming, existing.Credentials[provider])
-		}
+	if body.Credentials == nil {
+		// Key omitted: keep what is stored. The old len()>0 guard treated
+		// omission like an empty map and nil'd the field, so a PUT that
+		// did not mention credentials wiped every upstream secret and
+		// persisted the wipe to YAML (#566).
+		out.Credentials = cloneCredentials(existing.Credentials)
+		return out
+	}
+	out.Credentials = make(map[string]string, len(body.Credentials))
+	for provider, incoming := range body.Credentials {
+		out.Credentials[provider] = mergeSecret(incoming, existing.Credentials[provider])
+	}
+	return out
+}
+
+// cloneCredentials copies a credentials map so the clone never aliases the
+// live snapshot's map (invariant #9). nil stays nil.
+func cloneCredentials(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
 	}
 	return out
 }
