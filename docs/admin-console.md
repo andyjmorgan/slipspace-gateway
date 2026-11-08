@@ -484,7 +484,7 @@ sequenceDiagram
     end
 ```
 
-The detached shutdown context is deliberate: if the budget were derived from `ctx`, it would already be cancelled when shutdown began, and `Shutdown` would close in-flight connections immediately. The `//nolint:contextcheck` annotation on `shutdownAdminServer` documents this — shutdown ctx must outlive the request ctx.
+The detached shutdown context is deliberate: if the budget were derived from `ctx`, it would already be cancelled when shutdown began, and `Shutdown` would close in-flight connections immediately. The `//nolint:contextcheck` annotation on the `shutdownAdminServer(srv, drain)` call in `startAdmin`'s shutdown watcher goroutine (`cmd/gateway/main.go`) documents this — shutdown ctx must outlive the request ctx.
 
 In-flight SSE streams to the messages pane exit cleanly: each subscriber goroutine selects on `r.Context().Done()` and closes its subscription on cancel.
 
