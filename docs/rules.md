@@ -375,7 +375,7 @@ Caps recursive descent through nested `group` children during evaluation. Operat
 | Env var | `SLIPSPACE_RULES_MAX_GROUP_DEPTH` |
 | Default | `8` |
 | Valid range | `[1, 64]` (`MaxRulesMaxGroupDepth`) |
-| On overflow | The offending group evaluates to **false** and `gateway.rule.errors.total{error_kind="group_depth"}` is incremented. The rest of the rule chain continues. |
+| On overflow | The whole rule evaluates to **false** — the sentinel propagates through every enclosing group and is never inverted by a `not:` at any level — and `gateway.rule.errors.total{error_kind="group_depth"}` is incremented. The rest of the rule chain continues. |
 
 Exceeding the cap is a silent-but-metered failure mode — the request continues, the dashboard surfaces the error counter. If you see `group_depth` errors fire, your YAML has either a genuine deep tree (rare, refactor it flatter) or a circular reference (the YAML loader catches structural cycles, but you can still hand-write a deeply-nested literal that hits the cap).
 
