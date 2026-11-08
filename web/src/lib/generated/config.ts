@@ -650,10 +650,13 @@ export interface Group {
   failure_status_codes?: number /* int */[];
   /**
    * CircuitBreaker is the group-wide breaker config, applied to every
-   * target in the group. Breaker *state* is keyed per (group, provider)
-   * — internal/middleware/resilience/breaker.go (breakerKey) — so a
-   * provider tripped inside this group keeps taking traffic from any
-   * other group that also lists it. State is per-pod and in-process; it
+   * target in the group. Breaker *state* is keyed per (group, target
+   * name), where the target name comes from TargetNames(): the plain
+   * provider name, or provider#alias / provider#N when the group lists
+   * that provider more than once —
+   * internal/middleware/resilience/breaker.go (breakerKey) — so a target
+   * tripped inside this group keeps taking traffic from any other group
+   * that also lists the provider. State is per-pod and in-process; it
    * does not survive a restart or replicate across replicas.
    */
   circuit_breaker?: CircuitBreakerConfig;
