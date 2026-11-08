@@ -248,9 +248,19 @@ func translateChatMessages(in chat.RequestMessages) (system string, msgs []messa
 	for i, rm := range in {
 		switch msg := rm.(type) {
 		case *chat.SystemMessage:
-			sysParts = append(sysParts, msg.Content)
+			text, d, serr := systemContentText(i, msg.Content)
+			if serr != nil {
+				return "", nil, nil, serr
+			}
+			sysParts = append(sysParts, text)
+			drops = append(drops, d...)
 		case *chat.DeveloperMessage:
-			sysParts = append(sysParts, msg.Content)
+			text, d, serr := systemContentText(i, msg.Content)
+			if serr != nil {
+				return "", nil, nil, serr
+			}
+			sysParts = append(sysParts, text)
+			drops = append(drops, d...)
 		case *chat.UserMessage:
 			blocks, d, uerr := userContentToBlocks(i, msg.Content)
 			if uerr != nil {
@@ -287,6 +297,43 @@ func translateChatMessages(in chat.RequestMessages) (system string, msgs []messa
 	}
 
 	return strings.Join(sysParts, "\n\n"), msgs, drops, nil
+}
+
+// systemContentText flattens a system/developer message's content into the
+// text that joins Anthropic's system prompt. OpenAI accepts the content as a
+// string or an array of text parts; any non-text part in the array has no
+// Anthropic system equivalent and is dropped. Null content contributes an
+// empty string.
+func systemContentText(idx int, c chat.MessageContent) (string, []Drop, error) {
+	if c.IsNull() {
+		return "", nil, nil
+	}
+	if c.IsString() {
+		s, err := c.AsString()
+		if err != nil {
+			return "", nil, fmt.Errorf("translate chat->messages: message[%d]: decode system content: %w", idx, err)
+		}
+		return s, nil, nil
+	}
+	parts, err := c.AsParts()
+	if err != nil {
+		return "", nil, fmt.Errorf("translate chat->messages: message[%d]: decode system content parts: %w", idx, err)
+	}
+	var (
+		texts []string
+		drops []Drop
+	)
+	for pi, p := range parts {
+		if tp, ok := p.(*chat.TextContentPart); ok {
+			texts = append(texts, tp.Text)
+			continue
+		}
+		drops = append(drops, Drop{
+			Field:  fmt.Sprintf("messages[%d].content[%d]", idx, pi),
+			Reason: reasonNoTargetEquivalent,
+		})
+	}
+	return strings.Join(texts, "\n\n"), drops, nil
 }
 
 // userContentToBlocks maps an OpenAI user message's content into Anthropic

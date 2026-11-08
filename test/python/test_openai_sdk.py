@@ -29,6 +29,49 @@ def _client(gateway_url: str, *, api_key: str = API_KEY, headers: dict[str, str]
     )
 
 
+def test_chat_completion_system_array_content(gateway_url: str, mockllm_url: str) -> None:
+    """#577: the SDK emits system/developer content as an array of text parts
+    when given structured prompts; the gateway must forward it, not 400."""
+    stage_response(
+        mockllm_url,
+        method="POST",
+        path="/v1/chat/completions",
+        body={
+            "id": "chatcmpl-pycompat-sysarr",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "gpt-4o-mini",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "pong"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        },
+    )
+
+    client = _client(gateway_url)
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "You are helpful."},
+                    {"type": "text", "text": "Be terse."},
+                ],
+            },
+            {"role": "developer", "content": [{"type": "text", "text": "Internal."}]},
+            {"role": "user", "content": "ping"},
+        ],
+    )
+
+    assert resp.id == "chatcmpl-pycompat-sysarr"
+    assert resp.choices[0].message.content == "pong"
+
+
 def test_chat_completion_managed(gateway_url: str, mockllm_url: str) -> None:
     stage_response(
         mockllm_url,

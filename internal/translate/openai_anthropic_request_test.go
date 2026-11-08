@@ -506,3 +506,32 @@ func TestChatToMessages_ToolResultUnsupportedPart(t *testing.T) {
 		t.Errorf("missing tool_result audio drop; drops=%+v", drops)
 	}
 }
+
+// TestChatToMessages_SystemArrayContent pins #577 on the translate path: a
+// system prompt sent as an array of text parts (the shape the official SDKs
+// emit for structured prompts) joins Anthropic's system string, and a
+// non-text part in that array is reported as a drop rather than an error.
+func TestChatToMessages_SystemArrayContent(t *testing.T) {
+	req, drops := decodeMessagesReq(t, `{
+		"model":"m",
+		"messages":[
+			{"role":"system","content":[
+				{"type":"text","text":"first"},
+				{"type":"image_url","image_url":{"url":"https://x/y.png"}},
+				{"type":"text","text":"second"}
+			]},
+			{"role":"developer","content":[{"type":"text","text":"third"}]},
+			{"role":"user","content":"hi"}
+		]
+	}`)
+	sys, ok := req.SystemAsString()
+	if !ok || sys != "first\n\nsecond\n\nthird" {
+		t.Errorf("System = %q (ok=%v), want 'first\\n\\nsecond\\n\\nthird'", sys, ok)
+	}
+	if !hasDrop(drops, "messages[0].content[1]") {
+		t.Errorf("expected drop for the image part in system content, got %+v", drops)
+	}
+	if len(req.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1 (system folded out)", len(req.Messages))
+	}
+}

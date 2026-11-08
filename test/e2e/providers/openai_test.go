@@ -45,6 +45,67 @@ func TestOpenAI_ChatCompletions_NonStreaming(t *testing.T) {
 	}
 }
 
+// TestOpenAI_ChatCompletions_SystemArrayContent is the wire-contract case
+// for #577: a system message whose content is an array of text parts (the
+// shape the official SDKs emit for structured prompts) must be forwarded
+// verbatim, not rejected with 400 at the body-capture stage.
+func TestOpenAI_ChatCompletions_SystemArrayContent(t *testing.T) {
+	t.Parallel()
+	h := harness.New(t)
+
+	canned := `{"id":"chatcmpl-sys-arr","object":"chat.completion","model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+	h.StageMockResponse(harness.CannedResponse{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Status: http.StatusOK,
+		Body:   canned,
+	})
+
+	body := map[string]any{
+		"model": "gpt-4o-mini",
+		"messages": []map[string]any{
+			{"role": "system", "content": []map[string]any{
+				{"type": "text", "text": "You are helpful."},
+				{"type": "text", "text": "Be terse.", "cache_control": map[string]string{"type": "ephemeral"}},
+			}},
+			{"role": "developer", "content": []map[string]any{{"type": "text", "text": "Internal."}}},
+			{"role": "user", "content": "hi"},
+		},
+	}
+	resp := h.PostJSON("/v1/chat/completions", body, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, resp.Body)
+	}
+
+	captured := h.FetchCapturedRequests()
+	if len(captured) != 1 {
+		t.Fatalf("upstream captured %d requests, want 1", len(captured))
+	}
+	var upstream struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(captured[0].Body), &upstream); err != nil {
+		t.Fatalf("decode upstream body: %v\n%s", err, captured[0].Body)
+	}
+	if len(upstream.Messages) != 3 {
+		t.Fatalf("upstream messages = %d, want 3", len(upstream.Messages))
+	}
+	for i, role := range []string{"system", "developer"} {
+		if upstream.Messages[i].Role != role {
+			t.Errorf("messages[%d].role = %q, want %q", i, upstream.Messages[i].Role, role)
+		}
+		if c := strings.TrimSpace(string(upstream.Messages[i].Content)); !strings.HasPrefix(c, "[") {
+			t.Errorf("messages[%d].content forwarded as %s, want the array preserved", i, c)
+		}
+	}
+	if !strings.Contains(string(upstream.Messages[0].Content), `"cache_control"`) {
+		t.Errorf("unknown part field cache_control was not round-tripped: %s", upstream.Messages[0].Content)
+	}
+}
+
 func TestOpenAI_ChatCompletions_Streaming(t *testing.T) {
 	t.Parallel()
 	h := harness.New(t)

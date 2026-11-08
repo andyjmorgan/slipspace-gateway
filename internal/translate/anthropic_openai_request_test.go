@@ -65,7 +65,7 @@ func TestTranslateRequest_TextAndScalars(t *testing.T) {
 		t.Errorf("messages[0] role = %q, want system", req.Messages[0].Role())
 	}
 	sys, ok := req.Messages[0].(*chat.SystemMessage)
-	if !ok || sys.Content != "be terse" {
+	if sysText, _ := sys.Content.AsString(); !ok || sysText != "be terse" {
 		t.Errorf("system content = %+v, want 'be terse'", req.Messages[0])
 	}
 	user, ok := req.Messages[1].(*chat.UserMessage)
@@ -93,8 +93,8 @@ func TestTranslateRequest_SystemBlocksDropCacheControl(t *testing.T) {
 	if !ok {
 		t.Fatalf("messages[0] = %T, want SystemMessage", req.Messages[0])
 	}
-	if sys.Content != "line one\n\nline two" {
-		t.Errorf("joined system = %q, want 'line one\\n\\nline two'", sys.Content)
+	if got, _ := sys.Content.AsString(); got != "line one\n\nline two" {
+		t.Errorf("joined system = %q, want 'line one\\n\\nline two'", got)
 	}
 	if !hasDrop(drops, "system[0].cache_control") {
 		t.Errorf("expected system[0].cache_control drop, got %+v", drops)
