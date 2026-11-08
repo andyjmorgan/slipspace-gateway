@@ -122,6 +122,16 @@ type ResponsesRequest struct {
 	// json_object).
 	Text json.RawMessage `json:"text,omitempty"`
 
+	// ContextManagement enables server-side compaction on this request: when
+	// the rendered input crosses an entry's CompactThreshold, OpenAI compacts
+	// the context in-band and emits an encrypted "compaction" output item,
+	// with no separate POST /v1/responses/compact round trip. Nil leaves
+	// compaction off. The upstream schema requires at least one entry when
+	// the array is present.
+	// Ref: https://developers.openai.com/api/docs/guides/compaction
+	// Ref: https://developers.openai.com/api/reference/resources/responses/methods/create.md
+	ContextManagement []ContextManagementItem `json:"context_management,omitempty"`
+
 	models.DynamicProperties
 }
 
@@ -134,6 +144,36 @@ func (r *ResponsesRequest) UnmarshalJSON(data []byte) error {
 // MarshalJSON encodes r and merges DynamicProperties.Extra back into the
 // resulting object.
 func (r ResponsesRequest) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(r) }
+
+// ContextManagementItem is one entry of ResponsesRequest.ContextManagement.
+// The entry is Type-discriminated but currently single-member ("compaction"),
+// so it is a flat struct rather than a registry union; a variant OpenAI adds
+// later still round-trips through Type plus the embedded DynamicProperties.
+// Ref: https://developers.openai.com/api/reference/resources/responses/methods/create.md
+type ContextManagementItem struct {
+	// Type is the context-management entry kind; OpenAI currently accepts
+	// only "compaction".
+	Type string `json:"type"`
+
+	// CompactThreshold is the rendered-input token count at which the server
+	// runs compaction for this entry (upstream minimum 1000). A pointer so the
+	// field's absence is distinguishable from zero; nullable upstream, and an
+	// explicit null is omitted on re-marshal because OpenAI treats absent and
+	// null identically for this parameter.
+	CompactThreshold *int `json:"compact_threshold,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into c, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (c *ContextManagementItem) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, c)
+}
+
+// MarshalJSON encodes c and merges DynamicProperties.Extra back into the
+// resulting object.
+func (c ContextManagementItem) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
 
 // ResponsesResponse is the non-streaming response body returned by POST
 // /v1/responses. Unknown fields round-trip via the embedded
@@ -527,6 +567,16 @@ type OutputItem struct {
 	// not populated. See
 	// https://developers.openai.com/api/docs/guides/reasoning.
 	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
+
+	// CreatedBy is the identifier of the actor that created the item.
+	// Present on tool-call / tool-output items (function_call,
+	// function_call_output, computer_call_output, tool_search_call,
+	// tool_search_output, shell_call(+_output), apply_patch_call(+_output))
+	// and on the server-generated "compaction" item; absent on message and
+	// reasoning items.
+	// Ref: https://developers.openai.com/api/reference/resources/responses/subresources/input_items/methods/list.md
+	// Ref: https://developers.openai.com/api/reference/resources/responses/methods/create.md
+	CreatedBy string `json:"created_by,omitempty"`
 
 	models.DynamicProperties
 }

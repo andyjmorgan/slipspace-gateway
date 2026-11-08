@@ -124,7 +124,8 @@ type contentBlockStartRaw struct {
 
 // ContentBlockDeltaEvent carries an incremental update to the content block
 // at Index. The Delta itself is polymorphic — TextDelta, InputJSONDelta,
-// ThinkingDelta, SignatureDelta, CitationsDelta, or UnknownContentBlockDelta.
+// ThinkingDelta, SignatureDelta, CitationsDelta, CompactionDelta, or
+// UnknownContentBlockDelta.
 // Unknown fields round-trip via the embedded DynamicProperties.
 type ContentBlockDeltaEvent struct {
 	// Type is the wire "type" discriminator, always
@@ -432,8 +433,8 @@ func UnmarshalStreamEvent(data []byte) (StreamEvent, error) {
 
 // ContentBlockDelta is the polymorphic interface implemented by every delta
 // variant carried inside a ContentBlockDeltaEvent — TextDelta,
-// InputJSONDelta, ThinkingDelta, SignatureDelta, CitationsDelta, and the
-// UnknownContentBlockDelta fallback.
+// InputJSONDelta, ThinkingDelta, SignatureDelta, CitationsDelta,
+// CompactionDelta, and the UnknownContentBlockDelta fallback.
 //
 // The discriminator is the "type" field. Unknown discriminator values are
 // dispatched to UnknownContentBlockDelta, which preserves both the type
@@ -587,6 +588,43 @@ func (d *CitationsDelta) UnmarshalJSON(data []byte) error { return models.Unmars
 // resulting object.
 func (d CitationsDelta) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(d) }
 
+// CompactionDelta carries the complete summary of a streamed compaction block
+// (see CompactionBlock). Threshold compaction emits exactly one of these after
+// the compaction content_block_start — the summary is not streamed in
+// fragments — so the accumulator overlays rather than appends it. Unknown
+// fields round-trip via the embedded DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-threshold
+// Ref: https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_compaction_content_block_delta.py
+type CompactionDelta struct {
+	// Type is the wire "type" discriminator, always "compaction_delta".
+	Type string `json:"type"`
+
+	// Content is the complete compaction summary, or an explicit null when
+	// compaction produced none. A pointer without omitempty for the same
+	// reason as CompactionBlock.Content: the null is meaningful and must
+	// survive re-marshalling.
+	Content *string `json:"content"`
+
+	// EncryptedContent is the opaque prior-compaction metadata, kept raw so
+	// absent / null / populated all round-trip byte-equivalent.
+	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
+
+	models.DynamicProperties
+}
+
+// DeltaType returns the "compaction_delta" discriminator.
+func (CompactionDelta) DeltaType() string { return "compaction_delta" }
+
+func (CompactionDelta) isContentBlockDelta() {}
+
+// UnmarshalJSON decodes data into d, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (d *CompactionDelta) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, d) }
+
+// MarshalJSON encodes d and merges DynamicProperties.Extra back into the
+// resulting object.
+func (d CompactionDelta) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(d) }
+
 // UnknownContentBlockDelta preserves any delta whose "type" discriminator
 // this package has not modelled. Type carries the unknown discriminator
 // verbatim and every other JSON field lands in DynamicProperties.Extra so
@@ -621,6 +659,7 @@ var contentBlockDeltaRegistry = models.PolymorphicRegistry[ContentBlockDelta]{
 		"thinking_delta":   func() ContentBlockDelta { return &ThinkingDelta{} },
 		"signature_delta":  func() ContentBlockDelta { return &SignatureDelta{} },
 		"citations_delta":  func() ContentBlockDelta { return &CitationsDelta{} },
+		"compaction_delta": func() ContentBlockDelta { return &CompactionDelta{} },
 	},
 	Fallback: func(disc string) ContentBlockDelta { return &UnknownContentBlockDelta{Type: disc} },
 }

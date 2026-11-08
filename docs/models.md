@@ -194,6 +194,7 @@ var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
         "tool_reference":          func() ContentBlock { return &ToolReferenceBlock{} },
         "thinking":          func() ContentBlock { return &ThinkingBlock{} },
         "redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
+        "compaction":        func() ContentBlock { return &CompactionBlock{} },
     },
     Fallback: func(disc string) ContentBlock { return &UnknownBlock{Type: disc} },
 }

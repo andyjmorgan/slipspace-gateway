@@ -1040,3 +1040,101 @@ func TestAccumulate_AnthropicMessages_ContextManagementOnDelta(t *testing.T) {
 		t.Errorf("stop_details = %s, want the delta-carried detail preserved", resp.StopDetails)
 	}
 }
+
+func TestAccumulate_AnthropicMessages_CompactionThresholdStream(t *testing.T) {
+	t.Parallel()
+	// Threshold compaction: the compaction block opens empty on
+	// content_block_start, then exactly one compaction_delta carries the whole
+	// summary + opaque encrypted blob (no fragments), then a normal text block.
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-threshold
+	raw := []byte("" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":null}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":"Summary of the conversation: the user is building a scraper.","encrypted_content":"gAAAAABopaque"}}` + "\n\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Based on our conversation so far..."}}` + "\n\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":23000,"output_tokens":1000,"iterations":[{"type":"compaction","input_tokens":180000,"output_tokens":3500},{"type":"message","input_tokens":23000,"output_tokens":1000}]}}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	if !got.Recognised || got.Partial {
+		t.Fatalf("got %+v", got)
+	}
+	resp := parseAnthropic(t, got.Assembled)
+	if len(resp.Content) != 2 {
+		t.Fatalf("Content=%d want 2: %s", len(resp.Content), got.Assembled)
+	}
+	cb, ok := resp.Content[0].(*messages.CompactionBlock)
+	if !ok {
+		t.Fatalf("block[0] = %T want *CompactionBlock", resp.Content[0])
+	}
+	if cb.Content == nil || *cb.Content != "Summary of the conversation: the user is building a scraper." {
+		t.Errorf("content=%v", cb.Content)
+	}
+	if string(cb.EncryptedContent) != `"gAAAAABopaque"` {
+		t.Errorf("encrypted_content=%s", cb.EncryptedContent)
+	}
+	if txt, ok := resp.Content[1].(*messages.TextBlock); !ok || txt.Text != "Based on our conversation so far..." {
+		t.Fatalf("block[1] = %T %+v", resp.Content[1], resp.Content[1])
+	}
+	if len(resp.Usage.Iterations) != 2 || resp.Usage.Iterations[0].Type != "compaction" {
+		t.Errorf("iterations=%+v", resp.Usage.Iterations)
+	}
+}
+
+func TestAccumulate_AnthropicMessages_CompactionOnDemandWholeBlock(t *testing.T) {
+	t.Parallel()
+	// On-demand compaction ships the complete block (with its signature) on
+	// content_block_start, no deltas, and ends with stop_reason "compaction".
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
+	raw := []byte("" +
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}` + "\n\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":"Summary: recipe app data model.","signature":"EuYBCkQY","tool_changes":[]}}` + "\n\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"compaction","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":0,"iterations":[{"type":"compaction","input_tokens":144,"output_tokens":276}]}}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	if !got.Recognised || got.Partial {
+		t.Fatalf("got %+v", got)
+	}
+	resp := parseAnthropic(t, got.Assembled)
+	if len(resp.Content) != 1 {
+		t.Fatalf("Content=%d want 1: %s", len(resp.Content), got.Assembled)
+	}
+	cb, ok := resp.Content[0].(*messages.CompactionBlock)
+	if !ok {
+		t.Fatalf("block[0] = %T want *CompactionBlock", resp.Content[0])
+	}
+	if cb.Content == nil || *cb.Content != "Summary: recipe app data model." {
+		t.Errorf("content=%v", cb.Content)
+	}
+	if cb.Signature != "EuYBCkQY" {
+		t.Errorf("signature=%q", cb.Signature)
+	}
+	if string(cb.Extra["tool_changes"]) != `[]` {
+		t.Errorf("tool_changes not preserved: %v", cb.Extra)
+	}
+	if resp.StopReason == nil || *resp.StopReason != "compaction" {
+		t.Errorf("stop_reason=%v", resp.StopReason)
+	}
+}
+
+func TestAccumulate_AnthropicMessages_CompactionDeltaNullContentSurvives(t *testing.T) {
+	t.Parallel()
+	// A failed compaction streams a compaction_delta with an explicit null
+	// content; the assembled block must keep the null (not "" and not drop the
+	// key) because the server treats a null-content block as a no-op.
+	raw := []byte("" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":null}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":null}}` + "\n\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	if !got.Recognised {
+		t.Fatalf("got %+v", got)
+	}
+	if !strings.Contains(string(got.Assembled), `"content":null`) {
+		t.Fatalf("null compaction content lost: %s", got.Assembled)
+	}
+	resp := parseAnthropic(t, got.Assembled)
+	cb, ok := resp.Content[0].(*messages.CompactionBlock)
+	if !ok || cb.Content != nil {
+		t.Fatalf("block[0] = %T %+v want *CompactionBlock with nil Content", resp.Content[0], resp.Content[0])
+	}
+}

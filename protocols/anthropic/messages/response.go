@@ -29,7 +29,12 @@ type MessagesResponse struct {
 	Model string `json:"model"`
 
 	// StopReason is "end_turn", "max_tokens", "stop_sequence",
-	// "tool_use", etc. Nil while the response is still in progress.
+	// "tool_use", "pause_turn", "refusal", "model_context_window_exceeded",
+	// or "compaction" (the turn ended at a compaction boundary — on-demand
+	// compaction, or threshold compaction with pause_after_compaction; see
+	// CompactionBlock). Nil while the response is still in progress. Not an
+	// enum: the string is carried verbatim so a new value forwards intact.
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
 	StopReason *string `json:"stop_reason"`
 
 	// StopSequence carries the stop string that triggered termination

@@ -136,6 +136,49 @@ func TestUnmarshalStreamEvent_ContentBlockDelta_Signature(t *testing.T) {
 	})
 }
 
+// compaction_delta shapes per the SDK's BetaCompactionContentBlockDelta
+// (content + encrypted_content, both nullable). Ref:
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_compaction_content_block_delta.py
+func TestUnmarshalStreamEvent_ContentBlockDelta_Compaction(t *testing.T) {
+	in := []byte(`{"delta":{"content":"Summary of the conversation: ...","encrypted_content":"gAAAAABopaque","type":"compaction_delta"},"index":0,"type":"content_block_delta"}`)
+	streamRoundTrip(t, in, "content_block_delta", func(ev StreamEvent) {
+		cbd := ev.(*ContentBlockDeltaEvent)
+		cd, ok := cbd.Delta.(*CompactionDelta)
+		if !ok || cd.Content == nil || *cd.Content != "Summary of the conversation: ..." {
+			t.Fatalf("delta = %T %+v", cbd.Delta, cbd.Delta)
+		}
+		if string(cd.EncryptedContent) != `"gAAAAABopaque"` {
+			t.Fatalf("encrypted_content = %s", cd.EncryptedContent)
+		}
+		if len(cd.Extra) != 0 {
+			t.Fatalf("typed fields leaked into Extra: %v", cd.Extra)
+		}
+	})
+}
+
+func TestUnmarshalStreamEvent_ContentBlockDelta_CompactionNullContent(t *testing.T) {
+	in := []byte(`{"delta":{"content":null,"type":"compaction_delta"},"index":0,"type":"content_block_delta"}`)
+	streamRoundTrip(t, in, "content_block_delta", func(ev StreamEvent) {
+		cbd := ev.(*ContentBlockDeltaEvent)
+		cd, ok := cbd.Delta.(*CompactionDelta)
+		if !ok || cd.Content != nil || cd.EncryptedContent != nil {
+			t.Fatalf("delta = %T %+v", cbd.Delta, cbd.Delta)
+		}
+	})
+}
+
+func TestUnmarshalStreamEvent_ContentBlockStartCompaction(t *testing.T) {
+	// On-demand compaction delivers the whole block on content_block_start.
+	in := []byte(`{"content_block":{"content":"Summary: recipe app.","signature":"EuYBCkQY","type":"compaction"},"index":0,"type":"content_block_start"}`)
+	streamRoundTrip(t, in, "content_block_start", func(ev StreamEvent) {
+		cbs := ev.(*ContentBlockStartEvent)
+		cb, ok := cbs.ContentBlock.(*CompactionBlock)
+		if !ok || cb.Content == nil || *cb.Content != "Summary: recipe app." || cb.Signature != "EuYBCkQY" {
+			t.Fatalf("block = %T %+v", cbs.ContentBlock, cbs.ContentBlock)
+		}
+	})
+}
+
 func TestUnmarshalStreamEvent_ContentBlockDelta_Citations(t *testing.T) {
 	in := []byte(`{"delta":{"citation":{"cited_text":"the sky is blue","title":"Sky","type":"web_search_result_location","url":"https://e.com"},"type":"citations_delta"},"index":0,"type":"content_block_delta"}`)
 	streamRoundTrip(t, in, "content_block_delta", func(ev StreamEvent) {
@@ -392,7 +435,7 @@ func TestStream_RegistryCoversAllConcreteTypes(t *testing.T) {
 		t.Fatalf("event registry must have a fallback")
 	}
 
-	wantDelta := map[string]bool{"text_delta": false, "input_json_delta": false, "thinking_delta": false, "signature_delta": false, "citations_delta": false}
+	wantDelta := map[string]bool{"text_delta": false, "input_json_delta": false, "thinking_delta": false, "signature_delta": false, "citations_delta": false, "compaction_delta": false}
 	for k := range contentBlockDeltaRegistry.Factories {
 		if _, ok := wantDelta[k]; !ok {
 			t.Errorf("unexpected delta registry key %q", k)
@@ -440,6 +483,7 @@ func TestContentBlockDelta_DeltaTypeAccessors(t *testing.T) {
 		{ThinkingDelta{}, "thinking_delta"},
 		{SignatureDelta{}, "signature_delta"},
 		{CitationsDelta{}, "citations_delta"},
+		{CompactionDelta{}, "compaction_delta"},
 		{UnknownContentBlockDelta{Type: "x"}, "x"},
 	}
 	for _, c := range cases {

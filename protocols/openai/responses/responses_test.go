@@ -559,6 +559,7 @@ func TestResponses_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(InputTokensDetails{}),
 		reflect.TypeOf(OutputTokensDetails{}),
 		reflect.TypeOf(OutputItem{}),
+		reflect.TypeOf(ContextManagementItem{}),
 		reflect.TypeOf(ResponseCreatedEvent{}),
 		reflect.TypeOf(ResponseInProgressEvent{}),
 		reflect.TypeOf(OutputItemAddedEvent{}),
