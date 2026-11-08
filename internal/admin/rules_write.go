@@ -54,9 +54,9 @@ type RuleValidationError struct {
 //   - 400 on JSON parse failure, missing name, or empty body
 //   - 409 Conflict (RuleConflictError) when rule name already exists
 //   - 422 Unprocessable Entity (RuleValidationError) when the post-
-//     mutation Validate fails (e.g. unknown referenced policy on
-//     UseResiliencePolicyAction — though for a freshly-added rule
-//     that error is rare; included for consistency with PUT)
+//     mutation RevalidateAndIndex fails (e.g. rule.Validate rejects
+//     the rule, or it uses the retired "endpoint" condition;
+//     useResiliencePolicy names are not validated)
 //   - 500 on disk write failure (permission denied, etc.)
 //   - 503 when the store or config dir is not wired (admin write
 //     surface disabled by deployment)
@@ -158,7 +158,7 @@ func RulesReplaceHandler(store *config.Store, configDir string) http.Handler {
 // Refuses with 409 when the rule is still referenced by one or more
 // Configurations' RuleNames lists — operators must unbind it first.
 // This keeps the post-delete state guaranteed to pass Validate
-// (validateLibraries enforces every RuleNames entry resolves).
+// (validateConfigurations enforces that every RuleNames entry resolves).
 //
 // Response codes:
 //
