@@ -45,6 +45,7 @@ var requestFieldDisposition = map[string]string{
 	"OutputConfig":  dispMapped,  // effort -> chat.ReasoningEffort
 
 	"ContextManagement": dispDropped, // Anthropic context-management beta; no OpenAI equivalent (signalled)
+	"McpServers":        dispDropped, // Anthropic MCP connector beta; OpenAI has no server-side MCP client (signalled)
 }
 
 // responseFieldDisposition classifies every exported field of

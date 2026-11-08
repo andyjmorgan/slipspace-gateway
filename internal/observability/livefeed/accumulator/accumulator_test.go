@@ -1138,3 +1138,78 @@ func TestAccumulate_AnthropicMessages_CompactionDeltaNullContentSurvives(t *test
 		t.Fatalf("block[0] = %T %+v want *CompactionBlock with nil Content", resp.Content[0], resp.Content[0])
 	}
 }
+
+// TestAccumulate_AnthropicMessages_McpToolUseRollup mirrors the server_tool_use
+// case for the MCP connector beta: an mcp_tool_use block whose input streams
+// across input_json_delta fragments (anthropic-sdk-python TRACKS_TOOL_INPUT),
+// followed by an mcp_tool_result delivered whole in its content_block_start.
+// The streamed input MUST survive the rollup — before the block was typed it
+// fell through to UnknownBlock and the rollup emitted the start block's empty
+// {} input (GitHub #557).
+func TestAccumulate_AnthropicMessages_McpToolUseRollup(t *testing.T) {
+	t.Parallel()
+	raw := []byte("" +
+		`event: message_start` + "\n" +
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-5","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\n" +
+		`event: content_block_start` + "\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_use","id":"mcptoolu_014Q35RayjACSWkSj4X2yov1","name":"echo","server_name":"example-mcp","input":{},"future_field":"kept"}}` + "\n\n" +
+		`event: content_block_delta` + "\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"param1\":"}}` + "\n\n" +
+		`event: content_block_delta` + "\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" \"value1\"}"}}` + "\n\n" +
+		`event: content_block_stop` + "\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		`event: content_block_start` + "\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptoolu_014Q35RayjACSWkSj4X2yov1","is_error":false,"content":[{"type":"text","text":"Hello"}]}}` + "\n\n" +
+		`event: content_block_stop` + "\n" +
+		`data: {"type":"content_block_stop","index":1}` + "\n\n" +
+		`event: content_block_start` + "\n" +
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		`event: content_block_delta` + "\n" +
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"The server said Hello."}}` + "\n\n" +
+		`event: message_delta` + "\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}` + "\n\n" +
+		`event: message_stop` + "\n" +
+		`data: {"type":"message_stop"}` + "\n\n")
+	got := Accumulate("anthropic", "messages", raw)
+	if !got.Recognised || got.Partial {
+		t.Fatalf("got %+v", got)
+	}
+	resp := parseAnthropic(t, got.Assembled)
+	if len(resp.Content) != 3 {
+		t.Fatalf("Content=%d want 3", len(resp.Content))
+	}
+
+	use, ok := resp.Content[0].(*messages.McpToolUseBlock)
+	if !ok {
+		t.Fatalf("block[0] = %T want *McpToolUseBlock", resp.Content[0])
+	}
+	if use.ID != "mcptoolu_014Q35RayjACSWkSj4X2yov1" || use.Name != "echo" || use.ServerName != "example-mcp" {
+		t.Errorf("mcp_tool_use ID/Name/ServerName = %q/%q/%q", use.ID, use.Name, use.ServerName)
+	}
+	// The load-bearing assertion: the streamed input is preserved, not dropped.
+	if string(use.Input) != `{"param1":"value1"}` {
+		t.Errorf("mcp_tool_use Input=%q want the reassembled input", use.Input)
+	}
+	if v, ok := use.Extra["future_field"]; !ok || string(v) != `"kept"` {
+		t.Errorf("start-block DynamicProperties lost on reassembly: %v", use.Extra)
+	}
+
+	res, ok := resp.Content[1].(*messages.McpToolResultBlock)
+	if !ok {
+		t.Fatalf("block[1] = %T want *McpToolResultBlock", resp.Content[1])
+	}
+	if res.ToolUseID != use.ID {
+		t.Errorf("mcp_tool_result tool_use_id=%q want %q", res.ToolUseID, use.ID)
+	}
+	if res.IsError == nil || *res.IsError {
+		t.Errorf("mcp_tool_result is_error=%v want explicit false", res.IsError)
+	}
+	if !json.Valid(res.Content) || !strings.Contains(string(res.Content), `"Hello"`) {
+		t.Errorf("mcp_tool_result content not preserved: %s", res.Content)
+	}
+
+	if tb, ok := resp.Content[2].(*messages.TextBlock); !ok || tb.Text != "The server said Hello." {
+		t.Errorf("block[2] = %+v", resp.Content[2])
+	}
+}

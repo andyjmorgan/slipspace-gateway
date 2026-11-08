@@ -151,6 +151,15 @@ func (s *anthropicState) absorbBlockStart(index int, block messages.ContentBlock
 			st.toolID = b.ID
 			st.toolName = b.Name
 		}
+	case *messages.McpToolUseBlock:
+		// MCP connector calls stream Input over input_json_delta too
+		// (anthropic-sdk-python TRACKS_TOOL_INPUT), so the same splice
+		// applies; mcp_tool_result arrives whole and needs none.
+		st.kind = "mcp_tool_use"
+		if b != nil {
+			st.toolID = b.ID
+			st.toolName = b.Name
+		}
 	case *messages.ThinkingBlock:
 		st.kind = "thinking"
 		if b != nil {
@@ -312,16 +321,7 @@ func (s *anthropicState) assemble() messages.MessagesResponse {
 			block.Type = "tool_use"
 			block.ID = st.toolID
 			block.Name = st.toolName
-			// Only overwrite Input with the accumulated tool arguments when
-			// they form valid JSON. A stream truncated mid input_json_delta
-			// leaves an unterminated fragment; splicing it verbatim would
-			// emit a structurally-invalid response body. Fall back to the
-			// start block's Input, or "{}".
-			if frag := st.toolArgs.String(); frag != "" && json.Valid([]byte(frag)) {
-				block.Input = json.RawMessage(frag)
-			} else if len(block.Input) == 0 {
-				block.Input = json.RawMessage("{}")
-			}
+			block.Input = reassembleToolInput(st.toolArgs.String(), block.Input)
 			content = append(content, block)
 		case "server_tool_use":
 			// Same reconstruction as tool_use: reuse the start block (keeps ID,
@@ -334,11 +334,19 @@ func (s *anthropicState) assemble() messages.MessagesResponse {
 			block.Type = "server_tool_use"
 			block.ID = st.toolID
 			block.Name = st.toolName
-			if frag := st.toolArgs.String(); frag != "" && json.Valid([]byte(frag)) {
-				block.Input = json.RawMessage(frag)
-			} else if len(block.Input) == 0 {
-				block.Input = json.RawMessage("{}")
+			block.Input = reassembleToolInput(st.toolArgs.String(), block.Input)
+			content = append(content, block)
+		case "mcp_tool_use":
+			// Reuse the start block so ServerName and any DynamicProperties
+			// survive, splicing the streamed Input when it parsed.
+			block, ok := st.raw.(*messages.McpToolUseBlock)
+			if !ok || block == nil {
+				block = &messages.McpToolUseBlock{}
 			}
+			block.Type = "mcp_tool_use"
+			block.ID = st.toolID
+			block.Name = st.toolName
+			block.Input = reassembleToolInput(st.toolArgs.String(), block.Input)
 			content = append(content, block)
 		case "thinking":
 			block, ok := st.raw.(*messages.ThinkingBlock)
@@ -375,4 +383,21 @@ func (s *anthropicState) assemble() messages.MessagesResponse {
 	}
 	resp.Content = content
 	return resp
+}
+
+// reassembleToolInput picks the Input for a tool_use-shaped block
+// (tool_use, server_tool_use, mcp_tool_use) at assembly time: the
+// concatenated input_json_delta fragments when they form complete JSON,
+// otherwise the start block's own Input, otherwise an empty object. A stream
+// truncated mid input_json_delta leaves an unterminated fragment; splicing it
+// verbatim would make the whole assembled response unparseable, so the start
+// block's value (usually {}) is kept instead.
+func reassembleToolInput(frag string, start json.RawMessage) json.RawMessage {
+	if frag != "" && json.Valid([]byte(frag)) {
+		return json.RawMessage(frag)
+	}
+	if len(start) == 0 {
+		return json.RawMessage("{}")
+	}
+	return start
 }

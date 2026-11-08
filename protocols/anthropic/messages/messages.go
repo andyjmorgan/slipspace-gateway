@@ -75,6 +75,17 @@ type MessagesRequest struct {
 	// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/message_create_params.py
 	ContextManagement *ContextManagementConfig `json:"context_management,omitempty"`
 
+	// McpServers lists the remote MCP servers the API connects to on the
+	// caller's behalf (BETA; requires the "anthropic-beta:
+	// mcp-client-2025-11-20" header, or the superset
+	// "mcp-client-2026-09-15"). Each server must be referenced by exactly
+	// one {"type":"mcp_toolset"} entry in Tools. Nil leaves the connector
+	// unused.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+	// Ref: anthropic-sdk-python beta_request_mcp_server_url_definition_param.py:
+	// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_request_mcp_server_url_definition_param.py
+	McpServers []McpServerDefinition `json:"mcp_servers,omitempty"`
+
 	models.DynamicProperties
 }
 
@@ -217,8 +228,10 @@ type Tool struct {
 	Type string `json:"type,omitempty"`
 
 	// Name is the tool identifier the model invokes when calling this
-	// tool.
-	Name string `json:"name"`
+	// tool. Absent on a {"type":"mcp_toolset"} entry, which is addressed
+	// by MCPServerName instead, so it must be omitted when empty for that
+	// shape to round-trip.
+	Name string `json:"name,omitempty"`
 
 	// Description is the natural-language description the model uses to
 	// decide when to call the tool.
@@ -264,6 +277,29 @@ type Tool struct {
 	// caching at the configured tier.
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 
+	// MCPServerName binds a {"type":"mcp_toolset"} entry to the
+	// MessagesRequest.McpServers element whose Name matches (BETA;
+	// mcp-client-2025-11-20). Required on that shape — the API 400s when
+	// it names no declared server, and every declared server must be bound
+	// by exactly one toolset. Empty on every other tool kind.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+	// Ref: anthropic-sdk-python beta_mcp_toolset_param.py:
+	// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_mcp_toolset_param.py
+	MCPServerName string `json:"mcp_server_name,omitempty"`
+
+	// DefaultConfig is the mcp_toolset-level configuration applied to every
+	// tool the bound MCP server exposes; per-tool entries in Configs
+	// override it. Nil means the server defaults (enabled, not deferred).
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+	DefaultConfig *McpToolConfig `json:"default_config,omitempty"`
+
+	// Configs holds per-tool overrides on an mcp_toolset, keyed by the
+	// tool name as the MCP server lists it. A name the server does not
+	// expose is logged server-side but not rejected. Nil applies
+	// DefaultConfig uniformly.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+	Configs map[string]McpToolConfig `json:"configs,omitempty"`
+
 	models.DynamicProperties
 }
 
@@ -298,6 +334,114 @@ func (t *ToolChoice) UnmarshalJSON(data []byte) error { return models.UnmarshalD
 // MarshalJSON encodes t and merges DynamicProperties.Extra back into the
 // resulting object.
 func (t ToolChoice) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(t) }
+
+// McpToolConfig is the per-tool configuration object used both as an
+// mcp_toolset's DefaultConfig and as each value in its Configs map (BETA;
+// mcp-client-2025-11-20). Both fields are pointers so an explicit false
+// survives omitempty — "enabled": false is the denylist primitive, and
+// collapsing it to absent would silently re-enable the tool. Unknown fields
+// round-trip via the embedded DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+// Ref: anthropic-sdk-python beta_mcp_tool_config_param.py /
+// beta_mcp_tool_default_config_param.py (identical shape):
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_mcp_tool_config_param.py
+type McpToolConfig struct {
+	// Enabled exposes the tool to the model; the server default is true.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// DeferLoading withholds the tool's description until a tool search
+	// discovers it (see Tool.DeferLoading); the server default is false.
+	DeferLoading *bool `json:"defer_loading,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into c, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (c *McpToolConfig) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, c) }
+
+// MarshalJSON encodes c and merges DynamicProperties.Extra back into the
+// resulting object.
+func (c McpToolConfig) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(c) }
+
+// McpServerDefinition is one element of MessagesRequest.McpServers — a remote
+// MCP server the API connects to server-side (BETA; mcp-client-2025-11-20).
+// Type is modelled as a plain discriminator rather than a polymorphic
+// registry because "url" is the only variant Anthropic documents. Unknown
+// fields round-trip via the embedded DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+// Ref: anthropic-sdk-python beta_request_mcp_server_url_definition_param.py:
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_request_mcp_server_url_definition_param.py
+type McpServerDefinition struct {
+	// Type is the server definition kind; "url" is the only documented
+	// value.
+	Type string `json:"type"`
+
+	// URL is the MCP server endpoint. Must be https:// and publicly
+	// reachable (Streamable HTTP or SSE transport).
+	URL string `json:"url"`
+
+	// Name is the caller-chosen identifier an mcp_toolset binds to via
+	// Tool.MCPServerName; unique within the request.
+	Name string `json:"name"`
+
+	// AuthorizationToken is the OAuth bearer token the API presents to the
+	// MCP server. It is a credential: the gateway masks it wherever the
+	// request body is projected for operators (connector Record, admin
+	// live feed) via internal/contentredact.RedactBody, while the
+	// verbatim bytes still reach the upstream provider.
+	AuthorizationToken string `json:"authorization_token,omitempty"`
+
+	// ToolConfiguration is the DEPRECATED per-server tool filter from the
+	// superseded mcp-client-2025-04-04 beta. Accepted so callers still on
+	// the old header round-trip intact; new callers express the same
+	// policy through an mcp_toolset's DefaultConfig / Configs.
+	// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+	// (section "Deprecated version: mcp-client-2025-04-04")
+	ToolConfiguration *McpServerToolConfiguration `json:"tool_configuration,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into d, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (d *McpServerDefinition) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, d)
+}
+
+// MarshalJSON encodes d and merges DynamicProperties.Extra back into the
+// resulting object.
+func (d McpServerDefinition) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(d) }
+
+// McpServerToolConfiguration is the DEPRECATED mcp-client-2025-04-04 shape
+// of McpServerDefinition.ToolConfiguration. Enabled is a pointer so an
+// explicit false (disable every tool on the server) survives omitempty.
+// Unknown fields round-trip via the embedded DynamicProperties.
+// Ref: anthropic-sdk-python beta_request_mcp_server_tool_configuration_param.py:
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_request_mcp_server_tool_configuration_param.py
+type McpServerToolConfiguration struct {
+	// Enabled toggles every tool on the server; superseded by
+	// McpToolConfig.Enabled on the toolset's DefaultConfig.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// AllowedTools is the allowlist of tool names; superseded by per-tool
+	// entries in Tool.Configs.
+	AllowedTools []string `json:"allowed_tools,omitempty"`
+
+	models.DynamicProperties
+}
+
+// UnmarshalJSON decodes data into c, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (c *McpServerToolConfiguration) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, c)
+}
+
+// MarshalJSON encodes c and merges DynamicProperties.Extra back into the
+// resulting object.
+func (c McpServerToolConfiguration) MarshalJSON() ([]byte, error) {
+	return models.MarshalDynamic(c)
+}
 
 // Metadata is the optional metadata block on a MessagesRequest. Unknown
 // fields round-trip via the embedded DynamicProperties.

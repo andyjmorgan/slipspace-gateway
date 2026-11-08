@@ -19,8 +19,9 @@ import (
 // ContentBlock is the polymorphic interface implemented by every Anthropic
 // content block type — TextBlock, ImageBlock, ToolUseBlock, ToolResultBlock,
 // ServerToolUseBlock, WebSearchToolResultBlock, WebFetchToolResultBlock,
-// ToolSearchToolResultBlock, ToolReferenceBlock, ThinkingBlock,
-// RedactedThinkingBlock, CompactionBlock, and the UnknownBlock fallback.
+// ToolSearchToolResultBlock, ToolReferenceBlock, McpToolUseBlock,
+// McpToolResultBlock, ThinkingBlock, RedactedThinkingBlock, CompactionBlock,
+// and the UnknownBlock fallback.
 //
 // The discriminator is the "type" field. Unknown discriminator values are
 // dispatched to UnknownBlock, which preserves both the type value AND any
@@ -504,6 +505,104 @@ func (b *ToolReferenceBlock) UnmarshalJSON(data []byte) error {
 // resulting object.
 func (b ToolReferenceBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
 
+// McpToolUseBlock is the "mcp_tool_use" content block variant emitted when
+// the model invokes a tool on a remote MCP server declared in
+// MessagesRequest.McpServers (BETA; mcp-client-2025-11-20). The API executes
+// the call server-side and answers it with a sibling McpToolResultBlock
+// correlated by ID. Like tool_use and server_tool_use it streams its Input
+// across input_json_delta fragments (anthropic-sdk-python
+// lib/streaming/_beta_messages.py TRACKS_TOOL_INPUT). Unknown fields
+// round-trip via the embedded DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+// Ref: anthropic-sdk-python beta_mcp_tool_use_block.py:
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_mcp_tool_use_block.py
+type McpToolUseBlock struct {
+	// Type is the wire "type" discriminator, always "mcp_tool_use".
+	Type string `json:"type"`
+
+	// ID is the Anthropic-assigned call identifier (prefixed "mcptoolu_");
+	// echoed as ToolUseID on the corresponding McpToolResultBlock.
+	ID string `json:"id"`
+
+	// Name is the MCP tool invoked, as the server lists it (without the
+	// server name).
+	Name string `json:"name"`
+
+	// ServerName is the McpServerDefinition.Name of the server that hosts
+	// the tool.
+	ServerName string `json:"server_name"`
+
+	// Input is the structured argument payload (JSON object). Kept raw;
+	// streamed responses accumulate it from input_json_delta fragments.
+	Input json.RawMessage `json:"input,omitempty"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "mcp_tool_use" discriminator.
+func (McpToolUseBlock) BlockType() string { return "mcp_tool_use" }
+
+func (McpToolUseBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *McpToolUseBlock) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, b) }
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b McpToolUseBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
+// McpToolResultBlock is the "mcp_tool_result" content block carrying the
+// outcome of a server-side McpToolUseBlock (BETA; mcp-client-2025-11-20).
+// It appears in the assistant response and is echoed back by the client on
+// later turns, where it may additionally carry CacheControl. Content is
+// either a bare string or an array of text blocks, so it is kept raw to
+// round-trip both shapes. Arrives whole in content_block_start when
+// streaming — no deltas follow. Unknown fields round-trip via the embedded
+// DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+// Ref: anthropic-sdk-python beta_mcp_tool_result_block.py (response) /
+// beta_request_mcp_tool_result_block_param.py (request echo):
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_mcp_tool_result_block.py
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_request_mcp_tool_result_block_param.py
+type McpToolResultBlock struct {
+	// Type is the wire "type" discriminator, always "mcp_tool_result".
+	Type string `json:"type"`
+
+	// ToolUseID echoes the ID of the McpToolUseBlock this result answers.
+	ToolUseID string `json:"tool_use_id"`
+
+	// IsError flags the result as a tool failure. A pointer so the
+	// response's explicit false round-trips rather than collapsing to
+	// absent.
+	IsError *bool `json:"is_error,omitempty"`
+
+	// Content is the tool's output: a bare string or an array of text
+	// blocks. Kept raw to preserve either shape.
+	Content json.RawMessage `json:"content,omitempty"`
+
+	// CacheControl marks the echoed block as a prompt-cache breakpoint on
+	// the request side; never present on the response.
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "mcp_tool_result" discriminator.
+func (McpToolResultBlock) BlockType() string { return "mcp_tool_result" }
+
+func (McpToolResultBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *McpToolResultBlock) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, b)
+}
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b McpToolResultBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
 // ThinkingBlock is the "thinking" content block variant carrying the model's
 // extended-thinking trace. The non-streaming response embeds it directly; the
 // streaming response delivers it as a thinking content_block_start followed by
@@ -679,6 +778,8 @@ var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
 			return &ToolSearchToolResultBlock{}
 		},
 		"tool_reference":    func() ContentBlock { return &ToolReferenceBlock{} },
+		"mcp_tool_use":      func() ContentBlock { return &McpToolUseBlock{} },
+		"mcp_tool_result":   func() ContentBlock { return &McpToolResultBlock{} },
 		"thinking":          func() ContentBlock { return &ThinkingBlock{} },
 		"redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
 		"compaction":        func() ContentBlock { return &CompactionBlock{} },

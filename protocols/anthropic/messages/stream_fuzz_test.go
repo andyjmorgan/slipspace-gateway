@@ -13,6 +13,8 @@ func FuzzUnmarshalStreamEvent(f *testing.F) {
 		[]byte(`{"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","caller":{"type":"direct"},"content":[{"type":"web_search_result","title":"t","url":"https://e.com","encrypted_content":"z"}]}}`),
 		[]byte(`{"type":"content_block_start","index":1,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"srvtoolu_2","content":{"type":"web_fetch_result","url":"https://e.com","retrieved_at":"2026-01-01T00:00:00Z"}}}`),
 		[]byte(`{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_3","name":"tool_search_tool_regex"}}`),
+		[]byte(`{"type":"content_block_start","index":2,"content_block":{"type":"mcp_tool_use","id":"mcptoolu_1","name":"echo","server_name":"example-mcp","input":{}}}`),
+		[]byte(`{"type":"content_block_start","index":3,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptoolu_1","is_error":false,"content":[{"type":"text","text":"Hello"}]}}`),
 		[]byte(`{"type":"content_block_start","index":2,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_3","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"get_weather"}]}}}`),
 		[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://e.com","cited_text":"x","encrypted_index":"abc"}}}`),
 		[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`),

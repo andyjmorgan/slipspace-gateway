@@ -241,9 +241,9 @@ Two fields accept either a bare string or an array and are kept as
 ### Content blocks — the `type`-discriminated union
 
 Registry in `contentblock.go` (`blockRegistry`, discriminator field
-`type`; 12 factories including `server_tool_use`, `web_search_tool_result`,
+`type`; 14 factories including `server_tool_use`, `web_search_tool_result`,
 `web_fetch_tool_result`, `tool_search_tool_result`, `tool_reference`,
-`compaction`):
+`mcp_tool_use`, `mcp_tool_result`, `compaction`):
 
 | `type` | Type | Notes |
 |---|---|---|
@@ -256,10 +256,45 @@ Registry in `contentblock.go` (`blockRegistry`, discriminator field
 | `web_fetch_tool_result` | `WebFetchToolResultBlock` | Server web-fetch result |
 | `tool_search_tool_result` | `ToolSearchToolResultBlock` | Tool-search result (PR #470) |
 | `tool_reference` | `ToolReferenceBlock` | Tool reference (PR #470) |
+| `mcp_tool_use` | `McpToolUseBlock` | MCP connector call executed server-side (`id` prefixed `mcptoolu_`, `name`, `server_name`, raw `input`); streams `input` over `input_json_delta` like `server_tool_use` (#557) |
+| `mcp_tool_result` | `McpToolResultBlock` | Paired MCP result; `content` is string-or-text-array (kept raw), `is_error` is a `*bool` so an explicit `false` round-trips; carries `cache_control` only when the client echoes it (#557) |
 | `thinking` | `ThinkingBlock` (`contentblock.go:516`) | See signature echo below |
 | `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:549`) | Opaque encrypted `Data` |
 | `compaction` | `CompactionBlock` | Server-side context summary (compaction beta); see below |
 | *(any other)* | `UnknownBlock` | Fallback |
+
+### MCP connector (beta `mcp-client-2025-11-20`)
+
+The request side of Anthropic's [MCP connector](https://platform.claude.com/docs/en/agents-and-tools/mcp-connector)
+is typed on `MessagesRequest` and `Tool` (`messages.go`; GitHub #557):
+
+- **`MessagesRequest.McpServers []McpServerDefinition`** — one entry per remote
+  server: `Type` (only `"url"` is documented, so it is a plain discriminator,
+  not a registry), `URL`, `Name`, `AuthorizationToken`, plus the **deprecated**
+  `mcp-client-2025-04-04` nesting `ToolConfiguration *McpServerToolConfiguration`
+  (`Enabled *bool`, `AllowedTools []string`) kept so callers still on the old
+  header round-trip.
+- **`Tool` on a `{"type":"mcp_toolset"}` entry** — `MCPServerName` (must match a
+  server `Name`; 1:1 binding), `DefaultConfig *McpToolConfig`, and
+  `Configs map[string]McpToolConfig` keyed by tool name. `McpToolConfig` is
+  `{Enabled *bool; DeferLoading *bool}` — pointers so `"enabled": false` (the
+  denylist primitive) survives `omitempty`. `Tool.Name` is now `omitempty`
+  because a toolset entry has no name on the wire.
+- **`authorization_token` is a credential.** `internal/contentredact.RedactBody`
+  masks `mcp_servers[].authorization_token` to `[REDACTED]` wherever the request
+  body is projected for operators — the connector `Record` body and the admin
+  live-feed envelope (`cmd/gateway/reporter.go`) — while the verbatim bytes
+  still go upstream. `Record.request.body_sha256` / `body_bytes` describe the
+  body as recorded. The table of body credential fields lives in
+  `internal/contentredact/body.go`; add a row there for the next provider field.
+- Cross-provider translation to OpenAI Chat drops `mcp_servers` and every
+  `mcp_toolset` entry as counted feature drops (`internal/translate`), since
+  OpenAI has no server-side MCP client.
+
+The response blocks `mcp_tool_use` / `mcp_tool_result` are in the content-block
+table above; the SSE rollup (`internal/observability/livefeed/accumulator`)
+splices `mcp_tool_use.input` from `input_json_delta` fragments exactly as it
+does for `server_tool_use`.
 
 ### Thinking blocks and the signature-echo requirement
 
