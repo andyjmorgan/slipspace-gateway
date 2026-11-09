@@ -104,6 +104,12 @@ func FuzzChatCompletionResponse(f *testing.F) {
 		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi","reasoning_content":"legacy"},"finish_reason":"stop"}]}`,
 		// web-search annotations: typed url_citation plus an unknown annotation type.
 		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"see source","annotations":[{"type":"url_citation","url_citation":{"start_index":0,"end_index":3,"title":"t","url":"https://x.test"}},{"type":"file_citation","file_citation":{"file_id":"f_1"}}]},"finish_reason":"stop"}]}`,
+		// #511: in-band error at the envelope root (OpenRouter / Ollama late failure), numeric + null code.
+		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[],"error":{"message":"upstream disconnected","type":"api_error","param":null,"code":502}}`,
+		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[],"error":{"message":"m","type":"invalid_request_error","param":"messages","code":null,"metadata":{"error_type":"x"}},"usage":{"prompt_tokens":1,"completion_tokens":0,"total_tokens":1}}`,
+		// #511: prompt_tokens_details.cache_write_tokens, including the explicit-zero form OpenAI emits.
+		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":7000,"completion_tokens":4,"total_tokens":7004,"prompt_tokens_details":{"cached_tokens":1920,"cache_write_tokens":5000}}}`,
+		`{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":4,"total_tokens":11,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0}}}`,
 		`{}`,
 	}
 	for _, s := range seeds {
@@ -115,6 +121,32 @@ func FuzzChatCompletionResponse(f *testing.F) {
 			return
 		}
 		if _, err := json.Marshal(resp); err != nil {
+			t.Fatalf("marshal after parse: %v\nin: %s", err, in)
+		}
+	})
+}
+
+// FuzzChatCompletionChunk drives the streaming chunk envelope, including the
+// in-band mid-stream error form (#511) and terminal usage with the
+// cache_write_tokens leaf.
+func FuzzChatCompletionChunk(f *testing.F) {
+	seeds := []string{
+		`{"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}`,
+		`{"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`{"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":4,"total_tokens":11,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0}}}`,
+		`{"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}],"error":{"message":"Provider returned error","type":"rate_limit_error","param":null,"code":429,"metadata":{"error_type":"rate_limit_exceeded"}}}`,
+		`{"error":{"message":"m","type":"api_error"}}`,
+		`{}`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, in string) {
+		var chunk ChatCompletionChunk
+		if err := json.Unmarshal([]byte(in), &chunk); err != nil {
+			return
+		}
+		if _, err := json.Marshal(chunk); err != nil {
 			t.Fatalf("marshal after parse: %v\nin: %s", err, in)
 		}
 	})

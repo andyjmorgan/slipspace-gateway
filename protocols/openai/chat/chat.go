@@ -181,6 +181,22 @@ type ChatCompletionResponse struct {
 	// streaming variants without StreamOptions.IncludeUsage).
 	Usage *Usage `json:"usage,omitempty"`
 
+	// Error is the in-band error object some OpenAI-compatible servers
+	// (Ollama, OpenRouter, vLLM-style proxies) place at the root of a
+	// chat.completion envelope — as a sibling of Choices/Usage — when the
+	// upstream fails after the HTTP 200 has already been committed. Nil on
+	// every successful response. OpenAI itself does not declare this field
+	// on the chat completion object (its openapi spec,
+	// https://github.com/openai/openai-openapi, lists no `error` property on
+	// CreateChatCompletionResponse) and documents only the standalone
+	// ErrorResponse envelope for 4xx/5xx; the in-band form is documented by
+	// OpenRouter (https://openrouter.ai/docs/api_reference/errors-and-debugging,
+	// "Check the body for an `error` field even on a `200`") and is observed
+	// on live Ollama traffic (GitHub #511). Typed so the gateway can read it
+	// instead of leaving it in DynamicProperties.Extra; the nested object is
+	// the same ErrorObject the standalone envelope uses.
+	Error *ErrorObject `json:"error,omitempty"`
+
 	models.DynamicProperties
 }
 
@@ -227,6 +243,22 @@ type ChatCompletionChunk struct {
 	// Usage is only present on the terminal chunk when the caller set
 	// StreamOptions.IncludeUsage on the request.
 	Usage *Usage `json:"usage,omitempty"`
+
+	// Error is the mid-stream error object some OpenAI-compatible servers
+	// emit at the root of a chat.completion.chunk — alongside a Choices
+	// entry whose FinishReason is "error" — when the upstream fails after
+	// the stream has started and the 200 status can no longer change. Nil
+	// on every normal chunk. This is distinct from the standalone
+	// `data: {"error":{...}}` frame (ErrorResponse): here the error rides
+	// inside an otherwise well-formed chunk envelope. OpenAI's own openapi
+	// spec (https://github.com/openai/openai-openapi) declares no `error`
+	// property on CreateChatCompletionStreamResponse; the shape is
+	// documented by OpenRouter
+	// (https://openrouter.ai/docs/api_reference/errors-and-debugging,
+	// "MidStreamError": error at the top level alongside standard response
+	// fields, choices[0].finish_reason "error", stream terminates) and is
+	// observed on live Ollama traffic (GitHub #511). Reuses ErrorObject.
+	Error *ErrorObject `json:"error,omitempty"`
 
 	models.DynamicProperties
 }
@@ -347,6 +379,18 @@ type PromptTokensDetails struct {
 	// AudioTokens is the share of PromptTokens that were audio input.
 	// Pointer for the same reason as CachedTokens.
 	AudioTokens *int `json:"audio_tokens,omitempty"`
+
+	// CacheWriteTokens is the share of PromptTokens written to the prompt
+	// cache on this request ("the unadjusted number of prompt tokens
+	// written to cache", CompletionUsage.prompt_tokens_details in the
+	// openai-openapi spec, https://github.com/openai/openai-openapi). From
+	// GPT-5.6 onward these are billed at a cache-write rate rather than the
+	// uncached input rate, so the leaf is a costing input, not just a shape
+	// (https://developers.openai.com/api/docs/guides/prompt-caching).
+	// Pointer for the same reason as CachedTokens: OpenAI reports an
+	// explicit 0 on uncached requests and it must survive the rollup
+	// re-marshal.
+	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
 
 	models.DynamicProperties
 }

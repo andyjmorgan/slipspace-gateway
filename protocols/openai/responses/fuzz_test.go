@@ -88,6 +88,9 @@ func FuzzResponsesResponse(f *testing.F) {
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"incomplete","incomplete_details":{"reason":"x"}}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","billing":{"payer":"developer"},"frequency_penalty":0,"presence_penalty":0,"moderation":null,"reasoning":{"context":null,"effort":"low"}}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":null},{"type":"message","id":"msg_1","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"hi"}]}],"metadata":{"k":"v"}}`,
+		// #511: input_tokens_details.cache_write_tokens (+ the untyped per-lifetime breakdown) and the explicit-zero form.
+		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[],"usage":{"input_tokens":12000,"output_tokens":5,"total_tokens":12005,"input_tokens_details":{"cached_tokens":4000,"cache_write_tokens":7000,"cache_write_tokens_details":{"ttl_30m_tokens":3000,"ttl_12h_tokens":4000}},"output_tokens_details":{"reasoning_tokens":0}}}`,
+		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[],"usage":{"input_tokens":37,"output_tokens":11,"total_tokens":48,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}`,
 		`{"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[],"temperature":1,"top_p":1,"top_logprobs":0,"max_output_tokens":2048,"max_tool_calls":null,"store":true,"background":false,"completed_at":2,"truncation":"disabled","service_tier":"default","prompt_cache_retention":"in_memory","prompt_cache_key":null,"safety_identifier":null,"user":null,"instructions":null,"tools":[],"tool_choice":"auto","text":{"format":{"type":"text"}}}`,
 		`{}`,
 	}

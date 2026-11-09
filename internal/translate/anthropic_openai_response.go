@@ -34,6 +34,16 @@ func translateChatResponseToMessages(body []byte) ([]byte, []Drop, error) {
 		drops = append(drops, Drop{Field: "system_fingerprint", Reason: reasonNoTargetEquivalent})
 	}
 
+	// An in-band error (OpenAI-compat late failure reported inside a 200
+	// chat.completion envelope, GitHub #511) has no slot on a successful
+	// Anthropic message. Re-typing the response as an Anthropic error envelope
+	// is a status-changing decision the translator does not make on its own,
+	// so the error is signalled as a drop and the (possibly empty) choices are
+	// mapped as usual.
+	if src.Error != nil {
+		drops = append(drops, Drop{Field: "error", Reason: "in-band OpenAI-compat error has no Anthropic message equivalent"})
+	}
+
 	if len(src.Choices) > 1 {
 		drops = append(drops, Drop{Field: "choices[1:]", Reason: "Anthropic returns a single message; extra OpenAI choices dropped"})
 	}

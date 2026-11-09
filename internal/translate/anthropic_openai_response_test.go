@@ -142,6 +142,29 @@ func TestTranslateResponse_Drops(t *testing.T) {
 	}
 }
 
+// TestTranslateResponse_InBandErrorSignalled pins the disposition of the
+// OpenAI-compat in-band `error` (GitHub #511): it has no slot on an Anthropic
+// message, so it is reported as a drop rather than vanishing silently, and the
+// rest of the envelope still translates.
+func TestTranslateResponse_InBandErrorSignalled(t *testing.T) {
+	resp, drops := decodeMessages(t, `{
+		"id":"x","model":"m","object":"chat.completion","choices":[],
+		"error":{"message":"upstream disconnected","type":"api_error","param":null,"code":502}
+	}`)
+	if !hasDrop(drops, "error") {
+		t.Errorf("expected drop %q, got %+v", "error", drops)
+	}
+	if resp.ID != "x" || resp.Type != "message" {
+		t.Errorf("envelope not translated: %+v", resp)
+	}
+
+	// A normal response must not report an error drop.
+	_, drops = decodeMessages(t, `{"id":"x","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"a"},"finish_reason":"stop"}]}`)
+	if hasDrop(drops, "error") {
+		t.Errorf("unexpected error drop on a successful response: %+v", drops)
+	}
+}
+
 func TestTranslateResponse_ContentParts(t *testing.T) {
 	resp, drops := decodeMessages(t, `{
 		"id":"x","model":"m",

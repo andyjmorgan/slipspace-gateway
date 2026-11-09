@@ -58,6 +58,7 @@ var responseFieldDisposition = map[string]string{
 	"ServiceTier":       dispMapped,  // -> messages.Usage.ServiceTier
 	"Choices":           dispMapped,  // first choice -> message + stop_reason
 	"Usage":             dispMapped,  // -> messages.Usage
+	"Error":             dispDropped, // in-band OpenAI-compat error; no Anthropic message equivalent (signalled)
 }
 
 func TestRequestFieldCoverage_MessagesToChat(t *testing.T) {

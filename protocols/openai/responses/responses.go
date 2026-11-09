@@ -415,6 +415,20 @@ type InputTokensDetails struct {
 	// re-marshals this struct, so a plain int would erase a real zero).
 	CachedTokens *int `json:"cached_tokens,omitempty"`
 
+	// CacheWriteTokens is the share of InputTokens written to the prompt
+	// cache on this request ("the number of input tokens that were written
+	// to the cache", ResponseUsage.input_tokens_details in the openai-openapi
+	// spec, https://github.com/openai/openai-openapi — required alongside
+	// cached_tokens). From GPT-5.6 onward cache writes are billed at a
+	// write rate (1.25x input for the 30m lifetime, 2.5x for 12h) instead of
+	// the uncached input rate, and `cached_tokens` excludes tokens charged
+	// as writes, so this leaf is a costing input
+	// (https://developers.openai.com/api/docs/guides/prompt-caching). The
+	// per-lifetime split (`cache_write_tokens_details.ttl_30m_tokens` /
+	// `ttl_12h_tokens`) is not yet typed and rides along in Extra. Pointer
+	// for the same reason as CachedTokens.
+	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
+
 	models.DynamicProperties
 }
 
