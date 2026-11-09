@@ -306,6 +306,19 @@ func TestValidate_Failures(t *testing.T) {
 			c.RuleNames = []string{"ghost"}
 			r.Configurations["prod"] = c
 		}, "references rule"},
+		{"connector binding sampling out of range", func(r *ResolvedConfig) {
+			r.Connectors = contractsconfig.ConnectorsConfig{{Name: "hook", Type: "webhook", URL: "https://hooks.example.com/i", SecretRef: "env:S", TimeoutMS: 5000}}
+			c := r.Configurations["prod"]
+			five := 5.0
+			c.ConnectorBindings = []contractsconfig.ConnectorBinding{{Connector: "hook", Sampling: &five}}
+			r.Configurations["prod"] = c
+		}, "sampling must be in [0, 1]"},
+		{"connector binding unknown oversize_behaviour", func(r *ResolvedConfig) {
+			r.Connectors = contractsconfig.ConnectorsConfig{{Name: "hook", Type: "webhook", URL: "https://hooks.example.com/i", SecretRef: "env:S", TimeoutMS: 5000}}
+			c := r.Configurations["prod"]
+			c.ConnectorBindings = []contractsconfig.ConnectorBinding{{Connector: "hook", OversizeBehaviour: "explode"}}
+			r.Configurations["prod"] = c
+		}, "oversize_behaviour"},
 		{"unknown connector", func(r *ResolvedConfig) {
 			c := r.Configurations["prod"]
 			c.ConnectorBindings = []contractsconfig.ConnectorBinding{{Connector: "ghost"}}
