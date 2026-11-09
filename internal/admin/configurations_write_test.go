@@ -147,6 +147,29 @@ func TestConfigurations_CredentialWriteBack(t *testing.T) {
 	if strings.Contains(final.Body.String(), "topsecret") {
 		t.Errorf("response leaked the plaintext secret: %s", final.Body)
 	}
+
+	// #566: a PUT that omits the credentials key entirely (a console edit
+	// of an unrelated field) must leave the stored map untouched.
+	rec = do(t, h, http.MethodPut, "/api/v1/config/configurations/prod",
+		`{"tags":{"tier":"gold"},`+binding+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("omitted-credentials status = %d (body=%s)", rec.Code, rec.Body)
+	}
+	if got := store.Snapshot().Configurations["prod"].Credentials["openai"]; got != "topsecret" {
+		t.Errorf("omitting the credentials key wiped the secret: got %q, want topsecret", got)
+	}
+
+	// A delivered empty map is still an explicit "no providers carry a
+	// credential" — full replace of the provider set is the documented
+	// semantics when the key is present.
+	rec = do(t, h, http.MethodPut, "/api/v1/config/configurations/prod",
+		`{"credentials":{},`+binding+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty-credentials status = %d (body=%s)", rec.Code, rec.Body)
+	}
+	if got, ok := store.Snapshot().Configurations["prod"].Credentials["openai"]; ok {
+		t.Errorf("delivered empty map should drop the provider entry, still have %q", got)
+	}
 }
 
 // TestConfigurations_ApiKeysIgnored asserts a config write payload carrying an
