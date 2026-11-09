@@ -462,6 +462,54 @@ func TestMatchGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("depth cap is not inverted by an ancestor's not", func(t *testing.T) {
+		t.Parallel()
+		called := 0
+		// #618: the overflow happens two levels down. The parent And sees
+		// a false child, and its own not:true used to flip that into a
+		// match. The sentinel must propagate through every ancestor.
+		deep := &contractsrules.RuleGroup{
+			LogicalOperator: contractsrules.LogicalAnd,
+			Children:        []contractsrules.Condition{provOpenAI},
+		}
+		middle := &contractsrules.RuleGroup{
+			LogicalOperator: contractsrules.LogicalAnd,
+			Children:        []contractsrules.Condition{deep},
+		}
+		root := &contractsrules.RuleGroup{
+			LogicalOperator: contractsrules.LogicalAnd,
+			Children:        []contractsrules.Condition{middle},
+			Not:             true,
+		}
+		got := matchCondition(root, ctxWith("openai", "", "", nil), 0, 2, func() { called++ })
+		if got {
+			t.Error("an ancestor not: must not turn a depth-capped subtree into a match")
+		}
+		if called == 0 {
+			t.Error("groupDepthExceeded callback should have fired")
+		}
+	})
+
+	t.Run("depth cap propagates through an Or with a later true sibling", func(t *testing.T) {
+		t.Parallel()
+		called := 0
+		deep := &contractsrules.RuleGroup{
+			LogicalOperator: contractsrules.LogicalAnd,
+			Children:        []contractsrules.Condition{provOpenAI},
+		}
+		root := &contractsrules.RuleGroup{
+			LogicalOperator: contractsrules.LogicalOr,
+			Children:        []contractsrules.Condition{deep, provOpenAI},
+		}
+		got := matchCondition(root, ctxWith("openai", "", "", nil), 0, 1, func() { called++ })
+		if got {
+			t.Error("an Or that evaluated an over-deep child must fail closed, not fall through to a sibling")
+		}
+		if called == 0 {
+			t.Error("groupDepthExceeded callback should have fired")
+		}
+	})
+
 	t.Run("depth cap on the group itself is not inverted by not", func(t *testing.T) {
 		t.Parallel()
 		called := 0

@@ -16,43 +16,63 @@ import (
 //
 // depth tracks recursive descent into RuleGroup children; maxDepth
 // caps the cap operator-authored pathological YAML can reach. When
-// the cap is hit, the call returns false (not inverted by `not:`)
-// and signals via the supplied groupDepthExceeded callback so the
-// caller can increment the gateway.rule.errors.total counter.
+// the cap is hit anywhere in the subtree, the call returns false (not
+// inverted by any `not:`, at any level) and signals via the supplied
+// groupDepthExceeded callback so the caller can increment the
+// gateway.rule.errors.total counter.
 func matchCondition(
 	cond contractsrules.Condition,
 	gc GatewayContext,
 	depth, maxDepth int,
 	groupDepthExceeded func(),
 ) bool {
-	if cond == nil {
+	matched, exceeded := evalCondition(cond, gc, depth, maxDepth, groupDepthExceeded)
+	if exceeded {
+		// Depth-cap is a fail-closed sentinel, not a "no match": the
+		// whole rule is non-matching regardless of how the tree above
+		// the overflow would have combined it.
 		return false
+	}
+	return matched
+}
+
+// evalCondition is matchCondition's recursive core. It reports the
+// depth-cap sentinel separately from the match result so that every
+// enclosing group can propagate it instead of folding it into its own
+// And/Or/not: logic — an ancestor's `not:` must never turn an
+// unevaluated subtree into a match (#618).
+func evalCondition(
+	cond contractsrules.Condition,
+	gc GatewayContext,
+	depth, maxDepth int,
+	groupDepthExceeded func(),
+) (matched bool, depthExceeded bool) {
+	if cond == nil {
+		return false, false
 	}
 	switch c := cond.(type) {
 	case *contractsrules.ProviderCondition:
-		return invertIf(c.Not, matchProvider(*c, gc))
+		return invertIf(c.Not, matchProvider(*c, gc)), false
 	case *contractsrules.ProtocolCondition:
-		return invertIf(c.Not, matchProtocol(*c, gc))
+		return invertIf(c.Not, matchProtocol(*c, gc)), false
 	case *contractsrules.ModelNameCondition:
-		return invertIf(c.Not, matchModelName(*c, gc))
+		return invertIf(c.Not, matchModelName(*c, gc)), false
 	case *contractsrules.HeaderCondition:
-		return invertIf(c.Not, matchHeader(*c, gc))
+		return invertIf(c.Not, matchHeader(*c, gc)), false
 	case *contractsrules.TagCondition:
-		return invertIf(c.Not, matchTag(*c, gc))
+		return invertIf(c.Not, matchTag(*c, gc)), false
 	case *contractsrules.BodyFieldCondition:
-		return invertIf(c.Not, matchBodyField(*c, gc))
+		return invertIf(c.Not, matchBodyField(*c, gc)), false
 	case *contractsrules.RuleGroup:
-		matched, exceeded := matchGroup(*c, gc, depth, maxDepth, groupDepthExceeded)
+		m, exceeded := matchGroup(*c, gc, depth, maxDepth, groupDepthExceeded)
 		if exceeded {
-			// Depth-cap is a fail-closed sentinel, not a "no match".
-			// invertIf would turn it into a match when not: is set.
-			return false
+			return false, true
 		}
-		return invertIf(c.Not, matched)
+		return invertIf(c.Not, m), false
 	case *contractsrules.UnknownCondition:
-		return false
+		return false, false
 	default:
-		return false
+		return false, false
 	}
 }
 
@@ -193,7 +213,9 @@ func bodyTypeMatches(r gjson.Result, want string) bool {
 // first false child; LogicalOr short-circuits on the first true.
 // Empty Children always evaluates to false — a vacuously-true And
 // could fire every rule and is more likely an authoring mistake
-// than an intent.
+// than an intent. A depth-cap overflow in any evaluated child is
+// returned as depthExceeded rather than combined, so it propagates
+// to the root untouched by the operators in between.
 func matchGroup(
 	g contractsrules.RuleGroup,
 	gc GatewayContext,
@@ -212,14 +234,22 @@ func matchGroup(
 	switch g.LogicalOperator {
 	case contractsrules.LogicalAnd:
 		for _, child := range g.Children {
-			if !matchCondition(child, gc, depth+1, maxDepth, groupDepthExceeded) {
+			m, exceeded := evalCondition(child, gc, depth+1, maxDepth, groupDepthExceeded)
+			if exceeded {
+				return false, true
+			}
+			if !m {
 				return false, false
 			}
 		}
 		return true, false
 	case contractsrules.LogicalOr:
 		for _, child := range g.Children {
-			if matchCondition(child, gc, depth+1, maxDepth, groupDepthExceeded) {
+			m, exceeded := evalCondition(child, gc, depth+1, maxDepth, groupDepthExceeded)
+			if exceeded {
+				return false, true
+			}
+			if m {
 				return true, false
 			}
 		}
