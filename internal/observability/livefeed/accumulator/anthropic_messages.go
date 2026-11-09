@@ -191,6 +191,16 @@ func (s *anthropicState) absorbMessageDelta(e *messages.MessageDeltaEvent) {
 		v := *e.Delta.StopSequence
 		s.base.StopSequence = &v
 	}
+	// The code-execution container is delivered on the terminal
+	// message_delta (message_start carries container:null). A non-streaming
+	// decode keeps it on the response, so fold a non-nil delta container
+	// onto the base — mirroring the SDK snapshot accumulator, which only
+	// assigns when non-null so a null/absent delta never clobbers an
+	// earlier value.
+	if e.Delta.Container != nil {
+		c := *e.Delta.Container
+		s.base.Container = &c
+	}
 	// MessageDeltaEvent.Usage carries deltas for the final accounting;
 	// Anthropic's convention is that the final OutputTokens overrides
 	// the placeholder set on message_start.

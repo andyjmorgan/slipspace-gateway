@@ -23,6 +23,8 @@ func FuzzUnmarshalStreamEvent(f *testing.F) {
 		[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"future_delta","extra":1}}`),
 		[]byte(`{"type":"content_block_stop","index":0}`),
 		[]byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1,"output_tokens":2}}`),
+		[]byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"container":{"id":"container_01","expires_at":"2026-05-15T00:00:00Z","skills":[{"type":"anthropic","skill_id":"xlsx","version":"latest"}]}},"usage":{"output_tokens":2}}`),
+		[]byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn","container":null},"usage":{"output_tokens":2}}`),
 		[]byte(`{"type":"message_stop"}`),
 		[]byte(`{"type":"ping"}`),
 		[]byte(`{"type":"error","error":{"type":"overloaded_error","message":"x"}}`),

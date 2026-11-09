@@ -943,6 +943,67 @@ func TestAssemble_DefensiveFallbacksWhenRawMissing(t *testing.T) {
 	}
 }
 
+// TestAccumulate_AnthropicMessages_ContainerOnDelta locks the rollup-fidelity
+// fix for issue #607: when a request uses a container tool (code execution),
+// Anthropic sends container:null on message_start and delivers the populated
+// container inside the TERMINAL message_delta.delta (anthropic-sdk-python
+// types/raw_message_delta_event.py, Delta.container; the SDK's own snapshot
+// accumulator assigns event.delta.container when non-null). A non-streaming
+// MessagesResponse keeps container, so the assembled rollup must carry it too
+// — before the fix it fell into Delta.Extra and was thrown away.
+func TestAccumulate_AnthropicMessages_ContainerOnDelta(t *testing.T) {
+	raw := []byte(
+		`event: message_start` + "\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\n" +
+			`event: content_block_start` + "\n" +
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+			`event: content_block_delta` + "\n" +
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}` + "\n\n" +
+			`event: content_block_stop` + "\n" +
+			`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+			`event: message_delta` + "\n" +
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"container":{"id":"container_01","expires_at":"2026-05-15T00:00:00Z"}},"usage":{"output_tokens":3}}` + "\n\n" +
+			`event: message_stop` + "\n" +
+			`data: {"type":"message_stop"}` + "\n\n",
+	)
+
+	out := Accumulate("anthropic", "messages", raw)
+	resp := parseAnthropic(t, out.Assembled)
+
+	if resp.Container == nil {
+		t.Fatalf("container dropped from assembled rollup: %s", out.Assembled)
+	}
+	if resp.Container.ID != "container_01" || resp.Container.ExpiresAt != "2026-05-15T00:00:00Z" {
+		t.Errorf("container = %+v, want the delta-carried container preserved", resp.Container)
+	}
+	if resp.StopReason == nil || *resp.StopReason != "end_turn" {
+		t.Errorf("stop_reason = %v, want end_turn", resp.StopReason)
+	}
+}
+
+// TestAccumulate_AnthropicMessages_NullContainerOnDeltaOmitted pins the
+// omitempty parity with a non-streaming encode: a stream whose message_delta
+// carries container:null assembles without a container key, exactly as a
+// non-streaming MessagesResponse re-encodes.
+func TestAccumulate_AnthropicMessages_NullContainerOnDeltaOmitted(t *testing.T) {
+	raw := []byte(
+		`event: message_start` + "\n" +
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[],"container":null,"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\n" +
+			`event: message_delta` + "\n" +
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"container":null},"usage":{"output_tokens":3}}` + "\n\n" +
+			`event: message_stop` + "\n" +
+			`data: {"type":"message_stop"}` + "\n\n",
+	)
+
+	out := Accumulate("anthropic", "messages", raw)
+	if resp := parseAnthropic(t, out.Assembled); resp.Container != nil {
+		t.Fatalf("container = %+v, want nil for a null delta container", resp.Container)
+	}
+	if strings.Contains(string(out.Assembled), `"container"`) {
+		t.Fatalf("null container must be omitted from the rollup (omitempty parity): %s", out.Assembled)
+	}
+}
+
 // TestAccumulate_AnthropicMessages_ContextManagementOnDelta locks the
 // rollup-fidelity fix: Anthropic emits the response-side context_management
 // echo (which context edits the server applied) and, on the stop types that
