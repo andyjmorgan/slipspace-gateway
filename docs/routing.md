@@ -78,19 +78,21 @@ The real order is **`httperr → protocol → auth → bodycapture → selection
 | `/v1/responses`, `/responses` | `responses` | none |
 | `/v1/messages`, `/messages` | `messages` | none |
 | `/v1/embeddings`, `/embeddings` | `embeddings` | none |
-| `/v1beta/models/{model}:{op}` | `generate_content` | `{"model": <model>, "op": <op>}` |
+| `/v1beta/models/{model}:{op}`, `/v1/models/{model}:{op}` | `generate_content` | `{"model": <model>, "op": <op>, "version": <v1beta or v1>}` |
 | anything else | — (`ok == false`, non-generative) | — |
 
 The function returns `(protocol, params, ok)`. When `ok` is false the path is not a recognised generative endpoint and the request becomes a passthrough candidate (the v2 fall-through, not a 404).
 
-**Gemini is the only protocol whose model is path-derived.** `generate_content` paths are parsed by `parseGenerateContent`: the prefix is the literal `/v1beta/models/`, the segment after it is `{model}:{op}`, the model must be a single non-slash path segment, and the operation must be one of the recognised ops:
+**Gemini is the only protocol whose model is path-derived.** `generate_content` paths are parsed by `parseGenerateContent`: the first segment is the Gemini API version — `v1beta` (preview features; the pre-3.0 google-genai default) or `v1` (stable; the [google-genai 3.0.0 default](https://github.com/googleapis/python-genai/blob/main/CHANGELOG.md)) — Google documents both with the same `models/{model}:{op}` shape ([API versions](https://ai.google.dev/gemini-api/docs/api-versions)); then the literal `/models/`; then `{model}:{op}`, where the model must be a single non-slash path segment and the operation one of the recognised ops:
 
 | `op` | Meaning |
 |---|---|
 | `generateContent` | Non-streaming generation |
 | `streamGenerateContent` | Streaming generation |
 
-So `/v1beta/models/gemini-2.5-flash:generateContent` yields `protocol = generate_content`, `params = {"model": "gemini-2.5-flash", "op": "generateContent"}`. Anything else under `/v1beta/models/...` (an unknown op, a slash inside the model segment, an empty model) returns `ok == false` and falls through to passthrough — which is exactly how the Gemini `models` catalogue (`GET /v1beta/models`) is served as a passthrough family rather than a generative protocol.
+So `/v1beta/models/gemini-2.5-flash:generateContent` yields `protocol = generate_content`, `params = {"model": "gemini-2.5-flash", "op": "generateContent", "version": "v1beta"}`, and `/v1/models/gemini-2.5-flash:generateContent` the same with `"version": "v1"`. Anything else under `/v1beta/models/...` or `/v1/models/...` (an unknown op, a slash inside the model segment, an empty model, an unrecognised version such as `v2`) returns `ok == false` and falls through to passthrough — which is exactly how the Gemini `models` catalogue (`GET /v1beta/models`, `GET /v1/models`) is served as a passthrough family rather than a generative protocol.
+
+The `version` param exists so the upstream path can **preserve the client's API version**: the provider's `generate_content` path template carries a `{version}` placeholder (`"/{version}/models/{model}:{op}"` in the shipped configs) and `substitutePlaceholders` fills it from the inbound path, so a v1 client reaches `/v1/...` upstream and a v1beta client `/v1beta/...`. An operator who wants every client on one version writes it literally (`"/v1beta/models/{model}:{op}"`) — the template, not the gateway, decides whether the client's version is honoured or pinned.
 
 For every protocol except `generate_content`, the model that drives binding selection comes from the **request body**, read by bodycapture via [`bodycapture.Model`](../internal/middleware/bodycapture). Gemini's path-derived model wins when present (`pi.params["model"]`), otherwise selection reads the body — see [`selectionMiddleware`](../cmd/gateway/pipeline.go).
 
@@ -320,25 +322,29 @@ The protocol is fixed by the path; the provider is decided entirely by the model
 ```mermaid
 flowchart TB
     A["POST /v1beta/models/gemini-2.5-flash:generateContent"] --> P["ProtocolForPath"]
-    P --> PR["protocol = generate_content<br/>params = {model: gemini-2.5-flash, op: generateContent}"]
+    P --> PR["protocol = generate_content<br/>params = {model: gemini-2.5-flash, op: generateContent, version: v1beta}"]
     PR --> SEL["Select(generate_content, gemini-2.5-flash, …)"]
     SEL --> B["binding 6 → gemini"]
-    B --> RT["ResolveTarget<br/>path /v1beta/models/{model}:{op}"]
+    B --> RT["ResolveTarget<br/>path /{version}/models/{model}:{op}"]
     RT --> SUB["substitutePlaceholders → /v1beta/models/gemini-2.5-flash:generateContent"]
 ```
 
-Here the model comes from the path (`pi.params['model']`), not the body. The provider's protocol `path` is the template `"/v1beta/models/{model}:{op}"`; [`substitutePlaceholders`](../cmd/gateway/handler.go) fills `{model}` and `{op}` from the captured params when [`buildDestination`](../cmd/gateway/destination.go) mints the upstream URL.
+Here the model comes from the path (`pi.params['model']`), not the body. The provider's protocol `path` is the template `"/{version}/models/{model}:{op}"`; [`substitutePlaceholders`](../cmd/gateway/handler.go) fills `{version}`, `{model}` and `{op}` from the captured params when [`buildDestination`](../cmd/gateway/destination.go) mints the upstream URL. A google-genai 3.0 client sending `POST /v1/models/gemini-2.5-flash:generateContent` takes the identical route with `version: v1` and lands on `/v1/...` upstream.
 
 ### Passthrough — the model catalogue
 
-`GET /v1beta/models` is **not** a generative path (`ProtocolForPath` returns `ok == false`), so it falls through to passthrough matching. The `dev` configuration binds the `models` family on both `openai` and `gemini`; the Gemini family claims `/v1beta/models` for `GET`:
+`GET /v1beta/models` is **not** a generative path (`ProtocolForPath` returns `ok == false`), so it falls through to passthrough matching. The `dev` configuration binds the `models` family on both `openai` and `gemini`; the Gemini family claims `/v1beta/models` and `/v1/models` for `GET`:
 
 ```mermaid
 flowchart TB
     A["GET /v1beta/models"] --> P["ProtocolForPath → not generative"]
-    P --> MP["MatchPassthrough(GET, /v1beta/models, dev, …)"]
+    P --> MP["MatchPassthrough(GET, /v1beta/models, headers, dev, …)"]
     MP --> F["gemini.models family path matches, GET allowed"]
     F --> PV["proxied verbatim → gemini base_url + /v1beta/models"]
+    A4["GET /v1/models + x-goog-api-key"] --> MP4["MatchPassthrough(GET, /v1/models, headers, dev, …)"]
+    MP4 --> TIE["openai.models AND gemini.models both claim it"]
+    TIE --> HDR["tie-break: first family whose auth.header the client sent<br/>x-goog-api-key → gemini"]
+    HDR --> PV2["proxied verbatim → gemini base_url + /v1/models"]
     A2["POST /v1beta/models"] --> MP2["MatchPassthrough(POST, …)"]
     MP2 --> MM["path matched, POST not allowed"]
     MM --> R405["ErrMethodNotAllowed → 405"]
@@ -363,7 +369,7 @@ providers:
   gemini:
     protocols:
       generate_content:               # native
-        path: "/v1beta/models/{model}:{op}"
+        path: "/{version}/models/{model}:{op}"
         auth: { header: x-goog-api-key, format: "{key}" }
       chat:                           # OpenAI-compat surface
         path: /v1beta/openai/chat/completions

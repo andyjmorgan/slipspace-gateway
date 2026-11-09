@@ -146,7 +146,7 @@ providers:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `path` | string | no | Upstream path template appended to `base_url`. May contain `{name}` placeholders the gateway substitutes (e.g. Gemini's `/v1beta/models/{model}:{op}`). |
+| `path` | string | no | Upstream path template appended to `base_url`. May contain `{name}` placeholders the gateway substitutes from the inbound path (e.g. Gemini's `/{version}/models/{model}:{op}`, where `{version}` preserves the client's `v1` / `v1beta`; a literal `/v1beta/models/{model}:{op}` pins the upstream version). |
 | `auth` | ProviderAuth | no | Per-protocol credential override. Absent (`nil`) defers to the provider-native default for the wire shape. This is what lets a provider's OpenAI-compat `chat` surface authenticate with `Authorization: Bearer` while its native protocol uses a different header (invariant #6). |
 
 ### `ProviderAuth` fields (`contracts/config/model.go:101`)
@@ -532,7 +532,7 @@ A request's **protocol** is fixed by its inbound path — there is one canonical
 | `/v1/responses`, `/responses` | `ProtocolResponses` | `responses` |
 | `/v1/messages`, `/messages` | `ProtocolMessages` | `messages` |
 | `/v1/embeddings`, `/embeddings` | `ProtocolEmbeddings` | `embeddings` |
-| `/v1beta/models/{model}:generateContent` (or `:streamGenerateContent`) | `ProtocolGenerateContent` | `generate_content` |
+| `/v1beta/models/{model}:generateContent` or `/v1/models/{model}:generateContent` (or `:streamGenerateContent`) | `ProtocolGenerateContent` | `generate_content` |
 
 The protocol constants live in `contracts/config/model.go:22` and are re-exported from `internal/selection`. When `ProtocolForPath` does not recognise a path, the data plane falls back to per-configuration **passthrough** matching (`MatchPassthrough`) before returning a 404.
 

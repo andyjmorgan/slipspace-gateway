@@ -121,7 +121,13 @@ func (s *server) routes() {
 		s.mux.HandleFunc(path, provider)
 	}
 
+	// Gemini generate_content lives under /{version}/models/{model}:{op} on
+	// both API versions (v1 is the google-genai 3.0 default, v1beta the
+	// pre-3.0 one — issue #631); register both subtrees so the per-model
+	// paths reach the canned-response registry. The exact /v1/models route
+	// above still claims the OpenAI/Gemini catalogue listing.
 	s.mux.HandleFunc("/v1beta/models/", provider)
+	s.mux.HandleFunc("/v1/models/", provider)
 	// Anthropic Message Batches live under a subtree (retrieve is
 	// /v1/messages/batches/{id}); register the prefix so per-id paths
 	// reach the canned-response registry. The exact /v1/messages route

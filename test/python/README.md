@@ -7,7 +7,7 @@ SDKs against a running slipspace-gateway. Failures here are tagged
 ## Prerequisites
 
 - Go toolchain (to build `gateway` + `mockllm` from source on demand)
-- Python 3.10+
+- Python 3.11+ (google-genai 3.0 dropped 3.10)
 - Either `uv` (preferred) or stdlib `venv` + `pip`
 
 ## How the stack is wired
@@ -85,9 +85,18 @@ harness in `test/e2e/harness/` follows the same pattern.
 
 ## SDK version policy
 
-SDK versions are pinned with `>=`, not `==`. CI catches drift naturally — a
-new SDK release that breaks the wire contract will surface here within a
-release cycle.
+The three provider SDKs are pinned exactly (`==`) in `pyproject.toml` and
+`uv.lock` is committed, so a fresh checkout — and a CI runner without a cached
+venv — resolves the same versions the suite was last green against. Floating
+`>=` pins let google-genai 3.0.0 land unreviewed and change its default API
+version from `v1beta` to `v1`, turning every Gemini test red overnight (issue
+#631). Bump an SDK deliberately: edit the pin, `uv lock`, run the suite, and
+commit `pyproject.toml` + `uv.lock` together with whatever gateway change the
+new SDK needed.
+
+The Gemini tests pin `http_options.api_version` explicitly (`v1beta` for the
+existing cases, `v1` for the `_api_version_v1` cases) so both path shapes stay
+covered whatever the SDK's default happens to be.
 
 ## Adding a new test
 

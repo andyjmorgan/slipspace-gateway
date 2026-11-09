@@ -43,7 +43,7 @@ The gateway is keyed by **protocol, not provider**. The inbound path identifies 
 | `chat` | `/v1/chat/completions` *(also `/chat/completions`)* | OpenAI chat completions — also the OpenAI-compat surface for Anthropic and Gemini[^compat] |
 | `responses` | `/v1/responses` *(also `/responses`)* | OpenAI Responses |
 | `messages` | `/v1/messages` *(also `/messages`)* | Anthropic native Messages |
-| `generate_content` | `/v1beta/models/{model}:generateContent` *(also `:streamGenerateContent`)* | Gemini native |
+| `generate_content` | `/v1beta/models/{model}:generateContent` or `/v1/models/{model}:generateContent` *(also `:streamGenerateContent`)* | Gemini native |
 | `embeddings` | `/v1/embeddings` *(also `/embeddings`)* | Embeddings (model rides in the body; routed via catch-all bindings) |
 
 Anything that isn't a generative protocol (provider model-lists, Anthropic message batches, other opaque surfaces) falls through to per-configuration **passthrough** matching and is forwarded verbatim. See [docs/routing.md](docs/routing.md) for the full selection algorithm.

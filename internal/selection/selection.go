@@ -23,6 +23,7 @@ package selection
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -368,13 +369,24 @@ type PassthroughMatch struct {
 // family's path patterns and the method against that path's method set.
 // ErrNoPassthrough when no family claims the path; ErrMethodNotAllowed when one
 // claims the path but not the method.
+//
+// When more than one bound family claims the same path and method, the
+// inbound headers break the tie: the first family (in binding order) whose
+// `auth.header` the client actually presented wins, falling back to plain
+// binding order when none did. The Gemini SDK addresses its catalogue at
+// `GET /v1/models` — the same path as the OpenAI listing — but always carries
+// `x-goog-api-key`, while the OpenAI SDK carries `Authorization`; the header
+// the client chose is therefore the dialect signal (issue #631). A family
+// with nil auth has no header to look for and never wins a tie on its own.
 func MatchPassthrough(
 	method, path string,
+	header http.Header,
 	cfg contractsconfig.Configuration,
 	providers contractsconfig.ProvidersConfig,
 ) (PassthroughMatch, error) {
 	up := strings.ToUpper(method)
 	methodSeen := false
+	var candidates []PassthroughMatch
 
 	for _, pb := range cfg.PassthroughBindings {
 		be, ok := providers[pb.Provider]
@@ -394,8 +406,7 @@ func MatchPassthrough(
 				methodSeen = true
 				continue
 			}
-			cred := cfg.Credentials[pb.Provider]
-			return PassthroughMatch{
+			candidates = append(candidates, PassthroughMatch{
 				Family:          pb.Family,
 				Path:            pp.Path,
 				Provider:        pb.Provider,
@@ -403,16 +414,27 @@ func MatchPassthrough(
 				Auth:            fam.Auth,
 				RequiredHeaders: be.RequiredHeaders,
 				Query:           be.Query,
-				Credential:      cred,
+				Credential:      cfg.Credentials[pb.Provider],
 				Tags:            pb.Tags,
 				Params:          params,
-			}, nil
+			})
+			break // one path per family is enough; the next binding may still compete
 		}
 	}
-	if methodSeen {
+	switch {
+	case len(candidates) == 0 && methodSeen:
 		return PassthroughMatch{}, ErrMethodNotAllowed
+	case len(candidates) == 0:
+		return PassthroughMatch{}, ErrNoPassthrough
+	case len(candidates) == 1:
+		return candidates[0], nil
 	}
-	return PassthroughMatch{}, ErrNoPassthrough
+	for _, c := range candidates {
+		if c.Auth != nil && c.Auth.Header != "" && header.Get(c.Auth.Header) != "" {
+			return c, nil
+		}
+	}
+	return candidates[0], nil
 }
 
 // placeholder matches a `{name}` segment in a passthrough path pattern.

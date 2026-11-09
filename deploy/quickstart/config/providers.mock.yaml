@@ -45,7 +45,9 @@ providers:
     base_url: http://mockllm:5555
     protocols:
       generate_content:
-        path: "/v1beta/models/{model}:{op}"
+        # {version} re-inserts the API version the client addressed (v1 or
+        # v1beta) — google-genai 3.0 defaults to v1, older SDKs to v1beta.
+        path: "/{version}/models/{model}:{op}"
         auth:
           header: x-goog-api-key
           format: "{key}"
@@ -61,4 +63,6 @@ providers:
           format: "{key}"
         paths:
           - match: /v1beta/models
+            methods: [GET]
+          - match: /v1/models
             methods: [GET]

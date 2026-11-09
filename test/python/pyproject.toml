@@ -2,11 +2,16 @@
 name = "slipspace-gateway-pycompat"
 version = "0.0.1"
 description = "Wire-compatibility suite that drives the official OpenAI / Anthropic / Google Gemini Python SDKs against slipspace-gateway."
-requires-python = ">=3.10"
+# google-genai 3.0.0 dropped Python 3.10.
+requires-python = ">=3.11"
 dependencies = [
-    "openai>=1.50.0",
-    "anthropic>=0.40.0",
-    "google-genai>=0.5.0",
+    # The three provider SDKs are pinned exactly and uv.lock is committed, so a
+    # fresh checkout resolves the same wire behaviour as CI. Bumping an SDK is
+    # a deliberate, reviewed change — google-genai 3.0.0 silently moved the
+    # default API version to v1 and broke every Gemini test (issue #631).
+    "openai==2.46.0",
+    "anthropic==0.117.1",
+    "google-genai==3.0.0",
     "pytest>=8.0",
     "pytest-timeout>=2.3",
     "requests>=2.32",

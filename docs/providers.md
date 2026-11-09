@@ -34,7 +34,7 @@ This page is the operator's reference for the provider half of the v2 config mod
 
 SlipSpace does not auto-discover what an upstream supports, and a provider no longer carries a path catalogue. Instead:
 
-- The **inbound path is the protocol.** `/v1/chat/completions` is the `chat` protocol, `/v1/messages` is `messages`, `/v1beta/models/{model}:generateContent` is `generate_content`, and so on. The mapping is fixed in code — [`internal/selection/protocol.go::ProtocolForPath`](../internal/selection/protocol.go).
+- The **inbound path is the protocol.** `/v1/chat/completions` is the `chat` protocol, `/v1/messages` is `messages`, `/v1beta/models/{model}:generateContent` (or `/v1/models/{model}:generateContent`) is `generate_content`, and so on. The mapping is fixed in code — [`internal/selection/protocol.go::ProtocolForPath`](../internal/selection/protocol.go).
 - A **provider declares which protocols it serves** under `protocols:`, each with the upstream `path` to forward to and an optional per-protocol auth override.
 - A **Configuration's bindings** select a provider (or resilience group) for a `(protocol, model)` pair. Selection — [`internal/selection/selection.go::Select`](../internal/selection/selection.go) — walks the bindings in order and returns the first match.
 
@@ -366,13 +366,17 @@ providers:
     base_url: https://generativelanguage.googleapis.com
     protocols:
       generate_content:
-        path: "/v1beta/models/{model}:{op}"
+        path: "/{version}/models/{model}:{op}"
         auth:
           header: x-goog-api-key
           format: "{key}"
 ```
 
-[`ProtocolForPath`](../internal/selection/protocol.go) parses the inbound `/v1beta/models/{model}:{op}` path, captures `model` and `op` (one of `generateContent` / `streamGenerateContent`), and stashes them as path params. The final handler substitutes them back into the upstream path via [`substitutePlaceholders`](../cmd/gateway/handler.go). When a target alias is set the alias becomes the effective `{model}` for the path; body-keyed protocols instead have the model rewritten on the typed request body by the orchestrator's per-attempt `changeModelName` action ([`applyChangeModelName`](../internal/middleware/rules/actions.go)), which the body-remarshal stage (`rules.BodyRemarshalHandler`) re-encodes onto the outgoing request. The body-rewrite stage applies only rule-authored bodypatch ops and never carries the alias.
+[`ProtocolForPath`](../internal/selection/protocol.go) parses the inbound `/{version}/models/{model}:{op}` path, captures `version` (`v1beta` or `v1` — Google serves both with the same shape, see [API versions](https://ai.google.dev/gemini-api/docs/api-versions); google-genai 3.0.0 [defaults to `v1`](https://github.com/googleapis/python-genai/blob/main/CHANGELOG.md), older SDKs to `v1beta`), `model` and `op` (one of `generateContent` / `streamGenerateContent`), and stashes them as path params. The final handler substitutes them back into the upstream path via [`substitutePlaceholders`](../cmd/gateway/handler.go).
+
+**Choosing the upstream API version.** With `{version}` in the template the client's version is preserved on the wire — a v1 client stays on `/v1/...`, a v1beta client on `/v1beta/...`, and a v1beta-only feature requested over v1 is rejected by Google exactly as it would be without the gateway. Writing the version literally (`"/v1beta/models/{model}:{op}"`) pins every client to that upstream version regardless of the path they addressed; the shipped configs use `{version}`, and a pre-#631 config with a literal `v1beta` keeps its pinning behaviour unchanged.
+
+**The `GET /v1/models` catalogue collision.** google-genai 3.0 lists models at `/v1/models`, the same path as the OpenAI catalogue. Both are passthrough families, so the Gemini `models` family claims `/v1/models` alongside `/v1beta/models`, and when a configuration binds both families [`MatchPassthrough`](../internal/selection/selection.go) breaks the tie on the inbound headers: the first bound family (in `passthrough_bindings` order) whose `auth.header` the client actually presented wins — `x-goog-api-key` selects the Gemini family, `Authorization` the OpenAI one — falling back to binding order when neither header is present. A family with no `auth` block has no header to look for and only wins by order. When a target alias is set the alias becomes the effective `{model}` for the path; body-keyed protocols instead have the model rewritten on the typed request body by the orchestrator's per-attempt `changeModelName` action ([`applyChangeModelName`](../internal/middleware/rules/actions.go)), which the body-remarshal stage (`rules.BodyRemarshalHandler`) re-encodes onto the outgoing request. The body-rewrite stage applies only rule-authored bodypatch ops and never carries the alias.
 
 If a placeholder is present in the path but has no captured value, the upstream URL keeps the literal `{model}` segment and the upstream rejects it — surface that as a selection/parse bug, not a routing issue.
 
@@ -447,7 +451,7 @@ providers:
     base_url: https://generativelanguage.googleapis.com
     protocols:
       generate_content:
-        path: "/v1beta/models/{model}:{op}"
+        path: "/{version}/models/{model}:{op}"
         auth:
           header: x-goog-api-key
           format: "{key}"

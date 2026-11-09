@@ -87,8 +87,11 @@ type Provider struct {
 // ProviderProtocol is one generative protocol a provider serves.
 type ProviderProtocol struct {
 	// Path is the upstream path template appended to Provider.BaseURL. May
-	// contain placeholders the gateway substitutes (e.g. Gemini's
-	// "/v1beta/models/{model}:{op}").
+	// contain placeholders the gateway substitutes from the inbound path's
+	// params (e.g. Gemini's "/{version}/models/{model}:{op}", where {version}
+	// is the API version segment the client addressed — v1 or v1beta). A
+	// literal version in the template ("/v1beta/models/{model}:{op}") pins
+	// every client to that upstream version instead.
 	Path string `yaml:"path,omitempty" json:"path,omitempty"`
 
 	// Auth overrides the credential header/format for this protocol. nil
