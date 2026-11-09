@@ -338,16 +338,52 @@ func TestPart_FactoriesCoverEveryConcreteType(t *testing.T) {
 		"executableCode":      false,
 		"codeExecutionResult": false,
 	}
-	for k := range partFactories {
-		if _, ok := want[k]; !ok {
-			t.Errorf("unexpected factory key %q", k)
+	for _, pf := range partFactories {
+		if _, ok := want[pf.key]; !ok {
+			t.Errorf("unexpected factory key %q", pf.key)
 		}
-		want[k] = true
+		want[pf.key] = true
 	}
 	for k, seen := range want {
 		if !seen {
 			t.Errorf("missing factory for %q", k)
 		}
+	}
+}
+
+// TestUnmarshalPart_MultiKeyIsDeterministic pins #508: a part carrying two
+// recognised keys must decode to the same concrete type on every run
+// (dispatch order, not map iteration order), and the losing key must still
+// round-trip through Extra.
+func TestUnmarshalPart_MultiKeyIsDeterministic(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string // PartKind of the expected winner
+	}{
+		{"text beats functionCall", `{"functionCall":{"name":"f","args":{}},"text":"t"}`, "text"},
+		{"inlineData beats fileData", `{"fileData":{"fileUri":"gs://b/f","mimeType":"text/plain"},"inlineData":{"data":"AA","mimeType":"image/png"}}`, "inlineData"},
+		{"functionCall beats codeExecutionResult", `{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"1"},"functionCall":{"name":"f","args":{}}}`, "functionCall"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var first Part
+			for i := 0; i < 64; i++ {
+				v, err := UnmarshalPart([]byte(tc.in))
+				if err != nil {
+					t.Fatalf("iteration %d: %v", i, err)
+				}
+				if v.PartKind() != tc.want {
+					t.Fatalf("iteration %d: kind = %q, want %q", i, v.PartKind(), tc.want)
+				}
+				if first == nil {
+					first = v
+				} else if reflect.TypeOf(v) != reflect.TypeOf(first) {
+					t.Fatalf("iteration %d: type %T differs from first %T", i, v, first)
+				}
+			}
+			roundTripPart(t, []byte(tc.in), first)
+		})
 	}
 }
 

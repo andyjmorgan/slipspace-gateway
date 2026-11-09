@@ -301,8 +301,11 @@ v1.0** — `streamGenerateContent` emits a sequence of values with the same
 Gemini distinguishes content parts by *which top-level key is present*
 (`{"text":…}`, `{"inlineData":…}`, `{"functionCall":…}`) rather than by a
 discriminator field. `PolymorphicRegistry` assumes a single discriminator, so
-Gemini parts use a hand-rolled `UnmarshalPart` (`parts.go:409`) that inspects
-the key set against `partFactories` (`parts.go:395-403`):
+Gemini parts use a hand-rolled `UnmarshalPart` that inspects the key set
+against `partFactories`, an ordered slice in the proto's `oneof` declaration
+order. The first recognised key present wins, so a (malformed) part carrying
+two recognised keys decodes to the same type on every run and the losing key
+round-trips through `Extra`:
 
 | Key | Type | Notes |
 |---|---|---|

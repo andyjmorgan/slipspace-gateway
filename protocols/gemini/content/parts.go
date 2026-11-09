@@ -390,22 +390,35 @@ func (p *UnknownPart) UnmarshalJSON(data []byte) error { return models.Unmarshal
 // resulting object.
 func (p UnknownPart) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(p) }
 
-// partFactories maps a Gemini Part's identifying top-level key to the factory
-// that produces the matching concrete type.
-var partFactories = map[string]func() Part{
-	"text":                func() Part { return &TextPart{} },
-	"inlineData":          func() Part { return &InlineDataPart{} },
-	"fileData":            func() Part { return &FileDataPart{} },
-	"functionCall":        func() Part { return &FunctionCallPart{} },
-	"functionResponse":    func() Part { return &FunctionResponsePart{} },
-	"executableCode":      func() Part { return &ExecutableCodePart{} },
-	"codeExecutionResult": func() Part { return &CodeExecutionResultPart{} },
+// partFactory pairs a Gemini Part's identifying top-level key with the
+// factory that produces the matching concrete type.
+type partFactory struct {
+	key     string
+	factory func() Part
+}
+
+// partFactories lists the recognised Part keys in dispatch order. It is a
+// slice, not a map, because UnmarshalPart picks the first recognised key
+// present and a map's iteration order is randomised per run: a part that
+// carries two recognised keys (ill-formed against the upstream oneof, but
+// decodable) would otherwise flip type on byte-identical input (#508). The
+// order follows the `data` oneof declaration in Google's Part proto.
+var partFactories = []partFactory{
+	{"text", func() Part { return &TextPart{} }},
+	{"inlineData", func() Part { return &InlineDataPart{} }},
+	{"fileData", func() Part { return &FileDataPart{} }},
+	{"functionCall", func() Part { return &FunctionCallPart{} }},
+	{"functionResponse", func() Part { return &FunctionResponsePart{} }},
+	{"executableCode", func() Part { return &ExecutableCodePart{} }},
+	{"codeExecutionResult", func() Part { return &CodeExecutionResultPart{} }},
 }
 
 // UnmarshalPart decodes a single Gemini Part JSON object by inspecting
 // which top-level key is present. Returns ErrEmptyPart when the object has
 // no keys at all; any other shape this package has not modelled is returned
-// as an UnknownPart so the payload still round-trips.
+// as an UnknownPart so the payload still round-trips. When more than one
+// recognised key is present the first in partFactories order wins and the
+// others land in DynamicProperties.Extra — deterministic, and lossless.
 func UnmarshalPart(data []byte) (Part, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -414,11 +427,11 @@ func UnmarshalPart(data []byte) (Part, error) {
 	if len(raw) == 0 {
 		return nil, ErrEmptyPart
 	}
-	for key, factory := range partFactories {
-		if _, ok := raw[key]; ok {
-			v := factory()
+	for _, pf := range partFactories {
+		if _, ok := raw[pf.key]; ok {
+			v := pf.factory()
 			if err := json.Unmarshal(data, v); err != nil {
-				return nil, fmt.Errorf("gemini: unmarshal %q part: %w", key, err)
+				return nil, fmt.Errorf("gemini: unmarshal %q part: %w", pf.key, err)
 			}
 			return v, nil
 		}
