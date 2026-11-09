@@ -352,6 +352,7 @@ func (b blockingStore) Allow(_, target string, _ *contractsres.CircuitBreakerCon
 }
 func (blockingStore) RecordSuccess(string, string, *contractsres.CircuitBreakerConfig) {}
 func (blockingStore) RecordFailure(string, string, *contractsres.CircuitBreakerConfig) {}
+func (blockingStore) Release(string, string, *contractsres.CircuitBreakerConfig)       {}
 func (blockingStore) State(string, string) State                                       { return StateClosed }
 func (blockingStore) Snapshot() []BreakerSnapshot                                      { return nil }
 

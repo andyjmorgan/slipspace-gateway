@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	contractsres "github.com/andyjmorgan/slipspace-gateway/contracts/resilience"
 	contractsrules "github.com/andyjmorgan/slipspace-gateway/contracts/rules"
@@ -477,6 +478,63 @@ func TestLoadBalance_CBOpen_OneTargetSkipped(t *testing.T) {
 	}
 	if len(next.seen) != 1 || next.seen[0] != "anthropic" {
 		t.Errorf("attempts = %v; want [anthropic]", next.seen)
+	}
+}
+
+// TestLoadBalance_HalfOpenTargetNotPicked_ReleasesProbe is the #619
+// regression: the pre-filter admits HalfOpen target a (reserving its single
+// probe slot), the roll picks b, b succeeds, and a is never attempted. The
+// slot must be returned so the next request can still probe a — before the
+// fix it leaked, Allow(a) was false forever, and a silently left rotation.
+func TestLoadBalance_HalfOpenTargetNotPicked_ReleasesProbe(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	prevClock := clock
+	clock = func() time.Time { return base }
+	t.Cleanup(func() { clock = prevClock })
+
+	cb := &contractsres.CircuitBreakerConfig{
+		Enabled:           true,
+		FailureThreshold:  1,
+		MinimumThroughput: 1,
+		CooldownSeconds:   60,
+	}
+	store := NewInMemoryBreakerStore(nil)
+	store.RecordFailure("lb", "a", cb) // trip a
+	clock = func() time.Time { return base.Add(61 * time.Second) }
+
+	pol := &contractsres.ResilienceConfig{
+		Name:           "lb",
+		Mode:           contractsres.ModeLoadBalance,
+		CircuitBreaker: cb,
+		Targets: []contractsres.ResilienceTarget{
+			{Name: "a", Provider: "openai", Weight: 50, Actions: lbChangeTo("openai")},
+			{Name: "b", Provider: "anthropic", Weight: 50, Actions: lbChangeTo("anthropic")},
+		},
+	}
+	lookup := lbStubLookup(map[string]*contractsres.ResilienceConfig{"lb": pol})
+	next := &lbMockNext{outcomes: []lbAttemptOutcome{{status: 200, body: "ok"}}}
+	h := HTTPHandler(lookup, store, nil, next)
+
+	// A roll of 50 falls in b's weight band (a owns 0-49), so b is picked
+	// and a sits in the pool as an admitted HalfOpen probe candidate that
+	// is never attempted.
+	withStubRand(t, 50)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx := rules.WithMutableState(req.Context(), &rules.MutableState{PolicyRef: "lb"})
+	h.ServeHTTP(rec, req.WithContext(ctx))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", rec.Code)
+	}
+	if len(next.seen) != 1 || next.seen[0] != "anthropic" {
+		t.Fatalf("attempts = %v; want [anthropic]", next.seen)
+	}
+	if got := store.State("lb", "a"); got != StateHalfOpen {
+		t.Fatalf("a state = %v; want HalfOpen (cooldown elapsed, no probe recorded)", got)
+	}
+	if !store.Allow("lb", "a", cb) {
+		t.Fatal("a still admits no probe after a request that never attempted it: the HalfOpen slot leaked (#619)")
 	}
 }
 

@@ -401,6 +401,8 @@ When cooldown elapses the breaker moves to HalfOpen. The next `half_open_success
 
 `half_open_success_threshold` defaults to 1 — a single probe success closes. Bump it for providers that need a couple of green probes before you're confident they've recovered.
 
+A probe slot is reserved when the orchestrator admits a HalfOpen target and consumed when that attempt records its outcome. If the admitted target is never attempted — in load-balance modes another target won the roll, or the walk ended on the retry budget, a backoff cancel or a per-attempt state error — the reservation is released at the end of the request, so the target keeps admitting probes on the next one.
+
 ### CB and the load-balance pool
 
 In load-balance modes, CB-blocked targets are filtered **out of the pool** before weighted selection runs. They never trigger `strict_weights`' no-re-roll path, and they never appear as an "attempted" entry — they record as `cb_blocked` in the per-attempt history but the weighted-random roll happens over the survivors.
