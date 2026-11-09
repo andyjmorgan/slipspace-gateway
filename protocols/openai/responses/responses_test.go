@@ -424,6 +424,17 @@ func TestStreamEvent_AllKnownTypes(t *testing.T) {
 		{name: "item_done", json: `{"item":{"id":"msg_1","type":"message"},"output_index":0,"sequence_number":7,"type":"response.output_item.done"}`, typ: "response.output_item.done", want: &OutputItemDoneEvent{}},
 		{name: "completed", json: `{"response":{"id":"resp_1","status":"completed"},"sequence_number":8,"type":"response.completed"}`, typ: "response.completed", want: &ResponseCompletedEvent{}},
 		{name: "failed", json: `{"error":{"message":"boom"},"sequence_number":9,"type":"response.failed"}`, typ: "response.failed", want: &ResponseFailedEvent{}},
+		// Shapes below follow the x-oaiMeta examples of the matching schemas in
+		// https://github.com/openai/openai-openapi/blob/master/openapi.yaml.
+		{name: "fc_args_delta", json: `{"delta":"{ \"arg\":","item_id":"item-abc","output_index":0,"sequence_number":1,"type":"response.function_call_arguments.delta"}`, typ: "response.function_call_arguments.delta", want: &FunctionCallArgumentsDeltaEvent{}},
+		{name: "fc_args_done", json: `{"arguments":"{ \"arg\": 123 }","item_id":"item-abc","output_index":1,"sequence_number":1,"type":"response.function_call_arguments.done"}`, typ: "response.function_call_arguments.done", want: &FunctionCallArgumentsDoneEvent{}},
+		{name: "ctc_input_delta", json: `{"delta":"partial input text","item_id":"ctc_1234567890abcdef","output_index":0,"sequence_number":1,"type":"response.custom_tool_call_input.delta"}`, typ: "response.custom_tool_call_input.delta", want: &CustomToolCallInputDeltaEvent{}},
+		{name: "ctc_input_done", json: `{"input":"final complete input text","item_id":"ctc_1234567890abcdef","output_index":0,"sequence_number":1,"type":"response.custom_tool_call_input.done"}`, typ: "response.custom_tool_call_input.done", want: &CustomToolCallInputDoneEvent{}},
+		{name: "incomplete", json: `{"response":{"id":"resp_1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]},"sequence_number":42,"type":"response.incomplete"}`, typ: "response.incomplete", want: &ResponseIncompleteEvent{}},
+		// error: code and param are required-but-nullable in the spec; an
+		// explicit null must round-trip as null, not vanish.
+		{name: "error", json: `{"code":"ERR_SOMETHING","message":"Something went wrong","param":null,"sequence_number":1,"type":"error"}`, typ: "error", want: &ErrorEvent{}},
+		{name: "error_null_code", json: `{"code":null,"message":"boom","param":"input","sequence_number":2,"type":"error"}`, typ: "error", want: &ErrorEvent{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -556,8 +567,14 @@ func TestResponses_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ContentPartDoneEvent{}),
 		reflect.TypeOf(OutputTextDeltaEvent{}),
 		reflect.TypeOf(OutputTextDoneEvent{}),
+		reflect.TypeOf(FunctionCallArgumentsDeltaEvent{}),
+		reflect.TypeOf(FunctionCallArgumentsDoneEvent{}),
+		reflect.TypeOf(CustomToolCallInputDeltaEvent{}),
+		reflect.TypeOf(CustomToolCallInputDoneEvent{}),
 		reflect.TypeOf(ResponseCompletedEvent{}),
+		reflect.TypeOf(ResponseIncompleteEvent{}),
 		reflect.TypeOf(ResponseFailedEvent{}),
+		reflect.TypeOf(ErrorEvent{}),
 		reflect.TypeOf(UnknownEvent{}),
 	}
 	for _, rt := range types {
@@ -580,16 +597,22 @@ func TestResponses_RegistryHasFallback(t *testing.T) {
 		t.Fatalf("streamEventRegistry must have a fallback")
 	}
 	want := map[string]bool{
-		"response.created":            false,
-		"response.in_progress":        false,
-		"response.output_item.added":  false,
-		"response.output_item.done":   false,
-		"response.content_part.added": false,
-		"response.content_part.done":  false,
-		"response.output_text.delta":  false,
-		"response.output_text.done":   false,
-		"response.completed":          false,
-		"response.failed":             false,
+		"response.created":                       false,
+		"response.in_progress":                   false,
+		"response.output_item.added":             false,
+		"response.output_item.done":              false,
+		"response.content_part.added":            false,
+		"response.content_part.done":             false,
+		"response.output_text.delta":             false,
+		"response.output_text.done":              false,
+		"response.function_call_arguments.delta": false,
+		"response.function_call_arguments.done":  false,
+		"response.custom_tool_call_input.delta":  false,
+		"response.custom_tool_call_input.done":   false,
+		"response.completed":                     false,
+		"response.incomplete":                    false,
+		"response.failed":                        false,
+		"error":                                  false,
 	}
 	for k := range streamEventRegistry.Factories {
 		if _, ok := want[k]; !ok {

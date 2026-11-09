@@ -9,8 +9,10 @@ import (
 // ResponsesStreamEvent is the polymorphic interface implemented by every
 // event type emitted by the streaming /v1/responses endpoint — the
 // ResponseCreated, ResponseInProgress, OutputItemAdded/Done,
-// ContentPartAdded/Done, OutputTextDelta/Done, ResponseCompleted,
-// ResponseFailed concrete types, and the UnknownEvent fallback.
+// ContentPartAdded/Done, OutputTextDelta/Done,
+// FunctionCallArgumentsDelta/Done, CustomToolCallInputDelta/Done,
+// ResponseCompleted, ResponseIncomplete, ResponseFailed, Error concrete
+// types, and the UnknownEvent fallback.
 //
 // The discriminator is the "type" field. Unknown discriminator values are
 // dispatched to UnknownEvent, which preserves both the type value AND any
@@ -335,6 +337,201 @@ func (e *OutputTextDoneEvent) UnmarshalJSON(data []byte) error {
 // resulting object.
 func (e OutputTextDoneEvent) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(e) }
 
+// FunctionCallArgumentsDeltaEvent fires for each incremental fragment of a
+// function_call item's `arguments` string. Receivers concatenate Delta
+// across successive events keyed by ItemID / OutputIndex to reconstruct the
+// final arguments — OutputItem.Arguments on the finalised item. Unknown
+// fields round-trip via the embedded DynamicProperties.
+//
+// Schema: ResponseFunctionCallArgumentsDeltaEvent in the official OpenAPI
+// spec, https://github.com/openai/openai-openapi/blob/master/openapi.yaml
+// (required: type, item_id, output_index, delta, sequence_number).
+type FunctionCallArgumentsDeltaEvent struct {
+	// Type is the wire "type" discriminator, always
+	// "response.function_call_arguments.delta".
+	Type string `json:"type"`
+
+	// SequenceNumber is the event's monotonic position in the stream.
+	SequenceNumber *int `json:"sequence_number,omitempty"`
+
+	// ItemID identifies the function_call OutputItem the fragment belongs
+	// to.
+	ItemID string `json:"item_id,omitempty"`
+
+	// OutputIndex is the parent item's position in Output.
+	OutputIndex int `json:"output_index"`
+
+	// Delta is the next arguments fragment to append.
+	Delta string `json:"delta"`
+
+	models.DynamicProperties
+}
+
+// EventType returns the "response.function_call_arguments.delta"
+// discriminator.
+func (FunctionCallArgumentsDeltaEvent) EventType() string {
+	return "response.function_call_arguments.delta"
+}
+
+func (FunctionCallArgumentsDeltaEvent) isResponsesStreamEvent() {}
+
+// UnmarshalJSON decodes data into e, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (e *FunctionCallArgumentsDeltaEvent) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, e)
+}
+
+// MarshalJSON encodes e and merges DynamicProperties.Extra back into the
+// resulting object.
+func (e FunctionCallArgumentsDeltaEvent) MarshalJSON() ([]byte, error) {
+	return models.MarshalDynamic(e)
+}
+
+// FunctionCallArgumentsDoneEvent fires when a function_call item's
+// arguments are finalised and carries the complete Arguments string
+// (allowing receivers to validate their own concatenation). Unknown fields
+// round-trip via the embedded DynamicProperties.
+//
+// Schema: ResponseFunctionCallArgumentsDoneEvent in the official OpenAPI
+// spec, https://github.com/openai/openai-openapi/blob/master/openapi.yaml
+// (required: type, item_id, output_index, arguments, sequence_number).
+type FunctionCallArgumentsDoneEvent struct {
+	// Type is the wire "type" discriminator, always
+	// "response.function_call_arguments.done".
+	Type string `json:"type"`
+
+	// SequenceNumber is the event's monotonic position in the stream.
+	SequenceNumber *int `json:"sequence_number,omitempty"`
+
+	// ItemID identifies the function_call OutputItem.
+	ItemID string `json:"item_id,omitempty"`
+
+	// OutputIndex is the item's position in Output.
+	OutputIndex int `json:"output_index"`
+
+	// Arguments is the complete function-call arguments JSON string.
+	Arguments string `json:"arguments"`
+
+	models.DynamicProperties
+}
+
+// EventType returns the "response.function_call_arguments.done"
+// discriminator.
+func (FunctionCallArgumentsDoneEvent) EventType() string {
+	return "response.function_call_arguments.done"
+}
+
+func (FunctionCallArgumentsDoneEvent) isResponsesStreamEvent() {}
+
+// UnmarshalJSON decodes data into e, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (e *FunctionCallArgumentsDoneEvent) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, e)
+}
+
+// MarshalJSON encodes e and merges DynamicProperties.Extra back into the
+// resulting object.
+func (e FunctionCallArgumentsDoneEvent) MarshalJSON() ([]byte, error) {
+	return models.MarshalDynamic(e)
+}
+
+// CustomToolCallInputDeltaEvent fires for each incremental fragment of a
+// custom_tool_call item's free-form `input` string. Receivers concatenate
+// Delta across successive events keyed by ItemID / OutputIndex to
+// reconstruct the finalised item's `input`. Unknown fields round-trip via
+// the embedded DynamicProperties.
+//
+// Schema: ResponseCustomToolCallInputDeltaEvent in the official OpenAPI
+// spec, https://github.com/openai/openai-openapi/blob/master/openapi.yaml
+// (required: type, output_index, item_id, delta, sequence_number).
+type CustomToolCallInputDeltaEvent struct {
+	// Type is the wire "type" discriminator, always
+	// "response.custom_tool_call_input.delta".
+	Type string `json:"type"`
+
+	// SequenceNumber is the event's monotonic position in the stream.
+	SequenceNumber *int `json:"sequence_number,omitempty"`
+
+	// ItemID identifies the custom_tool_call OutputItem the fragment
+	// belongs to.
+	ItemID string `json:"item_id,omitempty"`
+
+	// OutputIndex is the parent item's position in Output.
+	OutputIndex int `json:"output_index"`
+
+	// Delta is the next input fragment to append.
+	Delta string `json:"delta"`
+
+	models.DynamicProperties
+}
+
+// EventType returns the "response.custom_tool_call_input.delta"
+// discriminator.
+func (CustomToolCallInputDeltaEvent) EventType() string {
+	return "response.custom_tool_call_input.delta"
+}
+
+func (CustomToolCallInputDeltaEvent) isResponsesStreamEvent() {}
+
+// UnmarshalJSON decodes data into e, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (e *CustomToolCallInputDeltaEvent) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, e)
+}
+
+// MarshalJSON encodes e and merges DynamicProperties.Extra back into the
+// resulting object.
+func (e CustomToolCallInputDeltaEvent) MarshalJSON() ([]byte, error) {
+	return models.MarshalDynamic(e)
+}
+
+// CustomToolCallInputDoneEvent fires when a custom_tool_call item's input
+// is finalised and carries the complete Input string. Unknown fields
+// round-trip via the embedded DynamicProperties.
+//
+// Schema: ResponseCustomToolCallInputDoneEvent in the official OpenAPI
+// spec, https://github.com/openai/openai-openapi/blob/master/openapi.yaml
+// (required: type, output_index, item_id, input, sequence_number).
+type CustomToolCallInputDoneEvent struct {
+	// Type is the wire "type" discriminator, always
+	// "response.custom_tool_call_input.done".
+	Type string `json:"type"`
+
+	// SequenceNumber is the event's monotonic position in the stream.
+	SequenceNumber *int `json:"sequence_number,omitempty"`
+
+	// ItemID identifies the custom_tool_call OutputItem.
+	ItemID string `json:"item_id,omitempty"`
+
+	// OutputIndex is the item's position in Output.
+	OutputIndex int `json:"output_index"`
+
+	// Input is the complete free-form input for the custom tool call.
+	Input string `json:"input"`
+
+	models.DynamicProperties
+}
+
+// EventType returns the "response.custom_tool_call_input.done"
+// discriminator.
+func (CustomToolCallInputDoneEvent) EventType() string {
+	return "response.custom_tool_call_input.done"
+}
+
+func (CustomToolCallInputDoneEvent) isResponsesStreamEvent() {}
+
+// UnmarshalJSON decodes data into e, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (e *CustomToolCallInputDoneEvent) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, e)
+}
+
+// MarshalJSON encodes e and merges DynamicProperties.Extra back into the
+// resulting object.
+func (e CustomToolCallInputDoneEvent) MarshalJSON() ([]byte, error) {
+	return models.MarshalDynamic(e)
+}
+
 // ResponseCompletedEvent fires once when the response has been fully
 // generated and carries the final ResponsesResponse shape. Unknown fields
 // round-trip via the embedded DynamicProperties.
@@ -403,6 +600,91 @@ func (e *ResponseFailedEvent) UnmarshalJSON(data []byte) error {
 // resulting object.
 func (e ResponseFailedEvent) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(e) }
 
+// ResponseIncompleteEvent fires once when generation stops short of
+// completion (e.g. max_output_tokens or a content filter) and carries the
+// final ResponsesResponse snapshot with Status == "incomplete". It is a
+// terminal event: no further output arrives after it. Unknown fields
+// round-trip via the embedded DynamicProperties.
+//
+// Schema: ResponseIncompleteEvent in the official OpenAPI spec,
+// https://github.com/openai/openai-openapi/blob/master/openapi.yaml
+// (required: type, response, sequence_number).
+type ResponseIncompleteEvent struct {
+	// Type is the wire "type" discriminator, always "response.incomplete".
+	Type string `json:"type"`
+
+	// SequenceNumber is the event's monotonic position in the stream.
+	SequenceNumber *int `json:"sequence_number,omitempty"`
+
+	// Response is the final ResponsesResponse snapshot with Status ==
+	// "incomplete" and IncompleteDetails populated. Kept raw because the
+	// type otherwise self-references.
+	Response json.RawMessage `json:"response,omitempty"`
+
+	models.DynamicProperties
+}
+
+// EventType returns the "response.incomplete" discriminator.
+func (ResponseIncompleteEvent) EventType() string { return "response.incomplete" }
+
+func (ResponseIncompleteEvent) isResponsesStreamEvent() {}
+
+// UnmarshalJSON decodes data into e, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (e *ResponseIncompleteEvent) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, e)
+}
+
+// MarshalJSON encodes e and merges DynamicProperties.Extra back into the
+// resulting object.
+func (e ResponseIncompleteEvent) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(e) }
+
+// ErrorEvent fires when the stream itself errors. Unlike ResponseFailedEvent
+// it carries no response snapshot — the error fields sit flat on the event
+// (there is no nested "error" wrapper). Unknown fields round-trip via the
+// embedded DynamicProperties.
+//
+// Schema: ResponseErrorEvent in the official OpenAPI spec,
+// https://github.com/openai/openai-openapi/blob/master/openapi.yaml
+// (required: type, code, message, param, sequence_number; code and param
+// are nullable).
+type ErrorEvent struct {
+	// Type is the wire "type" discriminator, always "error".
+	Type string `json:"type"`
+
+	// SequenceNumber is the event's monotonic position in the stream.
+	SequenceNumber *int `json:"sequence_number,omitempty"`
+
+	// Code is the error code. Kept raw because the spec declares it
+	// nullable and OpenAI emits an explicit null, which must round-trip
+	// as null rather than as an absent key.
+	Code json.RawMessage `json:"code,omitempty"`
+
+	// Message is the human-readable error message.
+	Message string `json:"message"`
+
+	// Param is the request parameter the error refers to. Kept raw for
+	// the same nullable reason as Code.
+	Param json.RawMessage `json:"param,omitempty"`
+
+	models.DynamicProperties
+}
+
+// EventType returns the "error" discriminator.
+func (ErrorEvent) EventType() string { return "error" }
+
+func (ErrorEvent) isResponsesStreamEvent() {}
+
+// UnmarshalJSON decodes data into e, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (e *ErrorEvent) UnmarshalJSON(data []byte) error {
+	return models.UnmarshalDynamic(data, e)
+}
+
+// MarshalJSON encodes e and merges DynamicProperties.Extra back into the
+// resulting object.
+func (e ErrorEvent) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(e) }
+
 // UnknownEvent preserves any streaming event whose "type" discriminator this
 // package has not modelled. Type carries the unknown discriminator verbatim
 // and every other JSON field lands in DynamicProperties.Extra so the event
@@ -435,16 +717,22 @@ func (e UnknownEvent) MarshalJSON() ([]byte, error) { return models.MarshalDynam
 var streamEventRegistry = models.PolymorphicRegistry[ResponsesStreamEvent]{
 	DiscriminatorField: "type",
 	Factories: map[string]func() ResponsesStreamEvent{
-		"response.created":            func() ResponsesStreamEvent { return &ResponseCreatedEvent{} },
-		"response.in_progress":        func() ResponsesStreamEvent { return &ResponseInProgressEvent{} },
-		"response.output_item.added":  func() ResponsesStreamEvent { return &OutputItemAddedEvent{} },
-		"response.output_item.done":   func() ResponsesStreamEvent { return &OutputItemDoneEvent{} },
-		"response.content_part.added": func() ResponsesStreamEvent { return &ContentPartAddedEvent{} },
-		"response.content_part.done":  func() ResponsesStreamEvent { return &ContentPartDoneEvent{} },
-		"response.output_text.delta":  func() ResponsesStreamEvent { return &OutputTextDeltaEvent{} },
-		"response.output_text.done":   func() ResponsesStreamEvent { return &OutputTextDoneEvent{} },
-		"response.completed":          func() ResponsesStreamEvent { return &ResponseCompletedEvent{} },
-		"response.failed":             func() ResponsesStreamEvent { return &ResponseFailedEvent{} },
+		"response.created":                       func() ResponsesStreamEvent { return &ResponseCreatedEvent{} },
+		"response.in_progress":                   func() ResponsesStreamEvent { return &ResponseInProgressEvent{} },
+		"response.output_item.added":             func() ResponsesStreamEvent { return &OutputItemAddedEvent{} },
+		"response.output_item.done":              func() ResponsesStreamEvent { return &OutputItemDoneEvent{} },
+		"response.content_part.added":            func() ResponsesStreamEvent { return &ContentPartAddedEvent{} },
+		"response.content_part.done":             func() ResponsesStreamEvent { return &ContentPartDoneEvent{} },
+		"response.output_text.delta":             func() ResponsesStreamEvent { return &OutputTextDeltaEvent{} },
+		"response.output_text.done":              func() ResponsesStreamEvent { return &OutputTextDoneEvent{} },
+		"response.function_call_arguments.delta": func() ResponsesStreamEvent { return &FunctionCallArgumentsDeltaEvent{} },
+		"response.function_call_arguments.done":  func() ResponsesStreamEvent { return &FunctionCallArgumentsDoneEvent{} },
+		"response.custom_tool_call_input.delta":  func() ResponsesStreamEvent { return &CustomToolCallInputDeltaEvent{} },
+		"response.custom_tool_call_input.done":   func() ResponsesStreamEvent { return &CustomToolCallInputDoneEvent{} },
+		"response.completed":                     func() ResponsesStreamEvent { return &ResponseCompletedEvent{} },
+		"response.incomplete":                    func() ResponsesStreamEvent { return &ResponseIncompleteEvent{} },
+		"response.failed":                        func() ResponsesStreamEvent { return &ResponseFailedEvent{} },
+		"error":                                  func() ResponsesStreamEvent { return &ErrorEvent{} },
 	},
 	Fallback: func(disc string) ResponsesStreamEvent { return &UnknownEvent{Type: disc} },
 }
