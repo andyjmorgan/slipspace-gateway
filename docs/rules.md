@@ -198,7 +198,7 @@ Matches the resolved model name with a string operator. The model name is read f
 | `type` | string | Always `"modelName"`. |
 | `operator` | enum | `Equals`, `StartsWith`, `EndsWith`, `Contains`, `Regex`. |
 | `expectedModelName` | string | The literal, prefix, suffix, substring, or regex pattern — `operator` decides which. |
-| `caseInsensitive` | bool | When true, both pattern and subject are lower-cased before comparison. Optional; defaults to false. |
+| `caseInsensitive` | bool | When true the comparison ignores case: for `Equals`/`StartsWith`/`EndsWith`/`Contains` both pattern and subject are lower-cased; for `Regex` the pattern is compiled with the `(?i)` flag and left otherwise as written, so escape classes such as `\D` or `\S` keep their meaning. Optional; defaults to false. |
 | `not` | bool | Inverts the match result. |
 
 ```yaml

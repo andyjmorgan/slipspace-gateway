@@ -233,7 +233,23 @@ func matchGroup(
 // case folding. Unknown operators return false; an invalid Regex
 // pattern returns false (the rule is inert until fixed, rather than
 // crashing the request).
+//
+// Regex never lower-cases the pattern: doing so flips the uppercase
+// escape classes to their complements (\D -> \d, \S -> \s, \W -> \w,
+// \B -> \b, \P{..} -> \p{..}) and silently changes what the rule
+// matches (#620). Case-insensitivity is expressed through the (?i) flag
+// instead, against the original subject.
 func matchString(op contractsrules.StringOperator, pattern, subject string, caseInsensitive bool) bool {
+	if op == contractsrules.StringRegex {
+		if caseInsensitive {
+			pattern = "(?i)" + pattern
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(subject)
+	}
 	if caseInsensitive {
 		pattern = strings.ToLower(pattern)
 		subject = strings.ToLower(subject)
@@ -247,12 +263,6 @@ func matchString(op contractsrules.StringOperator, pattern, subject string, case
 		return strings.HasSuffix(subject, pattern)
 	case contractsrules.StringContains:
 		return strings.Contains(subject, pattern)
-	case contractsrules.StringRegex:
-		re, err := regexp.Compile(pattern)
-		if err != nil {
-			return false
-		}
-		return re.MatchString(subject)
 	default:
 		return false
 	}
