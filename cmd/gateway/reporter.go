@@ -781,9 +781,14 @@ func (r *reporterRun) buildRecord(ctx context.Context, ev events.Request, matche
 
 	if captured, ok := bodycapture.FromContext(ctx); ok {
 		if len(captured.Raw) > 0 {
-			rec.Request.Body = jsonBodyOrEscaped(captured.Raw)
-			rec.Request.BodyBytes = len(captured.Raw)
-			sum := sha256.Sum256(captured.Raw)
+			// Body-embedded credentials (mcp_servers[].authorization_token)
+			// are masked like the credential headers below; the hash and
+			// length describe the body as recorded so consumers can still
+			// verify it. Raw is untouched — the upstream saw the real token.
+			body := contentredact.RedactBody(captured.Raw)
+			rec.Request.Body = jsonBodyOrEscaped(body)
+			rec.Request.BodyBytes = len(body)
+			sum := sha256.Sum256(body)
 			rec.Request.BodySha256 = hex.EncodeToString(sum[:])
 		}
 		if len(captured.Headers) > 0 {
@@ -994,8 +999,11 @@ func (r *reporterRun) captureBody(ctx context.Context, entryID string, assembled
 
 	if captured, ok := bodycapture.FromContext(ctx); ok {
 		if len(captured.Raw) > 0 {
-			env.Request = captured.Raw
-			env.RequestTotalBytes = int64(len(captured.Raw))
+			// Same body-credential masking as the connector Record: the
+			// live feed is an operator surface and must not echo a token
+			// the client embedded in the request body.
+			env.Request = contentredact.RedactBody(captured.Raw)
+			env.RequestTotalBytes = int64(len(env.Request))
 		}
 		if len(captured.Headers) > 0 {
 			env.RequestHeaders = captured.Headers

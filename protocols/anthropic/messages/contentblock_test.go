@@ -599,6 +599,8 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ToolSearchToolResultBlock{}),
 		reflect.TypeOf(ToolSearchResult{}),
 		reflect.TypeOf(ToolReferenceBlock{}),
+		reflect.TypeOf(McpToolUseBlock{}),
+		reflect.TypeOf(McpToolResultBlock{}),
 		reflect.TypeOf(ThinkingBlock{}),
 		reflect.TypeOf(RedactedThinkingBlock{}),
 		reflect.TypeOf(CompactionBlock{}),
@@ -620,7 +622,7 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 }
 
 func TestContentBlock_RegistryCoversAllConcreteTypes(t *testing.T) {
-	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "server_tool_use": false, "web_search_tool_result": false, "web_fetch_tool_result": false, "tool_search_tool_result": false, "tool_reference": false, "thinking": false, "redacted_thinking": false, "compaction": false}
+	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "server_tool_use": false, "web_search_tool_result": false, "web_fetch_tool_result": false, "tool_search_tool_result": false, "tool_reference": false, "thinking": false, "mcp_tool_use": false, "mcp_tool_result": false, "redacted_thinking": false, "compaction": false}
 	for k := range blockRegistry.Factories {
 		if _, ok := want[k]; !ok {
 			t.Errorf("unexpected registry key %q", k)

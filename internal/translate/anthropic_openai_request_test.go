@@ -456,3 +456,30 @@ func TestTranslateRequest_ToolResultMalformedContent(t *testing.T) {
 		t.Error("expected error for malformed tool_result content")
 	}
 }
+
+// TestTranslateRequest_McpConnectorDropped covers the Anthropic MCP connector
+// beta (GitHub #557): OpenAI Chat has no server-side MCP client, so the
+// declared mcp_servers and the mcp_toolset binding are both counted drops
+// (fail-closed, lossy header), never emitted as a nameless callable function,
+// while an ordinary custom tool alongside still translates.
+func TestTranslateRequest_McpConnectorDropped(t *testing.T) {
+	req, drops := decodeChat(t, `{"model":"m","max_tokens":1,
+		"mcp_servers":[{"type":"url","url":"https://example-server.modelcontextprotocol.io/sse","name":"example-mcp","authorization_token":"tok"}],
+		"tools":[
+			{"type":"mcp_toolset","mcp_server_name":"example-mcp","default_config":{"enabled":true}},
+			{"name":"get_weather","description":"d","input_schema":{"type":"object"}}
+		],
+		"messages":[{"role":"user","content":"x"}]}`)
+	if len(req.Tools) != 1 {
+		t.Fatalf("tools = %+v, want only the custom tool", req.Tools)
+	}
+	if req.Tools[0].Function == nil || req.Tools[0].Function.Name != "get_weather" {
+		t.Fatalf("tools[0] = %+v, want get_weather function", req.Tools[0])
+	}
+	if !hasDrop(drops, "tools[0].mcp_toolset") {
+		t.Errorf("expected mcp_toolset drop, got %+v", drops)
+	}
+	if !hasDrop(drops, "mcp_servers") {
+		t.Errorf("expected mcp_servers drop, got %+v", drops)
+	}
+}

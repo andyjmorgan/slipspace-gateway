@@ -204,17 +204,21 @@ type RequestPart struct {
 	// the gateway minted on the way out is never present here.
 	Headers map[string]string `json:"headers,omitempty"`
 
-	// BodySha256 is the hex SHA-256 of the captured body bytes. Set even
-	// when Body is omitted or by-reference, so consumers can verify
-	// identity later.
+	// BodySha256 is the hex SHA-256 of the body bytes as recorded — after
+	// body-embedded credentials (e.g. Anthropic mcp_servers[].authorization_token)
+	// are masked to "[REDACTED]", identical to the client's bytes otherwise.
+	// Set even when Body is omitted or by-reference, so consumers can
+	// verify identity later.
 	BodySha256 string `json:"body_sha256,omitempty"`
 
-	// BodyBytes is the uncompressed body length in bytes. Populated even
-	// when the body itself is omitted.
+	// BodyBytes is the uncompressed length in bytes of the body as
+	// recorded (see BodySha256). Populated even when the body itself is
+	// omitted.
 	BodyBytes int `json:"body_bytes,omitempty"`
 
-	// Body is the inline body (raw JSON or string). Mutually exclusive
-	// with BodyRef and BodyOmitted.
+	// Body is the inline body (raw JSON or string), with body-embedded
+	// credentials masked the same way credential headers are. Mutually
+	// exclusive with BodyRef and BodyOmitted.
 	Body json.RawMessage `json:"body,omitempty"`
 
 	// BodyRef is reserved for an out-of-line blob URL. No current code

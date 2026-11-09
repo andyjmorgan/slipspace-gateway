@@ -736,6 +736,9 @@ func TestMessages_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ClearThinkingEdit{}),
 		reflect.TypeOf(CompactEdit{}),
 		reflect.TypeOf(UnknownContextEdit{}),
+		reflect.TypeOf(McpServerDefinition{}),
+		reflect.TypeOf(McpServerToolConfiguration{}),
+		reflect.TypeOf(McpToolConfig{}),
 	}
 	for _, rt := range types {
 		t.Run(rt.Name(), func(t *testing.T) {

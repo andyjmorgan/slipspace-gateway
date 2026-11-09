@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"strings"
@@ -262,5 +264,72 @@ func TestReporter_BodyStoreNilIsNoop(t *testing.T) {
 	// Pass when OnComplete doesn't panic and the ring entry exists.
 	if len(ring.Recent(0)) != 1 {
 		t.Fatal("ring missing entry")
+	}
+}
+
+// TestReporter_MasksBodyCredentialOnOperatorProjections proves a credential
+// the client embedded in the request body — the Anthropic MCP connector's
+// mcp_servers[].authorization_token (GitHub #557) — is masked on both operator
+// projections of the body: the connector Record and the admin live-feed
+// envelope. The captured Raw bytes themselves are untouched, because they
+// are what the forwarder resends upstream.
+func TestReporter_MasksBodyCredentialOnOperatorProjections(t *testing.T) {
+	t.Parallel()
+	const secret = "ya29.mcp-oauth-token-that-must-not-leak" //nolint:gosec // G101: fixture token in test
+	ring, _ := livefeed.NewRing(4)
+	store, err := livefeed.NewBodyStore(64 * 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newTestReporter(t, ring)
+	r.factory.bodyStore = store
+
+	requestBody := []byte(`{"model":"claude-sonnet-4-5","max_tokens":10,"mcp_servers":[{"type":"url","url":"https://a.example/sse","name":"a","authorization_token":"` + secret + `"}],"messages":[{"role":"user","content":"hi"}]}`)
+	captured := bodycapture.Captured{Kind: bodycapture.KindMessages, Raw: requestBody}
+	ctx := bodycapture.WithCaptured(context.Background(), captured)
+	buf := livefeed.NewResponseBuffer(8 * 1024)
+	buf.Append([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[]}`))
+	ctx = livefeed.WithResponseBuffer(ctx, buf)
+	ctx = observability.WithCorrelationID(ctx, "corr-mcp-token")
+
+	// Connector Record projection.
+	rec := r.buildRecord(ctx, events.Request{CorrelationID: "corr-mcp-token", StatusCode: 200}, nil, nil, false)
+	if strings.Contains(string(rec.Request.Body), secret) {
+		t.Errorf("Record.Request.Body leaks the authorization_token: %s", rec.Request.Body)
+	}
+	if !strings.Contains(string(rec.Request.Body), `"authorization_token":"[REDACTED]"`) {
+		t.Errorf("Record.Request.Body not masked: %s", rec.Request.Body)
+	}
+	if rec.Request.BodyBytes != len(rec.Request.Body) {
+		t.Errorf("BodyBytes=%d want the recorded body length %d", rec.Request.BodyBytes, len(rec.Request.Body))
+	}
+	sum := sha256.Sum256(rec.Request.Body)
+	if rec.Request.BodySha256 != hex.EncodeToString(sum[:]) {
+		t.Errorf("BodySha256 does not describe the recorded body")
+	}
+
+	// Live-feed body envelope projection.
+	r.OnComplete(ctx, 200, 5)
+	entries := ring.Recent(0)
+	if len(entries) != 1 {
+		t.Fatalf("ring len=%d want 1", len(entries))
+	}
+	env, ok := store.Get(entries[0].EventID)
+	if !ok {
+		t.Fatalf("body store missing entry for %q", entries[0].EventID)
+	}
+	if strings.Contains(string(env.Request), secret) {
+		t.Errorf("live-feed Request leaks the authorization_token: %s", env.Request)
+	}
+	if !strings.Contains(string(env.Request), `"authorization_token":"[REDACTED]"`) {
+		t.Errorf("live-feed Request not masked: %s", env.Request)
+	}
+	if env.RequestTotalBytes != int64(len(env.Request)) {
+		t.Errorf("RequestTotalBytes=%d want %d", env.RequestTotalBytes, len(env.Request))
+	}
+
+	// The forwarded bytes are not what we masked.
+	if !strings.Contains(string(captured.Raw), secret) {
+		t.Fatalf("captured.Raw was mutated; the upstream must still receive the real token")
 	}
 }
