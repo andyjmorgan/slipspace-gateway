@@ -21,6 +21,11 @@ func FuzzUnmarshalStreamEvent(f *testing.F) {
 		[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}`),
 		[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://e.com","cited_text":"x"}}}`),
 		[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"future_delta","extra":1}}`),
+		[]byte(`{"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":null}}`),
+		[]byte(`{"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":"Summary","signature":"EuYBCkQY","tool_changes":[]}}`),
+		[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":"Summary of the conversation","encrypted_content":"gAAAAAB"}}`),
+		[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":null,"encrypted_content":null}}`),
+		[]byte(`{"type":"message_delta","delta":{"stop_reason":"compaction","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":0,"iterations":[{"type":"compaction","input_tokens":144,"output_tokens":276}]}}`),
 		[]byte(`{"type":"content_block_stop","index":0}`),
 		[]byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1,"output_tokens":2}}`),
 		[]byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"container":{"id":"container_01","expires_at":"2026-05-15T00:00:00Z","skills":[{"type":"anthropic","skill_id":"xlsx","version":"latest"}]}},"usage":{"output_tokens":2}}`),
@@ -65,6 +70,8 @@ func FuzzUnmarshalContentBlockDelta(f *testing.F) {
 		[]byte(`{"type":"thinking_delta","thinking":"x"}`),
 		[]byte(`{"type":"signature_delta","signature":"s"}`),
 		[]byte(`{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://e.com"}}`),
+		[]byte(`{"type":"compaction_delta","content":"Summary","encrypted_content":"gAAAAAB"}`),
+		[]byte(`{"type":"compaction_delta","content":null}`),
 		[]byte(`{"type":"future_delta","p":1}`),
 	}
 	for _, s := range seeds {

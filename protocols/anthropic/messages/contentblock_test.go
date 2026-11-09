@@ -294,6 +294,102 @@ func TestUnmarshalContentBlock_RedactedThinking(t *testing.T) {
 	roundTrip(t, in, v)
 }
 
+// Compaction block shapes are taken verbatim from the public docs and the
+// SDK type: a threshold summary, a failed compaction (null content) carrying
+// the opaque encrypted blob, and an on-demand block with signature +
+// cache_control. Ref:
+// https://platform.claude.com/docs/en/build-with-claude/compaction-threshold
+// https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_compaction_block.py
+func TestUnmarshalContentBlock_Compaction(t *testing.T) {
+	cases := []struct {
+		name        string
+		in          string
+		wantContent *string
+		wantEnc     string
+		wantSig     string
+		wantCache   bool
+	}{
+		{
+			name:        "threshold summary",
+			in:          `{"content":"Summary of the conversation: The user requested help building a web scraper...","type":"compaction"}`,
+			wantContent: strPtr("Summary of the conversation: The user requested help building a web scraper..."),
+		},
+		{
+			name:    "failed compaction keeps null content and opaque blob",
+			in:      `{"content":null,"encrypted_content":"gAAAAABopaque","type":"compaction"}`,
+			wantEnc: `"gAAAAABopaque"`,
+		},
+		{
+			name:        "null encrypted_content stays null",
+			in:          `{"content":"s","encrypted_content":null,"type":"compaction"}`,
+			wantContent: strPtr("s"),
+			wantEnc:     `null`,
+		},
+		{
+			name:        "on-demand with signature and cache_control",
+			in:          `{"cache_control":{"type":"ephemeral"},"content":"Summary: recipe app data model.","signature":"EuYBCkQY...","type":"compaction"}`,
+			wantContent: strPtr("Summary: recipe app data model."),
+			wantSig:     "EuYBCkQY...",
+			wantCache:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := UnmarshalContentBlock([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			cb, ok := v.(*CompactionBlock)
+			if !ok {
+				t.Fatalf("got %T", v)
+			}
+			if cb.BlockType() != "compaction" {
+				t.Fatalf("block type = %q", cb.BlockType())
+			}
+			switch {
+			case tc.wantContent == nil && cb.Content != nil:
+				t.Fatalf("content = %q, want nil", *cb.Content)
+			case tc.wantContent != nil && (cb.Content == nil || *cb.Content != *tc.wantContent):
+				t.Fatalf("content = %v, want %q", cb.Content, *tc.wantContent)
+			}
+			if string(cb.EncryptedContent) != tc.wantEnc {
+				t.Fatalf("encrypted_content = %s, want %s", cb.EncryptedContent, tc.wantEnc)
+			}
+			if cb.Signature != tc.wantSig {
+				t.Fatalf("signature = %q", cb.Signature)
+			}
+			if (cb.CacheControl != nil) != tc.wantCache {
+				t.Fatalf("cache_control = %+v", cb.CacheControl)
+			}
+			if len(cb.Extra) != 0 {
+				t.Fatalf("typed fields leaked into Extra: %v", cb.Extra)
+			}
+			roundTrip(t, []byte(tc.in), v)
+		})
+	}
+}
+
+func TestUnmarshalContentBlock_CompactionExtraFieldsRoundTrip(t *testing.T) {
+	// tool_changes is typed by the SDK but not yet on the public docs page, so
+	// it must ride DynamicProperties untouched alongside any future sibling.
+	in := []byte(`{"content":"s","future":1,"tool_changes":[{"type":"tool_removal","tool_name":"x"}],"type":"compaction"}`)
+	v, err := UnmarshalContentBlock(in)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cb, ok := v.(*CompactionBlock)
+	if !ok {
+		t.Fatalf("got %T", v)
+	}
+	if string(cb.Extra["tool_changes"]) != `[{"type":"tool_removal","tool_name":"x"}]` || string(cb.Extra["future"]) != `1` {
+		t.Fatalf("extras: %v", cb.Extra)
+	}
+	roundTrip(t, in, v)
+}
+
+func strPtr(s string) *string { return &s }
+
 func TestUnmarshalContentBlock_UnknownDiscriminatorRoundTrips(t *testing.T) {
 	in := []byte(`{"lat":40.7,"lon":-74,"type":"weather_widget"}`)
 	v, err := UnmarshalContentBlock(in)
@@ -505,6 +601,7 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 		reflect.TypeOf(ToolReferenceBlock{}),
 		reflect.TypeOf(ThinkingBlock{}),
 		reflect.TypeOf(RedactedThinkingBlock{}),
+		reflect.TypeOf(CompactionBlock{}),
 		reflect.TypeOf(UnknownBlock{}),
 	}
 	for _, rt := range types {
@@ -523,7 +620,7 @@ func TestContentBlock_AllExportedFieldsHaveJSONTag(t *testing.T) {
 }
 
 func TestContentBlock_RegistryCoversAllConcreteTypes(t *testing.T) {
-	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "server_tool_use": false, "web_search_tool_result": false, "web_fetch_tool_result": false, "tool_search_tool_result": false, "tool_reference": false, "thinking": false, "redacted_thinking": false}
+	want := map[string]bool{"text": false, "image": false, "tool_use": false, "tool_result": false, "server_tool_use": false, "web_search_tool_result": false, "web_fetch_tool_result": false, "tool_search_tool_result": false, "tool_reference": false, "thinking": false, "redacted_thinking": false, "compaction": false}
 	for k := range blockRegistry.Factories {
 		if _, ok := want[k]; !ok {
 			t.Errorf("unexpected registry key %q", k)

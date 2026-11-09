@@ -17,9 +17,10 @@ import (
 //   - message_start            (initial Message envelope — id, role,
 //     model, empty Content, partial Usage)
 //   - content_block_start      (block of kind text|tool_use|
-//     server_tool_use|web_search_tool_result|thinking)
+//     server_tool_use|web_search_tool_result|thinking|compaction)
 //   - content_block_delta      (text_delta | input_json_delta |
-//     thinking_delta | signature_delta | citations_delta)
+//     thinking_delta | signature_delta | citations_delta |
+//     compaction_delta)
 //   - content_block_stop
 //   - message_delta            (terminal stop_reason / stop_sequence /
 //     final Usage)
@@ -32,7 +33,11 @@ import (
 // assembly time. ThinkingBlock.Thinking accumulates across
 // ThinkingDelta events, with the terminal SignatureDelta setting its
 // Signature, so the reconstructed block matches the non-streaming
-// shape. message_delta overlays the terminal stop_reason,
+// shape. A CompactionBlock takes its Content / EncryptedContent from
+// the single CompactionDelta threshold compaction emits (overlay, not
+// append — the summary arrives whole), or stays as the start block
+// when on-demand compaction ships it without deltas.
+// message_delta overlays the terminal stop_reason,
 // stop_sequence, and merges Usage so the assembled response carries
 // the final accounting.
 func accumulateAnthropicMessages(raw []byte) Result {
@@ -93,6 +98,11 @@ type anthropicBlockState struct {
 	// citations accumulates citations_delta entries for a text block; the
 	// non-streaming response carries them on TextBlock.Citations.
 	citations []messages.Citation
+	// compaction holds the single compaction_delta a threshold-compaction
+	// block streams; nil when no delta arrived (on-demand compaction sends
+	// the whole block on content_block_start). Only set when kind ==
+	// "compaction".
+	compaction *messages.CompactionDelta
 	// raw holds the original block as emitted by content_block_start;
 	// kept so unknown block kinds (and any DynamicProperties that
 	// rode in on the start event) survive assembly.
@@ -149,6 +159,8 @@ func (s *anthropicState) absorbBlockStart(index int, block messages.ContentBlock
 			}
 			st.signature = b.Signature
 		}
+	case *messages.CompactionBlock:
+		st.kind = "compaction"
 	default:
 		// RedactedThinkingBlock / unknown — keep the raw block as-is;
 		// it carries no deltas to accumulate.
@@ -176,6 +188,10 @@ func (s *anthropicState) absorbBlockDelta(index int, delta messages.ContentBlock
 		st.signature = d.Signature
 	case *messages.CitationsDelta:
 		st.citations = append(st.citations, d.Citation)
+	case *messages.CompactionDelta:
+		// Exactly one per block by contract; a later one wins so the
+		// rollup matches what the client last saw.
+		st.compaction = d
 	}
 }
 
@@ -332,6 +348,24 @@ func (s *anthropicState) assemble() messages.MessagesResponse {
 			block.Type = "thinking"
 			block.Thinking = st.thinkingBuf.String()
 			block.Signature = st.signature
+			content = append(content, block)
+		case "compaction":
+			// Reuse the start block so Signature, CacheControl and any
+			// DynamicProperties survive; the delta (when one arrived)
+			// carries the authoritative summary and encrypted blob, and an
+			// explicit null content on it is meaningful (failed compaction)
+			// so it overlays too.
+			block, ok := st.raw.(*messages.CompactionBlock)
+			if !ok || block == nil {
+				block = &messages.CompactionBlock{}
+			}
+			block.Type = "compaction"
+			if d := st.compaction; d != nil {
+				block.Content = d.Content
+				if len(d.EncryptedContent) > 0 {
+					block.EncryptedContent = d.EncryptedContent
+				}
+			}
 			content = append(content, block)
 		default:
 			if st.raw != nil {

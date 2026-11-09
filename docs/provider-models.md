@@ -165,6 +165,14 @@ Request highlights:
   field (`responses.go:104-114`), all kept; `User` still round-trips.
 - **`Text`** (text / structured-output format) is kept raw because its `format`
   sub-object is polymorphic (`responses.go:120-123`).
+- **`ContextManagement []ContextManagementItem`** turns on server-side
+  compaction: `{type: "compaction", compact_threshold: N}` makes the server
+  compact the context in-band once the rendered input crosses `N` tokens and
+  emit an encrypted `compaction` output item, with no separate
+  `POST /v1/responses/compact` call. `Type` is discriminated but single-member
+  today, so the item is a flat struct (plus `DynamicProperties`) rather than a
+  registry union; `CompactThreshold *int` distinguishes absent from zero. Ref:
+  <https://developers.openai.com/api/docs/guides/compaction>.
 
 Response highlights:
 
@@ -176,9 +184,13 @@ Response highlights:
   decode the shape they need; `Arguments` (`responses.go:495`) is a Go `string`
   because OpenAI ships function arguments as a JSON-encoded string, matching the
   chat package's `ToolCallFunction.Arguments` convention. The struct also carries
-  `Phase` (`responses.go:487`) and the encrypted reasoning trace
-  `EncryptedContent json.RawMessage` (`responses.go:515`). `OutputText` (`responses.go:164`) is
-  the convenience concatenated-text projection.
+  `Phase` (`responses.go:487`), the encrypted reasoning trace
+  `EncryptedContent json.RawMessage` (`responses.go:515`), and `CreatedBy` — "the
+  identifier of the actor that created the item", present on tool-call /
+  tool-output items and the server-generated `compaction` item (ref:
+  <https://developers.openai.com/api/reference/resources/responses/subresources/input_items/methods/list.md>).
+  `OutputText` (`responses.go:164`) is the convenience concatenated-text
+  projection.
 - **`Usage`** uses `input_tokens`/`output_tokens` naming (not chat's
   `prompt`/`completion`), so it is a **distinct local type** from the chat
   package's `Usage` (`responses.go:380-399`); `OutputTokensDetails.ReasoningTokens`
@@ -228,9 +240,10 @@ Two fields accept either a bare string or an array and are kept as
 
 ### Content blocks — the `type`-discriminated union
 
-Registry at `contentblock.go:599-621` (`blockRegistry`, discriminator field
-`type`; 11 factories including `server_tool_use`, `web_search_tool_result`,
-`web_fetch_tool_result`, `tool_search_tool_result`, `tool_reference`):
+Registry in `contentblock.go` (`blockRegistry`, discriminator field
+`type`; 12 factories including `server_tool_use`, `web_search_tool_result`,
+`web_fetch_tool_result`, `tool_search_tool_result`, `tool_reference`,
+`compaction`):
 
 | `type` | Type | Notes |
 |---|---|---|
@@ -245,7 +258,8 @@ Registry at `contentblock.go:599-621` (`blockRegistry`, discriminator field
 | `tool_reference` | `ToolReferenceBlock` | Tool reference (PR #470) |
 | `thinking` | `ThinkingBlock` (`contentblock.go:516`) | See signature echo below |
 | `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:549`) | Opaque encrypted `Data` |
-| *(any other)* | `UnknownBlock` (`contentblock.go:579`) | Fallback |
+| `compaction` | `CompactionBlock` | Server-side context summary (compaction beta); see below |
+| *(any other)* | `UnknownBlock` | Fallback |
 
 ### Thinking blocks and the signature-echo requirement
 
@@ -263,6 +277,45 @@ Extended thinking is **load-bearing for round-tripping**, not just informational
   provider encrypted after tripping a safety classifier. It carries no
   human-readable content but must likewise be echoed back verbatim alongside any
   sibling thinking blocks.
+
+### Compaction blocks (agent context compaction)
+
+The compaction beta (`anthropic-beta: compact-2026-01-12` for threshold
+compaction driven by `context_management.edits[].type == "compact_20260112"`,
+`compact-2026-09-04` for on-demand `compaction: {"type":"summarize"}`) replaces
+a compacted conversation prefix with a `compaction` block the client echoes back
+verbatim on later turns. `CompactionBlock` (`contentblock.go`) carries:
+
+- `Content *string` — the summary; a pointer **without** `omitempty` because the
+  API emits an explicit `null` when compaction produced no usable summary and a
+  null-content block echoed back is a server-side no-op, so the null must
+  survive rather than collapse to `""` or disappear.
+- `EncryptedContent json.RawMessage` — opaque prior-compaction metadata,
+  round-tripped verbatim (raw so absent / null / blob all re-marshal
+  byte-equivalent, mirroring `responses.OutputItem.EncryptedContent`).
+- `Signature string` — on-demand blocks only; the API rejects a tampered block
+  (`compaction_signature_invalid` / `compaction_content_mismatch`).
+- `CacheControl *CacheControl` — a prompt-cache breakpoint on the summary.
+- `tool_changes` (SDK-typed, not yet on the public docs page) and anything newer
+  ride `DynamicProperties.Extra`.
+
+Streaming: threshold compaction opens the block with a `content_block_start`
+and then sends **exactly one** `compaction_delta` (`CompactionDelta` in
+`stream.go`, `Content` + `EncryptedContent`) carrying the whole summary — the
+livefeed accumulator overlays it rather than appending. On-demand compaction
+ships the complete block on `content_block_start` with no deltas. The
+`stop_reason` value `"compaction"` marks a turn that ended at a compaction
+boundary (`MessagesResponse.StopReason` is a free string, not an enum, so new
+values forward intact). Billing lands in `Usage.Iterations[].type ==
+"compaction"`; the top-level `input_tokens` / `output_tokens` exclude it.
+
+Telemetry: the gen_ai span projection (`internal/middleware/genaiattr`) emits a
+bare `compaction` part and never the summary or `encrypted_content` — the full
+block rides the connector Record only (invariant #4).
+
+Refs: <https://platform.claude.com/docs/en/build-with-claude/compaction>,
+<https://platform.claude.com/docs/en/build-with-claude/compaction-threshold>,
+<https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand>.
 
 The request enables thinking via `MessagesRequest.Thinking *ThinkingConfig`
 (`messages.go:59`; `ThinkingConfig` at `messages.go:322-340`: `Type` (`:327`),
@@ -314,10 +367,10 @@ The streaming union (`stream.go`, dispatched on event `type`) is:
 `ErrorEvent`, and `UnknownStreamEvent` (`stream.go:36-394`, `UnknownStreamEvent`
 at `stream.go:372`). The `ContentBlockDelta` payload is itself a union:
 `TextDelta`, `InputJSONDelta`, `ThinkingDelta`, `SignatureDelta`,
-`CitationsDelta`, `UnknownContentBlockDelta` (`stream.go:431-598`,
-`CitationsDelta` (type `citations_delta`) at `stream.go:551`, registered at
-`stream.go:607`,
-`UnknownContentBlockDelta` at `stream.go:578`).
+`CitationsDelta`, `CompactionDelta` (type `compaction_delta`, the single
+whole-summary delta of a streamed compaction block — see *Compaction blocks*
+above), and `UnknownContentBlockDelta` (`stream.go`, registry
+`contentBlockDeltaRegistry`).
 
 ## Gemini — generateContent (`protocols/gemini/content`)
 

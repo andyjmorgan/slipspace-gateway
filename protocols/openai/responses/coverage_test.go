@@ -191,3 +191,103 @@ func TestResponses_SealedInterfaceMarkers(t *testing.T) {
 	ResponseFailedEvent{}.isResponsesStreamEvent()
 	UnknownEvent{}.isResponsesStreamEvent()
 }
+
+// Server-side compaction request shape per
+// https://developers.openai.com/api/docs/guides/compaction and the create
+// reference (context_management: array of {type, compact_threshold}).
+func TestResponsesRequest_ContextManagement(t *testing.T) {
+	cases := []struct {
+		name          string
+		in            string
+		wantThreshold *int
+		wantExtraKey  string
+	}{
+		{
+			name:          "compaction with threshold",
+			in:            `{"context_management":[{"compact_threshold":200000,"type":"compaction"}],"input":"hi","model":"gpt-5.3-codex","store":false}`,
+			wantThreshold: intPtr(200000),
+		},
+		{
+			name: "threshold absent",
+			in:   `{"context_management":[{"type":"compaction"}],"input":"hi","model":"m"}`,
+		},
+		{
+			name:          "unknown item field rides Extra",
+			in:            `{"context_management":[{"compact_threshold":1000,"future":"keep","type":"compaction"}],"input":"hi","model":"m"}`,
+			wantThreshold: intPtr(1000),
+			wantExtraKey:  "future",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r ResponsesRequest
+			if err := json.Unmarshal([]byte(tc.in), &r); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(r.ContextManagement) != 1 || r.ContextManagement[0].Type != "compaction" {
+				t.Fatalf("context_management = %+v", r.ContextManagement)
+			}
+			item := r.ContextManagement[0]
+			switch {
+			case tc.wantThreshold == nil && item.CompactThreshold != nil:
+				t.Fatalf("compact_threshold = %d, want nil", *item.CompactThreshold)
+			case tc.wantThreshold != nil && (item.CompactThreshold == nil || *item.CompactThreshold != *tc.wantThreshold):
+				t.Fatalf("compact_threshold = %v, want %d", item.CompactThreshold, *tc.wantThreshold)
+			}
+			if tc.wantExtraKey != "" && string(item.Extra[tc.wantExtraKey]) != `"keep"` {
+				t.Fatalf("item extras: %v", item.Extra)
+			}
+			if _, leaked := r.Extra["context_management"]; leaked {
+				t.Fatalf("context_management leaked into request Extra")
+			}
+			out, err := json.Marshal(r)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !jsonValueEqual(t, []byte(tc.in), out) {
+				t.Fatalf("drift\n in: %s\nout: %s", tc.in, out)
+			}
+		})
+	}
+}
+
+// created_by ("The identifier of the actor that created the item") per
+// https://developers.openai.com/api/reference/resources/responses/subresources/input_items/methods/list.md
+func TestResponses_OutputItemCreatedBy(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{
+			name: "function_call",
+			in:   `{"arguments":"{}","call_id":"call_1","created_by":"assistant","id":"fc_1","name":"search","status":"completed","type":"function_call"}`,
+		},
+		{
+			name: "compaction item",
+			in:   `{"created_by":"system","encrypted_content":"gAAAAABpM0Yj-...=","id":"cmp_001","type":"compaction"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var o OutputItem
+			if err := json.Unmarshal([]byte(tc.in), &o); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if o.CreatedBy == "" {
+				t.Fatalf("created_by not typed: %+v", o)
+			}
+			if _, leaked := o.Extra["created_by"]; leaked {
+				t.Fatalf("created_by leaked into Extra")
+			}
+			out, err := json.Marshal(o)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !jsonValueEqual(t, []byte(tc.in), out) {
+				t.Fatalf("drift\n in: %s\nout: %s", tc.in, out)
+			}
+		})
+	}
+}
+
+func intPtr(i int) *int { return &i }

@@ -20,7 +20,7 @@ import (
 // content block type — TextBlock, ImageBlock, ToolUseBlock, ToolResultBlock,
 // ServerToolUseBlock, WebSearchToolResultBlock, WebFetchToolResultBlock,
 // ToolSearchToolResultBlock, ToolReferenceBlock, ThinkingBlock,
-// RedactedThinkingBlock, and the UnknownBlock fallback.
+// RedactedThinkingBlock, CompactionBlock, and the UnknownBlock fallback.
 //
 // The discriminator is the "type" field. Unknown discriminator values are
 // dispatched to UnknownBlock, which preserves both the type value AND any
@@ -571,6 +571,71 @@ func (b *RedactedThinkingBlock) UnmarshalJSON(data []byte) error {
 // resulting object.
 func (b RedactedThinkingBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
 
+// CompactionBlock is the "compaction" content block variant — the server-side
+// summary Anthropic's compaction beta (anthropic-beta: compact-2026-01-12 for
+// threshold compaction, compact-2026-09-04 for on-demand) emits in place of the
+// conversation prefix it compacted. The client echoes the block back verbatim
+// on later turns so the model keeps the summarised context; every opaque field
+// on it is therefore load-bearing for round-tripping in the same way
+// ThinkingBlock.Signature is. The non-streaming response embeds it directly;
+// threshold compaction streams it as a compaction content_block_start followed
+// by exactly one compaction_delta carrying the whole summary (see
+// CompactionDelta in stream.go), while on-demand compaction delivers the
+// complete block on the content_block_start with no deltas. Unknown fields
+// (e.g. tool_changes, which the SDK types but the public docs do not yet
+// describe) round-trip via the embedded DynamicProperties.
+// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction
+// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-threshold
+// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
+// Ref: https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_compaction_block.py
+type CompactionBlock struct {
+	// Type is the wire "type" discriminator, always "compaction".
+	Type string `json:"type"`
+
+	// Content is the summary of the compacted conversation prefix. A pointer
+	// without omitempty because Anthropic emits an explicit null when
+	// compaction produced no usable summary (safeguards tripped, or the model
+	// called a tool during the summarisation step); the server treats a block
+	// echoed back with null content as a no-op, so the null must survive the
+	// round trip rather than collapse to an empty string or vanish.
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-threshold
+	Content *string `json:"content"`
+
+	// EncryptedContent is opaque metadata from a prior compaction that the
+	// client must round-trip verbatim. Kept raw (like
+	// responses.OutputItem.EncryptedContent) so the three wire states —
+	// absent, null, and a populated blob — all re-marshal byte-equivalent.
+	// Ref: https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/beta/beta_compaction_block.py
+	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
+
+	// Signature is the server's signature over the summary on an on-demand
+	// compaction block; the client sends it back verbatim or the API rejects
+	// the turn (compaction_signature_invalid / compaction_content_mismatch).
+	// Absent on threshold-compaction blocks.
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
+	Signature string `json:"signature,omitempty"`
+
+	// CacheControl marks the block as a prompt-cache breakpoint so the
+	// summarised context is cached on subsequent turns.
+	// Ref: https://platform.claude.com/docs/en/build-with-claude/compaction-threshold
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
+
+	models.DynamicProperties
+}
+
+// BlockType returns the "compaction" discriminator.
+func (CompactionBlock) BlockType() string { return "compaction" }
+
+func (CompactionBlock) isContentBlock() {}
+
+// UnmarshalJSON decodes data into b, routing any field not declared on the
+// struct into DynamicProperties.Extra.
+func (b *CompactionBlock) UnmarshalJSON(data []byte) error { return models.UnmarshalDynamic(data, b) }
+
+// MarshalJSON encodes b and merges DynamicProperties.Extra back into the
+// resulting object.
+func (b CompactionBlock) MarshalJSON() ([]byte, error) { return models.MarshalDynamic(b) }
+
 // UnknownBlock preserves any content block whose "type" discriminator this
 // package has not modelled. Type carries the unknown discriminator verbatim
 // and every other JSON field lands in DynamicProperties.Extra so the block
@@ -616,6 +681,7 @@ var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
 		"tool_reference":    func() ContentBlock { return &ToolReferenceBlock{} },
 		"thinking":          func() ContentBlock { return &ThinkingBlock{} },
 		"redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
+		"compaction":        func() ContentBlock { return &CompactionBlock{} },
 	},
 	Fallback: func(disc string) ContentBlock { return &UnknownBlock{Type: disc} },
 }

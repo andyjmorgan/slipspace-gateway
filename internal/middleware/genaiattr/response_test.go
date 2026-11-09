@@ -941,3 +941,55 @@ func TestExtractResponse_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// A compaction block's summary and opaque encrypted_content blob are
+// conversation-prefix payload, not a model output part: the span projection
+// must carry the block's presence (a bare "compaction" part) and nothing else,
+// the same way *_tool_result encrypted_content is stripped. The full block
+// still rides the connector Record (invariant #4).
+func TestExtractResponse_Anthropic_CompactionBlobStripped(t *testing.T) {
+	t.Parallel()
+
+	assertStripped := func(t *testing.T, got genaiattr.ResponseAttrs) {
+		t.Helper()
+		if len(got.OutputParts) != 2 {
+			t.Fatalf("parts = %+v, want [compaction, text]", got.OutputParts)
+		}
+		if got.OutputParts[0].Type != "compaction" {
+			t.Errorf("part0 = %+v, want bare compaction part", got.OutputParts[0])
+		}
+		if got.OutputParts[1].Type != "text" || got.OutputParts[1].Content != "Based on our conversation so far..." {
+			t.Errorf("part1 = %+v, want text part", got.OutputParts[1])
+		}
+		if strings.Contains(got.OutputText, "SUMMARYTEXT") {
+			t.Errorf("compaction summary leaked into OutputText: %q", got.OutputText)
+		}
+		for i, p := range got.OutputParts {
+			for _, leak := range []string{"OPAQUEBLOB", "SUMMARYTEXT"} {
+				if strings.Contains(p.Content, leak) || strings.Contains(p.Result, leak) || strings.Contains(string(p.Arguments), leak) {
+					t.Errorf("part%d leaked %s: %+v", i, leak, p)
+				}
+			}
+		}
+	}
+
+	t.Run("non-stream", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"id":"msg_1","model":"claude-opus-4-8","content":[` +
+			`{"type":"compaction","content":"SUMMARYTEXT","encrypted_content":"OPAQUEBLOB"},` +
+			`{"type":"text","text":"Based on our conversation so far..."}],"stop_reason":"end_turn"}`)
+		assertStripped(t, genaiattr.ExtractResponse("messages", raw))
+	})
+
+	t.Run("stream threshold compaction_delta", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte("" +
+			"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"compaction\",\"content\":null}}\n\n" +
+			"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"compaction_delta\",\"content\":\"SUMMARYTEXT\",\"encrypted_content\":\"OPAQUEBLOB\"}}\n\n" +
+			"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+			"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Based on our conversation so far...\"}}\n\n" +
+			"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n")
+		assertStripped(t, genaiattr.ExtractResponse("messages", raw))
+	})
+}
