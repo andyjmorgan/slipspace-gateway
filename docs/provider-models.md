@@ -50,8 +50,8 @@ on `role` rather than `type` — chat-completions is the only OpenAI surface whe
 
 | Role | Type | Notes |
 |---|---|---|
-| `system` | `SystemMessage` (`messages.go:34`) | Classic system prompt |
-| `developer` | `DeveloperMessage` (`messages.go:65`) | OpenAI's replacement for `system` on newer (o-series) models. Both are modelled; the gateway preserves whichever the client sent and does not rewrite one into the other |
+| `system` | `SystemMessage` (`messages.go:34`) | Classic system prompt. `Content` is string-or-array like `user` (OpenAI accepts an array of text parts here too, and the SDKs emit it for structured prompts; #577) |
+| `developer` | `DeveloperMessage` (`messages.go:65`) | OpenAI's replacement for `system` on newer (o-series) models. Both are modelled; the gateway preserves whichever the client sent and does not rewrite one into the other. `Content` is string-or-array |
 | `user` | `UserMessage` (`messages.go:98`) | `Content` is string-or-array (see below) |
 | `assistant` | `AssistantMessage` (`messages.go:128`) | Carries `ToolCalls`, `Refusal`, `Audio` for replayed turns |
 | `tool` | `ToolMessage` (`messages.go:171`) | `ToolCallID` correlates to a prior call |

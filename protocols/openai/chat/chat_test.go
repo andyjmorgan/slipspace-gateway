@@ -32,11 +32,49 @@ func TestChatCompletionRequest_NonStreamingWithToolCalls(t *testing.T) {
 	if !ok {
 		t.Fatalf("messages[0] = %T", req.Messages[0])
 	}
-	if sys.Content != "You are helpful." {
-		t.Fatalf("system content = %q", sys.Content)
+	if got, _ := sys.Content.AsString(); got != "You are helpful." {
+		t.Fatalf("system content = %q", got)
 	}
 	if req.Temperature == nil || *req.Temperature != 0.2 {
 		t.Fatalf("temperature = %v", req.Temperature)
+	}
+	roundTripJSON(t, in, &req)
+}
+
+// TestChatCompletionRequest_SystemArrayContent is the #577 golden: a request
+// whose system and developer messages carry array-form content decodes (it
+// used to be a hard ErrParse -> 400 at the gateway edge) and round-trips
+// byte-equivalent, including the unknown cache_control on a part.
+func TestChatCompletionRequest_SystemArrayContent(t *testing.T) {
+	in := []byte(`{` +
+		`"model":"gpt-4o",` +
+		`"messages":[` +
+		`{"role":"system","content":[{"type":"text","text":"You are helpful."},{"type":"text","text":"Be terse.","cache_control":{"type":"ephemeral"}}]},` +
+		`{"role":"developer","content":[{"type":"text","text":"Internal."}]},` +
+		`{"role":"user","content":"yo"}` +
+		`]` +
+		`}`)
+	var req ChatCompletionRequest
+	if err := json.Unmarshal(in, &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	sys, ok := req.Messages[0].(*SystemMessage)
+	if !ok {
+		t.Fatalf("messages[0] = %T", req.Messages[0])
+	}
+	if !sys.Content.IsArray() {
+		t.Fatalf("system content should be an array, raw=%s", sys.Content.Raw())
+	}
+	parts, err := sys.Content.AsParts()
+	if err != nil || len(parts) != 2 {
+		t.Fatalf("system parts = %d (%v)", len(parts), err)
+	}
+	if tp, ok := parts[1].(*TextContentPart); !ok || tp.Text != "Be terse." {
+		t.Fatalf("parts[1] = %#v", parts[1])
+	}
+	dev, ok := req.Messages[1].(*DeveloperMessage)
+	if !ok || !dev.Content.IsArray() {
+		t.Fatalf("messages[1] = %T (array=%v)", req.Messages[1], ok && dev.Content.IsArray())
 	}
 	roundTripJSON(t, in, &req)
 }
@@ -248,6 +286,9 @@ func TestRequestMessage_AllRoles(t *testing.T) {
 	}{
 		{name: "system", json: `{"role":"system","content":"You are helpful."}`, role: "system", want: &SystemMessage{}},
 		{name: "developer", json: `{"role":"developer","content":"Internal instructions."}`, role: "developer", want: &DeveloperMessage{}},
+		// #577: the SDKs emit array-form content for system/developer too.
+		{name: "system_parts", json: `{"role":"system","content":[{"type":"text","text":"You are helpful."},{"type":"text","text":"Be terse.","cache_control":{"type":"ephemeral"}}]}`, role: "system", want: &SystemMessage{}},
+		{name: "developer_parts", json: `{"role":"developer","content":[{"type":"text","text":"Internal instructions."}],"name":"ops"}`, role: "developer", want: &DeveloperMessage{}},
 		{name: "user_string", json: `{"role":"user","content":"hi"}`, role: "user", want: &UserMessage{}},
 		{name: "assistant", json: `{"role":"assistant","content":"hi"}`, role: "assistant", want: &AssistantMessage{}},
 		{name: "tool", json: `{"role":"tool","content":"42","tool_call_id":"call_1"}`, role: "tool", want: &ToolMessage{}},

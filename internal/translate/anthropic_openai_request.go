@@ -201,7 +201,7 @@ func translateMessages(src messages.MessagesRequest) (chat.RequestMessages, []Dr
 // prompt. Block-level cache_control is dropped.
 func translateSystem(src messages.MessagesRequest) (chat.RequestMessage, []Drop, bool) {
 	if s, ok := src.SystemAsString(); ok {
-		return &chat.SystemMessage{RoleField: "system", Content: s}, nil, true
+		return &chat.SystemMessage{RoleField: "system", Content: chat.NewStringContent(s)}, nil, true
 	}
 	if blocks, ok := src.SystemAsBlocks(); ok {
 		var drops []Drop
@@ -215,7 +215,7 @@ func translateSystem(src messages.MessagesRequest) (chat.RequestMessage, []Drop,
 				drops = append(drops, Drop{Field: fmt.Sprintf("system[%d].cache_control", i), Reason: reasonNoTargetEquivalent})
 			}
 		}
-		return &chat.SystemMessage{RoleField: "system", Content: text}, drops, true
+		return &chat.SystemMessage{RoleField: "system", Content: chat.NewStringContent(text)}, drops, true
 	}
 	return nil, nil, false
 }

@@ -37,8 +37,10 @@ type SystemMessage struct {
 	// rest of the struct rather than being injected by MarshalJSON.
 	RoleField string `json:"role"`
 
-	// Content is the system prompt text.
-	Content string `json:"content"`
+	// Content is the system prompt — a plain string or an array of text
+	// content parts, both of which OpenAI accepts and the official SDKs emit
+	// (#577). Preserved verbatim by MessageContent like the other roles.
+	Content MessageContent `json:"content"`
 
 	// Name is an optional caller-supplied identifier for the system message.
 	Name string `json:"name,omitempty"`
@@ -66,8 +68,9 @@ type DeveloperMessage struct {
 	// RoleField is the wire "role" discriminator, always "developer".
 	RoleField string `json:"role"`
 
-	// Content is the developer prompt text.
-	Content string `json:"content"`
+	// Content is the developer prompt — string or array of text content
+	// parts, preserved verbatim by MessageContent (#577).
+	Content MessageContent `json:"content"`
 
 	// Name is an optional caller-supplied identifier for the message.
 	Name string `json:"name,omitempty"`
