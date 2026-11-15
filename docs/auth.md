@@ -121,7 +121,7 @@ flowchart LR
 | Bearer resolves to an `APIKey` whose `configuration:` field references a name absent from the index | 403 `unknown configuration` | `unknown_configuration` | Only fires under load-time validation skew — the loader rejects this at startup. A live 403 here implies a config swap that the loader didn't validate. |
 | Bearer resolves cleanly but the resolved target's credential is empty (`Configuration.Credentials[provider]` present but set to `""`) | request forwarded with **no credential header** (no-credential branch, [`destination.go:128`](../cmd/gateway/destination.go)) | `success` | Auth succeeds; the destination builder strips every credential header and forwards without one. Use for private endpoints that gate themselves (e.g. in-cluster ollama on an unauthenticated NodePort). |
 
-An *absent* credentials entry is not this branch — `selection.ResolveTarget` ([`internal/selection/selection.go:268`](../internal/selection/selection.go)) rejects it with "configuration holds no credential entry for provider", which the final handler ([`cmd/gateway/handler.go:172-177`](../cmd/gateway/handler.go)) reports as **500** `internal`. To run a provider without a credential, declare the provider under `credentials:` with an explicit empty value.
+An *absent* credentials entry is not this branch — `selection.ResolveTarget` ([`internal/selection/selection.go:269`](../internal/selection/selection.go)) rejects it with "configuration holds no credential entry for provider", which the final handler ([`cmd/gateway/handler.go:172-177`](../cmd/gateway/handler.go)) reports as **500** `internal`. To run a provider without a credential, declare the provider under `credentials:` with an explicit empty value.
 
 The disabled-key vs unknown-key distinction lives only in the structured log — the wire collapses both to 401 to deny enumeration. See `classifyResult` in [`internal/middleware/auth/auth.go`](../internal/middleware/auth/auth.go).
 
@@ -246,7 +246,7 @@ Content-Type: application/json
 
 ### Resolution
 
-1. `protocolMiddleware` ([`cmd/gateway/pipeline.go:62`](../cmd/gateway/pipeline.go)) maps `/v1/chat/completions` to `protocol=chat` via `selection.ProtocolForPath` ([`internal/selection/protocol.go:29-46`](../internal/selection/protocol.go)). There is no provider prefix in v2 — the provider is chosen later by the resolved Configuration's bindings, and an unrecognised path falls through to per-configuration passthrough matching.
+1. `protocolMiddleware` ([`cmd/gateway/pipeline.go:62`](../cmd/gateway/pipeline.go)) maps `/v1/chat/completions` to `protocol=chat` via `selection.ProtocolForPath` ([`internal/selection/protocol.go:46-67`](../internal/selection/protocol.go)). There is no provider prefix in v2 — the provider is chosen later by the resolved Configuration's bindings, and an unrecognised path falls through to per-configuration passthrough matching.
 2. Auth middleware: `X-Slipspace-Configuration` absent → managed-mode discovery.
 3. `Authorization` parses as `Bearer sk_live_acme_prod_42`.
 4. `SecretIndex` lookup returns:

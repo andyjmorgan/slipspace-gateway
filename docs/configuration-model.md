@@ -142,14 +142,14 @@ providers:
 | `protocols` | map[string]ProviderProtocol | no | Generative wire shapes this provider serves, keyed by protocol name (see [Protocol resolution](#protocol-resolution)). A provider must declare **at least one** `protocols` entry **or** one `passthrough` family, else validation fails. |
 | `passthrough` | map[string]PassthroughFamily | no | Opaque/stateful endpoint families this provider exposes (e.g. Anthropic message batches), keyed by family name. Proxied verbatim — never typed, never GenAI-telemetried. "Verbatim" governs forwarding, not audit: raw bodies **are** still captured into connector Records (under `bodycapture.KindPassthrough`) when the resolved configuration has `connector_bindings`. See [Passthrough families and bindings](#passthrough-families-and-bindings). |
 
-### `ProviderProtocol` fields (`contracts/config/model.go:84`)
+### `ProviderProtocol` fields (`contracts/config/model.go:88`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `path` | string | no | Upstream path template appended to `base_url`. May contain `{name}` placeholders the gateway substitutes from the inbound path (e.g. Gemini's `/{version}/models/{model}:{op}`, where `{version}` preserves the client's `v1` / `v1beta`; a literal `/v1beta/models/{model}:{op}` pins the upstream version). |
 | `auth` | ProviderAuth | no | Per-protocol credential override. Absent (`nil`) defers to the provider-native default for the wire shape. This is what lets a provider's OpenAI-compat `chat` surface authenticate with `Authorization: Bearer` while its native protocol uses a different header (invariant #6). |
 
-### `ProviderAuth` fields (`contracts/config/model.go:101`)
+### `ProviderAuth` fields (`contracts/config/model.go:108`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -282,7 +282,7 @@ bindings:
 |---|---|---|---|
 | `protocol` | string | yes | The generative protocol this binding serves — one of the protocol constants (see [Protocol resolution](#protocol-resolution)). Unknown protocol aborts validation. |
 | `models` | []string | no | Client-requested model patterns this binding matches. Exact string, or a single **trailing-`*`** prefix wildcard (interior or multiple `*` is rejected). An **empty** model set is a **catch-all** for the protocol (default-permissive, invariant #1) — never a default-deny. |
-| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:356`, `validateBindings` :346-401). |
+| `provider` | string | conditionally | Names the single destination provider. **Mutually exclusive** with `group` — exactly one of the two must be set (`internal/config/config_validate.go:364`, `validateBindings` :354-409). |
 | `group` | string | conditionally | Names a resilience group destination. Mutually exclusive with `provider`. |
 | `alias` | string | no | Rewrites the request body model name for the **single-provider** case (sugar for the binding's implicit target alias). **Ignored when `group` is set** — group targets carry their own aliases. |
 | `query` | map[string]string | no | Single-provider per-use query override. Ignored when `group` is set. |

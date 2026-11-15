@@ -29,7 +29,7 @@ struct, the struct is the source of truth — fix the doc.
 | Gemini | `protocols/gemini/models` | `GET /v1beta/models` (also `GET /v1/models`) |
 
 `embeddings` is a routable protocol (`selection.ProtocolForPath`,
-`internal/selection/protocol.go:37`; `contracts/config.ProtocolEmbeddings`) but has
+`internal/selection/protocol.go:54`; `contracts/config.ProtocolEmbeddings`) but has
 no `protocols/` package — embeddings request and response bodies are forwarded
 opaquely and are not parsed into typed models, so the `DynamicProperties`
 round-trip machinery does not apply to them.
@@ -46,7 +46,7 @@ reply is a sequence of `ChatCompletionChunk` (`chat.go:201-232`) whose
 `ChatCompletionRequest.Messages` is `RequestMessages`, a polymorphic slice keyed
 on `role` rather than `type` — chat-completions is the only OpenAI surface where
 `role` is the discriminator (`messages.go:7-29`). The registry
-(`messages.go:275-286`) maps:
+(`messages.go:278-304`) maps:
 
 | Role | Type | Notes |
 |---|---|---|
@@ -133,11 +133,11 @@ same raw-bytes treatment applies to `Stop` (string or array of strings,
 > **`ToolCallFunction.Arguments` is a JSON string, not an object.** OpenAI ships
 > function-call arguments as a stringified JSON document, so `Arguments` is a Go
 > `string`; callers must `json.Unmarshal` it to recover the structured payload
-> (`chat.go:762-772`, `Arguments` at `chat.go:769`). In streaming,
+> (`chat.go:806-816`, `Arguments` at `chat.go:813`). In streaming,
 > `ToolCallFunctionDelta.Arguments` is emitted *without* `omitempty` because
 > OpenAI sends an empty-string delta as the "tool call begins" marker — dropping
-> it would lose the start signal (`chat.go:793-802`, `Arguments` at `chat.go:799`;
-> rationale godoc at `chat.go:789-792`).
+> it would lose the start signal (`chat.go:837-846`, `Arguments` at `chat.go:843`;
+> rationale godoc at `chat.go:841-842`).
 
 ## OpenAI — Responses API (`protocols/openai/responses`)
 
@@ -258,8 +258,8 @@ Registry in `contentblock.go` (`blockRegistry`, discriminator field
 | `tool_reference` | `ToolReferenceBlock` | Tool reference (PR #470) |
 | `mcp_tool_use` | `McpToolUseBlock` | MCP connector call executed server-side (`id` prefixed `mcptoolu_`, `name`, `server_name`, raw `input`); streams `input` over `input_json_delta` like `server_tool_use` (#557) |
 | `mcp_tool_result` | `McpToolResultBlock` | Paired MCP result; `content` is string-or-text-array (kept raw), `is_error` is a `*bool` so an explicit `false` round-trips; carries `cache_control` only when the client echoes it (#557) |
-| `thinking` | `ThinkingBlock` (`contentblock.go:516`) | See signature echo below |
-| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:549`) | Opaque encrypted `Data` |
+| `thinking` | `ThinkingBlock` (`contentblock.go:615`) | See signature echo below |
+| `redacted_thinking` | `RedactedThinkingBlock` (`contentblock.go:648`) | Opaque encrypted `Data` |
 | `compaction` | `CompactionBlock` | Server-side context summary (compaction beta); see below |
 | *(any other)* | `UnknownBlock` | Fallback |
 
@@ -300,15 +300,15 @@ does for `server_tool_use`.
 
 Extended thinking is **load-bearing for round-tripping**, not just informational:
 
-- `ThinkingBlock.Signature` (`contentblock.go:526`; invariant documented at
-  `contentblock.go:512-515`) is a cryptographic
+- `ThinkingBlock.Signature` (`contentblock.go:625`; invariant documented at
+  `contentblock.go:611-614`) is a cryptographic
   attestation over the thinking trace. The client **MUST echo it back verbatim**
   on the assistant turn or tool use cannot resume — so it must round-trip
   exactly. In streaming it arrives as a terminal `signature_delta` after the
   `thinking_delta` fragments (`stream.go`, `SignatureDelta`).
-- `RedactedThinkingBlock.Data` (`RedactedThinkingBlock` at `contentblock.go:549`,
-  `Data` at `contentblock.go:554`; invariant documented at
-  `contentblock.go:544-548`) is thinking the
+- `RedactedThinkingBlock.Data` (`RedactedThinkingBlock` at `contentblock.go:648`,
+  `Data` at `contentblock.go:653`; invariant documented at
+  `contentblock.go:645-647`) is thinking the
   provider encrypted after tripping a safety classifier. It carries no
   human-readable content but must likewise be echoed back verbatim alongside any
   sibling thinking blocks.

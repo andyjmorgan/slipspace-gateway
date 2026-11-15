@@ -185,8 +185,10 @@ Opaque/stateful surfaces — model catalogues, Anthropic message batches, file A
 When `ProtocolForPath` returns `ok == false`, [`selectionMiddleware`](../cmd/gateway/pipeline.go) calls:
 
 ```go
-pm, err := selection.MatchPassthrough(method, path, cfg, providers)
+pm, err := selection.MatchPassthrough(r.Method, r.URL.Path, r.Header, cfg, providers)
 ```
+
+The header argument breaks path+method ties between families by which family's `auth.header` the client presented.
 
 [`MatchPassthrough`](../internal/selection/selection.go) walks `cfg.PassthroughBindings`, resolves each to its provider's named `PassthroughFamily`, and for each family path:
 

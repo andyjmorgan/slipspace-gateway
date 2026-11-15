@@ -177,7 +177,7 @@ The `Fallback` is what makes unknown discriminators survive. By convention each
 union has an `UnknownX` member whose only typed field is the discriminator
 itself; everything else lands in `DynamicProperties.Extra`. The Anthropic
 content-block registry is the canonical example
-(`protocols/anthropic/messages/contentblock.go:599`):
+(`protocols/anthropic/messages/contentblock.go:763`):
 
 ```go
 var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
@@ -192,6 +192,8 @@ var blockRegistry = models.PolymorphicRegistry[ContentBlock]{
         "web_fetch_tool_result":  func() ContentBlock { return &WebFetchToolResultBlock{} },
         "tool_search_tool_result": func() ContentBlock { return &ToolSearchToolResultBlock{} },
         "tool_reference":          func() ContentBlock { return &ToolReferenceBlock{} },
+        "mcp_tool_use":            func() ContentBlock { return &McpToolUseBlock{} },
+        "mcp_tool_result":         func() ContentBlock { return &McpToolResultBlock{} },
         "thinking":          func() ContentBlock { return &ThinkingBlock{} },
         "redacted_thinking": func() ContentBlock { return &RedactedThinkingBlock{} },
         "compaction":        func() ContentBlock { return &CompactionBlock{} },
@@ -211,15 +213,15 @@ The shared registry backs these unions (among others):
 
 | Union | Discriminator | Registry | Fallback type |
 |---|---|---|---|
-| Anthropic `ContentBlock` | `type` | `contentblock.go:599` | `UnknownBlock` |
+| Anthropic `ContentBlock` | `type` | `contentblock.go:763` | `UnknownBlock` |
 | Anthropic `ContextEdit` | `type` | `context_management.go:280` | `UnknownContextEdit` |
-| Anthropic `StreamEvent` | `type` | `stream.go:394` | `UnknownStreamEvent` |
-| Anthropic `ContentBlockDelta` | `type` | `stream.go:600` | `UnknownContentBlockDelta` |
-| OpenAI chat `RequestMessage` | `role` | `messages.go:275` | `UnknownRequestMessage` |
+| Anthropic `StreamEvent` | `type` | `stream.go:411` | `UnknownStreamEvent` |
+| Anthropic `ContentBlockDelta` | `type` | `stream.go:654` | `UnknownContentBlockDelta` |
+| OpenAI chat `RequestMessage` | `role` | `messages.go:278` | `UnknownRequestMessage` |
 | OpenAI chat `ContentPart` | `type` | `content_parts.go:294` | `UnknownContentPart` |
 | OpenAI chat `Annotation` | `type` | `annotations.go:127` | `UnknownAnnotation` |
 | OpenAI Responses `ToolDefinition` | `type` | `tool.go:240` | `UnknownTool` |
-| OpenAI Responses `ResponsesStreamEvent` | `type` | `events.go:435` | `UnknownEvent` |
+| OpenAI Responses `ResponsesStreamEvent` | `type` | `events.go:717` | `UnknownEvent` |
 
 Gemini `Part` is also a discriminated union but dispatches by **key-presence**
 (`{"text":…}` vs `{"functionCall":…}`) rather than a single discriminator field,
@@ -255,7 +257,7 @@ inside a raw sub-document are not discovered (`models/unmapped.go:28-34`,
 Anthropic, baked into the type design:
 
 - Anthropic **request** `Message.Content` is kept as `json.RawMessage`
-  (`protocols/anthropic/messages/messages.go:147`), so a request-side walk
+  (`protocols/anthropic/messages/messages.go:158`), so a request-side walk
   surfaces top-level and message-level unknowns but **not** content-block
   internals.
 - Anthropic **response** `Content` is typed `[]ContentBlock`

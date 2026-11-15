@@ -130,7 +130,7 @@ Same provider, two protocols, two credential conventions. The native `messages` 
 
 ## YAML schema
 
-The canonical Go types are in [`contracts/config/model.go`](../contracts/config/model.go) — `Provider` (lines 54–85), `ProviderProtocol` (88–100), `ProviderAuth` (105–114), `PassthroughFamily` (122–131) / `PassthroughPath` (134–146). What follows is the operator-facing summary.
+The canonical Go types are in [`contracts/config/model.go`](../contracts/config/model.go) — `Provider` (lines 54–85), `ProviderProtocol` (88–103), `ProviderAuth` (108–117), `PassthroughFamily` (125–134) / `PassthroughPath` (137–149). What follows is the operator-facing summary.
 
 ### Top-level
 
