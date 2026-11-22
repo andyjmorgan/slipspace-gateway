@@ -108,7 +108,7 @@ The pre-rename `backends:` key is rejected with `ErrLegacyProvidersKey`. Any oth
 
 ## `providers` block
 
-`providers:` is a map from provider name to its connection definition (`contractsconfig.ProvidersConfig`, `contracts/config/model.go:43`). A provider is a **connection** — base URL, transport quirks, protocol-to-path map, auth scheme — not a credential holder. The credential is supplied per provider by the binding configuration's `credentials` map and substituted into the protocol auth format's `{key}` placeholder. See [providers.md](providers.md) for the per-provider deep dive; this section documents the schema only.
+`providers:` is a map from provider name to its connection definition (`contractsconfig.ProvidersConfig`, `contracts/config/model.go:47`). A provider is a **connection** — base URL, transport quirks, protocol-to-path map, auth scheme — not a credential holder. The credential is supplied per provider by the binding configuration's `credentials` map and substituted into the protocol auth format's `{key}` placeholder. See [providers.md](providers.md) for the per-provider deep dive; this section documents the schema only.
 
 ```yaml
 providers:
@@ -169,7 +169,7 @@ There is no provider-level `auth_header` / `auth_format` in v2: auth is set per 
 
 ## `groups` block
 
-`groups:` is a map from group name to a resilience definition (`contractsconfig.GroupsConfig`, `contracts/config/model.go:147`). A group is a named failover / load-balance unit the orchestrator routes across. Targets are arbitrary providers, so a group cuts across providers — the only constraint is **protocol-preserving**: every target must serve the binding's protocol (no mid-failover translation). Groups replace v1 `resilience_policies`; a binding references a group through `Binding.Group` instead of a configuration carrying a single global `resilience_name`.
+`groups:` is a map from group name to a resilience definition (`contractsconfig.GroupsConfig`, `contracts/config/model.go:154`). A group is a named failover / load-balance unit the orchestrator routes across. Targets are arbitrary providers, so a group cuts across providers — the only constraint is **protocol-preserving**: every target must serve the binding's protocol (no mid-failover translation). Groups replace v1 `resilience_policies`; a binding references a group through `Binding.Group` instead of a configuration carrying a single global `resilience_name`.
 
 ```yaml
 groups:
@@ -188,7 +188,7 @@ groups:
         alias: claude-sonnet-4-5
 ```
 
-### `Group` fields (`contracts/config/model.go:154`)
+### `Group` fields (`contracts/config/model.go:161`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -202,7 +202,7 @@ groups:
 | `retry` | *RetryConfig | no | Inter-attempt backoff and attempt budget for the failover / re-roll walk: `enabled`, `max_attempts`, `backoff_type` (`constant`, `linear`, `exponential`), `delay_ms`, `max_delay_ms`, `use_jitter` (`contracts/resilience/types.go`, `RetryConfig`). Omitted or disabled keeps the default (next target immediately, every target may be tried). Validated by `RetryConfig.Validate` at load. |
 | `targets` | []Target | yes | The providers this group routes across. Must have at least one; two entries that are the same use of one provider (identical `provider`, `alias`, `path`, `query`) are rejected, while the same provider with a different alias, path or query may be listed more than once (`internal/config/config_validate.go::validateGroups`). |
 
-### `Target` fields (`contracts/config/model.go:194`)
+### `Target` fields (`contracts/config/model.go:254`)
 
 The atom a binding or group dispatches to: a provider reference plus per-use overrides that compose over the provider's own values (target wins).
 
@@ -223,7 +223,7 @@ Validation (`internal/config/config_validate.go::validateGroups`): the group nam
 
 ## `configurations` block
 
-`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:278`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
+`configurations:` is a map from configuration name to a reusable policy bundle (`contracts/config/model.go:343`). There must be **at least one** entry — an empty map aborts with `ErrNoConfigurations`.
 
 ```yaml
 configurations:
@@ -245,7 +245,7 @@ configurations:
       tier: production
 ```
 
-### `Configuration` fields (`contracts/config/model.go:278`)
+### `Configuration` fields (`contracts/config/model.go:343`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -261,7 +261,7 @@ configurations:
 
 ## `bindings` (inside a configuration)
 
-A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:223`, doc comment starts `:218`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
+A **binding** is the router expressed as config data: it maps a generative `(protocol, model)` pair to a destination — a single provider or a resilience group (`contracts/config/model.go:288`, doc comment starts `:282`). Selection is `(protocol-from-path, model-from-body) → first matching binding` (`internal/selection/selection.go::Select`).
 
 ```yaml
 bindings:
@@ -276,7 +276,7 @@ bindings:
     tags: ["surface:messages"]
 ```
 
-### `Binding` fields (`contracts/config/model.go:223`)
+### `Binding` fields (`contracts/config/model.go:288`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -343,21 +343,21 @@ configurations:
         tags: ["surface:batches"]
 ```
 
-### `PassthroughFamily` fields (`contracts/config/model.go:118`)
+### `PassthroughFamily` fields (`contracts/config/model.go:125`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `auth` | ProviderAuth | no | Credential convention for this family; `nil` defers to the provider-native default. Validated by the same `validateAuth` rules as protocol auth. |
 | `paths` | []PassthroughPath | yes | Inbound path patterns this family claims; must declare at least one. |
 
-### `PassthroughPath` fields (`contracts/config/model.go:130`)
+### `PassthroughPath` fields (`contracts/config/model.go:137`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `match` | string | yes | Inbound path pattern, optionally containing `{name}` placeholders (e.g. `/v1/messages/batches/{id}/results`). Captured params are surfaced to the forwarder; a pattern with no placeholders is an exact-string compare. |
 | `methods` | []string | yes | HTTP methods this path accepts. Matched case-insensitively. A claimed path with an unaccepted method yields `ErrMethodNotAllowed`. |
 
-### `PassthroughBinding` fields (`contracts/config/model.go:262`)
+### `PassthroughBinding` fields (`contracts/config/model.go:327`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -443,7 +443,7 @@ admin:
 |---|---|---|---|
 | `enabled` | bool | yes | Gates the admin console. `false` = the `/admin/` prefix is never mounted, no admin routes exist anywhere. |
 | `bind_addr` | string | no | The admin listener address (host:port). Empty resolves to the effective default `0.0.0.0:8081` (`EffectiveBindAddr`, `DefaultBindAddr`). Validated as host:port with numeric port. The admin console runs as a dedicated second `http.Server` on this address, distinct from the data-plane listener (`SLIPSPACE_HTTP_BIND`). |
-| `password` | string | no | Operator credential for HTTP Basic auth. Username is hardcoded `admin` (`contracts/admin/admin.go:19`). May be empty in YAML — at runtime `SLIPSPACE_ADMIN_PASSWORD` wins when set; otherwise this field is used. `ResolvePassword` (`admin.go:84-93`) returns the resolved password string — the env var wins over `admin.password`, and it returns `""` when both are empty. With `enabled: true`, **at least one** of the env var or this field must be non-empty: `Config.Validate` (`admin.go:94-108`) returns `ErrPasswordRequired`, and only when the admin block is `Enabled` and `ResolvePassword()` is empty. Both may be set simultaneously — the env var takes precedence; it is not an exclusive-or. Never serialised to JSON. |
+| `password` | string | no | Operator credential for HTTP Basic auth. Username is hardcoded `admin` (`contracts/admin/admin.go:19`). May be empty in YAML — at runtime `SLIPSPACE_ADMIN_PASSWORD` wins when set; otherwise this field is used. `ResolvePassword` (`admin.go:84-93`) returns the resolved password string — the env var wins over `admin.password`, and it returns `""` when both are empty. With `enabled: true`, **at least one** of the env var or this field must be non-empty: `Config.Validate` (`admin.go:97`) returns `ErrPasswordRequired`, and only when the admin block is `Enabled` and `ResolvePassword()` is empty. Both may be set simultaneously — the env var takes precedence; it is not an exclusive-or. Never serialised to JSON. |
 
 The console's runtime behaviour (live-feed capacity, body-capture budget, snapshot interval) is configured via `SLIPSPACE_ADMIN_*` env vars, not this block — see [environment-variables.md](environment-variables.md).
 
